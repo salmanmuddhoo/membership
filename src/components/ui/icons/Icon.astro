@@ -1,39 +1,30 @@
 ---
 import { Icons } from './icons.ts';
 
-interface Path {
-  d: string;
+interface Props {
+  name: keyof typeof Icons | string;
   class?: string;
 }
 
-const { name } = Astro.props;
-
-let icon = (Icons as any)[name] || {};
-
-let paths: Path[] = icon.paths || [];
+const { name, class: className = 'size-5 shrink-0' } = Astro.props;
+const icon = Icons[name as string];
 ---
 
 {
-  icon ? (
+  icon && (
     <svg
-      class={icon.class}
-      height={icon.height}
-      viewBox={icon.viewBox}
-      width={icon.width}
-      fill={icon.fill}
-      clip-rule={icon.clipRule}
-      fill-rule={icon.fillRule}
-      stroke={icon.stroke}
-      stroke-width={icon.strokeWidth}
-      stroke-linecap={icon.strokeLinecap}
-      stroke-linejoin={icon.strokeLinejoin}
+      class={className}
+      viewBox={icon.viewBox ?? '0 0 24 24'}
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      aria-hidden="true"
     >
-      <title>{icon.title}</title>
-      {paths.map((path: Path) => (
-        <path d={path.d} class={path.class || ''} />
+      {icon.paths.map(d => (
+        <path d={d} />
       ))}
     </svg>
-  ) : (
-    'Icon not found'
   )
 }
