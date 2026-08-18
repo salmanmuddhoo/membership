@@ -1,0 +1,4 @@
+# Database migrations live here as timestamped .sql files.
+# Create one with:  supabase migration new <name>
+# They are applied to the linked project automatically on merge to main
+# by .github/workflows/supabase-deploy.yml
