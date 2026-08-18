@@ -1,0 +1,46 @@
+---
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+
+const user = Astro.locals.user;
+const email = user?.email ?? '';
+---
+
+<DashboardLayout title="Dashboard · Al Barakah MCSL" heading="Dashboard">
+  <div class="mx-auto max-w-5xl">
+    {/* Welcome */}
+    <section
+      class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 sm:p-8 dark:border-neutral-800 dark:bg-neutral-950"
+    >
+      <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+        Welcome to Al Barakah MCSL
+      </h2>
+      <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+        {email ? `Signed in as ${email}.` : ''} This is the foundation of your internal
+        operations platform. Modules will appear here as they are defined and enabled.
+      </p>
+    </section>
+
+    {/* Placeholder module tiles for future work (not yet implemented) */}
+    <div class="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      {
+        [
+          'Membership',
+          'Financing',
+          'Documents',
+          'Approvals',
+          'Reports',
+          'Settings',
+        ].map(name => (
+          <div class="rounded-xl border border-dashed border-neutral-300 bg-neutral-50 p-5 dark:border-neutral-700 dark:bg-neutral-900/50">
+            <p class="text-sm font-medium text-neutral-700 dark:text-neutral-200">
+              {name}
+            </p>
+            <p class="mt-1 text-xs text-neutral-400 dark:text-neutral-500">
+              Coming soon
+            </p>
+          </div>
+        ))
+      }
+    </div>
+  </div>
+</DashboardLayout>

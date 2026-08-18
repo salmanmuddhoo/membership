@@ -1,0 +1,182 @@
+---
+import BaseLayout from './BaseLayout.astro';
+import BrandLogo from '@components/BrandLogo.astro';
+import ThemeIcon from '@components/ThemeIcon.astro';
+import Icon from '@components/ui/icons/Icon.astro';
+
+interface Props {
+  title?: string;
+  heading?: string;
+}
+
+const { title = 'Dashboard · Al Barakah MCSL', heading = 'Dashboard' } =
+  Astro.props;
+
+const user = Astro.locals.user;
+const email = user?.email ?? '';
+const initial = (email.charAt(0) || 'A').toUpperCase();
+
+// Primary navigation. Further modules are added here as they are enabled.
+const navItems = [
+  { label: 'Dashboard', href: '/dashboard', icon: 'dashboard' },
+];
+const currentPath = Astro.url.pathname;
+---
+
+<BaseLayout title={title}>
+  {/* Sidebar (off-canvas on small screens, fixed on large screens) */}
+  <aside
+    id="app-sidebar"
+    class="hs-overlay hs-overlay-open:translate-x-0 fixed inset-y-0 start-0 z-60 hidden w-64 -translate-x-full transform border-e border-neutral-200 bg-neutral-100 transition-all duration-300 [--auto-close:lg] lg:end-auto lg:bottom-0 lg:block lg:translate-x-0 dark:border-neutral-800 dark:bg-neutral-950"
+    role="navigation"
+    aria-label="Sidebar"
+  >
+    <div class="flex h-full flex-col">
+      <div class="flex items-center gap-x-2.5 px-6 py-5">
+        <BrandLogo class="size-9" />
+        <div class="leading-tight">
+          <span
+            class="block text-sm font-bold text-neutral-800 dark:text-neutral-100"
+          >
+            Al Barakah
+          </span>
+          <span class="block text-xs text-neutral-500 dark:text-neutral-400">
+            MCSL
+          </span>
+        </div>
+      </div>
+
+      <nav class="flex-1 space-y-1 px-3 py-2">
+        {
+          navItems.map(item => {
+            const active = currentPath === item.href;
+            return (
+              <a
+                href={item.href}
+                aria-current={active ? 'page' : undefined}
+                class={`flex items-center gap-x-3 rounded-lg px-3 py-2 text-sm font-medium transition ${
+                  active
+                    ? 'bg-yellow-400 text-neutral-800'
+                    : 'text-neutral-600 hover:bg-neutral-200 hover:text-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800 dark:hover:text-white'
+                }`}
+              >
+                <Icon name={item.icon} class="size-5 shrink-0" />
+                {item.label}
+              </a>
+            );
+          })
+        }
+      </nav>
+
+      <div
+        class="border-t border-neutral-200 px-6 py-4 dark:border-neutral-800"
+      >
+        <p class="text-xs text-neutral-400 dark:text-neutral-500">
+          Internal operations platform
+        </p>
+      </div>
+    </div>
+  </aside>
+
+  {/* Backdrop overlay uses Preline's built-in overlay handling on mobile */}
+
+  <div class="flex min-h-screen w-full flex-col lg:ps-64">
+    {/* Header */}
+    <header
+      class="sticky top-0 z-40 flex items-center gap-x-4 border-b border-neutral-200 bg-neutral-100/90 px-4 py-3 backdrop-blur-md sm:px-6 dark:border-neutral-800 dark:bg-neutral-950/90"
+    >
+      <button
+        type="button"
+        class="flex size-9 items-center justify-center rounded-lg text-neutral-600 hover:bg-neutral-200 lg:hidden dark:text-neutral-300 dark:hover:bg-neutral-800"
+        aria-label="Open sidebar"
+        aria-controls="app-sidebar"
+        data-hs-overlay="#app-sidebar"
+      >
+        <Icon name="menu" class="size-5" />
+      </button>
+
+      <h1
+        class="text-base font-semibold text-neutral-800 dark:text-neutral-100"
+      >
+        {heading}
+      </h1>
+
+      <div class="ms-auto flex items-center gap-x-2">
+        <ThemeIcon />
+
+        {/* User menu */}
+        <div
+          class="hs-dropdown relative inline-flex [--placement:bottom-right]"
+        >
+          <button
+            id="user-menu"
+            type="button"
+            class="hs-dropdown-toggle flex items-center gap-x-2 rounded-full py-1 ps-1 pe-2 text-sm text-neutral-700 hover:bg-neutral-200 dark:text-neutral-200 dark:hover:bg-neutral-800"
+            aria-haspopup="menu"
+            aria-expanded="false"
+            aria-label="User menu"
+          >
+            <span
+              class="flex size-8 items-center justify-center rounded-full bg-yellow-400 text-sm font-bold text-neutral-800"
+            >
+              {initial}
+            </span>
+            <span class="hidden max-w-40 truncate sm:block">{email}</span>
+            <Icon name="chevronDown" class="size-4" />
+          </button>
+
+          <div
+            class="hs-dropdown-menu duration hs-dropdown-open:opacity-100 z-50 hidden min-w-60 rounded-xl border border-neutral-200 bg-neutral-100 p-1 opacity-0 shadow-md transition-[opacity,margin] dark:border-neutral-700 dark:bg-neutral-900"
+            role="menu"
+            aria-orientation="vertical"
+            aria-labelledby="user-menu"
+          >
+            <div class="px-3 py-2">
+              <p class="text-xs text-neutral-500 dark:text-neutral-400">
+                Signed in as
+              </p>
+              <p
+                class="truncate text-sm font-medium text-neutral-800 dark:text-neutral-100"
+              >
+                {email}
+              </p>
+            </div>
+            <div
+              class="my-1 border-t border-neutral-200 dark:border-neutral-700"
+            >
+            </div>
+            <button
+              type="button"
+              data-logout
+              class="flex w-full items-center gap-x-3 rounded-lg px-3 py-2 text-sm text-neutral-700 hover:bg-neutral-200 disabled:pointer-events-none disabled:opacity-50 dark:text-neutral-300 dark:hover:bg-neutral-800"
+              role="menuitem"
+            >
+              <Icon name="logout" class="size-4" />
+              <span data-logout-label>Sign out</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main class="flex-1 px-4 py-6 sm:px-6 lg:px-8">
+      <slot />
+    </main>
+  </div>
+
+  <script>
+    import { supabase } from '@lib/supabase/client';
+
+    const btn = document.querySelector<HTMLButtonElement>('[data-logout]');
+    const label = btn?.querySelector<HTMLElement>('[data-logout-label]');
+    btn?.addEventListener('click', async () => {
+      btn.disabled = true;
+      if (label) label.textContent = 'Signing out…';
+      try {
+        await supabase.auth.signOut();
+      } finally {
+        window.location.assign('/login');
+      }
+    });
+  </script>
+</BaseLayout>

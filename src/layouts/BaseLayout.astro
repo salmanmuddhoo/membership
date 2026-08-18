@@ -1,0 +1,50 @@
+---
+import Meta from '@components/Meta.astro';
+import '@styles/global.css';
+
+interface Props {
+  title?: string;
+  description?: string;
+  bodyClass?: string;
+}
+
+const { title = 'Al Barakah MCSL', description, bodyClass = '' } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en" class="scroll-pt-16">
+  <head>
+    <Meta description={description} />
+    <title>{title}</title>
+    {
+      /* Set the theme before paint to avoid a flash of the wrong colour scheme. */
+    }
+    <script is:inline>
+      if (
+        localStorage.getItem('hs_theme') === 'dark' ||
+        (!('hs_theme' in localStorage) &&
+          window.matchMedia('(prefers-color-scheme: dark)').matches)
+      ) {
+        document.documentElement.classList.add('dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+      }
+    </script>
+  </head>
+  <body
+    class={`flex min-h-screen flex-col bg-neutral-200 text-neutral-800 selection:bg-yellow-400 selection:text-neutral-700 dark:bg-neutral-900 dark:text-neutral-200 ${bodyClass}`}
+  >
+    <slot />
+    <script>
+      // Preline UI interactive components (dropdowns, overlays, theme toggle).
+      import 'preline';
+      const init = () =>
+        (
+          window as Window & { HSStaticMethods?: { autoInit?: () => void } }
+        ).HSStaticMethods?.autoInit?.();
+      if (document.readyState === 'loading')
+        document.addEventListener('DOMContentLoaded', init);
+      else init();
+    </script>
+  </body>
+</html>
