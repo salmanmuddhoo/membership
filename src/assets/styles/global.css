@@ -53,17 +53,18 @@
   --color-neutral-900: oklch(0.205 0 0);
   --color-neutral-950: oklch(0.145 0 0);
 
-  --color-yellow-50: oklch(0.987 0.026 102.212);
-  --color-yellow-100: oklch(0.973 0.071 103.193);
-  --color-yellow-200: oklch(0.945 0.129 101.54);
-  --color-yellow-300: oklch(0.905 0.182 98.111);
-  --color-yellow-400: oklch(0.852 0.199 91.936);
-  --color-yellow-500: oklch(0.795 0.184 86.047);
-  --color-yellow-600: oklch(0.681 0.162 75.834);
-  --color-yellow-700: oklch(0.554 0.135 66.442);
-  --color-yellow-800: oklch(0.476 0.114 61.907);
-  --color-yellow-900: oklch(0.421 0.095 57.708);
-  --color-yellow-950: oklch(0.286 0.066 53.813);
+  /* Mint green — primary accent (buttons, active states, focus rings). */
+  --color-mint-50: oklch(0.979 0.021 166.113);
+  --color-mint-100: oklch(0.95 0.052 163.051);
+  --color-mint-200: oklch(0.905 0.093 164.15);
+  --color-mint-300: oklch(0.845 0.143 164.978);
+  --color-mint-400: oklch(0.765 0.177 163.223);
+  --color-mint-500: oklch(0.696 0.17 162.48);
+  --color-mint-600: oklch(0.596 0.145 163.225);
+  --color-mint-700: oklch(0.508 0.118 165.612);
+  --color-mint-800: oklch(0.432 0.095 166.913);
+  --color-mint-900: oklch(0.378 0.077 168.94);
+  --color-mint-950: oklch(0.262 0.051 172.552);
 
   --color-orange-50: oklch(0.98 0.016 73.684);
   --color-orange-100: oklch(0.954 0.038 75.164);

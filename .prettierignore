@@ -13,3 +13,6 @@ dist/
 .env
 .env.*
 .DS_Store
+
+# no TOML parser in prettier
+*.toml

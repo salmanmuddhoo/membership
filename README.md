@@ -34,6 +34,29 @@ The `PUBLIC_` prefix is required by Astro to expose these to the browser.
 The anon key is safe to expose; never commit the `.env` file or any
 service-role key.
 
+> On Vercel these must be set **before** the build runs (they are inlined at
+> build time) and take effect on the next deployment.
+
+## Creating a staff / admin user
+
+There is no public sign-up — accounts are provisioned by an administrator.
+
+**Option A — Supabase dashboard:** Authentication → Users → **Add user**, enter
+the email and password, and enable "Auto Confirm User".
+
+**Option B — script (repeatable):**
+
+```bash
+# Needs SUPABASE_URL and the service-role key (a secret — never commit it).
+SUPABASE_URL="https://your-ref.supabase.co" \
+SUPABASE_SERVICE_ROLE_KEY="your-service-role-key" \
+  pnpm create:user admin@albarakah.mu 'ChangeMe-Str0ng!'
+```
+
+The user is created already confirmed, with `role: admin` in its metadata, and
+can sign in immediately at `/login`. (Role-based access control itself is
+deferred to the FRD; this only tags the account.)
+
 ## Routes
 
 | Route        | Access        | Purpose                                   |
@@ -65,9 +88,35 @@ src/
 ├── lib/supabase/       # client, server, and config helpers
 ├── pages/              # index (redirect), login, dashboard
 └── middleware.ts       # server-side auth guard
+
+supabase/
+├── config.toml         # Supabase CLI config
+└── migrations/         # SQL migrations (applied on merge to main)
+
+scripts/
+└── create-user.mjs     # provision a staff/admin account
 ```
 
 ## Deployment
 
-The project targets [Vercel](https://vercel.com/) via `@astrojs/vercel`.
-Set the two Supabase environment variables in the Vercel project settings.
+Both deployments happen automatically when changes land on `main`:
+
+**App → Vercel.** Connected via Vercel's Git integration and the
+`@astrojs/vercel` adapter; every push to `main` triggers a production deploy.
+Set `PUBLIC_SUPABASE_URL` and `PUBLIC_SUPABASE_ANON_KEY` in the Vercel project
+(Production + Preview), and update `site` in `astro.config.mjs` to the real
+domain.
+
+**Database → Supabase.** `.github/workflows/supabase-deploy.yml` runs
+`supabase db push` whenever files under `supabase/migrations/**` reach `main`,
+applying pending migrations to the linked project. Add these **GitHub Actions
+secrets** (Settings → Secrets and variables → Actions):
+
+| Secret                  | Where to find it                          |
+| ----------------------- | ----------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | Supabase account → Access Tokens          |
+| `SUPABASE_PROJECT_REF`  | Project Settings → General → Reference ID |
+| `SUPABASE_DB_PASSWORD`  | The database password set for the project |
+
+Create migrations locally with `supabase migration new <name>`; there are none
+yet, so the workflow is a no-op until the first one is added.

@@ -10,13 +10,22 @@ const HOME_PATH = '/dashboard';
 //  - keeps signed-in users out of the login page
 //  - default-denies every other route to unauthenticated users
 export const onRequest = defineMiddleware(async (context, next) => {
-  const supabase = createSupabaseServerClient(context);
+  let user = null;
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  try {
+    const supabase = createSupabaseServerClient(context);
+    const {
+      data: { user: resolvedUser },
+    } = await supabase.auth.getUser();
+    user = resolvedUser ?? null;
+  } catch (error) {
+    // A misconfiguration or transient Supabase error should not take the
+    // whole site down with a 500 — treat the request as signed out and log it.
+    console.error('[auth] Failed to resolve session:', error);
+    user = null;
+  }
 
-  context.locals.user = user ?? null;
+  context.locals.user = user;
 
   const { pathname } = context.url;
 
