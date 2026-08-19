@@ -7,7 +7,20 @@ import BrandLogo from '@components/BrandLogo.astro';
   title="Sign in · Al Barakah MCSL"
   description="Sign in to the Al Barakah MCSL operations platform."
 >
-  <div class="w-full max-w-md">
+  {/* Full-page background photo, dimmed to ~50% so the form stays readable */}
+  <div
+    class="fixed inset-0 -z-10 bg-cover bg-center bg-no-repeat"
+    style="background-image: url('/background.jpg');"
+    aria-hidden="true"
+  >
+  </div>
+  <div
+    class="fixed inset-0 -z-10 bg-neutral-200/50 dark:bg-neutral-900/50"
+    aria-hidden="true"
+  >
+  </div>
+
+  <div class="relative z-10 w-full max-w-md">
     <div class="mb-6 flex flex-col items-center text-center">
       <BrandLogo class="size-12" />
       <h1 class="mt-4 text-xl font-bold text-neutral-800 dark:text-neutral-100">
