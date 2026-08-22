@@ -9,17 +9,15 @@
     "preview": "astro preview",
     "astro": "astro",
     "format:check": "prettier --check .",
-    "format:fix": "prettier --write .",
-    "create:user": "node scripts/create-user.mjs"
+    "format:fix": "prettier --write ."
   },
   "dependencies": {
     "@astrojs/check": "^0.9.10",
     "@astrojs/vercel": "^11.0.6",
-    "@supabase/ssr": "^0.12.4",
-    "@supabase/supabase-js": "^2.112.3",
     "@tailwindcss/forms": "^0.5.11",
     "@tailwindcss/vite": "^4.3.3",
     "astro": "^7.2.2",
+    "jose": "^6.2.10",
     "preline": "^4.2.0",
     "tailwindcss": "^4.3.3"
   },

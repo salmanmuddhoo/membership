@@ -1,6 +1,0 @@
-# Supabase CLI configuration.
-# Full reference: https://supabase.com/docs/guides/cli/config
-project_id = "al-barakah"
-
-[db]
-major_version = 15

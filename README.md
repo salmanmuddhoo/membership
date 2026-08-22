@@ -10,113 +10,75 @@ added later based on the Functional Requirements Document (FRD).
 
 - [Astro](https://astro.build/) (server output) — pages, routing, middleware
 - [Tailwind CSS v4](https://tailwindcss.com/) + [Preline UI](https://preline.co/) — design system
-- [Supabase](https://supabase.com/) — email/password authentication & sessions
+- **Microsoft Entra External ID** — authentication (OIDC), via [`jose`](https://github.com/panva/jose)
+- **Azure Database for PostgreSQL** — data store (added with the first module)
 - [@astrojs/vercel](https://docs.astro.build/en/guides/integrations-guide/vercel/) — deployment adapter
+
+The backend is **Azure-native** — see
+[`docs/adr/0001-azure-native-backend.md`](docs/adr/0001-azure-native-backend.md).
+The frontend is deployed on **Vercel**.
 
 ## Getting started
 
 ```bash
 pnpm install
-cp .env.example .env   # then fill in your Supabase values
+cp .env.example .env   # fill in your Entra values
 pnpm dev
 ```
 
-The app runs at `http://localhost:4321`.
+The app runs at `http://localhost:4321`. Sign-in requires a configured Entra
+tenant (see below); until then the login page shows a "not configured" notice.
 
 ## Environment variables
 
-| Variable                   | Description                                       |
-| -------------------------- | ------------------------------------------------- |
-| `PUBLIC_AUTH_PROVIDER`     | Backend provider: `supabase` (default) or `entra` |
-| `PUBLIC_SUPABASE_URL`      | Supabase project URL (Project Settings → API)     |
-| `PUBLIC_SUPABASE_ANON_KEY` | Supabase anon / publishable key                   |
+All are **server-side secrets** (no `PUBLIC_` prefix — never sent to the browser).
 
-The `PUBLIC_` prefix is required by Astro to expose these to the browser.
-The anon key is safe to expose; never commit the `.env` file or any
-service-role key.
-
-> On Vercel these must be set **before** the build runs (they are inlined at
-> build time) and take effect on the next deployment.
+| Variable                         | Description                                              |
+| -------------------------------- | -------------------------------------------------------- |
+| `ENTRA_AUTHORITY`                | Tenant authority, e.g. `https://<tenant>.ciamlogin.com/` |
+| `ENTRA_TENANT_ID`                | Directory (tenant) ID                                    |
+| `ENTRA_CLIENT_ID`                | App registration (client) ID                             |
+| `ENTRA_CLIENT_SECRET`            | App registration client secret                           |
+| `ENTRA_REDIRECT_URI`             | `<app-url>/auth/callback`                                |
+| `ENTRA_POST_LOGOUT_REDIRECT_URI` | `<app-url>/login`                                        |
+| `ENTRA_SCOPES`                   | `openid profile email offline_access` (default)          |
+| `AUTH_SESSION_SECRET`            | Random string used to sign the session cookie            |
 
 ### Environments (test vs production)
 
-Deployment is **Vercel only**. Test and production are separated purely by
-environment variables — the same code runs in both:
+Deployment is **Vercel only**. Test and production run the same code and are
+separated by environment variables set per Vercel scope, each pointing at its
+own Entra app registration (and, later, its own Postgres database):
 
-| Environment | Vercel scope | Backend                            |
-| ----------- | ------------ | ---------------------------------- |
-| Test        | Preview      | Supabase today → Entra External ID |
-| Production  | Production   | Supabase today → Entra External ID |
+| Environment | Vercel scope | Entra app registration |
+| ----------- | ------------ | ---------------------- |
+| Test        | Preview      | test tenant/app        |
+| Production  | Production   | production tenant/app  |
 
-Point each Vercel scope at its own backend via the variables above.
+## Authentication flow
 
-### Backend direction: Azure-native (Entra External ID)
+Sign-in is a standard **OIDC Authorization Code + PKCE** redirect to Entra
+(staff use email + password on the Entra-hosted page). Routes:
 
-The chosen long-term backend is **Azure-native** — Microsoft Entra External ID
-for auth and Azure Database for PostgreSQL for data — for both environments.
-See [`docs/adr/0001-azure-native-backend.md`](docs/adr/0001-azure-native-backend.md)
-for the decision, rationale, and phased migration plan.
+| Route            | Purpose                                                    |
+| ---------------- | ---------------------------------------------------------- |
+| `/auth/login`    | Starts sign-in (PKCE, redirects to Entra)                  |
+| `/auth/callback` | Exchanges the code, verifies the id_token, sets the cookie |
+| `/auth/logout`   | Clears the session, redirects to Entra sign-out            |
 
-The app never talks to a backend directly — it goes through a provider seam, so
-switching auth is a localized change, not a rewrite:
-
-```
-src/lib/
-├── config.ts              # getBackendProvider() + per-provider config
-└── auth/
-    ├── types.ts           # AuthUser + provider-agnostic contracts
-    ├── server.ts          # createServerAuth(context)  — used by middleware
-    ├── client.ts          # getBrowserAuth()           — used by login/logout
-    └── providers/
-        ├── supabase.ts    # current backend
-        └── entra.ts       # target backend (added next per the ADR)
-```
-
-The seam already accepts `PUBLIC_AUTH_PROVIDER=entra` and the Entra env vars
-(`.env.example`); the provider implementation and `/auth/*` routes land in the
-follow-up described by the ADR. Until then the default stays `supabase` so the
-live app is unaffected.
-
-## Creating a staff / admin user
-
-There is no public sign-up — accounts are provisioned by an administrator.
-
-**Option A — Supabase dashboard:** Authentication → Users → **Add user**, enter
-the email and password, and enable "Auto Confirm User".
-
-**Option B — script (repeatable):**
-
-```bash
-# Needs SUPABASE_URL and the service-role key (a secret — never commit it).
-SUPABASE_URL="https://your-ref.supabase.co" \
-SUPABASE_SERVICE_ROLE_KEY="your-service-role-key" \
-  pnpm create:user admin@albarakah.mu 'ChangeMe-Str0ng!'
-```
-
-The user is created already confirmed, with `role: admin` in its metadata, and
-can sign in immediately at `/login`. (Role-based access control itself is
-deferred to the FRD; this only tags the account.)
+The app then holds its **own** short-lived, signed session cookie
+(`AUTH_SESSION_SECRET`); the middleware verifies it locally on every request —
+no third-party tokens are stored. Guarding lives in `src/middleware.ts`:
+unauthenticated users are sent to `/login`; the `/auth/*` routes are public.
 
 ## Routes
 
-| Route        | Access        | Purpose                                   |
-| ------------ | ------------- | ----------------------------------------- |
-| `/`          | —             | Redirects to `/dashboard` or `/login`     |
-| `/login`     | Public        | Email + password sign-in                  |
-| `/dashboard` | Authenticated | Application shell / placeholder dashboard |
-
-Authentication is enforced server-side in `src/middleware.ts`:
-unauthenticated users are redirected to `/login`, and authenticated users are
-redirected away from `/login`.
-
-## Scripts
-
-```bash
-pnpm dev            # start the dev server
-pnpm build          # type-check (astro check) + production build
-pnpm preview        # preview the production build
-pnpm format:fix     # format with Prettier
-```
+| Route        | Access        | Purpose                               |
+| ------------ | ------------- | ------------------------------------- |
+| `/`          | —             | Redirects to `/dashboard` or `/login` |
+| `/login`     | Public        | Sign-in entry point                   |
+| `/auth/*`    | Public        | OIDC handshake endpoints              |
+| `/dashboard` | Authenticated | Application shell / placeholder       |
 
 ## Project structure
 
@@ -125,47 +87,37 @@ src/
 ├── assets/styles/      # global Tailwind / Preline styles
 ├── components/         # BrandLogo, Meta, ThemeIcon, ui/icons
 ├── layouts/            # BaseLayout, AuthLayout, DashboardLayout
-├── lib/                # config + auth provider seam (see below)
-├── pages/              # index (redirect), login, dashboard
+├── lib/
+│   ├── config.ts       # Entra config (runtime env)
+│   └── auth/
+│       ├── types.ts        # AuthUser + ServerAuth
+│       ├── server.ts       # createServerAuth(context)
+│       ├── session.ts      # signed session cookie (jose)
+│       └── providers/
+│           └── entra.ts    # OIDC: discovery, PKCE, token/id_token, logout
+├── pages/
+│   ├── index.astro     # root redirect
+│   ├── login.astro     # sign-in page
+│   ├── dashboard.astro # placeholder
+│   └── auth/           # login.ts, callback.ts, logout.ts
 └── middleware.ts       # server-side auth guard
 
-supabase/
-├── config.toml         # Supabase CLI config
-└── migrations/         # SQL migrations (applied on merge to main)
-
-scripts/
-└── create-user.mjs     # provision a staff/admin account
+docs/adr/               # architecture decision records
 ```
+
+## Setting up Azure
+
+Create, **per environment**, an Entra External ID tenant + email/password user
+flow + app registration (redirect `…/auth/callback`, a client secret, scopes
+`openid profile email offline_access`), and an Azure Database for PostgreSQL
+Flexible Server. Full checklist in the
+[ADR](docs/adr/0001-azure-native-backend.md).
 
 ## Deployment
 
-Both deployments happen automatically when changes land on `main`:
-
-**App → Vercel.** Connected via Vercel's Git integration and the
-`@astrojs/vercel` adapter; every push to `main` triggers a production deploy.
-Set `PUBLIC_SUPABASE_URL` and `PUBLIC_SUPABASE_ANON_KEY` in the Vercel project
-(Production + Preview), and update `site` in `astro.config.mjs` to the real
-domain.
-
-**Database → Supabase.** `.github/workflows/supabase-deploy.yml` runs
-`supabase db push` whenever files under `supabase/migrations/**` reach `main`,
-applying pending migrations to the linked project. Add these **GitHub Actions
-secrets** (Settings → Secrets and variables → Actions):
-
-| Secret                  | Where to find it                          |
-| ----------------------- | ----------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | Supabase account → Access Tokens          |
-| `SUPABASE_PROJECT_REF`  | Project Settings → General → Reference ID |
-| `SUPABASE_DB_PASSWORD`  | The database password set for the project |
-
-Create migrations locally with `supabase migration new <name>`; there are none
-yet, so the workflow is a no-op until the first one is added.
-
-### Azure options
-
-The accepted direction is **Azure-native (Entra External ID + Azure
-PostgreSQL)** — see [`docs/adr/0001-azure-native-backend.md`](docs/adr/0001-azure-native-backend.md).
-
-An earlier alternative, **self-hosting the Supabase stack on Azure**, is kept
-for reference in [`infra/azure/README.md`](infra/azure/README.md) (superseded by
-ADR 0001, but useful if the plan changes).
+**Vercel**, automatically on merge to `main` (Git integration + the
+`@astrojs/vercel` adapter). Set the environment variables above per scope
+(Preview = test, Production = production), and update `site` in
+`astro.config.mjs` to the production domain. Because Entra secrets are read at
+runtime, they take effect without a rebuild — though a redeploy is the simplest
+way to apply them.

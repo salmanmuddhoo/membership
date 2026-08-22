@@ -2,15 +2,7 @@
 /// <reference types="astro/client" />
 
 interface ImportMetaEnv {
-  // Backend selection
-  readonly PUBLIC_AUTH_PROVIDER?: 'supabase' | 'entra';
-
-  // Supabase (current backend)
-  readonly PUBLIC_SUPABASE_URL: string;
-  readonly PUBLIC_SUPABASE_ANON_KEY: string;
-
-  // Microsoft Entra External ID (server-side only; used once the Entra
-  // provider lands — see docs/adr/0001-azure-native-backend.md)
+  // Microsoft Entra External ID (server-side only; never exposed to the client)
   readonly ENTRA_AUTHORITY?: string;
   readonly ENTRA_TENANT_ID?: string;
   readonly ENTRA_CLIENT_ID?: string;
@@ -27,7 +19,7 @@ interface ImportMeta {
 
 declare namespace App {
   interface Locals {
-    // Populated by the auth middleware; provider-agnostic.
+    // Populated by the auth middleware from the session cookie.
     user: import('@lib/auth/types').AuthUser | null;
   }
 }
