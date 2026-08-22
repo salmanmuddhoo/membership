@@ -33,16 +33,20 @@ tenant (see below); until then the login page shows a "not configured" notice.
 
 All are **server-side secrets** (no `PUBLIC_` prefix — never sent to the browser).
 
-| Variable                         | Description                                              |
-| -------------------------------- | -------------------------------------------------------- |
-| `ENTRA_AUTHORITY`                | Tenant authority, e.g. `https://<tenant>.ciamlogin.com/` |
-| `ENTRA_TENANT_ID`                | Directory (tenant) ID                                    |
-| `ENTRA_CLIENT_ID`                | App registration (client) ID                             |
-| `ENTRA_CLIENT_SECRET`            | App registration client secret                           |
-| `ENTRA_REDIRECT_URI`             | `<app-url>/auth/callback`                                |
-| `ENTRA_POST_LOGOUT_REDIRECT_URI` | `<app-url>/login`                                        |
-| `ENTRA_SCOPES`                   | `openid profile email offline_access` (default)          |
-| `AUTH_SESSION_SECRET`            | Random string used to sign the session cookie            |
+Provide the OIDC endpoints **either** as `ENTRA_METADATA_URL` **or** as
+`ENTRA_AUTHORITY` + `ENTRA_TENANT_ID`.
+
+| Variable                         | Description                                                                                                                |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `ENTRA_METADATA_URL`             | Exact "OpenID Connect metadata document" URL (App reg → Endpoints)                                                         |
+| `ENTRA_AUTHORITY`                | `https://<subdomain>.ciamlogin.com/` — `<subdomain>` is the onmicrosoft prefix (a single label), **not** a business domain |
+| `ENTRA_TENANT_ID`                | Directory (tenant) ID                                                                                                      |
+| `ENTRA_CLIENT_ID`                | App registration (client) ID                                                                                               |
+| `ENTRA_CLIENT_SECRET`            | App registration client secret                                                                                             |
+| `ENTRA_REDIRECT_URI`             | `<app-url>/auth/callback`                                                                                                  |
+| `ENTRA_POST_LOGOUT_REDIRECT_URI` | `<app-url>/login`                                                                                                          |
+| `ENTRA_SCOPES`                   | `openid profile email offline_access` (default)                                                                            |
+| `AUTH_SESSION_SECRET`            | Random string used to sign the session cookie                                                                              |
 
 ### Environments (test vs production)
 
