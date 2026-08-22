@@ -7,7 +7,9 @@ export function getBrowserAuth(): BrowserAuth {
   switch (getBackendProvider()) {
     case 'supabase':
       return supabaseBrowserAuth;
-    case 'azure':
-      throw new Error('Azure auth provider is not implemented yet.');
+    case 'entra':
+      throw new Error(
+        'Entra auth provider is not implemented yet (see docs/adr/0001-azure-native-backend.md).'
+      );
   }
 }

@@ -2,9 +2,23 @@
 /// <reference types="astro/client" />
 
 interface ImportMetaEnv {
+  // Backend selection
+  readonly PUBLIC_AUTH_PROVIDER?: 'supabase' | 'entra';
+
+  // Supabase (current backend)
   readonly PUBLIC_SUPABASE_URL: string;
   readonly PUBLIC_SUPABASE_ANON_KEY: string;
-  readonly PUBLIC_AUTH_PROVIDER?: 'supabase' | 'azure';
+
+  // Microsoft Entra External ID (server-side only; used once the Entra
+  // provider lands — see docs/adr/0001-azure-native-backend.md)
+  readonly ENTRA_AUTHORITY?: string;
+  readonly ENTRA_TENANT_ID?: string;
+  readonly ENTRA_CLIENT_ID?: string;
+  readonly ENTRA_CLIENT_SECRET?: string;
+  readonly ENTRA_REDIRECT_URI?: string;
+  readonly ENTRA_POST_LOGOUT_REDIRECT_URI?: string;
+  readonly ENTRA_SCOPES?: string;
+  readonly AUTH_SESSION_SECRET?: string;
 }
 
 interface ImportMeta {

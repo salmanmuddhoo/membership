@@ -27,7 +27,7 @@ The app runs at `http://localhost:4321`.
 
 | Variable                   | Description                                       |
 | -------------------------- | ------------------------------------------------- |
-| `PUBLIC_AUTH_PROVIDER`     | Backend provider: `supabase` (default) or `azure` |
+| `PUBLIC_AUTH_PROVIDER`     | Backend provider: `supabase` (default) or `entra` |
 | `PUBLIC_SUPABASE_URL`      | Supabase project URL (Project Settings → API)     |
 | `PUBLIC_SUPABASE_ANON_KEY` | Supabase anon / publishable key                   |
 
@@ -43,34 +43,39 @@ service-role key.
 Deployment is **Vercel only**. Test and production are separated purely by
 environment variables — the same code runs in both:
 
-| Environment | Vercel scope | Backend                                |
-| ----------- | ------------ | -------------------------------------- |
-| Test        | Preview      | A dedicated **test** Supabase project  |
-| Production  | Production   | Supabase today (a future Azure option) |
+| Environment | Vercel scope | Backend                            |
+| ----------- | ------------ | ---------------------------------- |
+| Test        | Preview      | Supabase today → Entra External ID |
+| Production  | Production   | Supabase today → Entra External ID |
 
-Point each Vercel scope at its own Supabase project via the variables above.
+Point each Vercel scope at its own backend via the variables above.
 
-### Swapping the backend (Supabase → Azure) later
+### Backend direction: Azure-native (Entra External ID)
 
-Production may stay on Supabase or move to Azure. The app never talks to a
-backend directly — it goes through a provider seam so a switch is a localized
-change, not a rewrite:
+The chosen long-term backend is **Azure-native** — Microsoft Entra External ID
+for auth and Azure Database for PostgreSQL for data — for both environments.
+See [`docs/adr/0001-azure-native-backend.md`](docs/adr/0001-azure-native-backend.md)
+for the decision, rationale, and phased migration plan.
+
+The app never talks to a backend directly — it goes through a provider seam, so
+switching auth is a localized change, not a rewrite:
 
 ```
 src/lib/
-├── config.ts              # getBackendProvider() reads PUBLIC_AUTH_PROVIDER
+├── config.ts              # getBackendProvider() + per-provider config
 └── auth/
     ├── types.ts           # AuthUser + provider-agnostic contracts
     ├── server.ts          # createServerAuth(context)  — used by middleware
     ├── client.ts          # getBrowserAuth()           — used by login/logout
     └── providers/
-        └── supabase.ts    # the only Supabase-specific code
+        ├── supabase.ts    # current backend
+        └── entra.ts       # target backend (added next per the ADR)
 ```
 
-To add Azure: implement an `azure.ts` provider satisfying the same contracts
-(e.g. Entra ID for auth), wire it into the two `switch` statements in
-`auth/server.ts` and `auth/client.ts`, and set `PUBLIC_AUTH_PROVIDER=azure`
-for the production scope. Nothing else in the app changes.
+The seam already accepts `PUBLIC_AUTH_PROVIDER=entra` and the Entra env vars
+(`.env.example`); the provider implementation and `/auth/*` routes land in the
+follow-up described by the ADR. Until then the default stays `supabase` so the
+live app is unaffected.
 
 ## Creating a staff / admin user
 
@@ -156,11 +161,11 @@ secrets** (Settings → Secrets and variables → Actions):
 Create migrations locally with `supabase migration new <name>`; there are none
 yet, so the workflow is a no-op until the first one is added.
 
-### Production on Azure (optional)
+### Azure options
 
-Production can run a **self-hosted Supabase stack on Azure** while the frontend
-stays on Vercel and test keeps using managed Supabase. Because production still
-speaks the Supabase API, the app needs **no code changes** — only the Vercel
-Production env vars point at the Azure-hosted URL/anon key. See
-[`infra/azure/README.md`](infra/azure/README.md) for the runbook and the
-provisioning scaffold.
+The accepted direction is **Azure-native (Entra External ID + Azure
+PostgreSQL)** — see [`docs/adr/0001-azure-native-backend.md`](docs/adr/0001-azure-native-backend.md).
+
+An earlier alternative, **self-hosting the Supabase stack on Azure**, is kept
+for reference in [`infra/azure/README.md`](infra/azure/README.md) (superseded by
+ADR 0001, but useful if the plan changes).
