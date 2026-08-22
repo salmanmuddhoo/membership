@@ -8,9 +8,11 @@ export function createServerAuth(context: APIContext): ServerAuth {
   switch (getBackendProvider()) {
     case 'supabase':
       return createSupabaseServerAuth(context);
-    case 'azure':
-      // Add an Azure implementation (e.g. Entra ID) under providers/ and wire
-      // it here. Kept explicit so the switch fails loudly until it exists.
-      throw new Error('Azure auth provider is not implemented yet.');
+    case 'entra':
+      // Implemented in providers/entra.ts in a follow-up (see ADR 0001).
+      // Explicit so the switch fails loudly until it exists.
+      throw new Error(
+        'Entra auth provider is not implemented yet (see docs/adr/0001-azure-native-backend.md).'
+      );
   }
 }
