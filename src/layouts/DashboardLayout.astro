@@ -165,7 +165,7 @@ const currentPath = Astro.url.pathname;
   </div>
 
   <script>
-    import { supabase } from '@lib/supabase/client';
+    import { getBrowserAuth } from '@lib/auth/client';
 
     const btn = document.querySelector<HTMLButtonElement>('[data-logout]');
     const label = btn?.querySelector<HTMLElement>('[data-logout-label]');
@@ -173,7 +173,7 @@ const currentPath = Astro.url.pathname;
       btn.disabled = true;
       if (label) label.textContent = 'Signing out…';
       try {
-        await supabase.auth.signOut();
+        await getBrowserAuth().signOut();
       } finally {
         window.location.assign('/login');
       }
