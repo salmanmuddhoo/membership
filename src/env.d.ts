@@ -4,6 +4,7 @@
 interface ImportMetaEnv {
   readonly PUBLIC_SUPABASE_URL: string;
   readonly PUBLIC_SUPABASE_ANON_KEY: string;
+  readonly PUBLIC_AUTH_PROVIDER?: 'supabase' | 'azure';
 }
 
 interface ImportMeta {
@@ -12,7 +13,7 @@ interface ImportMeta {
 
 declare namespace App {
   interface Locals {
-    // Populated by the auth middleware from the Supabase session.
-    user: import('@supabase/supabase-js').User | null;
+    // Populated by the auth middleware; provider-agnostic.
+    user: import('@lib/auth/types').AuthUser | null;
   }
 }

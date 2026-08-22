@@ -25,10 +25,11 @@ The app runs at `http://localhost:4321`.
 
 ## Environment variables
 
-| Variable                   | Description                                   |
-| -------------------------- | --------------------------------------------- |
-| `PUBLIC_SUPABASE_URL`      | Supabase project URL (Project Settings → API) |
-| `PUBLIC_SUPABASE_ANON_KEY` | Supabase anon / publishable key               |
+| Variable                   | Description                                       |
+| -------------------------- | ------------------------------------------------- |
+| `PUBLIC_AUTH_PROVIDER`     | Backend provider: `supabase` (default) or `azure` |
+| `PUBLIC_SUPABASE_URL`      | Supabase project URL (Project Settings → API)     |
+| `PUBLIC_SUPABASE_ANON_KEY` | Supabase anon / publishable key                   |
 
 The `PUBLIC_` prefix is required by Astro to expose these to the browser.
 The anon key is safe to expose; never commit the `.env` file or any
@@ -36,6 +37,40 @@ service-role key.
 
 > On Vercel these must be set **before** the build runs (they are inlined at
 > build time) and take effect on the next deployment.
+
+### Environments (test vs production)
+
+Deployment is **Vercel only**. Test and production are separated purely by
+environment variables — the same code runs in both:
+
+| Environment | Vercel scope | Backend                                |
+| ----------- | ------------ | -------------------------------------- |
+| Test        | Preview      | A dedicated **test** Supabase project  |
+| Production  | Production   | Supabase today (a future Azure option) |
+
+Point each Vercel scope at its own Supabase project via the variables above.
+
+### Swapping the backend (Supabase → Azure) later
+
+Production may stay on Supabase or move to Azure. The app never talks to a
+backend directly — it goes through a provider seam so a switch is a localized
+change, not a rewrite:
+
+```
+src/lib/
+├── config.ts              # getBackendProvider() reads PUBLIC_AUTH_PROVIDER
+└── auth/
+    ├── types.ts           # AuthUser + provider-agnostic contracts
+    ├── server.ts          # createServerAuth(context)  — used by middleware
+    ├── client.ts          # getBrowserAuth()           — used by login/logout
+    └── providers/
+        └── supabase.ts    # the only Supabase-specific code
+```
+
+To add Azure: implement an `azure.ts` provider satisfying the same contracts
+(e.g. Entra ID for auth), wire it into the two `switch` statements in
+`auth/server.ts` and `auth/client.ts`, and set `PUBLIC_AUTH_PROVIDER=azure`
+for the production scope. Nothing else in the app changes.
 
 ## Creating a staff / admin user
 
@@ -85,7 +120,7 @@ src/
 ├── assets/styles/      # global Tailwind / Preline styles
 ├── components/         # BrandLogo, Meta, ThemeIcon, ui/icons
 ├── layouts/            # BaseLayout, AuthLayout, DashboardLayout
-├── lib/supabase/       # client, server, and config helpers
+├── lib/                # config + auth provider seam (see below)
 ├── pages/              # index (redirect), login, dashboard
 └── middleware.ts       # server-side auth guard
 

@@ -181,8 +181,9 @@ import BrandLogo from '@components/BrandLogo.astro';
   </div>
 
   <script>
-    import { supabase } from '@lib/supabase/client';
+    import { getBrowserAuth } from '@lib/auth/client';
 
+    const auth = getBrowserAuth();
     const form = document.getElementById('login-form') as HTMLFormElement;
     const emailInput = document.getElementById('email') as HTMLInputElement;
     const passwordInput = document.getElementById(
@@ -271,12 +272,9 @@ import BrandLogo from '@components/BrandLogo.astro';
 
       setLoading(true);
       try {
-        const { error } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
-        if (error) {
-          formError.textContent = friendlyError(error.message);
+        const result = await auth.signIn(email, password);
+        if (!result.ok) {
+          formError.textContent = friendlyError(result.error ?? '');
           formError.classList.remove('hidden');
           setLoading(false);
           return;

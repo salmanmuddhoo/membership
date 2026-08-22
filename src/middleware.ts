@@ -1,5 +1,5 @@
 import { defineMiddleware } from 'astro:middleware';
-import { createSupabaseServerClient } from '@lib/supabase/server';
+import { createServerAuth } from '@lib/auth/server';
 
 const LOGIN_PATH = '/login';
 const HOME_PATH = '/dashboard';
@@ -13,11 +13,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
   let user = null;
 
   try {
-    const supabase = createSupabaseServerClient(context);
-    const {
-      data: { user: resolvedUser },
-    } = await supabase.auth.getUser();
-    user = resolvedUser ?? null;
+    user = await createServerAuth(context).getUser();
   } catch (error) {
     // A misconfiguration or transient Supabase error should not take the
     // whole site down with a 500 — treat the request as signed out and log it.
