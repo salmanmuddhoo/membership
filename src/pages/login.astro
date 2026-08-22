@@ -1,26 +1,37 @@
 ---
 import AuthLayout from '@layouts/AuthLayout.astro';
 import BrandLogo from '@components/BrandLogo.astro';
+
+// Friendly messages for the two failure cases the /auth routes redirect back with.
+const errorCode = Astro.url.searchParams.get('error');
+const errorMessage =
+  errorCode === 'config'
+    ? 'Sign-in is not configured yet. Please contact your administrator.'
+    : errorCode === 'auth'
+      ? 'We could not sign you in. Please try again.'
+      : null;
 ---
 
 <AuthLayout
   title="Sign in · Al Barakah MCSL"
   description="Sign in to the Al Barakah MCSL operations platform."
 >
-  {/* Full-page background photo, dimmed to ~50% so the form stays readable */}
-  <div
-    class="fixed inset-0 -z-10 bg-cover bg-center bg-no-repeat"
-    style="background-image: url('/background.jpg');"
-    aria-hidden="true"
-  >
-  </div>
-  <div
-    class="fixed inset-0 -z-10 bg-neutral-200/50 dark:bg-neutral-900/50"
-    aria-hidden="true"
-  >
-  </div>
-
   <div class="relative z-10 w-full max-w-md">
+    {
+      /* Full-page background photo, dimmed to ~50% so the card stays readable */
+    }
+    <div
+      class="fixed inset-0 -z-10 bg-cover bg-center bg-no-repeat"
+      style="background-image: url('/background.jpg');"
+      aria-hidden="true"
+    >
+    </div>
+    <div
+      class="fixed inset-0 -z-10 bg-neutral-200/50 dark:bg-neutral-900/50"
+      aria-hidden="true"
+    >
+    </div>
+
     <div class="mb-6 flex flex-col items-center text-center">
       <BrandLogo class="size-12" />
       <h1 class="mt-4 text-xl font-bold text-neutral-800 dark:text-neutral-100">
@@ -42,136 +53,39 @@ import BrandLogo from '@components/BrandLogo.astro';
             Sign in
           </h2>
           <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
-            Enter your credentials to access your account.
+            Use your Al Barakah staff account to continue.
           </p>
         </div>
 
-        {/* Error banner */}
-        <div
-          id="form-error"
-          class="mb-4 hidden rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-900/20 dark:text-red-300"
-          role="alert"
-          aria-live="assertive"
-        >
-        </div>
-
-        <form id="login-form" novalidate>
-          <div class="grid gap-y-4">
-            {/* Email */}
-            <div>
-              <label
-                for="email"
-                class="mb-2 block text-sm font-medium text-neutral-800 dark:text-neutral-200"
-              >
-                Email address
-              </label>
-              <input
-                type="email"
-                id="email"
-                name="email"
-                autocomplete="email"
-                inputmode="email"
-                class="focus:border-mint-400 focus:ring-mint-400/40 block w-full rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm text-neutral-700 focus:ring-3 focus:outline-hidden disabled:pointer-events-none disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
-                aria-describedby="email-error"
-              />
-              <p
-                id="email-error"
-                class="mt-2 hidden text-xs text-red-600 dark:text-red-400"
-              >
-              </p>
-            </div>
-
-            {/* Password */}
-            <div>
-              <label
-                for="password"
-                class="mb-2 block text-sm font-medium text-neutral-800 dark:text-neutral-200"
-              >
-                Password
-              </label>
-              <div class="relative">
-                <input
-                  type="password"
-                  id="password"
-                  name="password"
-                  autocomplete="current-password"
-                  class="focus:border-mint-400 focus:ring-mint-400/40 block w-full rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3 pe-11 text-sm text-neutral-700 focus:ring-3 focus:outline-hidden disabled:pointer-events-none disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
-                  aria-describedby="password-error"
-                />
-                <button
-                  type="button"
-                  id="toggle-password"
-                  class="absolute inset-y-0 end-0 flex items-center pe-3.5 text-neutral-400 hover:text-neutral-600 focus:outline-hidden dark:hover:text-neutral-200"
-                  aria-label="Show password"
-                  aria-pressed="false"
-                >
-                  <svg
-                    data-icon="eye"
-                    class="size-5"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.5"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    aria-hidden="true"
-                    ><path
-                      d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z"
-                    ></path><path d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"
-                    ></path></svg
-                  >
-                  <svg
-                    data-icon="eye-off"
-                    class="hidden size-5"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.5"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    aria-hidden="true"
-                    ><path
-                      d="M3.98 8.223A10.477 10.477 0 0 0 1.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.451 10.451 0 0 1 12 4.5c4.756 0 8.773 3.162 10.065 7.498a10.522 10.522 0 0 1-4.293 5.774M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65m0 0a3 3 0 1 0-4.243-4.243m4.243 4.243L9.88 9.88"
-                    ></path></svg
-                  >
-                </button>
-              </div>
-              <p
-                id="password-error"
-                class="mt-2 hidden text-xs text-red-600 dark:text-red-400"
-              >
-              </p>
-            </div>
-
-            {/* Submit */}
-            <button
-              type="submit"
-              id="submit-btn"
-              class="bg-mint-300 hover:bg-mint-400 focus-visible:ring-mint-400/50 mt-2 inline-flex w-full items-center justify-center gap-x-2 rounded-lg border border-transparent px-4 py-3 text-sm font-bold text-neutral-800 transition duration-300 focus:outline-hidden focus-visible:ring-3 disabled:pointer-events-none disabled:opacity-60"
+        {
+          errorMessage && (
+            <div
+              class="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-900/20 dark:text-red-300"
+              role="alert"
             >
-              <svg
-                id="submit-spinner"
-                class="hidden size-4 animate-spin"
-                viewBox="0 0 24 24"
-                fill="none"
-                aria-hidden="true"
-              >
-                <circle
-                  class="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  stroke-width="4"></circle>
-                <path
-                  class="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 0 1 8-8V0C5.373 0 0 5.373 0 12h4Z"></path>
-              </svg>
-              <span id="submit-label">Sign in</span>
-            </button>
-          </div>
-        </form>
+              {errorMessage}
+            </div>
+          )
+        }
+
+        <a
+          href="/auth/login"
+          class="bg-mint-300 hover:bg-mint-400 focus-visible:ring-mint-400/50 inline-flex w-full items-center justify-center gap-x-2 rounded-lg border border-transparent px-4 py-3 text-sm font-bold text-neutral-800 transition duration-300 focus:outline-hidden focus-visible:ring-3"
+        >
+          Sign in
+          <svg
+            class="size-4"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M5 12h14M13 6l6 6-6 6"></path>
+          </svg>
+        </a>
       </div>
     </div>
 
@@ -179,114 +93,4 @@ import BrandLogo from '@components/BrandLogo.astro';
       Al Barakah MCSL — authorised staff only.
     </p>
   </div>
-
-  <script>
-    import { getBrowserAuth } from '@lib/auth/client';
-
-    const auth = getBrowserAuth();
-    const form = document.getElementById('login-form') as HTMLFormElement;
-    const emailInput = document.getElementById('email') as HTMLInputElement;
-    const passwordInput = document.getElementById(
-      'password'
-    ) as HTMLInputElement;
-    const emailError = document.getElementById('email-error') as HTMLElement;
-    const passwordError = document.getElementById(
-      'password-error'
-    ) as HTMLElement;
-    const formError = document.getElementById('form-error') as HTMLElement;
-    const submitBtn = document.getElementById(
-      'submit-btn'
-    ) as HTMLButtonElement;
-    const submitLabel = document.getElementById('submit-label') as HTMLElement;
-    const spinner = document.getElementById('submit-spinner') as HTMLElement;
-
-    const toggleBtn = document.getElementById(
-      'toggle-password'
-    ) as HTMLButtonElement;
-    const eyeIcon = toggleBtn.querySelector('[data-icon="eye"]') as SVGElement;
-    const eyeOffIcon = toggleBtn.querySelector(
-      '[data-icon="eye-off"]'
-    ) as SVGElement;
-
-    toggleBtn.addEventListener('click', () => {
-      const show = passwordInput.type === 'password';
-      passwordInput.type = show ? 'text' : 'password';
-      eyeIcon.classList.toggle('hidden', show);
-      eyeOffIcon.classList.toggle('hidden', !show);
-      toggleBtn.setAttribute('aria-pressed', String(show));
-      toggleBtn.setAttribute(
-        'aria-label',
-        show ? 'Hide password' : 'Show password'
-      );
-    });
-
-    function showFieldError(el: HTMLElement, message: string) {
-      el.textContent = message;
-      el.classList.remove('hidden');
-    }
-
-    function clearErrors() {
-      formError.classList.add('hidden');
-      formError.textContent = '';
-      [emailError, passwordError].forEach(el => {
-        el.classList.add('hidden');
-        el.textContent = '';
-      });
-    }
-
-    function setLoading(loading: boolean) {
-      submitBtn.disabled = loading;
-      spinner.classList.toggle('hidden', !loading);
-      submitLabel.textContent = loading ? 'Signing in…' : 'Sign in';
-    }
-
-    // Maps Supabase errors to safe, user-friendly messages.
-    function friendlyError(message: string): string {
-      const m = message.toLowerCase();
-      if (m.includes('invalid login credentials')) {
-        return 'Invalid email or password.';
-      }
-      if (m.includes('email not confirmed')) {
-        return 'Please confirm your email address before signing in.';
-      }
-      return 'Unable to sign in at the moment. Please try again.';
-    }
-
-    form.addEventListener('submit', async event => {
-      event.preventDefault();
-      clearErrors();
-
-      const email = emailInput.value.trim();
-      const password = passwordInput.value;
-
-      let hasError = false;
-      if (!email) {
-        showFieldError(emailError, 'Please enter your email address.');
-        hasError = true;
-      }
-      if (!password) {
-        showFieldError(passwordError, 'Please enter your password.');
-        hasError = true;
-      }
-      if (hasError) return;
-
-      setLoading(true);
-      try {
-        const result = await auth.signIn(email, password);
-        if (!result.ok) {
-          formError.textContent = friendlyError(result.error ?? '');
-          formError.classList.remove('hidden');
-          setLoading(false);
-          return;
-        }
-        // Full navigation so the server middleware sees the new session cookie.
-        window.location.assign('/dashboard');
-      } catch {
-        formError.textContent =
-          'Unable to sign in at the moment. Please try again.';
-        formError.classList.remove('hidden');
-        setLoading(false);
-      }
-    });
-  </script>
 </AuthLayout>

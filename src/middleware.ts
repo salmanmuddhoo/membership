@@ -4,8 +4,14 @@ import { createServerAuth } from '@lib/auth/server';
 const LOGIN_PATH = '/login';
 const HOME_PATH = '/dashboard';
 
+// Routes reachable without a session: the login page and the OIDC handshake
+// endpoints (/auth/login, /auth/callback, /auth/logout).
+function isPublic(pathname: string): boolean {
+  return pathname === LOGIN_PATH || pathname.startsWith('/auth/');
+}
+
 // Central authentication guard. Runs for every page request:
-//  - resolves the current user from the Supabase session cookie
+//  - resolves the current user from the session cookie (Entra External ID)
 //  - redirects the root to the appropriate place
 //  - keeps signed-in users out of the login page
 //  - default-denies every other route to unauthenticated users
@@ -15,8 +21,8 @@ export const onRequest = defineMiddleware(async (context, next) => {
   try {
     user = await createServerAuth(context).getUser();
   } catch (error) {
-    // A misconfiguration or transient Supabase error should not take the
-    // whole site down with a 500 — treat the request as signed out and log it.
+    // A misconfiguration or transient error should not take the whole site
+    // down with a 500 — treat the request as signed out and log it.
     console.error('[auth] Failed to resolve session:', error);
     user = null;
   }
@@ -33,7 +39,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
     return context.redirect(HOME_PATH);
   }
 
-  if (!user && pathname !== LOGIN_PATH) {
+  if (!user && !isPublic(pathname)) {
     return context.redirect(LOGIN_PATH);
   }
 

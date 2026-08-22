@@ -1,6 +1,0 @@
-# Terminates TLS and reverse-proxies to the Supabase API gateway (Kong on
-# :8000). Caddy auto-provisions a Let's Encrypt certificate for the domain.
-# Replace api.your-domain.com with the real API hostname.
-api.your-domain.com {
-	reverse_proxy localhost:8000
-}

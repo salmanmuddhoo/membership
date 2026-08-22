@@ -145,15 +145,14 @@ const currentPath = Astro.url.pathname;
               class="my-1 border-t border-neutral-200 dark:border-neutral-700"
             >
             </div>
-            <button
-              type="button"
-              data-logout
-              class="flex w-full items-center gap-x-3 rounded-lg px-3 py-2 text-sm text-neutral-700 hover:bg-neutral-200 disabled:pointer-events-none disabled:opacity-50 dark:text-neutral-300 dark:hover:bg-neutral-800"
+            <a
+              href="/auth/logout"
+              class="flex w-full items-center gap-x-3 rounded-lg px-3 py-2 text-sm text-neutral-700 hover:bg-neutral-200 dark:text-neutral-300 dark:hover:bg-neutral-800"
               role="menuitem"
             >
               <Icon name="logout" class="size-4" />
-              <span data-logout-label>Sign out</span>
-            </button>
+              Sign out
+            </a>
           </div>
         </div>
       </div>
@@ -163,20 +162,4 @@ const currentPath = Astro.url.pathname;
       <slot />
     </main>
   </div>
-
-  <script>
-    import { getBrowserAuth } from '@lib/auth/client';
-
-    const btn = document.querySelector<HTMLButtonElement>('[data-logout]');
-    const label = btn?.querySelector<HTMLElement>('[data-logout-label]');
-    btn?.addEventListener('click', async () => {
-      btn.disabled = true;
-      if (label) label.textContent = 'Signing out…';
-      try {
-        await getBrowserAuth().signOut();
-      } finally {
-        window.location.assign('/login');
-      }
-    });
-  </script>
 </BaseLayout>

@@ -16,8 +16,3 @@ dist/
 
 # no TOML parser in prettier
 *.toml
-
-# infra assets prettier cannot parse
-infra/azure/provision.sh
-infra/azure/caddy/Caddyfile
-infra/azure/supabase.env.example
