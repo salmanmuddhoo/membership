@@ -155,3 +155,12 @@ secrets** (Settings → Secrets and variables → Actions):
 
 Create migrations locally with `supabase migration new <name>`; there are none
 yet, so the workflow is a no-op until the first one is added.
+
+### Production on Azure (optional)
+
+Production can run a **self-hosted Supabase stack on Azure** while the frontend
+stays on Vercel and test keeps using managed Supabase. Because production still
+speaks the Supabase API, the app needs **no code changes** — only the Vercel
+Production env vars point at the Azure-hosted URL/anon key. See
+[`infra/azure/README.md`](infra/azure/README.md) for the runbook and the
+provisioning scaffold.
