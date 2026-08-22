@@ -15,8 +15,12 @@ function readEnv(key: string): string | undefined {
 }
 
 export interface EntraConfig {
-  authority: string;
-  tenantId: string;
+  // Either provide the exact OIDC metadata URL (copied from the app
+  // registration's "Endpoints" panel), or the authority + tenant id, from
+  // which the metadata URL is derived.
+  metadataUrl?: string;
+  authority?: string;
+  tenantId?: string;
   clientId: string;
   clientSecret: string;
   redirectUri: string;
@@ -29,6 +33,7 @@ export interface EntraConfig {
 // when the backend has not been configured yet, so callers can degrade
 // gracefully instead of crashing.
 export function getEntraConfig(): EntraConfig {
+  const metadataUrl = readEnv('ENTRA_METADATA_URL');
   const authority = readEnv('ENTRA_AUTHORITY');
   const tenantId = readEnv('ENTRA_TENANT_ID');
   const clientId = readEnv('ENTRA_CLIENT_ID');
@@ -40,22 +45,26 @@ export function getEntraConfig(): EntraConfig {
     readEnv('ENTRA_SCOPES') ?? 'openid profile email offline_access';
   const sessionSecret = readEnv('AUTH_SESSION_SECRET');
 
+  // The OIDC endpoints come from either an explicit metadata URL or the
+  // authority + tenant id pair.
+  const hasEndpointSource = Boolean(metadataUrl || (authority && tenantId));
+
   if (
-    !authority ||
-    !tenantId ||
+    !hasEndpointSource ||
     !clientId ||
     !clientSecret ||
     !redirectUri ||
     !sessionSecret
   ) {
     throw new Error(
-      'Entra is not configured. Set ENTRA_AUTHORITY, ENTRA_TENANT_ID, ' +
-        'ENTRA_CLIENT_ID, ENTRA_CLIENT_SECRET, ENTRA_REDIRECT_URI and ' +
-        'AUTH_SESSION_SECRET (see .env.example).'
+      'Entra is not configured. Set ENTRA_METADATA_URL (or ENTRA_AUTHORITY + ' +
+        'ENTRA_TENANT_ID), plus ENTRA_CLIENT_ID, ENTRA_CLIENT_SECRET, ' +
+        'ENTRA_REDIRECT_URI and AUTH_SESSION_SECRET (see .env.example).'
     );
   }
 
   return {
+    metadataUrl,
     authority,
     tenantId,
     clientId,

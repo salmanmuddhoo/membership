@@ -3,6 +3,7 @@
 
 interface ImportMetaEnv {
   // Microsoft Entra External ID (server-side only; never exposed to the client)
+  readonly ENTRA_METADATA_URL?: string;
   readonly ENTRA_AUTHORITY?: string;
   readonly ENTRA_TENANT_ID?: string;
   readonly ENTRA_CLIENT_ID?: string;

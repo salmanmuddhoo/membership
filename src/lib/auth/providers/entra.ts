@@ -16,12 +16,16 @@ interface Discovery {
 let discoveryCache: Discovery | null = null;
 let jwksCache: ReturnType<typeof createRemoteJWKSet> | null = null;
 
+function discoveryUrl(): string {
+  const { metadataUrl, authority, tenantId } = getEntraConfig();
+  if (metadataUrl) return metadataUrl;
+  const base = (authority ?? '').replace(/\/+$/, '');
+  return `${base}/${tenantId}/v2.0/.well-known/openid-configuration`;
+}
+
 async function getDiscovery(): Promise<Discovery> {
   if (discoveryCache) return discoveryCache;
-  const { authority, tenantId } = getEntraConfig();
-  const base = authority.replace(/\/+$/, '');
-  const url = `${base}/${tenantId}/v2.0/.well-known/openid-configuration`;
-  const res = await fetch(url);
+  const res = await fetch(discoveryUrl());
   if (!res.ok) {
     throw new Error(`Entra OIDC discovery failed (${res.status}).`);
   }
