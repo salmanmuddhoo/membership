@@ -122,7 +122,10 @@ export async function completeLogin(
     body,
   });
   if (!res.ok) {
-    throw new Error(`Entra token exchange failed (${res.status}).`);
+    // Surface Entra's exact reason (e.g. AADSTS7000215 invalid client secret)
+    // in the server logs — the body is safe to log, not shown to the user.
+    const detail = await res.text().catch(() => '');
+    throw new Error(`Entra token exchange failed (${res.status}): ${detail}`);
   }
   const tokens = (await res.json()) as { id_token?: string };
   if (!tokens.id_token) throw new Error('Entra response missing id_token.');
