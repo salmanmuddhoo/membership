@@ -31,7 +31,8 @@ tenant (see below); until then the login page shows a "not configured" notice.
 
 ## Environment variables
 
-All are **server-side secrets** (no `PUBLIC_` prefix — never sent to the browser).
+The Entra values are **server-side secrets** (no `PUBLIC_` prefix — never sent
+to the browser). The only browser-exposed one is `PUBLIC_APP_ENV` (a label).
 
 Provide the OIDC endpoints **either** as `ENTRA_METADATA_URL` **or** as
 `ENTRA_AUTHORITY` + `ENTRA_TENANT_ID`.
@@ -47,17 +48,22 @@ Provide the OIDC endpoints **either** as `ENTRA_METADATA_URL` **or** as
 | `ENTRA_POST_LOGOUT_REDIRECT_URI` | `<app-url>/login`                                                                                                          |
 | `ENTRA_SCOPES`                   | `openid profile email offline_access` (default)                                                                            |
 | `AUTH_SESSION_SECRET`            | Random string used to sign the session cookie                                                                              |
+| `PUBLIC_APP_ENV`                 | Optional UI label; set `test` on the test env to show a "TEST" badge                                                       |
 
 ### Environments (test vs production)
 
-Deployment is **Vercel only**. Test and production run the same code and are
-separated by environment variables set per Vercel scope, each pointing at its
-own Entra app registration (and, later, its own Postgres database):
+Deployment is **Vercel only**, one project, two long-lived environments that
+run the same code with their own env vars and their own Entra app registration
+(and, later, their own Postgres database):
 
-| Environment | Vercel scope | Entra app registration |
-| ----------- | ------------ | ---------------------- |
-| Test        | Preview      | test tenant/app        |
-| Production  | Production   | production tenant/app  |
+| Environment | Git branch   | Vercel environment | Promotion             |
+| ----------- | ------------ | ------------------ | --------------------- |
+| Test        | `main`       | custom env `test`  | auto on every merge   |
+| Production  | `production` | Production         | promoted occasionally |
+
+Promote by updating `production` from `main` (a PR `main → production` gives an
+audit trail). Full setup and promotion steps:
+[`docs/environments.md`](docs/environments.md).
 
 ## Authentication flow
 
@@ -119,9 +125,14 @@ Flexible Server. Full checklist in the
 
 ## Deployment
 
-**Vercel**, automatically on merge to `main` (Git integration + the
-`@astrojs/vercel` adapter). Set the environment variables above per scope
-(Preview = test, Production = production), and update `site` in
-`astro.config.mjs` to the production domain. Because Entra secrets are read at
-runtime, they take effect without a rebuild — though a redeploy is the simplest
-way to apply them.
+**Vercel** (Git integration + the `@astrojs/vercel` adapter), one project with
+two environments:
+
+- **Test** deploys automatically on every merge to `main`.
+- **Production** deploys when `production` is updated — see
+  [`docs/environments.md`](docs/environments.md) for the environment setup and
+  the `main → production` promotion steps.
+
+Set the environment variables above once per environment (test values on the
+`test` custom env, production values on Production). Because Entra secrets are
+read at runtime, they take effect on the next deploy.
