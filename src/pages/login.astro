@@ -1,6 +1,7 @@
 ---
 import AuthLayout from '@layouts/AuthLayout.astro';
 import BrandLogo from '@components/BrandLogo.astro';
+import EnvBadge from '@components/EnvBadge.astro';
 
 // Friendly messages for the two failure cases the /auth routes redirect back with.
 const errorCode = Astro.url.searchParams.get('error');
@@ -40,6 +41,7 @@ const errorMessage =
       <p class="text-sm text-neutral-500 dark:text-neutral-400">
         Internal Operations Platform
       </p>
+      <EnvBadge class="mt-3" />
     </div>
 
     <div

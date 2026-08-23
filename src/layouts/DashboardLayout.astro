@@ -2,6 +2,7 @@
 import BaseLayout from './BaseLayout.astro';
 import BrandLogo from '@components/BrandLogo.astro';
 import ThemeIcon from '@components/ThemeIcon.astro';
+import EnvBadge from '@components/EnvBadge.astro';
 import Icon from '@components/ui/icons/Icon.astro';
 
 interface Props {
@@ -100,6 +101,7 @@ const currentPath = Astro.url.pathname;
       >
         {heading}
       </h1>
+      <EnvBadge />
 
       <div class="ms-auto flex items-center gap-x-2">
         <ThemeIcon />

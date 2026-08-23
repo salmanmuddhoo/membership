@@ -1,0 +1,24 @@
+---
+// Names the current environment so Test and Production are never confused.
+// Shown only when PUBLIC_APP_ENV is set and is not "production", so the live
+// app stays clean while non-prod environments are clearly marked.
+interface Props {
+  class?: string;
+}
+
+const { class: className = '' } = Astro.props;
+const env = import.meta.env.PUBLIC_APP_ENV;
+const show = Boolean(env && env.toLowerCase() !== 'production');
+const label = env ? env.toUpperCase() : '';
+---
+
+{
+  show && (
+    <span
+      class={`inline-flex items-center rounded-full border border-orange-300 bg-orange-100 px-2 py-0.5 text-xs font-semibold tracking-wide text-orange-800 dark:border-orange-900/50 dark:bg-orange-900/30 dark:text-orange-200 ${className}`}
+      title={`You are viewing the ${label} environment`}
+    >
+      {label}
+    </span>
+  )
+}

@@ -2,6 +2,9 @@
 /// <reference types="astro/client" />
 
 interface ImportMetaEnv {
+  // Environment label shown in the UI (e.g. "test"). Public, not a secret.
+  readonly PUBLIC_APP_ENV?: string;
+
   // Microsoft Entra External ID (server-side only; never exposed to the client)
   readonly ENTRA_METADATA_URL?: string;
   readonly ENTRA_AUTHORITY?: string;
