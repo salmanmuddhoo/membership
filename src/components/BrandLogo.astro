@@ -1,24 +1,23 @@
 ---
 interface Props {
   class?: string;
+  alt?: string;
 }
 
-const { class: className = 'size-10' } = Astro.props;
+// The emblem has a white background and includes the name, so it sits on a
+// white rounded badge to read cleanly on both light and dark surfaces.
+const { class: className = 'size-10', alt = 'Al Barakah MCSL' } = Astro.props;
 ---
 
-{/* Al Barakah mark: a crescent and star on a rounded badge. */}
-<svg
-  class={className}
-  viewBox="0 0 40 40"
-  fill="none"
-  xmlns="http://www.w3.org/2000/svg"
-  role="img"
-  aria-label="Al Barakah"
+<span
+  class={`inline-flex shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-white ring-1 ring-black/5 ${className}`}
 >
-  <rect width="40" height="40" rx="11" class="fill-mint-300"></rect>
-  <path d="M26 11.5a9 9 0 1 0 0 17 7 7 0 1 1 0-17Z" class="fill-neutral-800"
-  ></path>
-  <path
-    d="m28.6 15.4 1.05 2.13 2.35.34-1.7 1.66.4 2.34-2.1-1.1-2.1 1.1.4-2.34-1.7-1.66 2.35-.34L28.6 15.4Z"
-    class="fill-neutral-800"></path>
-</svg>
+  <img
+    src="/logo.png"
+    alt={alt}
+    width="1024"
+    height="1024"
+    class="h-full w-full object-contain p-1"
+    decoding="async"
+  />
+</span>
