@@ -1,0 +1,18 @@
+# Gitleaks configuration for the Al Barakah platform.
+#
+# Starts from the full default rule set and narrows it only where a match is
+# provably not a credential. Every entry below must state why it is safe —
+# blanket allowlisting would defeat the purpose of the gate (FRD Section 30).
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Justified exceptions — reviewed, not blanket"
+paths = [
+  # Dependency integrity hashes (sha512-… base64), not credentials.
+  '''pnpm-lock\.yaml$''',
+  # Template of required variable NAMES with placeholder values only.
+  # Real values live in Vercel; a real .env is git-ignored.
+  '''^\.env\.example$''',
+]

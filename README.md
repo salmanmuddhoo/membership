@@ -136,3 +136,10 @@ two environments:
 Set the environment variables above once per environment (test values on the
 `test` custom env, production values on Production). Because Entra secrets are
 read at runtime, they take effect on the next deploy.
+
+## Security & contributions
+
+Every pull request into `main` or `production` must pass an automated security
+audit (secrets, SAST, dependency and misconfiguration scanning) and a human
+review before it can merge. See [`SECURITY.md`](SECURITY.md) for the policy and
+[`docs/security-gate.md`](docs/security-gate.md) for how the gate is configured.
