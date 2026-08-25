@@ -9,7 +9,11 @@
     "preview": "astro preview",
     "astro": "astro",
     "format:check": "prettier --check .",
-    "format:fix": "prettier --write ."
+    "format:fix": "prettier --write .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "migrate": "tsx scripts/migrate-cli.ts up",
+    "migrate:status": "tsx scripts/migrate-cli.ts status"
   },
   "dependencies": {
     "@astrojs/check": "^0.9.10",
@@ -18,14 +22,18 @@
     "@tailwindcss/vite": "^4.3.3",
     "astro": "^7.2.4",
     "jose": "^6.2.10",
+    "pg": "^8.23.0",
     "preline": "^5.0.0",
     "tailwindcss": "^4.3.3"
   },
   "devDependencies": {
+    "@types/pg": "^8.23.1",
     "prettier": "^3.9.6",
     "prettier-plugin-astro": "^0.14.1",
     "prettier-plugin-tailwindcss": "^0.8.1",
-    "typescript": "^6.0.3"
+    "tsx": "^4.23.12",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.11"
   },
   "pnpm": {
     "overrides": {
