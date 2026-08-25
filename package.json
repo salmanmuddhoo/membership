@@ -18,7 +18,7 @@
     "@tailwindcss/vite": "^4.3.3",
     "astro": "^7.2.4",
     "jose": "^6.2.10",
-    "preline": "^4.2.0",
+    "preline": "^5.0.0",
     "tailwindcss": "^4.3.3"
   },
   "devDependencies": {

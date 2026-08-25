@@ -27,8 +27,8 @@ importers:
         specifier: ^6.2.10
         version: 6.2.10
       preline:
-        specifier: ^4.2.0
-        version: 4.2.0
+        specifier: ^5.0.0
+        version: 5.0.0
       tailwindcss:
         specifier: ^4.3.3
         version: 4.3.3
@@ -780,8 +780,8 @@ packages:
     resolution: {integrity: sha512-/69XMRCDoam2HgC4ldHIaDgeQf1ViHIsa0Ld4uWgiXtZ+E24DWHe/9Ib6kbNiZ7WRIdlVokUDR1Fg0kjIpkfbw==}
     engines: {node: '>= 0.8.0'}
 
-  '@svgdotjs/svg.js@3.2.5':
-    resolution: {integrity: sha512-/VNHWYhNu+BS7ktbYoVGrCmsXDh+chFMaONMwGNdIBcFHrWqk2jY8fNyr3DLdtQUIalvkPfM554ZSFa3dm3nxQ==}
+  '@svgdotjs/svg.js@3.2.8':
+    resolution: {integrity: sha512-NUdbI/7FDdqGpzKmqr09IQoy9MUcrAC/3bC8gLgXi6OfJuyri450zMLvJekFUhuq3iN5gpdPjoSoStNl9Eijfg==}
 
   '@svgdotjs/svg.resize.js@2.0.5':
     resolution: {integrity: sha512-4heRW4B1QrJeENfi7326lUPYBCevj78FJs8kfeDxn5st0IYPIRXoTtOSYvTzFWgaWWXd3YCDE6ao4fmv91RthA==}
@@ -1826,8 +1826,9 @@ packages:
     resolution: {integrity: sha512-u82N74LFzG8ca+dD8puPnplTXoGH4fTPpVGuIbt36G3qvNlkvfD0lEAZSxaly3KX8TS/L1A1gsCEmvKmBcVbkQ==}
     engines: {node: ^10 || ^12 || >=14}
 
-  preline@4.2.0:
-    resolution: {integrity: sha512-lDdP5VzJDwVdWFDOUHKtkvWGxnsKt1o7Q9Sla19MMX03Lzzp4Pxwxs+TndcFZaNiSchYSDgSnjCsm7olV5JV3g==}
+  preline@5.0.0:
+    resolution: {integrity: sha512-c1ayJoroSzIUcfsBLHrEbYV1NCjCNvjd8l1e/H5EPNQWzZiK1I36eUBgpR+J9scfrf1+1OnXt8Y+EBYUG640cQ==}
+    engines: {node: 22.22.2, npm: '>=10'}
     hasBin: true
 
   prettier-plugin-astro@0.14.1:
@@ -2204,8 +2205,8 @@ packages:
   uri-js@4.4.1:
     resolution: {integrity: sha512-7rKUyy33Q1yc98pQ1DAmLtwX109F7TIfWlW1Ydo8Wl1ii1SeHieeh0HHfPeL2fMXK6z0s8ecKs9frCuLJvndBg==}
 
-  vanilla-calendar-pro@3.1.0:
-    resolution: {integrity: sha512-yXDtCaedcKz6i5OOdWGwui0C8MAmjXjj7JzKZyjDlkczSRqnhI8BDGFygqT2K+qL1uY7R2fLYlTlxA6oyFs2yg==}
+  vanilla-calendar-pro@3.2.0:
+    resolution: {integrity: sha512-YxGMSdIVaUxeFJAN3e0WOirlJHnYfb9XaLLMrQA8mPhMORwqs5PLMtUNfDlnrUBHn59c2GU6s+l2Zhe59B2zpw==}
 
   vfile-message@4.0.3:
     resolution: {integrity: sha512-QTHzsGd1EhbZs4AsQ20JX1rC3cOlt/IWJruk893DfLRr57lcnOeMaWG4K0JrRta4mIJZKth2Au3mM3u03/JWKw==}
@@ -3048,24 +3049,24 @@ snapshots:
 
   '@shikijs/vscode-textmate@10.0.2': {}
 
-  '@svgdotjs/svg.draggable.js@3.0.6(@svgdotjs/svg.js@3.2.5)':
+  '@svgdotjs/svg.draggable.js@3.0.6(@svgdotjs/svg.js@3.2.8)':
     dependencies:
-      '@svgdotjs/svg.js': 3.2.5
+      '@svgdotjs/svg.js': 3.2.8
 
   '@svgdotjs/svg.filter.js@3.0.9':
     dependencies:
-      '@svgdotjs/svg.js': 3.2.5
+      '@svgdotjs/svg.js': 3.2.8
 
-  '@svgdotjs/svg.js@3.2.5': {}
+  '@svgdotjs/svg.js@3.2.8': {}
 
-  '@svgdotjs/svg.resize.js@2.0.5(@svgdotjs/svg.js@3.2.5)(@svgdotjs/svg.select.js@4.0.3(@svgdotjs/svg.js@3.2.5))':
+  '@svgdotjs/svg.resize.js@2.0.5(@svgdotjs/svg.js@3.2.8)(@svgdotjs/svg.select.js@4.0.3(@svgdotjs/svg.js@3.2.8))':
     dependencies:
-      '@svgdotjs/svg.js': 3.2.5
-      '@svgdotjs/svg.select.js': 4.0.3(@svgdotjs/svg.js@3.2.5)
+      '@svgdotjs/svg.js': 3.2.8
+      '@svgdotjs/svg.select.js': 4.0.3(@svgdotjs/svg.js@3.2.8)
 
-  '@svgdotjs/svg.select.js@4.0.3(@svgdotjs/svg.js@3.2.5)':
+  '@svgdotjs/svg.select.js@4.0.3(@svgdotjs/svg.js@3.2.8)':
     dependencies:
-      '@svgdotjs/svg.js': 3.2.5
+      '@svgdotjs/svg.js': 3.2.8
 
   '@swc/helpers@0.2.14': {}
 
@@ -3327,11 +3328,11 @@ snapshots:
 
   apexcharts@4.7.0:
     dependencies:
-      '@svgdotjs/svg.draggable.js': 3.0.6(@svgdotjs/svg.js@3.2.5)
+      '@svgdotjs/svg.draggable.js': 3.0.6(@svgdotjs/svg.js@3.2.8)
       '@svgdotjs/svg.filter.js': 3.0.9
-      '@svgdotjs/svg.js': 3.2.5
-      '@svgdotjs/svg.resize.js': 2.0.5(@svgdotjs/svg.js@3.2.5)(@svgdotjs/svg.select.js@4.0.3(@svgdotjs/svg.js@3.2.5))
-      '@svgdotjs/svg.select.js': 4.0.3(@svgdotjs/svg.js@3.2.5)
+      '@svgdotjs/svg.js': 3.2.8
+      '@svgdotjs/svg.resize.js': 2.0.5(@svgdotjs/svg.js@3.2.8)(@svgdotjs/svg.select.js@4.0.3(@svgdotjs/svg.js@3.2.8))
+      '@svgdotjs/svg.select.js': 4.0.3(@svgdotjs/svg.js@3.2.8)
       '@yr/monotone-cubic-spline': 1.0.3
 
   argparse@2.0.1: {}
@@ -4074,16 +4075,17 @@ snapshots:
       picocolors: 1.1.1
       source-map-js: 1.2.1
 
-  preline@4.2.0:
+  preline@5.0.0:
     dependencies:
       '@floating-ui/dom': 1.8.0
       '@types/culori': 4.0.1
       apexcharts: 4.7.0
       culori: 4.0.2
+      datatables.net: 2.3.8
       datatables.net-dt: 2.3.8
       dropzone: 6.0.0-beta.2
       nouislider: 15.8.1
-      vanilla-calendar-pro: 3.1.0
+      vanilla-calendar-pro: 3.2.0
 
   prettier-plugin-astro@0.14.1:
     dependencies:
@@ -4413,7 +4415,7 @@ snapshots:
       punycode: 2.3.1
     optional: true
 
-  vanilla-calendar-pro@3.1.0: {}
+  vanilla-calendar-pro@3.2.0: {}
 
   vfile-message@4.0.3:
     dependencies:
