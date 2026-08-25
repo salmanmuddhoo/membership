@@ -104,6 +104,65 @@ function readIntEnv(key: string, fallback: number): number {
   return parsed;
 }
 
+// TLS modes that actually verify the server's certificate chain. node-postgres
+// currently treats all three as verify-full; libpq does not, and pg v9 will
+// adopt libpq's weaker semantics, so they are normalised rather than trusted.
+const VERIFYING_SSL_MODES = new Set(['require', 'verify-ca', 'verify-full']);
+
+// Make the application's TLS decision authoritative.
+//
+// node-postgres gives the connection string's sslmode precedence over the
+// explicit `ssl` option: given `?sslmode=disable`, a client constructed with
+// `ssl: { rejectUnauthorized: true }` still connects in PLAINTEXT, silently.
+// A deployment could therefore run unencrypted while this code believed it was
+// verifying. So the mode is rewritten here to match the environment's policy
+// instead of being left to whoever wrote the URL.
+//
+// Rewriting only ever strengthens: a mode that already verifies becomes the
+// explicit `verify-full` (which is what node-postgres does today, so behaviour
+// is unchanged and survives the pg v9 change), and a mode that would weaken TLS
+// in a deployed environment is refused rather than quietly upgraded — asking
+// for plaintext in production is a misconfiguration someone must see.
+export function normaliseSslMode(
+  connectionString: string,
+  allowInsecure: boolean
+): string {
+  let url: URL;
+  try {
+    url = new URL(connectionString);
+  } catch {
+    // libpq key=value form ("host=... sslmode=..."). We cannot rewrite it
+    // safely, so refuse it rather than let an unchecked sslmode through.
+    if (/sslmode/i.test(connectionString)) {
+      throw new Error(
+        'DATABASE_URL must be a postgresql:// URL when it specifies sslmode, ' +
+          'so the TLS mode can be verified (see docs/database.md).'
+      );
+    }
+    return connectionString;
+  }
+
+  const requested = url.searchParams.get('sslmode')?.toLowerCase();
+
+  if (allowInsecure) {
+    // Local plaintext development. An explicit sslmode is meaningless here and
+    // would fail against a cluster with no TLS, so it is replaced outright.
+    url.searchParams.set('sslmode', 'disable');
+    return url.toString();
+  }
+
+  if (requested && !VERIFYING_SSL_MODES.has(requested)) {
+    throw new Error(
+      `DATABASE_URL requests sslmode=${requested}, which does not verify the ` +
+        'server certificate. A deployed environment must use ' +
+        'sslmode=verify-full. Refusing to connect.'
+    );
+  }
+
+  url.searchParams.set('sslmode', 'verify-full');
+  return url.toString();
+}
+
 // PostgreSQL configuration. Throws with an actionable message when the
 // database has not been configured, so a missing variable surfaces as a
 // deployment problem rather than an obscure driver error (S-101).
@@ -132,7 +191,7 @@ export function getDatabaseConfig(): DatabaseConfig {
   }
 
   return {
-    connectionString,
+    connectionString: normaliseSslMode(connectionString, allowInsecure),
     poolMax: readIntEnv('DATABASE_POOL_MAX', 3),
     idleTimeoutMillis: readIntEnv('DATABASE_IDLE_TIMEOUT_MS', 10_000),
     connectionTimeoutMillis: readIntEnv('DATABASE_CONNECT_TIMEOUT_MS', 10_000),
