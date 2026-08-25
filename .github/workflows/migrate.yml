@@ -69,10 +69,18 @@ jobs:
 
       - name: Record the outcome
         if: always()
+        # Context values are passed through env rather than interpolated into
+        # the script. A branch name is attacker-controllable — a pull request
+        # from a branch named `$(...)` would otherwise run as shell — so
+        # ${{ github.ref_name }} must never be expanded inside a run block.
+        env:
+          RESULT: ${{ job.status }}
+          BRANCH: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
         run: |
           {
             echo "## Migrations"
             echo ""
-            echo "Environment: \`${{ job.status }}\` on \`${{ github.ref_name }}\`"
-            echo "Commit: \`${{ github.sha }}\`"
+            echo "Result: \`$RESULT\` on \`$BRANCH\`"
+            echo "Commit: \`$COMMIT\`"
           } >> "$GITHUB_STEP_SUMMARY"

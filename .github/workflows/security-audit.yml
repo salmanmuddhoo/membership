@@ -79,6 +79,10 @@ jobs:
 
       - name: Semgrep (blocking rules)
         run: |
+          # --sarif-output writes the report file while leaving the readable
+          # findings on the console. Using "--sarif --output" instead sends
+          # everything to the file, so a failing run says only that something
+          # was found and never what — which makes the gate undiagnosable.
           semgrep scan \
             --config=p/typescript \
             --config=p/javascript \
@@ -87,7 +91,7 @@ jobs:
             --severity=${{ env.SEMGREP_BLOCK_SEVERITY }} \
             --metrics=off \
             --error \
-            --sarif --output=semgrep.sarif
+            --sarif-output=semgrep.sarif
 
       - name: Semgrep (informational — never blocks)
         if: always()
