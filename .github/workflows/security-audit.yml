@@ -149,8 +149,12 @@ jobs:
       - name: Trivy — misconfiguration (reported, not blocking)
         if: always()
         run: |
+          # Skip node_modules: it contains vendored Dockerfiles belonging to
+          # dependencies, which we neither build nor ship. Scanning them adds
+          # noise without telling us anything about our own configuration.
           docker run --rm -v "$PWD:/repo" -w /repo ghcr.io/aquasecurity/trivy:latest \
             fs --scanners misconfig \
+               --skip-dirs node_modules \
                --exit-code 0 \
                --no-progress \
                . | tee trivy-misconfig.txt

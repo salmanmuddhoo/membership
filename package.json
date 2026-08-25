@@ -29,7 +29,8 @@
   },
   "pnpm": {
     "overrides": {
-      "fast-uri": ">=3.1.5"
+      "fast-uri": ">=3.1.5",
+      "path-to-regexp": ">=6.3.0"
     }
   }
 }
