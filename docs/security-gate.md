@@ -27,7 +27,18 @@ TRIVY_BLOCK_SEVERITY: HIGH,CRITICAL
 SEMGREP_BLOCK_SEVERITY: ERROR
 ```
 
-## What you must configure in GitHub
+## Enforcement status
+
+Branch protection is **not currently enabled**, by decision of the maintainer,
+who controls merges and deployment directly. The workflows below still run on
+every pull request and report pass/fail — they simply do not mechanically block
+a merge today.
+
+The settings in the next section are what to apply when that changes (for
+example when a second maintainer joins). No development work is needed: the
+workflows already emit the status checks GitHub needs.
+
+## What to configure in GitHub when enforcement is turned on
 
 Go to **Settings → Branches → Add branch ruleset** (or Branch protection
 rules) and apply the following to **`main`** and **`production`**:

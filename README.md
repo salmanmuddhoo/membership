@@ -137,6 +137,16 @@ Set the environment variables above once per environment (test values on the
 `test` custom env, production values on Production). Because Entra secrets are
 read at runtime, they take effect on the next deploy.
 
+## Planning
+
+- [`docs/backlog.md`](docs/backlog.md) — the Phase 1 product backlog: 16 epics
+  decomposed into features and user stories, with full acceptance criteria for
+  the next three milestones.
+- [`docs/adr/0001-azure-native-backend.md`](docs/adr/0001-azure-native-backend.md)
+  — the backend architecture decision.
+- [`docs/environments.md`](docs/environments.md) — test and production
+  environments, and how a release is promoted.
+
 ## Security & contributions
 
 Every pull request into `main` or `production` must pass an automated security

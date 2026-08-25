@@ -12,11 +12,24 @@ or member data in a report.
 
 ## The merge gate
 
-No change reaches `main` or `production` without passing an automated security
-audit **and** a human review. The audit runs on every pull request without
-anyone having to trigger it.
+The automated audit runs on every pull request into `main` and `production`
+without anyone having to trigger it, and reports a pass or fail per check.
 
-| Check                            | Tool              | Blocks a merge           |
+> **Current enforcement posture.** Branch protection is deliberately **not**
+> enabled, and there is no second reviewer. Enforcement rests with the sole
+> maintainer, who controls what is merged and deployed. The audit therefore
+> **informs** the merge decision rather than mechanically blocking it.
+>
+> This is a conscious deviation from FRD 30.2, which specifies automatic
+> blocking and a second human approval. It is recorded here so the control
+> environment is described accurately. Revisit when a second maintainer joins:
+> the workflows already emit the required status checks, so enforcement is a
+> settings change, not development work. See `docs/security-gate.md`.
+
+The table below states what each check reports as a failure — which is what
+would block a merge once branch protection is switched on.
+
+| Check                            | Tool              | Reported as failing      |
 | -------------------------------- | ----------------- | ------------------------ |
 | Secrets in code or git history   | Gitleaks          | Any finding              |
 | Static analysis (SAST)           | Semgrep           | `ERROR` severity         |
@@ -25,7 +38,10 @@ anyone having to trigger it.
 
 Thresholds are configurable at the top of
 `.github/workflows/security-audit.yml`. Medium and low findings are recorded
-against the run and tracked as backlog items rather than blocking the merge.
+against the run and tracked as backlog items rather than treated as failures.
+
+A failing audit must be resolved before the change is merged. With enforcement
+currently manual, that responsibility sits with the maintainer.
 
 ## Escalation
 
