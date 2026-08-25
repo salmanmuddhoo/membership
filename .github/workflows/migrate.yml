@@ -1,0 +1,78 @@
+name: Apply migrations
+
+# Schema changes reach a deployed database only through this workflow (S-102) —
+# never by someone connecting with psql and running DDL by hand.
+#
+# Runs after a merge, per environment:
+#   main       -> the test database
+#   production -> the production database
+#
+# Requires a GitHub Environment ("test" / "production") holding the secret
+# DATABASE_MIGRATION_URL, which is the SCHEMA OWNER connection string, not the
+# application's. Using a GitHub Environment rather than a plain repository
+# secret means the production credential is only readable by runs on the
+# production branch. See docs/database.md.
+on:
+  push:
+    branches: [main, production]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to migrate
+        required: true
+        type: choice
+        options: [test, production]
+
+concurrency:
+  # Never let two runs migrate the same database at once. The runner also takes
+  # an advisory lock, but not queueing here avoids the wasted run.
+  group: migrate-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  migrate:
+    name: Apply migrations
+    runs-on: ubuntu-latest
+    environment: ${{ github.event_name == 'workflow_dispatch'
+      && inputs.environment
+      || (github.ref == 'refs/heads/production' && 'production' || 'test') }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Reported before anything is applied, so the log says what the run is
+      # about to do even when it then fails.
+      - name: Pending migrations
+        env:
+          DATABASE_MIGRATION_URL: ${{ secrets.DATABASE_MIGRATION_URL }}
+        run: pnpm migrate:status
+
+      - name: Apply
+        env:
+          DATABASE_MIGRATION_URL: ${{ secrets.DATABASE_MIGRATION_URL }}
+        run: pnpm migrate
+
+      - name: Record the outcome
+        if: always()
+        run: |
+          {
+            echo "## Migrations"
+            echo ""
+            echo "Environment: \`${{ job.status }}\` on \`${{ github.ref_name }}\`"
+            echo "Commit: \`${{ github.sha }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -75,3 +75,67 @@ export function getEntraConfig(): EntraConfig {
     sessionSecret,
   };
 }
+
+export interface DatabaseConfig {
+  connectionString: string;
+  // Per-instance pool ceiling. Serverless scales by process, so the effective
+  // connection count is this number times the number of warm instances — which
+  // is why the default is deliberately tiny. See docs/database.md.
+  poolMax: number;
+  idleTimeoutMillis: number;
+  connectionTimeoutMillis: number;
+  // 'verify' negotiates TLS and requires the server certificate to chain to a
+  // trusted CA. 'disable' opens a plaintext connection and exists only for a
+  // local development cluster, which has no TLS at all — note that these are
+  // genuinely different things, and that an unverified TLS handshake is not
+  // offered as an option.
+  sslMode: 'verify' | 'disable';
+}
+
+function readIntEnv(key: string, fallback: number): number {
+  const raw = readEnv(key);
+  if (raw === undefined || raw === '') return fallback;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(
+      `${key} must be a positive integer; received ${JSON.stringify(raw)}.`
+    );
+  }
+  return parsed;
+}
+
+// PostgreSQL configuration. Throws with an actionable message when the
+// database has not been configured, so a missing variable surfaces as a
+// deployment problem rather than an obscure driver error (S-101).
+export function getDatabaseConfig(): DatabaseConfig {
+  const connectionString = readEnv('DATABASE_URL');
+
+  if (!connectionString) {
+    throw new Error(
+      'DATABASE_URL is not set. Provide the PostgreSQL connection string for ' +
+        'this environment (see .env.example and docs/database.md).'
+    );
+  }
+
+  // TLS is mandatory in a deployed environment. Local development against a
+  // plaintext instance is the one exception, and it has to be asked for
+  // explicitly rather than being inferred from the host name.
+  const allowInsecure = readEnv('DATABASE_ALLOW_INSECURE') === 'true';
+  const appEnv = readEnv('PUBLIC_APP_ENV');
+  const isProduction = appEnv === undefined || appEnv === 'production';
+
+  if (allowInsecure && isProduction) {
+    throw new Error(
+      'DATABASE_ALLOW_INSECURE must never be enabled outside local ' +
+        'development. Unset it, or set PUBLIC_APP_ENV to a non-production value.'
+    );
+  }
+
+  return {
+    connectionString,
+    poolMax: readIntEnv('DATABASE_POOL_MAX', 3),
+    idleTimeoutMillis: readIntEnv('DATABASE_IDLE_TIMEOUT_MS', 10_000),
+    connectionTimeoutMillis: readIntEnv('DATABASE_CONNECT_TIMEOUT_MS', 10_000),
+    sslMode: allowInsecure ? 'disable' : 'verify',
+  };
+}

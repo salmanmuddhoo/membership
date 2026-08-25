@@ -1,7 +1,8 @@
 name: CI
 
 # Quality gate: every pull request must install cleanly, be formatted,
-# type-check and produce a production build before it can be merged.
+# type-check, pass its tests and produce a production build before it can be
+# merged.
 on:
   pull_request:
     branches: [main, production]
@@ -40,3 +41,56 @@ jobs:
 
       - name: Type-check and build
         run: pnpm build
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+
+    # The database tests run against a real PostgreSQL server rather than a
+    # mock: the behaviour under test is largely the database's own (constraints,
+    # triggers, privileges), which a mock would simply assert back at us.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Prepare the test database
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5433'
+          PGUSER: postgres
+        run: |
+          # Mirrors scripts/dev-db.sh: an owner that runs migrations, and a
+          # least-privilege application role that cannot change the schema.
+          psql -v ON_ERROR_STOP=1 -c "create database albarakah"
+          psql -v ON_ERROR_STOP=1 -c "create role albarakah_app with login password 'devpassword'"
+          psql -v ON_ERROR_STOP=1 -d albarakah -c "revoke all on schema public from public"
+          psql -v ON_ERROR_STOP=1 -d albarakah -c "grant connect on database albarakah to albarakah_app"
+          psql -v ON_ERROR_STOP=1 -d albarakah -c "grant usage on schema public to albarakah_app"
+
+      - name: Run tests
+        run: pnpm test
