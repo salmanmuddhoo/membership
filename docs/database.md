@@ -33,10 +33,28 @@ Two variables, because the two roles are different:
   secret**, so the production credential is only readable by runs on the
   `production` branch. The running app never has it.
 
-Both must carry `?sslmode=require`. The client verifies the certificate: the
-code offers no "TLS without verification" setting, only verified TLS or (for a
-local plaintext cluster) no TLS at all, and the latter is refused unless
-`PUBLIC_APP_ENV` is set to something other than `production`.
+Both must carry **`?sslmode=verify-full`**.
+
+This is not a formality. node-postgres gives the connection string's `sslmode`
+**precedence over the explicit `ssl` option**: a client built with
+`ssl: { rejectUnauthorized: true }` but a URL ending `?sslmode=disable` connects
+in **plaintext**, silently. The URL, not the code, would decide whether member
+data crosses the network encrypted.
+
+So the application does not trust it. `normaliseSslMode` in `src/lib/config.ts`
+rewrites the mode to match the environment's policy before the driver sees it:
+
+| URL says                              | Deployed environment        | Local (`DATABASE_ALLOW_INSECURE=true`) |
+| ------------------------------------- | --------------------------- | -------------------------------------- |
+| `verify-full`, `verify-ca`, `require` | rewritten to `verify-full`  | rewritten to `disable`                 |
+| nothing                               | `verify-full` added         | `disable` added                        |
+| `disable`, `allow`, `prefer`          | **refused** — the run fails | rewritten to `disable`                 |
+
+An existing `sslmode=require` therefore keeps working and is silently
+strengthened. That also matters for the future: node-postgres treats `require`
+as `verify-full` today, but **pg v9 will adopt libpq semantics, where `require`
+encrypts without verifying the certificate** — a downgrade that would otherwise
+arrive unnoticed on a routine dependency bump.
 
 ## Connection pooling
 
@@ -129,3 +147,34 @@ Option 3 is where a financial application usually ends up, and it would amend
 ADR 0001, which currently assumes the backend runs on Vercel. It does not block
 development — the schema, the runner and the data layer are the same either way
 — but it should be settled before production holds real member data.
+
+### The same problem applies to CI
+
+GitHub-hosted runners also have dynamic egress IPs, so the migration workflow
+hits the firewall exactly as the application does. The symptom is a **connection
+timeout**, not a refusal or an authentication error:
+
+```
+Error: connect ETIMEDOUT 40.123.240.30:5432
+```
+
+`ETIMEDOUT` means packets are being dropped in transit — the firewall. A wrong
+password gives an authentication error and a wrong host gives DNS failure or
+`ECONNREFUSED`, so this symptom is specific.
+
+GitHub publishes its runner ranges at `https://api.github.com/meta` (the
+`actions` array), but there are thousands of them and they change, so
+allow-listing them is not practical. The workable approaches are:
+
+1. **Open the firewall broadly** while only the test database exists and holds
+   no real data. Fastest, and acceptable only under those two conditions. It
+   must be closed before production holds member data.
+2. **Just-in-time firewall rule.** The workflow authenticates to Azure (a
+   federated OIDC credential, no stored secret), adds a rule for the runner's
+   own IP, migrates, then removes the rule. This is the standard answer for
+   CI reaching a firewalled database and leaves nothing open between runs.
+3. **A self-hosted runner inside the VNet**, reaching PostgreSQL over a private
+   endpoint. Most control, most to operate.
+
+Option 2 is the right long-term shape and pairs naturally with option 3 of the
+application-side decision above.

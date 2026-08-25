@@ -7,6 +7,7 @@
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { normaliseSslMode } from '../src/lib/config';
 import { migrate, status } from './migrate';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -25,25 +26,33 @@ function connectionString(): string {
 
 // Mirrors the rule in src/lib/config.ts: plaintext is local-only and must be
 // asked for, never inferred.
-function sslOption() {
-  const allowInsecure = process.env.DATABASE_ALLOW_INSECURE === 'true';
+function allowInsecure(): boolean {
+  const allowed = process.env.DATABASE_ALLOW_INSECURE === 'true';
   const appEnv = process.env.PUBLIC_APP_ENV;
   const isProduction = appEnv === undefined || appEnv === 'production';
 
-  if (allowInsecure && isProduction) {
+  if (allowed && isProduction) {
     console.error(
       'DATABASE_ALLOW_INSECURE must never be enabled outside local development.'
     );
     process.exit(1);
   }
 
-  return allowInsecure ? false : { rejectUnauthorized: true };
+  return allowed;
+}
+
+// node-postgres lets the connection string's sslmode override the explicit ssl
+// option, so the URL is normalised first and the ssl option is then set to
+// agree with it. See normaliseSslMode in src/lib/config.ts.
+function sslOption(insecure: boolean) {
+  return insecure ? false : { rejectUnauthorized: true };
 }
 
 async function main(): Promise<void> {
   const command = process.argv[2] ?? 'up';
-  const url = connectionString();
-  const ssl = sslOption();
+  const insecure = allowInsecure();
+  const url = normaliseSslMode(connectionString(), insecure);
+  const ssl = sslOption(insecure);
 
   if (command === 'status') {
     const rows = await status(url, MIGRATIONS_DIR, { ssl });
