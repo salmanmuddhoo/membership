@@ -48,6 +48,15 @@ const navGroups: NavGroup[] = [
       ...(can('user.view')
         ? [{ label: 'Staff accounts', href: '/admin/users', icon: 'members' }]
         : []),
+      ...(can('config.view')
+        ? [
+            {
+              label: 'Configuration',
+              href: '/admin/configuration',
+              icon: 'settings',
+            },
+          ]
+        : []),
     ],
   },
   // A group with nothing the person may see is dropped entirely, so the heading

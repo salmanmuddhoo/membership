@@ -93,6 +93,23 @@ Two extensions must be allow-listed on the server before the first migration
 runs (Azure blocks extensions by default). Add `PGCRYPTO` and `CITEXT` to the
 server parameter `azure.extensions`, then apply.
 
+## Configuration tables refuse an unattributed write
+
+Every table migration 0010 creates carries a trigger that writes the change to
+the audit trail and raises if the session has not declared who is acting. That
+applies to the schema owner too, so a hand-edit at a psql prompt fails unless
+it names itself:
+
+```sql
+begin;
+set local albarakah.actor_description = 'your.name@albarakah.mu — ticket 123';
+update account_type set minimum_opening_amount = 6000 where code = 'msa';
+commit;
+```
+
+From the application, `withConfigurationActor()` does this. See
+docs/configuration.md.
+
 ## Applying migrations
 
 ```bash

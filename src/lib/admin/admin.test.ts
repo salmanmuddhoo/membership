@@ -190,22 +190,25 @@ describe('S-202: a user may hold several roles', () => {
   it('assigns more than one, as FRD 6.1 expects', async () => {
     const { roles } = await load();
     await roles.createRole(
-      { code: 'regional_officer', name: 'RO', permissions: [] },
+      { code: 'admin_test_officer', name: 'RO', permissions: [] },
       actor
     );
     await roles.createRole(
-      { code: 'clerk_duties', name: 'Clerk', permissions: [] },
+      { code: 'admin_test_clerk', name: 'Clerk', permissions: [] },
       actor
     );
 
     await roles.setUserRoles(
       officerId,
-      ['regional_officer', 'clerk_duties'],
+      ['admin_test_officer', 'admin_test_clerk'],
       actor
     );
 
     const user = (await roles.listUsers()).users.find(u => u.id === officerId);
-    expect(user?.roles.sort()).toEqual(['clerk_duties', 'regional_officer']);
+    expect(user?.roles.sort()).toEqual([
+      'admin_test_clerk',
+      'admin_test_officer',
+    ]);
   });
 
   it('refuses an unknown role', async () => {

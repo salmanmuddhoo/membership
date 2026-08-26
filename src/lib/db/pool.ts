@@ -101,6 +101,42 @@ export async function withTransaction<T>(
   }
 }
 
+export interface ConfigurationActor {
+  userId?: string | null;
+  description: string;
+}
+
+// Run configuration writes with the acting user declared to the database.
+//
+// Migration 0010 puts a trigger on every reference-configuration table that
+// writes the change to the append-only audit trail and REFUSES the write when
+// it cannot name who made it. That refusal is the point: it makes an
+// unattributable configuration change impossible rather than merely against
+// the rules, and it does so for anything that reaches the database — this
+// application, a future one, or someone at a psql prompt.
+//
+// set_config(..., true) scopes the setting to the transaction, so the actor
+// cannot leak onto the next request that borrows this pooled connection.
+export async function withConfigurationActor<T>(
+  actor: ConfigurationActor,
+  fn: (client: pg.PoolClient) => Promise<T>
+): Promise<T> {
+  if (!actor.description.trim()) {
+    // Failing here rather than at the database gives the caller a stack that
+    // points at their own code, and the two rules stay the same either way.
+    throw new Error('A configuration actor must be described.');
+  }
+
+  return withTransaction(async client => {
+    await client.query(
+      `select set_config('albarakah.actor_user_id', $1, true),
+              set_config('albarakah.actor_description', $2, true)`,
+      [actor.userId ?? '', actor.description]
+    );
+    return fn(client);
+  });
+}
+
 // Close the pool. Used by tests and scripts; serverless instances are frozen
 // rather than shut down, so request handlers should not call this.
 export async function closePool(): Promise<void> {
