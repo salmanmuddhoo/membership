@@ -3,6 +3,7 @@ import DashboardLayout from '@layouts/DashboardLayout.astro';
 import {
   AdminError,
   createStaffAccount,
+  deleteStaffAccount,
   listRoles,
   listUsers,
   setUserActive,
@@ -40,6 +41,9 @@ if (Astro.request.method === 'POST') {
       } else if (intent === 'roles') {
         await setUserRoles(userId, form.getAll('roles').map(String), actor);
         notice = 'Roles updated.';
+      } else if (intent === 'delete') {
+        await deleteStaffAccount(userId, actor);
+        notice = 'Account deleted.';
       } else if (intent === 'deactivate' || intent === 'reactivate') {
         // Deactivating yourself would end your own session on the next request
         // and could leave nobody able to administer the system.
@@ -65,7 +69,17 @@ if (Astro.request.method === 'POST') {
 }
 
 const search = Astro.url.searchParams.get('q') ?? '';
-const [page, roles] = await Promise.all([listUsers({ search }), listRoles()]);
+// Deactivated accounts are kept forever — their history points at them — but
+// showing every leaver on the working list every day is noise, so they are
+// behind a toggle.
+const showDeactivated = Astro.url.searchParams.get('deactivated') === '1';
+const [page, roles, deactivatedCount] = await Promise.all([
+  listUsers({ search, includeInactive: showDeactivated }),
+  listRoles(),
+  listUsers({ includeInactive: true }).then(
+    all => all.users.filter(u => !u.isActive).length
+  ),
+]);
 const { users, total, truncated } = page;
 ---
 
@@ -169,10 +183,10 @@ const { users, total, truncated } = page;
         Staff accounts
       </h2>
       <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
-        Accounts are created by email with <code>pnpm access:grant</code> and bind
-        to the person's Microsoft identity the first time they sign in. Leavers are
-        deactivated, never deleted — their history has to keep pointing at a real
-        account.
+        Accounts bind to the person's Microsoft identity the first time they
+        sign in. Deactivating someone removes their access immediately and keeps
+        their history readable, which is why it is the right thing for a leaver.
+        An account that has never been used can be deleted outright.
       </p>
 
       <form method="get" class="mt-5 flex flex-wrap items-center gap-2">
@@ -292,6 +306,23 @@ const { users, total, truncated } = page;
                         class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
                       >
                         Reactivate
+                      </button>
+                    )}
+                    {/*
+                      Offered only for an account that has never signed in.
+                      That is not the whole test — the service checks every
+                      reference before deleting — but it is the one an
+                      administrator can see, and it keeps the button off the
+                      rows where it would only ever explain itself.
+                    */}
+                    {!user.hasSignedIn && user.id !== principal.userId && (
+                      <button
+                        type="submit"
+                        name="intent"
+                        value="delete"
+                        class="rounded-lg border border-red-400 px-3 py-1.5 text-sm font-medium text-red-800 transition hover:bg-red-50 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-950"
+                      >
+                        Delete
                       </button>
                     )}
                   </div>

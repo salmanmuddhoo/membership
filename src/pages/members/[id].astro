@@ -96,8 +96,8 @@ const details = Object.entries(member.applicantValues).map(([key, value]) => ({
         member.accounts.length === 0 ? (
           <p class="mt-1 text-sm text-red-700 dark:text-red-300">
             This member has no account. That should not be possible — the
-            default account is opened in the same transaction as the member
-            (S-309). Please report it.
+            default account is opened at the same moment as the member. Please
+            report it.
           </p>
         ) : (
           <ul class="mt-4 space-y-3">
