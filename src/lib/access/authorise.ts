@@ -30,9 +30,17 @@ const OPEN_TO_ALL_USERS: ReadonlySet<string> = new Set(['/dashboard']);
 // sub-page under an already-protected area inherits its protection instead of
 // arriving unguarded.
 const ROUTE_PERMISSIONS: ReadonlyArray<readonly [string, string]> = [
-  // Populated as modules land (members, financing, documents, ...). The order
-  // matters: the longest matching prefix wins, so a more specific rule can
-  // tighten a broader one.
+  // Administration (M2). Declared explicitly rather than relying on the
+  // system-administrator exemption for undeclared routes: that exemption exists
+  // so a NEW page is reachable before its permission is written, not as the way
+  // finished pages are protected. Declaring them also means the permission can
+  // be granted to someone who is not a system administrator.
+  ['/admin/roles', 'role.view'],
+  ['/admin/users', 'user.view'],
+
+  // Further modules are added here as they land (members, financing,
+  // documents, ...). The order does not matter: the longest matching prefix
+  // wins, so a more specific rule can tighten a broader one.
 ];
 
 export type RoutePermissions = ReadonlyArray<readonly [string, string]>;

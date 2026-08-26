@@ -6,6 +6,7 @@ import {
   listUsers,
   setUserActive,
   setUserRoles,
+  USER_PAGE_LIMIT,
 } from '@lib/admin/roles';
 
 const list = defineEndpoint(
@@ -19,30 +20,60 @@ const list = defineEndpoint(
       'identity on first sign-in.',
     tag: 'Administration',
     permission: 'user.view',
+    query: [
+      {
+        name: 'q',
+        description:
+          'Case-insensitive substring matched against name and email. ' +
+          `The response is capped at ${USER_PAGE_LIMIT} accounts, so this ` +
+          'is how a caller reaches the ones beyond the cap.',
+        schema: { type: 'string' },
+      },
+    ],
     responseSchema: {
-      type: 'array',
-      items: {
-        type: 'object',
-        required: [
-          'id',
-          'email',
-          'displayName',
-          'isActive',
-          'hasSignedIn',
-          'roles',
-        ],
-        properties: {
-          id: { type: 'string', format: 'uuid' },
-          email: { type: 'string' },
-          displayName: { type: 'string' },
-          isActive: { type: 'boolean' },
-          hasSignedIn: { type: 'boolean' },
-          roles: { type: 'array', items: { type: 'string' } },
+      type: 'object',
+      required: ['users', 'total', 'truncated'],
+      properties: {
+        users: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: [
+              'id',
+              'email',
+              'displayName',
+              'isActive',
+              'hasSignedIn',
+              'roles',
+            ],
+            properties: {
+              id: { type: 'string', format: 'uuid' },
+              email: { type: 'string' },
+              displayName: { type: 'string' },
+              isActive: { type: 'boolean' },
+              hasSignedIn: { type: 'boolean' },
+              roles: { type: 'array', items: { type: 'string' } },
+            },
+          },
+        },
+        total: {
+          type: 'integer',
+          description: 'Accounts matching the search, before the cap.',
+        },
+        truncated: {
+          type: 'boolean',
+          description: 'True when the cap hid some of the matches.',
         },
       },
     },
   },
-  async ({ correlationId }) => apiSuccess(await listUsers(), correlationId)
+  async ({ context, correlationId }) =>
+    apiSuccess(
+      await listUsers({
+        search: context.url.searchParams.get('q') ?? undefined,
+      }),
+      correlationId
+    )
 );
 
 const update = defineEndpoint(

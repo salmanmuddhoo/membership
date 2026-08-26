@@ -1,0 +1,273 @@
+---
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import { query } from '@lib/db/pool';
+import {
+  AdminError,
+  createRole,
+  deleteRole,
+  listRoles,
+  setRolePermissions,
+} from '@lib/admin/roles';
+
+// Server-rendered forms rather than a client-side fetch of our own API. For an
+// internal administration screen that is the better trade: it works without
+// JavaScript, there is one place where authorisation happens (the middleware,
+// which has already run), and the page cannot get out of step with the API.
+//
+// Cross-site form posts cannot carry the session: the cookie is SameSite=Lax,
+// which browsers do not send on a cross-site POST. That is what stands in for a
+// CSRF token here.
+const principal = Astro.locals.principal!;
+const canManage = principal.permissions.has('role.manage');
+
+let error: string | null = null;
+let notice: string | null = null;
+
+if (Astro.request.method === 'POST') {
+  if (!canManage) {
+    // The route only requires role.view, so someone may reach this page and
+    // still not be allowed to change anything.
+    error = 'You do not have permission to change roles.';
+  } else {
+    const form = await Astro.request.formData();
+    const intent = String(form.get('intent') ?? '');
+    const actor = { userId: principal.userId, email: principal.email };
+
+    try {
+      if (intent === 'create') {
+        await createRole(
+          {
+            code: String(form.get('code') ?? '').trim(),
+            name: String(form.get('name') ?? '').trim(),
+            description:
+              String(form.get('description') ?? '').trim() || undefined,
+            permissions: form.getAll('permissions').map(String),
+          },
+          actor
+        );
+        notice = 'Role created.';
+      } else if (intent === 'permissions') {
+        await setRolePermissions(
+          String(form.get('roleId')),
+          form.getAll('permissions').map(String),
+          actor
+        );
+        notice = 'Permissions updated.';
+      } else if (intent === 'delete') {
+        await deleteRole(String(form.get('roleId')), actor);
+        notice = 'Role deleted.';
+      }
+    } catch (err) {
+      // An AdminError carries a message written for the person reading it —
+      // "held by 3 users", not a foreign-key violation. Anything else is a
+      // defect and must not have its internals shown.
+      if (err instanceof AdminError) {
+        error = err.message;
+      } else {
+        console.error('[admin/roles]', err);
+        error = 'Something went wrong. Please try again.';
+      }
+    }
+  }
+}
+
+const roles = await listRoles();
+const allPermissions = (
+  await query<{ code: string; description: string }>(
+    'select code, description from permission order by code'
+  )
+).rows;
+---
+
+<DashboardLayout title="Roles · Al Barakah MCSL" heading="Roles">
+  <div class="mx-auto max-w-5xl space-y-6">
+    {
+      error && (
+        <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+          {error}
+        </div>
+      )
+    }
+    {
+      notice && (
+        <div class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-lg border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
+          {notice}
+        </div>
+      )
+    }
+
+    <section
+      class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
+    >
+      <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+        Roles
+      </h2>
+      <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+        A role grants permissions. Removing one takes effect on the holder's
+        next request — there is no session to expire.
+      </p>
+
+      <div class="mt-5 space-y-4">
+        {
+          roles.map(role => (
+            <details class="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+              <summary class="flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-1">
+                <span class="font-medium text-neutral-800 dark:text-neutral-100">
+                  {role.name}
+                </span>
+                <code class="rounded bg-neutral-100 px-1.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
+                  {role.code}
+                </code>
+                {role.isSystem && (
+                  <span class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200">
+                    system
+                  </span>
+                )}
+                <span class="text-xs text-neutral-500 dark:text-neutral-400">
+                  {role.userCount} holder{role.userCount === 1 ? '' : 's'} ·{' '}
+                  {role.permissions.length} permission
+                  {role.permissions.length === 1 ? '' : 's'}
+                </span>
+              </summary>
+
+              {role.description && (
+                <p class="mt-3 text-sm text-neutral-500 dark:text-neutral-400">
+                  {role.description}
+                </p>
+              )}
+
+              <form method="post" class="mt-4 space-y-3">
+                <input type="hidden" name="roleId" value={role.id} />
+
+                <fieldset class="grid gap-2 sm:grid-cols-2">
+                  <legend class="mb-2 text-sm font-medium text-neutral-700 dark:text-neutral-200">
+                    Permissions
+                  </legend>
+                  {allPermissions.map(permission => (
+                    <label class="flex items-start gap-x-2 text-sm text-neutral-600 dark:text-neutral-300">
+                      <input
+                        type="checkbox"
+                        name="permissions"
+                        value={permission.code}
+                        checked={role.permissions.includes(permission.code)}
+                        disabled={!canManage}
+                        class="text-mint-500 focus:ring-mint-400 mt-0.5 rounded border-neutral-300 dark:border-neutral-600"
+                      />
+                      <span>
+                        <code class="text-xs">{permission.code}</code>
+                        <span class="block text-xs text-neutral-400 dark:text-neutral-500">
+                          {permission.description}
+                        </span>
+                      </span>
+                    </label>
+                  ))}
+                </fieldset>
+
+                {canManage && (
+                  <div class="flex flex-wrap gap-2 pt-2">
+                    <button
+                      type="submit"
+                      name="intent"
+                      value="permissions"
+                      class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+                    >
+                      Save permissions
+                    </button>
+                    {!role.isSystem && (
+                      <button
+                        type="submit"
+                        name="intent"
+                        value="delete"
+                        class="rounded-lg border border-red-300 px-3 py-1.5 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
+                      >
+                        Delete role
+                      </button>
+                    )}
+                  </div>
+                )}
+              </form>
+            </details>
+          ))
+        }
+      </div>
+    </section>
+
+    {
+      canManage && (
+        <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+          <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+            Add a role
+          </h2>
+
+          <form method="post" class="mt-4 space-y-4">
+            <input type="hidden" name="intent" value="create" />
+
+            <div class="grid gap-4 sm:grid-cols-2">
+              <label class="block text-sm">
+                <span class="text-neutral-700 dark:text-neutral-200">Name</span>
+                <input
+                  type="text"
+                  name="name"
+                  required
+                  placeholder="Regional Manager"
+                  class="focus:border-mint-400 focus:ring-mint-400 mt-1 block w-full rounded-lg border-neutral-300 bg-white px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+                />
+              </label>
+
+              <label class="block text-sm">
+                <span class="text-neutral-700 dark:text-neutral-200">Code</span>
+                <input
+                  type="text"
+                  name="code"
+                  required
+                  pattern="[a-z][a-z0-9_]{2,49}"
+                  placeholder="regional_manager"
+                  class="focus:border-mint-400 focus:ring-mint-400 mt-1 block w-full rounded-lg border-neutral-300 bg-white px-3 py-2 font-mono text-sm dark:border-neutral-700 dark:bg-neutral-900"
+                />
+                <span class="mt-1 block text-xs text-neutral-400">
+                  Lower-case letters, digits and underscores. Cannot be changed
+                  later.
+                </span>
+              </label>
+            </div>
+
+            <label class="block text-sm">
+              <span class="text-neutral-700 dark:text-neutral-200">
+                Description
+              </span>
+              <input
+                type="text"
+                name="description"
+                class="focus:border-mint-400 focus:ring-mint-400 mt-1 block w-full rounded-lg border-neutral-300 bg-white px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+              />
+            </label>
+
+            <fieldset class="grid gap-2 sm:grid-cols-2">
+              <legend class="mb-2 text-sm font-medium text-neutral-700 dark:text-neutral-200">
+                Permissions
+              </legend>
+              {allPermissions.map(permission => (
+                <label class="flex items-start gap-x-2 text-sm text-neutral-600 dark:text-neutral-300">
+                  <input
+                    type="checkbox"
+                    name="permissions"
+                    value={permission.code}
+                    class="text-mint-500 focus:ring-mint-400 mt-0.5 rounded border-neutral-300 dark:border-neutral-600"
+                  />
+                  <code class="text-xs">{permission.code}</code>
+                </label>
+              ))}
+            </fieldset>
+
+            <button
+              type="submit"
+              class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
+            >
+              Create role
+            </button>
+          </form>
+        </section>
+      )
+    }
+  </div>
+</DashboardLayout>
