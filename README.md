@@ -153,6 +153,8 @@ read at runtime, they take effect on the next deploy.
   staff accounts.
 - [`docs/api.md`](docs/api.md) — the `/api/v1` contract, how an endpoint is
   defined, and how the OpenAPI document stays current.
+- [`docs/documents.md`](docs/documents.md) — SharePoint as the document
+  repository, how a large upload is brokered, and the M365 tenant setup.
 
 ## Security & contributions
 
