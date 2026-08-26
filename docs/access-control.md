@@ -56,12 +56,17 @@ The account is created with **no subject**. The first time that person signs in
 successfully, the subject on their token is bound to the waiting record, and
 every later sign-in matches on the subject directly.
 
-### The assumption this rests on
+### The condition this rests on
 
 Binding by email trusts the email claim in the token. That is safe **only
 because self-service sign-up is disabled on the tenant**: every account is
 created by an administrator, so nobody can obtain a token bearing an address
 they were not given.
+
+> **Verified 26 August 2026.** Self-service sign-up is confirmed disabled on the
+> Al Barakah Entra External ID tenant. Re-check this at each security review,
+> and treat it as a control rather than a setting: it is what makes the binding
+> below safe.
 
 **If self-service sign-up is ever enabled, this becomes a way to claim someone
 else's pre-provisioned account, and `claimPreProvisionedAccount` must be removed

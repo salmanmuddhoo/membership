@@ -56,6 +56,22 @@ Beyond the per-merge gate, a deeper manual security review or penetration test
 should be scheduled periodically — quarterly is the target — given the
 sensitivity of the data held.
 
+## Tenant configuration this design depends on
+
+One access-control decision depends on a setting outside this repository, so it
+is recorded here rather than only in code:
+
+| Setting                                | Required state | Last verified  |
+| -------------------------------------- | -------------- | -------------- |
+| Entra External ID self-service sign-up | **Disabled**   | 26 August 2026 |
+
+Staff accounts are pre-provisioned by email and bound to an Entra identity on
+first sign-in (see `docs/access-control.md`). That binding trusts the email
+claim, which is only sound while every account is created by an administrator.
+**Enabling self-service sign-up would turn it into a way to claim someone
+else's pre-provisioned account**, and the binding must be removed in the same
+change. Re-check at each periodic review.
+
 ## Handling secrets
 
 - Never commit credentials, tokens, client secrets or connection strings.
