@@ -14,7 +14,9 @@
     "test:watch": "vitest",
     "migrate": "tsx scripts/migrate-cli.ts up",
     "migrate:status": "tsx scripts/migrate-cli.ts status",
-    "access:grant": "tsx scripts/grant-access.ts"
+    "access:grant": "tsx scripts/grant-access.ts",
+    "openapi:generate": "tsx scripts/generate-openapi.ts",
+    "openapi:check": "tsx scripts/generate-openapi.ts --check"
   },
   "dependencies": {
     "@astrojs/check": "^0.9.10",
