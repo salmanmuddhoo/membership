@@ -425,107 +425,599 @@ and comment, **so that** the approval chain is reconstructable.
 
 ---
 
-# M4–M10 — outline
+# M4 — Documents, print–scan–upload, SharePoint
 
-Listed for sequencing and estimation. Acceptance criteria are written at the
-start of each milestone, when the relevant business values are confirmed.
+**Goal:** an application's documents are captured, stored in SharePoint, and
+driven from Missing to Verified — with the signed physical form archived
+exactly as it was signed.
 
-## M4 — Documents, print–scan–upload, SharePoint · EPIC-05
+**Blocked by:** nothing. The brokered upload was proved in M1 (S-112); the
+checklists it drives were configured in M2 (S-208).
 
-| ID    | Story                                                          | Pri    | Pts |
-| ----- | -------------------------------------------------------------- | ------ | --- |
-| S-401 | Generate the pre-filled printable application form             | Must   | 8   |
-| S-402 | Archive the exact signed PDF rather than re-rendering (AD-10)  | Must   | 5   |
-| S-403 | Capture a document with the tablet camera _(DOC-US-001)_       | Must   | 8   |
-| S-404 | Upload an existing scanned file _(DOC-US-002)_                 | Must   | 3   |
-| S-405 | Create the member's SharePoint folder structure _(DOC-US-004)_ | Must   | 5   |
-| S-406 | Store document metadata in the platform (FRD 8.3)              | Must   | 5   |
-| S-407 | Drive the checklist from Missing to Verified _(DOC-US-003)_    | Must   | 5   |
-| S-408 | Never mark a failed upload as uploaded; retry safely           | Must   | 5   |
-| S-409 | Replace a document, preserving version history                 | Should | 3   |
-| S-410 | Document expiry and reminders                                  | Should | 3   |
+## Feature 4.1 — The printable form
 
-## M5 — Fees, payments & receipts · EPIC-09
+### S-401 · Generate the pre-filled printable application form
 
-| ID    | Story                                                                                | Pri    | Pts |
-| ----- | ------------------------------------------------------------------------------------ | ------ | --- |
-| S-501 | Record a payment against an application by fee component _(MEM-US-005)_              | Must   | 8   |
-| S-502 | Allocate sequential receipt numbers so gaps stay visible (AD-11) _(PAY-US-001)_      | Must   | 8   |
-| S-503 | Produce a printable/exportable receipt                                               | Must   | 5   |
-| S-504 | Emit a structured financial event per payment (AD-06)                                | Must   | 5   |
-| S-505 | Refund against the original receipt when an application is not approved (FRD 7.10.7) | Must   | 5   |
-| S-506 | Receipt reconciliation view with gap and duplicate exceptions                        | Must   | 5   |
-| S-507 | Processing fee as a separately reportable component (decision 5)                     | Should | 3   |
+**As** a Regional Officer, **I need** a printable form filled in from what I
+captured, **so that** the applicant signs a document that already matches the
+record. _(FRD 8.5)_
+`Must · 8 · EPIC-05`
 
-## M6 — Full membership depth · EPIC-04, EPIC-07
+- Renders from the membership type's field configuration, so a field an
+  administrator adds appears on the printed form without a release
+- Carries the Declaration and the four signature blocks: applicant, nominee,
+  witness 1, witness 2 (FRD 5.4)
+- **Given** the application is still a draft **Then** the form is watermarked
+  as a draft, so an unsigned print cannot be mistaken for the real one
+- **Given** a field is empty **Then** the space is printed blank rather than
+  omitted, so the applicant can complete it by hand
 
-| ID    | Story                                                                                        | Pri   | Pts |
-| ----- | -------------------------------------------------------------------------------------------- | ----- | --- |
-| S-601 | Corporate application capture (FRD 5.2)                                                      | Must  | 8   |
-| S-602 | Nominee capture with configurable count and optional percentages (decision 7) _(MEM-US-008)_ | Must  | 8   |
-| S-603 | Two attesting witnesses verified before the Secretary may verify                             | Must  | 3   |
-| S-604 | Minor application with a validated Guardian member link _(MEM-US-007)_                       | Must  | 8   |
-| S-605 | Block submission without a valid Guardian (FRD 7.10.2)                                       | Must  | 3   |
-| S-606 | Successor Guardian nomination (FRD 7.10.3)                                                   | Must  | 5   |
-| S-607 | Takaful Ta'awuni beneficiary nomination (FRD 7.10.4)                                         | Must  | 5   |
-| S-608 | Pre-Board completeness gate (FRD 7.10.8)                                                     | Must  | 5   |
-| S-609 | Board decision record with sign-offs (FRD 7.10.9, decision 4)                                | Must  | 5   |
-| S-610 | Minor reaching majority — configurable transition                                            | Could | 5   |
+### S-402 · Archive the signed PDF rather than re-rendering it
 
-## M7 — Legacy migration · EPIC-14
+**As** an auditor, **I need** the exact file that was signed, **so that** what
+we hold is what the applicant agreed to. _(AD-10)_
+`Must · 5 · EPIC-05`
 
-Phase-wise per your direction: **members first, finance later**. Source data is
-cleansed by Al Barakah before import; see the legacy register analysis for the
-five blockers and the field gaps.
+- The uploaded scan is stored byte-for-byte and never regenerated
+- **Given** the captured data changes after signing **Then** the archived scan
+  is untouched and the difference is visible
+- A checksum is recorded at upload and can be re-verified later
 
-| ID    | Story                                                          | Pri  | Pts |
-| ----- | -------------------------------------------------------------- | ---- | --- |
-| S-701 | Agree and freeze the cleansed source extract                   | Must | 3   |
-| S-702 | Column mapping and validation rules for members                | Must | 8   |
-| S-703 | Staging import with dry-run _(MIG-US-001)_                     | Must | 8   |
-| S-704 | Exception report for records failing validation                | Must | 5   |
-| S-705 | Preserve legacy member code as a cross-reference               | Must | 3   |
-| S-706 | Mark migrated members as a distinct state (incomplete records) | Must | 5   |
-| S-707 | Promote to production after business sign-off (decision 3)     | Must | 3   |
-| S-708 | Log the import as a traceable audit event (FRD 7.12)           | Must | 3   |
-| S-709 | Later pass — shares, savings, Haj and loan balances            | Must | 8   |
-| S-710 | Reconcile imported totals against the agreed control figures   | Must | 5   |
+## Feature 4.2 — Capture
 
-## M8 — Resignation & dormancy · EPIC-15
+### S-403 · Capture a document with the tablet camera
 
-| ID    | Story                                                              | Pri    | Pts |
-| ----- | ------------------------------------------------------------------ | ------ | --- |
-| S-801 | Capture a resignation request with reason _(RES-US-001)_           | Must   | 5   |
-| S-802 | Obligation checks that block closure                               | Must   | 5   |
-| S-803 | Secretary review and President approval of resignation             | Must   | 5   |
-| S-804 | Scheduled dormancy detection on the confirmed rule _(DOR-US-001)_  | Must   | 8   |
-| S-805 | Configurable reactivation, defaulting to staff action (decision 6) | Must   | 5   |
-| S-806 | Approaching-dormancy report                                        | Should | 3   |
+**As** a Regional Officer at a regional office, **I need** to photograph a
+document, **so that** capture needs no scanner. _(DOC-US-001, FRD 8.6)_
+`Must · 8 · EPIC-05`
 
-## M9 — Notifications, reporting & public API · EPIC-10, 12, 13
+- Multi-page capture assembled into one document
+- **Given** the connection drops mid-upload **Then** the upload resumes rather
+  than restarting, using the brokered upload session proved in M1
+- **Given** the photograph is unreadable **Then** it can be retaken before it
+  is committed to the record
 
-| ID    | Story                                                                  | Pri    | Pts |
-| ----- | ---------------------------------------------------------------------- | ------ | --- |
-| S-901 | Provider-independent notification service with templates (decision 11) | Must   | 8   |
-| S-902 | Email channel for the events in FRD Section 9                          | Must   | 5   |
-| S-903 | WhatsApp channel — membership approved (decision 11)                   | Must   | 8   |
-| S-904 | Notification delivery log and retry                                    | Must   | 3   |
-| S-905 | Membership, document and account reports                               | Should | 8   |
-| S-906 | Payments, receipts and dormancy reports                                | Should | 5   |
-| S-907 | Operations and audit reports                                           | Should | 5   |
-| S-908 | Public application API for Albarakah.mu _(MEM-US-002)_                 | Must   | 8   |
-| S-909 | API credentials, throttling and abuse protection                       | Must   | 5   |
+### S-404 · Upload an existing scanned file
 
-## M10 — Hardening, UAT & go-live
+**As** staff, **I need** to upload a file from the device, **so that** a
+document already scanned does not have to be photographed again. _(DOC-US-002)_
+`Must · 3 · EPIC-05`
 
-| ID     | Story                                                 | Pri  | Pts |
-| ------ | ----------------------------------------------------- | ---- | --- |
-| S-1001 | Independent security review or penetration test       | Must | 8   |
-| S-1002 | Performance check under regional-office conditions    | Must | 5   |
-| S-1003 | Backup and restore rehearsal                          | Must | 5   |
-| S-1004 | Provision real staff accounts and roles (decision 15) | Must | 3   |
-| S-1005 | Staff training and user documentation                 | Must | 8   |
-| S-1006 | Production cutover with a rollback plan               | Must | 5   |
+- Accepts PDF and common image types; rejects anything else with a reason
+- **Given** the file exceeds the platform's request limit **Then** it still
+  uploads, because the browser sends it to Microsoft directly
+
+## Feature 4.3 — SharePoint and metadata
+
+### S-405 · Create the member's SharePoint folder structure
+
+**As** the system, **I need** the folder structure created automatically,
+**so that** documents land where the Society expects them. _(DOC-US-004, FRD 8.1, 8.2)_
+`Must · 5 · EPIC-05`
+
+- Follows the standard structure of FRD 8.1, created on demand rather than in
+  advance
+- **Given** the folder already exists **Then** creation is a no-op, so a retry
+  cannot produce a duplicate
+- **Given** SharePoint is unavailable **Then** the failure is explicit and the
+  document is not recorded as stored
+
+### S-406 · Store document metadata in the platform
+
+**As** staff, **I need** each document's details held in the platform, **so
+that** documents are searchable without opening SharePoint. _(FRD 8.3)_
+`Must · 5 · EPIC-05`
+
+- Type, subject, uploader, timestamp, verification state, expiry, checksum and
+  the SharePoint location
+- **Given** a document is moved in SharePoint **Then** the stored location can
+  be repaired without losing its history
+
+### S-407 · Drive the checklist from Missing to Verified
+
+**As** the Secretary, **I need** to see and change each document's state,
+**so that** completeness is a fact rather than a judgement. _(DOC-US-003, FRD 8.4)_
+`Must · 5 · EPIC-05`
+
+- States: Missing, Uploaded, Under Review, Verified, Rejected, Expired
+- The checklist is the one configured for the applicant type in M2 (S-208)
+- **Given** a document is rejected **Then** a reason is mandatory and the
+  applicant's staff can see it
+- **Given** every required document is Verified **Then** the application
+  reports as document-complete; nothing else may assert that
+
+### S-408 · Never mark a failed upload as uploaded
+
+**As** staff, **I need** a failed upload to say so, **so that** nobody relies
+on a document that is not there.
+`Must · 5 · EPIC-05`
+
+- The checklist item advances only after SharePoint confirms the commit
+- **Given** the upload fails at any point **Then** the item stays Missing and
+  the error is shown
+- **Given** the same document is retried **Then** it does not create a second
+  copy
+
+## Feature 4.4 — Lifecycle
+
+### S-409 · Replace a document, preserving version history
+
+**As** staff, **I need** to replace a document, **so that** a better scan can
+supersede a poor one without losing the original. _(FRD 8.8)_
+`Should · 3 · EPIC-05`
+
+- The previous version stays retrievable and is marked superseded
+- **Given** a document was Verified **When** it is replaced **Then** it returns
+  to Under Review, because the verification was of the old file
+
+### S-410 · Document expiry and reminders
+
+**As** the Secretary, **I need** expiring documents flagged, **so that** a
+member's file does not quietly go stale. _(FRD 8.4)_
+`Should · 3 · EPIC-05`
+
+- Applies only to document types configured to track expiry (S-208)
+- **Given** a document passes its expiry **Then** its state becomes Expired and
+  the checklist is no longer complete
+- Detection runs as a scheduled job, on the runner proved in M1 (S-113)
+
+---
+
+# M5 — Fees, payments & receipts
+
+**Goal:** what an applicant pays is recorded against a sequential receipt, and
+a gap in that sequence is visible.
+
+**Needs confirming first:** the minor MSA deposit (S-501) and the processing
+fee amount (S-507). Both are absorbed by the fee configuration built in M2, so
+neither blocks the milestone starting — but each must be answered before the
+story that consumes it ships.
+
+### S-501 · Record a payment against an application by fee component
+
+**As** a Regional Officer, **I need** to record what was paid, itemised,
+**so that** the receipt matches the fee schedule. _(MEM-US-005, FRD 7.8.1)_
+`Must · 8 · EPIC-09`
+
+- Components and amounts come from the fee schedule version in force (S-207)
+- The version charged is recorded against the payment, so a later fee change
+  cannot alter what this applicant paid
+- **Given** a component is configured not applicable **Then** it cannot be paid
+- **Given** the amount tendered does not match the schedule **Then** the
+  difference is stated and must be acknowledged before recording
+
+### S-502 · Allocate sequential receipt numbers so gaps stay visible
+
+**As** the Treasurer, **I need** receipt numbers with no reuse and no silent
+gaps, **so that** the sequence is evidence. _(PAY-US-001, AD-11, FRD 7.8.2)_
+`Must · 8 · EPIC-09`
+
+- Allocation is not a bare sequence: a rolled-back transaction must leave a
+  visible gap rather than consuming a number invisibly
+- **Given** a number is allocated **Then** it can never be reused, including
+  after a failure
+- **Given** a gap exists **Then** it is reportable with the reason, if known
+
+### S-503 · Produce a printable receipt
+
+**As** a Regional Officer, **I need** a receipt to hand over, **so that** the
+applicant has proof of payment. _(FRD 7.8.2)_
+`Must · 5 · EPIC-09`
+
+- Carries receipt number, member or applicant reference, components, amounts,
+  currency, date, method and the staff member who processed it
+- **Given** the receipt is reprinted **Then** it is identifiably a reprint
+
+### S-504 · Emit a structured financial event per payment
+
+**As** the future accounting integration, **I need** each payment as a
+structured event, **so that** Phase 3 can consume it without re-deriving it.
+_(AD-06)_
+`Must · 5 · EPIC-09`
+
+- Append-only, with the fee version, components and receipt number
+- **Given** a payment is refunded **Then** a compensating event is emitted; the
+  original is never edited
+
+### S-505 · Refund against the original receipt when an application is not approved
+
+**As** the Treasurer, **I need** to refund a rejected applicant, **so that**
+the Society keeps only what it is due. _(FRD 7.10.7)_
+`Must · 5 · EPIC-09`
+
+- Refund references the original receipt and its components
+- **Given** the application was approved **Then** the entrance fee and Takaful
+  contribution are non-refundable, per FRD 7.10.6
+- **Given** a partial refund **Then** each component refunded is itemised
+
+### S-506 · Receipt reconciliation view with gap and duplicate exceptions
+
+**As** the Treasurer, **I need** the sequence audited, **so that** an anomaly
+is found by the system rather than by an auditor. _(FRD 7.8.2)_
+`Must · 5 · EPIC-09`
+
+- Lists gaps, duplicates and voided receipts for a period
+- **Given** no exceptions **Then** the view says so explicitly, rather than
+  showing an empty table that could mean either thing
+
+### S-507 · Processing fee as a separately reportable component
+
+**As** the Treasurer, **I need** the processing fee reported separately,
+**so that** it reconciles apart from the other components. _(decision 5, FRD 7.8.3)_
+`Should · 3 · EPIC-09`
+
+- Uses the same receipt mechanism with its own component code
+- **Depends on** the confirmed amount and applicability. Default until then:
+  configured, zero, not applicable — which is what M2 already ships
+
+---
+
+# M6 — Full membership depth
+
+**Goal:** Corporate and Minor applications work end to end, with nominees,
+witnesses, guardians and the board decision the FRD describes.
+
+**Needs confirming first:** nominee count and whether percentages apply
+(S-602). Default until then: a single nominee, no percentages.
+
+### S-601 · Corporate application capture
+
+**As** a Regional Officer, **I need** to capture a corporate applicant,
+**so that** entities can join. _(FRD 5.2)_
+`Must · 8 · EPIC-04`
+
+- Fields come from the Corporate membership type configured in M2
+- **Given** the corporate checklist **Then** a Certificate of Registration,
+  Memorandum and Written Resolution are required, and no ID card is
+
+### S-602 · Nominee capture with configurable count and optional percentages
+
+**As** a Regional Officer, **I need** to capture the nominees the rules allow,
+**so that** the nomination is valid. _(MEM-US-008, decision 7, FRD 5.3)_
+`Must · 8 · EPIC-04`
+
+- Count is configuration; the schema already supports several (S-301)
+- **Given** percentages are enabled **Then** they must total 100 before
+  submission
+- **Depends on** the confirmed count and percentage rule
+
+### S-603 · Two attesting witnesses verified before the Secretary may verify
+
+**As** the Secretary, **I need** both witnesses present on the scan, **so
+that** the nomination is legally valid. _(FRD 5.4)_
+`Must · 3 · EPIC-04`
+
+- **Given** fewer than four signatures are confirmed **Then** the Signed
+  Application Form cannot be marked Verified
+
+### S-604 · Minor application with a validated Guardian member link
+
+**As** a Regional Officer, **I need** to link a minor to their guardian,
+**so that** the guardian's responsibility is recorded. _(MEM-US-007, FRD 7.10.2)_
+`Must · 8 · EPIC-04`
+
+- The guardian must be an existing active member, found by Member ID or NIC
+- **Given** the named guardian is not a member **Then** capture explains that
+  they must join first
+
+### S-605 · Block submission without a valid Guardian
+
+**As** the Society, **I need** a minor's application to be unsubmittable
+without a guardian, **so that** the rule cannot be bypassed. _(FRD 7.10.2)_
+`Must · 3 · EPIC-04`
+
+- **Given** no valid guardian link **Then** submission is refused and says why
+
+### S-606 · Successor Guardian nomination
+
+**As** a Regional Officer, **I need** to record a successor guardian, **so
+that** the minor is covered if the guardian cannot act. _(FRD 7.10.3)_
+`Must · 5 · EPIC-04`
+
+- Captured as its own subject, with its own checklist items (already
+  configured in M2)
+
+### S-607 · Takaful Ta'awuni beneficiary nomination
+
+**As** a Regional Officer, **I need** to record the Takaful beneficiary,
+**so that** the fund knows who benefits. _(FRD 7.10.4)_
+`Must · 5 · EPIC-04`
+
+### S-608 · Pre-Board completeness gate
+
+**As** the Secretary, **I need** completeness checked before the board sees
+it, **so that** board time is not spent on incomplete files. _(FRD 7.10.8)_
+`Must · 5 · EPIC-06`
+
+- Documents Verified, payment recorded, guardian valid where applicable
+- **Given** anything is outstanding **Then** it is listed and the application
+  cannot be forwarded
+
+### S-609 · Board decision record with sign-offs
+
+**As** the Board, **I need** the decision recorded with who signed off,
+**so that** the approval is attributable. _(FRD 7.10.9, decision 4)_
+`Must · 5 · EPIC-06`
+
+- Uses the quorum already supported by the workflow configuration (S-209)
+- **Given** a quorum above one **Then** that many distinct role holders must
+  act before the step completes
+
+### S-610 · Minor reaching majority — configurable transition
+
+**As** an administrator, **I need** the majority transition configured, **so
+that** a minor becomes a full member without manual tracking. _(FRD 7.10.10)_
+`Could · 5 · EPIC-07`
+
+- Scheduled detection, on the job runner from M1
+- **Depends on** what the Society requires at majority — an MSA deposit is an
+  open point in FRD 7.10.6
+
+---
+
+# M7 — Legacy migration
+
+**Goal:** the existing register becomes members in this system, phase-wise —
+**members first, finance later**, per your direction.
+
+**Needs first:** the cleansed extract from Al Barakah. The legacy register
+analysis records five blockers and the field gaps; none is this system's to
+fix, and the import cannot start until the source is agreed and frozen.
+
+### S-701 · Agree and freeze the cleansed source extract
+
+**As** the project, **I need** one agreed source file, **so that** an import
+can be repeated and reconciled against something fixed.
+`Must · 3 · EPIC-14`
+
+- Recorded with a checksum, so "the file we imported" is unambiguous
+
+### S-702 · Column mapping and validation rules for members
+
+**As** the project, **I need** each source column mapped and validated,
+**so that** what fails is known before anything is written.
+`Must · 8 · EPIC-14`
+
+- Mapping is configuration, not code, so a re-cleansed source needs no release
+- Mobile numbers convert to international form on the way in, using the same
+  rule as capture — an unconvertible number is an exception, never a guess
+
+### S-703 · Staging import with dry-run
+
+**As** the project, **I need** to import into staging and see the outcome
+before committing, **so that** a bad import is discovered before it matters.
+_(MIG-US-001)_
+`Must · 8 · EPIC-14`
+
+- **Given** a dry run **Then** nothing is written and the full outcome is
+  reported
+- Runs on the job runner from M1, resumable and checkpointed
+
+### S-704 · Exception report for records failing validation
+
+**As** the project, **I need** every rejected record with its reason, **so
+that** Al Barakah can correct the source.
+`Must · 5 · EPIC-14`
+
+- Exportable, one row per problem, identifying the source record
+
+### S-705 · Preserve the legacy member code as a cross-reference
+
+**As** staff, **I need** the old code kept, **so that** a member can be found
+by what the Society has always called them. _(FRD 7.12)_
+`Must · 3 · EPIC-14`
+
+- Searchable, and distinct from the Member ID this system allocates
+- The member number sequence must be advanced past anything the register
+  already contains, so no imported member can collide with a new one
+
+### S-706 · Mark migrated members as a distinct state
+
+**As** staff, **I need** migrated records identifiable, **so that** an
+incomplete legacy record is not mistaken for a complete application.
+`Must · 5 · EPIC-14`
+
+- **Given** a migrated member **Then** the missing fields are listed rather
+  than silently blank
+
+### S-707 · Promote to production after business sign-off
+
+**As** the project, **I need** an explicit sign-off before production import,
+**so that** the decision is deliberate and recorded. _(decision 3)_
+`Must · 3 · EPIC-14`
+
+### S-708 · Log the import as a traceable audit event
+
+**As** an auditor, **I need** the import recorded, **so that** it is
+distinguishable from ordinary data entry. _(FRD 7.12)_
+`Must · 3 · EPIC-11`
+
+- Source checksum, counts, who authorised it, when
+
+### S-709 · Later pass — shares, savings, Haj and loan balances
+
+**As** the Society, **I need** balances imported once members exist, **so
+that** the financial position follows the people.
+`Must · 8 · EPIC-14`
+
+### S-710 · Reconcile imported totals against the agreed control figures
+
+**As** the Treasurer, **I need** imported totals to match agreed figures,
+**so that** the import is provably complete.
+`Must · 5 · EPIC-14`
+
+- **Given** any control total differs **Then** the import is reported as failed
+  reconciliation, whatever the record counts say
+
+---
+
+# M8 — Resignation & dormancy
+
+**Goal:** a member can resign through the approval chain, and dormancy is
+detected rather than noticed.
+
+**Needs confirming first:** the reactivation rule (S-805). Default until then:
+flag for staff action.
+
+### S-801 · Capture a resignation request with reason
+
+**As** staff, **I need** to record a resignation request, **so that** it
+enters the approval chain. _(RES-US-001, FRD 7.9)_
+`Must · 5 · EPIC-15`
+
+### S-802 · Obligation checks that block closure
+
+**As** the Treasurer, **I need** outstanding obligations to block closure,
+**so that** the Society is not owed by a closed member. _(FRD 7.9)_
+`Must · 5 · EPIC-15`
+
+- **Given** any outstanding balance **Then** approval is refused with the
+  amounts listed
+
+### S-803 · Secretary review and President approval of resignation
+
+**As** the Society, **I need** resignations to follow the same chain as
+applications, **so that** one governance model covers both. _(FRD 7.9)_
+`Must · 5 · EPIC-06`
+
+- Uses the workflow configuration from M2, with its own definition
+- Segregation of duties applies as it does to applications
+
+### S-804 · Scheduled dormancy detection
+
+**As** the Society, **I need** dormancy detected automatically, **so that**
+the rule is applied evenly. _(DOR-US-001, FRD 7.11)_
+`Must · 8 · EPIC-15`
+
+- Threshold is configuration
+- Runs on the job runner from M1, resumable over a large membership
+
+### S-805 · Configurable reactivation
+
+**As** an administrator, **I need** the reactivation rule configured, **so
+that** it can change without a release. _(decision 6)_
+`Must · 5 · EPIC-15`
+
+- **Depends on** the confirmed rule. Default until then: flag for staff action
+
+### S-806 · Approaching-dormancy report
+
+**As** staff, **I need** to see who is close to dormancy, **so that** they can
+be contacted first.
+`Should · 3 · EPIC-12`
+
+---
+
+# M9 — Notifications, reporting & public API
+
+**Goal:** members hear from the Society, staff can report on it, and
+Albarakah.mu can submit applications.
+
+### S-901 · Provider-independent notification service with templates
+
+**As** the Society, **I need** notifications independent of any one provider,
+**so that** changing provider is configuration. _(decision 11)_
+`Must · 8 · EPIC-10`
+
+- Templates are configuration; channel is a detail behind one interface
+
+### S-902 · Email channel for the events in FRD Section 9
+
+**As** a member, **I need** to be told what happened to my application,
+**so that** I am not left waiting. _(FRD Section 9)_
+`Must · 5 · EPIC-10`
+
+### S-903 · WhatsApp channel — membership approved
+
+**As** a member, **I need** approval by WhatsApp, **so that** I hear promptly.
+_(decision 11)_
+`Must · 8 · EPIC-10`
+
+- Sends to the international-form number captured in M3, which is why that
+  conversion happened at capture rather than being deferred
+
+### S-904 · Notification delivery log and retry
+
+**As** staff, **I need** to see whether a notification arrived, **so that** a
+silent failure is not mistaken for a member ignoring us.
+`Must · 3 · EPIC-10`
+
+- **Given** a send fails **Then** it is retried on a schedule and the failure
+  is visible until it succeeds or is abandoned
+
+### S-905 · Membership, document and account reports
+
+`Should · 8 · EPIC-12`
+
+### S-906 · Payments, receipts and dormancy reports
+
+`Should · 5 · EPIC-12`
+
+### S-907 · Operations and audit reports
+
+`Should · 5 · EPIC-12`
+
+- Includes an access-and-actions report over the audit trail, which is what
+  makes the trail useful rather than merely present
+
+### S-908 · Public application API for Albarakah.mu
+
+**As** an external applicant, **I need** to apply from the website, **so
+that** joining does not require visiting an office. _(MEM-US-002, FRD 7.3)_
+`Must · 8 · EPIC-13`
+
+- Creates a draft application through the same service the staff screens use,
+  so the two cannot diverge
+- **Given** a public submission **Then** it enters the same chain, with the
+  same required documents
+
+### S-909 · API credentials, throttling and abuse protection
+
+**As** the Society, **I need** the public endpoint protected, **so that** it
+cannot be used to flood or probe the system.
+`Must · 5 · EPIC-13`
+
+- Rate limiting reuses the mechanism from M1 (S-111)
+- **Given** the limit is exceeded **Then** the caller is refused with a
+  retry-after, and the refusal is recorded
+
+---
+
+# M10 — Hardening and go-live
+
+**Goal:** the system is ready to be relied on.
+
+**Needs confirming first:** KYC and audit retention periods. Default until
+then: retain indefinitely, which is safe but not compliant with a stated
+policy — so this is the one open value that should not stay open.
+
+### S-1001 · Penetration test and remediation
+
+`Must · 8 · EPIC-01`
+
+### S-1002 · Backup and restore, proved by an actual restore
+
+**As** the Society, **I need** a restore that has been performed, **so that**
+the backup is known to work rather than assumed to.
+`Must · 5 · EPIC-01`
+
+- **Given** a restore drill **Then** the recovered system is verified against
+  known figures, and the time taken is recorded
+
+### S-1003 · Retention and disposal policy applied
+
+**Depends on** the confirmed retention periods.
+`Must · 5 · EPIC-11`
+
+### S-1004 · Provision real staff accounts and roles
+
+**As** the Society, **I need** the real people set up with the right roles,
+**so that** go-live is not the moment access is first tested. _(decision 15)_
+`Must · 3 · EPIC-02`
+
+### S-1005 · Operational runbook and handover
+
+`Must · 5 · EPIC-01`
 
 ---
 

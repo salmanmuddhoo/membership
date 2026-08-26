@@ -325,6 +325,200 @@ describe('creating a staff account from the administration screen', () => {
   });
 });
 
+describe('deleting a staff account', () => {
+  it('deletes an account that has never been used', async () => {
+    const { roles } = await load();
+    // The real case: an address typed wrongly, or someone provisioned who
+    // never joined. Nothing points at the row, so nothing is lost.
+    const id = await roles.createStaffAccount(
+      { email: 'typo@albarakah.mu', displayName: 'Typo', roleCodes: [] },
+      actor
+    );
+
+    await roles.deleteStaffAccount(id, actor);
+
+    const gone = await run(appUrl, 'select 1 from app_user where id = $1', [
+      id,
+    ]);
+    expect(gone.rowCount).toBe(0);
+  });
+
+  it('takes its role grants with it', async () => {
+    const { roles } = await load();
+    const id = await roles.createStaffAccount(
+      {
+        email: 'withrole@albarakah.mu',
+        displayName: 'With Role',
+        roleCodes: ['system_administrator'],
+      },
+      actor
+    );
+
+    await roles.deleteStaffAccount(id, actor);
+
+    const orphans = await run(
+      appUrl,
+      'select 1 from user_role where user_id = $1',
+      [id]
+    );
+    expect(orphans.rowCount).toBe(0);
+  });
+
+  it('records the deletion, with what was deleted', async () => {
+    const { roles } = await load();
+    const id = await roles.createStaffAccount(
+      {
+        email: 'recorded@albarakah.mu',
+        displayName: 'Recorded',
+        roleCodes: [],
+      },
+      actor
+    );
+    await roles.deleteStaffAccount(id, actor);
+
+    const audited = await run(
+      appUrl,
+      `select actor_description, previous_value->>'email' as email
+         from audit_event where action = 'user.deleted' and entity_id = $1`,
+      [id]
+    );
+    // The row is gone, so the audit entry is the only remaining evidence the
+    // account ever existed. It has to say what it was.
+    expect(audited.rowCount).toBe(1);
+    expect(audited.rows[0].actor_description).toBe(actor.email);
+    expect(audited.rows[0].email).toBe('recorded@albarakah.mu');
+  });
+
+  it('refuses once the account has done anything', async () => {
+    const { roles } = await load();
+    const id = await roles.createStaffAccount(
+      { email: 'active@albarakah.mu', displayName: 'Active', roleCodes: [] },
+      actor
+    );
+
+    // They act: one audit row is enough to make them part of the record.
+    await run(
+      appUrl,
+      `insert into audit_event
+         (actor_user_id, actor_description, action, entity_type, entity_id)
+       values ($1, 'active@albarakah.mu', 'something.happened', 'thing', 'x')`,
+      [id]
+    );
+
+    await expect(roles.deleteStaffAccount(id, actor)).rejects.toThrowError(
+      /cannot be deleted/
+    );
+
+    const still = await run(appUrl, 'select 1 from app_user where id = $1', [
+      id,
+    ]);
+    expect(still.rowCount).toBe(1);
+  });
+
+  it('refuses an officer who captured an application', async () => {
+    const { roles } = await load();
+    const id = await roles.createStaffAccount(
+      {
+        email: 'captured@albarakah.mu',
+        displayName: 'Captured',
+        roleCodes: [],
+      },
+      actor
+    );
+
+    const type = await run(
+      appUrl,
+      `select id from membership_type where code = 'individual'`
+    );
+    await run(
+      appUrl,
+      `insert into membership_application (membership_type_id, captured_by)
+       values ($1, $2)`,
+      [type.rows[0].id, id]
+    );
+
+    // Deleting them would leave the application's captured_by pointing at
+    // nothing, and segregation of duties reads that column.
+    await expect(roles.deleteStaffAccount(id, actor)).rejects.toThrowError(
+      /cannot be deleted/
+    );
+  });
+
+  it('finds a reference in a table nobody remembered to list', async () => {
+    const { roles } = await load();
+    const id = await roles.createStaffAccount(
+      { email: 'future@albarakah.mu', displayName: 'Future', roleCodes: [] },
+      actor
+    );
+
+    // Stands in for a table a later milestone adds. The check reads the
+    // catalogue, so it covers this without anyone updating a hand-written
+    // list — which is the whole reason it is written that way.
+    await run(
+      ownerUrl,
+      `create table if not exists a_later_module (
+         id uuid primary key default gen_random_uuid(),
+         acted_by uuid not null references app_user(id)
+       )`
+    );
+    await run(
+      ownerUrl,
+      'grant select, insert on a_later_module to albarakah_app'
+    );
+    await run(appUrl, 'insert into a_later_module (acted_by) values ($1)', [
+      id,
+    ]);
+
+    try {
+      expect(await roles.referencesTo(id)).toEqual(
+        expect.arrayContaining([expect.stringContaining('a_later_module')])
+      );
+      await expect(roles.deleteStaffAccount(id, actor)).rejects.toThrowError(
+        /cannot be deleted/
+      );
+    } finally {
+      await run(ownerUrl, 'drop table a_later_module');
+    }
+  });
+
+  it('refuses to let an administrator delete themselves', async () => {
+    const { roles } = await load();
+    await expect(
+      roles.deleteStaffAccount(actor.userId, actor)
+    ).rejects.toThrowError(/your own account/);
+  });
+});
+
+describe('the working list hides leavers unless asked', () => {
+  it('leaves them out by default but still counts them when asked', async () => {
+    const { roles } = await load();
+    const id = await roles.createStaffAccount(
+      { email: 'gone@albarakah.mu', displayName: 'Gone Away', roleCodes: [] },
+      actor
+    );
+    await roles.setUserActive(id, false, actor);
+
+    const working = await roles.listUsers({ includeInactive: false });
+    expect(working.users.map(u => u.id)).not.toContain(id);
+
+    const everyone = await roles.listUsers({ includeInactive: true });
+    expect(everyone.users.map(u => u.id)).toContain(id);
+
+    // Default stays "everyone", so the API and any other caller are unchanged.
+    const byDefault = await roles.listUsers();
+    expect(byDefault.users.map(u => u.id)).toContain(id);
+  });
+
+  it('counts only what it shows', async () => {
+    const { roles } = await load();
+    const working = await roles.listUsers({ includeInactive: false });
+    const everyone = await roles.listUsers({ includeInactive: true });
+
+    expect(working.total).toBeLessThan(everyone.total);
+    expect(working.users.every(u => u.isActive)).toBe(true);
+  });
+});
+
 describe('S-202: a user may hold several roles', () => {
   it('assigns more than one, as FRD 6.1 expects', async () => {
     const { roles } = await load();

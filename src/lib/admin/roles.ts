@@ -416,6 +416,107 @@ export async function setUserRoles(
   });
 }
 
+/**
+ * What still points at this account.
+ *
+ * Read from the catalogue rather than a hand-written list, so a table added by
+ * a later milestone is covered without anyone remembering to update this. Every
+ * foreign key into app_user is found and probed.
+ */
+export async function referencesTo(userId: string): Promise<string[]> {
+  const keys = await query<{ table_name: string; column_name: string }>(
+    `select c.conrelid::regclass::text as table_name, a.attname as column_name
+       from pg_constraint c
+       join pg_attribute a
+         on a.attrelid = c.conrelid and a.attnum = any(c.conkey)
+      where c.confrelid = 'app_user'::regclass and c.contype = 'f'`
+  );
+
+  const holding: string[] = [];
+  for (const key of keys.rows) {
+    // These identifiers come from the catalogue, not from a request, so they
+    // cannot be hostile. regclass::text already quotes a table name that needs
+    // it; the column name is quoted here for the same reason, and because a
+    // reader should not have to work out why one is safe and the other is.
+    const column = `"${key.column_name.replace(/"/g, '""')}"`;
+    const used = await query<{ n: string }>(
+      `select count(*) as n from ${key.table_name} where ${column} = $1`,
+      [userId]
+    );
+    if (Number(used.rows[0].n) > 0) {
+      holding.push(`${key.table_name} (${used.rows[0].n})`);
+    }
+  }
+  return holding;
+}
+
+/**
+ * Delete a staff account outright.
+ *
+ * Only possible when nothing points at the account. That is a real case worth
+ * supporting — an address typed wrongly, or someone provisioned who never
+ * joined — and deleting such a row loses nothing at all.
+ *
+ * The moment an account has done anything, deletion stops being available and
+ * deactivation is the answer instead. Not as a policy this code chooses: audit
+ * rows, granted-by references and the approval chain all point here, and the
+ * retention period outlives anyone's employment. Removing the row would leave
+ * the record of what they did pointing at nothing, which for a financial
+ * institution is the one thing the audit trail must never allow.
+ */
+export async function deleteStaffAccount(
+  userId: string,
+  actor: { userId: string; email: string }
+): Promise<void> {
+  if (userId === actor.userId) {
+    throw new AdminError('You cannot delete your own account.', 'invalid');
+  }
+
+  const user = await query<{ email: string; display_name: string }>(
+    'select email::text as email, display_name from app_user where id = $1',
+    [userId]
+  );
+  if (user.rowCount === 0) {
+    throw new AdminError('That account no longer exists.', 'not_found');
+  }
+
+  // user_role rows are this account's own grants, not history of what it did,
+  // and cascade with it. Everything else is history.
+  const holding = (await referencesTo(userId)).filter(
+    r => !r.startsWith('user_role (')
+  );
+
+  if (holding.length > 0) {
+    throw new AdminError(
+      `${user.rows[0].email} has already been used in the system, so the ` +
+        'account cannot be deleted — records of what they did point at it. ' +
+        'Deactivate them instead: they lose access immediately and their ' +
+        'history stays readable.',
+      'in_use'
+    );
+  }
+
+  await withTransaction(async client => {
+    await client.query('delete from user_role where user_id = $1', [userId]);
+    await client.query('delete from app_user where id = $1', [userId]);
+
+    await recordAudit(
+      {
+        actorUserId: actor.userId,
+        actorDescription: actor.email,
+        action: 'user.deleted',
+        entityType: 'app_user',
+        entityId: userId,
+        previousValue: {
+          email: user.rows[0].email,
+          displayName: user.rows[0].display_name,
+        },
+      },
+      client
+    );
+  });
+}
+
 // Deactivate a leaver (S-204).
 //
 // Never a delete. Audit rows, approvals and granted-by references point at this
@@ -484,9 +585,14 @@ export interface UserPage {
 export const USER_PAGE_LIMIT = 100;
 
 export async function listUsers(
-  options: { search?: string; limit?: number } = {}
+  options: { search?: string; limit?: number; includeInactive?: boolean } = {}
 ): Promise<UserPage> {
   const search = options.search?.trim() ? options.search.trim() : null;
+  // Defaults to showing everyone, so the API and any other caller keep the
+  // whole picture. The administration screen chooses to hide deactivated
+  // accounts, because a leaver on the list every day is noise — but that is a
+  // presentation decision and it belongs to the page, not here.
+  const includeInactive = options.includeInactive ?? true;
   const limit = Math.min(
     Math.max(options.limit ?? USER_PAGE_LIMIT, 1),
     USER_PAGE_LIMIT
@@ -512,13 +618,14 @@ export async function listUsers(
        from app_user u
        left join user_role ur on ur.user_id = u.id
        left join role r on r.id = ur.role_id
-      where $1::text is null
-         or strpos(lower(u.display_name), lower($1::text)) > 0
-         or strpos(lower(u.email::text), lower($1::text)) > 0
+      where ($3::boolean or u.is_active)
+        and ($1::text is null
+             or strpos(lower(u.display_name), lower($1::text)) > 0
+             or strpos(lower(u.email::text), lower($1::text)) > 0)
       group by u.id
       order by u.display_name
       limit $2::int`,
-    [search, limit]
+    [search, limit, includeInactive]
   );
 
   const users = result.rows.map(r => ({
