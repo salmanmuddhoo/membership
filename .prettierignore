@@ -8,6 +8,10 @@ node_modules/
 dist/
 .astro/
 .vercel/
+# Written by scripts/generate-openapi.ts. Prettier collapses its short arrays,
+# which makes `pnpm openapi:check` see drift the moment `format:fix` runs — two
+# tools disagreeing about one generated file. The generator owns its format.
+docs/openapi.json
 
 # env / OS
 .env

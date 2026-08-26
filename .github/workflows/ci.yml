@@ -39,6 +39,12 @@ jobs:
       - name: Check formatting
         run: pnpm format:check
 
+      # S-110: an endpoint added without a descriptor cannot be documented, and
+      # a committed document that has drifted from the routes is worse than
+      # none. Both fail here rather than being noticed by an integrator later.
+      - name: Check the API document is generated and current
+        run: pnpm openapi:check
+
       - name: Type-check and build
         run: pnpm build
 

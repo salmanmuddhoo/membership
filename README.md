@@ -151,6 +151,8 @@ read at runtime, they take effect on the next deploy.
 - [`docs/access-control.md`](docs/access-control.md) — how a signed-in person is
   resolved to an account, how permissions are decided, and how to provision
   staff accounts.
+- [`docs/api.md`](docs/api.md) — the `/api/v1` contract, how an endpoint is
+  defined, and how the OpenAPI document stays current.
 
 ## Security & contributions
 

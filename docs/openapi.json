@@ -1,0 +1,181 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Al Barakah MCSL API",
+    "version": "1.0.0",
+    "description": "Internal operations API. Consumed by this application and, from Phase 4, by the member mobile application (AD-03).\n\nThis document is GENERATED from the route descriptors by `pnpm openapi:generate`. Do not edit it by hand."
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "Same origin as the application"
+    }
+  ],
+  "components": {
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": [
+              "code",
+              "message",
+              "correlationId"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "unauthenticated",
+                  "forbidden",
+                  "not_found",
+                  "validation_failed",
+                  "conflict",
+                  "rate_limited",
+                  "internal_error"
+                ]
+              },
+              "message": {
+                "type": "string",
+                "description": "Safe to show a person. Never contains internal detail."
+              },
+              "correlationId": {
+                "type": "string",
+                "description": "Ties this response to the server log."
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "description": "Field-level messages, for validation failures only."
+              }
+            }
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "sessionCookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "ab_session",
+        "description": "The application's own signed session cookie, set by the OIDC sign-in flow."
+      }
+    }
+  },
+  "security": [
+    {
+      "sessionCookie": []
+    }
+  ],
+  "paths": {
+    "/api/v1/health": {
+      "get": {
+        "summary": "Report platform health",
+        "description": "Confirms the API is serving and the database is reachable. Requires a signed-in account: an open health endpoint tells an unauthenticated caller when the platform is degraded.",
+        "tags": [
+          "Platform"
+        ],
+        "operationId": "getHealth",
+        "x-required-permission": "(any signed-in account)",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "status",
+                        "database",
+                        "checkedAt"
+                      ],
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "ok",
+                            "degraded"
+                          ]
+                        },
+                        "database": {
+                          "type": "string",
+                          "enum": [
+                            "reachable",
+                            "unreachable"
+                          ]
+                        },
+                        "checkedAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

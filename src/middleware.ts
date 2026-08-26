@@ -3,10 +3,19 @@ import { createServerAuth } from '@lib/auth/server';
 import { recordAuditQuietly } from '@lib/access/audit';
 import { authorise } from '@lib/access/authorise';
 import { resolvePrincipal, type Principal } from '@lib/access/principal';
+import { apiError, correlationIdFrom } from '@lib/api/envelope';
 
 const LOGIN_PATH = '/login';
 const HOME_PATH = '/dashboard';
 const DENIED_PATH = '/denied';
+const API_PREFIX = '/api/';
+
+// An API caller is not a browser: redirecting it to a sign-in page produces a
+// 302 to some HTML, which a client parsing JSON cannot make sense of. API
+// routes therefore refuse with the standard envelope and the right status.
+function isApi(pathname: string): boolean {
+  return pathname.startsWith(API_PREFIX);
+}
 
 // Routes reachable without a session: the login page, the OIDC handshake
 // endpoints (/auth/login, /auth/callback, /auth/logout), and the refusal page.
@@ -58,6 +67,12 @@ export const onRequest = defineMiddleware(async (context, next) => {
   context.locals.user = user;
   context.locals.principal = null;
 
+  const api = isApi(pathname);
+  const refuse = (code: 'unauthenticated' | 'forbidden', to: string) =>
+    api
+      ? apiError(code, correlationIdFrom(context.request.headers))
+      : context.redirect(to);
+
   if (pathname === '/') {
     return context.redirect(user ? HOME_PATH : LOGIN_PATH);
   }
@@ -71,7 +86,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
   }
 
   if (!user) {
-    return context.redirect(LOGIN_PATH);
+    return refuse('unauthenticated', LOGIN_PATH);
   }
 
   // The session is valid, but a valid session is not an account: the person
@@ -95,7 +110,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
         newValue: { reason: rejection.reason, path: pathname },
         ipAddress: clientAddress(context.request.headers),
       });
-      return context.redirect(DENIED_PATH);
+      return refuse('forbidden', DENIED_PATH);
     }
 
     principal = result.principal;
@@ -103,10 +118,18 @@ export const onRequest = defineMiddleware(async (context, next) => {
     // The database is unreachable. Failing closed is the only safe option: we
     // cannot establish who this is or what they may do.
     console.error('[access] could not resolve principal:', error);
-    return context.redirect(DENIED_PATH);
+    return refuse('forbidden', DENIED_PATH);
   }
 
   context.locals.principal = principal;
+
+  // API endpoints declare their own permission in their descriptor and enforce
+  // it in defineEndpoint(), which also produces the correct envelope. Applying
+  // the page route map to them as well would deny every endpoint here, since
+  // none of them appear in it.
+  if (api) {
+    return next();
+  }
 
   const decision = authorise(principal, pathname);
 
