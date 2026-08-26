@@ -14,11 +14,22 @@ function principal(overrides: Partial<Principal> = {}): Principal {
   };
 }
 
+// A path chosen so the live map does not claim it. The tests below assert
+// that first: as modules land, a prefix rule can quietly start covering
+// whatever fixture path was picked years earlier, and the test would then fail
+// for a reason that has nothing to do with what it is checking. /members/
+// was exactly that until M3 declared it.
+const UNDECLARED = '/nothing-has-declared-this';
+
 describe('deny by default (S-108)', () => {
+  it('has a fixture path the live map really does not cover', () => {
+    expect(requiredPermissionFor(UNDECLARED)).toBeUndefined();
+  });
+
   it('refuses an ordinary user a route nobody declared', async () => {
     // The property that matters: shipping a page and forgetting to protect it
     // produces a refusal, not an open door.
-    const decision = authorise(principal(), '/members/secret-new-page');
+    const decision = authorise(principal(), UNDECLARED);
 
     expect(decision.allowed).toBe(false);
     if (decision.allowed) return;
@@ -28,7 +39,7 @@ describe('deny by default (S-108)', () => {
   it('refuses even a user who holds unrelated permissions', async () => {
     const decision = authorise(
       principal({ permissions: new Set(['member.create', 'payment.record']) }),
-      '/reports/unlisted'
+      UNDECLARED
     );
 
     expect(decision.allowed).toBe(false);
@@ -38,7 +49,7 @@ describe('deny by default (S-108)', () => {
     // Someone has to reach a newly added page before its permission exists.
     const decision = authorise(
       principal({ roles: ['system_administrator'] }),
-      '/members/secret-new-page'
+      UNDECLARED
     );
 
     expect(decision.allowed).toBe(true);

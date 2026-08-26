@@ -708,14 +708,24 @@ describe('S-209: workflow definitions', () => {
       'membership_application'
     );
 
-    expect(statuses.map(s => s.code)).toEqual([
+    // Containment and order, not an exact list: later milestones legitimately
+    // add statuses — M3 adds Draft and Returned for Correction, which FRD
+    // 7.4.3 explicitly anticipates — and an exact-list assertion would fail
+    // for that rather than for anything being wrong.
+    const confirmed = [
       'new',
       'submitted_for_review',
       'submitted_for_approval',
       'approved',
       'rejected',
       'abeyance',
-    ]);
+    ];
+    const codes = statuses.map(s => s.code);
+    expect(codes).toEqual(expect.arrayContaining(confirmed));
+    expect(
+      confirmed.map(c => codes.indexOf(c)),
+      'the FRD 7.4.3 statuses should still read in their documented order'
+    ).toEqual([...confirmed.map(c => codes.indexOf(c))].sort((a, b) => a - b));
 
     const abeyance = statuses.find(s => s.code === 'abeyance')!;
     expect(abeyance.isActive).toBe(false);

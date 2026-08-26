@@ -73,16 +73,19 @@ beforeAll(async () => {
   );
   await run(
     appUrl,
+    // Codes this test owns. Bare ones like member.view are seeded by the
+    // migrations now, and borrowing a real code makes the test fail for a
+    // reason unrelated to what it asserts.
     `insert into permission (code, description)
-     values ('member.create', 'x'), ('member.view', 'x'), ('payment.record', 'x')`
+     values ('ptest.create', 'x'), ('ptest.view', 'x'), ('ptest.record', 'x')`
   );
-  // officer: member.create + member.view;  cashier: member.view + payment.record
+  // officer: ptest.create + ptest.view;  cashier: ptest.view + ptest.record
   await run(
     appUrl,
     `insert into role_permission (role_id, permission_id)
      select r.id, p.id from role r, permission p
-      where (r.code = 'officer' and p.code in ('member.create', 'member.view'))
-         or (r.code = 'cashier' and p.code in ('member.view', 'payment.record'))`
+      where (r.code = 'officer' and p.code in ('ptest.create', 'ptest.view'))
+         or (r.code = 'cashier' and p.code in ('ptest.view', 'ptest.record'))`
   );
   await run(
     appUrl,
@@ -177,11 +180,11 @@ describe('permission resolution (S-107)', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
-    // officer ∪ cashier — member.view is in both and must appear once.
+    // officer ∪ cashier — ptest.view is in both and must appear once.
     expect([...result.principal.permissions].sort()).toEqual([
-      'member.create',
-      'member.view',
-      'payment.record',
+      'ptest.create',
+      'ptest.record',
+      'ptest.view',
     ]);
     expect(result.principal.roles.sort()).toEqual(['cashier', 'officer']);
   });
@@ -191,9 +194,9 @@ describe('permission resolution (S-107)', () => {
     const subject = { id: 'sub-officer', email: null, name: null, roles: [] };
 
     const before = await resolvePrincipal(subject);
-    expect(
-      before.ok && before.principal.permissions.has('payment.record')
-    ).toBe(true);
+    expect(before.ok && before.principal.permissions.has('ptest.record')).toBe(
+      true
+    );
 
     // Revoke the cashier role — no cache to clear, no session to expire.
     await run(
@@ -205,9 +208,9 @@ describe('permission resolution (S-107)', () => {
     const after = await resolvePrincipal(subject);
     expect(after.ok).toBe(true);
     if (!after.ok) return;
-    expect(after.principal.permissions.has('payment.record')).toBe(false);
+    expect(after.principal.permissions.has('ptest.record')).toBe(false);
     // The permission the two roles shared survives, via the role still held.
-    expect(after.principal.permissions.has('member.view')).toBe(true);
+    expect(after.principal.permissions.has('ptest.view')).toBe(true);
   });
 
   it('gives a role that grants nothing an empty permission set, not an error', async () => {
