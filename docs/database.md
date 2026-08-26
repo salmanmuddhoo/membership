@@ -148,6 +148,23 @@ ADR 0001, which currently assumes the backend runs on Vercel. It does not block
 development — the schema, the runner and the data layer are the same either way
 — but it should be settled before production holds real member data.
 
+> **Direction set 26 August 2026: keep option 3 open.** Moving the API into
+> Azure with VNet integration and a private-endpoint PostgreSQL remains on the
+> table and must not be foreclosed. In practice that is a constraint on how code
+> is written from here:
+>
+> - **No dependency on Vercel-specific runtime APIs** in business logic. The
+>   data layer, the access layer and the API handlers must remain plain
+>   TypeScript that would run unchanged under Node in a container.
+> - **Nothing may assume the serverless request-body limit is permanent.** It
+>   shapes the upload design today; it would not exist behind Azure compute.
+> - **Configuration stays environment-variable driven**, so the same image runs
+>   in either place.
+>
+> Jobs already run on Azure (see `docs/jobs.md`), so the pattern and the
+> container are proven. Moving the API would be a deployment change, not a
+> rewrite — which is the property worth protecting.
+
 ### The same problem applies to CI
 
 GitHub-hosted runners also have dynamic egress IPs, so the migration workflow

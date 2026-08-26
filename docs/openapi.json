@@ -77,6 +77,136 @@
     }
   ],
   "paths": {
+    "/api/v1/documents/upload-ticket": {
+      "post": {
+        "summary": "Request permission to file a document",
+        "description": "Returns a short-lived, single-file upload URL. The bytes go from the device to Microsoft directly, so the platform's request-body limit never applies. The caller never receives a credential.",
+        "tags": [
+          "Documents"
+        ],
+        "operationId": "postDocumentsUploadTicket",
+        "x-required-permission": "document.upload",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "uploadUrl",
+                        "expiresAt",
+                        "chunkSize",
+                        "itemPath"
+                      ],
+                      "properties": {
+                        "uploadUrl": {
+                          "type": "string"
+                        },
+                        "expiresAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "chunkSize": {
+                          "type": "integer"
+                        },
+                        "itemPath": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "memberReference",
+                  "fileName",
+                  "sizeBytes",
+                  "contentType"
+                ],
+                "properties": {
+                  "memberReference": {
+                    "type": "string",
+                    "examples": [
+                      "ABM-000001"
+                    ]
+                  },
+                  "fileName": {
+                    "type": "string"
+                  },
+                  "sizeBytes": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "contentType": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/health": {
       "get": {
         "summary": "Report platform health",

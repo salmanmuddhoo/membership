@@ -6,21 +6,13 @@
 //
 // The increment is a single statement, so two concurrent requests cannot both
 // read the same count and both decide they are under the limit.
+import { readEnv } from '../config';
 import { query } from '../db/pool';
 
 export interface RateLimitResult {
   allowed: boolean;
   remaining: number;
   retryAfterSeconds: number;
-}
-
-function readEnv(key: string): string | undefined {
-  const viteVal = (import.meta.env as Record<string, string | undefined>)[key];
-  if (viteVal !== undefined && viteVal !== '') return viteVal;
-  const proc = (
-    globalThis as { process?: { env?: Record<string, string | undefined> } }
-  ).process;
-  return proc?.env?.[key];
 }
 
 function positiveInt(key: string, fallback: number): number {

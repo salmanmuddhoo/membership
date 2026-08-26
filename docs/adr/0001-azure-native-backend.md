@@ -79,6 +79,20 @@ Entra is now the only auth provider: there is no `PUBLIC_AUTH_PROVIDER` switch
 and no Supabase code path. Step 5 is the sole remaining item, tracked as
 milestone M1 in [`../backlog.md`](../backlog.md).
 
+## Open: where the API runs
+
+This ADR places the frontend on Vercel and assumes the API runs there too. That
+assumption is **explicitly held open**.
+
+Jobs already run on Azure Container Apps (see `docs/jobs.md`), and the direction
+set on 26 August 2026 is to keep open the option of moving the API there as
+well, with VNet integration and a private-endpoint PostgreSQL — which would also
+close the firewall question in `docs/database.md`.
+
+Nothing should be written that would make that move a rewrite rather than a
+deployment change. The constraints that follow from it are listed in
+`docs/database.md`.
+
 ## Azure/Entra provisioning checklist (per environment)
 
 **Entra External ID**
