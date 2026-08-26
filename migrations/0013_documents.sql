@@ -102,6 +102,12 @@ create table document_version (
     -- what the applicant signed.
     checksum_sha256    text,
 
+    -- The expiry this upload is FOR, applied to the document only when the
+    -- version commits. Held here rather than written straight to the document,
+    -- because an upload that never arrives must leave the document it was
+    -- replacing exactly as it was — including its expiry date.
+    intended_expires_at timestamptz,
+
     uploaded_by       uuid        not null references app_user(id),
     created_at        timestamptz not null default now(),
     committed_at      timestamptz,
