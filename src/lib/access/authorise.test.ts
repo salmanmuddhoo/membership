@@ -122,3 +122,32 @@ describe('a declared permission binds everyone', () => {
     expect(authorise(admin, '/brand-new-page', ROUTES).allowed).toBe(true);
   });
 });
+
+describe('the live route map', () => {
+  // These assert the REAL map, not a fixture. The administration pages exist
+  // and are reachable from the sidebar, so what they require has to be true —
+  // a menu entry whose permission does not match the route's is how a person
+  // ends up clicking a link and being refused.
+  it('protects the administration pages by name', () => {
+    expect(requiredPermissionFor('/admin/roles')).toBe('role.view');
+    expect(requiredPermissionFor('/admin/users')).toBe('user.view');
+  });
+
+  it('does not rely on the system-administrator exemption for them', () => {
+    // The exemption exists so a NEW page is reachable before its permission is
+    // written. A finished page relying on it could not be delegated to anyone
+    // who is not a system administrator.
+    const admin = principal({ roles: ['system_administrator'] });
+
+    expect(authorise(admin, '/admin/roles').allowed).toBe(false);
+    expect(authorise(admin, '/admin/users').allowed).toBe(false);
+  });
+
+  it('admits someone holding only the declared permission', () => {
+    const viewer = principal({ permissions: new Set(['role.view']) });
+
+    expect(authorise(viewer, '/admin/roles').allowed).toBe(true);
+    // ...and not the page they were not granted.
+    expect(authorise(viewer, '/admin/users').allowed).toBe(false);
+  });
+});

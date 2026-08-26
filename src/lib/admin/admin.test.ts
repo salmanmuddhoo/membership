@@ -204,7 +204,7 @@ describe('S-202: a user may hold several roles', () => {
       actor
     );
 
-    const user = (await roles.listUsers()).find(u => u.id === officerId);
+    const user = (await roles.listUsers()).users.find(u => u.id === officerId);
     expect(user?.roles.sort()).toEqual(['clerk_duties', 'regional_officer']);
   });
 
@@ -221,7 +221,7 @@ describe('S-204: deactivation, never deletion', () => {
     const { roles } = await load();
     await roles.setUserActive(officerId, false, actor);
 
-    const user = (await roles.listUsers()).find(u => u.id === officerId);
+    const user = (await roles.listUsers()).users.find(u => u.id === officerId);
     expect(user).toBeDefined();
     expect(user?.isActive).toBe(false);
 
@@ -249,6 +249,48 @@ describe('S-204: deactivation, never deletion', () => {
     );
     // No audit noise from a change that did not happen.
     expect(after.rows[0].n).toBe(before.rows[0].n);
+  });
+});
+
+describe('the staff list stays bounded', () => {
+  it('caps the page and reports how many it left out', async () => {
+    const { roles } = await load();
+    // Two accounts exist from the fixture; add enough to cross the cap.
+    const extra = roles.USER_PAGE_LIMIT + 5;
+    await run(
+      appUrl,
+      `insert into app_user (email, display_name)
+       select 'bulk' || i || '@albarakah.mu', 'Bulk ' || i
+         from generate_series(1, $1) as i`,
+      [extra]
+    );
+
+    try {
+      const page = await roles.listUsers();
+      expect(page.users).toHaveLength(roles.USER_PAGE_LIMIT);
+      expect(page.total).toBe(extra + 2);
+      expect(page.truncated).toBe(true);
+    } finally {
+      await run(appUrl, `delete from app_user where email like 'bulk%'`);
+    }
+  });
+
+  it('finds an account by a fragment of its email, whatever the case', async () => {
+    const { roles } = await load();
+    const page = await roles.listUsers({ search: 'OFFICER@albarakah' });
+
+    expect(page.users.map(u => u.id)).toEqual([officerId]);
+    expect(page.total).toBe(1);
+    expect(page.truncated).toBe(false);
+  });
+
+  it('treats a wildcard as text, not as a pattern', async () => {
+    const { roles } = await load();
+    // A LIKE-based search would match every account here.
+    const page = await roles.listUsers({ search: '%' });
+
+    expect(page.users).toHaveLength(0);
+    expect(page.total).toBe(0);
   });
 });
 

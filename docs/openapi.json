@@ -333,40 +333,58 @@
                   ],
                   "properties": {
                     "data": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "required": [
-                          "id",
-                          "email",
-                          "displayName",
-                          "isActive",
-                          "hasSignedIn",
-                          "roles"
-                        ],
-                        "properties": {
-                          "id": {
-                            "type": "string",
-                            "format": "uuid"
-                          },
-                          "email": {
-                            "type": "string"
-                          },
-                          "displayName": {
-                            "type": "string"
-                          },
-                          "isActive": {
-                            "type": "boolean"
-                          },
-                          "hasSignedIn": {
-                            "type": "boolean"
-                          },
-                          "roles": {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
+                      "type": "object",
+                      "required": [
+                        "users",
+                        "total",
+                        "truncated"
+                      ],
+                      "properties": {
+                        "users": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "id",
+                              "email",
+                              "displayName",
+                              "isActive",
+                              "hasSignedIn",
+                              "roles"
+                            ],
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "format": "uuid"
+                              },
+                              "email": {
+                                "type": "string"
+                              },
+                              "displayName": {
+                                "type": "string"
+                              },
+                              "isActive": {
+                                "type": "boolean"
+                              },
+                              "hasSignedIn": {
+                                "type": "boolean"
+                              },
+                              "roles": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              }
                             }
                           }
+                        },
+                        "total": {
+                          "type": "integer",
+                          "description": "Accounts matching the search, before the cap."
+                        },
+                        "truncated": {
+                          "type": "boolean",
+                          "description": "True when the cap hid some of the matches."
                         }
                       }
                     },
@@ -418,7 +436,18 @@
               }
             }
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Case-insensitive substring matched against name and email. The response is capped at 100 accounts, so this is how a caller reaches the ones beyond the cap.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
       },
       "patch": {
         "summary": "Change a user's roles or active state",

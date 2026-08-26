@@ -37,6 +37,16 @@ export interface EndpointDescriptor {
   // Shape of a successful `data` payload, as an OpenAPI schema object.
   responseSchema: Record<string, unknown>;
   requestSchema?: Record<string, unknown>;
+  // Query-string parameters the endpoint reads. Optional by default: an
+  // endpoint that requires one says so with `required: true`.
+  query?: QueryParameter[];
+}
+
+export interface QueryParameter {
+  name: string;
+  description?: string;
+  required?: boolean;
+  schema: Record<string, unknown>;
 }
 
 export interface RequestContext {

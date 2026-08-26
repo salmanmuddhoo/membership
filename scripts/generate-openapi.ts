@@ -166,6 +166,16 @@ function buildDocument(descriptors: EndpointDescriptor[]) {
       },
     };
 
+    if (d.query?.length) {
+      operation.parameters = d.query.map(q => ({
+        name: q.name,
+        in: 'query',
+        required: q.required ?? false,
+        ...(q.description ? { description: q.description } : {}),
+        schema: q.schema,
+      }));
+    }
+
     if (d.requestSchema) {
       operation.requestBody = {
         required: true,

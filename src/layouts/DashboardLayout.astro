@@ -17,10 +17,43 @@ const user = Astro.locals.user;
 const email = user?.email ?? '';
 const initial = (email.charAt(0) || 'A').toUpperCase();
 
-// Primary navigation. Further modules are added here as they are enabled.
-const navItems = [
-  { label: 'Dashboard', href: '/dashboard', icon: 'dashboard' },
-];
+// Navigation is built from the permissions this person actually holds, so a
+// link is never shown to someone the middleware would refuse. The permission
+// named here must match the one the route declares in
+// src/lib/access/authorise.ts — otherwise the menu and the guard disagree, and
+// the person meets a refusal page instead of a missing link.
+const principal = Astro.locals.principal;
+const can = (permission: string) =>
+  principal?.permissions.has(permission) ?? false;
+
+interface NavItem {
+  label: string;
+  href: string;
+  icon: string;
+}
+
+interface NavGroup {
+  label?: string;
+  items: NavItem[];
+}
+
+const navGroups: NavGroup[] = [
+  { items: [{ label: 'Dashboard', href: '/dashboard', icon: 'dashboard' }] },
+  {
+    label: 'Administration',
+    items: [
+      ...(can('role.view')
+        ? [{ label: 'Roles', href: '/admin/roles', icon: 'settings' }]
+        : []),
+      ...(can('user.view')
+        ? [{ label: 'Staff accounts', href: '/admin/users', icon: 'members' }]
+        : []),
+    ],
+  },
+  // A group with nothing the person may see is dropped entirely, so the heading
+  // does not sit above an empty space.
+].filter(group => group.items.length > 0);
+
 const currentPath = Astro.url.pathname;
 ---
 
@@ -47,25 +80,34 @@ const currentPath = Astro.url.pathname;
         </div>
       </div>
 
-      <nav class="flex-1 space-y-1 px-3 py-2">
+      <nav class="flex-1 space-y-4 px-3 py-2">
         {
-          navItems.map(item => {
-            const active = currentPath === item.href;
-            return (
-              <a
-                href={item.href}
-                aria-current={active ? 'page' : undefined}
-                class={`flex items-center gap-x-3 rounded-lg px-3 py-2 text-sm font-medium transition ${
-                  active
-                    ? 'bg-mint-300 text-neutral-800'
-                    : 'text-neutral-600 hover:bg-neutral-200 hover:text-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800 dark:hover:text-white'
-                }`}
-              >
-                <Icon name={item.icon} class="size-5 shrink-0" />
-                {item.label}
-              </a>
-            );
-          })
+          navGroups.map(group => (
+            <div class="space-y-1">
+              {group.label && (
+                <p class="px-3 pt-2 pb-1 text-xs font-semibold tracking-wide text-neutral-400 uppercase dark:text-neutral-500">
+                  {group.label}
+                </p>
+              )}
+              {group.items.map(item => {
+                const active = currentPath.startsWith(item.href);
+                return (
+                  <a
+                    href={item.href}
+                    aria-current={active ? 'page' : undefined}
+                    class={`flex items-center gap-x-3 rounded-lg px-3 py-2 text-sm font-medium transition ${
+                      active
+                        ? 'bg-mint-300 text-neutral-800'
+                        : 'text-neutral-600 hover:bg-neutral-200 hover:text-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800 dark:hover:text-white'
+                    }`}
+                  >
+                    <Icon name={item.icon} class="size-5 shrink-0" />
+                    {item.label}
+                  </a>
+                );
+              })}
+            </div>
+          ))
         }
       </nav>
 

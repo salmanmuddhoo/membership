@@ -1,0 +1,220 @@
+---
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import {
+  AdminError,
+  listRoles,
+  listUsers,
+  setUserActive,
+  setUserRoles,
+} from '@lib/admin/roles';
+
+const principal = Astro.locals.principal!;
+const canManage = principal.permissions.has('user.manage');
+
+let error: string | null = null;
+let notice: string | null = null;
+
+if (Astro.request.method === 'POST') {
+  if (!canManage) {
+    error = 'You do not have permission to change staff accounts.';
+  } else {
+    const form = await Astro.request.formData();
+    const intent = String(form.get('intent') ?? '');
+    const userId = String(form.get('userId') ?? '');
+    const actor = { userId: principal.userId, email: principal.email };
+
+    try {
+      if (intent === 'roles') {
+        await setUserRoles(userId, form.getAll('roles').map(String), actor);
+        notice = 'Roles updated.';
+      } else if (intent === 'deactivate' || intent === 'reactivate') {
+        // Deactivating yourself would end your own session on the next request
+        // and could leave nobody able to administer the system.
+        if (userId === principal.userId && intent === 'deactivate') {
+          error = 'You cannot deactivate your own account.';
+        } else {
+          await setUserActive(userId, intent === 'reactivate', actor);
+          notice =
+            intent === 'reactivate'
+              ? 'Account reactivated.'
+              : 'Account deactivated.';
+        }
+      }
+    } catch (err) {
+      if (err instanceof AdminError) {
+        error = err.message;
+      } else {
+        console.error('[admin/users]', err);
+        error = 'Something went wrong. Please try again.';
+      }
+    }
+  }
+}
+
+const search = Astro.url.searchParams.get('q') ?? '';
+const [page, roles] = await Promise.all([listUsers({ search }), listRoles()]);
+const { users, total, truncated } = page;
+---
+
+<DashboardLayout
+  title="Staff accounts · Al Barakah MCSL"
+  heading="Staff accounts"
+>
+  <div class="mx-auto max-w-5xl space-y-6">
+    {
+      error && (
+        <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+          {error}
+        </div>
+      )
+    }
+    {
+      notice && (
+        <div class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-lg border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
+          {notice}
+        </div>
+      )
+    }
+
+    <section
+      class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
+    >
+      <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+        Staff accounts
+      </h2>
+      <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+        Accounts are created by email with <code>pnpm access:grant</code> and bind
+        to the person's Microsoft identity the first time they sign in. Leavers are
+        deactivated, never deleted — their history has to keep pointing at a real
+        account.
+      </p>
+
+      <form method="get" class="mt-5 flex flex-wrap items-center gap-2">
+        <label for="q" class="sr-only">Search staff accounts</label>
+        <input
+          id="q"
+          type="search"
+          name="q"
+          value={search}
+          placeholder="Search by name or email"
+          class="focus:border-mint-400 focus:ring-mint-400 min-w-64 flex-1 rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm text-neutral-800 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+        />
+        <button
+          type="submit"
+          class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+        >
+          Search
+        </button>
+        {
+          search && (
+            <a
+              href="/admin/users"
+              class="px-2 py-1.5 text-sm text-neutral-500 underline dark:text-neutral-400"
+            >
+              Clear
+            </a>
+          )
+        }
+      </form>
+
+      <p class="mt-3 text-sm text-neutral-500 dark:text-neutral-400">
+        {
+          total === 0
+            ? search
+              ? `No accounts match \u201C${search}\u201D.`
+              : 'No accounts yet.'
+            : truncated
+              ? `Showing the first ${users.length} of ${total} accounts \u2014 search to narrow the list.`
+              : `${total} account${total === 1 ? '' : 's'}.`
+        }
+      </p>
+
+      <div class="mt-5 space-y-4">
+        {
+          users.map(user => (
+            <details class="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+              <summary class="flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-1">
+                <span class="font-medium text-neutral-800 dark:text-neutral-100">
+                  {user.displayName}
+                </span>
+                <span class="text-sm text-neutral-500 dark:text-neutral-400">
+                  {user.email}
+                </span>
+                {!user.isActive && (
+                  <span class="rounded bg-red-100 px-1.5 py-0.5 text-xs text-red-800 dark:bg-red-950 dark:text-red-200">
+                    deactivated
+                  </span>
+                )}
+                {!user.hasSignedIn && (
+                  <span class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-700 dark:text-neutral-300">
+                    never signed in
+                  </span>
+                )}
+                <span class="text-xs text-neutral-400 dark:text-neutral-500">
+                  {user.roles.length > 0 ? user.roles.join(', ') : 'no roles'}
+                </span>
+              </summary>
+
+              <form method="post" class="mt-4 space-y-3">
+                <input type="hidden" name="userId" value={user.id} />
+
+                <fieldset class="grid gap-2 sm:grid-cols-2">
+                  <legend class="mb-2 text-sm font-medium text-neutral-700 dark:text-neutral-200">
+                    Roles
+                  </legend>
+                  {roles.map(role => (
+                    <label class="flex items-center gap-x-2 text-sm text-neutral-600 dark:text-neutral-300">
+                      <input
+                        type="checkbox"
+                        name="roles"
+                        value={role.code}
+                        checked={user.roles.includes(role.code)}
+                        disabled={!canManage}
+                        class="text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600"
+                      />
+                      {role.name}
+                    </label>
+                  ))}
+                </fieldset>
+
+                {canManage && (
+                  <div class="flex flex-wrap gap-2 pt-2">
+                    <button
+                      type="submit"
+                      name="intent"
+                      value="roles"
+                      class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+                    >
+                      Save roles
+                    </button>
+                    {user.isActive ? (
+                      user.id !== principal.userId && (
+                        <button
+                          type="submit"
+                          name="intent"
+                          value="deactivate"
+                          class="rounded-lg border border-red-300 px-3 py-1.5 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
+                        >
+                          Deactivate
+                        </button>
+                      )
+                    ) : (
+                      <button
+                        type="submit"
+                        name="intent"
+                        value="reactivate"
+                        class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                      >
+                        Reactivate
+                      </button>
+                    )}
+                  </div>
+                )}
+              </form>
+            </details>
+          ))
+        }
+      </div>
+    </section>
+  </div>
+</DashboardLayout>

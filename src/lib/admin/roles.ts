@@ -364,7 +364,30 @@ export interface UserSummary {
   roles: string[];
 }
 
-export async function listUsers(): Promise<UserSummary[]> {
+export interface UserPage {
+  users: UserSummary[];
+  /** Accounts matching the search, before the page limit is applied. */
+  total: number;
+  /** True when the limit hid some of them, so the caller can say so. */
+  truncated: boolean;
+}
+
+/**
+ * The staff list grows without bound, and rendering all of it into one page
+ * is what makes it unusable rather than merely long. So it is always bounded
+ * and always says how many it left out; `search` is how you reach the rest.
+ */
+export const USER_PAGE_LIMIT = 100;
+
+export async function listUsers(
+  options: { search?: string; limit?: number } = {}
+): Promise<UserPage> {
+  const search = options.search?.trim() ? options.search.trim() : null;
+  const limit = Math.min(
+    Math.max(options.limit ?? USER_PAGE_LIMIT, 1),
+    USER_PAGE_LIMIT
+  );
+
   const result = await query<{
     id: string;
     email: string;
@@ -372,20 +395,29 @@ export async function listUsers(): Promise<UserSummary[]> {
     is_active: boolean;
     has_signed_in: boolean;
     roles: string[];
+    total_count: string;
   }>(
+    // count(*) over () is evaluated before LIMIT, so it reports the size of
+    // the whole match, not of the page.
     `select u.id, u.email::text as email, u.display_name, u.is_active,
             (u.entra_subject is not null) as has_signed_in,
             coalesce(
               array_agg(distinct r.code) filter (where r.code is not null), '{}'
-            ) as roles
+            ) as roles,
+            count(*) over () as total_count
        from app_user u
        left join user_role ur on ur.user_id = u.id
        left join role r on r.id = ur.role_id
+      where $1::text is null
+         or strpos(lower(u.display_name), lower($1::text)) > 0
+         or strpos(lower(u.email::text), lower($1::text)) > 0
       group by u.id
-      order by u.display_name`
+      order by u.display_name
+      limit $2::int`,
+    [search, limit]
   );
 
-  return result.rows.map(r => ({
+  const users = result.rows.map(r => ({
     id: r.id,
     email: r.email,
     displayName: r.display_name,
@@ -393,4 +425,8 @@ export async function listUsers(): Promise<UserSummary[]> {
     hasSignedIn: r.has_signed_in,
     roles: r.roles,
   }));
+
+  const total = result.rows.length > 0 ? Number(result.rows[0].total_count) : 0;
+
+  return { users, total, truncated: users.length < total };
 }
