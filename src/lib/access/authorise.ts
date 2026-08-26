@@ -1,0 +1,84 @@
+// Authorisation decisions, and the route permission map (S-107, S-108).
+//
+// Deny by default is the whole point: a route that nobody remembered to list
+// is refused rather than served. Adding a feature and forgetting to protect it
+// therefore produces a visible refusal in testing, not a silent hole in
+// production.
+import {
+  hasPermission,
+  isSystemAdministrator,
+  type Principal,
+} from './principal';
+
+export type Decision =
+  | { allowed: true }
+  | {
+      allowed: false;
+      reason: 'undeclared-route' | 'missing-permission';
+      required?: string;
+    };
+
+// Routes that require no permission beyond being a signed-in, active user.
+// Kept explicit and small: everything here is readable by every member of
+// staff, so each entry should be obviously harmless.
+const OPEN_TO_ALL_USERS: ReadonlySet<string> = new Set(['/dashboard']);
+
+// The permission each protected route requires. A route absent from both this
+// map and the set above is undeclared, and undeclared means denied.
+//
+// Prefixes end with '/' and match a route and everything beneath it, so a new
+// sub-page under an already-protected area inherits its protection instead of
+// arriving unguarded.
+const ROUTE_PERMISSIONS: ReadonlyArray<readonly [string, string]> = [
+  // Populated as modules land (members, financing, documents, ...). The order
+  // matters: the longest matching prefix wins, so a more specific rule can
+  // tighten a broader one.
+];
+
+export type RoutePermissions = ReadonlyArray<readonly [string, string]>;
+
+export function requiredPermissionFor(
+  pathname: string,
+  routes: RoutePermissions = ROUTE_PERMISSIONS
+): string | undefined {
+  let match: { prefix: string; permission: string } | undefined;
+
+  for (const [prefix, permission] of routes) {
+    const matches = prefix.endsWith('/')
+      ? pathname === prefix.slice(0, -1) || pathname.startsWith(prefix)
+      : pathname === prefix;
+
+    if (matches && (!match || prefix.length > match.prefix.length)) {
+      match = { prefix, permission };
+    }
+  }
+
+  return match?.permission;
+}
+
+// Decide whether a principal may reach a path.
+//
+// A system administrator passes an undeclared route — someone has to be able
+// to reach a newly added page before its permission exists — but is NOT
+// exempted from a declared one. An explicit permission means what it says;
+// bypassing it for one role would make the map advisory rather than binding.
+// `routes` is injectable so the rules can be tested against a representative
+// map. The live map is empty until the first module lands, and a security
+// property that cannot be exercised until then is one that ships unverified.
+export function authorise(
+  principal: Principal,
+  pathname: string,
+  routes: RoutePermissions = ROUTE_PERMISSIONS
+): Decision {
+  const required = requiredPermissionFor(pathname, routes);
+
+  if (required === undefined) {
+    if (OPEN_TO_ALL_USERS.has(pathname)) return { allowed: true };
+    if (isSystemAdministrator(principal)) return { allowed: true };
+    return { allowed: false, reason: 'undeclared-route' };
+  }
+
+  if (hasPermission(principal, required)) return { allowed: true };
+
+  return { allowed: false, reason: 'missing-permission', required };
+}

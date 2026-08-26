@@ -25,5 +25,10 @@ declare namespace App {
   interface Locals {
     // Populated by the auth middleware from the session cookie.
     user: import('@lib/auth/types').AuthUser | null;
+
+    // The signed-in user resolved against this system's own records, with the
+    // permissions their roles confer. Null until the middleware has matched an
+    // active account — a valid Entra session alone does not produce one.
+    principal: import('@lib/access/principal').Principal | null;
   }
 }
