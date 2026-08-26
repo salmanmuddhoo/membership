@@ -48,6 +48,15 @@ jobs:
       - name: Type-check and build
         run: pnpm build
 
+      # The Vercel adapter emits a closed allow-list of routes, with a final
+      # catch-all that 404s. A page missing from that list is unreachable in
+      # the deployed site however the application is configured — and nothing
+      # else fails: the source has the page, the tests pass, the build
+      # succeeds. Checking the build output here means the next occurrence
+      # fails next to the build that caused it.
+      - name: Every page is reachable in the build output
+        run: pnpm verify:routes
+
   test:
     name: Tests
     runs-on: ubuntu-latest

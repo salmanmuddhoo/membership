@@ -87,7 +87,7 @@ FRD Section 23, plus this project's specifics. A story is done when:
 
 ---
 
-# M1 — Data platform & cross-cutting core
+# M1 — Data platform & cross-cutting core ✅
 
 **Goal:** a signed-in officer is resolved against the database, permissions are
 enforced, and every action is audited.
@@ -233,12 +233,12 @@ uploaded, **so that** M4 is not designed against a limit we discover late.
 
 ---
 
-# M2 — Administration & configuration
+# M2 — Administration & configuration ✅
 
 **Goal:** an administrator can change the entrance fee, add an account type,
 alter a checklist and enable an optional workflow step — all without a release.
 
-## Feature 2.1 — Users, roles and permissions
+## Feature 2.1 — Users, roles and permissions ✅
 
 ### S-201 · Manage roles and their permissions
 
@@ -272,7 +272,7 @@ permissions, **so that** the operating model is expressed in the system.
 **so that** access ends without losing their history.
 `Must · 2 · EPIC-02`
 
-## Feature 2.2 — Reference configuration
+## Feature 2.2 — Reference configuration ✅
 
 ### S-205 · Membership types and their field rules
 
