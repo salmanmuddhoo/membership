@@ -254,6 +254,110 @@ export async function deleteRole(
 
 // Replace a user's roles. Several at once is the normal case, not an edge one:
 // FRD 6.1 expects a Regional Officer to also cover Clerk duties.
+/**
+ * Create a staff account (S-202, S-204 — the "create" half of user.manage).
+ *
+ * Accounts are created by EMAIL, never by Entra subject: the OIDC `sub` claim
+ * is pairwise to this application and is not visible anywhere in the Azure
+ * portal, so there is nothing an administrator could look up. The subject is
+ * bound the first time that person signs in (see access/principal.ts).
+ *
+ * That binding trusts the email claim, which is safe ONLY because self-service
+ * sign-up is disabled on the tenant. Creating an account here is therefore the
+ * moment access is really granted — the person named simply signs in and
+ * receives it. It is gated on user.manage and audited for that reason.
+ */
+export async function createStaffAccount(
+  input: { email: string; displayName: string; roleCodes: string[] },
+  actor: { userId: string; email: string }
+): Promise<string> {
+  const email = input.email.trim().toLowerCase();
+  const displayName = input.displayName.trim();
+
+  // Deliberately permissive: the authority on whether an address exists is the
+  // Entra tenant, not a regular expression, and a rule that rejects a real
+  // colleague's address is worse than one that lets a typo through — a typo
+  // simply never signs in, and the account can be deactivated.
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new AdminError(
+      'That does not look like an email address.',
+      'invalid'
+    );
+  }
+  if (displayName === '') {
+    throw new AdminError(
+      'A name is required, so colleagues can tell who this is.',
+      'invalid'
+    );
+  }
+
+  return withTransaction(async client => {
+    const existing = await client.query<{ id: string; is_active: boolean }>(
+      'select id, is_active from app_user where email = $1::citext',
+      [email]
+    );
+    if (existing.rowCount) {
+      // Say which case it is. "Already exists" sends an administrator hunting
+      // for an account that the list does not show because it is deactivated.
+      throw new AdminError(
+        existing.rows[0].is_active
+          ? `${email} already has an account. Change its roles below instead.`
+          : `${email} has a deactivated account. Reactivate it below rather ` +
+              'than creating a second one — their history points at the first.',
+        'duplicate'
+      );
+    }
+
+    if (input.roleCodes.length > 0) {
+      const known = await client.query<{ code: string }>(
+        'select code from role where code = any($1)',
+        [input.roleCodes]
+      );
+      const found = new Set(known.rows.map(r => r.code));
+      const unknown = input.roleCodes.filter(c => !found.has(c));
+      if (unknown.length > 0) {
+        throw new AdminError(
+          `Unknown role(s): ${unknown.join(', ')}.`,
+          'invalid'
+        );
+      }
+    }
+
+    const created = await client.query<{ id: string }>(
+      `insert into app_user (email, display_name) values ($1::citext, $2)
+       returning id`,
+      [email, displayName]
+    );
+    const userId = created.rows[0].id;
+
+    if (input.roleCodes.length > 0) {
+      await client.query(
+        `insert into user_role (user_id, role_id, granted_by)
+         select $1, r.id, $3 from role r where r.code = any($2)`,
+        [userId, input.roleCodes, actor.userId]
+      );
+    }
+
+    await recordAudit(
+      {
+        actorUserId: actor.userId,
+        actorDescription: actor.email,
+        action: 'user.created',
+        entityType: 'app_user',
+        entityId: userId,
+        newValue: {
+          email,
+          displayName,
+          roles: [...input.roleCodes].sort(),
+        },
+      },
+      client
+    );
+
+    return userId;
+  });
+}
+
 export async function setUserRoles(
   userId: string,
   roleCodes: string[],
