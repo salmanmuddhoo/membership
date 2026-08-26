@@ -16,14 +16,7 @@
 // rules about who may file what. The cost is that SharePoint sees one identity,
 // so WHO did what lives in our audit trail rather than SharePoint's.
 
-function readEnv(key: string): string | undefined {
-  const viteVal = (import.meta.env as Record<string, string | undefined>)[key];
-  if (viteVal !== undefined && viteVal !== '') return viteVal;
-  const proc = (
-    globalThis as { process?: { env?: Record<string, string | undefined> } }
-  ).process;
-  return proc?.env?.[key];
-}
+import { readEnv } from '../config';
 
 export interface GraphConfig {
   tenantId: string;

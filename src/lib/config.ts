@@ -5,8 +5,16 @@
 // available via process.env at request time (not inlined at build); in local
 // dev Astro loads .env into import.meta.env. We check both so it works in both
 // places.
-function readEnv(key: string): string | undefined {
-  const viteVal = (import.meta.env as Record<string, string | undefined>)[key];
+//
+// import.meta.env only EXISTS under Vite — the Astro app and the test runner.
+// The job runner and the CLI scripts run under plain Node, where it is
+// undefined and indexing it throws. So it is probed rather than assumed; every
+// caller outside the web app depends on that.
+export function readEnv(key: string): string | undefined {
+  const viteEnv = (
+    import.meta as unknown as { env?: Record<string, string | undefined> }
+  ).env;
+  const viteVal = viteEnv?.[key];
   if (viteVal !== undefined && viteVal !== '') return viteVal;
   const proc = (
     globalThis as { process?: { env?: Record<string, string | undefined> } }

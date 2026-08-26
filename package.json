@@ -16,7 +16,8 @@
     "migrate:status": "tsx scripts/migrate-cli.ts status",
     "access:grant": "tsx scripts/grant-access.ts",
     "openapi:generate": "tsx scripts/generate-openapi.ts",
-    "openapi:check": "tsx scripts/generate-openapi.ts --check"
+    "openapi:check": "tsx scripts/generate-openapi.ts --check",
+    "job": "tsx scripts/run-job.ts"
   },
   "dependencies": {
     "@astrojs/check": "^0.9.10",

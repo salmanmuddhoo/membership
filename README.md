@@ -155,6 +155,8 @@ read at runtime, they take effect on the next deploy.
   defined, and how the OpenAPI document stays current.
 - [`docs/documents.md`](docs/documents.md) — SharePoint as the document
   repository, how a large upload is brokered, and the M365 tenant setup.
+- [`docs/jobs.md`](docs/jobs.md) — scheduled and long-running jobs on Azure
+  Container Apps Jobs, and how they resume rather than restart.
 
 ## Security & contributions
 
