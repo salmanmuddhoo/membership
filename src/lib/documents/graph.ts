@@ -208,3 +208,31 @@ export async function ensureFolder(
       `(${response.status}): ${detail}`
   );
 }
+
+/**
+ * Remove a file from the drive.
+ *
+ * Used when a draft application is abandoned: the rows cascade away, and
+ * leaving the scans behind would keep an applicant's identity documents in
+ * SharePoint with nothing in this system explaining why they are there.
+ *
+ * A 404 is success — the file is gone, which is what was asked for, and a
+ * retry after a partial failure must not be an error.
+ */
+export async function deleteItemByPath(
+  itemPath: string,
+  config: GraphConfig = getGraphConfig()
+): Promise<void> {
+  const token = await getAccessToken(config);
+  const response = await fetch(
+    `${config.graphBaseUrl}/drives/${config.driveId}/root:/${encodeURI(itemPath)}`,
+    { method: 'DELETE', headers: { authorization: `Bearer ${token}` } }
+  );
+
+  if (response.ok || response.status === 404) return;
+
+  const detail = await response.text().catch(() => '');
+  throw new Error(
+    `Graph delete failed for ${itemPath} (${response.status}): ${detail}`
+  );
+}

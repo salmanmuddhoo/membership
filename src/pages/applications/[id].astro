@@ -2,6 +2,7 @@
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import {
   ApplicationError,
+  deleteDraftApplication,
   loadApplication,
   problemsBlockingSubmission,
   saveDraft,
@@ -54,7 +55,7 @@ let blockingOnSubmit: { label: string; subject: string }[] = [];
 let createdMember: { memberNo: string; accountNo: string; id: string } | null =
   null;
 
-const isEditable =
+let isEditable =
   application.status === 'draft' || application.status === 'returned';
 
 if (Astro.request.method === 'POST') {
@@ -76,9 +77,31 @@ if (Astro.request.method === 'POST') {
       : null;
   };
 
-  // The workflow actions are separate intents with their own permissions —
-  // being able to edit a draft is not being able to submit, review or decide.
-  if (intent === 'submit' || intent === 'review' || intent === 'decide') {
+  // Deleting leaves no page to come back to, so it redirects rather than
+  // re-rendering an application that is no longer there.
+  if (intent === 'delete') {
+    try {
+      const deleted = await deleteDraftApplication(application.id, principal);
+      return Astro.redirect(
+        `/applications?deleted=${encodeURIComponent(deleted.reference)}`
+      );
+    } catch (err) {
+      if (err instanceof ApplicationError) {
+        error = err.message;
+      } else {
+        console.error('[applications/delete]', err);
+        error =
+          'The draft could not be deleted. Nothing has been removed — ' +
+          'please try again.';
+      }
+      application = await loadApplication(application.id);
+      if (!application) return Astro.redirect('/applications');
+    }
+  } else if (
+    intent === 'submit' ||
+    intent === 'review' ||
+    intent === 'decide'
+  ) {
     try {
       if (intent === 'submit') {
         const result = await submitApplication(application.id, principal);
@@ -179,6 +202,20 @@ if (Astro.request.method === 'POST') {
     }
   }
 }
+
+// Recomputed after the POST: a submit that just succeeded leaves an
+// application that is no longer editable, and the page below is describing it
+// as it is now, not as it was when the request arrived.
+isEditable =
+  application!.status === 'draft' || application!.status === 'returned';
+
+// Offered only for the officer's own untouched draft. A returned application
+// is editable in exactly the same way but has been through the Secretary, and
+// that history is not theirs to discard.
+const isDeletableDraft =
+  canCapture &&
+  application!.status === 'draft' &&
+  application!.capturedBy === principal.userId;
 
 const [blocking, actions, history] = await Promise.all([
   problemsBlockingSubmission(application!),
@@ -558,6 +595,33 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         )
       }
     </form>
+
+    {
+      isDeletableDraft && (
+        <section class="rounded-2xl border border-neutral-200 p-6 dark:border-neutral-800">
+          <h2 class="text-sm font-medium text-neutral-800 dark:text-neutral-100">
+            Delete this draft
+          </h2>
+          <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+            For an application that was started by mistake or is no longer going
+            ahead. It has not been submitted, so nothing is lost — everything
+            typed in and any documents filed against it are removed, and this
+            cannot be undone. Once submitted, an application can no longer be
+            deleted.
+          </p>
+          <form method="post" class="mt-4" data-confirm-delete>
+            <button
+              type="submit"
+              name="intent"
+              value="delete"
+              class="rounded-lg border border-red-300 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
+            >
+              Delete draft {application!.reference}
+            </button>
+          </form>
+        </section>
+      )
+    }
   </div>
 </DashboardLayout>
 
@@ -566,6 +630,22 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
   // connection. The explicit Save draft button is the guarantee — this only
   // reduces how much a lapse costs, so the page works identically with
   // JavaScript switched off.
+  // Deleting a draft cannot be undone, so ask. Without JavaScript the button
+  // simply deletes: a confirmation is a courtesy, and a control that only
+  // works with scripting would not be.
+  document
+    .querySelector<HTMLFormElement>('form[data-confirm-delete]')
+    ?.addEventListener('submit', event => {
+      if (
+        !window.confirm(
+          'Delete this draft? Everything captured on it, and any documents ' +
+            'filed against it, will be removed. This cannot be undone.'
+        )
+      ) {
+        event.preventDefault();
+      }
+    });
+
   const form = document.getElementById(
     'capture-form'
   ) as HTMLFormElement | null;

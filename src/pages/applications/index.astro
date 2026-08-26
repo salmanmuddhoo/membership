@@ -36,6 +36,10 @@ if (Astro.request.method === 'POST') {
   }
 }
 
+// Set by the redirect after a draft is deleted: the page that would have
+// reported it no longer exists.
+const deleted = Astro.url.searchParams.get('deleted');
+
 const filter = Astro.url.searchParams.get('status') ?? '';
 const [applications, types] = await Promise.all([
   listApplications(filter ? { statuses: [filter] } : {}),
@@ -77,6 +81,14 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       error && (
         <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
           {error}
+        </div>
+      )
+    }
+
+    {
+      deleted && (
+        <div class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-lg border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
+          Draft {deleted} was deleted.
         </div>
       )
     }

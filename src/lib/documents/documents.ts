@@ -18,7 +18,12 @@ import {
   type FieldSubject,
 } from '../config/reference';
 import { query, withTransaction } from '../db/pool';
-import { ensureFolder, getItemByPath, type GraphConfig } from './graph';
+import {
+  deleteItemByPath,
+  ensureFolder,
+  getItemByPath,
+  type GraphConfig,
+} from './graph';
 import {
   createUploadTicket,
   sanitiseFileName,
@@ -765,4 +770,28 @@ export async function expireDocuments(
   });
 
   return { expired: result };
+}
+
+/**
+ * Remove everything filed against an application (used when a draft is
+ * abandoned).
+ *
+ * The document rows cascade away with the application. The files would not:
+ * they would sit in SharePoint as an applicant's identity papers with nothing
+ * in this system saying whose they are or why they are held. So the
+ * application's folder goes too, and the record that it was created with it —
+ * otherwise ensureFolderPath would later believe a folder exists that does
+ * not.
+ */
+export async function discardApplicationFiles(
+  reference: string,
+  config?: GraphConfig
+): Promise<void> {
+  const folder = applicationFolderPath(reference);
+  await deleteItemByPath(folder, config);
+  await query(
+    `delete from sharepoint_folder
+      where path = $1 or starts_with(path, $1 || '/')`,
+    [folder]
+  );
 }
