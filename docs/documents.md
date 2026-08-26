@@ -66,11 +66,20 @@ The client therefore never receives the application's client secret or any
 credential that reaches anything else (**AD-09**), and our function's body limit
 never applies because the bytes never pass through it.
 
-## The decision this leaves open
+## The decision, now settled
 
 **The browser talks to Microsoft directly.** That is a real departure from
-"SharePoint access must be through the backend/integration layer", and it should
-be settled deliberately rather than by default.
+"SharePoint access must be through the backend/integration layer", so it was put
+to the operator rather than taken by default.
+
+> **Decided 26 August 2026: option A, the brokered session.** The client
+> receives a capability to write one named file to one folder, expiring in
+> hours; the backend continues to decide every term of the upload. What is
+> delegated is the transfer, not the authority.
+
+The alternatives were considered and are kept below, because the reasoning
+matters if the requirement is ever revisited — particularly if content in
+transit needs inspecting, which option A cannot offer.
 
 |                                         | How                                                            | Trade                                                                                                                                                                                           |
 | --------------------------------------- | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -78,13 +87,12 @@ be settled deliberately rather than by default.
 | **B. Relay through the API**            | Client sends chunks to our API; backend forwards each to Graph | Literally all access through the backend. But every chunk must fit the 4.5 MB limit, we pay double egress and double latency, and function execution time becomes a factor on slow connections. |
 | **C. Stage in Azure Blob**              | Client uploads to Blob; a job moves it to SharePoint           | Decouples the upload from SharePoint's availability. But it adds a component and puts a second copy of member documents somewhere that must then be secured and swept.                          |
 
-**Recommendation: A.** The session URL is not a credential in any meaningful
+**A was chosen.** The session URL is not a credential in any meaningful
 sense — it is a capability to write one named file to one folder, expires in
 hours, and grants nothing else. The backend still decides every term of the
 upload; what it delegates is the _transfer_, not the _authority_. B is the
-purist reading, and it would be the right answer if the requirement were about
-data residency or inspection of content in transit rather than about credential
-custody — worth confirming which was meant.
+purist reading, and would be the right answer if the requirement were about data
+residency or inspecting content in transit rather than credential custody.
 
 ## Setting it up
 
