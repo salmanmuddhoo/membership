@@ -3,7 +3,7 @@ name: Apply migrations
 # Schema changes reach a deployed database only through this workflow (S-102) —
 # never by someone connecting with psql and running DDL by hand.
 #
-# Runs after a merge, per environment:
+# Runs after a merge,per environment:
 #   main       -> the test database
 #   production -> the production database
 #
