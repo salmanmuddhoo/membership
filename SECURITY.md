@@ -88,3 +88,25 @@ change. Re-check at each periodic review.
 Exceptions live in `.gitleaks.toml` and each one states why it is safe. Blanket
 allowlisting is not permitted — an exception that cannot be justified in a
 sentence should not be added.
+
+## A deployed page can be missing without anything failing
+
+The Vercel adapter emits a **closed allow-list** of routes in
+`.vercel/output/config.json`, ending in a catch-all that returns 404. That list
+is generated at build time and frozen into the deployment, so a page absent
+from it is unreachable no matter what the database, the permissions or the
+application configuration say.
+
+This matters for a security review because the symptom is indistinguishable
+from a permission problem at a glance, and the instinct is to start granting
+permissions to fix it. It is worth knowing the difference:
+
+| Symptom               | Cause                                                                         |
+| --------------------- | ----------------------------------------------------------------------------- |
+| Redirect to `/denied` | The route exists; the caller lacks the permission it declares                 |
+| **404**               | The route is not in the deployed build's allow-list — authorisation never ran |
+
+`pnpm verify:routes` checks the build output against `src/pages` and fails if
+any page would 404. It runs in CI after the build. Never respond to a 404 on a
+page you believe exists by widening permissions: check which commit is
+deployed first.
