@@ -50,6 +50,10 @@ export interface Application {
   membershipTypeName: string;
   status: string;
   capturedBy: string;
+  // Both, deliberately: the screen shows the name, because that is how a
+  // colleague is known; the audit trail records the address, because that is
+  // what identifies the account beyond doubt.
+  capturedByName: string;
   capturedByEmail: string;
   submittedAt: Date | null;
   decidedAt: Date | null;
@@ -125,6 +129,7 @@ export async function loadApplication(id: string): Promise<Application | null> {
     membership_type_name: string;
     status: string;
     captured_by: string;
+    captured_by_name: string;
     captured_by_email: string;
     submitted_at: Date | null;
     decided_at: Date | null;
@@ -132,7 +137,9 @@ export async function loadApplication(id: string): Promise<Application | null> {
   }>(
     `select a.id, a.reference, a.membership_type_id,
             m.code as membership_type_code, m.name as membership_type_name,
-            a.status, a.captured_by, u.email::text as captured_by_email,
+            a.status, a.captured_by,
+            u.display_name as captured_by_name,
+            u.email::text as captured_by_email,
             a.submitted_at, a.decided_at, a.updated_at
        from membership_application a
        join membership_type m on m.id = a.membership_type_id
@@ -163,6 +170,7 @@ export async function loadApplication(id: string): Promise<Application | null> {
     membershipTypeName: row.membership_type_name,
     status: row.status,
     capturedBy: row.captured_by,
+    capturedByName: row.captured_by_name,
     capturedByEmail: row.captured_by_email,
     submittedAt: row.submitted_at,
     decidedAt: row.decided_at,
@@ -370,7 +378,7 @@ export async function listApplications(options: {
     membershipTypeName: string;
     status: string;
     applicantName: string;
-    capturedByEmail: string;
+    capturedByName: string;
     updatedAt: Date;
   }>
 > {
@@ -380,13 +388,13 @@ export async function listApplications(options: {
     membership_type_name: string;
     status: string;
     applicant_name: string | null;
-    captured_by_email: string;
+    captured_by_name: string;
     updated_at: Date;
   }>(
     `select a.id, a.reference, m.name as membership_type_name, a.status,
             trim(coalesce(p.values->>'name', '') || ' '
                  || coalesce(p.values->>'surname', '')) as applicant_name,
-            u.email::text as captured_by_email,
+            u.display_name as captured_by_name,
             a.updated_at
        from membership_application a
        join membership_type m on m.id = a.membership_type_id
@@ -406,7 +414,7 @@ export async function listApplications(options: {
     membershipTypeName: r.membership_type_name,
     status: r.status,
     applicantName: r.applicant_name || '(no name yet)',
-    capturedByEmail: r.captured_by_email,
+    capturedByName: r.captured_by_name,
     updatedAt: r.updated_at,
   }));
 }

@@ -519,6 +519,40 @@ describe('the working list hides leavers unless asked', () => {
   });
 });
 
+describe('counting deactivated accounts', () => {
+  it('counts them all, not just those inside a page of results', async () => {
+    const { roles } = await load();
+    const before = await roles.countDeactivatedUsers();
+
+    const id = await roles.createStaffAccount(
+      { email: 'counted@albarakah.mu', displayName: 'Counted', roleCodes: [] },
+      actor
+    );
+    await roles.setUserActive(id, false, actor);
+
+    expect(await roles.countDeactivatedUsers()).toBe(before + 1);
+
+    // The point of counting in the database: with more accounts than the page
+    // limit, filtering a page would miss any deactivated account beyond it.
+    await run(
+      appUrl,
+      `insert into app_user (email, display_name, is_active)
+       select 'pad' || i || '@albarakah.mu', 'Pad ' || i, true
+         from generate_series(1, $1) as i`,
+      [roles.USER_PAGE_LIMIT + 10]
+    );
+    try {
+      const page = await roles.listUsers({ includeInactive: true });
+      expect(page.users).toHaveLength(roles.USER_PAGE_LIMIT);
+      // Still correct, even though the deactivated account may now sit beyond
+      // the page.
+      expect(await roles.countDeactivatedUsers()).toBe(before + 1);
+    } finally {
+      await run(appUrl, `delete from app_user where email like 'pad%'`);
+    }
+  });
+});
+
 describe('S-202: a user may hold several roles', () => {
   it('assigns more than one, as FRD 6.1 expects', async () => {
     const { roles } = await load();

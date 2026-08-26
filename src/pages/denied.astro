@@ -31,16 +31,18 @@ import BrandLogo from '@components/BrandLogo.astro';
       administrator — the attempt has been recorded.
     </p>
 
-    <div class="mt-8 flex items-center justify-center gap-3">
-      <a
-        href="/dashboard"
-        class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition duration-300"
-      >
-        Back to dashboard
-      </a>
+    <div class="mt-8 flex items-center justify-center">
+      {
+        /*
+        Sign out only. Most people who land here have no account in this system
+        or a deactivated one, and for them the dashboard is another refusal —
+        offering it sends them round a loop with no way out. Signing out is the
+        one action that always does something.
+      */
+      }
       <a
         href="/auth/logout"
-        class="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-800"
+        class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition duration-300"
       >
         Sign out
       </a>

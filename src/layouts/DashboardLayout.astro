@@ -15,7 +15,11 @@ const { title = 'Dashboard · Al Barakah MCSL', heading = 'Dashboard' } =
 
 const user = Astro.locals.user;
 const email = user?.email ?? '';
-const initial = (email.charAt(0) || 'A').toUpperCase();
+// The person's name, falling back to the address only before an account has
+// been resolved — a name is how a colleague is known, and an address is how
+// the system finds them.
+const displayName = Astro.locals.principal?.displayName || user?.name || email;
+const initial = (displayName.charAt(0) || 'A').toUpperCase();
 
 // Navigation is built from the permissions this person actually holds, so a
 // link is never shown to someone the middleware would refuse. The permission
@@ -185,7 +189,7 @@ const currentPath = Astro.url.pathname;
             >
               {initial}
             </span>
-            <span class="hidden max-w-40 truncate sm:block">{email}</span>
+            <span class="hidden max-w-40 truncate sm:block">{displayName}</span>
             <Icon name="chevronDown" class="size-4" />
           </button>
 
@@ -202,8 +206,22 @@ const currentPath = Astro.url.pathname;
               <p
                 class="truncate text-sm font-medium text-neutral-800 dark:text-neutral-100"
               >
-                {email}
+                {displayName}
               </p>
+              {
+                /*
+                The address stays here, small, because two colleagues can share
+                a name and this is where someone checks which account they are
+                actually using.
+              */
+              }
+              {
+                email && email !== displayName && (
+                  <p class="truncate text-xs text-neutral-500 dark:text-neutral-400">
+                    {email}
+                  </p>
+                )
+              }
             </div>
             <div
               class="my-1 border-t border-neutral-200 dark:border-neutral-700"
