@@ -1,0 +1,261 @@
+---
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import ConfigNav from '@components/ConfigNav.astro';
+import {
+  ConfigError,
+  listChecklists,
+  listFeeSchedules,
+  listMembershipTypes,
+  setFieldRule,
+  setMembershipTypeReferences,
+} from '@lib/config/reference';
+
+const principal = Astro.locals.principal!;
+const canManage = principal.permissions.has('config.manage');
+
+let error: string | null = null;
+let notice: string | null = null;
+
+if (Astro.request.method === 'POST') {
+  if (!canManage) {
+    error = 'You do not have permission to change configuration.';
+  } else {
+    const form = await Astro.request.formData();
+    const intent = String(form.get('intent') ?? '');
+    const actor = { userId: principal.userId, email: principal.email };
+
+    try {
+      if (intent === 'references') {
+        await setMembershipTypeReferences(
+          String(form.get('typeId')),
+          {
+            checklistId: String(form.get('checklistId') ?? '') || null,
+            feeScheduleId: String(form.get('feeScheduleId') ?? '') || null,
+          },
+          actor
+        );
+        notice = 'Checklist and fee schedule updated.';
+      } else if (intent === 'fields') {
+        // One form per type, so the visible/mandatory state of every field on
+        // it is submitted together: a checkbox that is off sends nothing, and
+        // reading each field's pair explicitly is what makes "unchecked" mean
+        // false rather than "leave as it was".
+        const visible = new Set(form.getAll('visible').map(String));
+        const mandatory = new Set(form.getAll('mandatory').map(String));
+        const ids = form.getAll('fieldId').map(String);
+
+        for (const id of ids) {
+          await setFieldRule(
+            id,
+            { isVisible: visible.has(id), isMandatory: mandatory.has(id) },
+            actor
+          );
+        }
+        notice = `Field rules updated for ${ids.length} field(s).`;
+      }
+    } catch (err) {
+      if (err instanceof ConfigError) {
+        error = err.message;
+      } else {
+        console.error('[config/membership-types]', err);
+        error = 'Something went wrong. Please try again.';
+      }
+    }
+  }
+}
+
+const [types, checklists, schedules] = await Promise.all([
+  listMembershipTypes(),
+  listChecklists(),
+  listFeeSchedules(),
+]);
+
+const SUBJECT_LABELS: Record<string, string> = {
+  applicant: 'Applicant',
+  nominee: 'Nominee',
+  guardian: 'Guardian',
+  beneficiary: 'Takaful beneficiary',
+};
+---
+
+<DashboardLayout
+  title="Membership types · Al Barakah MCSL"
+  heading="Membership types"
+>
+  <div class="mx-auto max-w-5xl space-y-6">
+    <ConfigNav />
+
+    {
+      error && (
+        <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+          {error}
+        </div>
+      )
+    }
+    {
+      notice && (
+        <div class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-lg border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
+          {notice}
+        </div>
+      )
+    }
+
+    <p class="text-sm text-neutral-500 dark:text-neutral-400">
+      The application form renders from these rows (FRD Section 5). Hiding a
+      field removes it from the form; a hidden field cannot be mandatory,
+      because nobody would be able to fill it in.
+    </p>
+
+    {
+      types.map(type => (
+        <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+          <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+              {type.name}
+            </h2>
+            <code class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
+              {type.code}
+            </code>
+            {!type.isActive && (
+              <span class="rounded bg-red-100 px-1.5 py-0.5 text-xs text-red-800 dark:bg-red-950 dark:text-red-200">
+                inactive
+              </span>
+            )}
+          </div>
+          <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+            {type.description}
+          </p>
+
+          <form method="post" class="mt-4 grid gap-3 sm:grid-cols-2">
+            <input type="hidden" name="typeId" value={type.id} />
+            <label class="text-sm text-neutral-600 dark:text-neutral-300">
+              Document checklist
+              <select
+                name="checklistId"
+                disabled={!canManage}
+                class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+              >
+                <option value="">— none —</option>
+                {checklists.map(c => (
+                  <option value={c.id} selected={c.id === type.checklistId}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label class="text-sm text-neutral-600 dark:text-neutral-300">
+              Fee schedule
+              <select
+                name="feeScheduleId"
+                disabled={!canManage}
+                class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+              >
+                <option value="">— none —</option>
+                {schedules.map(s => (
+                  <option value={s.id} selected={s.id === type.feeScheduleId}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {canManage && (
+              <div class="sm:col-span-2">
+                <button
+                  type="submit"
+                  name="intent"
+                  value="references"
+                  class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+                >
+                  Save links
+                </button>
+              </div>
+            )}
+          </form>
+
+          <details class="mt-4 rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+            <summary class="cursor-pointer text-sm font-medium text-neutral-700 dark:text-neutral-200">
+              Form fields ({type.fields.length})
+            </summary>
+
+            <form method="post" class="mt-4 space-y-4">
+              <input type="hidden" name="typeId" value={type.id} />
+              {['applicant', 'nominee', 'guardian', 'beneficiary'].map(
+                subject => {
+                  const fields = type.fields.filter(f => f.subject === subject);
+                  if (fields.length === 0) return null;
+                  return (
+                    <fieldset>
+                      <legend class="mb-2 text-sm font-medium text-neutral-700 dark:text-neutral-200">
+                        {SUBJECT_LABELS[subject]}
+                      </legend>
+                      <div class="overflow-x-auto">
+                        <table class="w-full text-sm">
+                          <thead>
+                            <tr class="text-left text-xs text-neutral-500 dark:text-neutral-400">
+                              <th class="py-1 pr-4 font-medium">Field</th>
+                              <th class="py-1 pr-4 font-medium">Type</th>
+                              <th class="py-1 pr-4 font-medium">Shown</th>
+                              <th class="py-1 font-medium">Mandatory</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {fields.map(field => (
+                              <tr class="border-t border-neutral-200 dark:border-neutral-800">
+                                <td class="py-1.5 pr-4 text-neutral-700 dark:text-neutral-200">
+                                  {field.label}
+                                  <input
+                                    type="hidden"
+                                    name="fieldId"
+                                    value={field.id}
+                                  />
+                                </td>
+                                <td class="py-1.5 pr-4 text-xs text-neutral-400 dark:text-neutral-500">
+                                  {field.dataType}
+                                </td>
+                                <td class="py-1.5 pr-4">
+                                  <input
+                                    type="checkbox"
+                                    name="visible"
+                                    value={field.id}
+                                    checked={field.isVisible}
+                                    disabled={!canManage}
+                                    class="text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600"
+                                  />
+                                </td>
+                                <td class="py-1.5">
+                                  <input
+                                    type="checkbox"
+                                    name="mandatory"
+                                    value={field.id}
+                                    checked={field.isMandatory}
+                                    disabled={!canManage}
+                                    class="text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600"
+                                  />
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </fieldset>
+                  );
+                }
+              )}
+
+              {canManage && (
+                <button
+                  type="submit"
+                  name="intent"
+                  value="fields"
+                  class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+                >
+                  Save field rules
+                </button>
+              )}
+            </form>
+          </details>
+        </section>
+      ))
+    }
+  </div>
+</DashboardLayout>

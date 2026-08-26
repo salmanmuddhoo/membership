@@ -50,7 +50,7 @@ describe('deny by default (S-108)', () => {
 });
 
 // A representative map, so the rules are exercised rather than described. The
-// live map is empty until the first module lands.
+// live map is exercised separately, in 'the live route map' below.
 const ROUTES = [
   ['/members/', 'member.view'],
   ['/members/new', 'member.create'],
@@ -133,6 +133,34 @@ describe('the live route map', () => {
     expect(requiredPermissionFor('/admin/users')).toBe('user.view');
   });
 
+  it('covers every configuration page with one prefix rule', () => {
+    // The index and each section, including ones added later: a rule that
+    // covered only the pages listed today would leave the next one open to
+    // whoever the undeclared-route exemption admits.
+    expect(requiredPermissionFor('/admin/configuration')).toBe('config.view');
+    for (const page of [
+      '/admin/configuration/membership-types',
+      '/admin/configuration/account-types',
+      '/admin/configuration/fees',
+      '/admin/configuration/checklists',
+      '/admin/configuration/workflows',
+      '/admin/configuration/something-added-later',
+    ]) {
+      expect(requiredPermissionFor(page)).toBe('config.view');
+    }
+  });
+
+  it('separates seeing the configuration from changing it', () => {
+    // config.view opens the pages; each page checks config.manage itself
+    // before it will write. Someone granted only the first can read what the
+    // fees are without being able to set them.
+    const viewer = principal({ permissions: new Set(['config.view']) });
+    expect(authorise(viewer, '/admin/configuration/fees').allowed).toBe(true);
+
+    const manager = principal({ permissions: new Set(['config.manage']) });
+    expect(authorise(manager, '/admin/configuration/fees').allowed).toBe(false);
+  });
+
   it('does not rely on the system-administrator exemption for them', () => {
     // The exemption exists so a NEW page is reachable before its permission is
     // written. A finished page relying on it could not be delegated to anyone
@@ -141,6 +169,8 @@ describe('the live route map', () => {
 
     expect(authorise(admin, '/admin/roles').allowed).toBe(false);
     expect(authorise(admin, '/admin/users').allowed).toBe(false);
+    expect(authorise(admin, '/admin/configuration').allowed).toBe(false);
+    expect(authorise(admin, '/admin/configuration/fees').allowed).toBe(false);
   });
 
   it('admits someone holding only the declared permission', () => {

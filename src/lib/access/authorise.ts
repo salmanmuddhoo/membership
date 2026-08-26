@@ -38,6 +38,12 @@ const ROUTE_PERMISSIONS: ReadonlyArray<readonly [string, string]> = [
   ['/admin/roles', 'role.view'],
   ['/admin/users', 'user.view'],
 
+  // Reference configuration (M2 Feature 2.2). A prefix rule: every page under
+  // it needs config.view to read, and each page checks config.manage itself
+  // before it will change anything. Viewing what the fees are is a different
+  // thing from setting them.
+  ['/admin/configuration/', 'config.view'],
+
   // Further modules are added here as they land (members, financing,
   // documents, ...). The order does not matter: the longest matching prefix
   // wins, so a more specific rule can tighten a broader one.
@@ -71,8 +77,8 @@ export function requiredPermissionFor(
 // exempted from a declared one. An explicit permission means what it says;
 // bypassing it for one role would make the map advisory rather than binding.
 // `routes` is injectable so the rules can be tested against a representative
-// map. The live map is empty until the first module lands, and a security
-// property that cannot be exercised until then is one that ships unverified.
+// map, and the tests also exercise the live map — a security property checked
+// only against a fixture is one nobody has confirmed the application uses.
 export function authorise(
   principal: Principal,
   pathname: string,

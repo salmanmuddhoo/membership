@@ -1,0 +1,258 @@
+---
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import ConfigNav from '@components/ConfigNav.astro';
+import {
+  addChecklistItem,
+  ConfigError,
+  listChecklists,
+  listDocumentTypes,
+  removeChecklistItem,
+  setChecklistItemRequirement,
+  type FieldSubject,
+} from '@lib/config/reference';
+
+const principal = Astro.locals.principal!;
+const canManage = principal.permissions.has('config.manage');
+
+let error: string | null = null;
+let notice: string | null = null;
+
+if (Astro.request.method === 'POST') {
+  if (!canManage) {
+    error = 'You do not have permission to change configuration.';
+  } else {
+    const form = await Astro.request.formData();
+    const intent = String(form.get('intent') ?? '');
+    const actor = { userId: principal.userId, email: principal.email };
+
+    try {
+      if (intent === 'add') {
+        await addChecklistItem(
+          String(form.get('checklistId')),
+          {
+            documentTypeId: String(form.get('documentTypeId')),
+            subject: String(form.get('subject')) as FieldSubject,
+            requirement:
+              String(form.get('requirement')) === 'optional'
+                ? 'optional'
+                : 'required',
+          },
+          actor
+        );
+        notice = 'Document added to the checklist.';
+      } else if (intent === 'requirement') {
+        await setChecklistItemRequirement(
+          String(form.get('itemId')),
+          String(form.get('requirement')) === 'optional'
+            ? 'optional'
+            : 'required',
+          actor
+        );
+        notice = 'Requirement updated.';
+      } else if (intent === 'remove') {
+        await removeChecklistItem(String(form.get('itemId')), actor);
+        notice = 'Document removed from the checklist.';
+      }
+    } catch (err) {
+      if (err instanceof ConfigError) {
+        error = err.message;
+      } else {
+        console.error('[config/checklists]', err);
+        error = 'Something went wrong. Please try again.';
+      }
+    }
+  }
+}
+
+const [checklists, documentTypes] = await Promise.all([
+  listChecklists(),
+  listDocumentTypes(),
+]);
+
+const SUBJECTS: FieldSubject[] = [
+  'applicant',
+  'nominee',
+  'guardian',
+  'beneficiary',
+];
+const SUBJECT_LABELS: Record<string, string> = {
+  applicant: 'Applicant',
+  nominee: 'Nominee',
+  guardian: 'Guardian',
+  beneficiary: 'Takaful beneficiary',
+};
+---
+
+<DashboardLayout
+  title="Document checklists · Al Barakah MCSL"
+  heading="Document checklists"
+>
+  <div class="mx-auto max-w-5xl space-y-6">
+    <ConfigNav />
+
+    {
+      error && (
+        <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+          {error}
+        </div>
+      )
+    }
+    {
+      notice && (
+        <div class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-lg border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
+          {notice}
+        </div>
+      )
+    }
+
+    <p class="text-sm text-neutral-500 dark:text-neutral-400">
+      A checklist is grouped by <em>subject</em> — who the document is about, which
+      is not the same as whose application it is. An individual application needs
+      an ID card for the applicant and another for the nominee (FRD 8.4.1); a minor's
+      adds a guardian and a Takaful beneficiary (FRD 7.10.5).
+    </p>
+
+    {
+      checklists.map(checklist => (
+        <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+          <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+              {checklist.name}
+            </h2>
+            <code class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
+              {checklist.code}
+            </code>
+            <span class="text-xs text-neutral-500 dark:text-neutral-400">
+              {checklist.items.length} document
+              {checklist.items.length === 1 ? '' : 's'}
+            </span>
+          </div>
+          <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+            {checklist.description}
+          </p>
+
+          <div class="mt-4 space-y-4">
+            {SUBJECTS.map(subject => {
+              const items = checklist.items.filter(i => i.subject === subject);
+              if (items.length === 0) return null;
+              return (
+                <div class="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+                  <h3 class="text-sm font-medium text-neutral-700 dark:text-neutral-200">
+                    {SUBJECT_LABELS[subject]}
+                  </h3>
+                  <ul class="mt-2 space-y-2">
+                    {items.map(item => (
+                      <li class="flex flex-wrap items-center gap-2 text-sm">
+                        <span class="text-neutral-700 dark:text-neutral-200">
+                          {item.documentName}
+                        </span>
+                        {item.tracksExpiry && (
+                          <span class="rounded bg-neutral-100 px-1.5 py-0.5 text-xs text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400">
+                            expires
+                          </span>
+                        )}
+                        {canManage ? (
+                          <form method="post" class="flex items-center gap-2">
+                            <input
+                              type="hidden"
+                              name="itemId"
+                              value={item.id}
+                            />
+                            <select
+                              name="requirement"
+                              class="rounded-lg border border-neutral-300 bg-white px-2 py-0.5 text-xs dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                            >
+                              <option
+                                value="required"
+                                selected={item.requirement === 'required'}
+                              >
+                                required
+                              </option>
+                              <option
+                                value="optional"
+                                selected={item.requirement === 'optional'}
+                              >
+                                optional
+                              </option>
+                            </select>
+                            <button
+                              type="submit"
+                              name="intent"
+                              value="requirement"
+                              class="rounded border border-neutral-300 px-2 py-0.5 text-xs text-neutral-600 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                            >
+                              Save
+                            </button>
+                            <button
+                              type="submit"
+                              name="intent"
+                              value="remove"
+                              class="rounded border border-red-300 px-2 py-0.5 text-xs text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
+                            >
+                              Remove
+                            </button>
+                          </form>
+                        ) : (
+                          <span class="text-xs text-neutral-400 dark:text-neutral-500">
+                            {item.requirement}
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              );
+            })}
+          </div>
+
+          {canManage && (
+            <form method="post" class="mt-4 flex flex-wrap items-end gap-2">
+              <input type="hidden" name="intent" value="add" />
+              <input type="hidden" name="checklistId" value={checklist.id} />
+              <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                Document
+                <select
+                  name="documentTypeId"
+                  class="mt-1 block rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                >
+                  {documentTypes
+                    .filter(d => d.isActive)
+                    .map(d => (
+                      <option value={d.id}>{d.name}</option>
+                    ))}
+                </select>
+              </label>
+              <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                For
+                <select
+                  name="subject"
+                  class="mt-1 block rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                >
+                  {SUBJECTS.map(s => (
+                    <option value={s}>{SUBJECT_LABELS[s]}</option>
+                  ))}
+                </select>
+              </label>
+              <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                Requirement
+                <select
+                  name="requirement"
+                  class="mt-1 block rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                >
+                  <option value="required">required</option>
+                  <option value="optional">optional</option>
+                </select>
+              </label>
+              <button
+                type="submit"
+                class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+              >
+                Add
+              </button>
+            </form>
+          )}
+        </section>
+      ))
+    }
+  </div>
+</DashboardLayout>

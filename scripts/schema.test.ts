@@ -63,7 +63,11 @@ describe('S-103 identity and access', () => {
   it('lets a user hold several roles, each with several permissions', async () => {
     await run(
       appUrl,
-      `insert into role (code, name) values ('officer', 'Officer'), ('secretary', 'Secretary')`
+      // Codes prefixed for this test. Bare ones like 'secretary' belong to
+      // the seeded workflow roles, and borrowing a real code would make the
+      // test fail for a reason that has nothing to do with what it asserts.
+      `insert into role (code, name)
+       values ('schema_test_officer', 'Officer'), ('schema_test_secretary', 'Secretary')`
     );
     await run(
       appUrl,
@@ -77,14 +81,14 @@ describe('S-103 identity and access', () => {
       // schema.
       `insert into role_permission (role_id, permission_id)
        select r.id, p.id from role r cross join permission p
-        where r.code in ('officer', 'secretary')
+        where r.code in ('schema_test_officer', 'schema_test_secretary')
           and p.code in ('member.create', 'member.approve')`
     );
     await run(
       appUrl,
       `insert into user_role (user_id, role_id)
        select u.id, r.id from app_user u cross join role r
-        where r.code in ('officer', 'secretary')
+        where r.code in ('schema_test_officer', 'schema_test_secretary')
           and u.entra_subject = 'entra-sub-1'`
     );
 
