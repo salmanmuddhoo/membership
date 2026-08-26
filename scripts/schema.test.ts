@@ -71,14 +71,21 @@ describe('S-103 identity and access', () => {
     );
     await run(
       appUrl,
+      // Scoped to the roles and permissions this test creates. A blanket cross
+      // join would also re-grant the seeded system_administrator pairs and
+      // collide — and would be asserting about seed data rather than about the
+      // schema.
       `insert into role_permission (role_id, permission_id)
-       select r.id, p.id from role r cross join permission p`
+       select r.id, p.id from role r cross join permission p
+        where r.code in ('officer', 'secretary')
+          and p.code in ('member.create', 'member.approve')`
     );
     await run(
       appUrl,
       `insert into user_role (user_id, role_id)
        select u.id, r.id from app_user u cross join role r
-       where u.entra_subject = 'entra-sub-1'`
+        where r.code in ('officer', 'secretary')
+          and u.entra_subject = 'entra-sub-1'`
     );
 
     const result = await run(

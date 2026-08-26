@@ -210,11 +210,31 @@ describe('permission resolution (S-107)', () => {
     expect(after.principal.permissions.has('member.view')).toBe(true);
   });
 
-  it('gives a user with no roles an empty permission set, not an error', async () => {
+  it('gives a role that grants nothing an empty permission set, not an error', async () => {
     const { resolvePrincipal } = await load();
 
+    // A user holding ONLY a role that carries no permissions. Previously this
+    // asserted that system_administrator granted none, which was true only
+    // until migration 0009 gave it the administration permissions — the test
+    // was relying on seed data rather than on the property it names.
+    await run(
+      appUrl,
+      `insert into role (code, name) values ('observer', 'Observer')`
+    );
+    await run(
+      appUrl,
+      `insert into app_user (entra_subject, email, display_name)
+       values ('sub-observer', 'observer@albarakah.mu', 'Observer')`
+    );
+    await run(
+      appUrl,
+      `insert into user_role (user_id, role_id)
+       select u.id, r.id from app_user u, role r
+        where u.entra_subject = 'sub-observer' and r.code = 'observer'`
+    );
+
     const result = await resolvePrincipal({
-      id: 'sub-admin',
+      id: 'sub-observer',
       email: null,
       name: null,
       roles: [],
@@ -222,9 +242,8 @@ describe('permission resolution (S-107)', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    // system_administrator carries no explicit permissions in this fixture.
+    expect(result.principal.roles).toEqual(['observer']);
     expect(result.principal.permissions.size).toBe(0);
-    expect(result.principal.roles).toEqual(['system_administrator']);
   });
 });
 

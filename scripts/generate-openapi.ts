@@ -43,15 +43,23 @@ async function collectDescriptors(): Promise<EndpointDescriptor[]> {
   const undocumented: string[] = [];
 
   for (const file of files) {
+    // A route file may serve several methods on one path — GET to list and
+    // POST to create are the same URL — so `descriptors` (plural) is accepted
+    // alongside the single-endpoint `descriptor`. Requiring one file per method
+    // would fight Astro's routing, which is per path.
     const module = (await import(file)) as {
       descriptor?: EndpointDescriptor;
+      descriptors?: EndpointDescriptor[];
     };
 
-    if (!module.descriptor) {
+    const found =
+      module.descriptors ?? (module.descriptor ? [module.descriptor] : []);
+
+    if (found.length === 0) {
       undocumented.push(path.relative(ROOT, file));
       continue;
     }
-    descriptors.push(module.descriptor);
+    descriptors.push(...found);
   }
 
   if (undocumented.length > 0) {
@@ -59,7 +67,9 @@ async function collectDescriptors(): Promise<EndpointDescriptor[]> {
       'These endpoints export no descriptor, so they cannot be documented:\n' +
         undocumented.map(f => `  - ${f}`).join('\n') +
         '\n\nDefine the endpoint with defineEndpoint() and re-export its ' +
-        'descriptor:\n  export const descriptor = endpoint.descriptor;'
+        'descriptor:\n  export const descriptor = endpoint.descriptor;\n' +
+        'or, for a path serving several methods:\n' +
+        '  export const descriptors = [list.descriptor, create.descriptor];'
     );
     process.exit(1);
   }
