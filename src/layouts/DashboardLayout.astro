@@ -40,6 +40,17 @@ interface NavGroup {
 const navGroups: NavGroup[] = [
   { items: [{ label: 'Dashboard', href: '/dashboard', icon: 'dashboard' }] },
   {
+    label: 'Membership',
+    items: [
+      ...(can('application.view')
+        ? [{ label: 'Applications', href: '/applications', icon: 'members' }]
+        : []),
+      ...(can('member.view')
+        ? [{ label: 'Members', href: '/members', icon: 'members' }]
+        : []),
+    ],
+  },
+  {
     label: 'Administration',
     items: [
       ...(can('role.view')

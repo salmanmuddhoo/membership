@@ -44,6 +44,13 @@ const ROUTE_PERMISSIONS: ReadonlyArray<readonly [string, string]> = [
   // thing from setting them.
   ['/admin/configuration/', 'config.view'],
 
+  // Membership applications (M3). A prefix rule so a sub-page added later is
+  // covered. Capturing, submitting, reviewing and approving are separate
+  // permissions the pages check themselves — being able to see an application
+  // is not being able to act on it.
+  ['/applications/', 'application.view'],
+  ['/members/', 'member.view'],
+
   // Further modules are added here as they land (members, financing,
   // documents, ...). The order does not matter: the longest matching prefix
   // wins, so a more specific rule can tighten a broader one.

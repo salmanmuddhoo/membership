@@ -1,0 +1,217 @@
+---
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import {
+  ApplicationError,
+  listApplications,
+  startApplication,
+} from '@lib/applications/capture';
+import { listMembershipTypes } from '@lib/config/reference';
+
+const principal = Astro.locals.principal!;
+const canCapture = principal.permissions.has('application.capture');
+
+let error: string | null = null;
+
+if (Astro.request.method === 'POST') {
+  if (!canCapture) {
+    error = 'You do not have permission to capture applications.';
+  } else {
+    const form = await Astro.request.formData();
+    try {
+      const { id } = await startApplication(
+        String(form.get('membershipType') ?? ''),
+        { userId: principal.userId, email: principal.email }
+      );
+      // Straight into the form. A list entry the officer then has to find is
+      // one more step between them and the applicant in front of them.
+      return Astro.redirect(`/applications/${id}`);
+    } catch (err) {
+      if (err instanceof ApplicationError) {
+        error = err.message;
+      } else {
+        console.error('[applications]', err);
+        error = 'Something went wrong. Please try again.';
+      }
+    }
+  }
+}
+
+const filter = Astro.url.searchParams.get('status') ?? '';
+const [applications, types] = await Promise.all([
+  listApplications(filter ? { statuses: [filter] } : {}),
+  listMembershipTypes(),
+]);
+
+const STATUS_LABELS: Record<string, string> = {
+  draft: 'Draft',
+  new: 'New',
+  submitted_for_review: 'Submit for Review',
+  submitted_for_approval: 'Submit for Approval',
+  approved: 'Approved',
+  rejected: 'Rejected',
+  returned: 'Returned for Correction',
+  abeyance: 'Abeyance',
+};
+
+const STATUS_CLASSES: Record<string, string> = {
+  draft:
+    'bg-neutral-200 text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200',
+  new: 'bg-mint-200 text-neutral-800 dark:bg-mint-900 dark:text-neutral-100',
+  submitted_for_approval:
+    'bg-mint-200 text-neutral-800 dark:bg-mint-900 dark:text-neutral-100',
+  approved:
+    'bg-mint-300 text-neutral-800 dark:bg-mint-800 dark:text-neutral-100',
+  rejected: 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200',
+  returned: 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200',
+};
+
+const dateFormat = new Intl.DateTimeFormat('en-GB', {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+});
+---
+
+<DashboardLayout title="Applications · Al Barakah MCSL" heading="Applications">
+  <div class="mx-auto max-w-5xl space-y-6">
+    {
+      error && (
+        <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+          {error}
+        </div>
+      )
+    }
+
+    {
+      canCapture && (
+        <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+          <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+            Start an application
+          </h2>
+          <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+            The form adapts to the type you choose — an Individual applicant is
+            asked for an NIC, a Corporate one for a registration number (FRD
+            Section 5).
+          </p>
+          <form method="post" class="mt-4 flex flex-wrap items-end gap-2">
+            <label class="text-sm text-neutral-600 dark:text-neutral-300">
+              Applicant status
+              <select
+                name="membershipType"
+                class="mt-1 block rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+              >
+                {types
+                  .filter(t => t.isActive)
+                  .map(t => (
+                    <option value={t.code}>{t.name}</option>
+                  ))}
+              </select>
+            </label>
+            <button
+              type="submit"
+              class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+            >
+              Start capture
+            </button>
+          </form>
+        </section>
+      )
+    }
+
+    <section
+      class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
+    >
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <h2
+          class="text-lg font-semibold text-neutral-800 dark:text-neutral-100"
+        >
+          Applications
+        </h2>
+        <form method="get" class="flex items-center gap-2">
+          <label for="status" class="sr-only">Filter by status</label>
+          <select
+            id="status"
+            name="status"
+            class="rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+          >
+            <option value="">All statuses</option>
+            {
+              Object.entries(STATUS_LABELS).map(([code, label]) => (
+                <option value={code} selected={code === filter}>
+                  {label}
+                </option>
+              ))
+            }
+          </select>
+          <button
+            type="submit"
+            class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+          >
+            Filter
+          </button>
+        </form>
+      </div>
+
+      {
+        applications.length === 0 ? (
+          <p class="mt-4 text-sm text-neutral-500 dark:text-neutral-400">
+            {filter
+              ? `No applications with status ${STATUS_LABELS[filter] ?? filter}.`
+              : 'No applications yet.'}
+          </p>
+        ) : (
+          <div class="mt-4 overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="text-left text-xs text-neutral-500 dark:text-neutral-400">
+                  <th class="py-2 pr-4 font-medium">Reference</th>
+                  <th class="py-2 pr-4 font-medium">Applicant</th>
+                  <th class="py-2 pr-4 font-medium">Type</th>
+                  <th class="py-2 pr-4 font-medium">Status</th>
+                  <th class="py-2 pr-4 font-medium">Captured by</th>
+                  <th class="py-2 font-medium">Updated</th>
+                </tr>
+              </thead>
+              <tbody>
+                {applications.map(a => (
+                  <tr class="border-t border-neutral-200 dark:border-neutral-800">
+                    <td class="py-2 pr-4">
+                      <a
+                        href={`/applications/${a.id}`}
+                        class="text-mint-700 dark:text-mint-300 font-medium underline"
+                      >
+                        {a.reference}
+                      </a>
+                    </td>
+                    <td class="py-2 pr-4 text-neutral-700 dark:text-neutral-200">
+                      {a.applicantName}
+                    </td>
+                    <td class="py-2 pr-4 text-neutral-600 dark:text-neutral-300">
+                      {a.membershipTypeName}
+                    </td>
+                    <td class="py-2 pr-4">
+                      <span
+                        class:list={[
+                          'rounded px-1.5 py-0.5 text-xs',
+                          STATUS_CLASSES[a.status] ??
+                            'bg-neutral-200 text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200',
+                        ]}
+                      >
+                        {STATUS_LABELS[a.status] ?? a.status}
+                      </span>
+                    </td>
+                    <td class="py-2 pr-4 text-xs text-neutral-500 dark:text-neutral-400">
+                      {a.capturedByEmail}
+                    </td>
+                    <td class="py-2 text-xs text-neutral-500 dark:text-neutral-400">
+                      {dateFormat.format(a.updatedAt)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      }
+    </section>
+  </div>
+</DashboardLayout>
