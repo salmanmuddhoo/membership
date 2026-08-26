@@ -9,6 +9,14 @@ import {
   type PartyValues,
 } from '@lib/applications/capture';
 import { listMembershipTypes, type FieldSubject } from '@lib/config/reference';
+import { createMemberFromApplication } from '@lib/members/create';
+import {
+  availableActions,
+  decideApplication,
+  reviewApplication,
+  submitApplication,
+  transitionsFor,
+} from '@lib/applications/workflow';
 
 const principal = Astro.locals.principal!;
 const canCapture = principal.permissions.has('application.capture');
@@ -42,6 +50,9 @@ async function partiesFromForm(form: FormData): Promise<PartyValues[]> {
 let error: string | null = null;
 let notice: string | null = null;
 let formatProblems: { fieldKey: string; label: string }[] = [];
+let blockingOnSubmit: { label: string; subject: string }[] = [];
+let createdMember: { memberNo: string; accountNo: string; id: string } | null =
+  null;
 
 const isEditable =
   application.status === 'draft' || application.status === 'returned';
@@ -65,7 +76,61 @@ if (Astro.request.method === 'POST') {
       : null;
   };
 
-  if (!canCapture) {
+  // The workflow actions are separate intents with their own permissions —
+  // being able to edit a draft is not being able to submit, review or decide.
+  if (intent === 'submit' || intent === 'review' || intent === 'decide') {
+    try {
+      if (intent === 'submit') {
+        const result = await submitApplication(application.id, principal);
+        if ('problems' in result) {
+          blockingOnSubmit = result.problems;
+          error =
+            `This application cannot be submitted yet: ${result.problems.length} ` +
+            'required field(s) are still empty.';
+        } else {
+          notice = 'Submitted for central processing.';
+        }
+      } else if (intent === 'review') {
+        const result = await reviewApplication(
+          application.id,
+          {
+            outcome:
+              String(form.get('outcome')) === 'return' ? 'return' : 'forward',
+            comment: String(form.get('comment') ?? ''),
+          },
+          principal
+        );
+        notice =
+          result.status === 'returned'
+            ? 'Returned to the originating staff.'
+            : 'Forwarded to the President.';
+      } else {
+        const result = await decideApplication(
+          application.id,
+          {
+            outcome:
+              String(form.get('outcome')) === 'reject' ? 'reject' : 'approve',
+            comment: String(form.get('comment') ?? ''),
+          },
+          principal,
+          createMemberFromApplication
+        );
+        notice = result.member
+          ? `Approved. Member ${result.member.memberNo} created with account ` +
+            `${result.member.accountNo}.`
+          : 'Rejected and returned to the originating staff.';
+        createdMember = result.member ?? null;
+      }
+      application = await loadApplication(application.id);
+    } catch (err) {
+      if (err instanceof ApplicationError || err instanceof Error) {
+        error = err.message;
+      }
+      if (!(err instanceof ApplicationError)) {
+        console.error('[applications/workflow]', err);
+      }
+    }
+  } else if (!canCapture) {
     const response = refuse(
       'You do not have permission to edit applications.',
       403
@@ -115,7 +180,11 @@ if (Astro.request.method === 'POST') {
   }
 }
 
-const blocking = await problemsBlockingSubmission(application!);
+const [blocking, actions, history] = await Promise.all([
+  problemsBlockingSubmission(application!),
+  availableActions(application!, principal),
+  transitionsFor(application!.id),
+]);
 const valuesFor = (subject: FieldSubject) =>
   application!.parties.find(p => p.subject === subject && p.ordinal === 1)
     ?.values ?? {};
@@ -225,6 +294,173 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         )
       }
     </section>
+
+    {
+      createdMember && (
+        <section class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-2xl border p-6">
+          <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+            Member created
+          </h2>
+          <p class="mt-1 text-sm text-neutral-700 dark:text-neutral-200">
+            <a
+              href={`/members/${createdMember.id}`}
+              class="font-medium underline"
+            >
+              {createdMember.memberNo}
+            </a>{' '}
+            with account {createdMember.accountNo}, opened automatically because
+            the membership was approved.
+          </p>
+        </section>
+      )
+    }
+
+    {
+      blockingOnSubmit.length > 0 && (
+        <section class="rounded-2xl border border-red-300 bg-red-50 p-6 dark:border-red-900 dark:bg-red-950">
+          <h2 class="text-sm font-medium text-red-900 dark:text-red-200">
+            Still required before this can be submitted
+          </h2>
+          <ul class="mt-2 list-inside list-disc text-sm text-red-800 dark:text-red-200">
+            {blockingOnSubmit.map(b => (
+              <li>
+                {b.label} <span class="text-xs">({b.subject})</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )
+    }
+
+    {
+      actions.length > 0 && (
+        <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+          <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+            Your next step
+          </h2>
+          <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+            Offered because the configured workflow puts this step at this
+            status and you hold the permission. Segregation of duties is checked
+            when you act: if you already worked on this application, the step
+            will be refused and will say so.
+          </p>
+
+          {actions.map(action => (
+            <form method="post" class="mt-4 space-y-3">
+              {action.stepCode === 'capture' && (
+                <button
+                  type="submit"
+                  name="intent"
+                  value="submit"
+                  disabled={blocking.length > 0}
+                  class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {blocking.length > 0
+                    ? `Submit (${blocking.length} required field(s) still empty)`
+                    : 'Submit for central processing'}
+                </button>
+              )}
+
+              {(action.stepCode === 'secretary_review' ||
+                action.stepCode === 'president_decision') && (
+                <>
+                  <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+                    Comment
+                    <textarea
+                      name="comment"
+                      rows="3"
+                      class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                      placeholder={
+                        action.stepCode === 'secretary_review'
+                          ? 'Required if you return this application.'
+                          : 'Required if you reject this application.'
+                      }
+                    />
+                  </label>
+                  <div class="flex flex-wrap gap-2">
+                    <button
+                      type="submit"
+                      name="outcome"
+                      value={
+                        action.stepCode === 'secretary_review'
+                          ? 'forward'
+                          : 'approve'
+                      }
+                      class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
+                    >
+                      {action.stepCode === 'secretary_review'
+                        ? 'Forward to the President'
+                        : 'Approve'}
+                    </button>
+                    <button
+                      type="submit"
+                      name="outcome"
+                      value={
+                        action.stepCode === 'secretary_review'
+                          ? 'return'
+                          : 'reject'
+                      }
+                      class="rounded-lg border border-red-300 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
+                    >
+                      {action.stepCode === 'secretary_review'
+                        ? 'Return for correction'
+                        : 'Reject'}
+                    </button>
+                  </div>
+                  <input
+                    type="hidden"
+                    name="intent"
+                    value={
+                      action.stepCode === 'secretary_review'
+                        ? 'review'
+                        : 'decide'
+                    }
+                  />
+                </>
+              )}
+            </form>
+          ))}
+        </section>
+      )
+    }
+
+    {
+      history.length > 0 && (
+        <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+          <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+            History
+          </h2>
+          <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+            Every transition, in order, with who made it and why (S-307). These
+            rows cannot be edited or deleted.
+          </p>
+          <ol class="mt-4 space-y-3">
+            {history.map(entry => (
+              <li class="border-l-2 border-neutral-300 pl-3 text-sm dark:border-neutral-700">
+                <div class="flex flex-wrap items-center gap-x-2">
+                  <span class="font-medium text-neutral-800 dark:text-neutral-100">
+                    {entry.fromStatus ?? 'created'} → {entry.toStatus}
+                  </span>
+                  {entry.actorRole && (
+                    <span class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
+                      {entry.actorRole}
+                    </span>
+                  )}
+                  <span class="text-xs text-neutral-500 dark:text-neutral-400">
+                    {entry.actorEmail} · {dateFormat.format(entry.occurredAt)}
+                  </span>
+                </div>
+                {entry.comment && (
+                  <p class="mt-1 text-neutral-600 dark:text-neutral-300">
+                    {entry.comment}
+                  </p>
+                )}
+              </li>
+            ))}
+          </ol>
+        </section>
+      )
+    }
 
     <form method="post" id="capture-form" class="space-y-6">
       {

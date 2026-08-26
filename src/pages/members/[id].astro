@@ -1,0 +1,130 @@
+---
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import { loadMember } from '@lib/members/create';
+import { forDisplay } from '@lib/applications/phone';
+
+const { id } = Astro.params;
+const member = id ? await loadMember(id) : null;
+if (!member) return new Response('Not found', { status: 404 });
+
+const dateFormat = new Intl.DateTimeFormat('en-GB', {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+});
+
+// Phone values are stored in E.164; +23057891234 is not what anyone wants to
+// read off a screen.
+const PHONE_KEYS = new Set(['mobile', 'telephone', 'contact_telephone']);
+const details = Object.entries(member.applicantValues).map(([key, value]) => ({
+  key,
+  label: key.replace(/_/g, ' '),
+  value: PHONE_KEYS.has(key) ? forDisplay(value) : value,
+}));
+---
+
+<DashboardLayout
+  title={`${member.memberNo} · Al Barakah MCSL`}
+  heading={`Member ${member.memberNo}`}
+>
+  <div class="mx-auto max-w-4xl space-y-6">
+    <a
+      href="/members"
+      class="inline-block text-sm text-neutral-500 underline dark:text-neutral-400"
+      >← All members</a
+    >
+
+    <section
+      class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
+    >
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <h2
+          class="text-lg font-semibold text-neutral-800 dark:text-neutral-100"
+        >
+          {member.name}
+        </h2>
+        <code
+          class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300"
+        >
+          {member.memberNo}
+        </code>
+        <span
+          class="bg-mint-200 dark:bg-mint-900 rounded px-1.5 py-0.5 text-xs text-neutral-800 dark:text-neutral-100"
+        >
+          {member.status}
+        </span>
+      </div>
+      <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+        {member.membershipTypeName} · joined {
+          dateFormat.format(member.joinedAt)
+        }
+        {
+          member.applicationReference && (
+            <>
+              {' '}
+              · from application{' '}
+              <span class="font-medium">{member.applicationReference}</span>
+            </>
+          )
+        }
+      </p>
+
+      {
+        details.length > 0 && (
+          <dl class="mt-5 grid gap-x-6 gap-y-2 sm:grid-cols-2">
+            {details.map(d => (
+              <div class="flex gap-2 text-sm">
+                <dt class="min-w-32 text-neutral-500 capitalize dark:text-neutral-400">
+                  {d.label}
+                </dt>
+                <dd class="text-neutral-800 dark:text-neutral-100">
+                  {d.value}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        )
+      }
+    </section>
+
+    <section
+      class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
+    >
+      <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+        Accounts
+      </h2>
+      {
+        member.accounts.length === 0 ? (
+          <p class="mt-1 text-sm text-red-700 dark:text-red-300">
+            This member has no account. That should not be possible — the
+            default account is opened in the same transaction as the member
+            (S-309). Please report it.
+          </p>
+        ) : (
+          <ul class="mt-4 space-y-3">
+            {member.accounts.map(account => (
+              <li class="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+                <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <code class="font-medium text-neutral-800 dark:text-neutral-100">
+                    {account.accountNo}
+                  </code>
+                  <span class="text-sm text-neutral-600 dark:text-neutral-300">
+                    {account.accountTypeName}
+                  </span>
+                  {account.isMembershipDefault && (
+                    <span class="bg-mint-200 dark:bg-mint-900 rounded px-1.5 py-0.5 text-xs text-neutral-800 dark:text-neutral-100">
+                      opened on approval
+                    </span>
+                  )}
+                  <span class="text-xs text-neutral-500 dark:text-neutral-400">
+                    {account.category} · {account.status} · opened{' '}
+                    {dateFormat.format(account.openedAt)}
+                  </span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )
+      }
+    </section>
+  </div>
+</DashboardLayout>

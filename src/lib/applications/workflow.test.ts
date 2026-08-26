@@ -1,0 +1,762 @@
+// The approval chain, and what it creates (M3 Features 3.2 and 3.3).
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import pg from 'pg';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
+import { migrate } from '../../../scripts/migrate';
+import type { Principal } from '../access/principal';
+
+const ADMIN_URL = 'postgresql://postgres@127.0.0.1:5433/postgres';
+const MIGRATIONS_DIR = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..',
+  '..',
+  '..',
+  'migrations'
+);
+
+const dbName = `workflow_test_${Date.now()}`;
+const ownerUrl = `postgresql://postgres@127.0.0.1:5433/${dbName}`;
+const appUrl = `postgresql://albarakah_app:devpassword@127.0.0.1:5433/${dbName}`;
+
+/**
+ * Change a configuration table directly.
+ *
+ * Migration 0010 puts a trigger on those tables that refuses a write it cannot
+ * attribute — including one from a test — so this declares an actor, exactly
+ * as docs/database.md says to do by hand. Needing this helper is the control
+ * working, not an obstacle to route around.
+ */
+async function runAsActor(sql: string, params: unknown[] = []) {
+  const client = new pg.Client({ connectionString: appUrl, ssl: false });
+  await client.connect();
+  try {
+    await client.query('begin');
+    await client.query(
+      `select set_config('albarakah.actor_description', $1, true)`,
+      ['workflow.test.ts']
+    );
+    const result = await client.query(sql, params);
+    await client.query('commit');
+    return result;
+  } catch (error) {
+    await client.query('rollback');
+    throw error;
+  } finally {
+    await client.end();
+  }
+}
+
+async function run(url: string, sql: string, params: unknown[] = []) {
+  const client = new pg.Client({ connectionString: url, ssl: false });
+  await client.connect();
+  try {
+    return await client.query(sql, params);
+  } finally {
+    await client.end();
+  }
+}
+
+async function load() {
+  vi.resetModules();
+  process.env.DATABASE_URL = appUrl;
+  process.env.DATABASE_ALLOW_INSECURE = 'true';
+  process.env.PUBLIC_APP_ENV = 'test';
+  return {
+    capture: await import('./capture'),
+    workflow: await import('./workflow'),
+    members: await import('../members/create'),
+    config: await import('../config/reference'),
+  };
+}
+
+const saved = { ...process.env };
+afterEach(() => {
+  process.env = { ...saved };
+});
+
+function principalFor(
+  userId: string,
+  email: string,
+  permissions: string[]
+): Principal {
+  return {
+    userId,
+    entraSubject: `sub-${email}`,
+    email,
+    displayName: email,
+    roles: [],
+    permissions: new Set(permissions),
+  };
+}
+
+let officer: Principal;
+let secretary: Principal;
+let president: Principal;
+
+const COMPLETE_INDIVIDUAL: Array<{
+  subject: 'applicant' | 'nominee' | 'guardian' | 'beneficiary';
+  ordinal: number;
+  values: Record<string, string>;
+}> = [
+  {
+    subject: 'applicant',
+    ordinal: 1,
+    values: {
+      surname: 'Beebeejaun',
+      name: 'Aisha',
+      nic: 'B1234567890123',
+      gender: 'Female',
+      address: '12 Royal Road, Curepipe',
+      mobile: '5789 1234',
+    },
+  },
+  {
+    subject: 'nominee',
+    ordinal: 1,
+    values: {
+      surname: 'Beebeejaun',
+      name: 'Yusuf',
+      nic: 'B9876543210987',
+      address: '12 Royal Road, Curepipe',
+    },
+  },
+];
+
+beforeAll(async () => {
+  await run(ADMIN_URL, `create database ${dbName}`);
+  await run(ownerUrl, 'revoke all on schema public from public');
+  await run(ownerUrl, `grant connect on database ${dbName} to albarakah_app`);
+  await migrate(ownerUrl, MIGRATIONS_DIR);
+
+  const users = await run(
+    appUrl,
+    `insert into app_user (email, display_name)
+     values ('officer@albarakah.mu', 'Officer'),
+            ('secretary@albarakah.mu', 'Secretary'),
+            ('president@albarakah.mu', 'President')
+     returning id, email::text as email`
+  );
+  const id = (email: string) =>
+    users.rows.find(r => r.email === email).id as string;
+
+  officer = principalFor(id('officer@albarakah.mu'), 'officer@albarakah.mu', [
+    'application.view',
+    'application.capture',
+    'application.submit',
+  ]);
+  secretary = principalFor(
+    id('secretary@albarakah.mu'),
+    'secretary@albarakah.mu',
+    ['application.view', 'application.review']
+  );
+  president = principalFor(
+    id('president@albarakah.mu'),
+    'president@albarakah.mu',
+    ['application.view', 'application.approve']
+  );
+}, 60_000);
+
+afterAll(async () => {
+  await run(ADMIN_URL, `drop database if exists ${dbName} with (force)`);
+});
+
+async function captureComplete() {
+  const { capture } = await load();
+  const actor = { userId: officer.userId, email: officer.email };
+  const { id } = await capture.startApplication('individual', actor);
+  await capture.saveDraft(id, COMPLETE_INDIVIDUAL, actor);
+  return id;
+}
+
+describe('M3: the walking skeleton, end to end', () => {
+  it('takes an application from capture to a member with an MSA', async () => {
+    const { capture, workflow, members } = await load();
+    const id = await captureComplete();
+
+    const submitted = await workflow.submitApplication(id, officer);
+    expect(submitted).toEqual({ status: 'new' });
+
+    const reviewed = await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Documents complete.' },
+      secretary
+    );
+    expect(reviewed.status).toBe('submitted_for_approval');
+
+    const decided = await workflow.decideApplication(
+      id,
+      { outcome: 'approve', comment: '' },
+      president,
+      members.createMemberFromApplication
+    );
+
+    expect(decided.status).toBe('approved');
+    expect(decided.member?.memberNo).toMatch(/^ABM-\d{6}$/);
+    expect(decided.member?.accountNo).toMatch(/^ACC-\d{8}$/);
+
+    // S-309: the account opened is whichever type is configured as the
+    // membership default, and there is exactly one.
+    const member = await members.loadMember(decided.member!.id);
+    expect(member!.accounts).toHaveLength(1);
+    expect(member!.accounts[0].accountTypeName).toBe(
+      'Multiplier Savings Account'
+    );
+    expect(member!.accounts[0].isMembershipDefault).toBe(true);
+    expect(member!.applicationReference).toBe(
+      (await capture.loadApplication(id))!.reference
+    );
+  });
+
+  it('records every transition with actor, timestamp and comment (S-307)', async () => {
+    const { workflow, members } = await load();
+    const id = await captureComplete();
+
+    await workflow.submitApplication(id, officer);
+    await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Checked against FRD 8.4.1.' },
+      secretary
+    );
+    await workflow.decideApplication(
+      id,
+      { outcome: 'approve', comment: 'Approved at the March board.' },
+      president,
+      members.createMemberFromApplication
+    );
+
+    const chain = await workflow.transitionsFor(id);
+    expect(chain.map(t => [t.fromStatus, t.toStatus])).toEqual([
+      ['draft', 'new'],
+      ['new', 'submitted_for_approval'],
+      ['submitted_for_approval', 'approved'],
+    ]);
+    expect(chain.map(t => t.actorEmail)).toEqual([
+      'officer@albarakah.mu',
+      'secretary@albarakah.mu',
+      'president@albarakah.mu',
+    ]);
+    expect(chain[1].comment).toBe('Checked against FRD 8.4.1.');
+    expect(chain[2].comment).toBe('Approved at the March board.');
+    expect(chain.every(t => t.occurredAt instanceof Date)).toBe(true);
+    // The step each transition came from, so it traces back to the configured
+    // chain that authorised it.
+    expect(chain.map(t => t.stepCode)).toEqual([
+      'capture',
+      'secretary_review',
+      'president_decision',
+    ]);
+  });
+
+  it('cannot have its history rewritten', async () => {
+    const { workflow } = await load();
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+
+    await expect(
+      run(appUrl, `update application_transition set comment = 'edited'`)
+    ).rejects.toThrowError(/append-only/);
+    await expect(
+      run(appUrl, `delete from application_transition`)
+    ).rejects.toThrowError(/append-only/);
+  });
+});
+
+describe('S-304: submission', () => {
+  it('refuses while a mandatory field is empty, and names them all', async () => {
+    const { capture, workflow } = await load();
+    const actor = { userId: officer.userId, email: officer.email };
+    const { id } = await capture.startApplication('individual', actor);
+
+    const result = await workflow.submitApplication(id, officer);
+    expect('problems' in result).toBe(true);
+    if (!('problems' in result)) return;
+    expect(result.problems.length).toBeGreaterThan(5);
+
+    // And nothing was submitted.
+    expect((await capture.loadApplication(id))!.status).toBe('draft');
+    expect(await workflow.transitionsFor(id)).toEqual([]);
+  });
+
+  it('locks the application from regional edits once submitted', async () => {
+    const { capture, workflow } = await load();
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+
+    await expect(
+      capture.saveDraft(
+        id,
+        [{ subject: 'applicant', ordinal: 1, values: { name: 'Changed' } }],
+        { userId: officer.userId, email: officer.email }
+      )
+    ).rejects.toThrowError(/no longer be edited/);
+  });
+
+  it('refuses someone without the submit permission', async () => {
+    const { workflow } = await load();
+    const id = await captureComplete();
+
+    await expect(
+      workflow.submitApplication(id, secretary)
+    ).rejects.toThrowError(/permission/);
+  });
+});
+
+describe('S-203: segregation of duties, on this record', () => {
+  it('refuses the officer who captured it the review, even with the permission', async () => {
+    const { workflow } = await load();
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+
+    // Someone who is entitled to review applications in general, but who
+    // captured THIS one. Permission is not the question.
+    const officerWhoCanAlsoReview = principalFor(
+      officer.userId,
+      officer.email,
+      ['application.view', 'application.review']
+    );
+
+    await expect(
+      workflow.reviewApplication(
+        id,
+        { outcome: 'forward', comment: 'Looks fine to me.' },
+        officerWhoCanAlsoReview
+      )
+    ).rejects.toThrowError(/may not review it/);
+  });
+
+  it('refuses the reviewer the approval', async () => {
+    const { workflow } = await load();
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+    await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Complete.' },
+      secretary
+    );
+
+    const secretaryWhoCanAlsoApprove = principalFor(
+      secretary.userId,
+      secretary.email,
+      ['application.view', 'application.approve']
+    );
+
+    await expect(
+      workflow.decideApplication(
+        id,
+        { outcome: 'approve', comment: '' },
+        secretaryWhoCanAlsoApprove,
+        (await load()).members.createMemberFromApplication
+      )
+    ).rejects.toThrowError(/may not also approve it/);
+  });
+
+  it('does not refuse a different application by the same people', async () => {
+    // The rule is per record. Blocking a Secretary from reviewing anything an
+    // officer captured would stop the Society working.
+    const { workflow } = await load();
+    const first = await captureComplete();
+    const second = await captureComplete();
+
+    await workflow.submitApplication(first, officer);
+    await workflow.submitApplication(second, officer);
+
+    await expect(
+      workflow.reviewApplication(
+        first,
+        { outcome: 'forward', comment: 'One.' },
+        secretary
+      )
+    ).resolves.toBeDefined();
+    await expect(
+      workflow.reviewApplication(
+        second,
+        { outcome: 'forward', comment: 'Two.' },
+        secretary
+      )
+    ).resolves.toBeDefined();
+  });
+
+  it('bars a clerk who submitted work someone else captured', async () => {
+    // FRD 7.4.2 lets a Clerk assist with capture. Both people had a hand in
+    // it, so both are barred from reviewing — the conservative reading.
+    const { capture, workflow } = await load();
+    const { id } = await capture.startApplication('individual', {
+      userId: officer.userId,
+      email: officer.email,
+    });
+    await capture.saveDraft(id, COMPLETE_INDIVIDUAL, {
+      userId: officer.userId,
+      email: officer.email,
+    });
+
+    const clerk = principalFor(secretary.userId, secretary.email, [
+      'application.view',
+      'application.submit',
+      'application.review',
+    ]);
+    await workflow.submitApplication(id, clerk);
+
+    await expect(
+      workflow.reviewApplication(
+        id,
+        { outcome: 'forward', comment: 'Mine to review?' },
+        clerk
+      )
+    ).rejects.toThrowError(/may not review it/);
+  });
+});
+
+describe('S-305 and S-306: a return or a rejection must say why', () => {
+  it('refuses a return with no comment', async () => {
+    const { workflow } = await load();
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+
+    await expect(
+      workflow.reviewApplication(
+        id,
+        { outcome: 'return', comment: '   ' },
+        secretary
+      )
+    ).rejects.toThrowError(/requires a comment/);
+  });
+
+  it('sends a returned application back to staff, editable again', async () => {
+    const { capture, workflow } = await load();
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+
+    const returned = await workflow.reviewApplication(
+      id,
+      {
+        outcome: 'return',
+        comment: 'The NIC does not match the birth certificate.',
+      },
+      secretary
+    );
+    expect(returned.status).toBe('returned');
+
+    // The officer can now correct it — the point of returning it.
+    await expect(
+      capture.saveDraft(
+        id,
+        [
+          {
+            subject: 'applicant',
+            ordinal: 1,
+            values: { ...COMPLETE_INDIVIDUAL[0].values, nic: 'B1111111111111' },
+          },
+        ],
+        { userId: officer.userId, email: officer.email }
+      )
+    ).resolves.toBeDefined();
+
+    const chain = await workflow.transitionsFor(id);
+    expect(chain[chain.length - 1].comment).toBe(
+      'The NIC does not match the birth certificate.'
+    );
+  });
+
+  it('refuses a rejection with no comment', async () => {
+    const { workflow, members } = await load();
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+    await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Complete.' },
+      secretary
+    );
+
+    await expect(
+      workflow.decideApplication(
+        id,
+        { outcome: 'reject', comment: '' },
+        president,
+        members.createMemberFromApplication
+      )
+    ).rejects.toThrowError(/requires a comment/);
+  });
+
+  it('creates no member when the decision is a rejection', async () => {
+    const { workflow, members } = await load();
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+    await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Complete.' },
+      secretary
+    );
+
+    const before = await run(appUrl, 'select count(*) as n from member');
+    const decided = await workflow.decideApplication(
+      id,
+      { outcome: 'reject', comment: 'Shares not paid.' },
+      president,
+      members.createMemberFromApplication
+    );
+
+    expect(decided.status).toBe('rejected');
+    expect(decided.member).toBeUndefined();
+    const after = await run(appUrl, 'select count(*) as n from member');
+    expect(after.rows[0].n).toBe(before.rows[0].n);
+  });
+});
+
+describe('S-308 and S-309: what approval creates', () => {
+  it('half-creates nothing when account opening fails', async () => {
+    const { capture, workflow, members, config } = await load();
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+    await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Complete.' },
+      secretary
+    );
+
+    // Take away the default product. The member insert has already succeeded
+    // by the time this is discovered, so if the two were not in one
+    // transaction there would now be a member with no account and an approved
+    // application to match.
+    const msa = (await config.listAccountTypes()).find(a => a.code === 'msa')!;
+    await runAsActor(
+      `update account_type set is_membership_default = false where id = $1`,
+      [msa.id]
+    );
+
+    const membersBefore = await run(appUrl, 'select count(*) as n from member');
+
+    try {
+      await expect(
+        workflow.decideApplication(
+          id,
+          { outcome: 'approve', comment: '' },
+          president,
+          members.createMemberFromApplication
+        )
+      ).rejects.toThrowError(/membership default/);
+
+      // Nothing was created...
+      const membersAfter = await run(
+        appUrl,
+        'select count(*) as n from member'
+      );
+      expect(membersAfter.rows[0].n).toBe(membersBefore.rows[0].n);
+
+      // ...and the application was not approved either. An approved
+      // application with no member is the state S-308 exists to prevent.
+      expect((await capture.loadApplication(id))!.status).toBe(
+        'submitted_for_approval'
+      );
+      expect(
+        (await workflow.transitionsFor(id)).some(t => t.toStatus === 'approved')
+      ).toBe(false);
+    } finally {
+      await runAsActor(
+        `update account_type set is_membership_default = true where id = $1`,
+        [msa.id]
+      );
+    }
+
+    // And it can be approved once the configuration is put back.
+    const decided = await workflow.decideApplication(
+      id,
+      { outcome: 'approve', comment: '' },
+      president,
+      members.createMemberFromApplication
+    );
+    expect(decided.member?.memberNo).toBeDefined();
+  });
+
+  it('opens whichever product is configured as the default (S-206)', async () => {
+    const { workflow, members, config } = await load();
+    const admin = { userId: officer.userId, email: officer.email };
+
+    const premiumId = await config.createAccountType(
+      {
+        code: 'premium_msa',
+        name: 'Premium Multiplier Savings',
+        category: 'savings',
+        minimumOpeningAmount: '10000.00',
+        checklistId: null,
+        requiresApproval: false,
+        defaultStatus: 'active',
+      },
+      admin
+    );
+    await config.setMembershipDefault(premiumId, admin);
+
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+    await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Complete.' },
+      secretary
+    );
+    const decided = await workflow.decideApplication(
+      id,
+      { outcome: 'approve', comment: '' },
+      president,
+      members.createMemberFromApplication
+    );
+
+    const member = await members.loadMember(decided.member!.id);
+    expect(member!.accounts[0].accountTypeName).toBe(
+      'Premium Multiplier Savings'
+    );
+
+    const msa = (await config.listAccountTypes()).find(a => a.code === 'msa')!;
+    await config.setMembershipDefault(msa.id, admin);
+  });
+
+  it('gives every member a distinct number in the documented format', async () => {
+    const { members } = await load();
+    const all = await members.listMembers({ limit: 100 });
+
+    expect(all.members.length).toBeGreaterThan(1);
+    expect(all.members.every(m => /^ABM-\d{6}$/.test(m.memberNo))).toBe(true);
+    expect(new Set(all.members.map(m => m.memberNo)).size).toBe(
+      all.members.length
+    );
+  });
+
+  it('cannot open a second default account for one member', async () => {
+    const { workflow, members, config } = await load();
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+    await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Complete.' },
+      secretary
+    );
+    const decided = await workflow.decideApplication(
+      id,
+      { outcome: 'approve', comment: '' },
+      president,
+      members.createMemberFromApplication
+    );
+
+    const msa = (await config.listAccountTypes()).find(a => a.code === 'msa')!;
+    // A retry that somehow ran twice. The database refuses, so "exactly one
+    // MSA is created" does not depend on the service getting it right.
+    await expect(
+      run(
+        appUrl,
+        `insert into account (member_id, account_type_id, is_membership_default)
+         values ($1, $2, true)`,
+        [decided.member!.id, msa.id]
+      )
+    ).rejects.toThrowError(/account_one_default_per_member_idx/);
+  });
+
+  it('audits the member and the account against the deciding officer', async () => {
+    const { workflow, members } = await load();
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+    await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Complete.' },
+      secretary
+    );
+    const decided = await workflow.decideApplication(
+      id,
+      { outcome: 'approve', comment: '' },
+      president,
+      members.createMemberFromApplication
+    );
+
+    const audited = await run(
+      appUrl,
+      `select action, actor_description, new_value->>'memberNo' as member_no
+         from audit_event
+        where action in ('member.created', 'account.opened')
+          and (entity_id = $1 or new_value->>'memberNo' = $2)
+        order by action`,
+      [decided.member!.id, decided.member!.memberNo]
+    );
+
+    expect(audited.rows.map(r => r.action)).toEqual([
+      'account.opened',
+      'member.created',
+    ]);
+    expect(
+      audited.rows.every(r => r.actor_description === president.email)
+    ).toBe(true);
+  });
+});
+
+describe('the actions offered come from the configured chain', () => {
+  it('offers the officer submission, and nobody else', async () => {
+    const { capture, workflow } = await load();
+    const id = await captureComplete();
+    const application = (await capture.loadApplication(id))!;
+
+    expect(
+      (await workflow.availableActions(application, officer)).map(
+        a => a.stepCode
+      )
+    ).toEqual(['capture']);
+    expect(await workflow.availableActions(application, secretary)).toEqual([]);
+    expect(await workflow.availableActions(application, president)).toEqual([]);
+  });
+
+  it('moves the offer along as the status changes', async () => {
+    const { capture, workflow } = await load();
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+
+    let application = (await capture.loadApplication(id))!;
+    expect(
+      (await workflow.availableActions(application, secretary)).map(
+        a => a.stepCode
+      )
+    ).toEqual(['secretary_review']);
+    expect(await workflow.availableActions(application, president)).toEqual([]);
+
+    await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Complete.' },
+      secretary
+    );
+    application = (await capture.loadApplication(id))!;
+    expect(
+      (await workflow.availableActions(application, president)).map(
+        a => a.stepCode
+      )
+    ).toEqual(['president_decision']);
+    expect(await workflow.availableActions(application, secretary)).toEqual([]);
+  });
+
+  it('refuses a step an administrator has disabled', async () => {
+    const { workflow, config } = await load();
+    const admin = { userId: officer.userId, email: officer.email };
+    const definition = (await config.listWorkflows()).find(
+      d => d.code === 'membership_application_approval'
+    )!;
+    const review = definition.steps.find(s => s.code === 'secretary_review')!;
+
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+
+    await config.setStepEnabled(review.id, false, admin);
+    try {
+      await expect(
+        workflow.reviewApplication(
+          id,
+          { outcome: 'forward', comment: 'Complete.' },
+          secretary
+        )
+      ).rejects.toThrowError(/not enabled in the configured workflow/);
+    } finally {
+      await config.setStepEnabled(review.id, true, admin);
+    }
+  });
+});

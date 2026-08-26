@@ -331,12 +331,12 @@ account type, **so that** amounts change by configuration (FRD 7.8.1).
 
 ---
 
-# M3 — Walking skeleton: application to member
+# M3 — Walking skeleton: application to member ✅
 
 **Goal:** capture an Individual application, take it through Secretary and
 President, and see a Member and their MSA account created.
 
-## Feature 3.1 — Application capture
+## Feature 3.1 — Application capture ✅
 
 ### S-301 · Create a draft Individual application
 
@@ -362,7 +362,7 @@ go, **so that** a dropped connection loses nothing (decision 14).
 be quoted and traced.
 `Must · 2 · EPIC-04`
 
-## Feature 3.2 — Submission and approval
+## Feature 3.2 — Submission and approval ✅
 
 ### S-304 · Submit for central processing
 
@@ -397,7 +397,7 @@ approved applicants become members. _(WF-US-002)_
 and comment, **so that** the approval chain is reconstructable.
 `Must · 3 · EPIC-11`
 
-## Feature 3.3 — Member and account creation
+## Feature 3.3 — Member and account creation ✅
 
 ### S-308 · Create the Member record on approval
 
