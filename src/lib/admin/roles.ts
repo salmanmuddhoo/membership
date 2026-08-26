@@ -569,6 +569,16 @@ export interface UserSummary {
   roles: string[];
 }
 
+// How many accounts are deactivated. Counted in the database rather than by
+// filtering a page of results, which would only ever count the deactivated
+// accounts that happened to fall inside the page limit.
+export async function countDeactivatedUsers(): Promise<number> {
+  const result = await query<{ n: string }>(
+    'select count(*) as n from app_user where not is_active'
+  );
+  return Number(result.rows[0].n);
+}
+
 export interface UserPage {
   users: UserSummary[];
   /** Accounts matching the search, before the page limit is applied. */

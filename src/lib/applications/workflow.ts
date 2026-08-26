@@ -45,6 +45,7 @@ export interface Transition {
   fromStatus: string | null;
   toStatus: string;
   stepCode: string | null;
+  actorName: string;
   actorEmail: string;
   actorRole: string | null;
   comment: string | null;
@@ -369,13 +370,15 @@ export async function transitionsFor(
     from_status: string | null;
     to_status: string;
     step_code: string | null;
+    actor_name: string;
     actor_email: string;
     actor_role: string | null;
     comment: string | null;
     occurred_at: Date;
   }>(
     `select t.from_status, t.to_status, t.step_code,
-            u.email::text as actor_email, t.actor_role, t.comment, t.occurred_at
+            u.display_name as actor_name, u.email::text as actor_email,
+            t.actor_role, t.comment, t.occurred_at
        from application_transition t
        join app_user u on u.id = t.actor_user_id
       where t.application_id = $1
@@ -387,6 +390,7 @@ export async function transitionsFor(
     fromStatus: r.from_status,
     toStatus: r.to_status,
     stepCode: r.step_code,
+    actorName: r.actor_name,
     actorEmail: r.actor_email,
     actorRole: r.actor_role,
     comment: r.comment,

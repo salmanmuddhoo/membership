@@ -2,6 +2,7 @@
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import {
   AdminError,
+  countDeactivatedUsers,
   createStaffAccount,
   deleteStaffAccount,
   listRoles,
@@ -15,6 +16,12 @@ const canManage = principal.permissions.has('user.manage');
 
 let error: string | null = null;
 let notice: string | null = null;
+// Set when creating an account was refused because a deactivated one already
+// holds that address. The list hides deactivated accounts by default, so the
+// message would otherwise point at something the administrator cannot see —
+// which is exactly the dead end this flag exists to avoid.
+let revealDeactivated = false;
+let revealAddress = '';
 
 if (Astro.request.method === 'POST') {
   if (!canManage) {
@@ -60,6 +67,12 @@ if (Astro.request.method === 'POST') {
     } catch (err) {
       if (err instanceof AdminError) {
         error = err.message;
+        if (err.reason === 'duplicate') {
+          revealDeactivated = true;
+          // Filter to the address as well, so "reactivate it below" means the
+          // one row underneath rather than somewhere in a list of hundreds.
+          revealAddress = String(form.get('email') ?? '').trim();
+        }
       } else {
         console.error('[admin/users]', err);
         error = 'Something went wrong. Please try again.';
@@ -68,17 +81,16 @@ if (Astro.request.method === 'POST') {
   }
 }
 
-const search = Astro.url.searchParams.get('q') ?? '';
+const search = revealAddress || (Astro.url.searchParams.get('q') ?? '');
 // Deactivated accounts are kept forever — their history points at them — but
 // showing every leaver on the working list every day is noise, so they are
 // behind a toggle.
-const showDeactivated = Astro.url.searchParams.get('deactivated') === '1';
+const showDeactivated =
+  Astro.url.searchParams.get('deactivated') === '1' || revealDeactivated;
 const [page, roles, deactivatedCount] = await Promise.all([
   listUsers({ search, includeInactive: showDeactivated }),
   listRoles(),
-  listUsers({ includeInactive: true }).then(
-    all => all.users.filter(u => !u.isActive).length
-  ),
+  countDeactivatedUsers(),
 ]);
 const { users, total, truncated } = page;
 ---
@@ -215,7 +227,27 @@ const { users, total, truncated } = page;
             </a>
           )
         }
+        {
+          showDeactivated && (
+            <input type="hidden" name="deactivated" value="1" />
+          )
+        }
       </form>
+
+      <p class="mt-3 text-sm">
+        <a
+          href={showDeactivated
+            ? `/admin/users${search ? `?q=${encodeURIComponent(search)}` : ''}`
+            : `/admin/users?deactivated=1${search ? `&q=${encodeURIComponent(search)}` : ''}`}
+          class="text-neutral-500 underline dark:text-neutral-400"
+        >
+          {
+            showDeactivated
+              ? 'Hide deactivated accounts'
+              : `Show deactivated accounts${deactivatedCount > 0 ? ` (${deactivatedCount})` : ''}`
+          }
+        </a>
+      </p>
 
       <p class="mt-3 text-sm text-neutral-500 dark:text-neutral-400">
         {

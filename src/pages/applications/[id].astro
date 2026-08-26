@@ -268,7 +268,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           {application!.status}
         </span>
         <span class="text-xs text-neutral-500 dark:text-neutral-400">
-          captured by {application!.capturedByEmail} · updated {
+          captured by {application!.capturedByName} · updated {
             dateFormat.format(application!.updatedAt)
           }
         </span>
@@ -447,7 +447,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                     </span>
                   )}
                   <span class="text-xs text-neutral-500 dark:text-neutral-400">
-                    {entry.actorEmail} · {dateFormat.format(entry.occurredAt)}
+                    {entry.actorName} · {dateFormat.format(entry.occurredAt)}
                   </span>
                 </div>
                 {entry.comment && (
