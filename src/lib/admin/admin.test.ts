@@ -186,6 +186,145 @@ describe('S-201: roles and their permissions', () => {
   });
 });
 
+describe('creating a staff account from the administration screen', () => {
+  it('creates the account with its roles, ready to sign in', async () => {
+    const { roles } = await load();
+
+    const id = await roles.createStaffAccount(
+      {
+        email: 'New.Recruit@albarakah.mu',
+        displayName: 'New Officer',
+        roleCodes: ['system_administrator'],
+      },
+      actor
+    );
+
+    const created = (await roles.listUsers()).users.find(u => u.id === id)!;
+    // Stored lower-case: the column is citext, but a consistent stored form
+    // keeps the audit trail and the Entra claim comparable by eye.
+    expect(created.email).toBe('new.recruit@albarakah.mu');
+    expect(created.displayName).toBe('New Officer');
+    expect(created.roles).toEqual(['system_administrator']);
+
+    // No subject yet. It binds on first sign-in, which is what makes an
+    // account created by email safe to hand out.
+    expect(created.hasSignedIn).toBe(false);
+  });
+
+  it('creates an account with no roles at all', async () => {
+    const { roles } = await load();
+    const id = await roles.createStaffAccount(
+      { email: 'norole@albarakah.mu', displayName: 'No Role', roleCodes: [] },
+      actor
+    );
+
+    const created = (await roles.listUsers()).users.find(u => u.id === id)!;
+    expect(created.roles).toEqual([]);
+    // Deny by default means such a person can sign in and reach nothing,
+    // which is the right starting state rather than an error.
+    expect(created.isActive).toBe(true);
+  });
+
+  it('records who created the account, and with what', async () => {
+    const { roles } = await load();
+    const id = await roles.createStaffAccount(
+      {
+        email: 'audited@albarakah.mu',
+        displayName: 'Audited',
+        roleCodes: ['system_administrator'],
+      },
+      actor
+    );
+
+    const audited = await run(
+      appUrl,
+      `select actor_description, new_value->>'email' as email,
+              new_value->'roles' as roles
+         from audit_event
+        where action = 'user.created' and entity_id = $1`,
+      [id]
+    );
+    expect(audited.rowCount).toBe(1);
+    expect(audited.rows[0].actor_description).toBe(actor.email);
+    expect(audited.rows[0].email).toBe('audited@albarakah.mu');
+    expect(audited.rows[0].roles).toEqual(['system_administrator']);
+  });
+
+  it('refuses a second account for an address that already has one', async () => {
+    const { roles } = await load();
+    await roles.createStaffAccount(
+      { email: 'dup@albarakah.mu', displayName: 'First', roleCodes: [] },
+      actor
+    );
+
+    await expect(
+      roles.createStaffAccount(
+        { email: 'DUP@albarakah.mu', displayName: 'Second', roleCodes: [] },
+        actor
+      )
+    ).rejects.toThrowError(/already has an account/);
+  });
+
+  it('points at the deactivated account rather than letting a second be made', async () => {
+    const { roles } = await load();
+    const id = await roles.createStaffAccount(
+      { email: 'leaver@albarakah.mu', displayName: 'Leaver', roleCodes: [] },
+      actor
+    );
+    await roles.setUserActive(id, false, actor);
+
+    // A deactivated account does not stand out in the list, so "already
+    // exists" would send an administrator hunting. A second account would also
+    // split that person's history across two records.
+    await expect(
+      roles.createStaffAccount(
+        {
+          email: 'leaver@albarakah.mu',
+          displayName: 'Returner',
+          roleCodes: [],
+        },
+        actor
+      )
+    ).rejects.toThrowError(/deactivated account. Reactivate it/);
+  });
+
+  it('refuses an unknown role, creating nothing', async () => {
+    const { roles } = await load();
+    const before = await run(appUrl, 'select count(*) as n from app_user');
+
+    await expect(
+      roles.createStaffAccount(
+        {
+          email: 'badrole@albarakah.mu',
+          displayName: 'Bad Role',
+          roleCodes: ['not_a_role'],
+        },
+        actor
+      )
+    ).rejects.toThrowError(/Unknown role/);
+
+    const after = await run(appUrl, 'select count(*) as n from app_user');
+    expect(after.rows[0].n).toBe(before.rows[0].n);
+  });
+
+  it('refuses input that is obviously not an address or has no name', async () => {
+    const { roles } = await load();
+    await expect(
+      roles.createStaffAccount(
+        { email: 'not-an-address', displayName: 'X', roleCodes: [] },
+        actor
+      )
+    ).rejects.toThrowError(/email address/);
+
+    await expect(
+      roles.createStaffAccount(
+        { email: 'noname@albarakah.mu', displayName: '  ', roleCodes: [] },
+        actor
+      )
+    ).rejects.toThrowError(/name is required/);
+  });
+});
+
 describe('S-202: a user may hold several roles', () => {
   it('assigns more than one, as FRD 6.1 expects', async () => {
     const { roles } = await load();
@@ -258,7 +397,12 @@ describe('S-204: deactivation, never deletion', () => {
 describe('the staff list stays bounded', () => {
   it('caps the page and reports how many it left out', async () => {
     const { roles } = await load();
-    // Two accounts exist from the fixture; add enough to cross the cap.
+    // Counted rather than assumed: other tests in this file create accounts,
+    // and hard-coding the fixture's two would break this for a reason that has
+    // nothing to do with paging.
+    const baseline = Number(
+      (await run(appUrl, 'select count(*) as n from app_user')).rows[0].n
+    );
     const extra = roles.USER_PAGE_LIMIT + 5;
     await run(
       appUrl,
@@ -271,7 +415,7 @@ describe('the staff list stays bounded', () => {
     try {
       const page = await roles.listUsers();
       expect(page.users).toHaveLength(roles.USER_PAGE_LIMIT);
-      expect(page.total).toBe(extra + 2);
+      expect(page.total).toBe(baseline + extra);
       expect(page.truncated).toBe(true);
     } finally {
       await run(appUrl, `delete from app_user where email like 'bulk%'`);

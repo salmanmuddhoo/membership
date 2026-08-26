@@ -2,6 +2,7 @@
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import {
   AdminError,
+  createStaffAccount,
   listRoles,
   listUsers,
   setUserActive,
@@ -24,7 +25,19 @@ if (Astro.request.method === 'POST') {
     const actor = { userId: principal.userId, email: principal.email };
 
     try {
-      if (intent === 'roles') {
+      if (intent === 'create') {
+        await createStaffAccount(
+          {
+            email: String(form.get('email') ?? ''),
+            displayName: String(form.get('displayName') ?? ''),
+            roleCodes: form.getAll('newRoles').map(String),
+          },
+          actor
+        );
+        notice =
+          `Account created for ${String(form.get('email') ?? '').trim()}. ` +
+          'They can sign in with their Microsoft account straight away.';
+      } else if (intent === 'roles') {
         await setUserRoles(userId, form.getAll('roles').map(String), actor);
         notice = 'Roles updated.';
       } else if (intent === 'deactivate' || intent === 'reactivate') {
@@ -73,6 +86,79 @@ const { users, total, truncated } = page;
         <div class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-lg border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
           {notice}
         </div>
+      )
+    }
+
+    {
+      canManage && (
+        <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+          <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+            Add a staff account
+          </h2>
+          <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+            Create the account by the person's work email address. There is no
+            password to set — they sign in with their Microsoft account, and it
+            binds to this record the first time they do. Give them the roles
+            their job needs; roles can be changed at any time below.
+          </p>
+
+          <form method="post" class="mt-4 space-y-4">
+            <input type="hidden" name="intent" value="create" />
+            <div class="grid gap-3 sm:grid-cols-2">
+              <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                Work email
+                <input
+                  type="email"
+                  name="email"
+                  required
+                  placeholder="name@albarakah.mu"
+                  class="focus:border-mint-400 focus:ring-mint-400 mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                />
+              </label>
+              <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                Name
+                <input
+                  type="text"
+                  name="displayName"
+                  required
+                  placeholder="Aisha Beebeejaun"
+                  class="focus:border-mint-400 focus:ring-mint-400 mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                />
+              </label>
+            </div>
+
+            <fieldset class="grid gap-2 sm:grid-cols-2">
+              <legend class="mb-2 text-sm font-medium text-neutral-700 dark:text-neutral-200">
+                Roles
+              </legend>
+              {roles.map(role => (
+                <label class="flex items-start gap-x-2 text-sm text-neutral-600 dark:text-neutral-300">
+                  <input
+                    type="checkbox"
+                    name="newRoles"
+                    value={role.code}
+                    class="text-mint-500 focus:ring-mint-400 mt-0.5 rounded border-neutral-300 dark:border-neutral-600"
+                  />
+                  <span>
+                    {role.name}
+                    {role.description && (
+                      <span class="block text-xs text-neutral-400 dark:text-neutral-500">
+                        {role.description}
+                      </span>
+                    )}
+                  </span>
+                </label>
+              ))}
+            </fieldset>
+
+            <button
+              type="submit"
+              class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+            >
+              Create account
+            </button>
+          </form>
+        </section>
       )
     }
 
