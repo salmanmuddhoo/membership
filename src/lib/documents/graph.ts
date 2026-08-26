@@ -117,3 +117,94 @@ export async function getAccessToken(
 export function resetTokenCache(): void {
   cached = undefined;
 }
+
+export interface GraphItem {
+  id: string;
+  name: string;
+  size: number;
+  webUrl: string;
+}
+
+/**
+ * Confirm a file is actually in the drive, and describe it.
+ *
+ * This is what turns "the browser said it finished" into a fact. S-408 turns
+ * on never trusting the client's word for a completed upload: the bytes go
+ * from the device to Microsoft without passing through us, so the only honest
+ * confirmation is asking Microsoft.
+ */
+export async function getItemByPath(
+  itemPath: string,
+  config: GraphConfig = getGraphConfig()
+): Promise<GraphItem | null> {
+  const token = await getAccessToken(config);
+  const response = await fetch(
+    `${config.graphBaseUrl}/drives/${config.driveId}/root:/${encodeURI(itemPath)}`,
+    { headers: { authorization: `Bearer ${token}` } }
+  );
+
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '');
+    throw new Error(`Graph item lookup failed (${response.status}): ${detail}`);
+  }
+
+  const item = (await response.json()) as Partial<GraphItem> & {
+    file?: unknown;
+  };
+  if (!item.id) return null;
+
+  // A folder at that path is not the document. Recording it as one would make
+  // the checklist claim a file exists that nobody can open.
+  if (!item.file) return null;
+
+  return {
+    id: item.id,
+    name: item.name ?? '',
+    size: item.size ?? 0,
+    webUrl: item.webUrl ?? '',
+  };
+}
+
+/**
+ * Create one folder, tolerating one that is already there (S-405).
+ *
+ * Graph has no "create if absent", so a conflictBehavior of `replace` would
+ * destroy an existing folder's contents and `fail` would error on the second
+ * call. `rename` would silently make "Member Documents 1". So the 409 is
+ * caught explicitly and treated as success, which is the only behaviour that
+ * makes creation idempotent — and a retry must not produce a second folder.
+ */
+export async function ensureFolder(
+  parentPath: string,
+  name: string,
+  config: GraphConfig = getGraphConfig()
+): Promise<void> {
+  const token = await getAccessToken(config);
+  const parent = parentPath === '' ? 'root' : `root:/${encodeURI(parentPath)}:`;
+
+  const response = await fetch(
+    `${config.graphBaseUrl}/drives/${config.driveId}/${parent}/children`,
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        name,
+        folder: {},
+        '@microsoft.graph.conflictBehavior': 'fail',
+      }),
+    }
+  );
+
+  if (response.ok) return;
+  if (response.status === 409) return; // Already there, which is what we wanted.
+
+  const detail = await response.text().catch(() => '');
+  throw new Error(
+    `Graph folder creation failed for ${parentPath}/${name} ` +
+      `(${response.status}): ${detail}`
+  );
+}
