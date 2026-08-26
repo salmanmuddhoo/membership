@@ -146,6 +146,11 @@ read at runtime, they take effect on the next deploy.
   — the backend architecture decision.
 - [`docs/environments.md`](docs/environments.md) — test and production
   environments, and how a release is promoted.
+- [`docs/database.md`](docs/database.md) — the two database roles, TLS, pooling
+  and how migrations are applied.
+- [`docs/access-control.md`](docs/access-control.md) — how a signed-in person is
+  resolved to an account, how permissions are decided, and how to provision
+  staff accounts.
 
 ## Security & contributions
 

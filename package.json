@@ -13,7 +13,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "migrate": "tsx scripts/migrate-cli.ts up",
-    "migrate:status": "tsx scripts/migrate-cli.ts status"
+    "migrate:status": "tsx scripts/migrate-cli.ts status",
+    "access:grant": "tsx scripts/grant-access.ts"
   },
   "dependencies": {
     "@astrojs/check": "^0.9.10",
