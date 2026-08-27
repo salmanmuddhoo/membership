@@ -21,6 +21,11 @@ export type ErrorCode =
   | 'validation_failed'
   | 'conflict'
   | 'rate_limited'
+  // A dependency this request needs is not configured or not answering. Kept
+  // apart from internal_error because it is not a defect: something outside
+  // this application has to change, and saying so is what lets the person on
+  // screen tell an operator what to do instead of filing a bug.
+  | 'service_unavailable'
   // Something went wrong that the caller can do nothing about.
   | 'internal_error';
 
@@ -31,6 +36,7 @@ const STATUS_BY_CODE: Record<ErrorCode, number> = {
   validation_failed: 422,
   conflict: 409,
   rate_limited: 429,
+  service_unavailable: 503,
   internal_error: 500,
 };
 
@@ -43,6 +49,8 @@ const MESSAGE_BY_CODE: Record<ErrorCode, string> = {
   validation_failed: 'The request could not be processed as submitted.',
   conflict: 'The request conflicts with the current state of the resource.',
   rate_limited: 'Too many requests. Please try again shortly.',
+  service_unavailable:
+    'A service this needs is unavailable. Please tell an administrator.',
   internal_error: 'Something went wrong. Please try again.',
 };
 

@@ -8,6 +8,7 @@ import type { APIRoute } from 'astro';
 import { defineEndpoint, apiSuccess, ApiError } from '@lib/api/endpoint';
 import { beginUpload, DocumentError } from '@lib/documents/documents';
 import { UploadRejected } from '@lib/documents/upload';
+import { GraphError, graphFailureMessage } from '@lib/documents/graph';
 import type { FieldSubject } from '@lib/config/reference';
 
 const SUBJECTS: ReadonlySet<string> = new Set([
@@ -157,6 +158,22 @@ const endpoint = defineEndpoint(
         correlationId
       );
     } catch (error) {
+      // SharePoint being unconfigured or refusing us is not a defect in this
+      // request, and reporting it as one leaves the officer staring at a 500
+      // with no idea whether to retry, fix their file, or find an
+      // administrator. The underlying detail stays in the log.
+      if (error instanceof GraphError) {
+        console.error(
+          JSON.stringify({
+            kind: 'graph-error',
+            correlationId,
+            reason: error.reason,
+            status: error.status ?? null,
+          }),
+          error.message
+        );
+        throw new ApiError('service_unavailable', graphFailureMessage(error));
+      }
       if (error instanceof UploadRejected) {
         throw new ApiError('validation_failed', error.message, {
           file: [error.reason],

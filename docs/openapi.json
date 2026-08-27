@@ -1392,6 +1392,7 @@
                       "required": [
                         "status",
                         "database",
+                        "sharePoint",
                         "checkedAt"
                       ],
                       "properties": {
@@ -1408,6 +1409,14 @@
                             "reachable",
                             "unreachable"
                           ]
+                        },
+                        "sharePoint": {
+                          "type": "string",
+                          "enum": [
+                            "configured",
+                            "not_configured"
+                          ],
+                          "description": "Whether the GRAPH_* settings are present in this environment. Not a reachability check — it makes no network call, so a health check does not depend on Microsoft answering."
                         },
                         "checkedAt": {
                           "type": "string",

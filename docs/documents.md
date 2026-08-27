@@ -113,6 +113,25 @@ Then set `GRAPH_TENANT_ID`, `GRAPH_CLIENT_ID`, `GRAPH_CLIENT_SECRET` and
 `GRAPH_DRIVE_ID` per environment. Test and production should use **different
 sites**, so a test upload can never land in the real member library.
 
+### Until that is done, filing a document fails — visibly
+
+`GET /api/v1/health` reports `sharePoint: "configured"` or
+`"not_configured"`. It reads the settings only and makes no network call, so a
+health check never waits on Microsoft and an outage at their end is not
+reported as one at ours.
+
+Filing a document in an environment that is not set up answers **503** with
+`SharePoint is not configured for this environment…`, not a 500. The
+distinction matters: 500 means this application has a defect and there is
+nothing an operator can do; 503 with that message names the thing to go and
+fix. Wrong or expired credentials are told apart from missing ones, and a
+refusal by the library is reported as the library's rather than as a problem
+with the file being filed.
+
+The detail behind any of them — the AADSTS code, the Graph error body — is
+logged against the request's correlation id and never returned. Quote that id
+when reporting a problem and the exact cause is one search away.
+
 ## What M4 built on it
 
 The spike endpoint `/api/v1/documents/upload-ticket` has been **retired**. It
