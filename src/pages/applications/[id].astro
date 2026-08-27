@@ -24,6 +24,7 @@ import {
   reviewDocument,
   DocumentError,
 } from '@lib/documents/documents';
+import { applicationTimeline } from '@lib/applications/timeline';
 
 const principal = Astro.locals.principal!;
 const canCapture = principal.permissions.has('application.capture');
@@ -297,6 +298,51 @@ const requiredOutstanding = checklist.filter(
   e => e.requirement === 'required' && e.state !== 'verified'
 ).length;
 
+// The officer's job is to FILE the documents; verifying them is the
+// Secretary's. So the timeline counts what has nothing against it at all,
+// which is a different number from the one the Documents heading shows.
+const requiredDocumentsMissing = checklist.filter(
+  e => e.requirement === 'required' && e.state === 'missing'
+).length;
+
+const timeline = applicationTimeline({
+  status: application!.status,
+  mandatoryFieldsOutstanding: blocking.length,
+  // The only evidence a signature exists is the signed form coming back.
+  signedFormFiled: checklist.some(
+    e => e.documentCode === 'signed_form' && e.state !== 'missing'
+  ),
+  requiredDocumentsOutstanding: requiredDocumentsMissing,
+  // Payments arrive in M5. Passing null rather than false is what keeps the
+  // step visible without ever telling the officer to go and do it.
+  paymentRecorded: null,
+});
+
+const STEP_MARK: Record<string, string> = {
+  done: 'bg-mint-300 text-neutral-800 dark:bg-mint-700 dark:text-neutral-100',
+  current:
+    'bg-neutral-800 text-white dark:bg-neutral-100 dark:text-neutral-900',
+  todo: 'bg-neutral-200 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400',
+  unavailable:
+    'bg-neutral-200 text-neutral-400 dark:bg-neutral-800 dark:text-neutral-500',
+};
+
+const STEP_TEXT: Record<string, string> = {
+  done: 'text-neutral-600 dark:text-neutral-300',
+  current: 'font-semibold text-neutral-900 dark:text-neutral-50',
+  todo: 'text-neutral-500 dark:text-neutral-400',
+  unavailable: 'text-neutral-400 dark:text-neutral-500',
+};
+
+// The colour and the tick carry the state for someone looking at it; this
+// carries the same thing for someone who is not.
+const STEP_READS: Record<string, string> = {
+  done: '(done)',
+  current: '(next)',
+  todo: '(to come)',
+  unavailable: '(not available)',
+};
+
 const SUBJECT_LABELS: Record<string, string> = {
   applicant: 'Applicant',
   nominee: 'Nominee',
@@ -411,6 +457,39 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     </section>
 
     {
+      canSeeDocuments && (
+        <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+          <ol class="flex flex-wrap gap-x-6 gap-y-3">
+            {timeline.map((step, index) => (
+              <li class="flex min-w-[10rem] flex-1 items-start gap-2">
+                <span
+                  class:list={[
+                    'mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold',
+                    STEP_MARK[step.state],
+                  ]}
+                  aria-hidden="true"
+                >
+                  {step.state === 'done' ? '✓' : index + 1}
+                </span>
+                <span>
+                  <span class:list={['block text-sm', STEP_TEXT[step.state]]}>
+                    {step.label}
+                  </span>
+                  {step.detail && (
+                    <span class="block text-xs text-neutral-500 dark:text-neutral-400">
+                      {step.detail}
+                    </span>
+                  )}
+                  <span class="sr-only">{STEP_READS[step.state]}</span>
+                </span>
+              </li>
+            ))}
+          </ol>
+        </section>
+      )
+    }
+
+    {
       createdMember && (
         <section class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-2xl border p-6">
           <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
@@ -447,91 +526,102 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       )
     }
 
-    {
-      actions.length > 0 && (
-        <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-          <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-            Your next step
-          </h2>
+    <form method="post" id="capture-form" class="space-y-6">
+      {
+        subjects.map(subject => {
+          const values = valuesFor(subject);
+          const missing = new Set(
+            blocking.filter(b => b.subject === subject).map(b => b.fieldKey)
+          );
+          return (
+            <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+              <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+                {SUBJECT_LABELS[subject] ?? subject}
+              </h2>
+              <div class="mt-4 grid gap-4 sm:grid-cols-2">
+                {(fields.get(subject) ?? []).map(field => {
+                  const name = `field.${subject}.1.${field.fieldKey}`;
+                  const value = values[field.fieldKey] ?? '';
+                  return (
+                    <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                      <span>
+                        {field.label}
+                        {field.isMandatory && (
+                          <span
+                            class="text-red-600 dark:text-red-400"
+                            aria-hidden="true"
+                          >
+                            {' '}
+                            *
+                          </span>
+                        )}
+                      </span>
+                      {field.dataType === 'choice' ? (
+                        <select
+                          name={name}
+                          disabled={!isEditable}
+                          required={field.isMandatory}
+                          class:list={[
+                            'mt-1 w-full rounded-lg border bg-white px-3 py-1.5 text-sm dark:bg-neutral-900 dark:text-neutral-100',
+                            missing.has(field.fieldKey)
+                              ? 'border-red-400 dark:border-red-700'
+                              : 'border-neutral-300 dark:border-neutral-600',
+                          ]}
+                        >
+                          <option value="">—</option>
+                          {field.choices.map(choice => (
+                            <option value={choice} selected={choice === value}>
+                              {choice}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          type={inputTypeFor(field.dataType)}
+                          name={name}
+                          value={value}
+                          disabled={!isEditable}
+                          required={field.isMandatory}
+                          placeholder={
+                            field.dataType === 'phone' ? '5789 1234' : undefined
+                          }
+                          class:list={[
+                            'mt-1 w-full rounded-lg border bg-white px-3 py-1.5 text-sm dark:bg-neutral-900 dark:text-neutral-100',
+                            missing.has(field.fieldKey)
+                              ? 'border-red-400 dark:border-red-700'
+                              : 'border-neutral-300 dark:border-neutral-600',
+                          ]}
+                        />
+                      )}
+                    </label>
+                  );
+                })}
+              </div>
+            </section>
+          );
+        })
+      }
 
-          {actions.map(action => (
-            <form method="post" class="mt-4 space-y-3">
-              {action.stepCode === 'capture' && (
-                <button
-                  type="submit"
-                  name="intent"
-                  value="submit"
-                  disabled={blocking.length > 0}
-                  class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {blocking.length > 0
-                    ? `Submit (${blocking.length} required field(s) still empty)`
-                    : 'Submit for central processing'}
-                </button>
-              )}
-
-              {(action.stepCode === 'secretary_review' ||
-                action.stepCode === 'president_decision') && (
-                <>
-                  <label class="block text-sm text-neutral-600 dark:text-neutral-300">
-                    Comment
-                    <textarea
-                      name="comment"
-                      rows="3"
-                      class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-                      placeholder={
-                        action.stepCode === 'secretary_review'
-                          ? 'Required if you return this application.'
-                          : 'Required if you reject this application.'
-                      }
-                    />
-                  </label>
-                  <div class="flex flex-wrap gap-2">
-                    <button
-                      type="submit"
-                      name="outcome"
-                      value={
-                        action.stepCode === 'secretary_review'
-                          ? 'forward'
-                          : 'approve'
-                      }
-                      class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
-                    >
-                      {action.stepCode === 'secretary_review'
-                        ? 'Forward to the President'
-                        : 'Approve'}
-                    </button>
-                    <button
-                      type="submit"
-                      name="outcome"
-                      value={
-                        action.stepCode === 'secretary_review'
-                          ? 'return'
-                          : 'reject'
-                      }
-                      class="rounded-lg border border-red-300 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
-                    >
-                      {action.stepCode === 'secretary_review'
-                        ? 'Return for correction'
-                        : 'Reject'}
-                    </button>
-                  </div>
-                  <input
-                    type="hidden"
-                    name="intent"
-                    value={
-                      action.stepCode === 'secretary_review'
-                        ? 'review'
-                        : 'decide'
-                    }
-                  />
-                </>
-              )}
-            </form>
-          ))}
-        </section>
-      )
-    }
+      {
+        isEditable && (
+          <div class="flex flex-wrap items-center gap-3">
+            <button
+              type="submit"
+              name="intent"
+              value="save"
+              class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
+            >
+              Save draft
+            </button>
+            <span
+              id="autosave-status"
+              class="text-xs text-neutral-500 dark:text-neutral-400"
+              aria-live="polite"
+            />
+          </div>
+        )
+      }
+    </form>
 
     {
       canSeeDocuments && checklist.length > 0 && (
@@ -687,6 +777,92 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     }
 
     {
+      actions.length > 0 && (
+        <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+          <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+            Your next step
+          </h2>
+
+          {actions.map(action => (
+            <form method="post" class="mt-4 space-y-3">
+              {action.stepCode === 'capture' && (
+                <button
+                  type="submit"
+                  name="intent"
+                  value="submit"
+                  disabled={blocking.length > 0}
+                  class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {blocking.length > 0
+                    ? `Submit (${blocking.length} required field(s) still empty)`
+                    : 'Submit for central processing'}
+                </button>
+              )}
+
+              {(action.stepCode === 'secretary_review' ||
+                action.stepCode === 'president_decision') && (
+                <>
+                  <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+                    Comment
+                    <textarea
+                      name="comment"
+                      rows="3"
+                      class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                      placeholder={
+                        action.stepCode === 'secretary_review'
+                          ? 'Required if you return this application.'
+                          : 'Required if you reject this application.'
+                      }
+                    />
+                  </label>
+                  <div class="flex flex-wrap gap-2">
+                    <button
+                      type="submit"
+                      name="outcome"
+                      value={
+                        action.stepCode === 'secretary_review'
+                          ? 'forward'
+                          : 'approve'
+                      }
+                      class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
+                    >
+                      {action.stepCode === 'secretary_review'
+                        ? 'Forward to the President'
+                        : 'Approve'}
+                    </button>
+                    <button
+                      type="submit"
+                      name="outcome"
+                      value={
+                        action.stepCode === 'secretary_review'
+                          ? 'return'
+                          : 'reject'
+                      }
+                      class="rounded-lg border border-red-300 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
+                    >
+                      {action.stepCode === 'secretary_review'
+                        ? 'Return for correction'
+                        : 'Reject'}
+                    </button>
+                  </div>
+                  <input
+                    type="hidden"
+                    name="intent"
+                    value={
+                      action.stepCode === 'secretary_review'
+                        ? 'review'
+                        : 'decide'
+                    }
+                  />
+                </>
+              )}
+            </form>
+          ))}
+        </section>
+      )
+    }
+
+    {
       history.length > 0 && (
         <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
           <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
@@ -719,103 +895,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         </section>
       )
     }
-
-    <form method="post" id="capture-form" class="space-y-6">
-      {
-        subjects.map(subject => {
-          const values = valuesFor(subject);
-          const missing = new Set(
-            blocking.filter(b => b.subject === subject).map(b => b.fieldKey)
-          );
-          return (
-            <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-              <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-                {SUBJECT_LABELS[subject] ?? subject}
-              </h2>
-              <div class="mt-4 grid gap-4 sm:grid-cols-2">
-                {(fields.get(subject) ?? []).map(field => {
-                  const name = `field.${subject}.1.${field.fieldKey}`;
-                  const value = values[field.fieldKey] ?? '';
-                  return (
-                    <label class="text-sm text-neutral-600 dark:text-neutral-300">
-                      <span>
-                        {field.label}
-                        {field.isMandatory && (
-                          <span
-                            class="text-red-600 dark:text-red-400"
-                            aria-hidden="true"
-                          >
-                            {' '}
-                            *
-                          </span>
-                        )}
-                      </span>
-                      {field.dataType === 'choice' ? (
-                        <select
-                          name={name}
-                          disabled={!isEditable}
-                          required={field.isMandatory}
-                          class:list={[
-                            'mt-1 w-full rounded-lg border bg-white px-3 py-1.5 text-sm dark:bg-neutral-900 dark:text-neutral-100',
-                            missing.has(field.fieldKey)
-                              ? 'border-red-400 dark:border-red-700'
-                              : 'border-neutral-300 dark:border-neutral-600',
-                          ]}
-                        >
-                          <option value="">—</option>
-                          {field.choices.map(choice => (
-                            <option value={choice} selected={choice === value}>
-                              {choice}
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
-                        <input
-                          type={inputTypeFor(field.dataType)}
-                          name={name}
-                          value={value}
-                          disabled={!isEditable}
-                          required={field.isMandatory}
-                          placeholder={
-                            field.dataType === 'phone' ? '5789 1234' : undefined
-                          }
-                          class:list={[
-                            'mt-1 w-full rounded-lg border bg-white px-3 py-1.5 text-sm dark:bg-neutral-900 dark:text-neutral-100',
-                            missing.has(field.fieldKey)
-                              ? 'border-red-400 dark:border-red-700'
-                              : 'border-neutral-300 dark:border-neutral-600',
-                          ]}
-                        />
-                      )}
-                    </label>
-                  );
-                })}
-              </div>
-            </section>
-          );
-        })
-      }
-
-      {
-        isEditable && (
-          <div class="flex flex-wrap items-center gap-3">
-            <button
-              type="submit"
-              name="intent"
-              value="save"
-              class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
-            >
-              Save draft
-            </button>
-            <span
-              id="autosave-status"
-              class="text-xs text-neutral-500 dark:text-neutral-400"
-              aria-live="polite"
-            />
-          </div>
-        )
-      }
-    </form>
 
     {
       isDeletableDraft && (
