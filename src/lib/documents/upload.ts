@@ -27,7 +27,12 @@
 // access through the backend", and it is why this is a spike rather than an
 // implementation - see docs/documents.md for the alternative and the
 // recommendation.
-import { getAccessToken, getGraphConfig, type GraphConfig } from './graph';
+import {
+  getAccessToken,
+  getGraphConfig,
+  GraphError,
+  type GraphConfig,
+} from './graph';
 
 // Graph requires every chunk except the last to be a multiple of 320 KiB.
 const CHUNK_MULTIPLE = 320 * 1024;
@@ -159,8 +164,10 @@ export async function createUploadTicket(
 
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
-    throw new Error(
-      `Graph createUploadSession failed (${response.status}): ${detail}`
+    throw new GraphError(
+      `Graph createUploadSession failed (${response.status}): ${detail}`,
+      'request_failed',
+      response.status
     );
   }
 

@@ -49,6 +49,10 @@ describe('the error envelope (S-109)', () => {
     expect(statusFor('validation_failed')).toBe(422);
     expect(statusFor('conflict')).toBe(409);
     expect(statusFor('rate_limited')).toBe(429);
+    // 503, not 500: a dependency that is not configured or not answering is
+    // not a defect in this application, and an operator watching for crashes
+    // should not be paged for one.
+    expect(statusFor('service_unavailable')).toBe(503);
     expect(statusFor('internal_error')).toBe(500);
   });
 

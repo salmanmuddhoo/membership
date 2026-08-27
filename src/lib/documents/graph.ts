@@ -18,6 +18,53 @@
 
 import { readEnv } from '../config';
 
+/**
+ * A failure that came from SharePoint, or from not being able to reach it.
+ *
+ * Typed because these are not defects and must not be reported as one. An
+ * operator who has not finished the Microsoft 365 setup, a secret that has
+ * expired, a drive the application was never granted — each of those is a
+ * configuration problem with an obvious owner, and an officer who is told only
+ * "something went wrong" has no way to know that, nor to say anything useful
+ * when they report it.
+ */
+export class GraphError extends Error {
+  constructor(
+    message: string,
+    readonly reason: 'not_configured' | 'auth_failed' | 'request_failed',
+    // The HTTP status Graph gave, when there was one.
+    readonly status?: number
+  ) {
+    super(message);
+    this.name = 'GraphError';
+  }
+}
+
+// What a caller may show the person on screen. Deliberately not the underlying
+// detail: an AADSTS code or a Graph error body is for the log, where it is
+// already recorded against the correlation id.
+export function graphFailureMessage(error: GraphError): string {
+  if (error.reason === 'not_configured') {
+    return (
+      'SharePoint is not configured for this environment, so documents ' +
+      'cannot be filed yet. An administrator needs to set the GRAPH_* ' +
+      'settings — see docs/documents.md.'
+    );
+  }
+  if (error.reason === 'auth_failed') {
+    return (
+      'This application could not sign in to SharePoint. Its credentials are ' +
+      'wrong or have expired, and an administrator needs to renew them.'
+    );
+  }
+  return (
+    'SharePoint refused the request' +
+    (error.status ? ` (${error.status})` : '') +
+    '. This is a problem with the document library rather than with what you ' +
+    'were filing.'
+  );
+}
+
 export interface GraphConfig {
   tenantId: string;
   clientId: string;
@@ -36,9 +83,10 @@ export function getGraphConfig(): GraphConfig {
   const driveId = readEnv('GRAPH_DRIVE_ID');
 
   if (!tenantId || !clientId || !clientSecret || !driveId) {
-    throw new Error(
+    throw new GraphError(
       'SharePoint is not configured. Set GRAPH_TENANT_ID, GRAPH_CLIENT_ID, ' +
-        'GRAPH_CLIENT_SECRET and GRAPH_DRIVE_ID (see docs/documents.md).'
+        'GRAPH_CLIENT_SECRET and GRAPH_DRIVE_ID (see docs/documents.md).',
+      'not_configured'
     );
   }
 
@@ -95,8 +143,10 @@ export async function getAccessToken(
     // The body names the AADSTS code, which is the only way to tell a wrong
     // secret from a missing consent. It contains no member data.
     const detail = await response.text().catch(() => '');
-    throw new Error(
-      `Graph token request failed (${response.status}): ${detail}`
+    throw new GraphError(
+      `Graph token request failed (${response.status}): ${detail}`,
+      'auth_failed',
+      response.status
     );
   }
 
@@ -146,7 +196,11 @@ export async function getItemByPath(
   if (response.status === 404) return null;
   if (!response.ok) {
     const detail = await response.text().catch(() => '');
-    throw new Error(`Graph item lookup failed (${response.status}): ${detail}`);
+    throw new GraphError(
+      `Graph item lookup failed (${response.status}): ${detail}`,
+      'request_failed',
+      response.status
+    );
   }
 
   const item = (await response.json()) as Partial<GraphItem> & {
@@ -203,9 +257,11 @@ export async function ensureFolder(
   if (response.status === 409) return; // Already there, which is what we wanted.
 
   const detail = await response.text().catch(() => '');
-  throw new Error(
+  throw new GraphError(
     `Graph folder creation failed for ${parentPath}/${name} ` +
-      `(${response.status}): ${detail}`
+      `(${response.status}): ${detail}`,
+    'request_failed',
+    response.status
   );
 }
 
@@ -232,7 +288,9 @@ export async function deleteItemByPath(
   if (response.ok || response.status === 404) return;
 
   const detail = await response.text().catch(() => '');
-  throw new Error(
-    `Graph delete failed for ${itemPath} (${response.status}): ${detail}`
+  throw new GraphError(
+    `Graph delete failed for ${itemPath} (${response.status}): ${detail}`,
+    'request_failed',
+    response.status
   );
 }
