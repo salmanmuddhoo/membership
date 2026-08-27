@@ -17,7 +17,7 @@
     "access:grant": "tsx scripts/grant-access.ts",
     "openapi:generate": "tsx scripts/generate-openapi.ts",
     "verify:routes": "tsx scripts/verify-routes.ts",
-    "verify:migrations": "tsx scripts/verify-migrations.ts",
+    "verify:migrations": "bash scripts/verify-migrations.sh",
     "openapi:check": "tsx scripts/generate-openapi.ts --check",
     "job": "tsx scripts/run-job.ts"
   },
