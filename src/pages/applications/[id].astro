@@ -238,13 +238,9 @@ if (Astro.request.method === 'POST') {
 isEditable =
   application!.status === 'draft' || application!.status === 'returned';
 
-// Offered only for the officer's own untouched draft. A returned application
-// is editable in exactly the same way but has been through the Secretary, and
-// that history is not theirs to discard.
-const isDeletableDraft =
-  canCapture &&
-  application!.status === 'draft' &&
-  application!.capturedBy === principal.userId;
+// A returned application is editable in exactly the same way as a draft but
+// has been through the Secretary, and that history is not anyone's to discard.
+const isDeletableDraft = canCapture && application!.status === 'draft';
 
 // Only for people who may see documents at all: an application is readable by
 // more roles than its scans are.
@@ -450,12 +446,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
             Your next step
           </h2>
-          <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
-            Offered because the configured workflow puts this step at this
-            status and you hold the permission. Segregation of duties is checked
-            when you act: if you already worked on this application, the step
-            will be refused and will say so.
-          </p>
 
           {actions.map(action => (
             <form method="post" class="mt-4 space-y-3">
@@ -554,10 +544,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                   } not yet verified.`}
             </p>
           </div>
-          <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
-            An item reads Missing until the file is confirmed in SharePoint, so
-            an upload that does not finish never looks filed.
-          </p>
 
           {[...documentsBySubject].map(([subject, entries]) => (
             <div class="mt-5">
@@ -625,24 +611,26 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                             />
                           </label>
                         )}
-                        <label class="text-xs text-neutral-600 dark:text-neutral-300">
-                          {entry.state === 'missing' ? 'File' : 'Replace'}
+                        <label class="cursor-pointer rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-200 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800">
+                          {entry.state === 'missing' ? 'Upload' : 'Replace'}
+                          {/* The native control writes its own "no file
+                              chosen" text in the browser's language, which on
+                              a French-locale device puts French in an English
+                              app. Hidden, and driven by this label instead. */}
                           <input
                             type="file"
                             data-file
                             accept={ACCEPTED_FILES}
                             capture="environment"
                             disabled
-                            class="mt-1 block text-sm text-neutral-700 file:mr-3 file:rounded-lg file:border-0 file:bg-neutral-200 file:px-3 file:py-1.5 file:text-sm file:font-medium disabled:opacity-50 dark:text-neutral-200 dark:file:bg-neutral-700 dark:file:text-neutral-100"
+                            class="sr-only"
                           />
                         </label>
                         <p
                           data-status
                           class="text-xs text-neutral-500 dark:text-neutral-400"
                         >
-                          Filing a document needs JavaScript, because the file
-                          goes from this device to SharePoint rather than
-                          through this application.
+                          Uploading requires JavaScript.
                         </p>
                       </div>
                     )}
@@ -697,10 +685,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
             History
           </h2>
-          <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
-            Every transition, in order, with who made it and why. These rows
-            cannot be edited or deleted.
-          </p>
           <ol class="mt-4 space-y-3">
             {history.map(entry => (
               <li class="border-l-2 border-neutral-300 pl-3 text-sm dark:border-neutral-700">
@@ -833,11 +817,8 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             Delete this draft
           </h2>
           <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
-            For an application that was started by mistake or is no longer going
-            ahead. It has not been submitted, so nothing is lost — everything
-            typed in and any documents filed against it are removed, and this
-            cannot be undone. Once submitted, an application can no longer be
-            deleted.
+            Removes everything captured on it and any documents filed against
+            it. This cannot be undone.
           </p>
           <form method="post" class="mt-4" data-confirm-delete>
             <button

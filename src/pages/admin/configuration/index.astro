@@ -17,12 +17,6 @@ const canManage = principal.permissions.has('config.manage');
       <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
         Reference configuration
       </h2>
-      <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
-        The values the Society changes without a release: what the application
-        form asks for, what it costs, which documents are needed, and who
-        approves. Every change here is recorded against your name — the database
-        refuses one it cannot attribute.
-      </p>
       {
         !canManage && (
           <p class="mt-3 rounded-lg border border-neutral-300 px-3 py-2 text-sm text-neutral-600 dark:border-neutral-700 dark:text-neutral-300">

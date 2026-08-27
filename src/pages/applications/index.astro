@@ -2,6 +2,7 @@
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import {
   ApplicationError,
+  deleteDraftApplication,
   listApplications,
   startApplication,
 } from '@lib/applications/capture';
@@ -17,20 +18,43 @@ if (Astro.request.method === 'POST') {
     error = 'You do not have permission to capture applications.';
   } else {
     const form = await Astro.request.formData();
-    try {
-      const { id } = await startApplication(
-        String(form.get('membershipType') ?? ''),
-        { userId: principal.userId, email: principal.email }
-      );
-      // Straight into the form. A list entry the officer then has to find is
-      // one more step between them and the applicant in front of them.
-      return Astro.redirect(`/applications/${id}`);
-    } catch (err) {
-      if (err instanceof ApplicationError) {
-        error = err.message;
-      } else {
-        console.error('[applications]', err);
-        error = 'Something went wrong. Please try again.';
+    const intent = String(form.get('intent') ?? 'start');
+
+    if (intent === 'delete') {
+      try {
+        const { reference } = await deleteDraftApplication(
+          String(form.get('applicationId') ?? ''),
+          principal
+        );
+        return Astro.redirect(
+          `/applications?deleted=${encodeURIComponent(reference)}`
+        );
+      } catch (err) {
+        if (err instanceof ApplicationError) {
+          error = err.message;
+        } else {
+          console.error('[applications/delete]', err);
+          error =
+            'The draft could not be deleted. Nothing has been removed — ' +
+            'please try again.';
+        }
+      }
+    } else {
+      try {
+        const { id } = await startApplication(
+          String(form.get('membershipType') ?? ''),
+          { userId: principal.userId, email: principal.email }
+        );
+        // Straight into the form. A list entry the officer then has to find is
+        // one more step between them and the applicant in front of them.
+        return Astro.redirect(`/applications/${id}`);
+      } catch (err) {
+        if (err instanceof ApplicationError) {
+          error = err.message;
+        } else {
+          console.error('[applications]', err);
+          error = 'Something went wrong. Please try again.';
+        }
       }
     }
   }
@@ -99,10 +123,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
             Start an application
           </h2>
-          <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
-            The form adapts to the type you choose — an Individual applicant is
-            asked for an NIC, a Corporate one for a registration number.
-          </p>
           <form method="post" class="mt-4 flex flex-wrap items-end gap-2">
             <label class="text-sm text-neutral-600 dark:text-neutral-300">
               Applicant status
@@ -179,7 +199,10 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                   <th class="py-2 pr-4 font-medium">Type</th>
                   <th class="py-2 pr-4 font-medium">Status</th>
                   <th class="py-2 pr-4 font-medium">Captured by</th>
-                  <th class="py-2 font-medium">Updated</th>
+                  <th class="py-2 pr-4 font-medium">Updated</th>
+                  {canCapture && (
+                    <th class="sr-only py-2 font-medium">Actions</th>
+                  )}
                 </tr>
               </thead>
               <tbody>
@@ -213,9 +236,35 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                     <td class="py-2 pr-4 text-xs text-neutral-500 dark:text-neutral-400">
                       {a.capturedByName}
                     </td>
-                    <td class="py-2 text-xs text-neutral-500 dark:text-neutral-400">
+                    <td class="py-2 pr-4 text-xs text-neutral-500 dark:text-neutral-400">
                       {dateFormat.format(a.updatedAt)}
                     </td>
+                    {canCapture && (
+                      <td class="py-2 text-right">
+                        {a.status === 'draft' && (
+                          <form method="post" data-confirm-delete>
+                            <input
+                              type="hidden"
+                              name="applicationId"
+                              value={a.id}
+                            />
+                            <input
+                              type="hidden"
+                              name="reference"
+                              value={a.reference}
+                            />
+                            <button
+                              type="submit"
+                              name="intent"
+                              value="delete"
+                              class="rounded-lg border border-red-300 px-2 py-1 text-xs font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
+                            >
+                              Delete
+                            </button>
+                          </form>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -226,3 +275,21 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     </section>
   </div>
 </DashboardLayout>
+
+<script>
+  // Deleting cannot be undone, so ask. Without JavaScript the button simply
+  // deletes: a confirmation is a courtesy, and a control that only works with
+  // scripting would not be.
+  for (const form of document.querySelectorAll<HTMLFormElement>(
+    'form[data-confirm-delete]'
+  )) {
+    form.addEventListener('submit', event => {
+      const reference =
+        form.querySelector<HTMLInputElement>('input[name="reference"]')
+          ?.value ?? 'this draft';
+      if (!window.confirm(`Delete ${reference}? This cannot be undone.`)) {
+        event.preventDefault();
+      }
+    });
+  }
+</script>

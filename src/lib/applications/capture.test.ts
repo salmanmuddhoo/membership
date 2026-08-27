@@ -561,14 +561,22 @@ describe('deleting a draft that is no longer needed', () => {
     );
   });
 
-  it("refuses another officer's draft", async () => {
+  // Any capture-holder may discard any draft, whoever began it. What is
+  // recorded is who did it.
+  it('lets a colleague delete a draft they did not start', async () => {
     const { capture } = await load();
     const { id } = await capture.startApplication('individual', officer);
 
-    await expect(
-      capture.deleteDraftApplication(id, principalFor(colleague), noFiles)
-    ).rejects.toThrow(/another member of staff/i);
-    expect(await capture.loadApplication(id)).not.toBeNull();
+    await capture.deleteDraftApplication(id, principalFor(colleague), noFiles);
+
+    expect(await capture.loadApplication(id)).toBeNull();
+    const audit = await run(
+      appUrl,
+      `select actor_user_id from audit_event
+        where action = 'membership.application.deleted' and entity_id = $1`,
+      [id]
+    );
+    expect(audit.rows[0].actor_user_id).toBe(colleague.userId);
   });
 
   it('refuses someone who may not capture applications at all', async () => {
