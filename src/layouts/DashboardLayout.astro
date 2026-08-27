@@ -55,6 +55,20 @@ const navGroups: NavGroup[] = [
     ],
   },
   {
+    label: 'Money',
+    items: [
+      ...(can('receipt.reconcile')
+        ? [
+            {
+              label: 'Receipt reconciliation',
+              href: '/receipts/reconciliation',
+              icon: 'reports',
+            },
+          ]
+        : []),
+    ],
+  },
+  {
     label: 'Administration',
     items: [
       ...(can('role.view')

@@ -425,7 +425,7 @@ and comment, **so that** the approval chain is reconstructable.
 
 ---
 
-# M4 — Documents, print–scan–upload, SharePoint
+# M4 — Documents, print–scan–upload, SharePoint ✅
 
 **Goal:** an application's documents are captured, stored in SharePoint, and
 driven from Missing to Verified — with the signed physical form archived
@@ -433,6 +433,10 @@ exactly as it was signed.
 
 **Blocked by:** nothing. The brokered upload was proved in M1 (S-112); the
 checklists it drives were configured in M2 (S-208).
+
+**Outstanding outside the repository:** the Microsoft 365 app registration.
+Uploads answer 503 with a readable message until `GRAPH_*` is configured, and
+the document-expiry job needs a schedule (`docs/jobs.md`).
 
 ## Feature 4.1 — The printable form
 
@@ -563,15 +567,20 @@ member's file does not quietly go stale. _(FRD 8.4)_
 
 ---
 
-# M5 — Fees, payments & receipts
+# M5 — Fees, payments & receipts ✅
 
 **Goal:** what an applicant pays is recorded against a sequential receipt, and
 a gap in that sequence is visible.
 
-**Needs confirming first:** the minor MSA deposit (S-501) and the processing
-fee amount (S-507). Both are absorbed by the fee configuration built in M2, so
-neither blocks the milestone starting — but each must be answered before the
-story that consumes it ships.
+**How it works:** `docs/payments.md`. The one decision worth reading is why a
+receipt number is a committed row rather than a `nextval()`.
+
+**Still unconfirmed, and shipped as configuration:** the minor MSA deposit
+(S-501) is configured not applicable, and the processing fee (S-507) is
+configured zero and not applicable. Both are a fee-version change away from
+being switched on — no release, no migration — so neither held the milestone
+up. Neither can be charged until someone publishes an amount, which is the
+correct behaviour for a figure nobody has confirmed.
 
 ### S-501 · Record a payment against an application by fee component
 
@@ -1054,11 +1063,11 @@ Every user story named in FRD Section 22 is covered.
 Each is absorbed by configuration, so none blocks the start of development.
 They must be confirmed before the milestone that consumes them.
 
-| Value                                          | Needed by    | Default if unconfirmed         |
-| ---------------------------------------------- | ------------ | ------------------------------ |
-| Minor MSA deposit                              | M5 · S-501   | Not required                   |
-| Processing fee amount and applicability        | M5 · S-507   | Zero / not applicable          |
-| Nominee count and percentage rules             | M6 · S-602   | Single nominee, no percentages |
-| Dormant reactivation rule                      | M8 · S-805   | Flag for staff action          |
-| KYC and audit retention periods                | M10          | Retain indefinitely            |
-| Whether Abeyance and Manager review are wanted | Post-go-live | Available but disabled         |
+| Value                                          | Needed by    | Default if unconfirmed                       |
+| ---------------------------------------------- | ------------ | -------------------------------------------- |
+| Minor MSA deposit                              | M5 · S-501   | Not required — **shipped this way**          |
+| Processing fee amount and applicability        | M5 · S-507   | Zero / not applicable — **shipped this way** |
+| Nominee count and percentage rules             | M6 · S-602   | Single nominee, no percentages               |
+| Dormant reactivation rule                      | M8 · S-805   | Flag for staff action                        |
+| KYC and audit retention periods                | M10          | Retain indefinitely                          |
+| Whether Abeyance and Manager review are wanted | Post-go-live | Available but disabled                       |

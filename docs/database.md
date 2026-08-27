@@ -23,6 +23,10 @@ Two further restrictions apply to the application role:
 - `config_entry_history` — no writes at all. History is written by a
   `SECURITY DEFINER` trigger, so it cannot be skipped or forged by writing to
   the table directly.
+- `financial_event`, `payment_line`, `receipt_print` — insert only;
+  `payment` and `receipt_number` cannot be deleted from at all. Voiding a
+  receipt is an UPDATE, which is why those two keep the privilege. See
+  `docs/payments.md`.
 
 ## Connection strings
 

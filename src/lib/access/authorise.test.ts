@@ -191,4 +191,23 @@ describe('the live route map', () => {
     // ...and not the page they were not granted.
     expect(authorise(viewer, '/admin/users').allowed).toBe(false);
   });
+
+  // M5. Reading a receipt and auditing the sequence are different jobs, and
+  // the exact rule for the reconciliation page has to beat the prefix rule
+  // that would otherwise let any receipt reader in.
+  it('separates reading a receipt from auditing the sequence', () => {
+    expect(requiredPermissionFor('/receipts/some-uuid')).toBe('payment.view');
+    expect(requiredPermissionFor('/receipts/reconciliation')).toBe(
+      'receipt.reconcile'
+    );
+
+    const officer = principal({ permissions: new Set(['payment.view']) });
+    expect(authorise(officer, '/receipts/some-uuid').allowed).toBe(true);
+    expect(authorise(officer, '/receipts/reconciliation').allowed).toBe(false);
+
+    const treasurer = principal({
+      permissions: new Set(['payment.view', 'receipt.reconcile']),
+    });
+    expect(authorise(treasurer, '/receipts/reconciliation').allowed).toBe(true);
+  });
 });
