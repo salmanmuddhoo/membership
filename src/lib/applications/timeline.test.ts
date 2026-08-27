@@ -10,7 +10,7 @@ const FRESH = {
   mandatoryFieldsOutstanding: 4,
   signedFormFiled: false,
   requiredDocumentsOutstanding: 5,
-  paymentRecorded: null,
+  paymentRecorded: false,
 } as const;
 
 const stateOf = (steps: TimelineStep[], key: string) =>
@@ -50,6 +50,13 @@ describe('what the officer is told to do next', () => {
         mandatoryFieldsOutstanding: 0,
         signedFormFiled: true,
         requiredDocumentsOutstanding: 0,
+      },
+      {
+        ...FRESH,
+        mandatoryFieldsOutstanding: 0,
+        signedFormFiled: true,
+        requiredDocumentsOutstanding: 0,
+        paymentRecorded: true,
       },
       { ...FRESH, status: 'new', mandatoryFieldsOutstanding: 0 },
       { ...FRESH, status: 'approved', mandatoryFieldsOutstanding: 0 },
@@ -93,35 +100,31 @@ describe('what the officer is told to do next', () => {
   });
 });
 
-describe('a step the system cannot do yet', () => {
-  // Payments arrive in M5. Until then the step is shown so the process reads
-  // whole, but it must never be what the officer is told to do next — there
-  // is nothing there for them to do it with.
-  it('is never the current step, and does not stop the ones after it', () => {
+describe('the payment step', () => {
+  it('is what the officer is told to do once the documents are in', () => {
     const steps = applicationTimeline({
       ...FRESH,
       mandatoryFieldsOutstanding: 0,
       signedFormFiled: true,
       requiredDocumentsOutstanding: 0,
-    });
-
-    expect(stateOf(steps, 'payment')).toBe('unavailable');
-    expect(steps.find(s => s.key === 'payment')!.detail).toBe(
-      'Not yet in the system'
-    );
-    expect(currentKeys(steps)).toEqual(['submitted']);
-  });
-
-  it('becomes an ordinary step once payments are recorded', () => {
-    const steps = applicationTimeline({
-      ...FRESH,
-      mandatoryFieldsOutstanding: 0,
-      signedFormFiled: true,
-      requiredDocumentsOutstanding: 0,
-      paymentRecorded: false,
     });
 
     expect(currentKeys(steps)).toEqual(['payment']);
+  });
+
+  it('shows the receipt number once there is one', () => {
+    const steps = applicationTimeline({
+      ...FRESH,
+      mandatoryFieldsOutstanding: 0,
+      signedFormFiled: true,
+      requiredDocumentsOutstanding: 0,
+      paymentRecorded: true,
+      paymentReceiptNo: 'RCT-000042',
+    });
+
+    expect(stateOf(steps, 'payment')).toBe('done');
+    expect(steps.find(s => s.key === 'payment')!.detail).toBe('RCT-000042');
+    expect(currentKeys(steps)).toEqual(['submitted']);
   });
 });
 
@@ -133,6 +136,7 @@ describe('once it has left the officer', () => {
       mandatoryFieldsOutstanding: 0,
       signedFormFiled: true,
       requiredDocumentsOutstanding: 0,
+      paymentRecorded: true,
     });
 
     expect(stateOf(steps, 'submitted')).toBe('done');
@@ -150,6 +154,7 @@ describe('once it has left the officer', () => {
       mandatoryFieldsOutstanding: 0,
       signedFormFiled: true,
       requiredDocumentsOutstanding: 0,
+      paymentRecorded: true,
     });
 
     expect(stateOf(steps, 'secretary')).toBe('done');
@@ -168,6 +173,7 @@ describe('once it has left the officer', () => {
       mandatoryFieldsOutstanding: 0,
       signedFormFiled: true,
       requiredDocumentsOutstanding: 0,
+      paymentRecorded: true,
     });
 
     expect(stateOf(steps, 'decision')).toBe('done');
@@ -202,6 +208,7 @@ describe('when it comes back for correction', () => {
       mandatoryFieldsOutstanding: 1,
       signedFormFiled: true,
       requiredDocumentsOutstanding: 0,
+      paymentRecorded: true,
     });
 
     expect(steps[0].detail).toBe('Returned for correction');
@@ -221,6 +228,7 @@ describe('a status nothing recognises', () => {
       mandatoryFieldsOutstanding: 0,
       signedFormFiled: true,
       requiredDocumentsOutstanding: 0,
+      paymentRecorded: true,
     });
 
     expect(stateOf(steps, 'submitted')).toBe('current');

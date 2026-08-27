@@ -450,6 +450,31 @@ export async function deleteDraftApplication(
       );
     }
 
+    // Money has changed hands against this draft, and the applicant is holding
+    // the receipt. The payment names this application, and a receipt that
+    // points at nothing is not a receipt — so the application stays, voided
+    // receipt or not. Deleting an abandoned draft is for a draft nobody has
+    // acted on; taking payment is acting on it.
+    //
+    // The foreign key refuses this anyway. Refusing here is what makes it a
+    // sentence the officer can act on rather than a constraint violation.
+    const receipted = await client.query<{ receipt_no: string }>(
+      `select r.receipt_no
+         from payment p
+         join receipt_number r on r.id = p.receipt_number_id
+        where p.application_id = $1
+        order by r.serial_no
+        limit 1`,
+      [applicationId]
+    );
+    if (receipted.rowCount && receipted.rowCount > 0) {
+      throw new ApplicationError(
+        `Receipt ${receipted.rows[0].receipt_no} was issued against this ` +
+          'application, so it cannot be deleted.',
+        'locked'
+      );
+    }
+
     const filed = await client.query<{ n: number }>(
       `select count(*)::int as n
          from document_version v

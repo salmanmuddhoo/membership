@@ -555,6 +555,95 @@ export async function getCurrentFees(
   }));
 }
 
+// The live version of one schedule, by schedule id, with the id of the version
+// itself (S-501).
+//
+// getCurrentFees answers "what does this cost"; a payment additionally has to
+// record WHICH VERSION it charged, because that is what makes an amount
+// unchangeable after the fact. Returning the two together means the caller
+// cannot read the amounts from one version and file them against another.
+export interface CurrentFeeVersion {
+  versionId: string;
+  scheduleId: string;
+  scheduleCode: string;
+  scheduleName: string;
+  versionNo: number;
+  components: FeeComponent[];
+}
+
+export async function currentFeeVersion(
+  scheduleId: string
+): Promise<CurrentFeeVersion | null> {
+  const version = await query<{
+    id: string;
+    schedule_id: string;
+    code: string;
+    name: string;
+    version_no: number;
+  }>(
+    `select v.id, v.schedule_id, s.code, s.name, v.version_no
+       from fee_schedule_version v
+       join fee_schedule s on s.id = v.schedule_id
+      where v.schedule_id = $1 and v.superseded_at is null`,
+    [scheduleId]
+  );
+
+  const row = version.rows[0];
+  if (!row) return null;
+
+  const components = await query<ComponentRow>(
+    `select version_id, code, amount, requirement, sort_order
+       from fee_component
+      where version_id = $1
+      order by sort_order, code`,
+    [row.id]
+  );
+
+  return {
+    versionId: row.id,
+    scheduleId: row.schedule_id,
+    scheduleCode: row.code,
+    scheduleName: row.name,
+    versionNo: row.version_no,
+    components: components.rows.map(c => ({
+      code: c.code,
+      amount: c.amount,
+      requirement: c.requirement,
+      sortOrder: c.sort_order,
+    })),
+  };
+}
+
+// The components of a version that has been superseded, for reading a receipt
+// that charged it.
+export async function feeVersionById(
+  versionId: string
+): Promise<{ versionNo: number; components: FeeComponent[] } | null> {
+  const version = await query<{ version_no: number }>(
+    'select version_no from fee_schedule_version where id = $1',
+    [versionId]
+  );
+  if (version.rows.length === 0) return null;
+
+  const components = await query<ComponentRow>(
+    `select version_id, code, amount, requirement, sort_order
+       from fee_component
+      where version_id = $1
+      order by sort_order, code`,
+    [versionId]
+  );
+
+  return {
+    versionNo: version.rows[0].version_no,
+    components: components.rows.map(c => ({
+      code: c.code,
+      amount: c.amount,
+      requirement: c.requirement,
+      sortOrder: c.sort_order,
+    })),
+  };
+}
+
 // Publish a new set of amounts (S-207).
 //
 // The change is a NEW VERSION, never an edit of the live one. That is what

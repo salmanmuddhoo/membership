@@ -25,12 +25,27 @@ import {
   DocumentError,
 } from '@lib/documents/documents';
 import { applicationTimeline } from '@lib/applications/timeline';
+import {
+  amountDueForApplication,
+  paymentsForApplication,
+  recordPayment,
+  METHOD_LABELS,
+  PAYMENT_METHODS,
+  PaymentError,
+  type AmountDue,
+  type Payment,
+  type PaymentMethod,
+} from '@lib/payments/payments';
+import { formatMoney } from '@lib/payments/money';
+import type { FeeComponentCode } from '@lib/config/reference';
 
 const principal = Astro.locals.principal!;
 const canCapture = principal.permissions.has('application.capture');
 const canSeeDocuments = principal.permissions.has('document.view');
 const canUpload = principal.permissions.has('document.upload');
 const canVerify = principal.permissions.has('document.verify');
+const canSeePayments = principal.permissions.has('payment.view');
+const canRecordPayment = principal.permissions.has('payment.record');
 const { id } = Astro.params;
 
 let application = id ? await loadApplication(id) : null;
@@ -106,6 +121,37 @@ if (Astro.request.method === 'POST') {
       }
       application = await loadApplication(application.id);
       if (!application) return Astro.redirect('/applications');
+    }
+  } else if (intent === 'record-payment') {
+    try {
+      const amounts: Partial<Record<FeeComponentCode, string>> = {};
+      for (const [key, value] of form.entries()) {
+        if (key.startsWith('amount.')) {
+          amounts[key.slice('amount.'.length) as FeeComponentCode] =
+            String(value);
+        }
+      }
+
+      const payment = await recordPayment(
+        {
+          applicationId: application.id,
+          method: String(form.get('method') ?? '') as PaymentMethod,
+          methodReference: String(form.get('methodReference') ?? ''),
+          varianceReason: String(form.get('varianceReason') ?? ''),
+          amounts,
+        },
+        principal
+      );
+      notice = `Receipt ${payment.receiptNo} recorded.`;
+    } catch (err) {
+      if (err instanceof PaymentError) {
+        error = err.message;
+      } else {
+        console.error('[payments/record]', err);
+        error =
+          'The payment could not be recorded. Nothing has been taken — ' +
+          'please try again.';
+      }
     }
   } else if (intent === 'verify-document' || intent === 'reject-document') {
     try {
@@ -305,6 +351,33 @@ const requiredDocumentsMissing = checklist.filter(
   e => e.requirement === 'required' && e.state === 'missing'
 ).length;
 
+// What has been taken against this application (M5). Read for everyone who
+// can see the application: the timeline has to say whether the payment step is
+// done, and a receipt number is not a figure. The amounts below are what
+// payment.view gates.
+const payments: Payment[] = await paymentsForApplication(application!.id);
+const livePayment =
+  payments.find(p => p.kind === 'payment' && !p.voidedAt) ?? null;
+const refunds = payments.filter(p => p.kind === 'refund' && !p.voidedAt);
+
+// A terminal application is not one to take money on: an approved member pays
+// through their account, and a rejected one is owed a refund, not a receipt.
+const isDecided =
+  application!.status === 'approved' || application!.status === 'rejected';
+
+let due: AmountDue | null = null;
+let dueProblem: string | null = null;
+if (canRecordPayment && !livePayment && !isDecided) {
+  try {
+    due = await amountDueForApplication(application!.id);
+  } catch (err) {
+    dueProblem =
+      err instanceof PaymentError
+        ? err.message
+        : 'The fee schedule could not be read.';
+  }
+}
+
 const timeline = applicationTimeline({
   status: application!.status,
   mandatoryFieldsOutstanding: blocking.length,
@@ -313,9 +386,8 @@ const timeline = applicationTimeline({
     e => e.documentCode === 'signed_form' && e.state !== 'missing'
   ),
   requiredDocumentsOutstanding: requiredDocumentsMissing,
-  // Payments arrive in M5. Passing null rather than false is what keeps the
-  // step visible without ever telling the officer to go and do it.
-  paymentRecorded: null,
+  paymentRecorded: livePayment !== null,
+  paymentReceiptNo: livePayment?.receiptNo ?? null,
 });
 
 const STEP_MARK: Record<string, string> = {
@@ -323,15 +395,12 @@ const STEP_MARK: Record<string, string> = {
   current:
     'bg-neutral-800 text-white dark:bg-neutral-100 dark:text-neutral-900',
   todo: 'bg-neutral-200 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400',
-  unavailable:
-    'bg-neutral-200 text-neutral-400 dark:bg-neutral-800 dark:text-neutral-500',
 };
 
 const STEP_TEXT: Record<string, string> = {
   done: 'text-neutral-600 dark:text-neutral-300',
   current: 'font-semibold text-neutral-900 dark:text-neutral-50',
   todo: 'text-neutral-500 dark:text-neutral-400',
-  unavailable: 'text-neutral-400 dark:text-neutral-500',
 };
 
 // The colour and the tick carry the state for someone looking at it; this
@@ -340,7 +409,6 @@ const STEP_READS: Record<string, string> = {
   done: '(done)',
   current: '(next)',
   todo: '(to come)',
-  unavailable: '(not available)',
 };
 
 const SUBJECT_LABELS: Record<string, string> = {
@@ -772,6 +840,188 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               </ul>
             </div>
           ))}
+        </section>
+      )
+    }
+
+    {
+      (livePayment || due || dueProblem) && (
+        <section
+          class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
+          id="payment"
+        >
+          <div class="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+              Payment
+            </h2>
+            {livePayment &&
+              (canSeePayments ? (
+                <a
+                  href={`/receipts/${livePayment.id}`}
+                  class="text-sm text-neutral-600 underline dark:text-neutral-300"
+                >
+                  Receipt {livePayment.receiptNo}
+                </a>
+              ) : (
+                /* Not a link: the receipt page needs payment.view, and
+                   offering a link that refuses is how someone ends up
+                   clicking through to a denial. */
+                <span class="text-sm text-neutral-600 dark:text-neutral-300">
+                  Receipt {livePayment.receiptNo}
+                </span>
+              ))}
+          </div>
+
+          {dueProblem && (
+            <p class="mt-3 rounded-lg border border-amber-300 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200">
+              {dueProblem}
+            </p>
+          )}
+
+          {livePayment && (
+            <div class="mt-4">
+              {/* Everyone who can see the application sees that it was paid,
+                  and by whom — the timeline says as much already. The figures
+                  are what payment.view gates. */}
+              <p class="text-sm text-neutral-600 dark:text-neutral-300">
+                {canSeePayments
+                  ? `${formatMoney(livePayment.totalAmount, livePayment.currency)} · ${METHOD_LABELS[livePayment.method]}`
+                  : 'Recorded'}{' '}
+                · taken by {livePayment.recordedByName} on{' '}
+                {dateFormat.format(livePayment.receivedAt)}
+              </p>
+
+              {canSeePayments && (
+                <table class="mt-3 w-full text-sm">
+                  <tbody>
+                    {livePayment.lines.map(line => (
+                      <tr class="border-t border-neutral-200 dark:border-neutral-800">
+                        <td class="py-1.5 text-neutral-600 dark:text-neutral-300">
+                          {line.label}
+                        </td>
+                        <td class="py-1.5 text-right text-neutral-800 tabular-nums dark:text-neutral-100">
+                          {formatMoney(line.amount, livePayment.currency)}
+                        </td>
+                      </tr>
+                    ))}
+                    <tr class="border-t-2 border-neutral-300 dark:border-neutral-700">
+                      <td class="py-1.5 font-medium text-neutral-800 dark:text-neutral-100">
+                        Total
+                      </td>
+                      <td class="py-1.5 text-right font-bold text-neutral-800 tabular-nums dark:text-neutral-100">
+                        {formatMoney(
+                          livePayment.totalAmount,
+                          livePayment.currency
+                        )}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              )}
+
+              {livePayment.varianceReason && canSeePayments && (
+                <p class="mt-3 rounded-lg border border-amber-300 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200">
+                  {livePayment.varianceReason}
+                </p>
+              )}
+
+              {refunds.length > 0 && canSeePayments && (
+                <ul class="mt-3 space-y-1 text-sm text-neutral-600 dark:text-neutral-300">
+                  {refunds.map(refund => (
+                    <li>
+                      Refunded{' '}
+                      {formatMoney(refund.totalAmount, refund.currency)} on{' '}
+                      {dateFormat.format(refund.receivedAt)} ·{' '}
+                      <a href={`/receipts/${refund.id}`} class="underline">
+                        {refund.receiptNo}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
+          {due && (
+            <form method="post" class="mt-4 space-y-4">
+              <table class="w-full text-sm">
+                <tbody>
+                  {due.components.map(component => (
+                    <tr class="border-t border-neutral-200 dark:border-neutral-800">
+                      <td class="py-2 text-neutral-600 dark:text-neutral-300">
+                        <label for={`amount-${component.code}`}>
+                          {component.label}
+                        </label>
+                        {component.requirement === 'optional' && (
+                          <span class="ml-2 text-xs text-neutral-500 dark:text-neutral-400">
+                            optional
+                          </span>
+                        )}
+                      </td>
+                      <td class="w-40 py-2 text-right">
+                        <input
+                          id={`amount-${component.code}`}
+                          type="text"
+                          inputmode="decimal"
+                          name={`amount.${component.code}`}
+                          value={component.amount}
+                          class="w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-right text-sm tabular-nums dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                  <tr class="border-t-2 border-neutral-300 dark:border-neutral-700">
+                    <td class="py-2 font-medium text-neutral-800 dark:text-neutral-100">
+                      Due
+                    </td>
+                    <td class="py-2 text-right font-bold text-neutral-800 tabular-nums dark:text-neutral-100">
+                      {formatMoney(due.expectedTotal)}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <div class="flex flex-wrap gap-3">
+                <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                  Method
+                  <select
+                    name="method"
+                    class="mt-1 block rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                  >
+                    {PAYMENT_METHODS.map(method => (
+                      <option value={method}>{METHOD_LABELS[method]}</option>
+                    ))}
+                  </select>
+                </label>
+                <label class="flex-1 text-sm text-neutral-600 dark:text-neutral-300">
+                  Cheque or transfer reference
+                  <input
+                    type="text"
+                    name="methodReference"
+                    class="mt-1 block w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                  />
+                </label>
+              </div>
+
+              <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+                Reason, if the amount differs from the fee schedule
+                <input
+                  type="text"
+                  name="varianceReason"
+                  class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                />
+              </label>
+
+              <button
+                type="submit"
+                name="intent"
+                value="record-payment"
+                class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
+              >
+                Record payment and issue receipt
+              </button>
+            </form>
+          )}
         </section>
       )
     }

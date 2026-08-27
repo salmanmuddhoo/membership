@@ -82,11 +82,13 @@ describe('S-201: roles and their permissions', () => {
   it('creates a role with permissions and audits it', async () => {
     const { roles } = await load();
 
+    // A code the migrations do not seed, so this proves creation rather than
+    // colliding with a role the business already has.
     const id = await roles.createRole(
       {
-        code: 'treasurer',
-        name: 'Treasurer',
-        description: 'Manages fees',
+        code: 'internal_auditor',
+        name: 'Internal Auditor',
+        description: 'Reads the record without acting on it',
         permissions: ['role.view', 'user.view'],
       },
       actor

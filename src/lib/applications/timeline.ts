@@ -8,7 +8,9 @@
 // The order here is the order of the real-world process, which is not the
 // order the software would naturally impose: the form is captured, printed and
 // physically signed BEFORE any document exists to scan. Filing the KYC pack
-// first would mean asking for a signed form nobody has signed yet.
+// first would mean asking for a signed form nobody has signed yet. The money
+// is taken after the pack is complete and before the application leaves the
+// office, which is where the payment step sits.
 //
 // Every step is derived from state that is recorded elsewhere. Nothing here is
 // stored, so nothing here can disagree with the record.
@@ -19,10 +21,7 @@ export type StepState =
   // The next thing to do.
   | 'current'
   // Ahead of the current step.
-  | 'todo'
-  // Cannot be done yet because the system does not do it — not because the
-  // officer has not got there. Kept visible so the process reads whole.
-  | 'unavailable';
+  | 'todo';
 
 export interface TimelineStep {
   key: string;
@@ -42,8 +41,12 @@ export interface TimelineInput {
   // Required checklist items with nothing filed against them. Counts the
   // signed form too, which is why the signing step reads it separately.
   requiredDocumentsOutstanding: number;
-  // null while the system does not record payments at all (M5).
-  paymentRecorded: boolean | null;
+  // A live receipt against this application (M5). A voided one does not count:
+  // the money went back.
+  paymentRecorded: boolean;
+  // Shown on the step once there is one, so the officer can quote it without
+  // scrolling.
+  paymentReceiptNo?: string | null;
 }
 
 // How far through the approval chain a status is. Two statuses share a rank
@@ -75,7 +78,6 @@ export function applicationTimeline(input: TimelineInput): TimelineStep[] {
     label: string;
     done: boolean;
     detail?: string;
-    unavailable?: boolean;
   }> = [
     {
       key: 'capture',
@@ -107,10 +109,11 @@ export function applicationTimeline(input: TimelineInput): TimelineStep[] {
     {
       key: 'payment',
       label: 'Record the payment and receipt',
-      done: input.paymentRecorded === true,
-      unavailable: input.paymentRecorded === null,
+      done: input.paymentRecorded,
       detail:
-        input.paymentRecorded === null ? 'Not yet in the system' : undefined,
+        input.paymentRecorded && input.paymentReceiptNo
+          ? input.paymentReceiptNo
+          : undefined,
     },
     {
       key: 'submitted',
@@ -142,9 +145,9 @@ export function applicationTimeline(input: TimelineInput): TimelineStep[] {
     },
   ];
 
-  // Exactly one step reads as current: the first that is neither finished nor
-  // impossible. Marking several would leave the officer choosing, which is the
-  // question the timeline exists to answer.
+  // Exactly one step reads as current: the first that is not finished.
+  // Marking several would leave the officer choosing, which is the question
+  // the timeline exists to answer.
   let currentTaken = false;
 
   return planned.map(step => {
@@ -152,8 +155,6 @@ export function applicationTimeline(input: TimelineInput): TimelineStep[] {
 
     if (step.done) {
       state = 'done';
-    } else if (step.unavailable) {
-      state = 'unavailable';
     } else if (!currentTaken) {
       state = 'current';
       currentTaken = true;

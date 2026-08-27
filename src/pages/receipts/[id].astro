@@ -1,0 +1,600 @@
+---
+// The receipt (S-503, S-505).
+//
+// Two things at once: the sheet the applicant is handed, and the page the
+// Treasurer works from. The Treasurer's controls are on screen only — the
+// paper carries the receipt and nothing else.
+import BaseLayout from '@layouts/BaseLayout.astro';
+import {
+  loadPayment,
+  paymentsForApplication,
+  printHistoryFor,
+  recordReceiptPrint,
+  refundableComponents,
+  refundPayment,
+  voidPayment,
+  METHOD_LABELS,
+  PAYMENT_METHODS,
+  PaymentError,
+  type Payment,
+  type PaymentMethod,
+  type RefundableComponent,
+} from '@lib/payments/payments';
+import { formatMoney } from '@lib/payments/money';
+import type { FeeComponentCode } from '@lib/config/reference';
+
+const principal = Astro.locals.principal!;
+const canRefund = principal.permissions.has('payment.refund');
+const canVoid = principal.permissions.has('payment.void');
+
+const { id } = Astro.params;
+let payment = id ? await loadPayment(id) : null;
+if (!payment) return new Response('Not found', { status: 404 });
+
+let error: string | null = null;
+let notice: string | null = null;
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = String(form.get('intent') ?? '');
+
+  // The print is recorded, not rendered, so it answers with nothing and the
+  // browser's own print dialog carries on.
+  if (intent === 'record-print') {
+    try {
+      await recordReceiptPrint(payment.id, principal);
+      return new Response(null, { status: 204 });
+    } catch (err) {
+      console.error('[receipts/print]', err);
+      return new Response(null, { status: 500 });
+    }
+  }
+
+  try {
+    if (intent === 'void') {
+      const voided = await voidPayment(
+        payment.id,
+        String(form.get('reason') ?? ''),
+        principal
+      );
+      payment = voided;
+      notice = `Receipt ${voided.receiptNo} voided.`;
+    } else if (intent === 'refund') {
+      const amounts: Partial<Record<FeeComponentCode, string>> = {};
+      for (const [key, value] of form.entries()) {
+        if (key.startsWith('refund.')) {
+          amounts[key.slice('refund.'.length) as FeeComponentCode] =
+            String(value);
+        }
+      }
+
+      const refund = await refundPayment(
+        {
+          paymentId: payment.id,
+          method: String(form.get('method') ?? '') as PaymentMethod,
+          methodReference: String(form.get('methodReference') ?? ''),
+          reason: String(form.get('reason') ?? ''),
+          amounts,
+        },
+        principal
+      );
+      return Astro.redirect(`/receipts/${refund.id}`);
+    }
+  } catch (err) {
+    if (err instanceof PaymentError) {
+      error = err.message;
+    } else {
+      console.error('[receipts]', err);
+      error = 'That could not be done. Nothing has changed — please try again.';
+    }
+    payment = (await loadPayment(payment.id)) ?? payment;
+  }
+}
+
+const prints = await printHistoryFor(payment.id);
+const isReprint = prints.count > 0;
+
+const refundable: RefundableComponent[] =
+  canRefund && payment.kind === 'payment' && !payment.voidedAt
+    ? await refundableComponents(payment.id)
+    : [];
+const anythingRefundable = refundable.some(c => Number(c.refundable) > 0);
+
+// Refunds already made against this one, so the Treasurer is not deciding
+// blind.
+const related: Payment[] = payment.applicationId
+  ? await paymentsForApplication(payment.applicationId)
+  : [];
+const refunds = related.filter(p => p.refundsId === payment!.id && !p.voidedAt);
+
+const owner = payment.applicationReference ?? payment.memberNo ?? '—';
+const ownerHref = payment.applicationId
+  ? `/applications/${payment.applicationId}`
+  : payment.memberId
+    ? `/members/${payment.memberId}`
+    : null;
+
+const dateFormat = new Intl.DateTimeFormat('en-GB', {
+  dateStyle: 'long',
+  timeStyle: 'short',
+});
+---
+
+<BaseLayout title={`${payment.receiptNo} · Receipt`}>
+  <div class="screen-only messages">
+    {error && <p class="message error">{error}</p>}
+    {notice && <p class="message notice">{notice}</p>}
+  </div>
+
+  <div class="print-page">
+    {payment.voidedAt && <div class="watermark">VOID</div>}
+
+    <header class="head">
+      <div>
+        <h1>Al Barakah MCSL</h1>
+        <p class="sub">
+          {payment.kind === 'refund' ? 'Refund' : 'Official receipt'}
+        </p>
+      </div>
+      <div class="ref">
+        <p><strong>{payment.receiptNo}</strong></p>
+        <p>{dateFormat.format(payment.receivedAt)}</p>
+        {isReprint && <p class="reprint">REPRINT</p>}
+      </div>
+    </header>
+
+    {
+      isReprint && (
+        <p class="reprint-note">
+          Reprint. First issued {dateFormat.format(prints.firstPrintedAt!)} by{' '}
+          {prints.firstPrintedByName}.
+        </p>
+      )
+    }
+
+    {
+      payment.voidedAt && (
+        <p class="void-note">
+          Voided {dateFormat.format(payment.voidedAt)} by {payment.voidedByName}
+          . {payment.voidReason}
+        </p>
+      )
+    }
+
+    <dl class="facts">
+      <div class="row">
+        <dt>Received from</dt>
+        <dd>{owner}</dd>
+      </div>
+      <div class="row">
+        <dt>Method</dt>
+        <dd>
+          {METHOD_LABELS[payment.method]}
+          {payment.methodReference && ` · ${payment.methodReference}`}
+        </dd>
+      </div>
+      {
+        payment.refundsReceiptNo && (
+          <div class="row">
+            <dt>Refund of</dt>
+            <dd>{payment.refundsReceiptNo}</dd>
+          </div>
+        )
+      }
+      <div class="row">
+        <dt>Received by</dt>
+        <dd>{payment.recordedByName}</dd>
+      </div>
+    </dl>
+
+    <table class="lines">
+      <tbody>
+        {
+          payment.lines.map(line => (
+            <tr>
+              <td>{line.label}</td>
+              <td class="amount">
+                {formatMoney(line.amount, payment!.currency)}
+              </td>
+            </tr>
+          ))
+        }
+        <tr class="total">
+          <td>Total</td>
+          <td class="amount">
+            {formatMoney(payment.totalAmount, payment.currency)}
+          </td>
+        </tr>
+      </tbody>
+    </table>
+
+    {payment.varianceReason && <p class="note">{payment.varianceReason}</p>}
+
+    <div class="signature">
+      <div class="sig-line"></div>
+      <p>For Al Barakah Multipurpose Co-operative Society Limited</p>
+    </div>
+
+    <div class="actions screen-only">
+      <button type="button" id="print" data-payment-id={payment.id}
+        >Print</button
+      >
+      {ownerHref && <a href={ownerHref}>Back</a>}
+    </div>
+  </div>
+
+  {
+    refunds.length > 0 && (
+      <section class="screen-only panel">
+        <h2>Refunded against this receipt</h2>
+        <ul>
+          {refunds.map(refund => (
+            <li>
+              <a href={`/receipts/${refund.id}`}>{refund.receiptNo}</a> ·{' '}
+              {formatMoney(refund.totalAmount, refund.currency)} ·{' '}
+              {dateFormat.format(refund.receivedAt)}
+            </li>
+          ))}
+        </ul>
+      </section>
+    )
+  }
+
+  {
+    canRefund && refundable.length > 0 && (
+      <section class="screen-only panel">
+        <h2>Refund</h2>
+        {!anythingRefundable && (
+          <p>Nothing on this receipt is still refundable.</p>
+        )}
+        <form method="post">
+          <table class="lines">
+            <tbody>
+              {refundable.map(component => (
+                <tr>
+                  <td>
+                    <label for={`refund-${component.code}`}>
+                      {component.label}
+                    </label>
+                    <span class="hint">
+                      {component.blockedReason
+                        ? component.blockedReason
+                        : `${formatMoney(component.refundable)} of ${formatMoney(
+                            component.paid
+                          )} still refundable`}
+                    </span>
+                  </td>
+                  <td class="amount">
+                    <input
+                      id={`refund-${component.code}`}
+                      type="text"
+                      inputmode="decimal"
+                      name={`refund.${component.code}`}
+                      value="0.00"
+                      disabled={Number(component.refundable) === 0}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <label>
+            Method
+            <select name="method">
+              {PAYMENT_METHODS.map(method => (
+                <option value={method}>{METHOD_LABELS[method]}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Cheque or transfer reference
+            <input type="text" name="methodReference" />
+          </label>
+          <label>
+            Reason
+            <input type="text" name="reason" required />
+          </label>
+
+          <button
+            type="submit"
+            name="intent"
+            value="refund"
+            disabled={!anythingRefundable}
+          >
+            Record refund
+          </button>
+        </form>
+      </section>
+    )
+  }
+
+  {
+    canVoid && !payment.voidedAt && (
+      <section class="screen-only panel danger">
+        <h2>Void this receipt</h2>
+        <form method="post" id="void-form">
+          <label>
+            Reason
+            <input type="text" name="reason" required />
+          </label>
+          <button type="submit" name="intent" value="void">
+            Void {payment.receiptNo}
+          </button>
+        </form>
+      </section>
+    )
+  }
+</BaseLayout>
+
+<style>
+  /* Set in absolute units against white: this sheet is printed and handed to
+     a person, so it must not follow the reader's dark mode. Same reasoning as
+     the application form. */
+  .print-page {
+    position: relative;
+    max-width: 150mm;
+    margin: 0 auto;
+    padding: 12mm 10mm;
+    background: #fff;
+    color: #111;
+    font-family: Georgia, 'Times New Roman', serif;
+    font-size: 11pt;
+    line-height: 1.45;
+  }
+
+  .head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 10mm;
+    border-bottom: 2px solid #111;
+    padding-bottom: 4mm;
+  }
+  h1 {
+    margin: 0;
+    font-size: 15pt;
+  }
+  .sub {
+    margin: 1mm 0 0;
+    font-size: 11pt;
+  }
+  .ref {
+    text-align: right;
+    font-size: 10pt;
+  }
+  .ref p {
+    margin: 0;
+  }
+  .reprint {
+    margin-top: 1mm !important;
+    font-weight: bold;
+    letter-spacing: 0.08em;
+  }
+  .reprint-note,
+  .void-note {
+    margin: 4mm 0 0;
+    padding: 2mm 3mm;
+    border: 1px solid #444;
+    font-size: 9.5pt;
+  }
+
+  .facts {
+    margin: 6mm 0 0;
+  }
+  .facts .row {
+    display: flex;
+    gap: 4mm;
+    padding: 1mm 0;
+  }
+  .facts dt {
+    flex: 0 0 40mm;
+    color: #444;
+    font-size: 10pt;
+  }
+  .facts dd {
+    margin: 0;
+  }
+
+  .lines {
+    width: 100%;
+    margin-top: 6mm;
+    border-collapse: collapse;
+  }
+  .lines td {
+    padding: 1.8mm 0;
+    border-bottom: 1px solid #ccc;
+    vertical-align: top;
+  }
+  .amount {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .total td {
+    border-top: 2px solid #111;
+    border-bottom: none;
+    font-weight: bold;
+    padding-top: 2.5mm;
+  }
+  .note {
+    margin-top: 4mm;
+    font-size: 10pt;
+  }
+
+  .signature {
+    margin-top: 16mm;
+  }
+  .sig-line {
+    height: 12mm;
+    border-bottom: 1px solid #444;
+    max-width: 70mm;
+  }
+  .signature p {
+    margin: 1mm 0 0;
+    font-size: 9pt;
+    color: #444;
+  }
+
+  .watermark {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 80pt;
+    font-weight: bold;
+    color: rgba(0, 0, 0, 0.1);
+    transform: rotate(-30deg);
+    pointer-events: none;
+    letter-spacing: 0.1em;
+  }
+
+  .actions {
+    margin-top: 8mm;
+    display: flex;
+    gap: 4mm;
+    align-items: center;
+    font-family: system-ui, sans-serif;
+    font-size: 10pt;
+  }
+  .actions button {
+    padding: 2mm 5mm;
+    border: 1px solid #333;
+    background: #eee;
+    cursor: pointer;
+    font: inherit;
+  }
+
+  /* Everything below is for the person working the receipt, not for paper. */
+  .messages {
+    max-width: 150mm;
+    margin: 0 auto;
+  }
+  .message {
+    margin: 0 0 1rem;
+    padding: 0.75rem 1rem;
+    border-radius: 0.5rem;
+    font-family: system-ui, sans-serif;
+    font-size: 0.875rem;
+  }
+  .error {
+    border: 1px solid #fca5a5;
+    background: #fef2f2;
+    color: #991b1b;
+  }
+  .notice {
+    border: 1px solid #86efac;
+    background: #f0fdf4;
+    color: #14532d;
+  }
+
+  .panel {
+    max-width: 150mm;
+    margin: 1.5rem auto 0;
+    padding: 1.25rem;
+    border: 1px solid #d4d4d4;
+    border-radius: 0.75rem;
+    background: #fff;
+    color: #111;
+    font-family: system-ui, sans-serif;
+    font-size: 0.875rem;
+  }
+  .panel.danger {
+    border-color: #fca5a5;
+  }
+  .panel h2 {
+    margin: 0 0 0.75rem;
+    font-size: 1rem;
+  }
+  .panel label {
+    display: block;
+    margin-top: 0.75rem;
+    color: #444;
+  }
+  .panel input,
+  .panel select {
+    margin-top: 0.25rem;
+    padding: 0.4rem 0.6rem;
+    border: 1px solid #d4d4d4;
+    border-radius: 0.4rem;
+    font: inherit;
+    width: 100%;
+    max-width: 22rem;
+  }
+  .panel .amount input {
+    max-width: 8rem;
+    text-align: right;
+  }
+  .panel .hint {
+    display: block;
+    color: #666;
+    font-size: 0.8125rem;
+  }
+  .panel button {
+    margin-top: 1rem;
+    padding: 0.5rem 1rem;
+    border: 1px solid #333;
+    border-radius: 0.4rem;
+    background: #eee;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .panel button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .panel ul {
+    margin: 0;
+    padding-left: 1.1rem;
+  }
+
+  @media print {
+    .screen-only {
+      display: none;
+    }
+    .print-page {
+      max-width: none;
+      padding: 0;
+    }
+    .watermark {
+      position: fixed;
+      color: rgba(0, 0, 0, 0.15);
+    }
+    @page {
+      size: A5;
+      margin: 12mm;
+    }
+  }
+</style>
+
+<script>
+  const button = document.getElementById('print') as HTMLButtonElement | null;
+
+  button?.addEventListener('click', async () => {
+    const body = new FormData();
+    body.set('intent', 'record-print');
+
+    // Recorded before the dialog opens, and a failure to record does not stop
+    // the print: the officer has an applicant waiting. The reprint mark is
+    // then one print behind, which is the lesser of the two problems.
+    try {
+      await fetch(window.location.pathname, { method: 'POST', body });
+    } catch {
+      // Deliberately swallowed; see above.
+    }
+    window.print();
+  });
+
+  document.getElementById('void-form')?.addEventListener('submit', event => {
+    if (
+      !window.confirm(
+        'Void this receipt? The number is never reused and the void is on ' +
+          'the record.'
+      )
+    ) {
+      event.preventDefault();
+    }
+  });
+</script>

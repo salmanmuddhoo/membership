@@ -1,0 +1,197 @@
+---
+// The receipt sequence, audited (S-506).
+//
+// The sequence is only evidence if something checks it. Three findings, all
+// from the ledger: a number that never became a receipt, one that was voided,
+// and one that appears twice. Nothing is derived from the payments — a
+// reconciliation that reads only the payments cannot see a number that never
+// reached one, which is the whole point.
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import { reconcileReceipts, type ExceptionKind } from '@lib/payments/receipts';
+import { formatMoney } from '@lib/payments/money';
+
+const principal = Astro.locals.principal!;
+if (!principal.permissions.has('receipt.reconcile')) {
+  return Astro.redirect('/denied');
+}
+
+// Default to the current month, which is the period a Treasurer reconciles.
+const now = new Date();
+const monthStart = new Date(
+  Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)
+);
+const asDate = (value: Date) => value.toISOString().slice(0, 10);
+
+const params = Astro.url.searchParams;
+const parse = (value: string | null, fallback: Date) => {
+  if (!value) return fallback;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return Number.isNaN(parsed.getTime()) ? fallback : parsed;
+};
+
+const from = parse(params.get('from'), monthStart);
+const toInclusive = parse(params.get('to'), now);
+// The query is half-open, so the last day the officer typed is included.
+const to = new Date(toInclusive.getTime() + 24 * 60 * 60 * 1000);
+
+const period = await reconcileReceipts(from, to);
+
+const KIND_LABELS: Record<ExceptionKind, string> = {
+  unissued: 'No receipt',
+  void: 'Voided',
+  duplicate: 'Duplicate number',
+  missing: 'Not in the ledger',
+};
+
+const KIND_CLASSES: Record<ExceptionKind, string> = {
+  unissued: 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200',
+  void: 'bg-neutral-200 text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200',
+  duplicate: 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200',
+  missing: 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200',
+};
+
+const dateFormat = new Intl.DateTimeFormat('en-GB', {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+});
+---
+
+<DashboardLayout
+  title="Receipt reconciliation · Al Barakah MCSL"
+  heading="Receipt reconciliation"
+>
+  <div class="mx-auto max-w-4xl space-y-6">
+    <form
+      method="get"
+      class="flex flex-wrap items-end gap-3 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
+    >
+      <label class="text-sm text-neutral-600 dark:text-neutral-300">
+        From
+        <input
+          type="date"
+          name="from"
+          value={asDate(from)}
+          class="mt-1 block rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+        />
+      </label>
+      <label class="text-sm text-neutral-600 dark:text-neutral-300">
+        To
+        <input
+          type="date"
+          name="to"
+          value={asDate(toInclusive)}
+          class="mt-1 block rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+        />
+      </label>
+      <button
+        type="submit"
+        class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
+      >
+        Show
+      </button>
+    </form>
+
+    <section
+      class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
+    >
+      <div class="grid gap-4 sm:grid-cols-3">
+        <div>
+          <p
+            class="text-2xl font-bold text-neutral-800 tabular-nums dark:text-neutral-100"
+          >
+            {period.issuedCount}
+          </p>
+          <p class="text-sm text-neutral-500 dark:text-neutral-400">
+            receipts issued
+          </p>
+        </div>
+        <div>
+          <p
+            class="text-2xl font-bold text-neutral-800 tabular-nums dark:text-neutral-100"
+          >
+            {formatMoney(period.issuedTotal)}
+          </p>
+          <p class="text-sm text-neutral-500 dark:text-neutral-400">
+            net of refunds
+          </p>
+        </div>
+        <div>
+          <p
+            class="text-2xl font-bold text-neutral-800 tabular-nums dark:text-neutral-100"
+          >
+            {
+              period.firstSerial === null
+                ? '—'
+                : `${period.firstSerial}–${period.lastSerial}`
+            }
+          </p>
+          <p class="text-sm text-neutral-500 dark:text-neutral-400">
+            numbers allocated
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section
+      class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
+    >
+      <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+        Exceptions
+      </h2>
+
+      {
+        period.exceptions.length === 0 ? (
+          /* Said in words. An empty table would read the same whether the
+             sequence is clean or the query found nothing to look at. */
+          <p class="mt-3 text-sm text-neutral-600 dark:text-neutral-300">
+            {period.firstSerial === null
+              ? 'No receipt numbers were allocated in this period.'
+              : `Every number from ${period.firstSerial} to ${period.lastSerial} is accounted for. No gaps, no duplicates, no voids.`}
+          </p>
+        ) : (
+          <table class="mt-4 w-full text-sm">
+            <thead>
+              <tr class="border-b border-neutral-300 text-left dark:border-neutral-700">
+                <th class="py-2 font-medium text-neutral-600 dark:text-neutral-300">
+                  Receipt
+                </th>
+                <th class="py-2 font-medium text-neutral-600 dark:text-neutral-300">
+                  Finding
+                </th>
+                <th class="py-2 font-medium text-neutral-600 dark:text-neutral-300">
+                  Reason
+                </th>
+                <th class="py-2 font-medium text-neutral-600 dark:text-neutral-300">
+                  When
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {period.exceptions.map(exception => (
+                <tr class="border-b border-neutral-200 align-top dark:border-neutral-800">
+                  <td class="py-2 font-medium text-neutral-800 tabular-nums dark:text-neutral-100">
+                    {exception.receiptNo}
+                  </td>
+                  <td class="py-2">
+                    <span
+                      class={`rounded px-1.5 py-0.5 text-xs ${KIND_CLASSES[exception.kind]}`}
+                    >
+                      {KIND_LABELS[exception.kind]}
+                    </span>
+                  </td>
+                  <td class="py-2 text-neutral-600 dark:text-neutral-300">
+                    {exception.reason || 'Not recorded'}
+                  </td>
+                  <td class="py-2 text-neutral-500 dark:text-neutral-400">
+                    {exception.at ? dateFormat.format(exception.at) : '—'}
+                    {exception.who && ` · ${exception.who}`}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )
+      }
+    </section>
+  </div>
+</DashboardLayout>

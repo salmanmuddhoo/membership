@@ -51,6 +51,13 @@ const ROUTE_PERMISSIONS: ReadonlyArray<readonly [string, string]> = [
   ['/applications/', 'application.view'],
   ['/members/', 'member.view'],
 
+  // Receipts (M5). Reading a receipt is payment.view; auditing the sequence is
+  // the Treasurer's own permission. The longer prefix wins, so the exact rule
+  // for the reconciliation page tightens the broader one rather than being
+  // shadowed by it.
+  ['/receipts/', 'payment.view'],
+  ['/receipts/reconciliation', 'receipt.reconcile'],
+
   // Further modules are added here as they land (members, financing,
   // documents, ...). The order does not matter: the longest matching prefix
   // wins, so a more specific rule can tighten a broader one.

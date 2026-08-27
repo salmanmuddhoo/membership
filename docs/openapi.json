@@ -1366,6 +1366,128 @@
         }
       }
     },
+    "/api/v1/financial-events": {
+      "get": {
+        "summary": "Read financial events in order",
+        "description": "Returns events with a sequence number greater than `after`, oldest first. Record the highest sequenceNo you have processed and pass it back as `after` next time. Amounts are decimal strings, never numbers.",
+        "tags": [
+          "Payments"
+        ],
+        "operationId": "getFinancialEvents",
+        "x-required-permission": "payment.view",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "events"
+                      ],
+                      "properties": {
+                        "events": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "sequenceNo",
+                              "eventType",
+                              "paymentId",
+                              "receiptNo",
+                              "occurredAt",
+                              "payload"
+                            ],
+                            "properties": {
+                              "sequenceNo": {
+                                "type": "integer"
+                              },
+                              "eventType": {
+                                "type": "string",
+                                "enum": [
+                                  "payment.recorded",
+                                  "payment.refunded",
+                                  "payment.voided"
+                                ]
+                              },
+                              "paymentId": {
+                                "type": "string",
+                                "format": "uuid"
+                              },
+                              "receiptNo": {
+                                "type": "string"
+                              },
+                              "occurredAt": {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              "payload": {
+                                "type": "object",
+                                "description": "The event in full: fee version, components, amounts, method and who recorded it. Self-contained, so a consumer never has to join back into tables that have moved on."
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/health": {
       "get": {
         "summary": "Report platform health",
