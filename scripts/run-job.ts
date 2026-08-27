@@ -12,6 +12,7 @@ import {
   type SweepCheckpoint,
 } from '../src/lib/jobs/chunked-sweep';
 import { runJob, JobAlreadyRunning } from '../src/lib/jobs/runner';
+import { expireDocuments } from '../src/lib/documents/documents';
 
 // Jobs are named here rather than passed as arbitrary strings: the container's
 // arguments are configuration, and configuration should not be able to name a
@@ -23,6 +24,23 @@ const JOBS: Record<string, () => Promise<unknown>> = {
     runJob<SweepCheckpoint>({
       name: 'chunked-sweep-demo',
       run: context => runChunkedSweep(context, { chunkSize: 100 }),
+    }),
+
+  // S-410. A document that has passed its expiry is Expired, and the checklist
+  // it sits on stops reading complete. Nothing on a request path can do this:
+  // expiry happens because a date passed, not because anyone did anything, so
+  // there is no request to hang it off. Run daily.
+  'document-expiry': () =>
+    runJob<{ sweptAt: string }>({
+      name: 'document-expiry',
+      run: async context => {
+        const { expired } = await expireDocuments();
+        // Reported through save() rather than returned: that is what makes the
+        // run's processedCount the number of documents expired, which is the
+        // number an operator looking at the run wants.
+        await context.save({ sweptAt: new Date().toISOString() }, expired);
+        context.log('documents expired', { expired });
+      },
     }),
 };
 

@@ -1,0 +1,288 @@
+---
+// The printable application form (S-401).
+//
+// Rendered from the membership type's field configuration, not from a fixed
+// template — so a field an administrator adds in M2 appears on the printed
+// form without a release, which is the whole reason the configuration exists.
+//
+// A field with no value prints as a ruled blank rather than being left out.
+// The applicant is sitting there with a pen: a form that silently omits what
+// was not captured gives them nothing to complete.
+import BaseLayout from '@layouts/BaseLayout.astro';
+import { loadApplication, visibleFields } from '@lib/applications/capture';
+import { listMembershipTypes, type FieldSubject } from '@lib/config/reference';
+
+const { id } = Astro.params;
+const application = id ? await loadApplication(id) : null;
+if (!application) return new Response('Not found', { status: 404 });
+
+const type = (await listMembershipTypes()).find(
+  t => t.id === application.membershipTypeId
+)!;
+const fields = visibleFields(type);
+
+const valuesFor = (subject: FieldSubject) =>
+  application.parties.find(p => p.subject === subject && p.ordinal === 1)
+    ?.values ?? {};
+
+const SUBJECT_LABELS: Record<string, string> = {
+  applicant: 'Applicant',
+  nominee: 'Nominee',
+  guardian: 'Parent / Guardian',
+  beneficiary: 'Takaful beneficiary',
+};
+
+// FRD 5.4. Four blocks, always all four: a form printed with three is a form
+// that will come back needing another visit.
+const SIGNATURES = ['Applicant', 'Nominee', 'Witness 1', 'Witness 2'] as const;
+
+// An unsigned print of a draft must not be mistaken for the real thing.
+const isDraft = application.status === 'draft';
+
+const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
+---
+
+<BaseLayout title={`${application.reference} · Application form`}>
+  <div class="print-page">
+    {isDraft && <div class="watermark">DRAFT</div>}
+
+    <header class="head">
+      <div>
+        <h1>Al Barakah MCSL</h1>
+        <p class="sub">Application for Membership — {type.name}</p>
+      </div>
+      <div class="ref">
+        <p><strong>{application.reference}</strong></p>
+        <p>{dateFormat.format(application.updatedAt)}</p>
+      </div>
+    </header>
+
+    {
+      [...fields].map(([subject, subjectFields]) => {
+        const values = valuesFor(subject);
+        return (
+          <section class="block">
+            <h2>{SUBJECT_LABELS[subject] ?? subject}</h2>
+            <dl>
+              {subjectFields.map(field => {
+                const value = (values[field.fieldKey] ?? '').trim();
+                return (
+                  <div class="row">
+                    <dt>
+                      {field.label}
+                      {field.isMandatory && <span class="req">*</span>}
+                    </dt>
+                    <dd class={value ? '' : 'blank'}>{value}</dd>
+                  </div>
+                );
+              })}
+            </dl>
+          </section>
+        );
+      })
+    }
+
+    <section class="declaration block">
+      <h2>Declaration</h2>
+      <p>
+        I declare that the information given above is true and complete to the
+        best of my knowledge. I have read and accept the rules and by-laws of Al
+        Barakah Multipurpose Co-operative Society Limited, and I undertake to
+        abide by them. I understand that any information found to be false may
+        result in my application being refused or my membership terminated.
+      </p>
+    </section>
+
+    <section class="block">
+      <div class="signatures">
+        {
+          SIGNATURES.map(who => (
+            <div class="sig">
+              <div class="sig-line" />
+              <p class="sig-name">{who}</p>
+              <p class="sig-date">Name and date</p>
+              <div class="sig-line short" />
+            </div>
+          ))
+        }
+      </div>
+    </section>
+
+    <div class="actions">
+      <button type="button" id="print">Print</button>
+      <a href={`/applications/${application.id}`}>Back to the application</a>
+    </div>
+  </div>
+</BaseLayout>
+
+<style>
+  /* Deliberately plain and self-contained. This sheet is printed, handed to a
+     person and signed, so it is set in absolute units against white — not in
+     the application's theme, which follows the reader's dark mode and would
+     print an unreadable page. */
+  .print-page {
+    position: relative;
+    max-width: 190mm;
+    margin: 0 auto;
+    padding: 12mm 10mm;
+    background: #fff;
+    color: #111;
+    font-family: Georgia, 'Times New Roman', serif;
+    font-size: 11pt;
+    line-height: 1.45;
+  }
+
+  .head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 10mm;
+    border-bottom: 2px solid #111;
+    padding-bottom: 4mm;
+  }
+  h1 {
+    margin: 0;
+    font-size: 16pt;
+    letter-spacing: 0.02em;
+  }
+  .sub {
+    margin: 1mm 0 0;
+    font-size: 11pt;
+  }
+  .ref {
+    text-align: right;
+    font-size: 10pt;
+  }
+  .ref p {
+    margin: 0;
+  }
+
+  .block {
+    margin-top: 7mm;
+    break-inside: avoid;
+  }
+  h2 {
+    margin: 0 0 3mm;
+    font-size: 11pt;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    border-bottom: 1px solid #999;
+    padding-bottom: 1mm;
+  }
+
+  dl {
+    margin: 0;
+  }
+  .row {
+    display: flex;
+    align-items: baseline;
+    gap: 4mm;
+    padding: 1.6mm 0;
+  }
+  dt {
+    flex: 0 0 55mm;
+    font-size: 10pt;
+    color: #333;
+  }
+  .req {
+    color: #333;
+  }
+  dd {
+    flex: 1;
+    margin: 0;
+    min-height: 6mm;
+    border-bottom: 1px solid #bbb;
+  }
+  /* An empty field prints as a ruled line to write on, never as nothing. */
+  .blank {
+    border-bottom: 1px solid #444;
+  }
+
+  .declaration p {
+    margin: 0;
+    text-align: justify;
+  }
+
+  .signatures {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10mm 12mm;
+    margin-top: 4mm;
+  }
+  .sig {
+    break-inside: avoid;
+  }
+  .sig-line {
+    height: 14mm;
+    border-bottom: 1px solid #444;
+  }
+  .sig-line.short {
+    height: 8mm;
+  }
+  .sig-name {
+    margin: 1mm 0 0;
+    font-size: 10pt;
+    font-weight: bold;
+  }
+  .sig-date {
+    margin: 3mm 0 0;
+    font-size: 9pt;
+    color: #555;
+  }
+
+  .watermark {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 90pt;
+    font-weight: bold;
+    color: rgba(0, 0, 0, 0.08);
+    transform: rotate(-30deg);
+    pointer-events: none;
+    letter-spacing: 0.1em;
+  }
+
+  .actions {
+    margin-top: 8mm;
+    display: flex;
+    gap: 4mm;
+    align-items: center;
+    font-family: system-ui, sans-serif;
+    font-size: 10pt;
+  }
+  .actions button {
+    padding: 2mm 5mm;
+    border: 1px solid #333;
+    background: #eee;
+    cursor: pointer;
+    font: inherit;
+  }
+
+  @media print {
+    /* The controls are for the screen; the paper carries the form. */
+    .actions {
+      display: none;
+    }
+    .print-page {
+      max-width: none;
+      padding: 0;
+    }
+    .watermark {
+      position: fixed;
+      /* Screen opacity disappears on paper, where a draft mark matters most. */
+      color: rgba(0, 0, 0, 0.13);
+    }
+    @page {
+      size: A4;
+      margin: 14mm;
+    }
+  }
+</style>
+
+<script>
+  document.getElementById('print')?.addEventListener('click', () => {
+    window.print();
+  });
+</script>

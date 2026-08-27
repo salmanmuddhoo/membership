@@ -330,11 +330,18 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
   heading={`Application ${application!.reference}`}
 >
   <div class="mx-auto max-w-4xl space-y-6">
-    <a
-      href="/applications"
-      class="inline-block text-sm text-neutral-500 underline dark:text-neutral-400"
-      >← All applications</a
-    >
+    <div class="flex flex-wrap items-center justify-between gap-2">
+      <a
+        href="/applications"
+        class="inline-block text-sm text-neutral-500 underline dark:text-neutral-400"
+        >← All applications</a
+      >
+      <a
+        href={`/applications/${application!.id}/print`}
+        class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+        >Printable form</a
+      >
+    </div>
 
     {
       error && (

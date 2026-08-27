@@ -111,12 +111,18 @@ async function main(): Promise<void> {
     const route = routeForPageFile(file);
     if (route === null) continue;
 
-    // A dynamic segment has no single path to probe; the pattern is checked by
-    // Astro's own routing, and getting one wrong shows up immediately in use.
-    if (route.includes('[')) continue;
+    // A rest segment matches a variable number of path parts, so there is no
+    // single path that stands for it. Left to Astro's own routing.
+    if (route.includes('[...')) continue;
+
+    // A dynamic segment is probed with a stand-in value. It used to be skipped
+    // — but a page like /applications/[id]/print is exactly the kind that goes
+    // missing from the allow-list, and skipping it meant the one check built
+    // for that failure mode never looked at it.
+    const probe = route.replace(/\[[^\]]+\]/g, 'probe-value');
 
     checked += 1;
-    if (!resolveRoute(routes, route).matched) {
+    if (!resolveRoute(routes, probe).matched) {
       missing.push(`${route}  (src/pages/${file})`);
     }
   }
