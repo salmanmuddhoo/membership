@@ -23,6 +23,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The migration check compares this branch against its base, so the
+          # history has to be here. A shallow clone would make it pass by
+          # having nothing to compare.
+          fetch-depth: 0
 
       - uses: pnpm/action-setup@v6
         with:
@@ -38,6 +43,14 @@ jobs:
 
       - name: Check formatting
         run: pnpm format:check
+
+      # S-102: editing a migration that has already been applied somewhere
+      # stops the deploy pipeline dead — and it stops it BEFORE applying any
+      # migration, so every later one is skipped and that database silently
+      # falls behind the code. The runner catches it, but only at deploy time,
+      # after the merge. This catches it next to the diff that causes it.
+      - name: No already-applied migration has been edited
+        run: pnpm verify:migrations "origin/${{ github.base_ref || 'main' }}"
 
       # S-110: an endpoint added without a descriptor cannot be documented, and
       # a committed document that has drifted from the routes is worse than

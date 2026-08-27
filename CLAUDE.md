@@ -30,6 +30,11 @@ screen.
 - Schema changes reach a database only through `migrations/`, applied by the
   pipeline — never by hand. Configuration tables need
   `set local albarakah.actor_description` at the top of the file.
+- **Never edit a migration that is already on `main`.** The runner records a
+  checksum and refuses a file that has changed — and refuses every migration
+  after it, so the database silently falls behind while the application moves
+  on. Put the change in a new migration. `pnpm verify:migrations` fails a
+  branch that edits one, and runs in CI.
 - Every page must be declared in `src/lib/access/authorise.ts`. Undeclared
   means denied, and `pnpm verify:routes` fails a page the build cannot reach.
 - Every `/api/v1` endpoint is built with `defineEndpoint`, which enforces its
