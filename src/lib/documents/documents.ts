@@ -27,6 +27,7 @@ import {
 import {
   createUploadTicket,
   sanitiseFileName,
+  validateUploadRequest,
   type UploadTicket,
 } from './upload';
 
@@ -367,6 +368,19 @@ export async function beginUpload(
     );
   }
 
+  // Checked before anything is created. createUploadTicket checks again — it
+  // is the function that talks to Graph and must not trust its caller — but
+  // doing it here as well means a file of the wrong type or size is refused
+  // without first creating a SharePoint folder for an upload that is never
+  // going to happen, and without the officer waiting on a round trip to be
+  // told something we already knew.
+  validateUploadRequest({
+    folderPath: owner.folder_path,
+    fileName: input.fileName,
+    contentType: input.contentType,
+    sizeBytes: input.sizeBytes,
+  });
+
   // Created before the ticket, so a folder failure refuses the upload rather
   // than producing a ticket that points nowhere.
   await ensureFolderPath(owner.folder_path, config);
@@ -477,9 +491,10 @@ export async function commitUpload(
     size_bytes: string;
     file_name: string;
     intended_expires_at: Date | null;
+    uploaded_by: string;
   }>(
     `select id, document_id, state, sharepoint_path, size_bytes, file_name,
-            intended_expires_at
+            intended_expires_at, uploaded_by
        from document_version where id = $1`,
     [versionId]
   );
@@ -488,6 +503,20 @@ export async function commitUpload(
   }
   const row = version.rows[0];
   if (row.state === 'committed') return { state: 'committed' };
+
+  // Only the person who started this upload may finish it. Not a theft
+  // concern — the bytes are whatever they are, and Graph is what confirms
+  // them. It is that the commit is what writes `document.filed` to the audit
+  // trail, and segregation of duties reads that trail to decide who may not
+  // verify this document (S-203). Letting anyone commit anyone's upload would
+  // put the wrong name against the filing, barring a person who did nothing
+  // and clearing the person who actually did it.
+  if (row.uploaded_by !== actor.userId) {
+    throw new DocumentError(
+      'This upload was started by someone else, so only they can complete it.',
+      'refused'
+    );
+  }
 
   const item = await getItemByPath(row.sharepoint_path, config);
   if (!item) {

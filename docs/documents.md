@@ -113,7 +113,45 @@ Then set `GRAPH_TENANT_ID`, `GRAPH_CLIENT_ID`, `GRAPH_CLIENT_SECRET` and
 `GRAPH_DRIVE_ID` per environment. Test and production should use **different
 sites**, so a test upload can never land in the real member library.
 
-## Recommendation for M4
+## What M4 built on it
+
+The spike endpoint `/api/v1/documents/upload-ticket` has been **retired**. It
+filed to a `Members/{reference}` folder that nothing else reads and created no
+`document` row, so a file sent through it appeared on no checklist and in no
+audit trail. Two endpoints replace it, and they are the only way a document is
+filed:
+
+| Endpoint                               | Permission        | What it does                                                           |
+| -------------------------------------- | ----------------- | ---------------------------------------------------------------------- |
+| `POST /api/v1/documents/begin-upload`  | `document.upload` | Records the intent, creates the folder, returns the scoped URL         |
+| `POST /api/v1/documents/commit-upload` | `document.upload` | Asks Graph whether the file is there and the right size, then files it |
+
+Between the two the version is `pending`, and the checklist reads **Missing** —
+so a tablet that loses signal halfway leaves nothing that looks filed.
+
+Three rules are worth knowing because they are not obvious from the endpoints:
+
+- **Only the person who began an upload may commit it.** Not a theft concern —
+  the bytes are whatever they are, and Graph is what confirms them. It is that
+  the commit writes `document.filed` to the audit trail, and segregation of
+  duties reads that trail to decide who may not verify the document. Letting
+  anyone commit anyone's upload would put the wrong name against the filing.
+- **A replacement changes nothing until it arrives.** The document's state,
+  its verdict and its expiry are rewritten at commit, never at begin, so a
+  failed replacement leaves the good file that is still live exactly as it was.
+- **File type and size are checked before the folder is created**, so a
+  refusal costs no round trip and leaves no empty folder behind.
+
+Verifying and rejecting are ordinary form posts on the application page rather
+than API endpoints: the Secretary is at a desk, and a form works without
+scripting. Filing cannot be, because the bytes go from the device to Microsoft
+— so the file input is disabled until the script enables it, and says why.
+
+Still open for later in M4: HEIC previews (accepted, but a browser cannot render
+one, so the thumbnail is a generic icon), and resuming a dropped transfer via
+`nextExpectedRanges` rather than restarting it.
+
+## Recommendation for M4 (from the spike, kept for the record)
 
 - Keep the ticket-then-upload shape: the API authorises, the device transfers.
 - **Record metadata only after Graph confirms the item** (S-406, S-408). The

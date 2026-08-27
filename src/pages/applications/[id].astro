@@ -18,9 +18,18 @@ import {
   submitApplication,
   transitionsFor,
 } from '@lib/applications/workflow';
+import {
+  checklistFor,
+  isDocumentComplete,
+  reviewDocument,
+  DocumentError,
+} from '@lib/documents/documents';
 
 const principal = Astro.locals.principal!;
 const canCapture = principal.permissions.has('application.capture');
+const canSeeDocuments = principal.permissions.has('document.view');
+const canUpload = principal.permissions.has('document.upload');
+const canVerify = principal.permissions.has('document.verify');
 const { id } = Astro.params;
 
 let application = id ? await loadApplication(id) : null;
@@ -96,6 +105,26 @@ if (Astro.request.method === 'POST') {
       }
       application = await loadApplication(application.id);
       if (!application) return Astro.redirect('/applications');
+    }
+  } else if (intent === 'verify-document' || intent === 'reject-document') {
+    try {
+      const outcome = intent === 'verify-document' ? 'verify' : 'reject';
+      const result = await reviewDocument(
+        String(form.get('documentId') ?? ''),
+        { outcome, reason: String(form.get('reason') ?? '') },
+        principal
+      );
+      notice =
+        result.state === 'verified'
+          ? 'Document verified.'
+          : 'Document rejected. The officer who filed it can replace it.';
+    } catch (err) {
+      if (err instanceof DocumentError) {
+        error = err.message;
+      } else {
+        console.error('[documents/review]', err);
+        error = 'The document could not be reviewed. Please try again.';
+      }
     }
   } else if (
     intent === 'submit' ||
@@ -217,6 +246,13 @@ const isDeletableDraft =
   application!.status === 'draft' &&
   application!.capturedBy === principal.userId;
 
+// Only for people who may see documents at all: an application is readable by
+// more roles than its scans are.
+const checklist = canSeeDocuments
+  ? await checklistFor({ applicationId: application!.id })
+  : [];
+const documentsComplete = checklist.length > 0 && isDocumentComplete(checklist);
+
 const [blocking, actions, history] = await Promise.all([
   problemsBlockingSubmission(application!),
   availableActions(application!, principal),
@@ -225,6 +261,45 @@ const [blocking, actions, history] = await Promise.all([
 const valuesFor = (subject: FieldSubject) =>
   application!.parties.find(p => p.subject === subject && p.ordinal === 1)
     ?.values ?? {};
+
+const DOCUMENT_STATE_LABELS: Record<string, string> = {
+  missing: 'Missing',
+  uploaded: 'Uploaded',
+  under_review: 'Under review',
+  verified: 'Verified',
+  rejected: 'Rejected',
+  expired: 'Expired',
+};
+
+const DOCUMENT_STATE_CLASSES: Record<string, string> = {
+  missing:
+    'bg-neutral-200 text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200',
+  uploaded:
+    'bg-mint-200 text-neutral-800 dark:bg-mint-900 dark:text-neutral-100',
+  under_review:
+    'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200',
+  verified:
+    'bg-mint-300 text-neutral-800 dark:bg-mint-800 dark:text-neutral-100',
+  rejected: 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200',
+  expired: 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200',
+};
+
+// What the file picker offers, matching what the upload service accepts. A
+// device that offers a file the backend will refuse wastes the officer's time
+// and their data allowance.
+const ACCEPTED_FILES =
+  'image/jpeg,image/png,image/heic,image/webp,application/pdf';
+
+const documentsBySubject = new Map<string, typeof checklist>();
+for (const entry of checklist) {
+  const list = documentsBySubject.get(entry.subject) ?? [];
+  list.push(entry);
+  documentsBySubject.set(entry.subject, list);
+}
+
+const requiredOutstanding = checklist.filter(
+  e => e.requirement === 'required' && e.state !== 'verified'
+).length;
 
 const SUBJECT_LABELS: Record<string, string> = {
   applicant: 'Applicant',
@@ -462,6 +537,161 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     }
 
     {
+      canSeeDocuments && checklist.length > 0 && (
+        <section
+          class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
+          id="documents"
+        >
+          <div class="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+              Documents
+            </h2>
+            <p class="text-sm text-neutral-500 dark:text-neutral-400">
+              {documentsComplete
+                ? 'Every required document has been verified.'
+                : `${requiredOutstanding} required ${
+                    requiredOutstanding === 1 ? 'document is' : 'documents are'
+                  } not yet verified.`}
+            </p>
+          </div>
+          <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+            An item reads Missing until the file is confirmed in SharePoint, so
+            an upload that does not finish never looks filed.
+          </p>
+
+          {[...documentsBySubject].map(([subject, entries]) => (
+            <div class="mt-5">
+              <h3 class="text-sm font-medium text-neutral-700 dark:text-neutral-200">
+                {SUBJECT_LABELS[subject] ?? subject}
+              </h3>
+              <ul class="mt-2 space-y-3">
+                {entries.map(entry => (
+                  <li class="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+                    <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <span class="font-medium text-neutral-800 dark:text-neutral-100">
+                        {entry.documentName}
+                      </span>
+                      <span
+                        class={`rounded px-1.5 py-0.5 text-xs ${DOCUMENT_STATE_CLASSES[entry.state]}`}
+                      >
+                        {DOCUMENT_STATE_LABELS[entry.state]}
+                      </span>
+                      {entry.requirement === 'required' ? (
+                        <span class="text-xs text-neutral-500 dark:text-neutral-400">
+                          required
+                        </span>
+                      ) : (
+                        <span class="text-xs text-neutral-500 dark:text-neutral-400">
+                          optional
+                        </span>
+                      )}
+                    </div>
+
+                    {entry.uploadedAt && (
+                      <p class="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                        {entry.fileName} · filed by {entry.uploadedByName} on{' '}
+                        {dateFormat.format(entry.uploadedAt)}
+                        {entry.versionCount > 1 &&
+                          ` · version ${entry.versionCount}`}
+                        {entry.verifiedByName &&
+                          ` · verified by ${entry.verifiedByName}`}
+                        {entry.expiresAt &&
+                          ` · expires ${dateFormat.format(entry.expiresAt)}`}
+                      </p>
+                    )}
+
+                    {entry.rejectionReason && (
+                      <p class="mt-2 rounded-lg border border-red-300 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:text-red-200">
+                        Rejected: {entry.rejectionReason}
+                      </p>
+                    )}
+
+                    {canUpload && (
+                      <div
+                        class="mt-3 flex flex-wrap items-end gap-3"
+                        data-upload
+                        data-application-id={application!.id}
+                        data-document-type-id={entry.documentTypeId}
+                        data-subject={entry.subject}
+                        data-tracks-expiry={entry.tracksExpiry ? 'yes' : 'no'}
+                      >
+                        {entry.tracksExpiry && (
+                          <label class="text-xs text-neutral-600 dark:text-neutral-300">
+                            Expires on
+                            <input
+                              type="date"
+                              data-expires
+                              class="mt-1 block rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                            />
+                          </label>
+                        )}
+                        <label class="text-xs text-neutral-600 dark:text-neutral-300">
+                          {entry.state === 'missing' ? 'File' : 'Replace'}
+                          <input
+                            type="file"
+                            data-file
+                            accept={ACCEPTED_FILES}
+                            capture="environment"
+                            disabled
+                            class="mt-1 block text-sm text-neutral-700 file:mr-3 file:rounded-lg file:border-0 file:bg-neutral-200 file:px-3 file:py-1.5 file:text-sm file:font-medium disabled:opacity-50 dark:text-neutral-200 dark:file:bg-neutral-700 dark:file:text-neutral-100"
+                          />
+                        </label>
+                        <p
+                          data-status
+                          class="text-xs text-neutral-500 dark:text-neutral-400"
+                        >
+                          Filing a document needs JavaScript, because the file
+                          goes from this device to SharePoint rather than
+                          through this application.
+                        </p>
+                      </div>
+                    )}
+
+                    {canVerify &&
+                      (entry.state === 'under_review' ||
+                        entry.state === 'uploaded') && (
+                        <form method="post" class="mt-3 space-y-2">
+                          <input
+                            type="hidden"
+                            name="documentId"
+                            value={entry.documentId}
+                          />
+                          <input
+                            type="text"
+                            name="reason"
+                            placeholder="Reason — required if you reject this document"
+                            class="w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                          />
+                          <div class="flex flex-wrap gap-2">
+                            <button
+                              type="submit"
+                              name="intent"
+                              value="verify-document"
+                              class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+                            >
+                              Verify
+                            </button>
+                            <button
+                              type="submit"
+                              name="intent"
+                              value="reject-document"
+                              class="rounded-lg border border-red-300 px-3 py-1.5 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
+                            >
+                              Reject
+                            </button>
+                          </div>
+                        </form>
+                      )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </section>
+      )
+    }
+
+    {
       history.length > 0 && (
         <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
           <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
@@ -630,6 +860,112 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
   // connection. The explicit Save draft button is the guarantee — this only
   // reduces how much a lapse costs, so the page works identically with
   // JavaScript switched off.
+  // S-403, S-404 · Filing a document from the device.
+  //
+  // The bytes go from here straight to Microsoft, over a short-lived URL the
+  // backend obtained for this one file in this one folder (see
+  // docs/documents.md, decision of 26 August 2026). They never pass through
+  // this application, which is what makes a 12 MB photograph of an identity
+  // card possible at all: the platform's request body limit is about 4.5 MB.
+  //
+  // The upload therefore cannot work without scripting, which is why the file
+  // input starts disabled with an explanation, and is enabled here.
+  for (const panel of document.querySelectorAll<HTMLElement>('[data-upload]')) {
+    const file = panel.querySelector<HTMLInputElement>('[data-file]');
+    const expiry = panel.querySelector<HTMLInputElement>('[data-expires]');
+    const status = panel.querySelector<HTMLElement>('[data-status]');
+    if (!file || !status) continue;
+
+    file.disabled = false;
+    status.textContent = '';
+
+    const say = (message: string) => {
+      status.textContent = message;
+    };
+
+    file.addEventListener('change', async () => {
+      const chosen = file.files?.[0];
+      if (!chosen) return;
+
+      if (panel.dataset.tracksExpiry === 'yes' && !expiry?.value) {
+        say('Enter the expiry date first — this document type expires.');
+        file.value = '';
+        return;
+      }
+
+      file.disabled = true;
+      say('Preparing…');
+
+      try {
+        // Phase one. The backend decides where this goes and whether it is
+        // allowed at all; all this sends is what the file is.
+        const begun = await fetch('/api/v1/documents/begin-upload', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            applicationId: panel.dataset.applicationId,
+            documentTypeId: panel.dataset.documentTypeId,
+            subject: panel.dataset.subject,
+            fileName: chosen.name,
+            contentType: chosen.type,
+            sizeBytes: chosen.size,
+            ...(expiry?.value ? { expiresAt: expiry.value } : {}),
+          }),
+        });
+        const begunBody = await begun.json();
+        if (!begun.ok) {
+          throw new Error(
+            begunBody?.error?.message ?? 'The upload was refused.'
+          );
+        }
+        const { versionId, uploadUrl, chunkSize } = begunBody.data;
+
+        // Phase two: the transfer. In chunks, because the connection in a
+        // regional office is the least reliable part of this, and a chunk that
+        // fails costs one chunk rather than the whole photograph.
+        for (let start = 0; start < chosen.size; start += chunkSize) {
+          const end = Math.min(start + chunkSize, chosen.size);
+          const response = await fetch(uploadUrl, {
+            method: 'PUT',
+            headers: {
+              'content-range': `bytes ${start}-${end - 1}/${chosen.size}`,
+            },
+            body: chosen.slice(start, end),
+          });
+          if (!response.ok && response.status !== 202) {
+            throw new Error(`The transfer failed (${response.status}).`);
+          }
+          say(`Sending… ${Math.round((end / chosen.size) * 100)}%`);
+        }
+
+        // Phase three. Our word that the transfer finished is not what files
+        // the document — the backend asks SharePoint.
+        say('Confirming…');
+        const committed = await fetch('/api/v1/documents/commit-upload', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ versionId }),
+        });
+        const commitBody = await committed.json();
+        if (!committed.ok) {
+          throw new Error(
+            commitBody?.error?.message ?? 'The file could not be confirmed.'
+          );
+        }
+
+        // Reload rather than patch the row: the checklist state, the version
+        // count and whether the Secretary may now act all come from the
+        // server, and guessing them here is how a screen starts disagreeing
+        // with the record.
+        window.location.reload();
+      } catch (error) {
+        say(error instanceof Error ? error.message : 'The upload failed.');
+        file.disabled = false;
+        file.value = '';
+      }
+    });
+  }
+
   // Deleting a draft cannot be undone, so ask. Without JavaScript the button
   // simply deletes: a confirmation is a courtesy, and a control that only
   // works with scripting would not be.

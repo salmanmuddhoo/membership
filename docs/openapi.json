@@ -1100,14 +1100,14 @@
         }
       }
     },
-    "/api/v1/documents/upload-ticket": {
+    "/api/v1/documents/begin-upload": {
       "post": {
-        "summary": "Request permission to file a document",
-        "description": "Returns a short-lived, single-file upload URL. The bytes go from the device to Microsoft directly, so the platform's request-body limit never applies. The caller never receives a credential.",
+        "summary": "Start filing a document",
+        "description": "Records the intent to file a document and returns a short-lived, single-file upload URL. The caller never receives a credential, and never says where the file goes — the folder comes from the application or member it is filed against. Nothing appears on the checklist until commit-upload.",
         "tags": [
           "Documents"
         ],
-        "operationId": "postDocumentsUploadTicket",
+        "operationId": "postDocumentsBeginUpload",
         "x-required-permission": "document.upload",
         "responses": {
           "200": {
@@ -1124,12 +1124,21 @@
                     "data": {
                       "type": "object",
                       "required": [
+                        "documentId",
+                        "versionId",
                         "uploadUrl",
                         "expiresAt",
-                        "chunkSize",
-                        "itemPath"
+                        "chunkSize"
                       ],
                       "properties": {
+                        "documentId": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "versionId": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
                         "uploadUrl": {
                           "type": "string"
                         },
@@ -1139,9 +1148,6 @@
                         },
                         "chunkSize": {
                           "type": "integer"
-                        },
-                        "itemPath": {
-                          "type": "string"
                         }
                       }
                     },
@@ -1201,27 +1207,157 @@
               "schema": {
                 "type": "object",
                 "required": [
-                  "memberReference",
+                  "documentTypeId",
+                  "subject",
                   "fileName",
-                  "sizeBytes",
-                  "contentType"
+                  "contentType",
+                  "sizeBytes"
                 ],
                 "properties": {
-                  "memberReference": {
+                  "applicationId": {
                     "type": "string",
-                    "examples": [
-                      "ABM-000001"
+                    "format": "uuid"
+                  },
+                  "memberId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "documentTypeId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "subject": {
+                    "type": "string",
+                    "enum": [
+                      "applicant",
+                      "nominee",
+                      "guardian",
+                      "beneficiary"
                     ]
                   },
                   "fileName": {
+                    "type": "string"
+                  },
+                  "contentType": {
                     "type": "string"
                   },
                   "sizeBytes": {
                     "type": "integer",
                     "minimum": 1
                   },
-                  "contentType": {
-                    "type": "string"
+                  "expiresAt": {
+                    "type": "string",
+                    "format": "date",
+                    "description": "Required for a document type configured to track expiry."
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/documents/commit-upload": {
+      "post": {
+        "summary": "Confirm a filed document arrived",
+        "description": "Asks SharePoint whether the file is present and complete. Only then is the document filed. A file that is absent or truncated leaves the checklist item as it was, which for a replacement means the document it was replacing is untouched.",
+        "tags": [
+          "Documents"
+        ],
+        "operationId": "postDocumentsCommitUpload",
+        "x-required-permission": "document.upload",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "state"
+                      ],
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "committed"
+                          ]
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "versionId"
+                ],
+                "properties": {
+                  "versionId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "checksumSha256": {
+                    "type": "string",
+                    "description": "Optional. Recorded so the archived file can later be proved unchanged (S-402)."
                   }
                 }
               }

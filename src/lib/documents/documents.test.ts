@@ -318,6 +318,48 @@ describe('S-408: a document is filed only when SharePoint says so', () => {
     );
   });
 
+  // The commit is what writes document.filed to the audit trail, and
+  // segregation of duties reads that trail. If anyone could commit anyone's
+  // upload, the wrong name would be recorded as having filed the document.
+  it('refuses a commit from someone other than the person who began it', async () => {
+    const { documents } = await load();
+    const begun = await documents.beginUpload(
+      {
+        applicationId,
+        documentTypeId: idCardTypeId,
+        subject: 'nominee',
+        fileName: 'nominee-id.jpg',
+        contentType: 'image/jpeg',
+        sizeBytes: 2048,
+        expiresAt: new Date('2030-01-01'),
+      },
+      officer
+    );
+    drive.files.set(begun.ticket.itemPath, { id: 'graph-other', size: 2048 });
+
+    await expect(
+      documents.commitUpload(begun.versionId, secretary)
+    ).rejects.toThrow(/started by someone else/i);
+
+    // Still not filed, and no filing recorded against the wrong person.
+    const entry = (await documents.checklistFor({ applicationId })).find(
+      e => e.subject === 'nominee' && e.documentCode === 'id_card'
+    )!;
+    expect(entry.state).toBe('missing');
+    const audited = await run(
+      appUrl,
+      `select count(*)::int as n from audit_event
+        where action = 'document.filed' and actor_user_id = $1`,
+      [secretary.userId]
+    );
+    expect(audited.rows[0].n).toBe(0);
+
+    // And the person who did begin it can still finish it.
+    await expect(
+      documents.commitUpload(begun.versionId, officer)
+    ).resolves.toEqual({ state: 'committed' });
+  });
+
   it('records the filing against the person who did it', async () => {
     const { documents } = await load();
     const entry = (await documents.checklistFor({ applicationId })).find(
@@ -332,6 +374,50 @@ describe('S-408: a document is filed only when SharePoint says so', () => {
     );
     expect(audited.rowCount).toBe(1);
     expect(audited.rows[0].actor_description).toBe(officer.email);
+  });
+});
+
+describe('a file the service will not take', () => {
+  it('is refused before a folder is created for it', async () => {
+    const { documents } = await load();
+
+    // A brand new application, so its folder has never been created. Against
+    // the application the other tests use, the folder already exists and
+    // ensureFolderPath would short-circuit — the assertion below would then
+    // hold whatever the order of operations was, and prove nothing.
+    const type = await run(
+      appUrl,
+      `select id from membership_type where code = 'individual'`
+    );
+    const fresh = await run(
+      appUrl,
+      `insert into membership_application (membership_type_id, captured_by)
+       values ($1, $2) returning id`,
+      [type.rows[0].id, officer.userId]
+    );
+
+    // Snapshot rather than reset: the drive is shared with the tests around
+    // this one, and what matters is that this call adds nothing to it.
+    const foldersBefore = [...drive.folders];
+
+    await expect(
+      documents.beginUpload(
+        {
+          applicationId: fresh.rows[0].id,
+          documentTypeId: idCardTypeId,
+          subject: 'applicant',
+          fileName: 'notes.docx',
+          contentType:
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          sizeBytes: 4096,
+          expiresAt: new Date('2030-01-01'),
+        },
+        officer
+      )
+    ).rejects.toThrow(/photograph or a PDF/i);
+
+    // Nothing was created in the drive on the way to refusing it.
+    expect(drive.folders).toEqual(foldersBefore);
   });
 });
 
