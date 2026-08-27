@@ -13,12 +13,15 @@ import {
   type MembershipType,
   type MembershipTypeField,
 } from '../config/reference';
+import { discardApplicationFiles } from '../documents/documents';
+import type { Principal } from '../access/principal';
 import { toInternational, PhoneFormatError } from './phone';
 
 export class ApplicationError extends Error {
   constructor(
     message: string,
-    readonly reason: 'not_found' | 'invalid' | 'locked' = 'invalid'
+    readonly reason:
+      'not_found' | 'invalid' | 'locked' | 'forbidden' = 'invalid'
   ) {
     super(message);
     this.name = 'ApplicationError';
@@ -365,6 +368,138 @@ export async function problemsBlockingSubmission(
   }
 
   return problems;
+}
+
+/**
+ * Delete a draft the officer no longer needs.
+ *
+ * Only a draft, and only the officer's own. A draft is the one state where
+ * deleting loses nothing: it has never been submitted, so no one else has read
+ * it, no one has reviewed or decided it, and there is no member behind it. A
+ * `returned` application looks editable for the same reason a draft does, but
+ * it has been through central processing and carries that history — it is
+ * corrected and resubmitted, never deleted.
+ *
+ * The row is deleted rather than flagged, because a draft that was started by
+ * mistake is not history worth keeping and holding an applicant's details
+ * indefinitely for a form nobody submitted is not something to do by default.
+ * What remains is the audit entry below.
+ */
+export async function deleteDraftApplication(
+  applicationId: string,
+  principal: Principal,
+  discardFiles: (reference: string) => Promise<void> = discardApplicationFiles
+): Promise<{ reference: string }> {
+  if (!principal.permissions.has('application.capture')) {
+    throw new ApplicationError(
+      'You do not have permission to delete applications.',
+      'forbidden'
+    );
+  }
+
+  return withTransaction(async client => {
+    // Re-read under a lock. Without it, a delete and a submit racing on the
+    // same draft could both read `draft` and both proceed, and the submitted
+    // application would vanish from under central processing.
+    const locked = await client.query<{
+      reference: string;
+      status: string;
+      captured_by: string;
+      created_at: Date;
+      membership_type_code: string;
+    }>(
+      `select a.reference, a.status, a.captured_by, a.created_at,
+              m.code as membership_type_code
+         from membership_application a
+         join membership_type m on m.id = a.membership_type_id
+        where a.id = $1
+          for no key update of a`,
+      [applicationId]
+    );
+    if (locked.rowCount === 0) {
+      throw new ApplicationError(
+        'That application no longer exists.',
+        'not_found'
+      );
+    }
+    const row = locked.rows[0];
+
+    if (row.status !== DRAFT_STATUS) {
+      throw new ApplicationError(
+        'Only a draft can be deleted. This application has already been ' +
+          `submitted (status: ${row.status}), so it has a history that has to ` +
+          'be kept.',
+        'locked'
+      );
+    }
+    if (row.captured_by !== principal.userId) {
+      throw new ApplicationError(
+        'This draft belongs to another member of staff. Only the person ' +
+          'capturing it can delete it.',
+        'forbidden'
+      );
+    }
+
+    // Belt and braces against a status that arrived some other way: anything
+    // with a transition behind it has been acted on by someone.
+    const acted = await client.query<{ n: number }>(
+      `select count(*)::int as n from application_transition
+        where application_id = $1`,
+      [applicationId]
+    );
+    if (acted.rows[0].n > 0) {
+      throw new ApplicationError(
+        'This application has already been acted on and cannot be deleted.',
+        'locked'
+      );
+    }
+
+    const filed = await client.query<{ n: number }>(
+      `select count(*)::int as n
+         from document_version v
+         join document d on d.id = v.document_id
+        where d.application_id = $1`,
+      [applicationId]
+    );
+
+    // The row is about to go, so this entry is the whole record of it. It
+    // deliberately does not copy what was captured: the point of deleting an
+    // abandoned draft is not to keep an applicant's details, and the audit log
+    // cannot be edited afterwards.
+    await recordAudit(
+      {
+        actorUserId: principal.userId,
+        actorDescription: principal.email,
+        action: 'membership.application.deleted',
+        entityType: 'membership_application',
+        entityId: applicationId,
+        previousValue: {
+          reference: row.reference,
+          membershipType: row.membership_type_code,
+          status: row.status,
+          startedAt: row.created_at,
+          documentsDiscarded: filed.rows[0].n,
+        },
+      },
+      client
+    );
+
+    await client.query('delete from membership_application where id = $1', [
+      applicationId,
+    ]);
+
+    // Inside the transaction, deliberately. The parties, transitions and
+    // document rows cascade away here; the files in SharePoint do not, and a
+    // failure to remove them has to take the deletion down with it rather than
+    // leave scans behind that nothing accounts for. Skipped entirely when
+    // nothing was ever uploaded, which is the usual case for an abandoned
+    // draft — and means deleting one does not depend on Graph being reachable.
+    if (filed.rows[0].n > 0) {
+      await discardFiles(row.reference);
+    }
+
+    return { reference: row.reference };
+  });
 }
 
 export async function listApplications(options: {

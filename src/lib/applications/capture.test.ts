@@ -12,6 +12,7 @@ import {
   vi,
 } from 'vitest';
 import { migrate } from '../../../scripts/migrate';
+import type { Principal } from '../access/principal';
 
 const ADMIN_URL = 'postgresql://postgres@127.0.0.1:5433/postgres';
 const MIGRATIONS_DIR = path.resolve(
@@ -53,6 +54,21 @@ afterEach(() => {
 });
 
 let officer: { userId: string; email: string };
+let colleague: { userId: string; email: string };
+
+function principalFor(
+  actor: { userId: string; email: string },
+  permissions: string[] = ['application.capture']
+): Principal {
+  return {
+    userId: actor.userId,
+    entraSubject: `sub-${actor.email}`,
+    email: actor.email,
+    displayName: actor.email,
+    roles: [],
+    permissions: new Set(permissions),
+  };
+}
 
 beforeAll(async () => {
   await run(ADMIN_URL, `create database ${dbName}`);
@@ -66,6 +82,13 @@ beforeAll(async () => {
      values ('officer@albarakah.mu', 'Officer') returning id`
   );
   officer = { userId: user.rows[0].id, email: 'officer@albarakah.mu' };
+
+  const other = await run(
+    appUrl,
+    `insert into app_user (email, display_name)
+     values ('colleague@albarakah.mu', 'Colleague') returning id`
+  );
+  colleague = { userId: other.rows[0].id, email: 'colleague@albarakah.mu' };
 }, 60_000);
 
 afterAll(async () => {
@@ -461,5 +484,235 @@ describe('the application list staff work from', () => {
     expect(await capture.listApplications({ statuses: ['approved'] })).toEqual(
       []
     );
+  });
+});
+
+describe('deleting a draft that is no longer needed', () => {
+  const noFiles = async () => {
+    throw new Error('SharePoint should not have been asked to delete anything');
+  };
+
+  it("removes the officer's own draft, and everything hanging off it", async () => {
+    const { capture } = await load();
+    const { id, reference } = await capture.startApplication(
+      'individual',
+      officer
+    );
+    await capture.saveDraft(
+      id,
+      [{ subject: 'applicant', ordinal: 1, values: { name: 'Fatima' } }],
+      officer
+    );
+
+    const result = await capture.deleteDraftApplication(
+      id,
+      principalFor(officer),
+      noFiles
+    );
+    expect(result.reference).toBe(reference);
+
+    expect(await capture.loadApplication(id)).toBeNull();
+    const parties = await run(
+      appUrl,
+      'select count(*)::int as n from application_party where application_id = $1',
+      [id]
+    );
+    expect(parties.rows[0].n).toBe(0);
+  });
+
+  it('leaves a record of the deletion without keeping what was captured', async () => {
+    const { capture } = await load();
+    const { id, reference } = await capture.startApplication(
+      'individual',
+      officer
+    );
+    await capture.saveDraft(
+      id,
+      [
+        {
+          subject: 'applicant',
+          ordinal: 1,
+          values: { name: 'Yusuf', nic: 'Y1234567890123' },
+        },
+      ],
+      officer
+    );
+
+    await capture.deleteDraftApplication(id, principalFor(officer), noFiles);
+
+    const audit = await run(
+      appUrl,
+      `select actor_user_id, previous_value
+         from audit_event
+        where action = 'membership.application.deleted' and entity_id = $1`,
+      [id]
+    );
+    expect(audit.rowCount).toBe(1);
+    expect(audit.rows[0].actor_user_id).toBe(officer.userId);
+    expect(audit.rows[0].previous_value).toMatchObject({
+      reference,
+      membershipType: 'individual',
+      status: 'draft',
+    });
+    // The reason for deleting an abandoned draft is not to go on holding the
+    // applicant's details in a log that cannot be edited afterwards.
+    expect(JSON.stringify(audit.rows[0].previous_value)).not.toContain(
+      'Y1234567890123'
+    );
+  });
+
+  it("refuses another officer's draft", async () => {
+    const { capture } = await load();
+    const { id } = await capture.startApplication('individual', officer);
+
+    await expect(
+      capture.deleteDraftApplication(id, principalFor(colleague), noFiles)
+    ).rejects.toThrow(/another member of staff/i);
+    expect(await capture.loadApplication(id)).not.toBeNull();
+  });
+
+  it('refuses someone who may not capture applications at all', async () => {
+    const { capture } = await load();
+    const { id } = await capture.startApplication('individual', officer);
+
+    await expect(
+      capture.deleteDraftApplication(id, principalFor(officer, []), noFiles)
+    ).rejects.toThrow(/permission/i);
+    expect(await capture.loadApplication(id)).not.toBeNull();
+  });
+
+  it('refuses an application that has been submitted', async () => {
+    const { capture } = await load();
+    const { id } = await capture.startApplication('individual', officer);
+    await run(
+      appUrl,
+      `update membership_application set status = 'new' where id = $1`,
+      [id]
+    );
+
+    await expect(
+      capture.deleteDraftApplication(id, principalFor(officer), noFiles)
+    ).rejects.toThrow(/only a draft/i);
+    expect(await capture.loadApplication(id)).not.toBeNull();
+  });
+
+  // A returned application is editable, exactly like a draft, so this is the
+  // distinction most likely to be got wrong: it has been through the Secretary
+  // and that history is not the officer's to throw away.
+  it('refuses a returned application even though it can still be edited', async () => {
+    const { capture } = await load();
+    const { id } = await capture.startApplication('individual', officer);
+    await run(
+      appUrl,
+      `update membership_application set status = 'returned' where id = $1`,
+      [id]
+    );
+
+    await expect(
+      capture.deleteDraftApplication(id, principalFor(officer), noFiles)
+    ).rejects.toThrow(/only a draft/i);
+    expect(await capture.loadApplication(id)).not.toBeNull();
+  });
+
+  it('refuses anything that already has a transition behind it', async () => {
+    const { capture } = await load();
+    const { id } = await capture.startApplication('individual', officer);
+    await run(
+      appUrl,
+      `insert into application_transition
+         (application_id, from_status, to_status, actor_user_id)
+       values ($1, 'draft', 'draft', $2)`,
+      [id, officer.userId]
+    );
+
+    await expect(
+      capture.deleteDraftApplication(id, principalFor(officer), noFiles)
+    ).rejects.toThrow(/already been acted on/i);
+  });
+
+  // The service check above is a courteous message. This is the guarantee:
+  // history cannot be laundered by deleting the record it hangs off, whatever
+  // code asks for it.
+  it('cannot be talked into it by going round the service', async () => {
+    const { capture } = await load();
+    const { id } = await capture.startApplication('individual', officer);
+    await run(
+      appUrl,
+      `insert into application_transition
+         (application_id, from_status, to_status, actor_user_id)
+       values ($1, 'draft', 'new', $2)`,
+      [id, officer.userId]
+    );
+
+    await expect(
+      run(appUrl, 'delete from membership_application where id = $1', [id])
+    ).rejects.toThrow(/violates foreign key constraint/i);
+  });
+
+  describe('the files that were filed against it', () => {
+    async function draftWithADocument() {
+      const { capture } = await load();
+      const { id, reference } = await capture.startApplication(
+        'individual',
+        officer
+      );
+      const document = await run(
+        appUrl,
+        `insert into document (document_type_id, subject, application_id, state)
+         select id, 'applicant', $1, 'uploaded' from document_type
+          where code = 'id_card' returning id`,
+        [id]
+      );
+      await run(
+        appUrl,
+        `insert into document_version
+           (document_id, version_no, state, file_name, content_type,
+            size_bytes, sharepoint_path, uploaded_by)
+         values ($1, 1, 'committed', 'nic.jpg', 'image/jpeg', 1024, $2, $3)`,
+        [
+          document.rows[0].id,
+          `Applications/${reference}/nic.jpg`,
+          officer.userId,
+        ]
+      );
+      return { capture, id, reference };
+    }
+
+    it('are removed too, so no scan is left behind unaccounted for', async () => {
+      const { capture, id, reference } = await draftWithADocument();
+
+      const discarded: string[] = [];
+      await capture.deleteDraftApplication(
+        id,
+        principalFor(officer),
+        async r => {
+          discarded.push(r);
+        }
+      );
+
+      expect(discarded).toEqual([reference]);
+      expect(await capture.loadApplication(id)).toBeNull();
+    });
+
+    it('keep the application alive if they cannot be removed', async () => {
+      const { capture, id } = await draftWithADocument();
+
+      await expect(
+        capture.deleteDraftApplication(id, principalFor(officer), async () => {
+          throw new Error('Graph delete failed for the folder (503)');
+        })
+      ).rejects.toThrow(/503/);
+
+      // Nothing half-done: the row, its parties and the audit entry are all
+      // still as they were, so the officer can try again.
+      expect(await capture.loadApplication(id)).not.toBeNull();
+      const audit = await run(
+        appUrl,
+        `select count(*)::int as n from audit_event
+          where action = 'membership.application.deleted' and entity_id = $1`,
+        [id]
+      );
+      expect(audit.rows[0].n).toBe(0);
+    });
   });
 });

@@ -18,10 +18,16 @@ import {
   type FieldSubject,
 } from '../config/reference';
 import { query, withTransaction } from '../db/pool';
-import { ensureFolder, getItemByPath, type GraphConfig } from './graph';
+import {
+  deleteItemByPath,
+  ensureFolder,
+  getItemByPath,
+  type GraphConfig,
+} from './graph';
 import {
   createUploadTicket,
   sanitiseFileName,
+  validateUploadRequest,
   type UploadTicket,
 } from './upload';
 
@@ -362,6 +368,19 @@ export async function beginUpload(
     );
   }
 
+  // Checked before anything is created. createUploadTicket checks again — it
+  // is the function that talks to Graph and must not trust its caller — but
+  // doing it here as well means a file of the wrong type or size is refused
+  // without first creating a SharePoint folder for an upload that is never
+  // going to happen, and without the officer waiting on a round trip to be
+  // told something we already knew.
+  validateUploadRequest({
+    folderPath: owner.folder_path,
+    fileName: input.fileName,
+    contentType: input.contentType,
+    sizeBytes: input.sizeBytes,
+  });
+
   // Created before the ticket, so a folder failure refuses the upload rather
   // than producing a ticket that points nowhere.
   await ensureFolderPath(owner.folder_path, config);
@@ -472,9 +491,10 @@ export async function commitUpload(
     size_bytes: string;
     file_name: string;
     intended_expires_at: Date | null;
+    uploaded_by: string;
   }>(
     `select id, document_id, state, sharepoint_path, size_bytes, file_name,
-            intended_expires_at
+            intended_expires_at, uploaded_by
        from document_version where id = $1`,
     [versionId]
   );
@@ -483,6 +503,20 @@ export async function commitUpload(
   }
   const row = version.rows[0];
   if (row.state === 'committed') return { state: 'committed' };
+
+  // Only the person who started this upload may finish it. Not a theft
+  // concern — the bytes are whatever they are, and Graph is what confirms
+  // them. It is that the commit is what writes `document.filed` to the audit
+  // trail, and segregation of duties reads that trail to decide who may not
+  // verify this document (S-203). Letting anyone commit anyone's upload would
+  // put the wrong name against the filing, barring a person who did nothing
+  // and clearing the person who actually did it.
+  if (row.uploaded_by !== actor.userId) {
+    throw new DocumentError(
+      'This upload was started by someone else, so only they can complete it.',
+      'refused'
+    );
+  }
 
   const item = await getItemByPath(row.sharepoint_path, config);
   if (!item) {
@@ -765,4 +799,28 @@ export async function expireDocuments(
   });
 
   return { expired: result };
+}
+
+/**
+ * Remove everything filed against an application (used when a draft is
+ * abandoned).
+ *
+ * The document rows cascade away with the application. The files would not:
+ * they would sit in SharePoint as an applicant's identity papers with nothing
+ * in this system saying whose they are or why they are held. So the
+ * application's folder goes too, and the record that it was created with it —
+ * otherwise ensureFolderPath would later believe a folder exists that does
+ * not.
+ */
+export async function discardApplicationFiles(
+  reference: string,
+  config?: GraphConfig
+): Promise<void> {
+  const folder = applicationFolderPath(reference);
+  await deleteItemByPath(folder, config);
+  await query(
+    `delete from sharepoint_folder
+      where path = $1 or starts_with(path, $1 || '/')`,
+    [folder]
+  );
 }
