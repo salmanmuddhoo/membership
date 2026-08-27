@@ -373,12 +373,16 @@ export async function problemsBlockingSubmission(
 /**
  * Delete a draft the officer no longer needs.
  *
- * Only a draft, and only the officer's own. A draft is the one state where
- * deleting loses nothing: it has never been submitted, so no one else has read
- * it, no one has reviewed or decided it, and there is no member behind it. A
- * `returned` application looks editable for the same reason a draft does, but
- * it has been through central processing and carries that history — it is
- * corrected and resubmitted, never deleted.
+ * Only a draft. That is the one state where deleting loses nothing: it has
+ * never been submitted, so no one else has read it, no one has reviewed or
+ * decided it, and there is no member behind it. A `returned` application looks
+ * editable for the same reason a draft does, but it has been through central
+ * processing and carries that history — it is corrected and resubmitted, never
+ * deleted.
+ *
+ * Anyone who may capture applications may delete a draft, whoever started it.
+ * Capture staff already create and edit these freely, and the audit entry
+ * below records who deleted which.
  *
  * The row is deleted rather than flagged, because a draft that was started by
  * mistake is not history worth keeping and holding an applicant's details
@@ -432,14 +436,6 @@ export async function deleteDraftApplication(
         'locked'
       );
     }
-    if (row.captured_by !== principal.userId) {
-      throw new ApplicationError(
-        'This draft belongs to another member of staff. Only the person ' +
-          'capturing it can delete it.',
-        'forbidden'
-      );
-    }
-
     // Belt and braces against a status that arrived some other way: anything
     // with a transition behind it has been acted on by someone.
     const acted = await client.query<{ n: number }>(

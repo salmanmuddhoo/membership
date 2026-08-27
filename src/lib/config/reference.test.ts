@@ -36,6 +36,25 @@ async function run(url: string, sql: string, params: unknown[] = []) {
   }
 }
 
+// Configuration tables refuse a write that cannot be attributed (S-210), so a
+// fixture that touches one has to say who it is, exactly as the application
+// does through withConfigurationActor.
+async function runAsConfigurator(url: string, sql: string) {
+  const client = new pg.Client({ connectionString: url, ssl: false });
+  await client.connect();
+  try {
+    await client.query('begin');
+    await client.query(
+      `select set_config('albarakah.actor_description', 'test fixture', true)`
+    );
+    const result = await client.query(sql);
+    await client.query('commit');
+    return result;
+  } finally {
+    await client.end();
+  }
+}
+
 async function load() {
   vi.resetModules();
   process.env.DATABASE_URL = appUrl;
@@ -591,10 +610,23 @@ describe('S-208: document types and dynamic checklists', () => {
     ).rejects.toThrowError(/already on this checklist/);
   });
 
-  it('carries expiry on the document types that have one', async () => {
+  // No document the Society currently accepts carries an expiry date — a
+  // Mauritian NIC does not, and nor does a birth certificate. So the type is
+  // created here rather than asserted against a seed: this is about the flag
+  // being carried through the configuration, and it must not start failing the
+  // day the Society decides a document does or does not expire.
+  it('carries expiry on a document type configured to have one', async () => {
     const { config } = await load();
+    await runAsConfigurator(
+      appUrl,
+      `insert into document_type (code, name, description, tracks_expiry)
+       values ('passport', 'Passport', 'Expires, unlike the NIC', true)
+       on conflict (code) do update set tracks_expiry = excluded.tracks_expiry`
+    );
+
     const types = await config.listDocumentTypes();
-    expect(types.find(d => d.code === 'id_card')!.tracksExpiry).toBe(true);
+    expect(types.find(d => d.code === 'passport')!.tracksExpiry).toBe(true);
+    expect(types.find(d => d.code === 'id_card')!.tracksExpiry).toBe(false);
     expect(types.find(d => d.code === 'birth_certificate')!.tracksExpiry).toBe(
       false
     );

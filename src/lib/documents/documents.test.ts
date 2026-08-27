@@ -40,6 +40,25 @@ async function run(url: string, sql: string, params: unknown[] = []) {
   }
 }
 
+// Configuration tables refuse a write that cannot be attributed (S-210), so a
+// fixture that touches one has to say who it is, exactly as the application
+// does through withConfigurationActor.
+async function runAsConfigurator(url: string, sql: string) {
+  const client = new pg.Client({ connectionString: url, ssl: false });
+  await client.connect();
+  try {
+    await client.query('begin');
+    await client.query(
+      `select set_config('albarakah.actor_description', 'test fixture', true)`
+    );
+    const result = await client.query(sql);
+    await client.query('commit');
+    return result;
+  } finally {
+    await client.end();
+  }
+}
+
 // A stand-in drive. Records what was created so the tests can assert on
 // folders, and lets a test make a file arrive truncated or not at all.
 interface FakeDrive {
@@ -712,13 +731,24 @@ describe('S-409: replacing a document keeps the original', () => {
 });
 
 describe('S-410: expiry', () => {
+  // Created here rather than taken from the seeds: no document the Society
+  // currently accepts expires, so pinning this to one would make it fail the
+  // day that changes. What is under test is the rule, not the catalogue.
   it('requires an expiry date for a type that tracks one', async () => {
     const { documents } = await load();
+    const expiring = await runAsConfigurator(
+      appUrl,
+      `insert into document_type (code, name, description, tracks_expiry)
+       values ('passport', 'Passport', 'Expires, unlike the NIC', true)
+       on conflict (code) do update set tracks_expiry = true
+       returning id`
+    );
+
     await expect(
       documents.beginUpload(
         {
           applicationId,
-          documentTypeId: idCardTypeId,
+          documentTypeId: expiring.rows[0].id,
           subject: 'beneficiary',
           fileName: 'x.jpg',
           contentType: 'image/jpeg',
