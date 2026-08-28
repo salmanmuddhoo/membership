@@ -13,6 +13,7 @@ import {
 } from 'vitest';
 import { migrate } from '../../../scripts/migrate';
 import type { Principal } from '../access/principal';
+import type { PartyValues } from './capture';
 
 const ADMIN_URL = 'postgresql://postgres@127.0.0.1:5433/postgres';
 const MIGRATIONS_DIR = path.resolve(
@@ -111,6 +112,101 @@ describe('S-303: a unique reference per application', () => {
          from membership_application`
     );
     expect(clash.rows[0].duplicates).toBe('0');
+  });
+});
+
+describe('an application exists once a detail does, and not before', () => {
+  // Opening the capture form is not starting an application. An officer who
+  // taps Capture, sees it is the wrong applicant and closes the tab must leave
+  // nothing behind — no reference spent, no row in the list, no draft for
+  // somebody to delete.
+  const blank = (): PartyValues[] => [
+    {
+      subject: 'applicant' as const,
+      ordinal: 1,
+      values: { surname: '', name: '', nic: '' },
+    },
+    { subject: 'nominee' as const, ordinal: 1, values: { name: '' } },
+  ];
+
+  it('creates nothing at all from an empty form', async () => {
+    const { capture } = await load();
+
+    const before = await run(
+      appUrl,
+      'select count(*)::int as n from membership_application'
+    );
+
+    const created = await capture.startApplicationWithValues(
+      'individual',
+      blank(),
+      officer
+    );
+    expect(created).toBeNull();
+
+    const after = await run(
+      appUrl,
+      'select count(*)::int as n from membership_application'
+    );
+    expect(after.rows[0].n).toBe(before.rows[0].n);
+
+    // And no reference was spent, which is the part a later audit would ask
+    // about: a gap in APP-2026-xxxxxx that nothing explains.
+    const audited = await run(
+      appUrl,
+      `select count(*)::int as n from audit_event
+        where action = 'membership.application.started'`
+    );
+    expect(audited.rows[0].n).toBe(before.rows[0].n);
+  });
+
+  it('treats whitespace as nothing typed', async () => {
+    const { capture } = await load();
+    const parties = blank();
+    parties[0].values.surname = '   ';
+
+    expect(
+      await capture.startApplicationWithValues('individual', parties, officer)
+    ).toBeNull();
+  });
+
+  it('creates it, with the value, from the first thing typed', async () => {
+    const { capture } = await load();
+    const parties = blank();
+    parties[0].values.surname = 'Beebee';
+
+    const created = await capture.startApplicationWithValues(
+      'individual',
+      parties,
+      officer
+    );
+
+    expect(created).not.toBeNull();
+    expect(created!.reference).toMatch(/^APP-\d{4}-\d{6}$/);
+
+    // The value is there, not lost in the round trip that created the row.
+    const application = await capture.loadApplication(created!.id);
+    expect(application!.status).toBe('draft');
+    expect(
+      application!.parties.find(p => p.subject === 'applicant')!.values.surname
+    ).toBe('Beebee');
+
+    // Every subject the type configures still has its row, so the form the
+    // officer carries on typing into is the same form.
+    expect(application!.parties.map(p => p.subject).sort()).toEqual([
+      'applicant',
+      'nominee',
+    ]);
+  });
+
+  it('refuses a type that is not being accepted, before creating anything', async () => {
+    const { capture } = await load();
+    const parties = blank();
+    parties[0].values.surname = 'Someone';
+
+    await expect(
+      capture.startApplicationWithValues('no_such_type', parties, officer)
+    ).rejects.toThrow(/Unknown membership type/);
   });
 });
 
