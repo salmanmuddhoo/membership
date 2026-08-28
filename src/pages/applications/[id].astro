@@ -1,4 +1,5 @@
 ---
+import CaptureFields from '@components/CaptureFields.astro';
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import {
   ApplicationError,
@@ -301,10 +302,6 @@ const [blocking, actions, history] = await Promise.all([
   availableActions(application!, principal),
   transitionsFor(application!.id),
 ]);
-const valuesFor = (subject: FieldSubject) =>
-  application!.parties.find(p => p.subject === subject && p.ordinal === 1)
-    ?.values ?? {};
-
 const DOCUMENT_STATE_LABELS: Record<string, string> = {
   missing: 'Missing',
   uploaded: 'Uploaded',
@@ -411,27 +408,14 @@ const STEP_READS: Record<string, string> = {
   todo: '(to come)',
 };
 
+// For the documents section. The capture form carries its own, in the
+// component that renders it.
 const SUBJECT_LABELS: Record<string, string> = {
   applicant: 'Applicant',
   nominee: 'Nominee',
   guardian: 'Parent / Guardian',
   beneficiary: 'Takaful beneficiary',
 };
-
-// The configured data type decides the keyboard a tablet shows, which matters
-// more here than anywhere: capture happens on a tablet in a regional office.
-const INPUT_TYPES = {
-  text: 'text',
-  number: 'number',
-  date: 'date',
-  email: 'email',
-  phone: 'tel',
-} as const satisfies Record<string, astroHTML.JSX.HTMLInputTypeAttribute>;
-
-type InputType = (typeof INPUT_TYPES)[keyof typeof INPUT_TYPES];
-
-const inputTypeFor = (dataType: string): InputType =>
-  (INPUT_TYPES as Record<string, InputType>)[dataType] ?? 'text';
 
 const dateFormat = new Intl.DateTimeFormat('en-GB', {
   dateStyle: 'medium',
@@ -517,7 +501,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             <p class="font-medium">
               {blocking.length} required{' '}
               {blocking.length === 1 ? 'field is' : 'fields are'} still empty.
-              The application can be saved as a draft but not submitted.
             </p>
           </div>
         )
@@ -595,97 +578,34 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     }
 
     <form method="post" id="capture-form" class="space-y-6">
-      {
-        subjects.map(subject => {
-          const values = valuesFor(subject);
-          const missing = new Set(
-            blocking.filter(b => b.subject === subject).map(b => b.fieldKey)
-          );
-          return (
-            <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-              <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-                {SUBJECT_LABELS[subject] ?? subject}
-              </h2>
-              <div class="mt-4 grid gap-4 sm:grid-cols-2">
-                {(fields.get(subject) ?? []).map(field => {
-                  const name = `field.${subject}.1.${field.fieldKey}`;
-                  const value = values[field.fieldKey] ?? '';
-                  return (
-                    <label class="text-sm text-neutral-600 dark:text-neutral-300">
-                      <span>
-                        {field.label}
-                        {field.isMandatory && (
-                          <span
-                            class="text-red-600 dark:text-red-400"
-                            aria-hidden="true"
-                          >
-                            {' '}
-                            *
-                          </span>
-                        )}
-                      </span>
-                      {field.dataType === 'choice' ? (
-                        <select
-                          name={name}
-                          disabled={!isEditable}
-                          required={field.isMandatory}
-                          class:list={[
-                            'mt-1 w-full rounded-lg border bg-white px-3 py-1.5 text-sm dark:bg-neutral-900 dark:text-neutral-100',
-                            missing.has(field.fieldKey)
-                              ? 'border-red-400 dark:border-red-700'
-                              : 'border-neutral-300 dark:border-neutral-600',
-                          ]}
-                        >
-                          <option value="">—</option>
-                          {field.choices.map(choice => (
-                            <option value={choice} selected={choice === value}>
-                              {choice}
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
-                        <input
-                          type={inputTypeFor(field.dataType)}
-                          name={name}
-                          value={value}
-                          disabled={!isEditable}
-                          required={field.isMandatory}
-                          placeholder={
-                            field.dataType === 'phone' ? '5789 1234' : undefined
-                          }
-                          class:list={[
-                            'mt-1 w-full rounded-lg border bg-white px-3 py-1.5 text-sm dark:bg-neutral-900 dark:text-neutral-100',
-                            missing.has(field.fieldKey)
-                              ? 'border-red-400 dark:border-red-700'
-                              : 'border-neutral-300 dark:border-neutral-600',
-                          ]}
-                        />
-                      )}
-                    </label>
-                  );
-                })}
-              </div>
-            </section>
-          );
-        })
-      }
+      <CaptureFields
+        fields={fields}
+        parties={application!.parties}
+        blocking={blocking}
+        isEditable={isEditable}
+      />
 
       {
         isEditable && (
           <div class="flex flex-wrap items-center gap-3">
-            <button
-              type="submit"
-              name="intent"
-              value="save"
-              class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
-            >
-              Save draft
-            </button>
             <span
               id="autosave-status"
               class="text-xs text-neutral-500 dark:text-neutral-400"
               aria-live="polite"
             />
+            {/* Saving is automatic. Without scripting it cannot be, so the
+                button appears for the one reader who needs it rather than
+                for everyone. */}
+            <noscript>
+              <button
+                type="submit"
+                name="intent"
+                value="save"
+                class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
+              >
+                Save draft
+              </button>
+            </noscript>
           </div>
         )
       }
@@ -1174,9 +1094,10 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 
 <script>
   // S-302, decision 14: an officer on a tablet must not lose work to a dropped
-  // connection. The explicit Save draft button is the guarantee — this only
-  // reduces how much a lapse costs, so the page works identically with
-  // JavaScript switched off.
+  // connection. Saving is now automatic and there is no button to fall back
+  // on, so this has to be the guarantee rather than a convenience: a short
+  // pause after typing stops, a backstop interval, and every way of leaving
+  // the page. Without scripting the noscript button above is the fallback.
   // S-403, S-404 · Filing a document from the device.
   //
   // The bytes go from here straight to Microsoft, over a short-lived URL the
@@ -1307,10 +1228,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
   if (form && status) {
     let dirty = false;
     let inFlight = false;
-
-    form.addEventListener('input', () => {
-      dirty = true;
-    });
+    let pending: number | undefined;
 
     const save = async () => {
       if (!dirty || inFlight) return;
@@ -1330,14 +1248,20 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       } catch {
         // Saying "saved" when nothing was saved is the one thing this must
         // never do: the officer would close the tablet trusting it.
-        status.textContent =
-          'Not saved — check your connection, or press Save draft.';
+        status.textContent = 'Not saved — check your connection.';
       } finally {
         inFlight = false;
       }
     };
 
-    setInterval(save, 20_000);
+    form.addEventListener('input', () => {
+      dirty = true;
+      window.clearTimeout(pending);
+      pending = window.setTimeout(save, 2_000);
+    });
+    // Moving off a field is the moment the officer has finished with it.
+    form.addEventListener('focusout', () => void save());
+    window.setInterval(save, 20_000);
     // Leaving the page or switching away is exactly when work is lost.
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') void save();

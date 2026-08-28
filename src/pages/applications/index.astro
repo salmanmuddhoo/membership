@@ -4,7 +4,6 @@ import {
   ApplicationError,
   deleteDraftApplication,
   listApplications,
-  startApplication,
 } from '@lib/applications/capture';
 import { listMembershipTypes } from '@lib/config/reference';
 
@@ -37,23 +36,6 @@ if (Astro.request.method === 'POST') {
           error =
             'The draft could not be deleted. Nothing has been removed — ' +
             'please try again.';
-        }
-      }
-    } else {
-      try {
-        const { id } = await startApplication(
-          String(form.get('membershipType') ?? ''),
-          { userId: principal.userId, email: principal.email }
-        );
-        // Straight into the form. A list entry the officer then has to find is
-        // one more step between them and the applicant in front of them.
-        return Astro.redirect(`/applications/${id}`);
-      } catch (err) {
-        if (err instanceof ApplicationError) {
-          error = err.message;
-        } else {
-          console.error('[applications]', err);
-          error = 'Something went wrong. Please try again.';
         }
       }
     }
@@ -123,11 +105,17 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
             Start an application
           </h2>
-          <form method="post" class="mt-4 flex flex-wrap items-end gap-2">
+          {/* A GET, deliberately. Opening the form creates nothing — the
+              application exists once a detail is entered. */}
+          <form
+            method="get"
+            action="/applications/new"
+            class="mt-4 flex flex-wrap items-end gap-2"
+          >
             <label class="text-sm text-neutral-600 dark:text-neutral-300">
               Applicant status
               <select
-                name="membershipType"
+                name="type"
                 class="mt-1 block rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
               >
                 {types

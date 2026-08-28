@@ -19,6 +19,28 @@ application asks for.
 Hiding a field in Configuration removes it from the capture form. Enabling the
 Regional Manager step puts it in the chain. Neither needs a release.
 
+## Nothing exists until a detail does
+
+Opening the capture form does not create an application. `/applications/new`
+holds the form with no row behind it; `startApplicationWithValues` returns
+`null` for a form that is entirely blank, and the officer who tapped Capture on
+the wrong applicant and closed the tab leaves nothing behind — no reference
+spent, no row in the list, no draft for someone to delete.
+
+The application is created by the first save that carries a value, and the
+client then moves the address bar to `/applications/<id>` with `replaceState`
+rather than navigating: the officer is mid-word, and reloading the page under
+them to show a heading they did not ask for is not worth the interruption.
+
+There is no Save draft button. Saving is automatic — two seconds after typing
+stops, on leaving a field, on a backstop interval, and when the page is hidden.
+That makes the autosave the guarantee rather than a convenience, which is why
+it reports "Not saved" loudly and never reports a save that did not happen. A
+`<noscript>` button is the fallback for a reader with scripting off.
+
+The rule lives in the service, not on the page: a page that merely declines to
+post is still a page that can post.
+
 ## The chain
 
 ```
@@ -100,8 +122,12 @@ permission model and the segregation rules above it.
 | `ABM-000001`      | `member_number_seq`         | Acceptable                                      |
 | `ACC-00000001`    | `account_number_seq`        | Acceptable                                      |
 
-Receipt numbers in M5 are the ones where a gap is an audit signal (AD-11), and
-they will need a different allocation — a sequence is the wrong tool there.
+Acceptable, but not free: it is why an empty form creates nothing. A reference
+allocated to a form nobody typed into is a gap with no story behind it.
+
+Receipt numbers are the ones where a gap **is** an audit signal (AD-11), and a
+sequence is the wrong tool there. M5 allocates them as committed rows instead —
+see `docs/payments.md`.
 
 The legacy import in M7 must advance `member_number_seq` past whatever the
 existing register contains: FRD 7.5 requires Member IDs to stay unique

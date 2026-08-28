@@ -1,0 +1,216 @@
+---
+// Starting an application (S-301, S-302).
+//
+// This page has no application behind it, and that is the point. Opening the
+// capture form is not starting an application: an officer who taps Capture,
+// realises it is the wrong applicant and closes the tab leaves nothing behind
+// — no reference spent, no row in the list, no draft for somebody to delete.
+//
+// The application comes into existence on the first save that carries a value,
+// and from then on the officer is working on /applications/<id> without having
+// been interrupted to get there.
+import CaptureFields from '@components/CaptureFields.astro';
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import {
+  ApplicationError,
+  startApplicationWithValues,
+  visibleFields,
+  type PartyValues,
+} from '@lib/applications/capture';
+import { listMembershipTypes } from '@lib/config/reference';
+
+const principal = Astro.locals.principal!;
+if (!principal.permissions.has('application.capture')) {
+  return Astro.redirect('/denied');
+}
+
+const requested = Astro.url.searchParams.get('type') ?? '';
+const types = await listMembershipTypes();
+const type = types.find(t => t.code === requested && t.isActive);
+if (!type) {
+  // Nothing to capture into. Back to the list, where the choice is made.
+  return Astro.redirect('/applications');
+}
+
+const fields = visibleFields(type);
+const subjects = [...fields.keys()];
+
+let error: string | null = null;
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const isAutosave = String(form.get('intent') ?? '') === 'autosave';
+
+  const parties: PartyValues[] = subjects.map(subject => {
+    const values: Record<string, string> = {};
+    for (const field of fields.get(subject) ?? []) {
+      values[field.fieldKey] = String(
+        form.get(`field.${subject}.1.${field.fieldKey}`) ?? ''
+      );
+    }
+    return { subject, ordinal: 1, values };
+  });
+
+  try {
+    const created = await startApplicationWithValues(type.code, parties, {
+      userId: principal.userId,
+      email: principal.email,
+    });
+
+    if (!created) {
+      // Nothing was typed, so nothing was created. The autosave is told as
+      // much and stops reporting a save that did not happen.
+      if (isAutosave) {
+        return new Response(JSON.stringify({ created: false }), {
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      error = 'Fill in at least one detail before saving.';
+    } else if (isAutosave) {
+      // The officer keeps typing. The client moves the address bar to the
+      // application that now exists, so a refresh — or a dropped connection
+      // — lands on the real thing rather than back here.
+      return new Response(
+        JSON.stringify({
+          created: true,
+          id: created.id,
+          reference: created.reference,
+          savedAt: created.savedAt.toISOString(),
+          problems: created.problems,
+        }),
+        { headers: { 'content-type': 'application/json' } }
+      );
+    } else {
+      return Astro.redirect(`/applications/${created.id}`);
+    }
+  } catch (err) {
+    if (err instanceof ApplicationError) {
+      error = err.message;
+    } else {
+      console.error('[applications/new]', err);
+      error = 'Something went wrong. Please try again.';
+    }
+    if (isAutosave) {
+      return new Response(JSON.stringify({ error }), {
+        status: 500,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+  }
+}
+---
+
+<DashboardLayout
+  title={`New ${type.name} application · Al Barakah MCSL`}
+  heading={`New ${type.name} application`}
+>
+  <div class="mx-auto max-w-4xl space-y-6">
+    <a
+      href="/applications"
+      class="inline-block text-sm text-neutral-500 underline dark:text-neutral-400"
+      >← All applications</a
+    >
+
+    {
+      error && (
+        <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+          {error}
+        </div>
+      )
+    }
+
+    <form method="post" id="capture-form" class="space-y-6">
+      <CaptureFields fields={fields} parties={[]} />
+
+      <div class="flex flex-wrap items-center gap-3">
+        <span
+          id="autosave-status"
+          class="text-xs text-neutral-500 dark:text-neutral-400"
+          aria-live="polite">Saved as you type.</span
+        >
+        <noscript>
+          <button
+            type="submit"
+            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
+          >
+            Save draft
+          </button>
+        </noscript>
+      </div>
+    </form>
+  </div>
+</DashboardLayout>
+
+<script>
+  // Saving is automatic, so it has to be quick enough that nobody wonders. A
+  // short pause after typing stops, a backstop interval, and every way of
+  // leaving the page.
+  //
+  // Until the first value is entered this posts nothing at all: an empty form
+  // must not create an application, and a request that would create nothing is
+  // a request not worth making.
+  const form = document.getElementById(
+    'capture-form'
+  ) as HTMLFormElement | null;
+  const status = document.getElementById('autosave-status');
+  if (form && status) {
+    let dirty = false;
+    let inFlight = false;
+    let pending: number | undefined;
+
+    const anythingEntered = () =>
+      [...new FormData(form).entries()].some(
+        ([key, value]) =>
+          key.startsWith('field.') && String(value).trim() !== ''
+      );
+
+    const save = async () => {
+      if (!dirty || inFlight || !anythingEntered()) return;
+      inFlight = true;
+
+      const body = new FormData(form);
+      body.set('intent', 'autosave');
+
+      try {
+        const response = await fetch(
+          window.location.pathname + window.location.search,
+          {
+            method: 'POST',
+            body,
+            headers: { 'x-requested-with': 'autosave' },
+          }
+        );
+        if (!response.ok) throw new Error(String(response.status));
+
+        const result = await response.json();
+        if (!result.created) return;
+
+        dirty = false;
+        status.textContent = `${result.reference} saved at ${new Date().toLocaleTimeString('en-GB')}`;
+
+        // From here on this IS an application, and every later save belongs to
+        // it. replaceState rather than a navigation: the officer is mid-word,
+        // and reloading the page under them to show a heading they did not ask
+        // for is not worth the interruption.
+        window.history.replaceState({}, '', `/applications/${result.id}`);
+      } catch {
+        // Saying "saved" when nothing was saved is the one thing this must
+        // never do: the officer would close the tablet trusting it.
+        status.textContent = 'Not saved — check your connection.';
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    form.addEventListener('input', () => {
+      dirty = true;
+      window.clearTimeout(pending);
+      pending = window.setTimeout(save, 2_000);
+    });
+    form.addEventListener('focusout', () => void save());
+    window.setInterval(save, 20_000);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') void save();
+    });
+  }
+</script>

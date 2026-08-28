@@ -72,13 +72,10 @@ export interface MissingField {
   label: string;
 }
 
-export async function startApplication(
-  membershipTypeCode: string,
-  actor: Actor
-): Promise<{ id: string; reference: string }> {
-  const type = (await listMembershipTypes()).find(
-    t => t.code === membershipTypeCode
-  );
+// The type an application is being captured against, refused if it is not one
+// the Society currently accepts.
+async function acceptingType(code: string): Promise<MembershipType> {
+  const type = (await listMembershipTypes()).find(t => t.code === code);
   if (!type) {
     throw new ApplicationError('Unknown membership type.', 'not_found');
   }
@@ -87,39 +84,115 @@ export async function startApplication(
       `${type.name} applications are not currently accepted.`
     );
   }
+  return type;
+}
+
+// The row and its empty parties. Shared by both ways in, so a reference is
+// allocated in exactly one place.
+async function insertApplication(
+  client: PoolClient,
+  type: MembershipType,
+  actor: Actor
+): Promise<{ id: string; reference: string }> {
+  const created = await client.query<{ id: string; reference: string }>(
+    `insert into membership_application (membership_type_id, captured_by)
+     values ($1, $2) returning id, reference`,
+    [type.id, actor.userId]
+  );
+  const { id, reference } = created.rows[0];
+
+  // One empty party per subject the type configures, so the form has
+  // something to render into and a draft save has somewhere to land.
+  const subjects = [...new Set(type.fields.map(f => f.subject))];
+  for (const subject of subjects) {
+    await client.query(
+      `insert into application_party (application_id, subject, ordinal)
+       values ($1, $2, 1)`,
+      [id, subject]
+    );
+  }
+
+  await recordAudit(
+    {
+      actorUserId: actor.userId,
+      actorDescription: actor.email,
+      action: 'membership.application.started',
+      entityType: 'membership_application',
+      entityId: id,
+      newValue: { reference, membershipType: type.code },
+    },
+    client
+  );
+
+  return { id, reference };
+}
+
+export async function startApplication(
+  membershipTypeCode: string,
+  actor: Actor
+): Promise<{ id: string; reference: string }> {
+  const type = await acceptingType(membershipTypeCode);
+  return withTransaction(client => insertApplication(client, type, actor));
+}
+
+// Is there anything here at all? What decides whether an application exists.
+export function hasAnyValue(parties: PartyValues[]): boolean {
+  return parties.some(party =>
+    Object.values(party.values).some(value => value.trim() !== '')
+  );
+}
+
+/**
+ * Create an application from the first thing the officer typed (S-301, S-302).
+ *
+ * Opening the capture form is not starting an application. An officer who
+ * clicks Capture, sees it is the wrong applicant and closes the tab should
+ * leave nothing behind — a reference allocated to an empty form is a reference
+ * spent, a row in the list to explain, and a draft somebody has to delete.
+ *
+ * So nothing exists until a value does. Returns null when the form is entirely
+ * blank, and the caller has nothing to redirect to because nothing happened.
+ * The rule lives here rather than on the page: a page that merely declines to
+ * post is still a page that can post.
+ */
+export async function startApplicationWithValues(
+  membershipTypeCode: string,
+  parties: PartyValues[],
+  actor: Actor
+): Promise<{
+  id: string;
+  reference: string;
+  savedAt: Date;
+  problems: MissingField[];
+} | null> {
+  const type = await acceptingType(membershipTypeCode);
+  if (!hasAnyValue(parties)) return null;
+
+  const fields = visibleFields(type);
+  const problems: MissingField[] = [];
 
   return withTransaction(async client => {
-    const created = await client.query<{ id: string; reference: string }>(
-      `insert into membership_application (membership_type_id, captured_by)
-       values ($1, $2) returning id, reference`,
-      [type.id, actor.userId]
-    );
-    const { id, reference } = created.rows[0];
+    const { id, reference } = await insertApplication(client, type, actor);
 
-    // One empty party per subject the type configures, so the form has
-    // something to render into and a draft save has somewhere to land.
-    const subjects = [...new Set(type.fields.map(f => f.subject))];
-    for (const subject of subjects) {
+    for (const party of parties) {
+      const subjectFields = fields.get(party.subject) ?? [];
+      const { values, errors } = normalise(party.values, subjectFields);
+      problems.push(...errors.map(e => ({ ...e, ordinal: party.ordinal })));
+
       await client.query(
-        `insert into application_party (application_id, subject, ordinal)
-         values ($1, $2, 1)`,
-        [id, subject]
+        `update application_party set values = $4
+          where application_id = $1 and subject = $2 and ordinal = $3`,
+        [id, party.subject, party.ordinal, JSON.stringify(values)]
       );
     }
 
-    await recordAudit(
-      {
-        actorUserId: actor.userId,
-        actorDescription: actor.email,
-        action: 'membership.application.started',
-        entityType: 'membership_application',
-        entityId: id,
-        newValue: { reference, membershipType: type.code },
-      },
-      client
+    const touched = await client.query<{ updated_at: Date }>(
+      `update membership_application set updated_at = now()
+        where id = $1 returning updated_at`,
+      [id]
     );
 
-    return { id, reference };
+    return { id, reference, savedAt: touched.rows[0].updated_at, problems };
   });
 }
 

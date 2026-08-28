@@ -1,0 +1,118 @@
+---
+// The capture form's fields, as the membership type configures them (S-301).
+//
+// Shared by the page that starts an application and the page that edits one,
+// so an officer typing into a form that has no application yet sees exactly
+// the form they will keep typing into once it does.
+import type { MissingField, PartyValues } from '@lib/applications/capture';
+import type { FieldSubject, MembershipTypeField } from '@lib/config/reference';
+
+interface Props {
+  fields: Map<FieldSubject, MembershipTypeField[]>;
+  parties: PartyValues[];
+  // Mandatory fields still empty, so the ones holding submission up are
+  // outlined rather than only listed somewhere else on the page.
+  blocking?: MissingField[];
+  isEditable?: boolean;
+}
+
+const { fields, parties, blocking = [], isEditable = true } = Astro.props;
+
+const SUBJECT_LABELS: Record<string, string> = {
+  applicant: 'Applicant',
+  nominee: 'Nominee',
+  guardian: 'Parent / Guardian',
+  beneficiary: 'Takaful beneficiary',
+};
+
+// The configured data type decides the keyboard a tablet shows, which matters
+// more here than anywhere: capture happens on a tablet in a regional office.
+const INPUT_TYPES = {
+  text: 'text',
+  number: 'number',
+  date: 'date',
+  email: 'email',
+  phone: 'tel',
+} as const satisfies Record<string, astroHTML.JSX.HTMLInputTypeAttribute>;
+
+type InputType = (typeof INPUT_TYPES)[keyof typeof INPUT_TYPES];
+
+const inputTypeFor = (dataType: string): InputType =>
+  (INPUT_TYPES as Record<string, InputType>)[dataType] ?? 'text';
+
+const valuesFor = (subject: FieldSubject) =>
+  parties.find(p => p.subject === subject && p.ordinal === 1)?.values ?? {};
+---
+
+{
+  [...fields.keys()].map(subject => {
+    const values = valuesFor(subject);
+    const missing = new Set(
+      blocking.filter(b => b.subject === subject).map(b => b.fieldKey)
+    );
+    return (
+      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+          {SUBJECT_LABELS[subject] ?? subject}
+        </h2>
+        <div class="mt-4 grid gap-4 sm:grid-cols-2">
+          {(fields.get(subject) ?? []).map(field => {
+            const name = `field.${subject}.1.${field.fieldKey}`;
+            const value = values[field.fieldKey] ?? '';
+            return (
+              <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                <span>
+                  {field.label}
+                  {field.isMandatory && (
+                    <span
+                      class="text-red-600 dark:text-red-400"
+                      aria-hidden="true"
+                    >
+                      {' '}
+                      *
+                    </span>
+                  )}
+                </span>
+                {field.dataType === 'choice' ? (
+                  <select
+                    name={name}
+                    disabled={!isEditable}
+                    class:list={[
+                      'mt-1 w-full rounded-lg border bg-white px-3 py-1.5 text-sm dark:bg-neutral-900 dark:text-neutral-100',
+                      missing.has(field.fieldKey)
+                        ? 'border-red-400 dark:border-red-700'
+                        : 'border-neutral-300 dark:border-neutral-600',
+                    ]}
+                  >
+                    <option value="">—</option>
+                    {field.choices.map(choice => (
+                      <option value={choice} selected={choice === value}>
+                        {choice}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type={inputTypeFor(field.dataType)}
+                    name={name}
+                    value={value}
+                    disabled={!isEditable}
+                    placeholder={
+                      field.dataType === 'phone' ? '5789 1234' : undefined
+                    }
+                    class:list={[
+                      'mt-1 w-full rounded-lg border bg-white px-3 py-1.5 text-sm dark:bg-neutral-900 dark:text-neutral-100',
+                      missing.has(field.fieldKey)
+                        ? 'border-red-400 dark:border-red-700'
+                        : 'border-neutral-300 dark:border-neutral-600',
+                    ]}
+                  />
+                )}
+              </label>
+            );
+          })}
+        </div>
+      </section>
+    );
+  })
+}
