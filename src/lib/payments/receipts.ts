@@ -97,6 +97,10 @@ export interface ReceiptException {
   kind: ExceptionKind;
   receiptNo: string;
   serialNo: number;
+  // The receipt behind the finding, where there is one. A void has a payment
+  // to open; an abandoned allocation never became one, and reads as a dead
+  // end because that is what it is.
+  paymentId: string | null;
   // Why, where the system knows. Empty is itself a finding: a number that went
   // nowhere for no recorded reason is the one an auditor asks about.
   reason: string;
@@ -123,6 +127,7 @@ interface ExceptionRow {
   reason: string | null;
   at: Date | null;
   who: string | null;
+  payment_id: string | null;
 }
 
 // One statement, three findings, so the period is read once and the results
@@ -135,9 +140,10 @@ interface ExceptionRow {
 // something happened outside this application.
 const EXCEPTIONS = `
   with window_rows as (
-    select r.*, u.display_name as allocated_by_name
+    select r.*, u.display_name as allocated_by_name, p.id as payment_id
       from receipt_number r
       join app_user u on u.id = r.allocated_by
+      left join payment p on p.receipt_number_id = r.id
      where r.allocated_at >= $1 and r.allocated_at < $2
   ),
   bounds as (
@@ -148,14 +154,16 @@ const EXCEPTIONS = `
            receipt_no, serial_no,
            coalesce(reason, '') as reason,
            coalesce(settled_at, allocated_at) as at,
-           allocated_by_name as who
+           allocated_by_name as who,
+           payment_id
       from window_rows
      where state <> 'issued'
   ),
   duplicates as (
     select 'duplicate' as kind, receipt_no, min(serial_no) as serial_no,
            count(*)::text || ' rows share this number' as reason,
-           min(allocated_at) as at, null::text as who
+           min(allocated_at) as at, null::text as who,
+           min(payment_id::text)::uuid as payment_id
       from window_rows
      group by receipt_no
     having count(*) > 1
@@ -164,7 +172,8 @@ const EXCEPTIONS = `
     select 'missing' as kind,
            'RCT-' || lpad(s::text, 6, '0') as receipt_no,
            s as serial_no,
-           '' as reason, null::timestamptz as at, null::text as who
+           '' as reason, null::timestamptz as at, null::text as who,
+           null::uuid as payment_id
       from bounds, generate_series(bounds.lo, bounds.hi) as s
      where bounds.lo is not null
        and not exists (select 1 from receipt_number r where r.serial_no = s)
@@ -217,6 +226,7 @@ export async function reconcileReceipts(
       kind: e.kind,
       receiptNo: e.receipt_no,
       serialNo: Number(e.serial_no),
+      paymentId: e.payment_id,
       reason: e.reason ?? '',
       at: e.at,
       who: e.who,

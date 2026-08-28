@@ -247,9 +247,21 @@ export async function paymentsForApplication(
   return assemble(result.rows, await linesFor(result.rows.map(r => r.id)));
 }
 
+/**
+ * Everything taken from one member, however it was filed.
+ *
+ * Two ways, and both are needed. A payment made after approval names the
+ * member. The one that admitted them in the first place names the APPLICATION
+ * — the member did not exist when it was taken — so a query on member_id alone
+ * finds nothing at all for most members, which is exactly the receipt a
+ * Treasurer looking one up wants to see.
+ */
 export async function paymentsForMember(memberId: string): Promise<Payment[]> {
   const result = await query<PaymentRow>(
-    `${PAYMENT_SELECT} where p.member_id = $1 order by p.received_at`,
+    `${PAYMENT_SELECT}
+      where p.member_id = $1
+         or p.application_id = (select application_id from member where id = $1)
+      order by p.received_at`,
     [memberId]
   );
   return assemble(result.rows, await linesFor(result.rows.map(r => r.id)));

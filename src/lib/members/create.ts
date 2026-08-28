@@ -135,6 +135,8 @@ export interface MemberAccount {
 export interface MemberDetail extends MemberSummary {
   accounts: MemberAccount[];
   applicantValues: Record<string, string>;
+  // Null for a legacy record imported in M7, which has no application here.
+  applicationId: string | null;
 }
 
 // The name is assembled from the application's applicant party, because what
@@ -205,11 +207,13 @@ export async function loadMember(id: string): Promise<MemberDetail | null> {
     name: string;
     joined_at: Date;
     application_reference: string | null;
+    application_id: string | null;
     applicant_values: Record<string, string> | null;
   }>(
     `select m.id, m.member_no, t.name as membership_type_name, m.status,
             ${NAME_SQL} as name, m.joined_at,
             a.reference as application_reference,
+            m.application_id,
             p.values as applicant_values
        from member m
        join membership_type t on t.id = m.membership_type_id
@@ -249,6 +253,7 @@ export async function loadMember(id: string): Promise<MemberDetail | null> {
     name: row.name || '(unnamed)',
     joinedAt: row.joined_at,
     applicationReference: row.application_reference,
+    applicationId: row.application_id,
     applicantValues: row.applicant_values ?? {},
     accounts: accounts.rows.map(a => ({
       id: a.id,

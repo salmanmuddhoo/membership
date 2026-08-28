@@ -72,11 +72,28 @@ function resetDrive() {
   drive = { folders: [], files: new Map() };
 }
 
+// The pool the last load() built.
+//
+// Each load() calls vi.resetModules(), which builds a NEW pool on the next
+// import. The one it replaces has to be given back: an abandoned pool holds
+// its connections until they idle out, and a suite that loads this often then
+// exhausts the server's connection slots — which fails as
+// "remaining connection slots are reserved", far from the test that caused it.
+let openPool: { closePool: () => Promise<void> } | undefined;
+
+async function closeOpenPool() {
+  const previous = openPool;
+  openPool = undefined;
+  await previous?.closePool();
+}
+
 async function load() {
+  await closeOpenPool();
   vi.resetModules();
   process.env.DATABASE_URL = appUrl;
   process.env.DATABASE_ALLOW_INSECURE = 'true';
   process.env.PUBLIC_APP_ENV = 'test';
+  openPool = await import('../db/pool');
 
   vi.doMock('./graph', async () => {
     const actual = await vi.importActual<typeof import('./graph')>('./graph');
@@ -175,6 +192,9 @@ beforeAll(async () => {
 }, 60_000);
 
 afterAll(async () => {
+  // Before the drop, so the last pool's connections are handed back rather
+  // than terminated out from under it.
+  await closeOpenPool();
   await run(ADMIN_URL, `drop database if exists ${dbName} with (force)`);
 });
 

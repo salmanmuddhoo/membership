@@ -170,7 +170,18 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               {period.exceptions.map(exception => (
                 <tr class="border-b border-neutral-200 align-top dark:border-neutral-800">
                   <td class="py-2 font-medium text-neutral-800 tabular-nums dark:text-neutral-100">
-                    {exception.receiptNo}
+                    {exception.paymentId ? (
+                      <a
+                        href={`/receipts/${exception.paymentId}`}
+                        class="underline"
+                      >
+                        {exception.receiptNo}
+                      </a>
+                    ) : (
+                      /* No receipt to open. The number was allocated and the
+                         payment never happened, which is the finding. */
+                      exception.receiptNo
+                    )}
                   </td>
                   <td class="py-2">
                     <span

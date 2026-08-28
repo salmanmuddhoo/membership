@@ -2,10 +2,25 @@
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import { loadMember } from '@lib/members/create';
 import { forDisplay } from '@lib/applications/phone';
+import {
+  paymentsForMember,
+  METHOD_LABELS,
+  type Payment,
+} from '@lib/payments/payments';
+import { formatMoney } from '@lib/payments/money';
+
+const principal = Astro.locals.principal!;
+const canSeePayments = principal.permissions.has('payment.view');
 
 const { id } = Astro.params;
 const member = id ? await loadMember(id) : null;
 if (!member) return new Response('Not found', { status: 404 });
+
+// What this member has paid, including the receipt that admitted them — which
+// names their application, not them: they did not exist when it was taken.
+const payments: Payment[] = canSeePayments
+  ? await paymentsForMember(member.id)
+  : [];
 
 const dateFormat = new Intl.DateTimeFormat('en-GB', {
   dateStyle: 'medium',
@@ -126,5 +141,54 @@ const details = Object.entries(member.applicantValues).map(([key, value]) => ({
         )
       }
     </section>
+
+    {
+      canSeePayments && (
+        <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+          <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+            Payments
+          </h2>
+          {payments.length === 0 ? (
+            <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+              Nothing recorded against this member.
+            </p>
+          ) : (
+            <ul class="mt-4 space-y-3">
+              {payments.map(payment => (
+                <li class="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+                  <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <a
+                      href={`/receipts/${payment.id}`}
+                      class="font-medium text-neutral-800 underline dark:text-neutral-100"
+                    >
+                      {payment.receiptNo}
+                    </a>
+                    <span class="font-medium text-neutral-800 tabular-nums dark:text-neutral-100">
+                      {payment.kind === 'refund' && '−'}
+                      {formatMoney(payment.totalAmount, payment.currency)}
+                    </span>
+                    {payment.kind === 'refund' && (
+                      <span class="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+                        refund of {payment.refundsReceiptNo}
+                      </span>
+                    )}
+                    {payment.voidedAt && (
+                      <span class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200">
+                        void
+                      </span>
+                    )}
+                    <span class="text-xs text-neutral-500 dark:text-neutral-400">
+                      {METHOD_LABELS[payment.method]} ·{' '}
+                      {dateFormat.format(payment.receivedAt)} · taken by{' '}
+                      {payment.recordedByName}
+                    </span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )
+    }
   </div>
 </DashboardLayout>
