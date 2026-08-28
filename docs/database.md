@@ -28,6 +28,28 @@ Two further restrictions apply to the application role:
   receipt is an UPDATE, which is why those two keep the privilege. See
   `docs/payments.md`.
 
+## Connections in the test suite
+
+Each integration test calls a `load()` helper that runs `vi.resetModules()` and
+re-imports the modules under test, which builds a **new** pool. The pool it
+replaces must be closed — an abandoned one keeps its connections until they
+idle out (10s), and a suite that loads a hundred times over a few seconds piles
+them up until the server refuses:
+
+```
+remaining connection slots are reserved for roles with the SUPERUSER attribute
+```
+
+which surfaces as `The database is unavailable.` in whichever test happened to
+be running, nowhere near the one that caused it.
+
+So `load()` closes the pool it replaces, and `afterAll` closes the last one
+before dropping the database. Measured on the full suite: **peak 84 concurrent
+connections without that, 42 with it.** CI runs stock `postgres:16` — 100 max,
+3 reserved for superusers, so 97 usable. The margin is the point; if the suite
+grows enough to approach it again, the answer is to look for a pool that is not
+being given back, not to raise the ceiling.
+
 ## Connection strings
 
 Two variables, because the two roles are different:
