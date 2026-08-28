@@ -133,6 +133,26 @@ a reprint, and marking it as one would make the stamp meaningless within a week.
 A failure to record does not stop the print: there is an applicant waiting, and
 a stamp one print behind is the lesser problem.
 
+## Reading a member's payments
+
+The receipt that admitted someone names their **application**, not them — they
+were not a member when it was taken. `paymentsForMember` therefore looks both
+ways, and a query on `member_id` alone finds nothing at all for most members.
+
+## Proving the failure path
+
+The stranded-allocation guarantee cannot be tested by racing two officers.
+When the second call happens to run after the first has committed, it is
+refused by the duplicate check **before** allocating anything — no number
+spent, which is better behaviour but not the behaviour under test. A test
+asserting a stranded number then fails on the good outcome.
+
+So the test opens the window deliberately: it holds the application's row lock,
+waits until the ledger shows the number has actually been taken, then deletes
+the application and releases. `recordPayment` unblocks, finds nothing, and
+abandons its number. Waiting on the ledger rather than on a clock is what makes
+it deterministic.
+
 ## An application that has been receipted
 
 It cannot be deleted, voided receipt or not. Deleting an abandoned draft is for

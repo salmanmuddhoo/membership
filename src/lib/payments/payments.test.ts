@@ -99,6 +99,78 @@ async function newApplication(type = 'individual') {
   return capture.startApplication(type, officer);
 }
 
+// The highest receipt number allocated so far.
+//
+// Tests share one database and run in order, so "the last two rows" is not the
+// same claim as "the two rows this test caused". Anchoring to a mark taken at
+// the start says the second thing, which is the one being asserted.
+async function highWaterMark(): Promise<number> {
+  const result = await run(
+    appUrl,
+    'select coalesce(max(serial_no), 0)::int as n from receipt_number'
+  );
+  return result.rows[0].n;
+}
+
+/**
+ * Make recordPayment fail AFTER it has taken a receipt number.
+ *
+ * Racing two officers looks like the natural way to do this and is not: when
+ * the second call happens to run after the first has committed, it is refused
+ * by the duplicate check BEFORE allocating anything — no number spent, which
+ * is better behaviour but not the behaviour under test. A test that asserts a
+ * stranded number would then fail on the good outcome.
+ *
+ * So the window is opened deliberately. The number is allocated before the
+ * transaction opens (see receipts.ts), so holding the application's row lock
+ * stops the call inside its transaction; deleting the application while it
+ * waits makes its re-read find nothing, which is exactly the failure the catch
+ * exists for. Waiting on the ledger rather than on a clock is what makes it
+ * deterministic: we only delete once the number is provably taken.
+ */
+async function failAfterAllocation(applicationId: string) {
+  const before = await highWaterMark();
+
+  const holder = new pg.Client({ connectionString: appUrl, ssl: false });
+  await holder.connect();
+  await holder.query('begin');
+  await holder.query(
+    'select 1 from membership_application where id = $1 for no key update',
+    [applicationId]
+  );
+
+  const { payments } = await load();
+  const attempt = payments.recordPayment(
+    { applicationId, method: 'cash', amounts: FULL },
+    principalFor(officer)
+  );
+  // Swallowed here and re-thrown by the caller's own expectation, so an
+  // unhandled rejection cannot escape while we wait below.
+  const settled = attempt.then(
+    value => ({ ok: true as const, value }),
+    error => ({ ok: false as const, error })
+  );
+
+  for (let waited = 0; waited < 5_000; waited += 20) {
+    if ((await highWaterMark()) > before) break;
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  const allocated = await highWaterMark();
+  expect(allocated).toBeGreaterThan(before);
+
+  await holder.query(
+    'delete from application_party where application_id = $1',
+    [applicationId]
+  );
+  await holder.query('delete from membership_application where id = $1', [
+    applicationId,
+  ]);
+  await holder.query('commit');
+  await holder.end();
+
+  return { outcome: await settled, serialNo: allocated };
+}
+
 beforeAll(async () => {
   await run(ADMIN_URL, `create database ${dbName}`);
   await run(ownerUrl, 'revoke all on schema public from public');
@@ -333,12 +405,58 @@ describe('S-502: the receipt sequence is evidence', () => {
   // The property the whole allocation design exists for. A payment that fails
   // must not consume a number invisibly: the number is spent — it can never
   // come back — and WHY it was spent is on the record.
-  //
-  // Driven through a real race rather than a contrived error: two officers
-  // receipting the same application at the same moment. Both get a number,
-  // one wins the row lock, and the loser's number has to be accounted for.
   it('leaves a failed payment behind as a visible, explained gap', async () => {
-    const { payments, receipts } = await load();
+    const { receipts } = await load();
+    const application = await newApplication();
+
+    const { outcome, serialNo } = await failAfterAllocation(application.id);
+
+    expect(outcome.ok).toBe(false);
+
+    const ledger = await run(
+      appUrl,
+      `select state, coalesce(reason, '') as reason
+         from receipt_number where serial_no = $1`,
+      [serialNo]
+    );
+    expect(ledger.rows[0].state).toBe('abandoned');
+    // Not merely marked: the reason is what an auditor asks for.
+    expect(ledger.rows[0].reason).not.toBe('');
+
+    // And it is reportable as a gap, carrying that reason.
+    const period = await receipts.reconcileReceipts(
+      new Date(Date.now() - 60_000),
+      new Date(Date.now() + 60_000)
+    );
+    const gap = period.exceptions.find(
+      e => e.kind === 'unissued' && e.serialNo === serialNo
+    );
+    expect(gap).toBeDefined();
+    expect(gap!.reason).not.toBe('');
+  });
+
+  // The number is gone for good. The next receipt is the next number, and the
+  // sequence carries the hole rather than closing over it.
+  it('never hands a spent number to the next payment', async () => {
+    const { payments } = await load();
+    const abandonedApplication = await newApplication();
+    const { serialNo } = await failAfterAllocation(abandonedApplication.id);
+
+    const next = await newApplication();
+    const payment = await payments.recordPayment(
+      { applicationId: next.id, method: 'cash', amounts: FULL },
+      principalFor(officer)
+    );
+
+    expect(payment.serialNo).toBeGreaterThan(serialNo);
+  });
+
+  // Two officers receipting the same application at once. Which of them is
+  // refused, and whether the loser had taken a number first, depends on
+  // timing — but exactly one receipt exists either way, and that is the
+  // guarantee.
+  it('lets only one of two simultaneous officers receipt an application', async () => {
+    const { payments } = await load();
     const application = await newApplication();
 
     const both = await Promise.allSettled([
@@ -352,34 +470,16 @@ describe('S-502: the receipt sequence is evidence', () => {
       ),
     ]);
 
-    const won = both.filter(r => r.status === 'fulfilled');
-    const lost = both.filter(r => r.status === 'rejected');
-    expect(won).toHaveLength(1);
-    expect(lost).toHaveLength(1);
+    expect(both.filter(r => r.status === 'fulfilled')).toHaveLength(1);
+    expect(both.filter(r => r.status === 'rejected')).toHaveLength(1);
 
-    const ledger = await run(
+    const live = await run(
       appUrl,
-      `select state, coalesce(reason, '') as reason
-         from receipt_number
-        order by serial_no desc
-        limit 2`
+      `select count(*)::int as n from payment
+        where application_id = $1 and kind = 'payment' and voided_at is null`,
+      [application.id]
     );
-    const states = ledger.rows.map((r: { state: string }) => r.state).sort();
-    expect(states).toEqual(['abandoned', 'issued']);
-
-    const abandoned = ledger.rows.find(
-      (r: { state: string }) => r.state === 'abandoned'
-    );
-    expect(abandoned.reason).not.toBe('');
-
-    // And it is reportable as a gap, with that reason.
-    const period = await receipts.reconcileReceipts(
-      new Date(Date.now() - 60_000),
-      new Date(Date.now() + 60_000)
-    );
-    const gap = period.exceptions.find(e => e.kind === 'unissued');
-    expect(gap).toBeDefined();
-    expect(gap!.reason).not.toBe('');
+    expect(live.rows[0].n).toBe(1);
   });
 
   it('refuses to delete a number, or to renumber one', async () => {
@@ -834,5 +934,110 @@ describe('an application that has been decided', () => {
         principalFor(officer)
       )
     ).rejects.toThrow(message);
+  });
+});
+
+describe('what a member has paid', () => {
+  // The receipt that admitted someone names their APPLICATION — they were not
+  // a member when it was taken. A query on member_id alone therefore finds
+  // nothing for almost every member, which is precisely the receipt a
+  // Treasurer looking one up wants.
+  it('finds the receipt that admitted them, not just later ones', async () => {
+    const { payments } = await load();
+    const application = await newApplication();
+    const admitted = await payments.recordPayment(
+      { applicationId: application.id, method: 'cash', amounts: FULL },
+      principalFor(officer)
+    );
+
+    // Approved, so the member exists and points back at the application. Done
+    // directly: what is under test is the lookup, not the approval chain.
+    await run(
+      appUrl,
+      `update membership_application set status = 'approved' where id = $1`,
+      [application.id]
+    );
+    const member = await run(
+      appUrl,
+      `insert into member (application_id, membership_type_id)
+       select $1, membership_type_id from membership_application where id = $1
+       returning id`,
+      [application.id]
+    );
+    const memberId = member.rows[0].id;
+
+    const found = await payments.paymentsForMember(memberId);
+    expect(found.map(p => p.receiptNo)).toEqual([admitted.receiptNo]);
+
+    // A refund against it belongs to the member too, so the page shows the
+    // money that went back beside the money that came in.
+    const refund = await payments.refundPayment(
+      {
+        paymentId: admitted.id,
+        method: 'cash',
+        reason: 'Shares returned.',
+        amounts: { shares: '500.00' },
+      },
+      principalFor(treasurer)
+    );
+
+    const both = await payments.paymentsForMember(memberId);
+    expect(both.map(p => p.receiptNo)).toEqual([
+      admitted.receiptNo,
+      refund.receiptNo,
+    ]);
+  });
+
+  it('returns nothing for a member who has paid nothing', async () => {
+    const { payments } = await load();
+    const application = await newApplication();
+    const member = await run(
+      appUrl,
+      `insert into member (application_id, membership_type_id)
+       select $1, membership_type_id from membership_application where id = $1
+       returning id`,
+      [application.id]
+    );
+
+    expect(await payments.paymentsForMember(member.rows[0].id)).toEqual([]);
+  });
+});
+
+describe('S-506: an exception leads back to its receipt', () => {
+  // "An anomaly is found by the system rather than by an auditor" is only half
+  // the job if the Treasurer then has to hunt for the receipt by hand.
+  it('carries the payment behind a void, and nothing behind an abandonment', async () => {
+    const { payments, receipts } = await load();
+    const application = await newApplication();
+    const payment = await payments.recordPayment(
+      { applicationId: application.id, method: 'cash', amounts: FULL },
+      principalFor(officer)
+    );
+    await payments.voidPayment(
+      payment.id,
+      'Wrong applicant.',
+      principalFor(treasurer)
+    );
+
+    // An allocation that never became a payment.
+    const contested = await newApplication();
+    const { serialNo } = await failAfterAllocation(contested.id);
+
+    const period = await receipts.reconcileReceipts(
+      new Date(Date.now() - 60_000),
+      new Date(Date.now() + 60_000)
+    );
+
+    const voided = period.exceptions.find(
+      e => e.kind === 'void' && e.receiptNo === payment.receiptNo
+    )!;
+    expect(voided.paymentId).toBe(payment.id);
+
+    // An abandoned number never became a receipt, so there is nothing to open.
+    const abandoned = period.exceptions.find(
+      e => e.kind === 'unissued' && e.serialNo === serialNo
+    );
+    expect(abandoned).toBeDefined();
+    expect(abandoned!.paymentId).toBeNull();
   });
 });
