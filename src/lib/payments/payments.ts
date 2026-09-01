@@ -78,7 +78,8 @@ export const ACTION_VOIDED = 'membership.payment.voided';
 
 // FRD 7.10.6: once a membership is approved, the entrance fee and the Takaful
 // contribution have been earned and are not returned. Shares and the MSA
-// deposit are the member's money and always are.
+// deposit are the member's own money, sitting in their two accounts, and
+// always come back.
 const NON_REFUNDABLE_ONCE_APPROVED: ReadonlySet<FeeComponentCode> = new Set([
   'entrance',
   'takaful',

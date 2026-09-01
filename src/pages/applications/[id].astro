@@ -78,8 +78,11 @@ let error: string | null = null;
 let notice: string | null = null;
 let formatProblems: { fieldKey: string; label: string }[] = [];
 let blockingOnSubmit: { label: string; subject: string }[] = [];
-let createdMember: { memberNo: string; accountNo: string; id: string } | null =
-  null;
+let createdMember: {
+  id: string;
+  memberNo: string;
+  accounts: { id: string; typeCode: string; typeName: string }[];
+} | null = null;
 
 let isEditable =
   application.status === 'draft' || application.status === 'returned';
@@ -216,8 +219,8 @@ if (Astro.request.method === 'POST') {
           createMemberFromApplication
         );
         notice = result.member
-          ? `Approved. Member ${result.member.memberNo} created with account ` +
-            `${result.member.accountNo}.`
+          ? `Approved. Member ${result.member.memberNo} created with ` +
+            `${result.member.accounts.map(a => a.typeName).join(' and ')}.`
           : 'Rejected and returned to the originating staff.';
         createdMember = result.member ?? null;
       }
@@ -553,8 +556,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             >
               {createdMember.memberNo}
             </a>{' '}
-            with account {createdMember.accountNo}, opened automatically because
-            the membership was approved.
+            with {createdMember.accounts.map(a => a.typeName).join(' and ')},
+            opened automatically because the membership was approved. Both carry
+            the member's number.
           </p>
         </section>
       )

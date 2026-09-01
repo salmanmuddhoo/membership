@@ -6,7 +6,7 @@ import {
   createAccountType,
   listAccountTypes,
   listChecklists,
-  setMembershipDefault,
+  setOpensOnApproval,
   updateAccountType,
 } from '@lib/config/reference';
 
@@ -58,10 +58,12 @@ if (Astro.request.method === 'POST') {
           actor
         );
         notice = 'Account type updated.';
-      } else if (intent === 'default') {
-        await setMembershipDefault(String(form.get('typeId')), actor);
-        notice =
-          'Default product changed. Memberships approved from now on open it.';
+      } else if (intent === 'opens-on-approval') {
+        const opens = form.get('opens') === 'yes';
+        await setOpensOnApproval(String(form.get('typeId')), opens, actor);
+        notice = opens
+          ? 'Memberships approved from now on open this account.'
+          : 'Memberships approved from now on do not open this account.';
       }
     } catch (err) {
       if (err instanceof ConfigError) {
@@ -128,7 +130,7 @@ const STATUSES = ['active', 'pending', 'inactive', 'dormant'];
                 </code>
                 {type.isMembershipDefault && (
                   <span class="bg-mint-200 dark:bg-mint-900 rounded px-1.5 py-0.5 text-xs text-neutral-800 dark:text-neutral-100">
-                    membership default
+                    opens on approval
                   </span>
                 )}
                 {!type.isActive && (
@@ -234,15 +236,24 @@ const STATUSES = ['active', 'pending', 'inactive', 'dormant'];
                     >
                       Save
                     </button>
-                    {!type.isMembershipDefault && type.isActive && (
-                      <button
-                        type="submit"
-                        name="intent"
-                        value="default"
-                        class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
-                      >
-                        Make membership default
-                      </button>
+                    {type.isActive && (
+                      <>
+                        <input
+                          type="hidden"
+                          name="opens"
+                          value={type.isMembershipDefault ? 'no' : 'yes'}
+                        />
+                        <button
+                          type="submit"
+                          name="intent"
+                          value="opens-on-approval"
+                          class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                        >
+                          {type.isMembershipDefault
+                            ? 'Do not open on approval'
+                            : 'Open on approval'}
+                        </button>
+                      </>
                     )}
                   </div>
                 )}
