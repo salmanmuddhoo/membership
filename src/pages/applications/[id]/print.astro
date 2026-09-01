@@ -39,6 +39,15 @@ const SIGNATURES = ['Applicant', 'Nominee', 'Witness 1', 'Witness 2'] as const;
 // An unsigned print of a draft must not be mistaken for the real thing.
 const isDraft = application.status === 'draft';
 
+// Step 2 of the capture wizard (docs/applications.md): this page IS that
+// step, not a separate one that mirrors it — the officer lands here on Next
+// from capture and leaves on Next here, straight to filing documents. Only
+// while the application is still the officer's to work on; once submitted,
+// this is just the print view again; whoever opens it, the printed page
+// itself carries no wizard chrome.
+const isEditable =
+  application.status === 'draft' || application.status === 'returned';
+
 const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
 ---
 
@@ -110,7 +119,20 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
 
     <div class="actions">
       <button type="button" id="print">Print</button>
-      <a href={`/applications/${application.id}`}>Back to the application</a>
+      {
+        isEditable ? (
+          <>
+            <a href={`/applications/${application.id}?step=1`}>← Back</a>
+            <a href={`/applications/${application.id}?step=3`} class="next">
+              Next: upload documents →
+            </a>
+          </>
+        ) : (
+          <a href={`/applications/${application.id}`}>
+            Back to the application
+          </a>
+        )
+      }
     </div>
   </div>
 </BaseLayout>
@@ -252,12 +274,15 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
     font-family: system-ui, sans-serif;
     font-size: 10pt;
   }
-  .actions button {
+  .actions button,
+  .actions a.next {
     padding: 2mm 5mm;
     border: 1px solid #333;
     background: #eee;
     cursor: pointer;
     font: inherit;
+    text-decoration: none;
+    color: #111;
   }
 
   @media print {

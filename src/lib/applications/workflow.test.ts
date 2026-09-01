@@ -80,6 +80,16 @@ async function closeOpenPool() {
   await previous?.closePool();
 }
 
+// A stand-in drive, exactly as documents.test.ts uses one — submitApplication
+// now refuses unless the required documents are actually filed (S-304), so
+// getting an application to a submittable state here means going through the
+// same begin/commit steps a real upload would, against a fake Graph rather
+// than a real tenant.
+interface FakeDrive {
+  files: Map<string, { id: string; size: number }>;
+}
+let drive: FakeDrive = { files: new Map() };
+
 async function load() {
   await closeOpenPool();
   vi.resetModules();
@@ -87,17 +97,59 @@ async function load() {
   process.env.DATABASE_ALLOW_INSECURE = 'true';
   process.env.PUBLIC_APP_ENV = 'test';
   openPool = await import('../db/pool');
+
+  vi.doMock('../documents/graph', async () => {
+    const actual =
+      await vi.importActual<typeof import('../documents/graph')>(
+        '../documents/graph'
+      );
+    return {
+      ...actual,
+      ensureFolder: async () => {},
+      getItemByPath: async (itemPath: string) => {
+        const file = drive.files.get(itemPath);
+        return file ? { ...file, name: itemPath, webUrl: 'https://x' } : null;
+      },
+    };
+  });
+
+  // upload.ts's createUploadTicket calls getGraphConfig() itself to build the
+  // ticket, which the mock above does not reach — GRAPH_* is not set here any
+  // more than it is in documents.test.ts, which mocks this same function for
+  // the same reason.
+  vi.doMock('../documents/upload', async () => {
+    const actual = await vi.importActual<typeof import('../documents/upload')>(
+      '../documents/upload'
+    );
+    return {
+      ...actual,
+      createUploadTicket: async (request: {
+        folderPath: string;
+        fileName: string;
+      }) => ({
+        uploadUrl: 'https://upload.invalid/session',
+        expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+        chunkSize: 327_680,
+        itemPath: `${request.folderPath}/${request.fileName}`,
+      }),
+    };
+  });
+
   return {
     capture: await import('./capture'),
     workflow: await import('./workflow'),
     members: await import('../members/create'),
     config: await import('../config/reference'),
+    documents: await import('../documents/documents'),
+    payments: await import('../payments/payments'),
   };
 }
 
 const saved = { ...process.env };
 afterEach(() => {
   process.env = { ...saved };
+  vi.doUnmock('../documents/graph');
+  vi.doUnmock('../documents/upload');
 });
 
 function principalFor(
@@ -189,11 +241,67 @@ afterAll(async () => {
   await run(ADMIN_URL, `drop database if exists ${dbName} with (force)`);
 });
 
+// Files every REQUIRED item the type's checklist asks for — whatever they
+// are; nothing here needs to know the catalogue, only that submission needs
+// it complete (S-304).
+async function fileRequiredDocuments(
+  documents: Awaited<ReturnType<typeof load>>['documents'],
+  applicationId: string
+) {
+  const actor = { userId: officer.userId, email: officer.email };
+  const checklist = await documents.checklistFor({ applicationId });
+
+  for (const entry of checklist.filter(e => e.requirement === 'required')) {
+    const begun = await documents.beginUpload(
+      {
+        applicationId,
+        documentTypeId: entry.documentTypeId,
+        subject: entry.subject,
+        fileName: `${entry.documentCode}.pdf`,
+        contentType: 'application/pdf',
+        sizeBytes: 100,
+        ...(entry.tracksExpiry ? { expiresAt: new Date('2030-01-01') } : {}),
+      },
+      actor
+    );
+    drive.files.set(begun.ticket.itemPath, {
+      id: `${entry.documentCode}-${entry.subject}`,
+      size: 100,
+    });
+    await documents.commitUpload(begun.versionId, actor);
+  }
+}
+
+// The full schedule, in cash, exactly as it stands — no variance to explain.
+async function recordFullPayment(
+  payments: Awaited<ReturnType<typeof load>>['payments'],
+  applicationId: string
+) {
+  const due = await payments.amountDueForApplication(applicationId);
+  const amounts: Record<string, string> = {};
+  for (const component of due.components)
+    amounts[component.code] = component.amount;
+
+  await payments.recordPayment(
+    { applicationId, method: 'cash', amounts },
+    // A throwaway grant rather than adding payment.record to the shared
+    // `officer` — several tests below assert on officer's own permission
+    // set, and this helper's only job is to make the application payable,
+    // not to change who officer is everywhere else in this file.
+    {
+      ...officer,
+      permissions: new Set([...officer.permissions, 'payment.record']),
+    }
+  );
+}
+
 async function captureComplete() {
-  const { capture } = await load();
+  const { capture, documents, payments } = await load();
   const actor = { userId: officer.userId, email: officer.email };
   const { id } = await capture.startApplication('individual', actor);
   await capture.saveDraft(id, COMPLETE_INDIVIDUAL, actor);
+  await fileRequiredDocuments(documents, id);
+  await recordFullPayment(payments, id);
   return id;
 }
 
@@ -345,6 +453,47 @@ describe('S-304: submission', () => {
       workflow.submitApplication(id, secretary)
     ).rejects.toThrowError(/permission/);
   });
+
+  it('refuses while a required document has not been filed', async () => {
+    const { capture, workflow, payments } = await load();
+    const actor = { userId: officer.userId, email: officer.email };
+    const { id } = await capture.startApplication('individual', actor);
+    await capture.saveDraft(id, COMPLETE_INDIVIDUAL, actor);
+    // Fields are complete, money is taken — only the KYC pack is missing.
+    await recordFullPayment(payments, id);
+
+    await expect(workflow.submitApplication(id, officer)).rejects.toThrowError(
+      /required document.*still need to be filed/
+    );
+    expect((await capture.loadApplication(id))!.status).toBe('draft');
+  });
+
+  it('refuses while payment has not been recorded', async () => {
+    const { capture, workflow, documents } = await load();
+    const actor = { userId: officer.userId, email: officer.email };
+    const { id } = await capture.startApplication('individual', actor);
+    await capture.saveDraft(id, COMPLETE_INDIVIDUAL, actor);
+    // Fields and the KYC pack are complete — only the money is missing.
+    await fileRequiredDocuments(documents, id);
+
+    await expect(workflow.submitApplication(id, officer)).rejects.toThrowError(
+      /Payment must be recorded/
+    );
+    expect((await capture.loadApplication(id))!.status).toBe('draft');
+  });
+
+  it('reports document and payment readiness the same way submitApplication checks it', async () => {
+    const { capture, workflow } = await load();
+    const id = await captureComplete();
+    const application = (await capture.loadApplication(id))!;
+
+    const readiness = await workflow.submissionReadiness(application);
+    expect(readiness).toEqual({
+      fieldProblems: [],
+      documentsOutstanding: 0,
+      paymentRecorded: true,
+    });
+  });
 });
 
 describe('S-203: segregation of duties, on this record', () => {
@@ -425,7 +574,7 @@ describe('S-203: segregation of duties, on this record', () => {
   it('bars a clerk who submitted work someone else captured', async () => {
     // FRD 7.4.2 lets a Clerk assist with capture. Both people had a hand in
     // it, so both are barred from reviewing — the conservative reading.
-    const { capture, workflow } = await load();
+    const { capture, workflow, documents, payments } = await load();
     const { id } = await capture.startApplication('individual', {
       userId: officer.userId,
       email: officer.email,
@@ -434,6 +583,8 @@ describe('S-203: segregation of duties, on this record', () => {
       userId: officer.userId,
       email: officer.email,
     });
+    await fileRequiredDocuments(documents, id);
+    await recordFullPayment(payments, id);
 
     const clerk = principalFor(secretary.userId, secretary.email, [
       'application.view',

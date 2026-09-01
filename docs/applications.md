@@ -70,6 +70,84 @@ happened on. It does not update as the officer types; the id page reached on
 Next is where the live version lives, and reaching for one is one Next click
 away.
 
+## A red border has to stay honest without a reload
+
+A mandatory field's red border is drawn once, from what `problemsBlockingSubmission`
+found still empty when the page rendered — and autosave then keeps saving in
+the background with no reload, which used to leave that border exactly as
+wrong as it started: a field the officer had since filled in stayed red until
+they reloaded, reading as data that was never saved when it had been. The
+same staleness reached the capture form's own **Next** button, whose disabled
+state and "N required fields still empty" label were drawn from the same
+page load.
+
+Both are now kept live in `[id].astro`'s script rather than the server's:
+every mandatory input carries `data-mandatory` (`CaptureFields.astro`), and an
+`input`/`change` listener recomputes that one field's border and the whole
+form's remaining-empty count on every keystroke — a purely client-side
+correction, since the server-rendered HTML was never wrong about what was
+true at the moment it rendered, only about what became true afterwards
+without it.
+
+## The wizard: one step visible at a time, while it is the officer's
+
+Capture, documents and payment used to be three sections stacked on one long
+page. They are now three of five numbered **steps**
+(`CAPTURE_STEP` … `SUBMIT_STEP` in `[id].astro`), and only one is on screen —
+selected by a `?step=` query parameter, Back and Next at the foot of each:
+
+1. **Capture** — the applicant/nominee/etc. fields, exactly as before.
+2. **Print** — `/applications/<id>/print` itself, not a section here (see
+   below).
+3. **Documents** — the KYC checklist.
+4. **Payment** — recording what was taken.
+5. **Submit** — the "Your next step" action, once there is one to take.
+
+A step is reachable only once the one before it actually is done, on the same
+evidence the progress timeline reads — `blocking.length`, the documents
+still `missing`, whether a live payment exists — computed fresh on every
+request as `furthestStep`, never stored. Requesting a step ahead of that
+(`?step=4` before the documents are filed) redirects back to it rather than
+rendering a step nothing unlocked; requesting none at all resumes at
+`furthestStep` rather than always restarting at Capture, so reopening a draft
+someone else's autosave or a previous session already carried further does
+not make them walk it again. Going **backward** — reviewing what was
+captured, reprinting the form — is always allowed; only going forward is
+gated.
+
+**Step 2 has no section of its own.** `/applications/<id>/print` already
+shows a preview with a Print button, which is what step 2 asks for, and its
+own "done" signal — the signed form coming back and being filed — is
+something step 3 produces, not something step 2 could gate step 3 on without
+a paradox. So Next from Capture goes straight to the print page, and Next
+there goes straight to Documents; `?step=2` on `[id].astro` itself exists only
+to redirect a hand-typed URL somewhere real.
+
+**None of this applies once the application is no longer editable.** A
+submitted application is read by the Secretary and the President in full —
+every section, not a walkthrough — because they are deciding on the whole of
+it, not filling anything in in order. The gating is `isEditable &&` on every
+step; without it, everything renders exactly as it always did.
+
+## Submitting requires more than the form fields
+
+`submitApplication` used to check only `problemsBlockingSubmission` — the
+form fields — before moving an application to `new`. It now calls
+`submissionReadiness`, which also refuses while a required document is still
+`missing` (filed, not verified — verifying is the Secretary's job, the next
+step in the chain, and cannot be a precondition of reaching it) or while no
+live payment has been recorded. Both refusals are a plain `ApplicationError`,
+not the `{ problems }` shape field-completeness returns, because they are not
+a list of fields to fix — there is exactly one thing missing, and the message
+says what it is.
+
+The wizard's own gating (above) means an officer can only reach Submit once
+both are already true, so in the ordinary flow this refusal is never seen —
+but it is not the wizard's job to be the only thing standing between an
+incomplete application and central processing. `submissionReadiness` is
+exported and shared: the wizard and the server read the same three counts, so
+neither can drift from what the other allows.
+
 ## The chain
 
 ```

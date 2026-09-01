@@ -418,6 +418,65 @@ const timeline = applicationTimeline({
   paymentReceiptNo: livePayment?.receiptNo ?? null,
 });
 
+// The wizard steps an officer walks while the application is still theirs to
+// work on — narrower than the seven the timeline shows, which also cover what
+// the Secretary and President do afterwards. Paginating them is what makes
+// "payment only once documents are filed" true on the screen and not just in
+// the service: each step is unreachable until the one before it actually is
+// done, on the SAME evidence the timeline reads, so the two can never
+// disagree about what is unlocked.
+//
+// Step 2 (print and sign) has no section of its own here — it already has a
+// page, `/applications/<id>/print`, and a step whose "done" signal is a
+// document filed in step 3 cannot also gate entry to step 3.
+const CAPTURE_STEP = 1;
+const PRINT_STEP = 2;
+const DOCUMENTS_STEP = 3;
+const PAYMENT_STEP = 4;
+const SUBMIT_STEP = 5;
+
+const furthestStep = !isEditable
+  ? SUBMIT_STEP
+  : blocking.length > 0
+    ? CAPTURE_STEP
+    : requiredDocumentsMissing > 0
+      ? DOCUMENTS_STEP
+      : livePayment === null
+        ? PAYMENT_STEP
+        : SUBMIT_STEP;
+
+// Once submitted this application is read entirely, not stepped through — the
+// Secretary and President need the whole picture, and only an editable
+// application has an officer working through it in order.
+let currentStep = SUBMIT_STEP;
+if (isEditable) {
+  const stepParam = Astro.url.searchParams.get('step');
+  // No step in the URL means "wherever I left off", not "back to the start":
+  // an officer re-opening a draft they already finished capturing should not
+  // have to click through it again to reach where they actually are.
+  const requested = stepParam ? Number(stepParam) : furthestStep;
+  const clamped = Math.min(
+    Math.max(
+      Number.isFinite(requested) ? requested : CAPTURE_STEP,
+      CAPTURE_STEP
+    ),
+    SUBMIT_STEP
+  );
+
+  // Defensive only — nothing in this page links to ?step=2, since Next and
+  // Back go straight to and from the print page. A hand-edited URL still
+  // lands somewhere real rather than rendering an empty step.
+  if (clamped === PRINT_STEP) {
+    return Astro.redirect(`/applications/${application!.id}/print`);
+  }
+  if (clamped > furthestStep) {
+    return Astro.redirect(
+      `/applications/${application!.id}?step=${furthestStep}`
+    );
+  }
+  currentStep = clamped;
+}
+
 // For the documents section. The capture form carries its own, in the
 // component that renders it.
 const SUBJECT_LABELS: Record<string, string> = {
@@ -573,423 +632,524 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       )
     }
 
-    <form method="post" id="capture-form" class="space-y-6">
-      <CaptureFields
-        fields={fields}
-        parties={application!.parties}
-        blocking={blocking}
-        isEditable={isEditable}
-      />
-
-      {
-        isEditable && (
-          <div class="flex flex-wrap items-center gap-3">
-            <span
-              id="autosave-status"
-              class="text-xs text-neutral-500 dark:text-neutral-400"
-              aria-live="polite"
-            />
-            {/* Saving is automatic. Without scripting it cannot be, so the
-                button appears for the one reader who needs it rather than
-                for everyone. */}
-            <noscript>
-              <button
-                type="submit"
-                name="intent"
-                value="save"
-                class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
-              >
-                Save draft
-              </button>
-            </noscript>
-          </div>
-        )
-      }
-    </form>
-
     {
-      canSeeDocuments && checklist.length > 0 && (
-        <section
-          class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
-          id="documents"
-        >
-          <div class="flex flex-wrap items-baseline justify-between gap-2">
-            <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-              Documents
-            </h2>
-            <p class="text-sm text-neutral-500 dark:text-neutral-400">
-              {documentsComplete
-                ? 'Every required document has been verified.'
-                : `${requiredOutstanding} required ${
-                    requiredOutstanding === 1 ? 'document is' : 'documents are'
-                  } not yet verified.`}
-            </p>
-          </div>
+      (!isEditable || currentStep === CAPTURE_STEP) && (
+        <form method="post" id="capture-form" class="space-y-6">
+          <CaptureFields
+            fields={fields}
+            parties={application!.parties}
+            blocking={blocking}
+            isEditable={isEditable}
+          />
 
-          {[...documentsBySubject].map(([subject, entries]) => (
-            <div class="mt-5">
-              <h3 class="text-sm font-medium text-neutral-700 dark:text-neutral-200">
-                {SUBJECT_LABELS[subject] ?? subject}
-              </h3>
-              <ul class="mt-2 space-y-3">
-                {entries.map(entry => (
-                  <li class="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
-                    <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-                      <span class="font-medium text-neutral-800 dark:text-neutral-100">
-                        {entry.documentName}
-                      </span>
-                      <span
-                        class={`rounded px-1.5 py-0.5 text-xs ${DOCUMENT_STATE_CLASSES[entry.state]}`}
-                      >
-                        {DOCUMENT_STATE_LABELS[entry.state]}
-                      </span>
-                      {entry.requirement === 'required' ? (
-                        <span class="text-xs text-neutral-500 dark:text-neutral-400">
-                          required
-                        </span>
-                      ) : (
-                        <span class="text-xs text-neutral-500 dark:text-neutral-400">
-                          optional
-                        </span>
-                      )}
-                    </div>
-
-                    {entry.uploadedAt && (
-                      <p class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-neutral-500 dark:text-neutral-400">
-                        <span>
-                          {entry.fileName} · filed by {entry.uploadedByName} on{' '}
-                          {dateFormat.format(entry.uploadedAt)}
-                          {entry.versionCount > 1 &&
-                            ` · version ${entry.versionCount}`}
-                          {entry.verifiedByName &&
-                            ` · verified by ${entry.verifiedByName}`}
-                          {entry.expiresAt &&
-                            ` · expires ${dateFormat.format(entry.expiresAt)}`}
-                        </span>
-                        <button
-                          type="button"
-                          data-view-document
-                          data-document-id={entry.documentId}
-                          class="font-medium text-neutral-700 underline hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-neutral-100"
-                        >
-                          View
-                        </button>
-                      </p>
-                    )}
-
-                    {entry.rejectionReason && (
-                      <p class="mt-2 rounded-lg border border-red-300 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:text-red-200">
-                        Rejected: {entry.rejectionReason}
-                      </p>
-                    )}
-
-                    {canUpload && (
-                      <div
-                        class="mt-3 flex flex-wrap items-end gap-3"
-                        data-upload
-                        data-application-id={application!.id}
-                        data-document-type-id={entry.documentTypeId}
-                        data-subject={entry.subject}
-                        data-tracks-expiry={entry.tracksExpiry ? 'yes' : 'no'}
-                      >
-                        {entry.tracksExpiry && (
-                          <label class="text-xs text-neutral-600 dark:text-neutral-300">
-                            Expires on
-                            <input
-                              type="date"
-                              data-expires
-                              class="mt-1 block rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-                            />
-                          </label>
-                        )}
-                        <label class="cursor-pointer rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-200 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800">
-                          {entry.state === 'missing' ? 'Upload' : 'Replace'}
-                          {/* The native control writes its own "no file
-                              chosen" text in the browser's language, which on
-                              a French-locale device puts French in an English
-                              app. Hidden, and driven by this label instead. */}
-                          <input
-                            type="file"
-                            data-file
-                            accept={ACCEPTED_FILES}
-                            capture="environment"
-                            disabled
-                            class="sr-only"
-                          />
-                        </label>
-                        <p
-                          data-status
-                          class="text-xs text-neutral-500 dark:text-neutral-400"
-                        >
-                          Uploading requires JavaScript.
-                        </p>
-                      </div>
-                    )}
-
-                    {canUpload && entry.state !== 'missing' && (
-                      <form
-                        method="post"
-                        class="mt-2"
-                        data-confirm-delete-document
-                      >
-                        <input
-                          type="hidden"
-                          name="documentId"
-                          value={entry.documentId}
-                        />
-                        <button
-                          type="submit"
-                          name="intent"
-                          value="delete-document"
-                          class="rounded-lg border border-red-300 px-3 py-1.5 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
-                        >
-                          Delete
-                        </button>
-                      </form>
-                    )}
-
-                    {canVerify &&
-                      (entry.state === 'under_review' ||
-                        entry.state === 'uploaded') && (
-                        <form method="post" class="mt-3 space-y-2">
-                          <input
-                            type="hidden"
-                            name="documentId"
-                            value={entry.documentId}
-                          />
-                          <input
-                            type="text"
-                            name="reason"
-                            placeholder="Reason — required if you reject this document"
-                            class="w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-                          />
-                          <div class="flex flex-wrap gap-2">
-                            <button
-                              type="submit"
-                              name="intent"
-                              value="verify-document"
-                              class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
-                            >
-                              Verify
-                            </button>
-                            <button
-                              type="submit"
-                              name="intent"
-                              value="reject-document"
-                              class="rounded-lg border border-red-300 px-3 py-1.5 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
-                            >
-                              Reject
-                            </button>
-                          </div>
-                        </form>
-                      )}
-                  </li>
-                ))}
-              </ul>
+          {isEditable && (
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <div class="flex flex-wrap items-center gap-3">
+                <span
+                  id="autosave-status"
+                  class="text-xs text-neutral-500 dark:text-neutral-400"
+                  aria-live="polite"
+                />
+                {/* Saving is automatic. Without scripting it cannot be, so
+                      the button appears for the one reader who needs it
+                      rather than for everyone. */}
+                <noscript>
+                  <button
+                    type="submit"
+                    name="intent"
+                    value="save"
+                    class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
+                  >
+                    Save draft
+                  </button>
+                </noscript>
+              </div>
+              {/* Disabled to start with whatever the page already knows;
+                    kept honest as the officer types by the script below,
+                    which is the same fix the red-bordered fields below get —
+                    autosave has no reload to refresh either of them with. */}
+              <button
+                type="button"
+                id="capture-next-button"
+                disabled={blocking.length > 0}
+                class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {blocking.length > 0
+                  ? `Next (${blocking.length} required field${blocking.length === 1 ? '' : 's'} still empty)`
+                  : 'Next: print the form'}
+              </button>
             </div>
-          ))}
-        </section>
+          )}
+        </form>
       )
     }
 
     {
-      (livePayment || due || dueProblem) && (
-        <section
-          class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
-          id="payment"
-        >
-          <div class="flex flex-wrap items-baseline justify-between gap-2">
-            <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-              Payment
-            </h2>
-            {livePayment &&
-              (canSeePayments ? (
+      (!isEditable || currentStep === DOCUMENTS_STEP) &&
+        canSeeDocuments &&
+        checklist.length > 0 && (
+          <section
+            class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
+            id="documents"
+          >
+            <div class="flex flex-wrap items-baseline justify-between gap-2">
+              <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+                Documents
+              </h2>
+              <p class="text-sm text-neutral-500 dark:text-neutral-400">
+                {documentsComplete
+                  ? 'Every required document has been verified.'
+                  : `${requiredOutstanding} required ${
+                      requiredOutstanding === 1
+                        ? 'document is'
+                        : 'documents are'
+                    } not yet verified.`}
+              </p>
+            </div>
+
+            {[...documentsBySubject].map(([subject, entries]) => (
+              <div class="mt-5">
+                <h3 class="text-sm font-medium text-neutral-700 dark:text-neutral-200">
+                  {SUBJECT_LABELS[subject] ?? subject}
+                </h3>
+                <ul class="mt-2 space-y-3">
+                  {entries.map(entry => (
+                    <li class="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+                      <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+                        <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+                          <span class="font-medium text-neutral-800 dark:text-neutral-100">
+                            {entry.documentName}
+                          </span>
+                          <span
+                            class={`rounded px-1.5 py-0.5 text-xs ${DOCUMENT_STATE_CLASSES[entry.state]}`}
+                          >
+                            {DOCUMENT_STATE_LABELS[entry.state]}
+                          </span>
+                          {entry.requirement === 'required' ? (
+                            <span class="text-xs text-neutral-500 dark:text-neutral-400">
+                              required
+                            </span>
+                          ) : (
+                            <span class="text-xs text-neutral-500 dark:text-neutral-400">
+                              optional
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Upload when there is nothing filed, or the small ×
+                           when there is — never both, so there is exactly one
+                           thing to do with a document at a time. Replacing
+                           directly is gone: delete, then upload, is the same
+                           two steps made visible instead of hidden behind one
+                           button that quietly did both. */}
+                        {canUpload && entry.state === 'missing' && (
+                          <div
+                            class="flex flex-wrap items-center gap-3"
+                            data-upload
+                            data-application-id={application!.id}
+                            data-document-type-id={entry.documentTypeId}
+                            data-subject={entry.subject}
+                            data-tracks-expiry={
+                              entry.tracksExpiry ? 'yes' : 'no'
+                            }
+                          >
+                            {entry.tracksExpiry && (
+                              <label class="text-xs text-neutral-600 dark:text-neutral-300">
+                                Expires on
+                                <input
+                                  type="date"
+                                  data-expires
+                                  class="mt-1 block rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                                />
+                              </label>
+                            )}
+                            <label class="cursor-pointer rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-200 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800">
+                              Upload
+                              {/* The native control writes its own "no file
+                                chosen" text in the browser's language, which
+                                on a French-locale device puts French in an
+                                English app. Hidden, and driven by this label
+                                instead. */}
+                              <input
+                                type="file"
+                                data-file
+                                accept={ACCEPTED_FILES}
+                                capture="environment"
+                                disabled
+                                class="sr-only"
+                              />
+                            </label>
+                            <p
+                              data-status
+                              class="text-xs text-neutral-500 dark:text-neutral-400"
+                            >
+                              Uploading requires JavaScript.
+                            </p>
+                          </div>
+                        )}
+
+                        {canUpload && entry.state !== 'missing' && (
+                          <form method="post" data-confirm-delete-document>
+                            <input
+                              type="hidden"
+                              name="documentId"
+                              value={entry.documentId}
+                            />
+                            <button
+                              type="submit"
+                              name="intent"
+                              value="delete-document"
+                              title="Delete this document"
+                              aria-label="Delete this document"
+                              class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-red-600 transition hover:bg-red-100 dark:text-red-400 dark:hover:bg-red-950"
+                            >
+                              <svg
+                                class="size-4"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                aria-hidden="true"
+                              >
+                                <path d="M18 6 6 18M6 6l12 12" />
+                              </svg>
+                            </button>
+                          </form>
+                        )}
+                      </div>
+
+                      {entry.uploadedAt && (
+                        <p class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-neutral-500 dark:text-neutral-400">
+                          <span>
+                            {entry.fileName} · filed by {entry.uploadedByName}{' '}
+                            on {dateFormat.format(entry.uploadedAt)}
+                            {entry.versionCount > 1 &&
+                              ` · version ${entry.versionCount}`}
+                            {entry.verifiedByName &&
+                              ` · verified by ${entry.verifiedByName}`}
+                            {entry.expiresAt &&
+                              ` · expires ${dateFormat.format(entry.expiresAt)}`}
+                          </span>
+                          <button
+                            type="button"
+                            data-view-document
+                            data-document-id={entry.documentId}
+                            class="font-medium text-neutral-700 underline hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-neutral-100"
+                          >
+                            View
+                          </button>
+                        </p>
+                      )}
+
+                      {entry.rejectionReason && (
+                        <p class="mt-2 rounded-lg border border-red-300 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:text-red-200">
+                          Rejected: {entry.rejectionReason}
+                        </p>
+                      )}
+
+                      {canVerify &&
+                        (entry.state === 'under_review' ||
+                          entry.state === 'uploaded') && (
+                          <form method="post" class="mt-3 space-y-2">
+                            <input
+                              type="hidden"
+                              name="documentId"
+                              value={entry.documentId}
+                            />
+                            <input
+                              type="text"
+                              name="reason"
+                              placeholder="Reason — required if you reject this document"
+                              class="w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                            />
+                            <div class="flex flex-wrap gap-2">
+                              <button
+                                type="submit"
+                                name="intent"
+                                value="verify-document"
+                                class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+                              >
+                                Verify
+                              </button>
+                              <button
+                                type="submit"
+                                name="intent"
+                                value="reject-document"
+                                class="rounded-lg border border-red-300 px-3 py-1.5 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
+                              >
+                                Reject
+                              </button>
+                            </div>
+                          </form>
+                        )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+
+            {isEditable && currentStep === DOCUMENTS_STEP && (
+              <div class="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800">
                 <a
-                  href={`/receipts/${livePayment.id}`}
-                  class="text-sm text-neutral-600 underline dark:text-neutral-300"
+                  href={`/applications/${application!.id}/print`}
+                  class="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
                 >
-                  Receipt {livePayment.receiptNo}
+                  ← Back
                 </a>
-              ) : (
-                /* Not a link: the receipt page needs payment.view, and
+                <a
+                  href={
+                    requiredDocumentsMissing === 0
+                      ? `/applications/${application!.id}?step=${PAYMENT_STEP}`
+                      : undefined
+                  }
+                  aria-disabled={requiredDocumentsMissing > 0}
+                  class:list={[
+                    'rounded-lg px-4 py-2 text-sm font-bold transition',
+                    requiredDocumentsMissing > 0
+                      ? 'cursor-not-allowed bg-neutral-300 text-neutral-500 dark:bg-neutral-700 dark:text-neutral-400'
+                      : 'bg-mint-300 hover:bg-mint-400 text-neutral-800',
+                  ]}
+                >
+                  {requiredDocumentsMissing > 0
+                    ? `Next (${requiredDocumentsMissing} required document${requiredDocumentsMissing === 1 ? '' : 's'} still missing)`
+                    : 'Next: record the payment'}
+                </a>
+              </div>
+            )}
+          </section>
+        )
+    }
+
+    {
+      (!isEditable || currentStep === PAYMENT_STEP) &&
+        (livePayment || due || dueProblem) && (
+          <section
+            class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
+            id="payment"
+          >
+            <div class="flex flex-wrap items-baseline justify-between gap-2">
+              <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+                Payment
+              </h2>
+              {livePayment &&
+                (canSeePayments ? (
+                  <a
+                    href={`/receipts/${livePayment.id}`}
+                    class="text-sm text-neutral-600 underline dark:text-neutral-300"
+                  >
+                    Receipt {livePayment.receiptNo}
+                  </a>
+                ) : (
+                  /* Not a link: the receipt page needs payment.view, and
                    offering a link that refuses is how someone ends up
                    clicking through to a denial. */
-                <span class="text-sm text-neutral-600 dark:text-neutral-300">
-                  Receipt {livePayment.receiptNo}
-                </span>
-              ))}
-          </div>
+                  <span class="text-sm text-neutral-600 dark:text-neutral-300">
+                    Receipt {livePayment.receiptNo}
+                  </span>
+                ))}
+            </div>
 
-          {dueProblem && (
-            <p class="mt-3 rounded-lg border border-amber-300 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200">
-              {dueProblem}
-            </p>
-          )}
+            {dueProblem && (
+              <p class="mt-3 rounded-lg border border-amber-300 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200">
+                {dueProblem}
+              </p>
+            )}
 
-          {livePayment && (
-            <div class="mt-4">
-              {/* Everyone who can see the application sees that it was paid,
+            {livePayment && (
+              <div class="mt-4">
+                {/* Everyone who can see the application sees that it was paid,
                   and by whom — the timeline says as much already. The figures
                   are what payment.view gates. */}
-              <p class="text-sm text-neutral-600 dark:text-neutral-300">
-                {canSeePayments
-                  ? `${formatMoney(livePayment.totalAmount, livePayment.currency)} · ${METHOD_LABELS[livePayment.method]}`
-                  : 'Recorded'}{' '}
-                · taken by {livePayment.recordedByName} on{' '}
-                {dateFormat.format(livePayment.receivedAt)}
-              </p>
+                <p class="text-sm text-neutral-600 dark:text-neutral-300">
+                  {canSeePayments
+                    ? `${formatMoney(livePayment.totalAmount, livePayment.currency)} · ${METHOD_LABELS[livePayment.method]}`
+                    : 'Recorded'}{' '}
+                  · taken by {livePayment.recordedByName} on{' '}
+                  {dateFormat.format(livePayment.receivedAt)}
+                </p>
 
-              {canSeePayments && (
-                <table class="mt-3 w-full text-sm">
-                  <tbody>
-                    {livePayment.lines.map(line => (
-                      <tr class="border-t border-neutral-200 dark:border-neutral-800">
-                        <td class="py-1.5 text-neutral-600 dark:text-neutral-300">
-                          {line.label}
+                {canSeePayments && (
+                  <table class="mt-3 w-full text-sm">
+                    <tbody>
+                      {livePayment.lines.map(line => (
+                        <tr class="border-t border-neutral-200 dark:border-neutral-800">
+                          <td class="py-1.5 text-neutral-600 dark:text-neutral-300">
+                            {line.label}
+                          </td>
+                          <td class="py-1.5 text-right text-neutral-800 tabular-nums dark:text-neutral-100">
+                            {formatMoney(line.amount, livePayment.currency)}
+                          </td>
+                        </tr>
+                      ))}
+                      <tr class="border-t-2 border-neutral-300 dark:border-neutral-700">
+                        <td class="py-1.5 font-medium text-neutral-800 dark:text-neutral-100">
+                          Total
                         </td>
-                        <td class="py-1.5 text-right text-neutral-800 tabular-nums dark:text-neutral-100">
-                          {formatMoney(line.amount, livePayment.currency)}
+                        <td class="py-1.5 text-right font-bold text-neutral-800 tabular-nums dark:text-neutral-100">
+                          {formatMoney(
+                            livePayment.totalAmount,
+                            livePayment.currency
+                          )}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                )}
+
+                {livePayment.varianceReason && canSeePayments && (
+                  <p class="mt-3 rounded-lg border border-amber-300 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200">
+                    {livePayment.varianceReason}
+                  </p>
+                )}
+
+                {refunds.length > 0 && canSeePayments && (
+                  <ul class="mt-3 space-y-1 text-sm text-neutral-600 dark:text-neutral-300">
+                    {refunds.map(refund => (
+                      <li>
+                        Refunded{' '}
+                        {formatMoney(refund.totalAmount, refund.currency)} on{' '}
+                        {dateFormat.format(refund.receivedAt)} ·{' '}
+                        <a href={`/receipts/${refund.id}`} class="underline">
+                          {refund.receiptNo}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+
+            {due && (
+              <form method="post" class="mt-4 space-y-4" data-payment-form>
+                <table class="w-full text-sm">
+                  <tbody>
+                    {due.components.map(component => (
+                      <tr class="border-t border-neutral-200 dark:border-neutral-800">
+                        <td class="py-2 text-neutral-600 dark:text-neutral-300">
+                          <label for={`amount-${component.code}`}>
+                            {component.label}
+                          </label>
+                          {component.requirement === 'optional' ? (
+                            <span class="ml-2 text-xs text-neutral-500 dark:text-neutral-400">
+                              optional
+                            </span>
+                          ) : (
+                            <span class="ml-2 text-xs text-neutral-500 dark:text-neutral-400">
+                              set by Configuration
+                            </span>
+                          )}
+                        </td>
+                        <td class="w-40 py-2 text-right">
+                          <input
+                            id={`amount-${component.code}`}
+                            type="text"
+                            inputmode="decimal"
+                            name={`amount.${component.code}`}
+                            value={component.amount}
+                            readonly={component.requirement !== 'optional'}
+                            data-amount-input
+                            class:list={[
+                              'w-full rounded-lg border px-3 py-1.5 text-right text-sm tabular-nums',
+                              component.requirement === 'optional'
+                                ? 'border-neutral-300 bg-white dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100'
+                                : 'cursor-not-allowed border-neutral-200 bg-neutral-100 text-neutral-600 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300',
+                            ]}
+                          />
                         </td>
                       </tr>
                     ))}
                     <tr class="border-t-2 border-neutral-300 dark:border-neutral-700">
-                      <td class="py-1.5 font-medium text-neutral-800 dark:text-neutral-100">
+                      <td class="py-2 font-medium text-neutral-800 dark:text-neutral-100">
                         Total
                       </td>
-                      <td class="py-1.5 text-right font-bold text-neutral-800 tabular-nums dark:text-neutral-100">
-                        {formatMoney(
-                          livePayment.totalAmount,
-                          livePayment.currency
-                        )}
+                      <td
+                        data-payment-total
+                        class="py-2 text-right font-bold text-neutral-800 tabular-nums dark:text-neutral-100"
+                      >
+                        {formatMoney(initialTotal)}
                       </td>
                     </tr>
                   </tbody>
                 </table>
-              )}
 
-              {livePayment.varianceReason && canSeePayments && (
-                <p class="mt-3 rounded-lg border border-amber-300 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200">
-                  {livePayment.varianceReason}
-                </p>
-              )}
-
-              {refunds.length > 0 && canSeePayments && (
-                <ul class="mt-3 space-y-1 text-sm text-neutral-600 dark:text-neutral-300">
-                  {refunds.map(refund => (
-                    <li>
-                      Refunded{' '}
-                      {formatMoney(refund.totalAmount, refund.currency)} on{' '}
-                      {dateFormat.format(refund.receivedAt)} ·{' '}
-                      <a href={`/receipts/${refund.id}`} class="underline">
-                        {refund.receiptNo}
-                      </a>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
-
-          {due && (
-            <form method="post" class="mt-4 space-y-4" data-payment-form>
-              <table class="w-full text-sm">
-                <tbody>
-                  {due.components.map(component => (
-                    <tr class="border-t border-neutral-200 dark:border-neutral-800">
-                      <td class="py-2 text-neutral-600 dark:text-neutral-300">
-                        <label for={`amount-${component.code}`}>
-                          {component.label}
-                        </label>
-                        {component.requirement === 'optional' ? (
-                          <span class="ml-2 text-xs text-neutral-500 dark:text-neutral-400">
-                            optional
-                          </span>
-                        ) : (
-                          <span class="ml-2 text-xs text-neutral-500 dark:text-neutral-400">
-                            set by Configuration
-                          </span>
-                        )}
-                      </td>
-                      <td class="w-40 py-2 text-right">
-                        <input
-                          id={`amount-${component.code}`}
-                          type="text"
-                          inputmode="decimal"
-                          name={`amount.${component.code}`}
-                          value={component.amount}
-                          readonly={component.requirement !== 'optional'}
-                          data-amount-input
-                          class:list={[
-                            'w-full rounded-lg border px-3 py-1.5 text-right text-sm tabular-nums',
-                            component.requirement === 'optional'
-                              ? 'border-neutral-300 bg-white dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100'
-                              : 'cursor-not-allowed border-neutral-200 bg-neutral-100 text-neutral-600 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300',
-                          ]}
-                        />
-                      </td>
-                    </tr>
-                  ))}
-                  <tr class="border-t-2 border-neutral-300 dark:border-neutral-700">
-                    <td class="py-2 font-medium text-neutral-800 dark:text-neutral-100">
-                      Total
-                    </td>
-                    <td
-                      data-payment-total
-                      class="py-2 text-right font-bold text-neutral-800 tabular-nums dark:text-neutral-100"
+                <div class="flex flex-wrap gap-3">
+                  <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                    Method
+                    <select
+                      name="method"
+                      class="mt-1 block rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
                     >
-                      {formatMoney(initialTotal)}
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+                      {PAYMENT_METHODS.map(method => (
+                        <option value={method}>{METHOD_LABELS[method]}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label class="flex-1 text-sm text-neutral-600 dark:text-neutral-300">
+                    Cheque or transfer reference
+                    <input
+                      type="text"
+                      name="methodReference"
+                      class="mt-1 block w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                    />
+                  </label>
+                </div>
 
-              <div class="flex flex-wrap gap-3">
-                <label class="text-sm text-neutral-600 dark:text-neutral-300">
-                  Method
-                  <select
-                    name="method"
-                    class="mt-1 block rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-                  >
-                    {PAYMENT_METHODS.map(method => (
-                      <option value={method}>{METHOD_LABELS[method]}</option>
-                    ))}
-                  </select>
-                </label>
-                <label class="flex-1 text-sm text-neutral-600 dark:text-neutral-300">
-                  Cheque or transfer reference
+                <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+                  Reason, if the amount differs from the fee schedule
                   <input
                     type="text"
-                    name="methodReference"
-                    class="mt-1 block w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                    name="varianceReason"
+                    class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
                   />
                 </label>
+
+                <button
+                  type="submit"
+                  name="intent"
+                  value="record-payment"
+                  class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
+                >
+                  Record payment and issue receipt
+                </button>
+              </form>
+            )}
+
+            {isEditable && currentStep === PAYMENT_STEP && (
+              <div class="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800">
+                <a
+                  href={`/applications/${application!.id}?step=${DOCUMENTS_STEP}`}
+                  class="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                >
+                  ← Back
+                </a>
+                <a
+                  href={
+                    livePayment
+                      ? `/applications/${application!.id}?step=${SUBMIT_STEP}`
+                      : undefined
+                  }
+                  aria-disabled={livePayment === null}
+                  class:list={[
+                    'rounded-lg px-4 py-2 text-sm font-bold transition',
+                    livePayment === null
+                      ? 'cursor-not-allowed bg-neutral-300 text-neutral-500 dark:bg-neutral-700 dark:text-neutral-400'
+                      : 'bg-mint-300 hover:bg-mint-400 text-neutral-800',
+                  ]}
+                >
+                  {livePayment === null
+                    ? 'Next (payment not yet recorded)'
+                    : 'Next: submit for review'}
+                </a>
               </div>
-
-              <label class="block text-sm text-neutral-600 dark:text-neutral-300">
-                Reason, if the amount differs from the fee schedule
-                <input
-                  type="text"
-                  name="varianceReason"
-                  class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-                />
-              </label>
-
-              <button
-                type="submit"
-                name="intent"
-                value="record-payment"
-                class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
-              >
-                Record payment and issue receipt
-              </button>
-            </form>
-          )}
-        </section>
-      )
+            )}
+          </section>
+        )
     }
 
     {
-      actions.length > 0 && (
+      (!isEditable || currentStep === SUBMIT_STEP) && actions.length > 0 && (
         <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
           <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
             Your next step
@@ -1075,7 +1235,20 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     }
 
     {
-      history.length > 0 && (
+      isEditable && currentStep === SUBMIT_STEP && (
+        <div class="flex">
+          <a
+            href={`/applications/${application!.id}?step=${PAYMENT_STEP}`}
+            class="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+          >
+            ← Back
+          </a>
+        </div>
+      )
+    }
+
+    {
+      (!isEditable || currentStep === SUBMIT_STEP) && history.length > 0 && (
         <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
           <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
             History
@@ -1147,6 +1320,55 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     backLink.addEventListener('click', event => {
       event.preventDefault();
       window.history.back();
+    });
+  }
+
+  // A mandatory field's red border is drawn once, from what was still empty
+  // when the page rendered — but autosave keeps saving in the background with
+  // no reload, so a field the officer just filled in would otherwise stay red
+  // until they reloaded, looking like data that never saved when it did. Kept
+  // honest here instead: as the officer types, each mandatory field's own
+  // border reacts to its own current value, and the Next button's label and
+  // disabled state react to how many are still empty overall.
+  const mandatoryFields = [
+    ...document.querySelectorAll<HTMLInputElement | HTMLSelectElement>(
+      '#capture-form [data-mandatory]'
+    ),
+  ];
+  const captureNextButton = document.getElementById(
+    'capture-next-button'
+  ) as HTMLButtonElement | null;
+
+  const syncMandatoryField = (el: HTMLInputElement | HTMLSelectElement) => {
+    const empty = el.value.trim() === '';
+    el.classList.toggle('border-red-400', empty);
+    el.classList.toggle('dark:border-red-700', empty);
+    el.classList.toggle('border-neutral-300', !empty);
+    el.classList.toggle('dark:border-neutral-600', !empty);
+  };
+
+  const syncCaptureNextButton = () => {
+    if (!captureNextButton) return;
+    const remaining = mandatoryFields.filter(
+      el => el.value.trim() === ''
+    ).length;
+    captureNextButton.disabled = remaining > 0;
+    captureNextButton.textContent =
+      remaining > 0
+        ? `Next (${remaining} required field${remaining === 1 ? '' : 's'} still empty)`
+        : 'Next: print the form';
+  };
+
+  for (const el of mandatoryFields) {
+    el.addEventListener('input', () => {
+      syncMandatoryField(el);
+      syncCaptureNextButton();
+    });
+    // A select's value can change without an 'input' event in some browsers;
+    // 'change' is the one every browser fires for it.
+    el.addEventListener('change', () => {
+      syncMandatoryField(el);
+      syncCaptureNextButton();
     });
   }
 
@@ -1416,6 +1638,19 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         inFlight = false;
       }
     };
+
+    if (captureNextButton) {
+      captureNextButton.addEventListener('click', async () => {
+        window.clearTimeout(pending);
+        captureNextButton.disabled = true;
+        // Flushes whatever autosave has not yet sent. A no-op if nothing
+        // changed since the last save — save() itself checks `dirty`.
+        await save();
+        window.location.assign(
+          window.location.pathname.replace(/\/$/, '') + '/print'
+        );
+      });
+    }
 
     form.addEventListener('input', () => {
       dirty = true;
