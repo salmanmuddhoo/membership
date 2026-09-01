@@ -136,3 +136,18 @@
 .dark .islamic-pattern {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='88' height='88' viewBox='0 0 88 88'%3E%3Cg fill='none' stroke='%236ee7b7' stroke-opacity='0.10' stroke-width='1.2'%3E%3Cg transform='translate(44 44)'%3E%3Crect x='-13' y='-13' width='26' height='26' rx='1'/%3E%3Crect x='-13' y='-13' width='26' height='26' rx='1' transform='rotate(45)'/%3E%3C/g%3E%3Cg transform='translate(0 0)'%3E%3Crect x='-13' y='-13' width='26' height='26' rx='1'/%3E%3Crect x='-13' y='-13' width='26' height='26' rx='1' transform='rotate(45)'/%3E%3C/g%3E%3Cg transform='translate(88 0)'%3E%3Crect x='-13' y='-13' width='26' height='26' rx='1'/%3E%3Crect x='-13' y='-13' width='26' height='26' rx='1' transform='rotate(45)'/%3E%3C/g%3E%3Cg transform='translate(0 88)'%3E%3Crect x='-13' y='-13' width='26' height='26' rx='1'/%3E%3Crect x='-13' y='-13' width='26' height='26' rx='1' transform='rotate(45)'/%3E%3C/g%3E%3Cg transform='translate(88 88)'%3E%3Crect x='-13' y='-13' width='26' height='26' rx='1'/%3E%3Crect x='-13' y='-13' width='26' height='26' rx='1' transform='rotate(45)'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
 }
+
+/*
+  @tailwindcss/forms gives every <select> a custom arrow and the
+  padding-right:2.5rem that keeps text clear of it — but every <select> in
+  this app also carries a px-3 (or px-2) utility class for its left padding,
+  and utilities live in a higher-precedence layer than the plugin's base
+  styles. That utility's padding-right silently wins the cascade and shrinks
+  the space back down, which is what let the arrow sit on top of the text.
+  Unlayered rules outrank every `@layer` rule regardless of source order, so
+  reasserting it here — outside any layer — restores it everywhere without
+  editing every select's class list, including ones added later.
+*/
+select {
+  padding-right: 2.5rem;
+}

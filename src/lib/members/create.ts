@@ -72,6 +72,26 @@ export async function createMemberFromApplication(
   );
   const { id: memberId, member_no: memberNo } = member.rows[0];
 
+  // The application's own reference — APP-2026-000003, allocated at capture,
+  // before anyone was a member — is replaced by the member's number. From
+  // here on there is one identifier, not two: AB0001 is the application that
+  // admitted them just as much as it is their Shares account and their MSA.
+  // `reference` carries no trigger against being changed (unlike the
+  // append-only tables), so this is a plain update inside the same
+  // transaction as the member it now matches.
+  //
+  // What this does not reach back and rename: the signed form already
+  // printed carries the old reference on paper, and any document already
+  // filed sits in a SharePoint folder named after it (applicationFolderPath
+  // reads the CURRENT reference, so a document filed after this point goes
+  // to a new, AB-numbered folder instead). Both are archives of a moment,
+  // not live views, and are expected to read differently from the record
+  // that has since moved on.
+  await client.query(
+    `update membership_application set reference = $2 where id = $1`,
+    [application.id, memberNo]
+  );
+
   // A unique index on (member_id, account_type_id) means a retry that somehow
   // ran twice fails here rather than quietly opening a second Shares account
   // (S-309: exactly one of each).
@@ -102,6 +122,22 @@ export async function createMemberFromApplication(
         fromApplication: application.reference,
         membershipType: application.membershipTypeCode,
       },
+    },
+    client
+  );
+
+  // Against the APPLICATION, not the member: someone reading that record's
+  // own history should see why its reference changed, not only find out by
+  // noticing the member entry above.
+  await recordAudit(
+    {
+      actorUserId: actor.userId,
+      actorDescription: actor.email,
+      action: 'membership.application.renumbered',
+      entityType: 'membership_application',
+      entityId: application.id,
+      previousValue: { reference: application.reference },
+      newValue: { reference: memberNo },
     },
     client
   );

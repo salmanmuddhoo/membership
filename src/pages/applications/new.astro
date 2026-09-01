@@ -123,17 +123,35 @@ if (Astro.request.method === 'POST') {
       <CaptureFields fields={fields} parties={[]} />
 
       <div class="flex flex-wrap items-center gap-3">
+        {
+          /* Hidden until the script below un-hides it, so a reader with
+            scripting off never sees an inert button — they get the noscript
+            one, which works by being a real form submission. */
+        }
+        <button
+          type="button"
+          id="next-button"
+          hidden
+          class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Next
+        </button>
         <span
           id="autosave-status"
           class="text-xs text-neutral-500 dark:text-neutral-400"
           aria-live="polite">Saved as you type.</span
         >
+        {
+          /* Next is driven by the script below. Without it, submitting this
+            button the ordinary way saves and moves on in one step, which is
+            the same thing Next does with scripting on. */
+        }
         <noscript>
           <button
             type="submit"
             class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
           >
-            Save draft
+            Next
           </button>
         </noscript>
       </div>
@@ -153,10 +171,21 @@ if (Astro.request.method === 'POST') {
     'capture-form'
   ) as HTMLFormElement | null;
   const status = document.getElementById('autosave-status');
+  const nextButton = document.getElementById(
+    'next-button'
+  ) as HTMLButtonElement | null;
+
   if (form && status) {
     let dirty = false;
     let inFlight = false;
     let pending: number | undefined;
+    // Set the moment the first save creates the application. Once this is
+    // known, a later response is judged only by whether the request
+    // succeeded — not by re-checking `created`/`reference`, which this same
+    // endpoint stops returning after the application exists. Getting that
+    // wrong before left every save after the first quietly unable to report
+    // itself, though the data was still being saved underneath.
+    let applicationId: string | null = null;
 
     const anythingEntered = () =>
       [...new FormData(form).entries()].some(
@@ -183,16 +212,25 @@ if (Astro.request.method === 'POST') {
         if (!response.ok) throw new Error(String(response.status));
 
         const result = await response.json();
-        if (!result.created) return;
+
+        if (!applicationId) {
+          // Nothing existed before this save, so this response is the one
+          // that says whether it does now.
+          if (!result.created) return;
+          applicationId = result.id;
+
+          // From here on this IS an application. replaceState rather than a
+          // navigation: the officer is mid-word, and reloading the page under
+          // them to show a heading they did not ask for is not worth the
+          // interruption. window.location updates with it, so the next save
+          // above posts to /applications/<id> rather than back here.
+          window.history.replaceState({}, '', `/applications/${result.id}`);
+          status.textContent = `${result.reference} saved at ${new Date().toLocaleTimeString('en-GB')}`;
+        } else {
+          status.textContent = `Saved at ${new Date().toLocaleTimeString('en-GB')}`;
+        }
 
         dirty = false;
-        status.textContent = `${result.reference} saved at ${new Date().toLocaleTimeString('en-GB')}`;
-
-        // From here on this IS an application, and every later save belongs to
-        // it. replaceState rather than a navigation: the officer is mid-word,
-        // and reloading the page under them to show a heading they did not ask
-        // for is not worth the interruption.
-        window.history.replaceState({}, '', `/applications/${result.id}`);
       } catch {
         // Saying "saved" when nothing was saved is the one thing this must
         // never do: the officer would close the tablet trusting it.
@@ -212,5 +250,36 @@ if (Astro.request.method === 'POST') {
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') void save();
     });
+
+    if (nextButton) {
+      nextButton.hidden = false;
+
+      nextButton.addEventListener('click', async () => {
+        window.clearTimeout(pending);
+        nextButton.disabled = true;
+
+        // Flushes whatever is still unsaved. If the application already
+        // exists and nothing changed since the last save, this is a no-op —
+        // save() itself checks `dirty`.
+        await save();
+
+        if (applicationId) {
+          // A real navigation, not replaceState: the officer asked to move
+          // on, and /applications/<id> is a different page — documents,
+          // submission, the timeline — that this one was never going to grow
+          // into.
+          window.location.assign(`/applications/${applicationId}`);
+          return;
+        }
+
+        nextButton.disabled = false;
+        if (!anythingEntered()) {
+          status.textContent = 'Add at least one detail before continuing.';
+        }
+        // Otherwise save() already explained itself (e.g. a dropped
+        // connection), and that message should stand rather than being
+        // overwritten here.
+      });
+    }
   }
 </script>
