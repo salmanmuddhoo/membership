@@ -201,6 +201,7 @@ describe('M3: the walking skeleton, end to end', () => {
   it('takes an application from capture to a member with an MSA', async () => {
     const { capture, workflow, members } = await load();
     const id = await captureComplete();
+    const capturedReference = (await capture.loadApplication(id))!.reference;
 
     const submitted = await workflow.submitApplication(id, officer);
     expect(submitted).toEqual({ status: 'new' });
@@ -242,6 +243,14 @@ describe('M3: the walking skeleton, end to end', () => {
     expect(member!.applicationReference).toBe(
       (await capture.loadApplication(id))!.reference
     );
+
+    // From approval on there is one identifier, not two: the application
+    // takes the member's own number rather than keeping the APP- reference
+    // it was captured under.
+    const application = await capture.loadApplication(id);
+    expect(application!.reference).toBe(decided.member!.memberNo);
+    expect(application!.reference).not.toBe(capturedReference);
+    expect(capturedReference).toMatch(/^APP-\d{4}-\d{6}$/);
   });
 
   it('records every transition with actor, timestamp and comment (S-307)', async () => {
@@ -515,7 +524,7 @@ describe('S-305 and S-306: a return or a rejection must say why', () => {
   });
 
   it('creates no member when the decision is a rejection', async () => {
-    const { workflow, members } = await load();
+    const { capture, workflow, members } = await load();
     const id = await captureComplete();
     await workflow.submitApplication(id, officer);
     await workflow.reviewApplication(
@@ -523,6 +532,7 @@ describe('S-305 and S-306: a return or a rejection must say why', () => {
       { outcome: 'forward', comment: 'Complete.' },
       secretary
     );
+    const capturedReference = (await capture.loadApplication(id))!.reference;
 
     const before = await run(appUrl, 'select count(*) as n from member');
     const decided = await workflow.decideApplication(
@@ -536,6 +546,12 @@ describe('S-305 and S-306: a return or a rejection must say why', () => {
     expect(decided.member).toBeUndefined();
     const after = await run(appUrl, 'select count(*) as n from member');
     expect(after.rows[0].n).toBe(before.rows[0].n);
+
+    // No member means no number to take: a rejected application keeps the
+    // reference it was captured under, for good.
+    expect((await capture.loadApplication(id))!.reference).toBe(
+      capturedReference
+    );
   });
 });
 
@@ -726,6 +742,41 @@ describe('S-308 and S-309: what approval creates', () => {
     expect(
       audited.rows.every(r => r.actor_description === president.email)
     ).toBe(true);
+  });
+
+  it('audits the reference change against the application itself', async () => {
+    const { capture, workflow, members } = await load();
+    const id = await captureComplete();
+    const capturedReference = (await capture.loadApplication(id))!.reference;
+    await workflow.submitApplication(id, officer);
+    await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Complete.' },
+      secretary
+    );
+    const decided = await workflow.decideApplication(
+      id,
+      { outcome: 'approve', comment: '' },
+      president,
+      members.createMemberFromApplication
+    );
+
+    // Findable from the APPLICATION's own history, not only by knowing to
+    // look at the member's.
+    const audited = await run(
+      appUrl,
+      `select previous_value->>'reference' as was,
+              new_value->>'reference' as now
+         from audit_event
+        where action = 'membership.application.renumbered'
+          and entity_type = 'membership_application'
+          and entity_id = $1`,
+      [id]
+    );
+
+    expect(audited.rows).toHaveLength(1);
+    expect(audited.rows[0].was).toBe(capturedReference);
+    expect(audited.rows[0].now).toBe(decided.member!.memberNo);
   });
 });
 

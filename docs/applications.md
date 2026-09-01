@@ -127,6 +127,26 @@ account as well would invite the copies to disagree, and there is no question
 which would be right — so the accounts carry no number of their own and the
 screens read it from the member.
 
+**An approved application takes the member's number as its own reference.**
+`APP-YYYY-000001` is what it is called before anyone is a member — allocated at
+capture, when there is nothing else to call it. `createMemberFromApplication`
+overwrites `membership_application.reference` with the new member's `member_no`
+inside the same transaction that creates them, so from approval onward there is
+one identifier, not two: the application, the Shares account and the MSA all
+read AB0001. A rejected application keeps its `APP-` reference forever — no
+member is ever created from it.
+
+This is a rename, not a new record, and it reaches everything that reads the
+`reference` column live: the applications list, receipts, the printed form if
+reprinted. It does **not** reach back and correct what was already fixed at an
+earlier moment — the signed form the applicant already has in hand was printed
+with `APP-2026-000003` on it, and any document filed before approval sits in a
+SharePoint folder of that name (`applicationFolderPath` reads whatever
+`reference` says at the moment a document is filed). A document filed _after_
+approval goes to a new, AB-numbered folder instead. Both are archives of a
+moment, not live views, and are expected to disagree with a record that has
+since moved on — the same principle as a superseded fee version.
+
 Acceptable, but not free: it is why an empty form creates nothing. A reference
 allocated to a form nobody typed into is a gap with no story behind it.
 
