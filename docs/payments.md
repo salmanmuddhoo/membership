@@ -58,6 +58,17 @@ through a JavaScript float is a rounding error waiting for a large enough
 figure, and the variance check on every receipt rests on the arithmetic being
 exact.
 
+## What a member is
+
+A member is **one number and two accounts**. AB0001 is the person, their Shares
+account and their MSA. Contributing to Shares is what makes someone a member;
+the MSA opens beside it at the same moment.
+
+That shapes the fee schedule: **Shares is required, the MSA deposit is
+optional.** The account opens either way, and whether money goes into it at
+joining is configuration. Both are the member's own money and both are
+refundable; the entrance fee and Takaful are the Society's once approved.
+
 ## Variance
 
 `expectedTotal` is the sum of the **required** components of the fee version in

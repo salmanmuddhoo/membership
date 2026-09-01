@@ -183,7 +183,7 @@ describe('S-210: every configuration change is audited', () => {
     const { config, pool } = await load();
     const [type] = await config.listAccountTypes();
 
-    await config.setMembershipDefault(type.id, actor);
+    await config.setOpensOnApproval(type.id, true, actor);
 
     // Same pool, a plain query afterwards: if set_config had not been scoped
     // to the transaction, this write would inherit the previous actor and
@@ -289,14 +289,17 @@ describe('S-205: membership types and their field rules', () => {
   });
 });
 
-describe('S-206: account types and the default product', () => {
-  it('ships the MSA as the membership default', async () => {
+describe('S-206: the accounts a membership opens', () => {
+  // A membership opens Shares and an MSA together, both carrying the member's
+  // number. More than one, which is why this is a set rather than "the
+  // default".
+  it('ships Shares and the MSA as the accounts an approval opens', async () => {
     const { config } = await load();
-    const dflt = await config.getMembershipDefaultAccountType();
-    expect(dflt?.code).toBe('msa');
+    const opened = await config.getAccountTypesOpenedOnApproval();
+    expect(opened.map(t => t.code)).toEqual(['shares', 'msa']);
   });
 
-  it('opens the new type once the default is changed', async () => {
+  it('opens a further type once one is added', async () => {
     const { config } = await load();
 
     const newId = await config.createAccountType(
@@ -312,41 +315,89 @@ describe('S-206: account types and the default product', () => {
       actor
     );
 
-    await config.setMembershipDefault(newId, actor);
+    await config.setOpensOnApproval(newId, true, actor);
 
-    // What an approval will read.
-    const dflt = await config.getMembershipDefaultAccountType();
-    expect(dflt?.code).toBe('premium_savings');
+    // Added to what an approval opens, not swapped for it. Marking one used to
+    // clear the others, which would silently stop opening the MSA.
+    const opened = await config.getAccountTypesOpenedOnApproval();
+    expect(opened.map(t => t.code).sort()).toEqual([
+      'msa',
+      'premium_savings',
+      'shares',
+    ]);
 
-    // And exactly one, not two.
-    const defaults = (await config.listAccountTypes()).filter(
-      a => a.isMembershipDefault
-    );
-    expect(defaults).toHaveLength(1);
-
-    const msa = (await config.listAccountTypes()).find(a => a.code === 'msa')!;
-    await config.setMembershipDefault(msa.id, actor);
+    // And it can be taken off again.
+    await config.setOpensOnApproval(newId, false, actor);
+    expect(
+      (await config.getAccountTypesOpenedOnApproval()).map(t => t.code)
+    ).toEqual(['shares', 'msa']);
   });
 
-  it('refuses to deactivate the default product', async () => {
+  // An approval that opens nothing is the half-created member S-308 exists to
+  // prevent, and it would not be discovered until someone approved.
+  it('refuses to clear the last account an approval opens', async () => {
     const { config } = await load();
-    const msa = (await config.listAccountTypes()).find(a => a.code === 'msa')!;
+    const types = await config.listAccountTypes();
+    const shares = types.find(a => a.code === 'shares')!;
+    const msa = types.find(a => a.code === 'msa')!;
+
+    await config.setOpensOnApproval(shares.id, false, actor);
 
     await expect(
-      config.updateAccountType(
-        msa.id,
+      config.setOpensOnApproval(msa.id, false, actor)
+    ).rejects.toThrowError(/at least one account/);
+
+    await config.setOpensOnApproval(shares.id, true, actor);
+  });
+
+  // Deactivating one of several is fine — the others still open. Deactivating
+  // the last one would leave an approval with nothing to open.
+  it('refuses to deactivate the last account an approval opens', async () => {
+    const { config } = await load();
+    const deactivate = async (code: string) => {
+      const type = (await config.listAccountTypes()).find(
+        a => a.code === code
+      )!;
+      return config.updateAccountType(
+        type.id,
         {
-          name: msa.name,
-          category: msa.category,
-          minimumOpeningAmount: msa.minimumOpeningAmount,
-          checklistId: msa.checklistId,
-          requiresApproval: msa.requiresApproval,
-          defaultStatus: msa.defaultStatus,
+          name: type.name,
+          category: type.category,
+          minimumOpeningAmount: type.minimumOpeningAmount,
+          checklistId: type.checklistId,
+          requiresApproval: type.requiresApproval,
+          defaultStatus: type.defaultStatus,
           isActive: false,
         },
         actor
-      )
-    ).rejects.toThrowError(/membership default product/);
+      );
+    };
+
+    // Shares goes: the MSA still opens, so nothing is left half-configured.
+    await deactivate('shares');
+
+    // The MSA cannot, because now it is the only one left.
+    await expect(deactivate('msa')).rejects.toThrowError(
+      /only product a membership approval opens/
+    );
+
+    // Put Shares back for the tests that follow.
+    const shares = (await config.listAccountTypes()).find(
+      a => a.code === 'shares'
+    )!;
+    await config.updateAccountType(
+      shares.id,
+      {
+        name: shares.name,
+        category: shares.category,
+        minimumOpeningAmount: shares.minimumOpeningAmount,
+        checklistId: shares.checklistId,
+        requiresApproval: shares.requiresApproval,
+        defaultStatus: shares.defaultStatus,
+        isActive: true,
+      },
+      actor
+    );
   });
 
   it('refuses a code that is not a code', async () => {
@@ -369,7 +420,10 @@ describe('S-206: account types and the default product', () => {
 });
 
 describe('S-207: fee schedules', () => {
-  it('ships the amounts FRD 7.8.1 confirms, totalling Rs 13,500', async () => {
+  // Shares is what makes someone a member and is mandatory. The MSA deposit is
+  // optional: the account opens either way, and whether money goes into it at
+  // joining is configuration.
+  it('requires Rs 8,500, with the MSA deposit optional on top', async () => {
     const { config } = await load();
     const fees = await config.getCurrentFees('individual_membership');
 
@@ -379,26 +433,32 @@ describe('S-207: fee schedules', () => {
     expect(amounts.shares).toBe('5000.00');
     expect(amounts.msa_deposit).toBe('5000.00');
 
+    const required = Object.fromEntries(fees.map(f => [f.code, f.requirement]));
+    expect(required.shares).toBe('required');
+    expect(required.msa_deposit).toBe('optional');
+
     const charged = fees
       .filter(f => f.requirement === 'required')
       .reduce((sum, f) => sum + Number(f.amount), 0);
-    expect(charged).toBe(13500);
+    expect(charged).toBe(8500);
   });
 
   it('distinguishes not-applicable from unconfigured', async () => {
     const { config } = await load();
 
-    // FRD 7.8.3 names a processing fee but confirms no amount, and FRD 7.10.6
-    // omits the MSA deposit for minors. Both must read as decisions, not gaps.
+    // FRD 7.8.3 names a processing fee but confirms no amount, so it ships
+    // configured and switched off — a decision, not a gap. Three states, and
+    // the middle one matters: optional is offered and may be declined, not
+    // applicable cannot be charged at all.
     const individual = await config.getCurrentFees('individual_membership');
     expect(individual.find(f => f.code === 'processing')?.requirement).toBe(
       'not_applicable'
     );
+    expect(individual.find(f => f.code === 'msa_deposit')?.requirement).toBe(
+      'optional'
+    );
 
     const minor = await config.getCurrentFees('minor_membership');
-    expect(minor.find(f => f.code === 'msa_deposit')?.requirement).toBe(
-      'not_applicable'
-    );
     const minorTotal = minor
       .filter(f => f.requirement === 'required')
       .reduce((sum, f) => sum + Number(f.amount), 0);
@@ -414,6 +474,7 @@ describe('S-207: fee schedules', () => {
     // Stand in for a receipt: the version id an application recorded when it
     // charged, and the amount it charged for the entrance fee.
     const chargedVersionId = schedule.current!.id;
+    const chargedVersionNo = schedule.current!.versionNo;
     const chargedEntrance = schedule.current!.components.find(
       c => c.code === 'entrance'
     )!.amount;
@@ -448,10 +509,13 @@ describe('S-207: fee schedules', () => {
     const reread = (await config.listFeeSchedules()).find(
       s => s.code === 'individual_membership'
     )!;
-    expect(reread.current!.versionNo).toBe(2);
-    expect(reread.history.map(v => v.versionNo)).toContain(1);
+    // Relative to whatever was live, not a fixed number: a migration that
+    // publishes a version is a normal thing to happen, and this test is about
+    // supersession rather than about how many versions exist.
+    expect(reread.current!.versionNo).toBe(chargedVersionNo + 1);
+    expect(reread.history.map(v => v.versionNo)).toContain(chargedVersionNo);
     expect(
-      reread.history.find(v => v.versionNo === 1)!.supersededAt
+      reread.history.find(v => v.versionNo === chargedVersionNo)!.supersededAt
     ).not.toBeNull();
   });
 

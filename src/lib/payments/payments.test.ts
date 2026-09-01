@@ -102,14 +102,14 @@ function principalFor(
   };
 }
 
-// The individual schedule seeded by 0010: 1500 + 2000 + 5000 + 5000.
+// What an individual must pay: 1500 + 2000 + 5000. The MSA deposit is
+// optional, so it is not here — paying it is a separate case, below.
 const FULL = {
   entrance: '1500.00',
   takaful: '2000.00',
   shares: '5000.00',
-  msa_deposit: '5000.00',
 } as const;
-const FULL_TOTAL = '13500.00';
+const FULL_TOTAL = '8500.00';
 
 async function newApplication(type = 'individual') {
   const { capture } = await load();
@@ -229,7 +229,33 @@ describe('S-501: what is due comes from the schedule, not from the screen', () =
       'shares',
       'msa_deposit',
     ]);
+
+    // Only what is required counts towards what is due. An optional component
+    // that is not taken is not a shortfall, so the MSA deposit is offered
+    // without making every ordinary payment look short.
+    expect(
+      due.components.find(c => c.code === 'msa_deposit')!.requirement
+    ).toBe('optional');
     expect(due.expectedTotal).toBe(FULL_TOTAL);
+  });
+
+  it('takes an optional MSA deposit without calling it a variance', async () => {
+    const { payments } = await load();
+    const application = await newApplication();
+
+    const payment = await payments.recordPayment(
+      {
+        applicationId: application.id,
+        method: 'cash',
+        amounts: { ...FULL, msa_deposit: '5000.00' },
+      },
+      principalFor(officer)
+    );
+
+    expect(payment.totalAmount).toBe('13500.00');
+    // No reason was given, and none was demanded: the shortfall check counts
+    // required components only.
+    expect(payment.varianceReason).toBe('');
   });
 
   // 0010 ships the processing fee configured, zero and not applicable,
@@ -254,14 +280,16 @@ describe('S-501: what is due comes from the schedule, not from the screen', () =
     ).rejects.toThrow(/Processing fee is not payable/);
   });
 
-  // FRD 7.10.6: a minor pays no MSA deposit.
-  it('charges a minor the schedule for minors', async () => {
+  // Each type is charged its own schedule. They happen to agree on the amount
+  // today, so the assertion is that the MINOR schedule was read — not that a
+  // number came out.
+  it('charges a minor against the minor schedule', async () => {
     const { payments } = await load();
     const application = await newApplication('minor');
 
     const due = await payments.amountDueForApplication(application.id);
 
-    expect(due.components.map(c => c.code)).not.toContain('msa_deposit');
+    expect(due.scheduleName).toBe('Minor membership');
     expect(due.expectedTotal).toBe('8500.00');
   });
 });
@@ -282,11 +310,14 @@ describe('S-501: recording a payment', () => {
 
     expect(payment.receiptNo).toMatch(/^RCT-\d{6}$/);
     expect(payment.totalAmount).toBe(FULL_TOTAL);
+    // A line for every chargeable component, including the optional one that
+    // was declined — a receipt that silently omits what was offered and not
+    // taken is harder to reconcile than one that shows a zero.
     expect(payment.lines.map(l => [l.componentCode, l.amount])).toEqual([
       ['entrance', '1500.00'],
       ['takaful', '2000.00'],
       ['shares', '5000.00'],
-      ['msa_deposit', '5000.00'],
+      ['msa_deposit', '0.00'],
     ]);
     // Every line carries what the schedule said, so the receipt can be read
     // against it without the schedule being consulted again.
@@ -311,7 +342,7 @@ describe('S-501: recording a payment', () => {
         { code: 'entrance', amount: '9999.00', requirement: 'required' },
         { code: 'takaful', amount: '2000.00', requirement: 'required' },
         { code: 'shares', amount: '5000.00', requirement: 'required' },
-        { code: 'msa_deposit', amount: '5000.00', requirement: 'required' },
+        { code: 'msa_deposit', amount: '5000.00', requirement: 'optional' },
       ],
       treasurer
     );
@@ -326,15 +357,16 @@ describe('S-501: recording a payment', () => {
       after!.lines.find(l => l.componentCode === 'entrance')!.scheduledAmount
     ).toBe('1500.00');
 
-    // Put the schedule back. Fee versions are shared configuration, so a test
-    // that leaves one raised charges every test after it.
+    // Put the schedule back, exactly as configured — including the MSA
+    // deposit being OPTIONAL. Restoring it as required would quietly raise
+    // what every test after this one is told it owes.
     await config.publishFeeVersion(
       individual.id,
       [
         { code: 'entrance', amount: '1500.00', requirement: 'required' },
         { code: 'takaful', amount: '2000.00', requirement: 'required' },
         { code: 'shares', amount: '5000.00', requirement: 'required' },
-        { code: 'msa_deposit', amount: '5000.00', requirement: 'required' },
+        { code: 'msa_deposit', amount: '5000.00', requirement: 'optional' },
       ],
       treasurer
     );
@@ -353,7 +385,7 @@ describe('S-501: recording a payment', () => {
         },
         principalFor(officer)
       )
-    ).rejects.toThrow(/1000.00 less than the 13500.00 due/);
+    ).rejects.toThrow(/1000.00 less than the 8500.00 due/);
 
     const payment = await payments.recordPayment(
       {
@@ -364,7 +396,7 @@ describe('S-501: recording a payment', () => {
       },
       principalFor(officer)
     );
-    expect(payment.totalAmount).toBe('12500.00');
+    expect(payment.totalAmount).toBe('7500.00');
     expect(payment.varianceReason).toBe('Balance to follow next week.');
   });
 
@@ -588,14 +620,14 @@ describe('S-505: refunding', () => {
         paymentId: payment.id,
         method: 'cash',
         reason: 'Application withdrawn.',
-        amounts: { shares: '5000.00', msa_deposit: '5000.00' },
+        amounts: { shares: '5000.00' },
       },
       principalFor(treasurer)
     );
 
     expect(refund.kind).toBe('refund');
     expect(refund.refundsReceiptNo).toBe(payment.receiptNo);
-    expect(refund.totalAmount).toBe('10000.00');
+    expect(refund.totalAmount).toBe('5000.00');
     expect(refund.receiptNo).not.toBe(payment.receiptNo);
 
     // The original is untouched.

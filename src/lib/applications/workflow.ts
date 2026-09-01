@@ -280,7 +280,11 @@ export async function reviewApplication(
 export interface DecisionResult {
   status: string;
   // Present on approval: what the decision created (S-308, S-309).
-  member?: { id: string; memberNo: string; accountNo: string };
+  member?: {
+    id: string;
+    memberNo: string;
+    accounts: { id: string; typeCode: string; typeName: string }[];
+  };
 }
 
 /**
@@ -299,7 +303,11 @@ export async function decideApplication(
     client: PoolClient,
     application: Application,
     actor: Actor
-  ) => Promise<{ id: string; memberNo: string; accountNo: string }>
+  ) => Promise<{
+    id: string;
+    memberNo: string;
+    accounts: { id: string; typeCode: string; typeName: string }[];
+  }>
 ): Promise<DecisionResult> {
   const application = await loadApplication(applicationId);
   if (!application) {

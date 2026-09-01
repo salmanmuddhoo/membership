@@ -405,17 +405,22 @@ and comment, **so that** the approval chain is reconstructable.
 **so that** an approved applicant becomes a member. _(FRD 7.5)_
 `Must · 5 · EPIC-07`
 
-- Format `ABM-000001`, unique for the lifetime of the system
+- Format `AB0001`, unique for the lifetime of the system — the Society's own
+  format, and the number both of the member's accounts carry
 - **Given** creation fails part-way **Then** nothing is half-created and the failure is visible
 
-### S-309 · Auto-create the default MSA account
+### S-309 · Auto-create the member's accounts
 
-**As** the system, **I need** the default account opened automatically,
-**so that** no one opens it by hand. _(ACC-US-002, decision 1)_
+**As** the system, **I need** the member's accounts opened automatically,
+**so that** no one opens them by hand. _(ACC-US-002, decision 1)_
 `Must · 5 · EPIC-08`
 
-- The product is whichever type is configured as default (S-206)
-- **Given** approval **Then** exactly one MSA is created, linked to the member, and audited
+- A membership opens **two** accounts: Shares, which is what makes someone a
+  member, and an MSA beside it. Both carry the member's number
+- Which types open is configuration, read at approval time (S-206), so a
+  further product can be added without a release
+- **Given** approval **Then** exactly one account of each configured type is
+  created, linked to the member, and audited
 
 ### S-310 · Member profile view
 

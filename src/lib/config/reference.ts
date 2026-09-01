@@ -327,17 +327,24 @@ export async function updateAccountType(
   validateAmount(input.minimumOpeningAmount);
 
   await withConfigurationActor(actorFor(actor), async client => {
-    // Deactivating the default product would leave a membership approval with
-    // no account to open. Refuse rather than discover it at approval time.
+    // Deactivating the last product a membership opens would leave an
+    // approval with no account to open. Refuse rather than discover it at
+    // approval time. Deactivating one of several is fine — the others still
+    // open.
     if (!input.isActive) {
-      const isDefault = await client.query(
+      const lastOne = await client.query<{ n: number }>(
+        `select count(*)::int as n from account_type
+          where is_membership_default and is_active and id <> $1`,
+        [id]
+      );
+      const opensOnApproval = await client.query(
         'select 1 from account_type where id = $1 and is_membership_default',
         [id]
       );
-      if (isDefault.rowCount) {
+      if (opensOnApproval.rowCount && lastOne.rows[0].n === 0) {
         throw new ConfigError(
-          'This is the membership default product. Make another type the ' +
-            'default before deactivating it.',
+          'This is the only product a membership approval opens. Set ' +
+            'another type to open on approval before deactivating it.',
           'conflict'
         );
       }
@@ -366,12 +373,21 @@ export async function updateAccountType(
   });
 }
 
-// S-206: "Given the default is changed Then subsequent approvals open the new
-// type." A partial unique index allows only one default row, so the old one is
-// cleared inside the same transaction as the new one is set — attempting it
-// the other way round would trip the index.
-export async function setMembershipDefault(
+/**
+ * Whether a membership approval opens this account type (S-206).
+ *
+ * Several types may be marked at once, and normally two are: a membership
+ * opens a Shares account and an MSA together, both carrying the member's
+ * number. This used to set one exclusively, which is why it is a toggle now —
+ * marking Shares must not silently unmark the MSA.
+ *
+ * "Given the default is changed Then subsequent approvals open the new type"
+ * still holds: nothing is cached, so the next approval reads whatever is
+ * marked now.
+ */
+export async function setOpensOnApproval(
   accountTypeId: string,
+  opens: boolean,
   actor: Actor
 ): Promise<void> {
   await withConfigurationActor(actorFor(actor), async client => {
@@ -382,28 +398,45 @@ export async function setMembershipDefault(
     if (target.rowCount === 0) {
       throw new ConfigError('That account type no longer exists.', 'not_found');
     }
-    if (!target.rows[0].is_active) {
+    if (opens && !target.rows[0].is_active) {
       throw new ConfigError(
-        'An inactive account type cannot be the membership default.'
+        'An inactive account type cannot be opened on approval.'
       );
     }
 
+    if (!opens) {
+      // Clearing the last one would leave an approval with nothing to open,
+      // which is the half-created member S-308 exists to prevent — and it
+      // would not be discovered until someone approved an application.
+      const others = await client.query<{ n: number }>(
+        `select count(*)::int as n from account_type
+          where is_membership_default and is_active and id <> $1`,
+        [accountTypeId]
+      );
+      if (others.rows[0].n === 0) {
+        throw new ConfigError(
+          'A membership approval has to open at least one account. Set ' +
+            'another type to open on approval before clearing this one.',
+          'conflict'
+        );
+      }
+    }
+
     await client.query(
-      'update account_type set is_membership_default = false where is_membership_default and id <> $1',
-      [accountTypeId]
-    );
-    await client.query(
-      'update account_type set is_membership_default = true where id = $1',
-      [accountTypeId]
+      'update account_type set is_membership_default = $2 where id = $1',
+      [accountTypeId, opens]
     );
   });
 }
 
-// The product a membership approval opens. Read at approval time rather than
-// cached, so a change takes effect on the next approval (S-206).
-export async function getMembershipDefaultAccountType(): Promise<AccountType | null> {
+// The products a membership approval opens, in the order they are listed.
+// Read at approval time rather than cached, so a change takes effect on the
+// next approval (S-206).
+export async function getAccountTypesOpenedOnApproval(): Promise<
+  AccountType[]
+> {
   const all = await listAccountTypes();
-  return all.find(a => a.isMembershipDefault) ?? null;
+  return all.filter(a => a.isMembershipDefault && a.isActive);
 }
 
 // ---------------------------------------------------------------------------

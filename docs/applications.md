@@ -119,8 +119,13 @@ permission model and the segregation rules above it.
 | Format            | Sequence                    | Gaps                                            |
 | ----------------- | --------------------------- | ----------------------------------------------- |
 | `APP-YYYY-000001` | `application_reference_seq` | Acceptable — a rolled-back capture consumes one |
-| `ABM-000001`      | `member_number_seq`         | Acceptable                                      |
-| `ACC-00000001`    | `account_number_seq`        | Acceptable                                      |
+| `AB0001`          | `member_number_seq`         | Acceptable                                      |
+
+There is no account number. **A member is one number and two accounts:** AB0001
+is the member, their Shares account and their MSA. Storing that number on each
+account as well would invite the copies to disagree, and there is no question
+which would be right — so the accounts carry no number of their own and the
+screens read it from the member.
 
 Acceptable, but not free: it is why an empty form creates nothing. A reference
 allocated to a form nobody typed into is a gap with no story behind it.

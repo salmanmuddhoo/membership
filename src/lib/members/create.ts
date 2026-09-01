@@ -20,7 +20,10 @@ export class MemberCreationError extends Error {
 export interface CreatedMember {
   id: string;
   memberNo: string;
-  accountNo: string;
+  // The accounts opened alongside the member, in configured order. They all
+  // carry the member's number — AB0001 is the member, their Shares account and
+  // their MSA — so the number is not repeated here.
+  accounts: { id: string; typeCode: string; typeName: string }[];
 }
 
 /**
@@ -36,23 +39,27 @@ export async function createMemberFromApplication(
   application: Application,
   actor: Actor
 ): Promise<CreatedMember> {
-  const defaultType = await client.query<{
+  // Every type configured to open on approval, not one: a membership opens a
+  // Shares account and an MSA together, and which types those are is
+  // configuration read at approval time (S-206).
+  const openOnApproval = await client.query<{
     id: string;
     code: string;
     name: string;
+    default_status: string;
   }>(
-    `select id, code, name from account_type
+    `select id, code, name, default_status from account_type
       where is_membership_default and is_active
-      limit 1`
+      order by sort_order, name`
   );
 
-  if (defaultType.rowCount === 0) {
-    // Refusing is right: approving without opening the account would leave a
+  if (openOnApproval.rowCount === 0) {
+    // Refusing is right: approving without opening the accounts would leave a
     // member the Society has to remember to finish by hand, which is exactly
     // what decision 1 and S-309 exist to prevent.
     throw new MemberCreationError(
-      'No active account type is configured as the membership default, so ' +
-        'there is no account to open. Set one in Configuration → Account ' +
+      'No active account type is set to open when a membership is approved, ' +
+        'so there is no account to open. Set one in Configuration → Account ' +
         'types before approving.'
     );
   }
@@ -65,16 +72,23 @@ export async function createMemberFromApplication(
   );
   const { id: memberId, member_no: memberNo } = member.rows[0];
 
-  // is_membership_default carries a partial unique index per member, so a
-  // retry that somehow ran twice fails here rather than quietly opening a
-  // second MSA (S-309: "exactly one MSA is created").
-  const account = await client.query<{ id: string; account_no: string }>(
-    `insert into account (member_id, account_type_id, is_membership_default, status)
-     values ($1, $2, true, $3)
-     returning id, account_no`,
-    [memberId, defaultType.rows[0].id, 'active']
-  );
-  const { id: accountId, account_no: accountNo } = account.rows[0];
+  // A unique index on (member_id, account_type_id) means a retry that somehow
+  // ran twice fails here rather than quietly opening a second Shares account
+  // (S-309: exactly one of each).
+  const accounts: CreatedMember['accounts'] = [];
+  for (const type of openOnApproval.rows) {
+    const account = await client.query<{ id: string }>(
+      `insert into account (member_id, account_type_id, is_membership_default, status)
+       values ($1, $2, true, $3)
+       returning id`,
+      [memberId, type.id, type.default_status]
+    );
+    accounts.push({
+      id: account.rows[0].id,
+      typeCode: type.code,
+      typeName: type.name,
+    });
+  }
 
   await recordAudit(
     {
@@ -92,24 +106,27 @@ export async function createMemberFromApplication(
     client
   );
 
-  await recordAudit(
-    {
-      actorUserId: actor.userId,
-      actorDescription: actor.email,
-      action: 'account.opened',
-      entityType: 'account',
-      entityId: accountId,
-      newValue: {
-        accountNo,
-        memberNo,
-        accountType: defaultType.rows[0].code,
-        openedBecause: 'membership approved',
+  // One entry per account. They opened together, but they are separate
+  // accounts and each one's opening is its own thing to answer for.
+  for (const account of accounts) {
+    await recordAudit(
+      {
+        actorUserId: actor.userId,
+        actorDescription: actor.email,
+        action: 'account.opened',
+        entityType: 'account',
+        entityId: account.id,
+        newValue: {
+          memberNo,
+          accountType: account.typeCode,
+          openedBecause: 'membership approved',
+        },
       },
-    },
-    client
-  );
+      client
+    );
+  }
 
-  return { id: memberId, memberNo, accountNo };
+  return { id: memberId, memberNo, accounts };
 }
 
 export interface MemberSummary {
@@ -124,6 +141,8 @@ export interface MemberSummary {
 
 export interface MemberAccount {
   id: string;
+  // The member's number. Both of a member's accounts carry it, which is why it
+  // is read from the member rather than stored on the account.
   accountNo: string;
   accountTypeName: string;
   category: string;
@@ -229,19 +248,21 @@ export async function loadMember(id: string): Promise<MemberDetail | null> {
 
   const accounts = await query<{
     id: string;
-    account_no: string;
     account_type_name: string;
     category: string;
     status: string;
     is_membership_default: boolean;
     opened_at: Date;
   }>(
-    `select a.id, a.account_no, t.name as account_type_name, t.category,
+    `select a.id, t.name as account_type_name, t.category,
             a.status, a.is_membership_default, a.opened_at
        from account a
        join account_type t on t.id = a.account_type_id
       where a.member_id = $1
-      order by a.opened_at`,
+      -- Both accounts open inside one transaction, so opened_at is the same
+      -- instant on each and cannot order them. The configured order can, and
+      -- it is the order the Society lists them in.
+      order by t.sort_order, t.name`,
     [id]
   );
 
@@ -257,7 +278,7 @@ export async function loadMember(id: string): Promise<MemberDetail | null> {
     applicantValues: row.applicant_values ?? {},
     accounts: accounts.rows.map(a => ({
       id: a.id,
-      accountNo: a.account_no,
+      accountNo: row.member_no,
       accountTypeName: a.account_type_name,
       category: a.category,
       status: a.status,

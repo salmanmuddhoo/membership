@@ -220,17 +220,25 @@ describe('M3: the walking skeleton, end to end', () => {
     );
 
     expect(decided.status).toBe('approved');
-    expect(decided.member?.memberNo).toMatch(/^ABM-\d{6}$/);
-    expect(decided.member?.accountNo).toMatch(/^ACC-\d{8}$/);
+    // The Society's own format: AB0001 is the member.
+    expect(decided.member?.memberNo).toMatch(/^AB\d{4,}$/);
 
-    // S-309: the account opened is whichever type is configured as the
-    // membership default, and there is exactly one.
+    // A membership opens Shares and an MSA together — every type configured to
+    // open on approval, not one (S-206, S-309).
     const member = await members.loadMember(decided.member!.id);
-    expect(member!.accounts).toHaveLength(1);
-    expect(member!.accounts[0].accountTypeName).toBe(
-      'Multiplier Savings Account'
-    );
-    expect(member!.accounts[0].isMembershipDefault).toBe(true);
+    expect(member!.accounts.map(a => a.accountTypeName)).toEqual([
+      'Shares',
+      'Multiplier Savings Account',
+    ]);
+    expect(member!.accounts.every(a => a.isMembershipDefault)).toBe(true);
+
+    // And both carry the member's number. That is the whole point of it: the
+    // member, their Shares account and their MSA are one AB number.
+    expect(member!.accounts.map(a => a.accountNo)).toEqual([
+      member!.memberNo,
+      member!.memberNo,
+    ]);
+
     expect(member!.applicationReference).toBe(
       (await capture.loadApplication(id))!.reference
     );
@@ -546,10 +554,12 @@ describe('S-308 and S-309: what approval creates', () => {
     // by the time this is discovered, so if the two were not in one
     // transaction there would now be a member with no account and an approved
     // application to match.
-    const msa = (await config.listAccountTypes()).find(a => a.code === 'msa')!;
+    // Every type, not just the MSA: a membership now opens more than one, so
+    // clearing a single flag would leave the Shares account still openable and
+    // the approval would succeed.
     await runAsActor(
-      `update account_type set is_membership_default = false where id = $1`,
-      [msa.id]
+      `update account_type set is_membership_default = false
+        where is_membership_default`
     );
 
     const membersBefore = await run(appUrl, 'select count(*) as n from member');
@@ -562,7 +572,7 @@ describe('S-308 and S-309: what approval creates', () => {
           president,
           members.createMemberFromApplication
         )
-      ).rejects.toThrowError(/membership default/);
+      ).rejects.toThrowError(/no account to open/);
 
       // Nothing was created...
       const membersAfter = await run(
@@ -580,9 +590,10 @@ describe('S-308 and S-309: what approval creates', () => {
         (await workflow.transitionsFor(id)).some(t => t.toStatus === 'approved')
       ).toBe(false);
     } finally {
+      // Put back exactly what was cleared: the two types a membership opens.
       await runAsActor(
-        `update account_type set is_membership_default = true where id = $1`,
-        [msa.id]
+        `update account_type set is_membership_default = true
+          where code in ('shares', 'msa')`
       );
     }
 
@@ -612,7 +623,8 @@ describe('S-308 and S-309: what approval creates', () => {
       },
       admin
     );
-    await config.setMembershipDefault(premiumId, admin);
+    // Added alongside Shares and the MSA, so an approval now opens three.
+    await config.setOpensOnApproval(premiumId, true, admin);
 
     const id = await captureComplete();
     await workflow.submitApplication(id, officer);
@@ -629,12 +641,11 @@ describe('S-308 and S-309: what approval creates', () => {
     );
 
     const member = await members.loadMember(decided.member!.id);
-    expect(member!.accounts[0].accountTypeName).toBe(
+    expect(member!.accounts.map(a => a.accountTypeName)).toContain(
       'Premium Multiplier Savings'
     );
 
-    const msa = (await config.listAccountTypes()).find(a => a.code === 'msa')!;
-    await config.setMembershipDefault(msa.id, admin);
+    await config.setOpensOnApproval(premiumId, false, admin);
   });
 
   it('gives every member a distinct number in the documented format', async () => {
@@ -642,13 +653,13 @@ describe('S-308 and S-309: what approval creates', () => {
     const all = await members.listMembers({ limit: 100 });
 
     expect(all.members.length).toBeGreaterThan(1);
-    expect(all.members.every(m => /^ABM-\d{6}$/.test(m.memberNo))).toBe(true);
+    expect(all.members.every(m => /^AB\d{4,}$/.test(m.memberNo))).toBe(true);
     expect(new Set(all.members.map(m => m.memberNo)).size).toBe(
       all.members.length
     );
   });
 
-  it('cannot open a second default account for one member', async () => {
+  it('cannot open a second account of the same type for one member', async () => {
     const { workflow, members, config } = await load();
     const id = await captureComplete();
     await workflow.submitApplication(id, officer);
@@ -664,17 +675,19 @@ describe('S-308 and S-309: what approval creates', () => {
       members.createMemberFromApplication
     );
 
-    const msa = (await config.listAccountTypes()).find(a => a.code === 'msa')!;
-    // A retry that somehow ran twice. The database refuses, so "exactly one
-    // MSA is created" does not depend on the service getting it right.
+    const shares = (await config.listAccountTypes()).find(
+      a => a.code === 'shares'
+    )!;
+    // A retry that somehow ran twice. The database refuses, so "exactly one of
+    // each" does not depend on the service getting it right.
     await expect(
       run(
         appUrl,
         `insert into account (member_id, account_type_id, is_membership_default)
          values ($1, $2, true)`,
-        [decided.member!.id, msa.id]
+        [decided.member!.id, shares.id]
       )
-    ).rejects.toThrowError(/account_one_default_per_member_idx/);
+    ).rejects.toThrowError(/account_one_per_type_per_member_idx/);
   });
 
   it('audits the member and the account against the deciding officer', async () => {
@@ -703,7 +716,10 @@ describe('S-308 and S-309: what approval creates', () => {
       [decided.member!.id, decided.member!.memberNo]
     );
 
+    // One entry per account, plus the member. They opened together, but each
+    // account's opening is its own thing to answer for.
     expect(audited.rows.map(r => r.action)).toEqual([
+      'account.opened',
       'account.opened',
       'member.created',
     ]);
