@@ -296,7 +296,19 @@ async function recordFullPayment(
 }
 
 async function captureComplete() {
-  const { capture, documents, payments } = await load();
+  // Plain dynamic imports, not another load(): every caller has already
+  // called load() once for its own {capture, workflow, ...}, and load()
+  // closes the file's last-tracked pool on entry. A second call here would
+  // close the caller's pool out from under the `workflow`/`capture` handles
+  // it is about to keep using — not a leak so much as its opposite, an extra
+  // pool the caller's variables silently fall back to opening on their next
+  // query, which is what pushed the suite over CI's connection ceiling.
+  // Vitest only changes the module registry on vi.resetModules(), which
+  // load() already ran once for this test; importing again here resolves
+  // from that same cache — no new modules, no new pool.
+  const capture = await import('./capture');
+  const documents = await import('../documents/documents');
+  const payments = await import('../payments/payments');
   const actor = { userId: officer.userId, email: officer.email };
   const { id } = await capture.startApplication('individual', actor);
   await capture.saveDraft(id, COMPLETE_INDIVIDUAL, actor);
