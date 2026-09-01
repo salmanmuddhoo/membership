@@ -700,6 +700,118 @@ export async function reviewDocument(
   return { state };
 }
 
+/**
+ * A short-lived URL to open the current filed version of a document.
+ *
+ * The bytes never pass through this application on the way in (S-112); they
+ * do not on the way out either. Graph hands back a pre-authenticated URL
+ * scoped to this one file, which is what lets an officer open it at all —
+ * they have no SharePoint account of their own to view webUrl with (see
+ * graph.ts).
+ */
+export async function getDocumentViewUrl(
+  documentId: string,
+  config?: GraphConfig
+): Promise<{ url: string; fileName: string }> {
+  const row = await query<{ sharepoint_path: string; file_name: string }>(
+    `select sharepoint_path, file_name
+       from document_version
+      where document_id = $1 and state = 'committed' and superseded_at is null`,
+    [documentId]
+  );
+  if (row.rowCount === 0) {
+    throw new DocumentError(
+      'There is no filed version of that document to view.',
+      'not_found'
+    );
+  }
+
+  const item = await getItemByPath(row.rows[0].sharepoint_path, config);
+  if (!item?.downloadUrl) {
+    throw new DocumentError(
+      'SharePoint did not offer a way to open this file. Please try again.',
+      'refused'
+    );
+  }
+
+  return { url: item.downloadUrl, fileName: row.rows[0].file_name };
+}
+
+/**
+ * Undo a mistaken upload, so the checklist reads Missing again and the item
+ * can be filed afresh.
+ *
+ * This is Replace without the replacement: the live version is superseded
+ * exactly as it would be if a new file had landed (S-409), only nothing takes
+ * its place. The file itself is not removed from SharePoint — versions are
+ * never deleted, which is the same guarantee that keeps a signed form
+ * retrievable after it is superseded — so what this undoes is being on the
+ * checklist, not the record that it was ever filed.
+ *
+ * Gated on document.upload rather than a separate permission: anyone who may
+ * file a document may equally well decide the one they just filed was wrong.
+ * Available on any state Replace is (S-409 already lets an officer replace a
+ * verified document without restriction; this is not a new door).
+ */
+export async function removeFiledDocument(
+  documentId: string,
+  principal: { userId: string; email: string; permissions: ReadonlySet<string> }
+): Promise<{ state: 'missing' }> {
+  if (!principal.permissions.has('document.upload')) {
+    throw new DocumentError(
+      'You do not have permission to file documents.',
+      'refused'
+    );
+  }
+
+  await withTransaction(async client => {
+    const row = await client.query<{
+      version_id: string;
+      file_name: string;
+      document_state: string;
+    }>(
+      `select v.id as version_id, v.file_name, d.state as document_state
+         from document_version v
+         join document d on d.id = v.document_id
+        where v.document_id = $1 and v.state = 'committed'
+          and v.superseded_at is null
+        for update of v`,
+      [documentId]
+    );
+    if (row.rowCount === 0) {
+      throw new DocumentError(
+        'There is no filed version of that document to remove.',
+        'not_found'
+      );
+    }
+    const {
+      version_id: versionId,
+      file_name: fileName,
+      document_state,
+    } = row.rows[0];
+
+    await client.query(
+      `update document_version set superseded_at = now() where id = $1`,
+      [versionId]
+    );
+
+    await recordAudit(
+      {
+        actorUserId: principal.userId,
+        actorDescription: principal.email,
+        action: 'document.removed',
+        entityType: ENTITY_TYPE,
+        entityId: documentId,
+        previousValue: { state: document_state, fileName },
+        newValue: { state: 'missing' },
+      },
+      client
+    );
+  });
+
+  return { state: 'missing' };
+}
+
 export interface DocumentVersionSummary {
   id: string;
   versionNo: number;

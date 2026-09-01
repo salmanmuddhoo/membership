@@ -82,6 +82,19 @@ acceptance criterion the versioning in 0010 exists to serve, and
 `payments.test.ts` proves it by raising the entrance fee after a receipt and
 reading the receipt back.
 
+**A required component's amount is not one an officer can edit on the
+application page** — the input is `readonly`, carrying whatever the fee
+schedule set, so the figure the officer sees recording a payment is always
+the one Configuration published. Only an optional component's amount is
+editable there, and the page's **Total** figure — every component's amount,
+required and optional alike, recomputed as the optional one changes — is a
+display-only convenience distinct from `expectedTotal` above, which stays
+required-only because that is the figure the variance check is against. This
+is a page-level lock, not a service-level one: `recordPayment` still accepts
+a required amount that differs from the schedule, given a reason, exactly as
+before. Nothing on this page can produce that request any more, but a
+correction made another way — direct API use, say — still can.
+
 ## Refunds
 
 A refund is a `payment` row with `kind = 'refund'`, its own receipt number, and

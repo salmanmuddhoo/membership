@@ -1,4 +1,5 @@
 ---
+import ApplicationTimeline from '@components/ApplicationTimeline.astro';
 import CaptureFields from '@components/CaptureFields.astro';
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import {
@@ -22,6 +23,7 @@ import {
 import {
   checklistFor,
   isDocumentComplete,
+  removeFiledDocument,
   reviewDocument,
   DocumentError,
 } from '@lib/documents/documents';
@@ -37,7 +39,7 @@ import {
   type Payment,
   type PaymentMethod,
 } from '@lib/payments/payments';
-import { formatMoney } from '@lib/payments/money';
+import { formatMoney, fromCents, sumCents } from '@lib/payments/money';
 import type { FeeComponentCode } from '@lib/config/reference';
 
 const principal = Astro.locals.principal!;
@@ -155,6 +157,21 @@ if (Astro.request.method === 'POST') {
         error =
           'The payment could not be recorded. Nothing has been taken — ' +
           'please try again.';
+      }
+    }
+  } else if (intent === 'delete-document') {
+    try {
+      await removeFiledDocument(
+        String(form.get('documentId') ?? ''),
+        principal
+      );
+      notice = 'Document removed. It can be filed again.';
+    } catch (err) {
+      if (err instanceof DocumentError) {
+        error = err.message;
+      } else {
+        console.error('[documents/delete]', err);
+        error = 'The document could not be removed. Please try again.';
       }
     }
   } else if (intent === 'verify-document' || intent === 'reject-document') {
@@ -293,11 +310,12 @@ isEditable =
 // has been through the Secretary, and that history is not anyone's to discard.
 const isDeletableDraft = canCapture && application!.status === 'draft';
 
-// Only for people who may see documents at all: an application is readable by
-// more roles than its scans are.
-const checklist = canSeeDocuments
-  ? await checklistFor({ applicationId: application!.id })
-  : [];
+// Read for everyone who can reach this page, not only those who may see
+// scans: the progress timeline reports how many documents are outstanding
+// regardless of document.view, and that count is not itself sensitive. The
+// Documents section below still shows nothing — file names, uploaders — to
+// someone without canSeeDocuments.
+const checklist = await checklistFor({ applicationId: application!.id });
 const documentsComplete = checklist.length > 0 && isDocumentComplete(checklist);
 
 const [blocking, actions, history] = await Promise.all([
@@ -378,6 +396,16 @@ if (canRecordPayment && !livePayment && !isDecided) {
   }
 }
 
+// What Total reads on load — every component's default, required and
+// optional alike, not just the required ones due.expectedTotal sums (that
+// figure exists to test a payment against the schedule, not to be shown as a
+// total that ignores what the optional row already carries). The script
+// below recomputes this live as the optional amount changes; this is only
+// its starting value.
+const initialTotal = due
+  ? fromCents(sumCents(due.components.map(c => c.amount)))
+  : '0';
+
 const timeline = applicationTimeline({
   status: application!.status,
   mandatoryFieldsOutstanding: blocking.length,
@@ -389,27 +417,6 @@ const timeline = applicationTimeline({
   paymentRecorded: livePayment !== null,
   paymentReceiptNo: livePayment?.receiptNo ?? null,
 });
-
-const STEP_MARK: Record<string, string> = {
-  done: 'bg-mint-300 text-neutral-800 dark:bg-mint-700 dark:text-neutral-100',
-  current:
-    'bg-neutral-800 text-white dark:bg-neutral-100 dark:text-neutral-900',
-  todo: 'bg-neutral-200 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400',
-};
-
-const STEP_TEXT: Record<string, string> = {
-  done: 'text-neutral-600 dark:text-neutral-300',
-  current: 'font-semibold text-neutral-900 dark:text-neutral-50',
-  todo: 'text-neutral-500 dark:text-neutral-400',
-};
-
-// The colour and the tick carry the state for someone looking at it; this
-// carries the same thing for someone who is not.
-const STEP_READS: Record<string, string> = {
-  done: '(done)',
-  current: '(next)',
-  todo: '(to come)',
-};
 
 // For the documents section. The capture form carries its own, in the
 // component that renders it.
@@ -432,17 +439,35 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 >
   <div class="mx-auto max-w-4xl space-y-6">
     <div class="flex flex-wrap items-center justify-between gap-2">
-      <a
-        href="/applications"
-        class="inline-block text-sm text-neutral-500 underline dark:text-neutral-400"
-        >← All applications</a
-      >
+      <div class="flex flex-wrap items-center gap-x-4 gap-y-1">
+        {
+          /* A real navigation, not history-dependent JavaScript: the officer
+             may have arrived here from a link, a bookmark or Next, and every
+             one of those has "the list" as a safe place to land. Where the
+             browser actually does have somewhere to go back to, the script
+             below prefers that instead — closer to what "Back" means after
+             clicking Next. */
+        }
+        <a
+          href="/applications"
+          id="back-link"
+          class="inline-block text-sm text-neutral-500 underline dark:text-neutral-400"
+          >← Back</a
+        >
+        <a
+          href="/applications"
+          class="inline-block text-sm text-neutral-500 underline dark:text-neutral-400"
+          >All applications</a
+        >
+      </div>
       <a
         href={`/applications/${application!.id}/print`}
         class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
         >Printable form</a
       >
     </div>
+
+    <ApplicationTimeline steps={timeline} />
 
     {
       error && (
@@ -509,39 +534,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         )
       }
     </section>
-
-    {
-      canSeeDocuments && (
-        <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-          <ol class="flex flex-wrap gap-x-6 gap-y-3">
-            {timeline.map((step, index) => (
-              <li class="flex min-w-[10rem] flex-1 items-start gap-2">
-                <span
-                  class:list={[
-                    'mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold',
-                    STEP_MARK[step.state],
-                  ]}
-                  aria-hidden="true"
-                >
-                  {step.state === 'done' ? '✓' : index + 1}
-                </span>
-                <span>
-                  <span class:list={['block text-sm', STEP_TEXT[step.state]]}>
-                    {step.label}
-                  </span>
-                  {step.detail && (
-                    <span class="block text-xs text-neutral-500 dark:text-neutral-400">
-                      {step.detail}
-                    </span>
-                  )}
-                  <span class="sr-only">{STEP_READS[step.state]}</span>
-                </span>
-              </li>
-            ))}
-          </ol>
-        </section>
-      )
-    }
 
     {
       createdMember && (
@@ -663,15 +655,25 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                     </div>
 
                     {entry.uploadedAt && (
-                      <p class="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
-                        {entry.fileName} · filed by {entry.uploadedByName} on{' '}
-                        {dateFormat.format(entry.uploadedAt)}
-                        {entry.versionCount > 1 &&
-                          ` · version ${entry.versionCount}`}
-                        {entry.verifiedByName &&
-                          ` · verified by ${entry.verifiedByName}`}
-                        {entry.expiresAt &&
-                          ` · expires ${dateFormat.format(entry.expiresAt)}`}
+                      <p class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-neutral-500 dark:text-neutral-400">
+                        <span>
+                          {entry.fileName} · filed by {entry.uploadedByName} on{' '}
+                          {dateFormat.format(entry.uploadedAt)}
+                          {entry.versionCount > 1 &&
+                            ` · version ${entry.versionCount}`}
+                          {entry.verifiedByName &&
+                            ` · verified by ${entry.verifiedByName}`}
+                          {entry.expiresAt &&
+                            ` · expires ${dateFormat.format(entry.expiresAt)}`}
+                        </span>
+                        <button
+                          type="button"
+                          data-view-document
+                          data-document-id={entry.documentId}
+                          class="font-medium text-neutral-700 underline hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-neutral-100"
+                        >
+                          View
+                        </button>
                       </p>
                     )}
 
@@ -722,6 +724,28 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                           Uploading requires JavaScript.
                         </p>
                       </div>
+                    )}
+
+                    {canUpload && entry.state !== 'missing' && (
+                      <form
+                        method="post"
+                        class="mt-2"
+                        data-confirm-delete-document
+                      >
+                        <input
+                          type="hidden"
+                          name="documentId"
+                          value={entry.documentId}
+                        />
+                        <button
+                          type="submit"
+                          name="intent"
+                          value="delete-document"
+                          class="rounded-lg border border-red-300 px-3 py-1.5 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
+                        >
+                          Delete
+                        </button>
+                      </form>
                     )}
 
                     {canVerify &&
@@ -867,7 +891,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           )}
 
           {due && (
-            <form method="post" class="mt-4 space-y-4">
+            <form method="post" class="mt-4 space-y-4" data-payment-form>
               <table class="w-full text-sm">
                 <tbody>
                   {due.components.map(component => (
@@ -876,9 +900,13 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                         <label for={`amount-${component.code}`}>
                           {component.label}
                         </label>
-                        {component.requirement === 'optional' && (
+                        {component.requirement === 'optional' ? (
                           <span class="ml-2 text-xs text-neutral-500 dark:text-neutral-400">
                             optional
+                          </span>
+                        ) : (
+                          <span class="ml-2 text-xs text-neutral-500 dark:text-neutral-400">
+                            set by Configuration
                           </span>
                         )}
                       </td>
@@ -889,17 +917,27 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                           inputmode="decimal"
                           name={`amount.${component.code}`}
                           value={component.amount}
-                          class="w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-right text-sm tabular-nums dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                          readonly={component.requirement !== 'optional'}
+                          data-amount-input
+                          class:list={[
+                            'w-full rounded-lg border px-3 py-1.5 text-right text-sm tabular-nums',
+                            component.requirement === 'optional'
+                              ? 'border-neutral-300 bg-white dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100'
+                              : 'cursor-not-allowed border-neutral-200 bg-neutral-100 text-neutral-600 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300',
+                          ]}
                         />
                       </td>
                     </tr>
                   ))}
                   <tr class="border-t-2 border-neutral-300 dark:border-neutral-700">
                     <td class="py-2 font-medium text-neutral-800 dark:text-neutral-100">
-                      Due
+                      Total
                     </td>
-                    <td class="py-2 text-right font-bold text-neutral-800 tabular-nums dark:text-neutral-100">
-                      {formatMoney(due.expectedTotal)}
+                    <td
+                      data-payment-total
+                      class="py-2 text-right font-bold text-neutral-800 tabular-nums dark:text-neutral-100"
+                    >
+                      {formatMoney(initialTotal)}
                     </td>
                   </tr>
                 </tbody>
@@ -1097,6 +1135,21 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 </DashboardLayout>
 
 <script>
+  // "Back", after Next brought the officer here from capture. A plain link to
+  // the list is the safe default (it works whichever page sent them here, or
+  // if they arrived on a fresh tab with no history at all) — but where the
+  // browser actually has somewhere to go back to, that is closer to what
+  // "Back" means right after clicking Next, so it is preferred when available.
+  const backLink = document.getElementById(
+    'back-link'
+  ) as HTMLAnchorElement | null;
+  if (backLink && window.history.length > 1) {
+    backLink.addEventListener('click', event => {
+      event.preventDefault();
+      window.history.back();
+    });
+  }
+
   // S-302, decision 14: an officer on a tablet must not lose work to a dropped
   // connection. Saving is now automatic and there is no button to fall back
   // on, so this has to be the guarantee rather than a convenience: a short
@@ -1223,6 +1276,112 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         event.preventDefault();
       }
     });
+
+  // Removing a filed document is reversible in the sense that it can always
+  // be filed again — but the officer does not know that mid-click, so this
+  // asks first exactly as deleting the draft does.
+  for (const deleteForm of document.querySelectorAll<HTMLFormElement>(
+    'form[data-confirm-delete-document]'
+  )) {
+    deleteForm.addEventListener('submit', event => {
+      if (
+        !window.confirm('Remove this document? You can file it again after.')
+      ) {
+        event.preventDefault();
+      }
+    });
+  }
+
+  // S-403 · Viewing a filed document. The URL is fetched fresh on each click
+  // rather than embedded on the page: it is pre-authenticated (good for one
+  // GET, no further sign-in), so it is a secret in the same sense an upload
+  // ticket is one, and belongs in a short-lived response rather than in HTML
+  // that sits in the page for as long as the tab is open.
+  for (const viewButton of document.querySelectorAll<HTMLButtonElement>(
+    '[data-view-document]'
+  )) {
+    viewButton.addEventListener('click', async () => {
+      const documentId = viewButton.dataset.documentId;
+      if (!documentId) return;
+
+      const original = viewButton.textContent;
+      viewButton.disabled = true;
+      viewButton.textContent = 'Opening…';
+
+      try {
+        const response = await fetch('/api/v1/documents/view-url', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ documentId }),
+        });
+        const body = await response.json();
+        if (!response.ok) {
+          throw new Error(
+            body?.error?.message ?? 'The file could not be opened.'
+          );
+        }
+        window.open(body.data.url, '_blank', 'noopener');
+      } catch (error) {
+        window.alert(
+          error instanceof Error
+            ? error.message
+            : 'The file could not be opened.'
+        );
+      } finally {
+        viewButton.disabled = false;
+        viewButton.textContent = original;
+      }
+    });
+  }
+
+  // The mandatory component's amount is fixed and its input is readonly, so
+  // only the optional one ever changes here — but Total sums every amount
+  // input, mandatory included, so it stays right without caring which field
+  // moved. Mirrors money.ts's own cents arithmetic rather than importing it:
+  // this is a plain script tag, and the server re-derives the real total from
+  // the posted amounts regardless of what this shows.
+  const paymentForm = document.querySelector<HTMLFormElement>(
+    '[data-payment-form]'
+  );
+  if (paymentForm) {
+    const totalCell = paymentForm.querySelector<HTMLElement>(
+      '[data-payment-total]'
+    );
+    const amountInputs = paymentForm.querySelectorAll<HTMLInputElement>(
+      '[data-amount-input]'
+    );
+
+    const parseCents = (raw: string): number => {
+      const trimmed = raw.trim();
+      if (!/^-?\d+(\.\d{1,2})?$/.test(trimmed)) return 0;
+      const negative = trimmed.startsWith('-');
+      const [whole, fraction = ''] = trimmed.replace('-', '').split('.');
+      return (
+        (negative ? -1 : 1) *
+        (Number(whole) * 100 + Number(fraction.padEnd(2, '0')))
+      );
+    };
+
+    const formatCents = (cents: number): string => {
+      const sign = cents < 0 ? '-' : '';
+      const absolute = Math.abs(cents);
+      const rupees = new Intl.NumberFormat('en-GB').format(
+        Math.trunc(absolute / 100)
+      );
+      return `${sign}MUR ${rupees}.${String(absolute % 100).padStart(2, '0')}`;
+    };
+
+    const recomputeTotal = () => {
+      if (!totalCell) return;
+      let total = 0;
+      for (const input of amountInputs) total += parseCents(input.value);
+      totalCell.textContent = formatCents(total);
+    };
+
+    for (const input of amountInputs) {
+      if (!input.readOnly) input.addEventListener('input', recomputeTotal);
+    }
+  }
 
   const form = document.getElementById(
     'capture-form'

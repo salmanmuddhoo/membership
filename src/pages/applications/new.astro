@@ -9,6 +9,7 @@
 // The application comes into existence on the first save that carries a value,
 // and from then on the officer is working on /applications/<id> without having
 // been interrupted to get there.
+import ApplicationTimeline from '@components/ApplicationTimeline.astro';
 import CaptureFields from '@components/CaptureFields.astro';
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import {
@@ -17,7 +18,11 @@ import {
   visibleFields,
   type PartyValues,
 } from '@lib/applications/capture';
-import { listMembershipTypes } from '@lib/config/reference';
+import { applicationTimeline } from '@lib/applications/timeline';
+import {
+  checklistForMembershipType,
+  listMembershipTypes,
+} from '@lib/config/reference';
 
 const principal = Astro.locals.principal!;
 if (!principal.permissions.has('application.capture')) {
@@ -34,6 +39,31 @@ if (!type) {
 
 const fields = visibleFields(type);
 const subjects = [...fields.keys()];
+
+// Nothing is captured yet, so this is the timeline's opening position rather
+// than a read of a real record: every mandatory field counts as outstanding,
+// and — since no document row exists until something is filed against it —
+// so does every required document the configuration asks for. Getting the
+// documents count right matters: 0 would read as "nothing outstanding",
+// which is done, not empty, and would tick that step off before capture is
+// even finished. It does not update as the officer types — the id page they
+// reach on Next is where the live version lives — but it is the same roadmap
+// from the first keystroke.
+const mandatoryFieldsTotal = [...fields.values()]
+  .flat()
+  .filter(f => f.isMandatory).length;
+const requiredDocumentsTotal = [
+  ...(await checklistForMembershipType(type.code)).values(),
+]
+  .flat()
+  .filter(item => item.requirement === 'required').length;
+const timeline = applicationTimeline({
+  status: 'draft',
+  mandatoryFieldsOutstanding: mandatoryFieldsTotal,
+  signedFormFiled: false,
+  requiredDocumentsOutstanding: requiredDocumentsTotal,
+  paymentRecorded: false,
+});
 
 let error: string | null = null;
 
@@ -110,6 +140,8 @@ if (Astro.request.method === 'POST') {
       class="inline-block text-sm text-neutral-500 underline dark:text-neutral-400"
       >← All applications</a
     >
+
+    <ApplicationTimeline steps={timeline} />
 
     {
       error && (

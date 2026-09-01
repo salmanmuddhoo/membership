@@ -173,6 +173,13 @@ export interface GraphItem {
   name: string;
   size: number;
   webUrl: string;
+  // A short-lived, pre-authenticated URL good for one anonymous GET (typically
+  // ~1 hour). This is what makes a document viewable by an officer at all:
+  // they have no SharePoint account (see the note on identity above), so
+  // webUrl — which needs one — is not usable, but this needs no further
+  // authentication. Absent only if Graph did not return one, which
+  // getDocumentViewUrl treats as a refusal rather than guessing a URL.
+  downloadUrl?: string;
 }
 
 /**
@@ -205,6 +212,7 @@ export async function getItemByPath(
 
   const item = (await response.json()) as Partial<GraphItem> & {
     file?: unknown;
+    '@microsoft.graph.downloadUrl'?: string;
   };
   if (!item.id) return null;
 
@@ -217,6 +225,7 @@ export async function getItemByPath(
     name: item.name ?? '',
     size: item.size ?? 0,
     webUrl: item.webUrl ?? '',
+    downloadUrl: item['@microsoft.graph.downloadUrl'],
   };
 }
 

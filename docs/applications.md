@@ -41,6 +41,35 @@ it reports "Not saved" loudly and never reports a save that did not happen. A
 The rule lives in the service, not on the page: a page that merely declines to
 post is still a page that can post.
 
+**Next moves the officer on without a save button of its own.** It flushes
+whatever autosave has not yet sent, then navigates to `/applications/<id>` —
+a real navigation, not the `replaceState` the first save already did, because
+the officer asked to move on and the destination is a different page: the
+documents, the payment, the actions the capture form never grows into.
+`/applications/<id>` carries its own **Back**, for the reverse trip — browser
+history where the tab has one to go back to, `/applications` otherwise, so it
+always lands somewhere real rather than depending on how the tab got here.
+
+## The progress timeline
+
+`applicationTimeline` (`src/lib/applications/timeline.ts`) is unchanged by any
+of this — the seven steps and how far a status/checklist/payment combination
+has got through them are exactly as before. What changed is where it is drawn
+and what it looks like: `ApplicationTimeline.astro` renders it as a row of
+coloured boxes, one per step, rather than a numbered list, and it is the first
+thing on the page — above the status line, above every section it summarises
+— on **both** the capture form and the full application page. An officer
+orients before they read anything else.
+
+The capture page has no application behind it yet (see above), so its
+timeline is a starting position rather than a read of a real record: every
+mandatory field counts as outstanding and so does every required document the
+membership type's checklist configures — passing `0` for either would read as
+**done** rather than **not yet begun**, ticking off a step nothing has
+happened on. It does not update as the officer types; the id page reached on
+Next is where the live version lives, and reaching for one is one Next click
+away.
+
 ## The chain
 
 ```
