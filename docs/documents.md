@@ -166,6 +166,30 @@ than API endpoints: the Secretary is at a desk, and a form works without
 scripting. Filing cannot be, because the bytes go from the device to Microsoft
 — so the file input is disabled until the script enables it, and says why.
 
+### Viewing and removing what was filed
+
+**Viewing is brokered the same way filing is, in the other direction.**
+`POST /api/v1/documents/view-url` (`document.view`) asks Graph for the current
+committed version's metadata and returns its `@microsoft.graph.downloadUrl` —
+a pre-authenticated URL good for one GET, no further sign-in. That is what
+lets an officer open a document at all: they have no SharePoint account (see
+"Two tenants, not one" above), so the item's ordinary `webUrl` is not usable
+to them. The URL is fetched on click rather than embedded in the page — it is
+a secret in the same sense an upload ticket is one, and a page that sat open
+for an hour would otherwise carry a live one in its HTML the whole time.
+
+**Removing a filed document is Replace without the replacement.**
+`removeFiledDocument` (`document.upload`) supersedes the live version exactly
+as a genuine replacement would (S-409) — it just does not insert one to take
+its place. What this does **not** do is touch SharePoint: versions are never
+deleted there, which is the same guarantee that keeps a signed form
+retrievable after it is superseded by a clearer scan, so undoing a mistaken
+upload undoes it from the checklist, not from the record that it was ever
+filed. The item reads Missing again, exactly as if nothing had been filed,
+and can be filed afresh. Available on any state Replace already is — S-409
+lets an officer replace even a verified document without restriction, so this
+is not a new door, only the other side of an existing one.
+
 Still open for later in M4: HEIC previews (accepted, but a browser cannot render
 one, so the thumbnail is a generic icon), and resuming a dropped transfer via
 `nextExpectedRanges` rather than restarting it.

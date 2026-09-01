@@ -104,7 +104,14 @@ async function load() {
       },
       getItemByPath: async (itemPath: string) => {
         const file = drive.files.get(itemPath);
-        return file ? { ...file, name: itemPath, webUrl: 'https://x' } : null;
+        return file
+          ? {
+              ...file,
+              name: itemPath,
+              webUrl: 'https://x',
+              downloadUrl: `https://download.invalid/${encodeURIComponent(itemPath)}`,
+            }
+          : null;
       },
     };
   });
@@ -833,5 +840,207 @@ describe('S-410: expiry', () => {
     const { documents } = await load();
     const checklist = await documents.checklistFor({ applicationId });
     expect(documents.isDocumentComplete(checklist)).toBe(false);
+  });
+});
+
+// Uses the 'utility_bill' document type seeded in migration 0010 — configured
+// for 'guardian' on Minor, not for anything on Individual — against a
+// subject/type combination the Individual checklist does not configure.
+// beginUpload does not check that: any active document type may be filed
+// against any subject, and what is under test here is the view/remove
+// behaviour, not the checklist configuration.
+describe('S-403: viewing a filed document', () => {
+  it('returns a URL good for opening the current version, and its file name', async () => {
+    const { documents } = await load();
+    const type = await run(
+      appUrl,
+      `select id from document_type where code = 'utility_bill'`
+    );
+
+    const begun = await documents.beginUpload(
+      {
+        applicationId,
+        documentTypeId: type.rows[0].id,
+        subject: 'applicant',
+        fileName: 'bill.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 200,
+      },
+      officer
+    );
+    drive.files.set(begun.ticket.itemPath, { id: 'graph-bill', size: 200 });
+    await documents.commitUpload(begun.versionId, officer);
+
+    const result = await documents.getDocumentViewUrl(begun.documentId);
+    expect(result.fileName).toBe('bill.pdf');
+    expect(result.url).toContain(encodeURIComponent(begun.ticket.itemPath));
+  });
+
+  it('refuses when nothing has been committed yet', async () => {
+    const { documents } = await load();
+    const type = await run(
+      appUrl,
+      `select id from document_type where code = 'utility_bill'`
+    );
+    const begun = await documents.beginUpload(
+      {
+        applicationId,
+        documentTypeId: type.rows[0].id,
+        subject: 'nominee',
+        fileName: 'unfinished.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 200,
+      },
+      officer
+    );
+    // Never committed — no live version exists to view.
+    await expect(
+      documents.getDocumentViewUrl(begun.documentId)
+    ).rejects.toThrowError(/no filed version/);
+  });
+});
+
+describe('undoing a mistaken upload, so it can be filed again', () => {
+  // Built inside each test, not here: describe bodies run at collection
+  // time, before beforeAll has populated `officer` — spreading it here would
+  // silently carry no userId or email at all.
+  const asUploader = () => ({
+    ...officer,
+    permissions: new Set(['document.upload']),
+  });
+  const asViewerOnly = () => ({
+    ...officer,
+    permissions: new Set(['document.view']),
+  });
+
+  it('supersedes the live version, without touching the file in SharePoint', async () => {
+    const { documents } = await load();
+    const type = await run(
+      appUrl,
+      `select id from document_type where code = 'utility_bill'`
+    );
+    const begun = await documents.beginUpload(
+      {
+        applicationId,
+        documentTypeId: type.rows[0].id,
+        subject: 'guardian',
+        fileName: 'bill2.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 300,
+      },
+      officer
+    );
+    drive.files.set(begun.ticket.itemPath, { id: 'graph-bill2', size: 300 });
+    await documents.commitUpload(begun.versionId, officer);
+
+    const before = await documents.versionsOf(begun.documentId);
+    expect(before.filter(v => v.supersededAt === null)).toHaveLength(1);
+
+    const result = await documents.removeFiledDocument(
+      begun.documentId,
+      asUploader()
+    );
+    expect(result.state).toBe('missing');
+
+    const after = await documents.versionsOf(begun.documentId);
+    // Nothing live — but the version itself is kept, exactly as a replacement
+    // keeps what it supersedes (S-409): the same guarantee, reached from a
+    // different direction.
+    expect(after.filter(v => v.supersededAt === null)).toHaveLength(0);
+    expect(after).toHaveLength(before.length);
+    expect(drive.files.has(begun.ticket.itemPath)).toBe(true);
+
+    const audited = await run(
+      appUrl,
+      `select previous_value->>'state' as was, new_value->>'state' as now
+         from audit_event
+        where action = 'document.removed' and entity_id = $1`,
+      [begun.documentId]
+    );
+    expect(audited.rowCount).toBe(1);
+    expect(audited.rows[0].now).toBe('missing');
+  });
+
+  it('can be filed again afterwards, as a new version', async () => {
+    const { documents } = await load();
+    const type = await run(
+      appUrl,
+      `select id from document_type where code = 'utility_bill'`
+    );
+    const documentId = (
+      await run(
+        appUrl,
+        `select id from document
+          where application_id = $1 and subject = 'guardian'
+            and document_type_id = $2`,
+        [applicationId, type.rows[0].id]
+      )
+    ).rows[0].id;
+
+    const begun = await documents.beginUpload(
+      {
+        applicationId,
+        documentTypeId: type.rows[0].id,
+        subject: 'guardian',
+        fileName: 'bill3.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 150,
+      },
+      officer
+    );
+    expect(begun.documentId).toBe(documentId);
+    drive.files.set(begun.ticket.itemPath, { id: 'graph-bill3', size: 150 });
+    await documents.commitUpload(begun.versionId, officer);
+
+    const versions = await documents.versionsOf(documentId);
+    const live = versions.find(v => v.supersededAt === null)!;
+    expect(versions.filter(v => v.supersededAt === null)).toHaveLength(1);
+    // Carries a version prefix once it is not the first — the removed
+    // version still counts (S-409), so this is version 3, not 2.
+    expect(live.fileName).toContain('bill3.pdf');
+  });
+
+  it('refuses when there is nothing filed to remove', async () => {
+    const { documents } = await load();
+    const type = await run(
+      appUrl,
+      `select id from document_type where code = 'utility_bill'`
+    );
+    const begun = await documents.beginUpload(
+      {
+        applicationId,
+        documentTypeId: type.rows[0].id,
+        subject: 'beneficiary',
+        fileName: 'still-pending.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 100,
+      },
+      officer
+    );
+    // Never committed — nothing live to remove.
+    await expect(
+      documents.removeFiledDocument(begun.documentId, asUploader())
+    ).rejects.toThrowError(/no filed version/);
+  });
+
+  it('refuses someone without document.upload', async () => {
+    const { documents } = await load();
+    const type = await run(
+      appUrl,
+      `select id from document_type where code = 'utility_bill'`
+    );
+    const documentId = (
+      await run(
+        appUrl,
+        `select id from document
+          where application_id = $1 and subject = 'guardian'
+            and document_type_id = $2`,
+        [applicationId, type.rows[0].id]
+      )
+    ).rows[0].id;
+
+    await expect(
+      documents.removeFiledDocument(documentId, asViewerOnly())
+    ).rejects.toThrowError(/permission/);
   });
 });

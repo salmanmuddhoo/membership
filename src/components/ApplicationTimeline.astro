@@ -1,0 +1,84 @@
+---
+// The seven-step journey from capture to a decision (S-301 to S-308), drawn as
+// a row of connected boxes rather than a list.
+//
+// Deliberately the first thing on both pages that work an application — the
+// capture form and the full application page — so an officer orients before
+// they read anything else: where this one has got to, and what happens next.
+// It is a picture of `applicationTimeline`'s output, not a second copy of the
+// logic that produced it.
+import type { TimelineStep } from '@lib/applications/timeline';
+
+interface Props {
+  steps: TimelineStep[];
+}
+
+const { steps } = Astro.props;
+
+const BOX: Record<string, string> = {
+  done: 'bg-mint-300 text-neutral-800 dark:bg-mint-700 dark:text-neutral-100',
+  current:
+    'bg-neutral-800 text-white ring-2 ring-mint-400 dark:bg-neutral-100 dark:text-neutral-900',
+  todo: 'bg-neutral-200 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400',
+};
+
+const DETAIL: Record<string, string> = {
+  done: 'text-neutral-700/80 dark:text-neutral-100/70',
+  current: 'text-neutral-200 dark:text-neutral-600',
+  todo: 'text-neutral-500 dark:text-neutral-400',
+};
+
+// The colour and the box carry the state for someone looking at it; this
+// carries the same thing for someone who is not.
+const READS: Record<string, string> = {
+  done: '(done)',
+  current: '(next)',
+  todo: '(to come)',
+};
+---
+
+<section
+  class="rounded-2xl border border-neutral-200 bg-neutral-100 p-4 sm:p-6 dark:border-neutral-800 dark:bg-neutral-950"
+  aria-label="Application progress"
+>
+  <ol class="flex flex-wrap items-stretch gap-2 sm:flex-nowrap sm:gap-0">
+    {
+      steps.map((step, index) => (
+        <li class="flex flex-1 items-stretch gap-2 sm:min-w-0">
+          <div
+            class:list={[
+              'flex min-w-[8rem] flex-1 flex-col justify-center rounded-xl px-3 py-2 text-center transition',
+              BOX[step.state],
+            ]}
+          >
+            <span class="block text-[0.65rem] font-bold tracking-wide uppercase opacity-75">
+              Step {index + 1}
+            </span>
+            <span class="block text-sm leading-tight font-semibold">
+              {step.label}
+            </span>
+            {step.detail && (
+              <span
+                class:list={[
+                  'mt-0.5 block text-[0.7rem] leading-tight',
+                  DETAIL[step.state],
+                ]}
+              >
+                {step.detail}
+              </span>
+            )}
+            <span class="sr-only">{READS[step.state]}</span>
+          </div>
+          {index < steps.length - 1 && (
+            <span
+              aria-hidden="true"
+              class="hidden shrink-0 self-center px-1 text-neutral-300 sm:block dark:text-neutral-700"
+            >
+              &rarr;
+            </span>
+          )}
+        </li>
+      ))
+    }
+  </ol>
+</section>
