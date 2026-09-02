@@ -123,6 +123,25 @@ Notes on those settings:
 - Use a **managed identity** for the registry pull and, when the VNet work is
   done, for the database too — removing the connection string entirely.
 
+## `minor-majority-transition` (S-610, FRD 7.10.10)
+
+A birthday is not a request anyone makes, so nothing on a request path can
+notice one. `transitionMinorsAtMajority` (`src/lib/members/majority.ts`)
+walks active members whose type has both `majority_age` and
+`majority_transition_type_id` configured (migration 0023 — both null by
+default, so this finds nothing until an administrator sets both from
+**Membership types**), compares each one's applicant `date_of_birth` against
+that age, and moves anyone who has reached it into the configured type.
+Every move is audited under `member.majority_transition` with
+`actor_user_id` null and an `actorDescription` naming the job — the same
+pattern `document-expiry` (S-410) already established for a change nobody
+requested.
+
+No chunking: unlike a sweep over the full membership, the number of members
+crossing an age threshold on any given day is small, so this reads and
+writes in one query per run, the same shape as `document-expiry`. Run daily,
+alongside it.
+
 ## Recommendation for M7 and M8
 
 - **M7 migration import** — a Manual job. Read the cleansed extract in batches,
@@ -132,8 +151,8 @@ Notes on those settings:
   names sharing this runner.
 - **M8 dormancy sweep** — a Schedule job, nightly. Decide dormancy per member,
   write only the ones that changed, and record each change in the audit trail
-  with `actor_user_id` null and an `actorDescription` naming the job. That is
-  what `audit_event`'s nullable actor exists for.
+  with `actor_user_id` null and an `actorDescription` naming the job — the
+  same shape `minor-majority-transition` (S-610, above) already proves.
 - **Add a job that watches the jobs.** A `job_run` row still `running` with an
   `updated_at` hours old means a container died and no schedule has picked it up.
   Nothing currently notices. Worth building alongside M9's notification layer.

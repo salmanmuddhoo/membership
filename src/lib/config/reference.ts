@@ -65,6 +65,13 @@ export interface MembershipType {
   // 'nominee', ordinal 1..N) this type's capture form renders and accepts.
   // Confirmed default is 1 nominee, no percentages (docs/backlog.md M6).
   nomineeCount: number;
+  // S-610: the age at which a member of this type automatically becomes a
+  // member of majorityTransitionTypeId, and which type that is. Both null
+  // means no automatic transition — the shipped default until an
+  // administrator sets both.
+  majorityAge: number | null;
+  majorityTransitionTypeId: string | null;
+  majorityTransitionTypeName: string | null;
 }
 
 export async function listMembershipTypes(): Promise<MembershipType[]> {
@@ -80,14 +87,20 @@ export async function listMembershipTypes(): Promise<MembershipType[]> {
     is_active: boolean;
     sort_order: number;
     nominee_count: number;
+    majority_age: number | null;
+    majority_transition_type_id: string | null;
+    majority_transition_type_name: string | null;
   }>(
     `select m.id, m.code, m.name, m.description,
             m.checklist_id, c.name as checklist_name,
             m.fee_schedule_id, f.name as fee_schedule_name,
-            m.is_active, m.sort_order, m.nominee_count
+            m.is_active, m.sort_order, m.nominee_count,
+            m.majority_age, m.majority_transition_type_id,
+            mt.name as majority_transition_type_name
        from membership_type m
        left join document_checklist c on c.id = m.checklist_id
        left join fee_schedule f       on f.id = m.fee_schedule_id
+       left join membership_type mt   on mt.id = m.majority_transition_type_id
       order by m.sort_order, m.name`
   );
 
@@ -142,6 +155,9 @@ export async function listMembershipTypes(): Promise<MembershipType[]> {
     sortOrder: t.sort_order,
     fields: byType.get(t.id) ?? [],
     nomineeCount: t.nominee_count,
+    majorityAge: t.majority_age,
+    majorityTransitionTypeId: t.majority_transition_type_id,
+    majorityTransitionTypeName: t.majority_transition_type_name,
   }));
 }
 
@@ -161,6 +177,59 @@ export async function setNomineeCount(
     const result = await client.query(
       `update membership_type set nominee_count = $2 where id = $1`,
       [typeId, count]
+    );
+    if (result.rowCount === 0) {
+      throw new ConfigError(
+        'That membership type no longer exists.',
+        'not_found'
+      );
+    }
+  });
+}
+
+// S-610: the age at which this type automatically becomes another, and
+// which type that is. Set together or cleared together — a member's type
+// with no target, or a target with no age, would each on their own leave
+// the scheduled job unable to tell what to do, so neither is allowed.
+export async function setMajorityTransition(
+  typeId: string,
+  transition: { age: number | null; transitionTypeId: string | null },
+  actor: Actor
+): Promise<void> {
+  const { age, transitionTypeId } = transition;
+
+  if ((age === null) !== (transitionTypeId === null)) {
+    throw new ConfigError(
+      'Set both the age and the type a member becomes at that age, or ' +
+        'clear both — one without the other cannot be acted on.'
+    );
+  }
+  if (age !== null && (!Number.isInteger(age) || age < 1 || age > 100)) {
+    throw new ConfigError('The age must be a whole number from 1 to 100.');
+  }
+  if (transitionTypeId !== null && transitionTypeId === typeId) {
+    throw new ConfigError('A type cannot transition into itself.');
+  }
+
+  await withConfigurationActor(actorFor(actor), async client => {
+    if (transitionTypeId !== null) {
+      const target = await client.query(
+        'select 1 from membership_type where id = $1',
+        [transitionTypeId]
+      );
+      if (target.rowCount === 0) {
+        throw new ConfigError(
+          'The membership type to transition into no longer exists.',
+          'not_found'
+        );
+      }
+    }
+
+    const result = await client.query(
+      `update membership_type
+          set majority_age = $2, majority_transition_type_id = $3
+        where id = $1`,
+      [typeId, age, transitionTypeId]
     );
     if (result.rowCount === 0) {
       throw new ConfigError(
