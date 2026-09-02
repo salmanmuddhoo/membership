@@ -1094,6 +1094,13 @@ export interface WorkflowStep {
   name: string;
   roleId: string;
   roleName: string;
+  // S-611: which role's job this step actually is, not just a label for the
+  // transition history — `assertMayAct` (workflow.ts) checks a principal's
+  // own role codes against this, the same way it already checks their
+  // permissions. Needed once `regional_review` and `secretary_review` began
+  // sharing a single permission (`application.review`, migration 0011): the
+  // permission alone could no longer tell the two apart.
+  roleCode: string;
   fromStatus: string;
   toStatus: string;
   isEnabled: boolean;
@@ -1174,13 +1181,14 @@ export async function listWorkflows(): Promise<WorkflowDefinition[]> {
     name: string;
     role_id: string;
     role_name: string;
+    role_code: string;
     from_status: string;
     to_status: string;
     is_enabled: boolean;
     quorum_count: number;
   }>(
     `select s.id, s.definition_id, s.step_no, s.code, s.name,
-            s.role_id, r.name as role_name,
+            s.role_id, r.name as role_name, r.code as role_code,
             s.from_status, s.to_status, s.is_enabled, s.quorum_count
        from workflow_step s
        join role r on r.id = s.role_id
@@ -1197,6 +1205,7 @@ export async function listWorkflows(): Promise<WorkflowDefinition[]> {
       name: s.name,
       roleId: s.role_id,
       roleName: s.role_name,
+      roleCode: s.role_code,
       fromStatus: s.from_status,
       toStatus: s.to_status,
       isEnabled: s.is_enabled,

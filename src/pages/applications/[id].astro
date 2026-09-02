@@ -222,6 +222,12 @@ if (Astro.request.method === 'POST') {
           notice = 'Submitted for central processing.';
         }
       } else if (intent === 'review') {
+        // S-611: which step this is reviewing — Regional oversight or
+        // Secretary review — travels with the form as a hidden field, since
+        // a signed-in person only ever sees the one their own role covers
+        // (availableActions filters by role), but the server still has to be
+        // told which so it checks the right one.
+        const stepCode = String(form.get('stepCode') ?? 'secretary_review');
         const result = await reviewApplication(
           application.id,
           {
@@ -229,12 +235,15 @@ if (Astro.request.method === 'POST') {
               String(form.get('outcome')) === 'return' ? 'return' : 'forward',
             comment: String(form.get('comment') ?? ''),
           },
-          principal
+          principal,
+          stepCode
         );
         notice =
           result.status === 'returned'
             ? 'Returned to the originating staff.'
-            : 'Forwarded to the President.';
+            : stepCode === 'regional_review'
+              ? 'Forwarded for central review.'
+              : 'Forwarded to the President.';
       } else {
         const result = await decideApplication(
           application.id,
@@ -353,6 +362,50 @@ const forwardAction = actions.find(a => a.stepCode === 'secretary_review');
 const boardReasons = forwardAction
   ? boardReadinessReasons(await boardReadiness(application!))
   : [];
+
+// S-611: what a review-type step's own buttons say and post — the "forward"
+// verb, the "return"/"reject" verb, and the comment's placeholder — kept as
+// one small table instead of a chain of stepCode comparisons repeated in the
+// markup below, so a step's wording lives in exactly one place. Regional
+// oversight is a gate (S-209): "forward" records that it happened without
+// moving the record on its own, the same reviewApplication call as Secretary
+// review's, just with a different stepCode (see the POST handler above).
+const REVIEW_STEP_META: Record<
+  string,
+  {
+    intent: 'review' | 'decide';
+    forwardOutcome: string;
+    forwardLabel: string;
+    returnOutcome: string;
+    returnLabel: string;
+    commentPlaceholder: string;
+  }
+> = {
+  regional_review: {
+    intent: 'review',
+    forwardOutcome: 'forward',
+    forwardLabel: 'Forward for central review',
+    returnOutcome: 'return',
+    returnLabel: 'Return for correction',
+    commentPlaceholder: 'Required if you return this application.',
+  },
+  secretary_review: {
+    intent: 'review',
+    forwardOutcome: 'forward',
+    forwardLabel: 'Forward to the President',
+    returnOutcome: 'return',
+    returnLabel: 'Return for correction',
+    commentPlaceholder: 'Required if you return this application.',
+  },
+  president_decision: {
+    intent: 'decide',
+    forwardOutcome: 'approve',
+    forwardLabel: 'Approve',
+    returnOutcome: 'reject',
+    returnLabel: 'Reject',
+    commentPlaceholder: 'Required if you reject this application.',
+  },
+};
 
 // S-609: only worth a round trip when this step actually asks for more than
 // one sign-off, or already has one recorded from a quorum that has since
@@ -1238,116 +1291,105 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             Your next step
           </h2>
 
-          {actions.map(action => (
-            <form method="post" class="mt-4 space-y-3">
-              {action.stepCode === 'capture' && (
-                <button
-                  type="submit"
-                  name="intent"
-                  value="submit"
-                  disabled={blocking.length > 0}
-                  class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {blocking.length > 0
-                    ? `Submit (${blocking.length} item${blocking.length === 1 ? '' : 's'} still need attention)`
-                    : 'Submit for Processing'}
-                </button>
-              )}
-
-              {action.stepCode === 'secretary_review' &&
-                boardReasons.length > 0 && (
-                  <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-                    <p class="font-medium">Not ready for the Board yet:</p>
-                    <ul class="mt-1 list-disc pl-5">
-                      {boardReasons.map(reason => (
-                        <li>{reason}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
-              {action.stepCode === 'president_decision' &&
-                signoffs.length > 0 && (
-                  <div class="rounded-lg border border-neutral-300 bg-white px-4 py-3 text-sm dark:border-neutral-700 dark:bg-neutral-900">
-                    <p class="font-medium text-neutral-700 dark:text-neutral-200">
-                      {signoffs.filter(s => s.outcome === 'approve').length} of{' '}
-                      {action.quorumCount} sign-off
-                      {action.quorumCount === 1 ? '' : 's'} recorded
-                    </p>
-                    <ul class="mt-1 space-y-0.5 text-neutral-600 dark:text-neutral-300">
-                      {signoffs.map(s => (
-                        <li>
-                          {s.outcome === 'approve' ? 'Approved' : 'Rejected'} by{' '}
-                          {s.actorName}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
-              {(action.stepCode === 'secretary_review' ||
-                action.stepCode === 'president_decision') && (
-                <>
-                  <label class="block text-sm text-neutral-600 dark:text-neutral-300">
-                    Comment
-                    <textarea
-                      name="comment"
-                      rows="3"
-                      class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-                      placeholder={
-                        action.stepCode === 'secretary_review'
-                          ? 'Required if you return this application.'
-                          : 'Required if you reject this application.'
-                      }
-                    />
-                  </label>
-                  <div class="flex flex-wrap gap-2">
-                    <button
-                      type="submit"
-                      name="outcome"
-                      value={
-                        action.stepCode === 'secretary_review'
-                          ? 'forward'
-                          : 'approve'
-                      }
-                      disabled={
-                        action.stepCode === 'secretary_review' &&
-                        boardReasons.length > 0
-                      }
-                      class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {action.stepCode === 'secretary_review'
-                        ? 'Forward to the President'
-                        : 'Approve'}
-                    </button>
-                    <button
-                      type="submit"
-                      name="outcome"
-                      value={
-                        action.stepCode === 'secretary_review'
-                          ? 'return'
-                          : 'reject'
-                      }
-                      class="rounded-lg border border-red-300 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
-                    >
-                      {action.stepCode === 'secretary_review'
-                        ? 'Return for correction'
-                        : 'Reject'}
-                    </button>
-                  </div>
-                  <input
-                    type="hidden"
+          {actions.map(action => {
+            const reviewMeta = REVIEW_STEP_META[action.stepCode];
+            return (
+              <form method="post" class="mt-4 space-y-3">
+                {action.stepCode === 'capture' && (
+                  <button
+                    type="submit"
                     name="intent"
-                    value={
-                      action.stepCode === 'secretary_review'
-                        ? 'review'
-                        : 'decide'
-                    }
-                  />
-                </>
-              )}
-            </form>
-          ))}
+                    value="submit"
+                    disabled={blocking.length > 0}
+                    class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {blocking.length > 0
+                      ? `Submit (${blocking.length} item${blocking.length === 1 ? '' : 's'} still need attention)`
+                      : 'Submit for Processing'}
+                  </button>
+                )}
+
+                {action.stepCode === 'secretary_review' &&
+                  boardReasons.length > 0 && (
+                    <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+                      <p class="font-medium">Not ready for the Board yet:</p>
+                      <ul class="mt-1 list-disc pl-5">
+                        {boardReasons.map(reason => (
+                          <li>{reason}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                {action.stepCode === 'president_decision' &&
+                  signoffs.length > 0 && (
+                    <div class="rounded-lg border border-neutral-300 bg-white px-4 py-3 text-sm dark:border-neutral-700 dark:bg-neutral-900">
+                      <p class="font-medium text-neutral-700 dark:text-neutral-200">
+                        {signoffs.filter(s => s.outcome === 'approve').length}{' '}
+                        of {action.quorumCount} sign-off
+                        {action.quorumCount === 1 ? '' : 's'} recorded
+                      </p>
+                      <ul class="mt-1 space-y-0.5 text-neutral-600 dark:text-neutral-300">
+                        {signoffs.map(s => (
+                          <li>
+                            {s.outcome === 'approve' ? 'Approved' : 'Rejected'}{' '}
+                            by {s.actorName}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                {reviewMeta && (
+                  <>
+                    <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+                      Comment
+                      <textarea
+                        name="comment"
+                        rows="3"
+                        class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                        placeholder={reviewMeta.commentPlaceholder}
+                      />
+                    </label>
+                    <div class="flex flex-wrap gap-2">
+                      <button
+                        type="submit"
+                        name="outcome"
+                        value={reviewMeta.forwardOutcome}
+                        disabled={
+                          action.stepCode === 'secretary_review' &&
+                          boardReasons.length > 0
+                        }
+                        class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {reviewMeta.forwardLabel}
+                      </button>
+                      <button
+                        type="submit"
+                        name="outcome"
+                        value={reviewMeta.returnOutcome}
+                        class="rounded-lg border border-red-300 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
+                      >
+                        {reviewMeta.returnLabel}
+                      </button>
+                    </div>
+                    <input
+                      type="hidden"
+                      name="intent"
+                      value={reviewMeta.intent}
+                    />
+                    {reviewMeta.intent === 'review' && (
+                      <input
+                        type="hidden"
+                        name="stepCode"
+                        value={action.stepCode}
+                      />
+                    )}
+                  </>
+                )}
+              </form>
+            );
+          })}
         </section>
       )
     }
