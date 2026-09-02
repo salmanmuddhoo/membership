@@ -206,6 +206,43 @@ incomplete application and central processing. `submissionReadiness` is
 exported and shared: the wizard and the server read the same three counts, so
 neither can drift from what the other allows.
 
+## A minor's guardian has to be someone real (S-604, S-605)
+
+The guardian block on a Minor application asks for a Member No. and a NIC —
+plain text fields, like any other — but filling them in is not the same as
+naming a real guardian. FRD 7.10.2 requires the guardian to be an **existing,
+active member**, so `problemsBlockingSubmission` (`capture.ts`) resolves
+whatever was typed against `member`, joined back to the applicant party of
+whichever application created that member (NIC is not a column on `member`
+itself — it only ever lived on the application that produced it). Either
+identifier resolving is enough; neither resolving, or resolving to someone no
+longer active, is reported the same way an empty mandatory field is: it
+blocks submission, and it blocks the wizard from reaching Documents or
+Payment, on the same `blocking` count the timeline and the Next button
+already read.
+
+The difference from an empty field is that a filled-in, wrong Member No.
+looks fine at a glance — the red border it gets is the same one an empty
+field gets, but nothing on the page says _why_ a filled-in field is red. The
+capture page's **Needs attention** section exists for exactly this: unlike
+the "still required" list (which only appears after a real submit attempt),
+it always shows a blocking problem whose value is non-empty — the "must join
+as a member first" or "is not an active member" message — the moment the
+page renders it, without the officer having to attempt and be refused first.
+An empty mandatory field is not listed there; the asterisk and the border
+already say what it needs.
+
+**Successor guardian and Takaful beneficiary (S-606, S-607) needed no new
+code.** Both were already configuration: the successor guardian is the Minor
+type's own `nominee` subject (distinct from an Individual or Corporate
+nominee — the type decides what "nominee" means), and the beneficiary is its
+own subject, both with their own checklist requirements from migration 0010.
+The same is true of Corporate capture (S-601): the fields, checklist and fee
+schedule were seeded in M2, and nothing in `capture.ts` has ever known a
+membership type by name — the generic pipeline just had to be pointed at it
+by a test to be sure. `workflow.test.ts` now carries end-to-end tests for
+both.
+
 ## The chain
 
 ```

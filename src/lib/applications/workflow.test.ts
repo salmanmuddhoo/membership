@@ -13,6 +13,7 @@ import {
 } from 'vitest';
 import { migrate } from '../../../scripts/migrate';
 import type { Principal } from '../access/principal';
+import type { PartyValues } from './capture';
 
 const ADMIN_URL = 'postgresql://postgres@127.0.0.1:5433/postgres';
 const MIGRATIONS_DIR = path.resolve(
@@ -316,6 +317,216 @@ async function captureComplete() {
   await recordFullPayment(payments, id);
   return id;
 }
+
+// FRD 5.2: no NIC, no gender — a registered entity's own particulars plus a
+// contact person, and a nominee exactly as an Individual's.
+const COMPLETE_CORPORATE: Array<{
+  subject: 'applicant' | 'nominee' | 'guardian' | 'beneficiary';
+  ordinal: number;
+  values: Record<string, string>;
+}> = [
+  {
+    subject: 'applicant',
+    ordinal: 1,
+    values: {
+      name: 'Curepipe Trading Co Ltd',
+      registration_no: 'C12345678',
+      address: '10 St Georges Street, Port Louis',
+      mobile: '5789 1234',
+      contact_person: 'Aisha Beebeejaun',
+      contact_telephone: '5789 5678',
+    },
+  },
+  {
+    subject: 'nominee',
+    ordinal: 1,
+    values: {
+      surname: 'Beebeejaun',
+      name: 'Yusuf',
+      nic: 'B9876543210987',
+      address: '12 Royal Road, Curepipe',
+    },
+  },
+];
+
+async function captureCompleteCorporate() {
+  const capture = await import('./capture');
+  const documents = await import('../documents/documents');
+  const payments = await import('../payments/payments');
+  const actor = { userId: officer.userId, email: officer.email };
+  const { id } = await capture.startApplication('corporate', actor);
+  await capture.saveDraft(id, COMPLETE_CORPORATE, actor);
+  await fileRequiredDocuments(documents, id);
+  await recordFullPayment(payments, id);
+  return id;
+}
+
+// A member row for a minor's application to point its guardian at, with a
+// real applicant NIC behind it — capture.ts's guardian lookup joins back to
+// that party, since NIC is not a column on `member` itself.
+async function seedGuardianMember(nic: string): Promise<{ memberNo: string }> {
+  const type = await run(
+    appUrl,
+    `select id from membership_type where code = 'individual'`
+  );
+  const application = await run(
+    appUrl,
+    `insert into membership_application (membership_type_id, captured_by)
+     values ($1, $2) returning id`,
+    [type.rows[0].id, officer.userId]
+  );
+  await run(
+    appUrl,
+    `insert into application_party (application_id, subject, ordinal, values)
+     values ($1, 'applicant', 1, $2::jsonb)`,
+    [application.rows[0].id, JSON.stringify({ nic })]
+  );
+  const member = await run(
+    appUrl,
+    `insert into member (application_id, membership_type_id)
+     values ($1, $2) returning member_no`,
+    [application.rows[0].id, type.rows[0].id]
+  );
+  return { memberNo: member.rows[0].member_no };
+}
+
+describe('S-604/S-605: a Minor application with a valid guardian, end to end', () => {
+  it('is blocked while the guardian cannot be found, then goes through once they can', async () => {
+    const { capture, workflow, members } = await load();
+    const actor = { userId: officer.userId, email: officer.email };
+    const { id } = await capture.startApplication('minor', actor);
+
+    const parties = (guardianMemberNo: string): PartyValues[] => [
+      {
+        subject: 'applicant',
+        ordinal: 1,
+        values: {
+          surname: 'Ramdin',
+          name: 'Zaid',
+          date_of_birth: '2015-01-01',
+          gender: 'Male',
+          address: '4 Pope Hennessy Street, Port Louis',
+        },
+      },
+      {
+        subject: 'guardian' as const,
+        ordinal: 1,
+        values: {
+          surname: 'Ramdin',
+          name: 'Farah',
+          nic: 'G0000000000000',
+          member_id: guardianMemberNo,
+          relationship: 'Mother',
+          mobile: '5789 1234',
+        },
+      },
+      {
+        subject: 'nominee' as const,
+        ordinal: 1,
+        values: {
+          surname: 'Peerthum',
+          name: 'Ismail',
+          nic: 'H1111111111111',
+        },
+      },
+      {
+        subject: 'beneficiary' as const,
+        ordinal: 1,
+        values: { surname: 'Ramdin', name: 'Zaid', nic: 'H2222222222222' },
+      },
+    ];
+
+    await capture.saveDraft(id, parties('AB9999'), actor);
+    const documents = await import('../documents/documents');
+    const payments = await import('../payments/payments');
+    await fileRequiredDocuments(documents, id);
+    await recordFullPayment(payments, id);
+
+    // Not a member yet — submission refuses, and says the guardian is why.
+    const refused = await workflow.submitApplication(id, officer);
+    expect('problems' in refused).toBe(true);
+    if ('problems' in refused) {
+      expect(
+        refused.problems.some(p => /must join as a member first/.test(p.label))
+      ).toBe(true);
+    }
+
+    // Now the guardian actually is one — the same application goes through.
+    const { memberNo } = await seedGuardianMember('S5555555555555');
+    await capture.saveDraft(id, parties(memberNo), actor);
+
+    const submitted = await workflow.submitApplication(id, officer);
+    expect(submitted).toEqual({ status: 'new' });
+
+    await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Guardian verified.' },
+      secretary
+    );
+    const decided = await workflow.decideApplication(
+      id,
+      { outcome: 'approve', comment: '' },
+      president,
+      members.createMemberFromApplication
+    );
+    expect(decided.status).toBe('approved');
+  });
+});
+
+describe('S-601: a Corporate application, end to end', () => {
+  // The acceptance criterion in the backlog, checked directly: the corporate
+  // checklist asks for the entity's own documents, not an ID card, which is
+  // an Individual's proof of identity and not a registered entity's.
+  it('asks for corporate documents, not an ID card, for the applicant', async () => {
+    const { documents } = await load();
+    const id = await captureCompleteCorporate();
+    const checklist = await documents.checklistFor({ applicationId: id });
+
+    const applicantDocs = checklist
+      .filter(e => e.subject === 'applicant')
+      .map(e => e.documentCode);
+    expect(applicantDocs).toEqual(
+      expect.arrayContaining([
+        'cert_registration',
+        'memorandum',
+        'written_resolution',
+      ])
+    );
+    expect(applicantDocs).not.toContain('id_card');
+
+    // The nominee is still proven by ID card, exactly as an Individual's is.
+    expect(checklist.find(e => e.subject === 'nominee')?.documentCode).toBe(
+      'id_card'
+    );
+  });
+
+  it('takes a Corporate application all the way to an approved member', async () => {
+    const { workflow, members } = await load();
+    const id = await captureCompleteCorporate();
+
+    await workflow.submitApplication(id, officer);
+    await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Complete.' },
+      secretary
+    );
+    const decided = await workflow.decideApplication(
+      id,
+      { outcome: 'approve', comment: '' },
+      president,
+      members.createMemberFromApplication
+    );
+
+    expect(decided.status).toBe('approved');
+    expect(decided.member?.memberNo).toMatch(/^AB\d{4,}$/);
+
+    const member = await members.loadMember(decided.member!.id);
+    expect(member!.accounts.map(a => a.accountTypeName)).toEqual([
+      'Shares',
+      'Multiplier Savings Account',
+    ]);
+  });
+});
 
 describe('M3: the walking skeleton, end to end', () => {
   it('takes an application from capture to a member with an MSA', async () => {

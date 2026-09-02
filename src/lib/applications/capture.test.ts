@@ -361,6 +361,151 @@ describe('S-301: the form comes from the configuration, not from code', () => {
   });
 });
 
+// A member row this test can point a guardian at, with a real applicant NIC
+// behind it — findGuardianMember() joins back to that party, since NIC is
+// not a column on `member` itself (FRD 7.10.2: found by Member No. or NIC).
+async function seedMember(
+  nic: string,
+  status: 'active' | 'inactive' = 'active'
+): Promise<{ memberNo: string }> {
+  const type = await run(
+    appUrl,
+    `select id from membership_type where code = 'individual'`
+  );
+  const application = await run(
+    appUrl,
+    `insert into membership_application (membership_type_id, captured_by)
+     values ($1, $2) returning id`,
+    [type.rows[0].id, officer.userId]
+  );
+  const applicationId = application.rows[0].id;
+  await run(
+    appUrl,
+    `insert into application_party (application_id, subject, ordinal, values)
+     values ($1, 'applicant', 1, $2::jsonb)`,
+    [applicationId, JSON.stringify({ nic })]
+  );
+  const member = await run(
+    appUrl,
+    `insert into member (application_id, membership_type_id, status)
+     values ($1, $2, $3) returning member_no`,
+    [applicationId, type.rows[0].id, status]
+  );
+  return { memberNo: member.rows[0].member_no };
+}
+
+describe('S-604/S-605: a minor’s guardian must be an existing, active member', () => {
+  const minorParties = (
+    guardian: Record<string, string> = {}
+  ): PartyValues[] => [
+    {
+      subject: 'applicant',
+      ordinal: 1,
+      values: {
+        surname: 'Ramdin',
+        name: 'Zaid',
+        date_of_birth: '2015-01-01',
+        gender: 'Male',
+        address: '4 Pope Hennessy Street, Port Louis',
+      },
+    },
+    {
+      subject: 'guardian' as const,
+      ordinal: 1,
+      values: {
+        surname: 'Ramdin',
+        name: 'Farah',
+        nic: 'G0000000000000',
+        relationship: 'Mother',
+        mobile: '5789 1234',
+        ...guardian,
+      },
+    },
+    {
+      subject: 'nominee' as const,
+      ordinal: 1,
+      values: { surname: 'Peerthum', name: 'Ismail', nic: 'H1111111111111' },
+    },
+    {
+      subject: 'beneficiary' as const,
+      ordinal: 1,
+      values: { surname: 'Ramdin', name: 'Zaid' },
+    },
+  ];
+
+  it('blocks submission when the named guardian matches nobody', async () => {
+    const { capture } = await load();
+    const { id } = await capture.startApplication('minor', officer);
+    await capture.saveDraft(
+      id,
+      minorParties({ member_id: 'AB9999', nic: 'X0000000000000' }),
+      officer
+    );
+
+    const application = await capture.loadApplication(id);
+    const problems = await capture.problemsBlockingSubmission(application!);
+
+    const guardianProblem = problems.find(
+      p => p.subject === 'guardian' && p.fieldKey === 'member_id'
+    );
+    expect(guardianProblem?.label).toMatch(/must join as a member first/);
+  });
+
+  it('passes once the Member No. resolves to an active member', async () => {
+    const { capture } = await load();
+    const { memberNo } = await seedMember('S2222222222222');
+
+    const { id } = await capture.startApplication('minor', officer);
+    await capture.saveDraft(
+      id,
+      minorParties({ member_id: memberNo, nic: 'not-the-lookup' }),
+      officer
+    );
+
+    const application = await capture.loadApplication(id);
+    const problems = await capture.problemsBlockingSubmission(application!);
+    expect(
+      problems.some(p => p.subject === 'guardian' && p.fieldKey === 'member_id')
+    ).toBe(false);
+  });
+
+  it('resolves by NIC when the Member No. given does not match', async () => {
+    const { capture } = await load();
+    await seedMember('S3333333333333');
+
+    const { id } = await capture.startApplication('minor', officer);
+    await capture.saveDraft(
+      id,
+      // Member No. is mandatory on its own (any blank is already reported as
+      // a missing field), so this is the case the "or NIC" wording actually
+      // covers: a wrong or unknown Member No., correct NIC.
+      minorParties({ member_id: 'AB0000', nic: 'S3333333333333' }),
+      officer
+    );
+
+    const application = await capture.loadApplication(id);
+    const problems = await capture.problemsBlockingSubmission(application!);
+    expect(
+      problems.some(p => p.subject === 'guardian' && p.fieldKey === 'member_id')
+    ).toBe(false);
+  });
+
+  it('still blocks when the matched member is not active', async () => {
+    const { capture } = await load();
+    const { memberNo } = await seedMember('S4444444444444', 'inactive');
+
+    const { id } = await capture.startApplication('minor', officer);
+    await capture.saveDraft(id, minorParties({ member_id: memberNo }), officer);
+
+    const application = await capture.loadApplication(id);
+    const problems = await capture.problemsBlockingSubmission(application!);
+    const guardianProblem = problems.find(
+      p => p.subject === 'guardian' && p.fieldKey === 'member_id'
+    );
+    expect(guardianProblem?.label).toMatch(/not an active member/);
+  });
+});
+
 describe('S-301: mobile numbers are stored in full international form', () => {
   it('converts on save, so what is stored is what M9 can send to', async () => {
     const { capture } = await load();
