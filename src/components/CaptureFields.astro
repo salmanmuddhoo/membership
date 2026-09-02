@@ -14,9 +14,18 @@ interface Props {
   // outlined rather than only listed somewhere else on the page.
   blocking?: MissingField[];
   isEditable?: boolean;
+  // How many nominee blocks to render (S-602). Every other subject always
+  // renders exactly one — only nominee is ever more than one instance.
+  nomineeCount?: number;
 }
 
-const { fields, parties, blocking = [], isEditable = true } = Astro.props;
+const {
+  fields,
+  parties,
+  blocking = [],
+  isEditable = true,
+  nomineeCount = 1,
+} = Astro.props;
 
 const SUBJECT_LABELS: Record<string, string> = {
   applicant: 'Applicant',
@@ -40,117 +49,135 @@ type InputType = (typeof INPUT_TYPES)[keyof typeof INPUT_TYPES];
 const inputTypeFor = (dataType: string): InputType =>
   (INPUT_TYPES as Record<string, InputType>)[dataType] ?? 'text';
 
-const valuesFor = (subject: FieldSubject) =>
-  parties.find(p => p.subject === subject && p.ordinal === 1)?.values ?? {};
+const valuesFor = (subject: FieldSubject, ordinal: number) =>
+  parties.find(p => p.subject === subject && p.ordinal === ordinal)?.values ??
+  {};
+
+// Every subject is one instance except nominee, which is as many as the
+// type configures (S-602: "one or more Nominees where configured").
+const ordinalsFor = (subject: FieldSubject) =>
+  Array.from(
+    { length: subject === 'nominee' ? Math.max(nomineeCount, 1) : 1 },
+    (_, i) => i + 1
+  );
 ---
 
 {
-  [...fields.keys()].map(subject => {
-    const values = valuesFor(subject);
-    const missing = new Set(
-      blocking.filter(b => b.subject === subject).map(b => b.fieldKey)
-    );
-    const subjectFields = fields.get(subject) ?? [];
-    // A guardian is identified by Member No. and NIC (S-604) — where a type
-    // asks for both, search helps the officer find the parent rather than
-    // typing those in blind. Not every type that could have a `guardian`
-    // subject need configure it this way, so this checks for the fields
-    // rather than the subject's name.
-    const isGuardianSearch =
-      subject === 'guardian' &&
-      isEditable &&
-      subjectFields.some(f => f.fieldKey === 'member_id') &&
-      subjectFields.some(f => f.fieldKey === 'nic');
-    return (
-      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-          {SUBJECT_LABELS[subject] ?? subject}
-        </h2>
-        {isGuardianSearch && (
-          <div class="relative mt-3" data-guardian-search>
-            <label class="block text-sm text-neutral-600 dark:text-neutral-300">
-              Search for the parent
-              <input
-                type="text"
-                autocomplete="off"
-                placeholder="Name, NIC or Member No."
-                data-guardian-search-input
-                class="mt-1 block w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-              />
-            </label>
-            <p
-              data-guardian-search-status
-              class="mt-1 text-xs text-neutral-500 dark:text-neutral-400"
-            />
-            <ul
-              data-guardian-search-results
-              hidden
-              class="absolute z-10 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-neutral-300 bg-white text-sm shadow-lg dark:border-neutral-600 dark:bg-neutral-900"
-            />
-          </div>
-        )}
-        <div class="mt-4 grid gap-4 sm:grid-cols-2">
-          {subjectFields.map(field => {
-            const name = `field.${subject}.1.${field.fieldKey}`;
-            const value = values[field.fieldKey] ?? '';
-            return (
-              <label class="text-sm text-neutral-600 dark:text-neutral-300">
-                <span>
-                  {field.label}
-                  {field.isMandatory && (
-                    <span
-                      class="text-red-600 dark:text-red-400"
-                      aria-hidden="true"
-                    >
-                      {' '}
-                      *
-                    </span>
-                  )}
-                </span>
-                {field.dataType === 'choice' ? (
-                  <select
-                    name={name}
-                    disabled={!isEditable}
-                    data-mandatory={field.isMandatory ? 'yes' : undefined}
-                    class:list={[
-                      'mt-1 w-full rounded-lg border bg-white px-3 py-1.5 text-sm dark:bg-neutral-900 dark:text-neutral-100',
-                      missing.has(field.fieldKey)
-                        ? 'border-red-400 dark:border-red-700'
-                        : 'border-neutral-300 dark:border-neutral-600',
-                    ]}
-                  >
-                    <option value="">—</option>
-                    {field.choices.map(choice => (
-                      <option value={choice} selected={choice === value}>
-                        {choice}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <input
-                    type={inputTypeFor(field.dataType)}
-                    name={name}
-                    value={value}
-                    disabled={!isEditable}
-                    placeholder={
-                      field.dataType === 'phone' ? '5789 1234' : undefined
-                    }
-                    data-mandatory={field.isMandatory ? 'yes' : undefined}
-                    class:list={[
-                      'mt-1 w-full rounded-lg border bg-white px-3 py-1.5 text-sm dark:bg-neutral-900 dark:text-neutral-100',
-                      missing.has(field.fieldKey)
-                        ? 'border-red-400 dark:border-red-700'
-                        : 'border-neutral-300 dark:border-neutral-600',
-                    ]}
-                  />
-                )}
+  [...fields.keys()].flatMap(subject =>
+    ordinalsFor(subject).map(ordinal => {
+      const values = valuesFor(subject, ordinal);
+      const missing = new Set(
+        blocking
+          .filter(b => b.subject === subject && b.ordinal === ordinal)
+          .map(b => b.fieldKey)
+      );
+      const subjectFields = fields.get(subject) ?? [];
+      // A guardian is identified by Member No. and NIC (S-604) — where a type
+      // asks for both, search helps the officer find the parent rather than
+      // typing those in blind. Not every type that could have a `guardian`
+      // subject need configure it this way, so this checks for the fields
+      // rather than the subject's name.
+      const isGuardianSearch =
+        subject === 'guardian' &&
+        ordinal === 1 &&
+        isEditable &&
+        subjectFields.some(f => f.fieldKey === 'member_id') &&
+        subjectFields.some(f => f.fieldKey === 'nic');
+      const heading =
+        subject === 'nominee' && nomineeCount > 1
+          ? `${SUBJECT_LABELS[subject] ?? subject} ${ordinal} of ${nomineeCount}`
+          : (SUBJECT_LABELS[subject] ?? subject);
+      return (
+        <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+          <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+            {heading}
+          </h2>
+          {isGuardianSearch && (
+            <div class="relative mt-3" data-guardian-search>
+              <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+                Search for the parent
+                <input
+                  type="text"
+                  autocomplete="off"
+                  placeholder="Name, NIC or Member No."
+                  data-guardian-search-input
+                  class="mt-1 block w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                />
               </label>
-            );
-          })}
-        </div>
-      </section>
-    );
-  })
+              <p
+                data-guardian-search-status
+                class="mt-1 text-xs text-neutral-500 dark:text-neutral-400"
+              />
+              <ul
+                data-guardian-search-results
+                hidden
+                class="absolute z-10 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-neutral-300 bg-white text-sm shadow-lg dark:border-neutral-600 dark:bg-neutral-900"
+              />
+            </div>
+          )}
+          <div class="mt-4 grid gap-4 sm:grid-cols-2">
+            {subjectFields.map(field => {
+              const name = `field.${subject}.${ordinal}.${field.fieldKey}`;
+              const value = values[field.fieldKey] ?? '';
+              return (
+                <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                  <span>
+                    {field.label}
+                    {field.isMandatory && (
+                      <span
+                        class="text-red-600 dark:text-red-400"
+                        aria-hidden="true"
+                      >
+                        {' '}
+                        *
+                      </span>
+                    )}
+                  </span>
+                  {field.dataType === 'choice' ? (
+                    <select
+                      name={name}
+                      disabled={!isEditable}
+                      data-mandatory={field.isMandatory ? 'yes' : undefined}
+                      class:list={[
+                        'mt-1 w-full rounded-lg border bg-white px-3 py-1.5 text-sm dark:bg-neutral-900 dark:text-neutral-100',
+                        missing.has(field.fieldKey)
+                          ? 'border-red-400 dark:border-red-700'
+                          : 'border-neutral-300 dark:border-neutral-600',
+                      ]}
+                    >
+                      <option value="">—</option>
+                      {field.choices.map(choice => (
+                        <option value={choice} selected={choice === value}>
+                          {choice}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      type={inputTypeFor(field.dataType)}
+                      name={name}
+                      value={value}
+                      disabled={!isEditable}
+                      placeholder={
+                        field.dataType === 'phone' ? '5789 1234' : undefined
+                      }
+                      data-mandatory={field.isMandatory ? 'yes' : undefined}
+                      class:list={[
+                        'mt-1 w-full rounded-lg border bg-white px-3 py-1.5 text-sm dark:bg-neutral-900 dark:text-neutral-100',
+                        missing.has(field.fieldKey)
+                          ? 'border-red-400 dark:border-red-700'
+                          : 'border-neutral-300 dark:border-neutral-600',
+                      ]}
+                    />
+                  )}
+                </label>
+              );
+            })}
+          </div>
+        </section>
+      );
+    })
+  )
 }
 
 <script>

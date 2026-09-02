@@ -55,6 +55,14 @@ minor's application collects four different people's details on one form.
 A field can be hidden or made mandatory without a release. A hidden field
 cannot be mandatory; the database refuses it, because capture would deadlock.
 
+`membership_type.nominee_count` (S-602, FRD 5.3) is how many nominee
+instances that type's form renders and accepts — 1 to 10, changed from the
+same screen, next to a type's fields. It needs no matching schema change: the
+form and the mandatory-field check both already work per row of
+`application_party`, not per subject. A type that wants nominees to divide
+the membership by percentage adds a mandatory `percentage` field the same way
+it adds any other one — see `docs/applications.md`.
+
 ### Account types (S-206, FRD 7.6)
 
 `account_type`. Exactly one row is `is_membership_default` — the product a

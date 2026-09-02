@@ -38,6 +38,25 @@ async function run(url: string, sql: string, params: unknown[] = []) {
   }
 }
 
+// Configuration tables refuse a write that cannot be attributed (S-210), so a
+// fixture that adds a field directly has to say who it is, exactly as the
+// application does through withConfigurationActor.
+async function runAsConfigurator(url: string, sql: string) {
+  const client = new pg.Client({ connectionString: url, ssl: false });
+  await client.connect();
+  try {
+    await client.query('begin');
+    await client.query(
+      `select set_config('albarakah.actor_description', 'test fixture', true)`
+    );
+    const result = await client.query(sql);
+    await client.query('commit');
+    return result;
+  } finally {
+    await client.end();
+  }
+}
+
 // The pool the last load() built.
 //
 // Each load() calls vi.resetModules(), which builds a NEW pool on the next
@@ -617,6 +636,191 @@ describe('finding a parent to link, before or after they are a member', () => {
   it('returns nothing for a blank search rather than the whole register', async () => {
     const { capture } = await load();
     expect(await capture.searchGuardianCandidates('  ')).toEqual([]);
+  });
+});
+
+describe('S-602: as many nominee rows as the type configures', () => {
+  it('creates one application_party row per nominee ordinal', async () => {
+    const { capture, config } = await load();
+    const individual = (await config.listMembershipTypes()).find(
+      t => t.code === 'individual'
+    )!;
+
+    await config.setNomineeCount(individual.id, 3, officer);
+    try {
+      const { id } = await capture.startApplication('individual', officer);
+      const application = await capture.loadApplication(id);
+      const nominees = application!.parties
+        .filter(p => p.subject === 'nominee')
+        .map(p => p.ordinal)
+        .sort();
+      expect(nominees).toEqual([1, 2, 3]);
+    } finally {
+      await config.setNomineeCount(individual.id, 1, officer);
+    }
+  });
+
+  it('names a missing mandatory field on whichever nominee left it blank', async () => {
+    const { capture, config } = await load();
+    const individual = (await config.listMembershipTypes()).find(
+      t => t.code === 'individual'
+    )!;
+
+    await config.setNomineeCount(individual.id, 2, officer);
+    try {
+      const { id } = await capture.startApplication('individual', officer);
+      await capture.saveDraft(
+        id,
+        [
+          {
+            subject: 'nominee',
+            ordinal: 1,
+            values: {
+              surname: 'Ramtohul',
+              name: 'Devi',
+              nic: 'S1231231231231',
+              address: '4 Pope Hennessy Street, Curepipe',
+            },
+          },
+          // Ordinal 2 is left entirely blank.
+        ],
+        officer
+      );
+      const application = await capture.loadApplication(id);
+      const problems = await capture.problemsBlockingSubmission(application!);
+
+      expect(
+        problems.some(p => p.subject === 'nominee' && p.ordinal === 1)
+      ).toBe(false);
+      expect(
+        problems.filter(p => p.subject === 'nominee' && p.ordinal === 2).length
+      ).toBeGreaterThan(0);
+    } finally {
+      await config.setNomineeCount(individual.id, 1, officer);
+    }
+  });
+});
+
+describe('S-602: nominee percentages, only where the type asks for them', () => {
+  let typeId: string;
+
+  beforeAll(async () => {
+    const { config } = await load();
+    typeId = (await config.listMembershipTypes()).find(
+      t => t.code === 'individual'
+    )!.id;
+
+    // Adding a mandatory 'percentage' field is what turns the rule on — no
+    // separate flag, per capture.ts.
+    await runAsConfigurator(
+      ownerUrl,
+      `insert into membership_type_field
+         (membership_type_id, field_key, label, data_type, subject,
+          is_visible, is_mandatory, sort_order)
+       select '${typeId}', 'percentage', 'Percentage', 'number', 'nominee',
+              true, true, 99`
+    );
+    const { config: cfg } = await load();
+    await cfg.setNomineeCount(typeId, 2, officer);
+  });
+
+  afterAll(async () => {
+    const { config } = await load();
+    await config.setNomineeCount(typeId, 1, officer);
+    await runAsConfigurator(
+      ownerUrl,
+      `delete from membership_type_field
+        where membership_type_id = '${typeId}' and field_key = 'percentage'`
+    );
+  });
+
+  async function draftWithPercentages(
+    percentages: (string | undefined)[]
+  ): Promise<import('./capture').Application> {
+    const { capture } = await load();
+    const { id } = await capture.startApplication('individual', officer);
+    await capture.saveDraft(
+      id,
+      percentages.map((percentage, i) => ({
+        subject: 'nominee' as const,
+        ordinal: i + 1,
+        values: {
+          surname: `Nominee${i + 1}`,
+          name: 'Test',
+          nic: `S000000000000${i}`,
+          address: 'Curepipe',
+          ...(percentage === undefined ? {} : { percentage }),
+        },
+      })),
+      officer
+    );
+    return (await capture.loadApplication(id))!;
+  }
+
+  it('blocks submission when the split does not add up to 100', async () => {
+    const { capture } = await load();
+    const application = await draftWithPercentages(['40', '40']);
+
+    const problems = await capture.problemsBlockingSubmission(application);
+    expect(
+      problems.some(p => p.subject === 'nominee' && p.fieldKey === 'percentage')
+    ).toBe(true);
+  });
+
+  it('lets it through once the split is exactly 100', async () => {
+    const { capture } = await load();
+    const application = await draftWithPercentages(['60', '40']);
+
+    const problems = await capture.problemsBlockingSubmission(application);
+    expect(
+      problems.some(p => p.subject === 'nominee' && p.fieldKey === 'percentage')
+    ).toBe(false);
+  });
+
+  it('says nothing about the total while a nominee has not entered one yet', async () => {
+    const { capture } = await load();
+    // Ordinal 2's percentage is missing — already reported as its own
+    // mandatory-field problem; totalling an incomplete split would be noise
+    // on top of that.
+    const application = await draftWithPercentages(['60', undefined]);
+
+    const problems = await capture.problemsBlockingSubmission(application);
+    const percentageProblems = problems.filter(
+      p => p.subject === 'nominee' && p.fieldKey === 'percentage'
+    );
+    // Exactly the missing-field problem for ordinal 2, not a second one about
+    // the total.
+    expect(percentageProblems).toHaveLength(1);
+    expect(percentageProblems[0].ordinal).toBe(2);
+  });
+
+  it('is inert for a type that never configured the field', async () => {
+    const { capture } = await load();
+    const { id } = await capture.startApplication('minor', officer);
+
+    // The minor type's own nominee fields, filled in without a percentage —
+    // untouched by a rule that lives on a different type entirely.
+    await capture.saveDraft(
+      id,
+      [
+        {
+          subject: 'nominee',
+          ordinal: 1,
+          values: {
+            surname: 'Beebeejaun',
+            name: 'Yusuf',
+            nic: 'S4564564564564',
+            address: 'Curepipe',
+          },
+        },
+      ],
+      officer
+    );
+    const after = await capture.loadApplication(id);
+    const problems = await capture.problemsBlockingSubmission(after!);
+    expect(
+      problems.some(p => p.subject === 'nominee' && p.fieldKey === 'percentage')
+    ).toBe(false);
   });
 });
 

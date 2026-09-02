@@ -66,14 +66,17 @@ const subjects = [...fields.keys()];
 // an empty string and is removed — a partial post would make deleting a wrong
 // entry impossible.
 async function partiesFromForm(form: FormData): Promise<PartyValues[]> {
-  return subjects.map(subject => {
-    const values: Record<string, string> = {};
-    for (const field of fields.get(subject) ?? []) {
-      values[field.fieldKey] = String(
-        form.get(`field.${subject}.1.${field.fieldKey}`) ?? ''
-      );
-    }
-    return { subject, ordinal: 1, values };
+  return subjects.flatMap(subject => {
+    const ordinals = subject === 'nominee' ? type.nomineeCount : 1;
+    return Array.from({ length: ordinals }, (_, i) => i + 1).map(ordinal => {
+      const values: Record<string, string> = {};
+      for (const field of fields.get(subject) ?? []) {
+        values[field.fieldKey] = String(
+          form.get(`field.${subject}.${ordinal}.${field.fieldKey}`) ?? ''
+        );
+      }
+      return { subject, ordinal, values };
+    });
   });
 }
 
@@ -665,6 +668,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             parties={application!.parties}
             blocking={blocking}
             isEditable={isEditable}
+            nomineeCount={type.nomineeCount}
           />
 
           {isEditable && (

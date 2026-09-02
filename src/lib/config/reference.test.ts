@@ -287,6 +287,44 @@ describe('S-205: membership types and their field rules', () => {
       )
     ).rejects.toThrowError(/hidden cannot be mandatory/);
   });
+
+  describe('S-602: how many nominees a type captures', () => {
+    it('defaults to 1, and can be changed without a release', async () => {
+      const { config } = await load();
+      const individual = (await config.listMembershipTypes()).find(
+        t => t.code === 'individual'
+      )!;
+      expect(individual.nomineeCount).toBe(1);
+
+      await config.setNomineeCount(individual.id, 3, actor);
+      const after = (await config.listMembershipTypes()).find(
+        t => t.code === 'individual'
+      )!;
+      expect(after.nomineeCount).toBe(3);
+
+      await config.setNomineeCount(individual.id, 1, actor);
+    });
+
+    it('refuses anything outside 1 to 10, or not a whole number', async () => {
+      const { config } = await load();
+      const individual = (await config.listMembershipTypes()).find(
+        t => t.code === 'individual'
+      )!;
+
+      for (const count of [0, -1, 11, 2.5, NaN]) {
+        await expect(
+          config.setNomineeCount(individual.id, count, actor)
+        ).rejects.toThrowError(/whole number from 1 to 10/);
+      }
+    });
+
+    it('refuses a membership type that does not exist', async () => {
+      const { config } = await load();
+      await expect(
+        config.setNomineeCount('00000000-0000-0000-0000-000000000000', 2, actor)
+      ).rejects.toThrowError(/no longer exists/);
+    });
+  });
 });
 
 describe('S-206: the accounts a membership opens', () => {
