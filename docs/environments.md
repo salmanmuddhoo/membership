@@ -50,3 +50,21 @@ git push origin production
 When the Postgres data layer lands, give each environment its **own** Azure
 Database for PostgreSQL and set its connection string per Vercel environment —
 same split as the Entra apps above. Never point Test at the production database.
+
+## Resetting Test back to empty
+
+A System Administrator can wipe every member, application, document, payment
+and receipt on **Test** — `/admin/reset-data`, gated by the `system.reset_data`
+permission — for a clean slate between rounds of testing. Staff accounts,
+roles and reference configuration (membership types, fees, the document
+checklist) are left alone; only what a member or an application actually
+touches is removed. See `docs/database.md` for what makes that possible at
+the database level.
+
+**This is refused outright unless `PUBLIC_APP_ENV` marks the deployment as
+non-production** — the same flag this page already asks you to set to `test`
+on the Test custom environment, above. There is no override: an unset or
+`production` value is read as production, never as permission, so nothing
+short of that Vercel environment variable being wrong can put this within
+reach of the real database. It never runs on Production, because Production
+does not set it.

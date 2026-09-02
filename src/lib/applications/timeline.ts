@@ -90,7 +90,7 @@ export function applicationTimeline(input: TimelineInput): TimelineStep[] {
   }> = [
     {
       key: 'capture',
-      label: 'Capture the application',
+      label: 'Applicant details',
       done: input.mandatoryFieldsOutstanding === 0,
       detail: returned
         ? 'Returned for correction'
@@ -103,13 +103,13 @@ export function applicationTimeline(input: TimelineInput): TimelineStep[] {
     },
     {
       key: 'sign',
-      label: 'Print and have it signed',
+      label: 'Application signature',
       // The only evidence a signature exists is the signed form coming back.
       done: input.signedFormFiled,
     },
     {
       key: 'documents',
-      label: 'File the signed form and KYC documents',
+      label: 'KYC Documents',
       done: input.requiredDocumentsOutstanding === 0,
       detail:
         input.requiredDocumentsOutstanding > 0
@@ -119,31 +119,26 @@ export function applicationTimeline(input: TimelineInput): TimelineStep[] {
     },
     {
       key: 'payment',
-      label: 'Record the payment and receipt',
+      label: 'Payments',
       done: input.paymentRecorded,
       detail:
         input.paymentRecorded && input.paymentReceiptNo
           ? input.paymentReceiptNo
           : undefined,
     },
+    // Submission and Secretary review used to be two steps. An officer has
+    // exactly one thing to do at this point — submit — and everything after
+    // that is the Secretary's, all the way through to forwarding it on, so
+    // it reads as one step: done once it is fully past the Secretary.
     {
-      key: 'submitted',
-      label: 'Submit for review',
-      done: rank >= 1,
-    },
-    {
-      key: 'secretary',
-      label: 'Secretary review',
-      // Done once it has moved past the Secretary to the President or beyond.
+      key: 'submit',
+      label: 'Submit',
       done: rank >= 3,
-      detail:
-        input.status === 'submitted_for_review'
-          ? 'With the Secretary'
-          : undefined,
+      detail: rank >= 1 && rank < 3 ? 'With the Secretary' : undefined,
     },
     {
       key: 'decision',
-      label: 'President decision',
+      label: 'Approval Stage',
       done: rank >= 4,
       detail:
         input.status === 'approved'
@@ -178,7 +173,13 @@ export function applicationTimeline(input: TimelineInput): TimelineStep[] {
       label: step.label,
       state,
       ...(step.detail ? { detail: step.detail } : {}),
-      ...(step.problem ? { problem: true } : {}),
+      // Never on a step still ahead in the chain: a step's own data can be
+      // "wrong" (no documents filed yet, nothing paid) purely because
+      // nothing has happened there YET, which is not the same as something
+      // being missing that should already be there. Only a step that is
+      // current or already done — one the officer has actually reached —
+      // can be a problem.
+      ...(step.problem && state !== 'todo' ? { problem: true } : {}),
     };
   });
 }

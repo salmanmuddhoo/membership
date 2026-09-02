@@ -28,6 +28,18 @@ Two further restrictions apply to the application role:
   receipt is an UPDATE, which is why those two keep the privilege. See
   `docs/payments.md`.
 
+**One narrow, named exception.** `reset_all_test_data()` (migration 0019) can
+truncate every table above, `audit_event` included — a `SECURITY DEFINER`
+function, since `albarakah_app` cannot, and each guard trigger now checks a
+flag that function sets for the length of its own transaction and nothing
+else ever sets. It exists to let a System Administrator wipe a **test**
+environment back to empty; `resetAllTestData()` (`src/lib/admin/reset.ts`)
+refuses outright unless `PUBLIC_APP_ENV` marks the deployment as non-production
+— see `docs/environments.md` — before this function is ever called. See
+`scripts/schema.test.ts` and `src/lib/admin/reset.test.ts` for what stays
+provably true either side of it: the guards refuse everyone else, on the
+owner connection as much as the application's.
+
 ## Connections in the test suite
 
 Each integration test calls a `load()` helper that runs `vi.resetModules()` and

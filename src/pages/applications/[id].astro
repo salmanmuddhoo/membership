@@ -497,6 +497,8 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
   heading={`Application ${application!.reference}`}
 >
   <div class="mx-auto max-w-4xl space-y-6">
+    <ApplicationTimeline steps={timeline} applicationId={application!.id} />
+
     <div class="flex flex-wrap items-center justify-between gap-2">
       <div class="flex flex-wrap items-center gap-x-4 gap-y-1">
         {
@@ -525,8 +527,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         >Printable form</a
       >
     </div>
-
-    <ApplicationTimeline steps={timeline} applicationId={application!.id} />
 
     {
       error && (

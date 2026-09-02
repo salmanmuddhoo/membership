@@ -64,30 +64,49 @@ it.
 
 ## The progress timeline
 
-`applicationTimeline` (`src/lib/applications/timeline.ts`) computes the seven
-steps and how far a status/checklist/payment combination has got through
-them. `ApplicationTimeline.astro` draws that as a row of arrow-shaped boxes,
-one per step (a `clip-path` chevron pointing right, with real spacing between
-them rather than a nested/overlapping row) — the first thing on the page,
-above the status line, above every section it summarises, on **both** the
-capture form and the full application page. An officer orients before they
-read anything else.
+`applicationTimeline` (`src/lib/applications/timeline.ts`) computes six steps
+— **Applicant details, Application signature, KYC Documents, Payments,
+Submit, Approval Stage** — and how far a status/checklist/payment combination
+has got through them. Submission and Secretary review read as the one
+"Submit" step: an officer has exactly one thing left to do at that point, and
+everything from there through the Secretary forwarding it on is out of their
+hands. `ApplicationTimeline.astro` draws the six as a row of arrow-shaped
+boxes (a `clip-path` chevron pointing right, with real spacing between them
+rather than a nested/overlapping row) — the first thing on the page, above
+the status line, above every section it summarises, on **both** the capture
+form and the full application page. An officer orients before they read
+anything else.
 
 Each step's label and detail turn red when `applicationTimeline` marks it a
 `problem` — a mandatory field still empty, a required document still
-outstanding, a return for correction — as distinct from merely `current`,
-which is true of plenty of steps nothing is wrong with (being next in line to
-record a payment is not a problem). The box colour still shows done/current/
-todo; the red is layered on top of whichever it lands on, and it comes from
-the same computation the rest of the timeline reads rather than the component
+outstanding, a return for correction — but **only once that step is current
+or done**, never while it is still ahead in the chain. A step nobody has
+reached yet always looks incomplete read on its own (no documents filed, no
+payment taken), and that is not a problem — it is just next. Gating on state
+this way is what keeps Payments from reading red while the officer is still
+on Applicant details: `state !== 'todo'` in the final map, not a special case
+for any one step. The box colour still shows done/current/todo regardless;
+the red is layered on top of whichever it lands on, and it comes from the
+same computation the rest of the timeline reads rather than the component
 re-deriving "is this wrong" from the detail string.
+
+**The capture page (`/applications/new`) never shows red at all.** Its
+timeline is a starting position, not a read of anything the officer has
+actually attempted (see below) — every field and document reads as
+outstanding before a single character is typed, and marking that a "problem"
+would be alarming someone who has not done anything yet, wrong or otherwise.
+`new.astro` strips every step's `problem` flag before handing the steps to
+the component; the live, real version of the timeline — problems included —
+is what greets the officer on the id page once Next has actually created the
+application.
 
 On `[id].astro` every step is a real link — `applicationId` is passed in, and
 each step's `href` (`ApplicationTimeline.astro`'s `STEP_HREF` map) goes
-straight to that step: capture, documents and payment land on their
-`?step=N`, sign lands on the print page, and the Secretary/President steps
-land on the application as a whole, since neither is a page an officer steps
-through. A step not yet reached still links — same redirect `[id].astro`
+straight to that step: Applicant details, KYC Documents and Payments land on
+their `?step=N`, Application signature lands on the print page, and Submit
+and Approval Stage land on the application as a whole, since neither is a
+page an officer steps through — Approval Stage is the Secretary's and the
+President's. A step not yet reached still links — same redirect `[id].astro`
 already does for a hand-typed `?step=` ahead of `furthestStep`, landing back
 on the furthest step actually unlocked rather than a dead end. The capture
 page (`/applications/new`) has no application yet for a step to link to, so

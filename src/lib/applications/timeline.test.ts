@@ -31,8 +31,7 @@ describe('the order of the process', () => {
       'sign',
       'documents',
       'payment',
-      'submitted',
-      'secretary',
+      'submit',
       'decision',
     ]);
     expect(keys.indexOf('sign')).toBeLessThan(keys.indexOf('documents'));
@@ -124,11 +123,14 @@ describe('the payment step', () => {
 
     expect(stateOf(steps, 'payment')).toBe('done');
     expect(steps.find(s => s.key === 'payment')!.detail).toBe('RCT-000042');
-    expect(currentKeys(steps)).toEqual(['submitted']);
+    expect(currentKeys(steps)).toEqual(['submit']);
   });
 });
 
 describe('once it has left the officer', () => {
+  // Submission and Secretary review read as one step, "Submit" — an officer
+  // has exactly one thing left to do at this point, and everything after
+  // that is the Secretary's.
   it('shows the Secretary holding it', () => {
     const steps = applicationTimeline({
       ...FRESH,
@@ -139,9 +141,8 @@ describe('once it has left the officer', () => {
       paymentRecorded: true,
     });
 
-    expect(stateOf(steps, 'submitted')).toBe('done');
-    expect(stateOf(steps, 'secretary')).toBe('current');
-    expect(steps.find(s => s.key === 'secretary')!.detail).toBe(
+    expect(stateOf(steps, 'submit')).toBe('current');
+    expect(steps.find(s => s.key === 'submit')!.detail).toBe(
       'With the Secretary'
     );
     expect(stateOf(steps, 'decision')).toBe('todo');
@@ -157,7 +158,7 @@ describe('once it has left the officer', () => {
       paymentRecorded: true,
     });
 
-    expect(stateOf(steps, 'secretary')).toBe('done');
+    expect(stateOf(steps, 'submit')).toBe('done');
     expect(steps.find(s => s.key === 'decision')!.detail).toBe(
       'With the President'
     );
@@ -180,9 +181,9 @@ describe('once it has left the officer', () => {
     expect(steps.find(s => s.key === 'decision')!.detail).toBe(detail);
   });
 
-  // Submitted does not mean complete. An application can be with the Secretary
-  // while a required document was never filed, and the officer needs to see
-  // that rather than reading "New" and assuming there is nothing to do.
+  // A submitted status does not mean complete. An application can read
+  // 'new' while a required document was never filed, and the officer needs
+  // to see that rather than assuming there is nothing left to do.
   it('still shows a document outstanding after submission', () => {
     const steps = applicationTimeline({
       ...FRESH,
@@ -192,11 +193,12 @@ describe('once it has left the officer', () => {
       requiredDocumentsOutstanding: 2,
     });
 
-    expect(stateOf(steps, 'submitted')).toBe('done');
     expect(stateOf(steps, 'documents')).toBe('current');
     expect(steps.find(s => s.key === 'documents')!.detail).toBe(
       '2 outstanding'
     );
+    // Submit is blocked behind the still-outstanding documents, not done.
+    expect(stateOf(steps, 'submit')).toBe('todo');
   });
 });
 
@@ -214,7 +216,7 @@ describe('when it comes back for correction', () => {
     expect(steps[0].detail).toBe('Returned for correction');
     expect(stateOf(steps, 'capture')).toBe('current');
     // Back with the officer, so submission is ahead of them again.
-    expect(stateOf(steps, 'submitted')).toBe('todo');
+    expect(stateOf(steps, 'submit')).toBe('todo');
   });
 });
 
@@ -238,13 +240,30 @@ describe('marking a step as a problem, not merely current', () => {
     expect(steps.find(s => s.key === 'capture')!.problem).toBe(true);
   });
 
-  it('is a problem while a required document is outstanding', () => {
+  it('is a problem while a required document is outstanding, once reached', () => {
     const steps = applicationTimeline({
       ...FRESH,
       mandatoryFieldsOutstanding: 0,
       signedFormFiled: true,
     });
     expect(steps.find(s => s.key === 'documents')!.problem).toBe(true);
+  });
+
+  // The point of gating on state: a step's own data can look "wrong" purely
+  // because the officer has not gotten there yet — no documents filed, no
+  // payment taken — and that is not the same as something being missing
+  // that should already be there. Only current or done, never a step still
+  // ahead in the chain.
+  it('is never a problem on a step still ahead in the chain', () => {
+    const steps = applicationTimeline(FRESH);
+
+    // Capture is current with a real problem; documents and payment are
+    // both untouched and both would look "incomplete" read in isolation —
+    // outstanding documents, no payment — but neither has been reached yet.
+    expect(stateOf(steps, 'documents')).toBe('todo');
+    expect(steps.find(s => s.key === 'documents')!.problem).toBeUndefined();
+    expect(stateOf(steps, 'payment')).toBe('todo');
+    expect(steps.find(s => s.key === 'payment')!.problem).toBeUndefined();
   });
 
   it('is not a problem once complete, nor for a step nothing is wrong with', () => {
@@ -274,7 +293,7 @@ describe('a status nothing recognises', () => {
       paymentRecorded: true,
     });
 
-    expect(stateOf(steps, 'submitted')).toBe('current');
+    expect(stateOf(steps, 'submit')).toBe('current');
     expect(stateOf(steps, 'decision')).toBe('todo');
   });
 });

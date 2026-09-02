@@ -30,6 +30,14 @@ able to open a newly added page before its permission exists. They are **not**
 exempt from a permission a route _does_ declare: an explicit rule means what it
 says, and exempting a role would make the map advisory rather than binding.
 
+The role is otherwise deliberately unprivileged over the Society's own
+business — `application.view` and `member.view` only, everywhere that module
+lands (see `docs/applications.md`, `docs/payments.md`). `system.reset_data`
+is the one exception, and it is administering the system rather than running
+it: it wipes a **test** environment back to empty, refuses outright on
+anything the deployment's own `PUBLIC_APP_ENV` does not mark as non-production
+(see `docs/environments.md`), and cannot touch a real member's record.
+
 Prefixes ending in `/` cover everything beneath them, so a sub-page added later
 inherits protection. The longest matching prefix wins, so a specific rule can
 tighten a broader one.
