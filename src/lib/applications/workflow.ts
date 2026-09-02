@@ -36,10 +36,18 @@ import {
 export const WORKFLOW_CODE = 'membership_application_approval';
 export const ENTITY_TYPE = 'membership_application';
 
-// The action names the segregation rules seeded in migration 0009 key on.
-// They are the contract between this module and those rules: renaming one here
-// silently disables the control, so they are named once and referenced.
+// The action names the segregation rules seeded in migrations 0009 and 0024
+// key on. They are the contract between this module and those rules: renaming
+// one here silently disables the control, so they are named once and
+// referenced.
 export const ACTION_CAPTURED = 'membership.application.captured';
+// S-611: `regional_review` and `secretary_review` share the same
+// `application.review` permission (migration 0011) — both are a review in
+// the everyday sense — but they are audited, and segregated, under distinct
+// action names, so someone who holds both the Regional Manager and Secretary
+// roles cannot sign off on the same application at both stages (0024).
+export const ACTION_REGIONAL_REVIEWED =
+  'membership.application.regional_reviewed';
 export const ACTION_REVIEWED = 'membership.application.reviewed';
 export const ACTION_APPROVED = 'membership.application.approved';
 
@@ -54,15 +62,54 @@ export interface Transition {
   occurredAt: Date;
 }
 
-async function stepByCode(code: string): Promise<WorkflowStep | undefined> {
-  return (await activeChain(WORKFLOW_CODE)).find(s => s.code === code);
+// S-611: a gate step's own from_status and to_status are identical (S-209
+// comment on workflow_step.to_status) — acting on it never moves the record,
+// which is exactly why the record's status alone cannot say whether it has
+// already happened. A recorded transition is the only signal there is:
+// `recordTransition` writes one every time a step completes, gate or not.
+async function gatePassed(
+  applicationId: string,
+  stepCode: string
+): Promise<boolean> {
+  const result = await query(
+    `select 1 from application_transition
+      where application_id = $1 and step_code = $2
+      limit 1`,
+    [applicationId, stepCode]
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
+// Every enabled gate earlier in the chain, sitting on the same status this
+// step waits at, that this application has not yet passed — read from
+// configuration rather than a hardcoded 'regional_review', so a gate added
+// later needs no change here. Disabling a gate (Regional oversight's default)
+// drops it from `chain` entirely, so it contributes nothing: that is what
+// lets the chain go straight to the next step with no code change.
+async function unmetGates(
+  chain: WorkflowStep[],
+  step: WorkflowStep,
+  applicationId: string
+): Promise<WorkflowStep[]> {
+  const earlierGates = chain.filter(
+    s =>
+      s.stepNo < step.stepNo &&
+      s.fromStatus === step.fromStatus &&
+      s.fromStatus === s.toStatus
+  );
+  const unmet: WorkflowStep[] = [];
+  for (const gate of earlierGates) {
+    if (!(await gatePassed(applicationId, gate.code))) unmet.push(gate);
+  }
+  return unmet;
 }
 
 /**
  * Refuse unless this person may perform this step on this record.
  *
  * Order matters for the message as much as for the logic: "you do not review
- * applications" is a different conversation from "you captured this one".
+ * applications" is a different conversation from "that is not your step",
+ * which is again different from "you captured this one".
  */
 async function assertMayAct(
   principal: Principal,
@@ -77,7 +124,8 @@ async function assertMayAct(
     );
   }
 
-  const step = await stepByCode(options.stepCode);
+  const chain = await activeChain(WORKFLOW_CODE);
+  const step = chain.find(s => s.code === options.stepCode);
   if (!step) {
     throw new ApplicationError(
       `The ${options.stepCode.replace('_', ' ')} step is not enabled in the ` +
@@ -86,10 +134,45 @@ async function assertMayAct(
     );
   }
 
+  // S-611: the permission above says review is this person's job in general
+  // — `application.review` covers both Regional oversight and Secretary
+  // review, deliberately, since both are a review in the everyday sense. The
+  // step's own configured role is what says whether THIS review is theirs;
+  // without it, either role could act on the other's step.
+  if (!principal.roles.includes(step.roleCode)) {
+    throw new ApplicationError(
+      `${step.name} is the ${step.roleName}'s step, not yours.`,
+      'invalid'
+    );
+  }
+
   if (application.status !== step.fromStatus) {
     throw new ApplicationError(
       `This application is ${application.status}; that step acts on ` +
         `${step.fromStatus}.`,
+      'locked'
+    );
+  }
+
+  // A gate's own status never moves once passed (S-209), so nothing above
+  // catches someone acting on it a second time — the record still reads
+  // exactly as ready for it as before. Checked here, once, for both this
+  // step (has it already happened?) and every gate earlier in the chain
+  // (has each of THEM already happened?).
+  if (
+    step.fromStatus === step.toStatus &&
+    (await gatePassed(application.id, step.code))
+  ) {
+    throw new ApplicationError(
+      `${step.name} has already been completed.`,
+      'locked'
+    );
+  }
+
+  const unmet = await unmetGates(chain, step, application.id);
+  if (unmet.length > 0) {
+    throw new ApplicationError(
+      `${unmet.map(g => g.name).join(', ')} must happen first.`,
       'locked'
     );
   }
@@ -318,12 +401,20 @@ export function boardReadinessReasons(readiness: BoardReadiness): string[] {
 }
 
 /**
- * S-305 · Secretary review: forward, or return with a comment.
+ * S-305, S-611 · A review step: forward, or return with a comment.
+ *
+ * `stepCode` defaults to Secretary review, S-305's original and still the
+ * common case. Passing `'regional_review'` runs the exact same forward/return
+ * shape for Regional oversight (S-611) instead — a gate, so its own "forward"
+ * records that it happened without moving the record on (its `toStatus`
+ * equals its `fromStatus` by configuration, S-209), while "return" still
+ * sends the application back to the originating staff either way.
  */
 export async function reviewApplication(
   applicationId: string,
   decision: { outcome: 'forward' | 'return'; comment: string },
-  principal: Principal
+  principal: Principal,
+  stepCode: string = 'secretary_review'
 ): Promise<{ status: string }> {
   const application = await loadApplication(applicationId);
   if (!application) {
@@ -343,17 +434,26 @@ export async function reviewApplication(
     );
   }
 
+  // S-611: Regional oversight is audited under its own action name, distinct
+  // from Secretary review — see ACTION_REGIONAL_REVIEWED's own comment for
+  // why (migration 0024's segregation rules key on the two being different).
+  const action =
+    stepCode === 'regional_review' ? ACTION_REGIONAL_REVIEWED : ACTION_REVIEWED;
+
   const actor: Actor = { userId: principal.userId, email: principal.email };
   const step = await assertMayAct(principal, application, {
     permission: 'application.review',
-    stepCode: 'secretary_review',
-    action: ACTION_REVIEWED,
+    stepCode,
+    action,
   });
 
   // S-608: nothing forwarded to the Board is incomplete — the reasons are
   // named so the Secretary knows exactly what to chase, not just that
-  // something is missing.
-  if (decision.outcome === 'forward') {
+  // something is missing. Regional oversight sits before that gate, not at
+  // it: verifying a filed document is the Secretary's own review (S-608's
+  // own comment), which has not happened yet at this stage, so nothing here
+  // asks Regional oversight to re-check it.
+  if (decision.outcome === 'forward' && stepCode === 'secretary_review') {
     const reasons = boardReadinessReasons(await boardReadiness(application));
     if (reasons.length > 0) {
       throw new ApplicationError(
@@ -382,7 +482,7 @@ export async function reviewApplication(
       {
         actorUserId: actor.userId,
         actorDescription: actor.email,
-        action: ACTION_REVIEWED,
+        action,
         entityType: ENTITY_TYPE,
         entityId: application.id,
         previousValue: { status: application.status },
@@ -655,6 +755,24 @@ export interface AvailableAction {
   quorumCount: number;
 }
 
+// What a step is called and which permission it needs, for whichever of the
+// review-type steps a code path actually knows how to act on — capture,
+// Regional oversight, Secretary review, President decision. `availableActions`
+// and `pendingActionCount` both read this rather than each keeping their own
+// copy, so a label can never drift between "what button appears" and "what
+// the nav badge counts". A step with no entry here (none exist today) is
+// configuration an administrator can see but no code path acts on yet — S-209's
+// own description of a disabled step, extended to "unrecognised" as well.
+const STEP_META: Record<string, { label: string; permission: string }> = {
+  capture: {
+    label: 'Submit for Processing',
+    permission: 'application.submit',
+  },
+  regional_review: { label: 'Review', permission: 'application.review' },
+  secretary_review: { label: 'Review', permission: 'application.review' },
+  president_decision: { label: 'Decide', permission: 'application.approve' },
+};
+
 /**
  * What this person may do with this application right now.
  *
@@ -662,7 +780,10 @@ export interface AvailableAction {
  * an administrator enables appears here without a code change. Segregation is
  * NOT evaluated here — it needs a database round trip per action, and offering
  * a button that then explains why it is refused is better than silently hiding
- * it and leaving the reviewer wondering where their work went.
+ * it and leaving the reviewer wondering where their work went. An unmet gate
+ * (S-611) is different: unlike segregation it is not a one-off, per-attempt
+ * refusal — it holds for as long as nobody has passed the gate, so a button
+ * that always fails is worse than the one extra query it takes to hide it.
  */
 export async function availableActions(
   application: Application,
@@ -671,20 +792,24 @@ export async function availableActions(
   const chain = await activeChain(WORKFLOW_CODE);
   const actions: AvailableAction[] = [];
 
-  const forStep: Record<string, { label: string; permission: string }> = {
-    capture: {
-      label: 'Submit for Processing',
-      permission: 'application.submit',
-    },
-    secretary_review: { label: 'Review', permission: 'application.review' },
-    president_decision: { label: 'Decide', permission: 'application.approve' },
-  };
-
   for (const step of chain) {
-    const meta = forStep[step.code];
+    const meta = STEP_META[step.code];
     if (!meta) continue;
     if (step.fromStatus !== application.status) continue;
     if (!principal.permissions.has(meta.permission)) continue;
+    // S-611: the step's configured role, not just the permission — see
+    // assertMayAct's own comment for why this matters once a permission is
+    // shared between two steps (Regional oversight and Secretary review).
+    if (!principal.roles.includes(step.roleCode)) continue;
+    // A gate's own status never moves once passed, so it would otherwise
+    // keep offering itself back to whoever just completed it.
+    if (
+      step.fromStatus === step.toStatus &&
+      (await gatePassed(application.id, step.code))
+    ) {
+      continue;
+    }
+    if ((await unmetGates(chain, step, application.id)).length > 0) continue;
     actions.push({
       stepCode: step.code,
       label: meta.label,
@@ -694,4 +819,69 @@ export async function availableActions(
   }
 
   return actions;
+}
+
+/**
+ * S-611 · How many applications are waiting on this person right now, for the
+ * "Applications" nav badge — a live count, not a stored number, so it needs
+ * nothing incrementing or clearing by hand: an application appearing at a
+ * step this principal's role covers raises it by exactly one, and it moving
+ * on (to the next step, or off the chain entirely) drops it by exactly one.
+ *
+ * Only steps a person actually waits to act on count — capture is excluded,
+ * since a draft is the originating officer's own work-in-progress (saved
+ * automatically, S-302), not something sitting in anyone's queue.
+ */
+export async function pendingActionCount(
+  principal: Principal
+): Promise<number> {
+  const chain = await activeChain(WORKFLOW_CODE);
+  let total = 0;
+
+  for (const step of chain) {
+    if (step.code === 'capture') continue;
+    const meta = STEP_META[step.code];
+    if (!meta) continue;
+    if (!principal.permissions.has(meta.permission)) continue;
+    if (!principal.roles.includes(step.roleCode)) continue;
+
+    const earlierGates = chain.filter(
+      s =>
+        s.stepNo < step.stepNo &&
+        s.fromStatus === step.fromStatus &&
+        s.fromStatus === s.toStatus
+    );
+    // This step is itself a gate when its own from/to status match (S-209):
+    // what counts as pending for it is the applications nobody has passed it
+    // for yet, the mirror image of what counts as pending for a step waiting
+    // on that gate (only the ones the gate HAS been passed for).
+    const isGate = step.fromStatus === step.toStatus;
+
+    const conditions = ['a.status = $1'];
+    const params: unknown[] = [step.fromStatus];
+    for (const gate of earlierGates) {
+      params.push(gate.code);
+      conditions.push(
+        `exists (select 1 from application_transition t
+                  where t.application_id = a.id and t.step_code = $${params.length})`
+      );
+    }
+    if (isGate) {
+      params.push(step.code);
+      conditions.push(
+        `not exists (select 1 from application_transition t
+                       where t.application_id = a.id and t.step_code = $${params.length})`
+      );
+    }
+
+    const result = await query<{ n: string }>(
+      `select count(*)::int as n
+         from membership_application a
+        where ${conditions.join(' and ')}`,
+      params
+    );
+    total += Number(result.rows[0]?.n ?? 0);
+  }
+
+  return total;
 }

@@ -861,6 +861,7 @@ describe('S-209: workflow definitions', () => {
     ).toBeDefined();
     expect(regional!.isEnabled).toBe(false);
     expect(regional!.roleName).toBe('Regional Manager');
+    expect(regional!.roleCode).toBe('regional_manager');
 
     // It is configuration, not a stage the chain waits at.
     const chain = await config.activeChain('membership_application_approval');
@@ -888,6 +889,7 @@ describe('S-209: workflow definitions', () => {
     for (const step of definition.steps) {
       expect(step.roleId).toBeTruthy();
       expect(step.roleName).toBeTruthy();
+      expect(step.roleCode).toBeTruthy();
     }
     expect(
       definition.steps.find(s => s.code === 'secretary_review')!.roleName

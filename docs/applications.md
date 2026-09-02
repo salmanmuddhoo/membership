@@ -370,6 +370,73 @@ anticipates.
 but no enabled step produces it: it is the state for a Secretary _claim_
 action, which the walking skeleton does not need.
 
+## Regional oversight actually gates the chain, once enabled (S-611)
+
+A gate sitting in the chain was config an administrator could see since M2
+(S-209); nothing yet made it hold anything up. Enabling it now does exactly
+that: submission still puts an application at New, but `assertMayAct`
+(`workflow.ts`) refuses the Secretary's `secretary_review` step on it until a
+`regional_review` transition already exists — read from
+`application_transition`, the same table every step already writes to, since
+a gate's own status never moves and so cannot itself say whether it has been
+passed. **Disabled, none of this exists**: `activeChain()` drops the step
+from the chain entirely, `unmetGates` (the check above) finds nothing to
+wait on, and submission reaches the Secretary exactly as it always has — the
+same "no code change either way" `activeChain()` already gave every other
+step.
+
+**A shared permission is not a shared step.** `regional_review` and
+`secretary_review` both need `application.review` (migration 0011) —
+deliberately, since both are a review in the everyday sense — which means
+the permission alone can no longer tell a Regional Manager and a Secretary
+apart the way it always could when each step held a permission of its own.
+What does is the step's own configured **role**
+(`workflow_step.role_id`, read back as `roleCode`): `assertMayAct` checks a
+principal's own role codes against it, refusing "Regional oversight is the
+Regional Manager's step, not yours" to a Secretary who tries it and the
+mirror image to a Regional Manager reaching for Secretary review, even
+though both hold the permission that would otherwise let either try.
+
+**Regional oversight is its own action, not a second `reviewed`.** Recorded
+as `membership.application.regional_reviewed`
+(`ACTION_REGIONAL_REVIEWED`), distinct from Secretary review's
+`membership.application.reviewed` — the segregation table's own
+`earlier_action <> later_action` constraint forbids reusing one action name
+for what has to be two separately barrable events. Migration 0024 seeds the
+rules this makes possible: whoever captured an application may not give it
+regional oversight either, and whoever gave it regional oversight may not
+also review it centrally or approve it — mirroring 0009's original
+captured/reviewed/approved rules for the step 0009 could not have known
+about yet.
+
+`reviewApplication` (S-305's original) takes the same shape either way — an
+optional `stepCode` argument, defaulting to `'secretary_review'`, so passing
+`'regional_review'` runs the identical forward/return logic against the
+Regional Manager's step instead. A forward on a gate records that it
+happened without moving the application on (`toStatus` equals `fromStatus`
+by configuration); a return still sends the application back to the
+originating staff exactly as Secretary review's does. What it does **not**
+do is re-check S-608's Board-readiness reasons — verifying a filed document
+is the Secretary's own review, which has not happened yet at this earlier
+stage, so nothing asks Regional oversight to anticipate it.
+
+`availableActions` applies the same role check, plus one `unmetGates` does
+not: it also hides a gate step from whoever already passed it, so "Review"
+does not keep offering itself back once acted on — the one case where
+`availableActions` accepts a database round trip it otherwise avoids (its
+own comment explains why: this is not a one-off refusal like segregation,
+it holds for as long as nobody has acted, so a button that always fails is
+worse than the query it takes to hide it).
+
+**The "Applications" nav item counts what is waiting**, live. `pendingActionCount`
+(`workflow.ts`) sums, for whichever review-type step a signed-in person's
+role covers, how many applications sit at that step's status — gated the
+same way the step itself is, so a Regional Manager's count only includes
+applications nobody has passed the gate for yet, and a Secretary's only
+includes ones that have been. Submitting one raises the Regional Manager's
+count (or the Secretary's, disabled) by exactly one; forwarding moves it off
+one queue and onto the next, never incremented or cleared by hand.
+
 ## Nothing incomplete reaches the Board (S-608)
 
 Submission (S-304) already refuses an empty mandatory field, an unfiled
@@ -434,13 +501,15 @@ entitled to act. The segregation check reads `audit_event`, which is
 append-only: someone cannot erase their earlier action to unblock the later
 one.
 
-The action names are the contract with the rules seeded in migration 0009:
+The action names are the contract with the rules seeded in migrations 0009
+and 0024:
 
-| Action                            | Recorded when                                          |
-| --------------------------------- | ------------------------------------------------------ |
-| `membership.application.captured` | Submission — once per person who worked on the capture |
-| `membership.application.reviewed` | Secretary review                                       |
-| `membership.application.approved` | President decision                                     |
+| Action                                     | Recorded when                                          |
+| ------------------------------------------ | ------------------------------------------------------ |
+| `membership.application.captured`          | Submission — once per person who worked on the capture |
+| `membership.application.regional_reviewed` | Regional oversight (S-611), where enabled              |
+| `membership.application.reviewed`          | Secretary review                                       |
+| `membership.application.approved`          | President decision                                     |
 
 Renaming one of those in `workflow.ts` without changing the rule silently
 disables the control, which is why they are named once as constants.
@@ -450,7 +519,9 @@ disables the control, which is why they are named once as constants.
 Segregation means **one person cannot do all three steps**. To try the whole
 chain you need three accounts, or one account and three role changes between
 steps (each change is audited). Create them under **Staff accounts** and assign
-Regional Officer, Secretary and President.
+Regional Officer, Secretary and President. With Regional oversight enabled
+(**Workflows**), a fourth account — Regional Manager — is genuinely required
+before Secretary review becomes reachable at all.
 
 The System Administrator role deliberately holds only `application.view` and
 `member.view`. Administering the system is not running the Society's business,

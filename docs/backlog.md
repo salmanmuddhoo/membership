@@ -671,12 +671,13 @@ is found by the system rather than by an auditor. _(FRD 7.8.2)_
 **Goal:** Corporate and Minor applications work end to end, with nominees,
 witnesses, guardians and the board decision the FRD describes.
 
-**Done:** S-601 to S-610 — Corporate capture, configurable nominee count and
+**Done:** S-601 to S-611 — Corporate capture, configurable nominee count and
 percentage splits, the four-signature verification gate, the Guardian link
 (searchable, and findable before the parent is even a member), the successor
 guardian/beneficiary subjects, the pre-Board completeness gate, the Board
-quorum sign-off, and the minor-majority transition, all the way through to
-an approved member. Every M6 story is built.
+quorum sign-off, the minor-majority transition, and Regional oversight
+actually gating the chain once enabled, all the way through to an approved
+member. Every M6 story is built.
 
 ### S-601 · Corporate application capture ✅
 
@@ -866,6 +867,60 @@ against their type's configured age and moves them into the configured
 type, auditing every move with a null actor and a job-naming description —
 the same shape `document-expiry` (S-410) already established. See
 `docs/jobs.md`.
+
+### S-611 · Regional oversight actually gates the chain, once enabled ✅
+
+**As** a Regional Manager, **I need** to review an application before it
+reaches the Secretary, **so that** regional oversight means something once
+switched on. _(FRD 7.4.2, decision 2)_
+`Must · 5 · EPIC-06`
+
+- **Given** Regional oversight is enabled **Then** submission reaches the
+  Regional Manager first, and the Secretary cannot act until they forward it
+- **Given** Regional oversight is disabled **Then** submission reaches the
+  Secretary directly, exactly as before it existed
+- The Regional Manager, Secretary and President each see how many
+  applications are waiting on them, as a live count on the Applications menu
+
+S-209 (M2) shipped `regional_review` as a step present in the chain but
+`is_enabled = false` — configuration an administrator could see, with
+nothing yet behind it to enforce. Officer feedback asked for the enforcement:
+switching the step on with no code following it left "regional oversight" as
+a label, not a control.
+
+`regional_review` is a **gate** (`from_status` equals `to_status`, S-209) —
+acting on it never moves the record, so nothing about the record's own
+status can say whether it has already happened. `assertMayAct`
+(`workflow.ts`) answers that by reading `application_transition` instead:
+Secretary review refuses until a `regional_review` transition already
+exists for the application. Read from the active chain rather than a
+hardcoded step pair, so a gate added later needs no new code — disabling
+Regional oversight simply drops it out of `activeChain()`, and the check
+finds nothing to wait on.
+
+**A shared permission stopped being enough to tell two steps apart.**
+`regional_review` and `secretary_review` both need `application.review`
+(migration 0011) — both are a review in the everyday sense — so a
+permission check alone could no longer say whose turn it was. `WorkflowStep`
+gained `roleCode` (the role a step is actually configured for), and
+`assertMayAct`/`availableActions` both check a principal's own role codes
+against it: a Secretary cannot act on the Regional Manager's step even
+holding the permission, and the reverse. Regional oversight is audited as
+its own action, `membership.application.regional_reviewed`, so migration
+0024 could seed the segregation rules the shared permission would otherwise
+have missed — whoever captured an application may not give it regional
+oversight, and whoever gave it regional oversight may not also review it
+centrally or approve it, mirroring 0009's original captured/reviewed/approved
+rules.
+
+`reviewApplication` (S-305) took an optional `stepCode`, defaulting to
+`'secretary_review'`, rather than becoming a second function — Regional
+oversight's forward/return is the identical shape, just against a different
+step and without S-608's Board-readiness re-check (verifying a filed
+document is the Secretary's own review, which has not happened yet this
+early). The "Applications" nav badge (`pendingActionCount`) is the same
+config-driven counting, live rather than stored, for whichever step a
+person's role covers. See `docs/applications.md` and `docs/configuration.md`.
 
 ---
 

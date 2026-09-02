@@ -4,6 +4,7 @@ import BrandLogo from '@components/BrandLogo.astro';
 import ThemeIcon from '@components/ThemeIcon.astro';
 import EnvBadge from '@components/EnvBadge.astro';
 import Icon from '@components/ui/icons/Icon.astro';
+import { pendingActionCount } from '@lib/applications/workflow';
 
 interface Props {
   title?: string;
@@ -30,10 +31,21 @@ const principal = Astro.locals.principal;
 const can = (permission: string) =>
   principal?.permissions.has(permission) ?? false;
 
+// S-611: how many applications are waiting on THIS person right now —
+// Regional Manager, Secretary and President each see their own count, live
+// off the same query the "Your next step" section on an application itself
+// resolves from, not a number stored and incremented by hand. Zero renders
+// as no badge at all, same as nothing pending ever having existed.
+const applicationsBadge =
+  principal && can('application.view')
+    ? await pendingActionCount(principal)
+    : 0;
+
 interface NavItem {
   label: string;
   href: string;
   icon: string;
+  badge?: number;
 }
 
 interface NavGroup {
@@ -47,7 +59,14 @@ const navGroups: NavGroup[] = [
     label: 'Membership',
     items: [
       ...(can('application.view')
-        ? [{ label: 'Applications', href: '/applications', icon: 'members' }]
+        ? [
+            {
+              label: 'Applications',
+              href: '/applications',
+              icon: 'members',
+              badge: applicationsBadge > 0 ? applicationsBadge : undefined,
+            },
+          ]
         : []),
       ...(can('member.view')
         ? [{ label: 'Members', href: '/members', icon: 'members' }]
@@ -149,7 +168,12 @@ const currentPath = Astro.url.pathname;
                     }`}
                   >
                     <Icon name={item.icon} class="size-5 shrink-0" />
-                    {item.label}
+                    <span class="flex-1">{item.label}</span>
+                    {item.badge && (
+                      <span class="inline-flex min-w-5 items-center justify-center rounded-full bg-red-500 px-1.5 py-0.5 text-xs font-semibold text-white">
+                        {item.badge}
+                      </span>
+                    )}
                   </a>
                 );
               })}

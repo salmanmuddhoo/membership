@@ -122,6 +122,29 @@ acted on before the chain proceeds but does not move the record. The Regional
 Manager review is one. FRD 7.4.3 confirms no status for it, and inventing one
 would put a state in the model the business has not agreed to.
 
+**Execution honours the gate (S-611).** Enabling Regional oversight is not
+only a label change: `assertMayAct` (`workflow.ts`) refuses the Secretary the
+`secretary_review` step until a `regional_review` transition already exists
+for the application, read from `application_transition` rather than a status
+of its own — the same table every step already writes to, gate or not.
+Disabling it drops the step from `activeChain()` entirely, so nothing waits
+on it and Secretary review is reachable straight from submission, with no
+code change either way. `regional_review` and `secretary_review` share the
+`application.review` permission (S-209 above), which is deliberate — both
+are a review in the everyday sense — so the step's own configured **role**
+(`workflow_step.role_id`, exposed as `roleCode`) is what actually separates
+them: a Secretary cannot act on the Regional Manager's step, or the reverse,
+even though both hold the permission. Regional oversight is audited under
+its own action, `membership.application.regional_reviewed`, distinct from
+Secretary review's — migration 0024 seeds the segregation rules this makes
+possible, barring whoever gave an application its regional oversight from
+also reviewing or approving it centrally.
+
+The "Applications" nav item carries a live badge (`pendingActionCount`,
+`workflow.ts`) for whichever of Regional oversight, Secretary review and
+President decision a signed-in person's own role covers — a count read
+fresh on every page render, not a number stored and incremented by hand.
+
 `quorum_count` is 1 everywhere today, changed from **Workflows** with
 `setStepQuorum` (S-209). Execution honours it (S-609): above 1 on
 `president_decision`, a single decision no longer completes the step —

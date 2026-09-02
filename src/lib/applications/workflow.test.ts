@@ -156,19 +156,21 @@ afterEach(() => {
 function principalFor(
   userId: string,
   email: string,
-  permissions: string[]
+  permissions: string[],
+  roles: string[]
 ): Principal {
   return {
     userId,
     entraSubject: `sub-${email}`,
     email,
     displayName: email,
-    roles: [],
+    roles,
     permissions: new Set(permissions),
   };
 }
 
 let officer: Principal;
+let regionalManager: Principal;
 let secretary: Principal;
 let president: Principal;
 
@@ -211,6 +213,7 @@ beforeAll(async () => {
     appUrl,
     `insert into app_user (email, display_name)
      values ('officer@albarakah.mu', 'Officer'),
+            ('regional.manager@albarakah.mu', 'Regional Manager'),
             ('secretary@albarakah.mu', 'Secretary'),
             ('president@albarakah.mu', 'President')
      returning id, email::text as email`
@@ -218,20 +221,29 @@ beforeAll(async () => {
   const id = (email: string) =>
     users.rows.find(r => r.email === email).id as string;
 
-  officer = principalFor(id('officer@albarakah.mu'), 'officer@albarakah.mu', [
-    'application.view',
-    'application.capture',
-    'application.submit',
-  ]);
+  officer = principalFor(
+    id('officer@albarakah.mu'),
+    'officer@albarakah.mu',
+    ['application.view', 'application.capture', 'application.submit'],
+    ['regional_officer']
+  );
+  regionalManager = principalFor(
+    id('regional.manager@albarakah.mu'),
+    'regional.manager@albarakah.mu',
+    ['application.view', 'application.review'],
+    ['regional_manager']
+  );
   secretary = principalFor(
     id('secretary@albarakah.mu'),
     'secretary@albarakah.mu',
-    ['application.view', 'application.review']
+    ['application.view', 'application.review'],
+    ['secretary']
   );
   president = principalFor(
     id('president@albarakah.mu'),
     'president@albarakah.mu',
-    ['application.view', 'application.approve']
+    ['application.view', 'application.approve'],
+    ['president']
   );
 }, 60_000);
 
@@ -763,7 +775,8 @@ describe('S-203: segregation of duties, on this record', () => {
     const officerWhoCanAlsoReview = principalFor(
       officer.userId,
       officer.email,
-      ['application.view', 'application.review']
+      ['application.view', 'application.review'],
+      ['secretary']
     );
 
     await expect(
@@ -788,7 +801,8 @@ describe('S-203: segregation of duties, on this record', () => {
     const secretaryWhoCanAlsoApprove = principalFor(
       secretary.userId,
       secretary.email,
-      ['application.view', 'application.approve']
+      ['application.view', 'application.approve'],
+      ['president']
     );
 
     await expect(
@@ -842,11 +856,12 @@ describe('S-203: segregation of duties, on this record', () => {
     await fileRequiredDocuments(documents, id);
     await recordFullPayment(payments, id);
 
-    const clerk = principalFor(secretary.userId, secretary.email, [
-      'application.view',
-      'application.submit',
-      'application.review',
-    ]);
+    const clerk = principalFor(
+      secretary.userId,
+      secretary.email,
+      ['application.view', 'application.submit', 'application.review'],
+      ['regional_officer', 'secretary']
+    );
     await workflow.submitApplication(id, clerk);
 
     await expect(
@@ -1130,10 +1145,12 @@ describe('S-609: a quorum above one needs that many distinct sign-offs', () => {
       `insert into app_user (email, display_name)
        values ('board2@albarakah.mu', 'Board Member 2') returning id`
     );
-    boardMember2 = principalFor(user.rows[0].id, 'board2@albarakah.mu', [
-      'application.view',
-      'application.approve',
-    ]);
+    boardMember2 = principalFor(
+      user.rows[0].id,
+      'board2@albarakah.mu',
+      ['application.view', 'application.approve'],
+      ['president']
+    );
   });
 
   it('does not transition until enough distinct approvals are in', async () => {
@@ -1604,5 +1621,197 @@ describe('the actions offered come from the configured chain', () => {
     } finally {
       await config.setStepEnabled(review.id, true, admin);
     }
+  });
+});
+
+describe('S-611: Regional oversight, enabled or not, gates the chain', () => {
+  async function setRegionalReviewEnabled(enabled: boolean) {
+    const { config } = await load();
+    const definition = (await config.listWorkflows()).find(
+      d => d.code === 'membership_application_approval'
+    )!;
+    const step = definition.steps.find(s => s.code === 'regional_review')!;
+    await config.setStepEnabled(step.id, enabled, {
+      userId: officer.userId,
+      email: officer.email,
+    });
+  }
+
+  afterEach(async () => {
+    // Every other describe block in this file assumes the shipped default
+    // (disabled) — restore it so a test order change elsewhere never
+    // inherits it turned on.
+    await setRegionalReviewEnabled(false);
+  });
+
+  it('is invisible and inert while disabled: submission goes straight to the Secretary', async () => {
+    const { capture, workflow } = await load();
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+    const application = (await capture.loadApplication(id))!;
+
+    expect(
+      (await workflow.availableActions(application, secretary)).map(
+        a => a.stepCode
+      )
+    ).toEqual(['secretary_review']);
+    expect(
+      await workflow.availableActions(application, regionalManager)
+    ).toEqual([]);
+  });
+
+  it('routes to the Regional Manager first once enabled, then to the Secretary once they forward', async () => {
+    await setRegionalReviewEnabled(true);
+    const { capture, workflow } = await load();
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+    let application = (await capture.loadApplication(id))!;
+
+    // The Regional Manager sees it; the Secretary does not, even though both
+    // hold application.review — the step's own configured role decides.
+    expect(
+      (await workflow.availableActions(application, regionalManager)).map(
+        a => a.stepCode
+      )
+    ).toEqual(['regional_review']);
+    expect(await workflow.availableActions(application, secretary)).toEqual([]);
+
+    // A gate never moves the record on its own (S-209).
+    expect(application.status).toBe('new');
+
+    await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Checked at the regional office.' },
+      regionalManager,
+      'regional_review'
+    );
+    application = (await capture.loadApplication(id))!;
+    expect(application.status).toBe('new');
+
+    // Now it is the Secretary's turn, and the Regional Manager's is done.
+    expect(
+      (await workflow.availableActions(application, secretary)).map(
+        a => a.stepCode
+      )
+    ).toEqual(['secretary_review']);
+    expect(
+      await workflow.availableActions(application, regionalManager)
+    ).toEqual([]);
+
+    const forwarded = await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Complete.' },
+      secretary
+    );
+    expect(forwarded.status).toBe('submitted_for_approval');
+  });
+
+  it('refuses the Secretary who tries to act before Regional oversight has', async () => {
+    await setRegionalReviewEnabled(true);
+    const { workflow } = await load();
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+
+    await expect(
+      workflow.reviewApplication(
+        id,
+        { outcome: 'forward', comment: 'Jumping the queue.' },
+        secretary
+      )
+    ).rejects.toThrowError(/must happen first/);
+  });
+
+  it('refuses a Secretary who tries to act on the Regional oversight step, even holding the same permission', async () => {
+    await setRegionalReviewEnabled(true);
+    const { workflow } = await load();
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+
+    await expect(
+      workflow.reviewApplication(
+        id,
+        { outcome: 'forward', comment: 'Not my step.' },
+        secretary,
+        'regional_review'
+      )
+    ).rejects.toThrowError(/not yours/);
+  });
+
+  it('lets the Regional Manager return an application for correction, same as the Secretary can', async () => {
+    await setRegionalReviewEnabled(true);
+    const { capture, workflow } = await load();
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+
+    const returned = await workflow.reviewApplication(
+      id,
+      { outcome: 'return', comment: 'Missing the signed form.' },
+      regionalManager,
+      'regional_review'
+    );
+    expect(returned.status).toBe('returned');
+    expect((await capture.loadApplication(id))!.status).toBe('returned');
+  });
+
+  it('bars whoever gave regional oversight from also doing the Secretary review of the same application', async () => {
+    await setRegionalReviewEnabled(true);
+    const { workflow } = await load();
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+    await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Fine.' },
+      regionalManager,
+      'regional_review'
+    );
+
+    // Someone who holds both roles — the rule is about this record's
+    // history, not which roles a person happens to hold (mirrors S-203).
+    const regionalManagerWhoCanAlsoReview = principalFor(
+      regionalManager.userId,
+      regionalManager.email,
+      ['application.view', 'application.review'],
+      ['secretary']
+    );
+
+    await expect(
+      workflow.reviewApplication(
+        id,
+        { outcome: 'forward', comment: 'Reviewing my own oversight.' },
+        regionalManagerWhoCanAlsoReview
+      )
+    ).rejects.toThrowError(/may not also review it centrally/);
+  });
+
+  it('counts what is pending for each role, live off the chain rather than stored', async () => {
+    await setRegionalReviewEnabled(true);
+    const { workflow } = await load();
+
+    const regionalBaseline = await workflow.pendingActionCount(regionalManager);
+    const secretaryBaseline = await workflow.pendingActionCount(secretary);
+
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+
+    expect(await workflow.pendingActionCount(regionalManager)).toBe(
+      regionalBaseline + 1
+    );
+    expect(await workflow.pendingActionCount(secretary)).toBe(
+      secretaryBaseline
+    );
+
+    await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Checked at the regional office.' },
+      regionalManager,
+      'regional_review'
+    );
+
+    expect(await workflow.pendingActionCount(regionalManager)).toBe(
+      regionalBaseline
+    );
+    expect(await workflow.pendingActionCount(secretary)).toBe(
+      secretaryBaseline + 1
+    );
   });
 });
