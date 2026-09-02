@@ -708,12 +708,21 @@ end".
 
 New `membership_type.nominee_count` (migration 0021, default 1, 1–10),
 changed from **Membership types** admin without a release. `insertApplication`
-creates that many `nominee` rows; `problemsBlockingSubmission` already looped
-over every row for a subject, so per-nominee mandatory-field checks needed no
-change at all. Percentages need no flag of their own: a type that adds a
-mandatory `percentage` field to the nominee subject gets its split totalled
-at submission — refused unless it comes to exactly 100, and silent for every
-type that never configured the field. See `docs/applications.md`.
+creates that many `nominee` rows; `problemsBlockingSubmission` loops over
+every row for a subject, so a type with several nominees configured gets a
+set of missing-field checks per row, each naming its own nominee.
+
+**Only the first nominee is mandatory, relaxed on officer feedback.** "One
+or more Nominees where configured" is _at least_ one, not every slot a type
+allows — `problemsBlockingSubmission` and `CaptureFields.astro` both skip
+mandatory-field enforcement past ordinal 1, so a second or third nominee may
+be left blank without blocking submission; the form marks them "(optional)"
+instead of the usual red asterisk. Percentages need no flag of their own: a
+type that adds a mandatory `percentage` field to the nominee subject gets
+its split totalled at submission — refused unless it comes to exactly 100 —
+but only once every _mandatory_ nominee has entered a value, so an optional
+nominee left blank altogether never enters the total. See
+`docs/applications.md`.
 
 ### S-603 · Two attesting witnesses verified before the Secretary may verify ✅
 
