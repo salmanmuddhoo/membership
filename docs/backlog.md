@@ -671,12 +671,12 @@ is found by the system rather than by an auditor. _(FRD 7.8.2)_
 **Goal:** Corporate and Minor applications work end to end, with nominees,
 witnesses, guardians and the board decision the FRD describes.
 
-**Done:** S-601, S-602, S-603, S-604, S-605, S-606, S-607 — Corporate capture,
-configurable nominee count and percentage splits, the four-signature
-verification gate, the Guardian link (searchable, and findable before the
-parent is even a member), and the successor guardian/beneficiary subjects,
-all the way through to an approved member. Remaining: S-608/S-609 (Board
-completeness gate and quorum sign-off), S-610 (majority transition, Could).
+**Done:** S-601 to S-609 — Corporate capture, configurable nominee count and
+percentage splits, the four-signature verification gate, the Guardian link
+(searchable, and findable before the parent is even a member), the successor
+guardian/beneficiary subjects, the pre-Board completeness gate and the Board
+quorum sign-off, all the way through to an approved member. Remaining: S-610
+(majority transition, Could — the only story left in M6).
 
 ### S-601 · Corporate application capture ✅
 
@@ -793,7 +793,7 @@ Already configured (migration 0010): its own `beneficiary` subject on the
 Minor type, with its own checklist requirement. Exercised by the same
 end-to-end test as S-604/S-605.
 
-### S-608 · Pre-Board completeness gate
+### S-608 · Pre-Board completeness gate ✅
 
 **As** the Secretary, **I need** completeness checked before the board sees
 it, **so that** board time is not spent on incomplete files. _(FRD 7.10.8)_
@@ -803,7 +803,14 @@ it, **so that** board time is not spent on incomplete files. _(FRD 7.10.8)_
 - **Given** anything is outstanding **Then** it is listed and the application
   cannot be forwarded
 
-### S-609 · Board decision record with sign-offs
+`boardReadiness` (`workflow.ts`) re-checks the three things submission
+cannot guarantee stay true — documents actually Verified (not merely
+filed), the payment still live (not voided or refunded since), and a
+guardian still an active member — and `reviewApplication` refuses a
+`forward` outcome naming every outstanding one together. Return for
+correction is untouched. See `docs/applications.md`.
+
+### S-609 · Board decision record with sign-offs ✅
 
 **As** the Board, **I need** the decision recorded with who signed off,
 **so that** the approval is attributable. _(FRD 7.10.9, decision 4)_
@@ -812,6 +819,16 @@ it, **so that** board time is not spent on incomplete files. _(FRD 7.10.8)_
 - Uses the quorum already supported by the workflow configuration (S-209)
 - **Given** a quorum above one **Then** that many distinct role holders must
   act before the step completes
+
+New `application_step_signoff` (migration 0022), append-only like
+`application_transition`. At quorum 1 — every step ships this way —
+`decideApplication` transitions on a single decision exactly as before this
+story. Above 1 it accumulates distinct approvals until quorum is met before
+the step actually completes; a single reject vetoes immediately regardless
+of quorum or how many approvals are already in, since an attributable
+decision is one person's, not a vote nobody can trace. `signoffsFor` reads
+who has acted so far; `[id].astro` shows it only when a step's quorum is
+actually above 1. See `docs/applications.md`.
 
 ### S-610 · Minor reaching majority — configurable transition
 

@@ -262,6 +262,62 @@ export async function submitApplication(
 }
 
 /**
+ * S-608 · Everything the Board needs already true before the Secretary may
+ * forward an application to it — not the mandatory fields
+ * `problemsBlockingSubmission` already checked at S-304 (those cannot have
+ * gone empty since; nothing edits a submitted application), but the three
+ * things that can still be wrong at review time: a document filed but never
+ * actually verified, no payment recorded, or — since a guardian is a claim
+ * about another member's status, not a fact frozen at submission — a
+ * guardian who has since stopped being an active member.
+ */
+export interface BoardReadiness {
+  documentsUnverified: number;
+  paymentRecorded: boolean;
+  guardianProblems: MissingField[];
+}
+
+export async function boardReadiness(
+  application: Application
+): Promise<BoardReadiness> {
+  const [checklist, payments, problems] = await Promise.all([
+    checklistFor({ applicationId: application.id }),
+    paymentsForApplication(application.id),
+    problemsBlockingSubmission(application),
+  ]);
+
+  return {
+    // Filed is not enough here — Verifying is the whole point of the
+    // Secretary's own review, which is what this gate sits at the end of.
+    documentsUnverified: checklist.filter(
+      e => e.requirement === 'required' && e.state !== 'verified'
+    ).length,
+    paymentRecorded: payments.some(p => p.kind === 'payment' && !p.voidedAt),
+    // Every other problem problemsBlockingSubmission reports is a mandatory
+    // field, which cannot have gone empty since submission locked the form —
+    // the guardian check is the one that reads a fact outside this record.
+    guardianProblems: problems.filter(p => p.subject === 'guardian'),
+  };
+}
+
+// Shared by the throw below and by the id page's proactive "not ready yet"
+// list, so the two can never name the outstanding items differently.
+export function boardReadinessReasons(readiness: BoardReadiness): string[] {
+  const reasons: string[] = [];
+  if (readiness.documentsUnverified > 0) {
+    reasons.push(
+      `${readiness.documentsUnverified} required document(s) still need ` +
+        'to be Verified'
+    );
+  }
+  if (!readiness.paymentRecorded) {
+    reasons.push('payment has not been recorded');
+  }
+  reasons.push(...readiness.guardianProblems.map(p => p.label));
+  return reasons;
+}
+
+/**
  * S-305 · Secretary review: forward, or return with a comment.
  */
 export async function reviewApplication(
@@ -293,6 +349,18 @@ export async function reviewApplication(
     stepCode: 'secretary_review',
     action: ACTION_REVIEWED,
   });
+
+  // S-608: nothing forwarded to the Board is incomplete — the reasons are
+  // named so the Secretary knows exactly what to chase, not just that
+  // something is missing.
+  if (decision.outcome === 'forward') {
+    const reasons = boardReadinessReasons(await boardReadiness(application));
+    if (reasons.length > 0) {
+      throw new ApplicationError(
+        `This application is not ready for the Board: ${reasons.join('; ')}.`
+      );
+    }
+  }
 
   const toStatus = decision.outcome === 'forward' ? step.toStatus : 'returned';
 
@@ -335,10 +403,28 @@ export interface DecisionResult {
     memberNo: string;
     accounts: { id: string; typeCode: string; typeName: string }[];
   };
+  // Present when a quorum above one (S-609) has not yet been reached by this
+  // sign-off: it was recorded, but the step has not completed and `status`
+  // is still whatever it was before this call.
+  signoff?: { recorded: number; required: number };
 }
 
+const STEP_CODE_PRESIDENT_DECISION = 'president_decision';
+
 /**
- * S-306 · President decision: approve or reject.
+ * S-306, S-609 · President decision: approve or reject, with a Board quorum.
+ *
+ * At quorum 1 — every step ships this way, per S-209 — a single decision
+ * still transitions immediately, exactly as before S-609. Above quorum 1
+ * this is where FRD 7.10.9's "who signed off" actually lives:
+ * `application_step_signoff` gets one row per distinct person who acted,
+ * and the step itself does not move until enough of them have.
+ *
+ * A reject is never something a quorum waits out. FRD 7.10.9 asks for an
+ * attributable decision, not a vote nobody can trace to a person — so one
+ * reject, from anyone entitled to act, ends it immediately whatever else has
+ * already been signed off. Quorum only ever governs how many approvals it
+ * takes to move forward.
  *
  * On approval the Member and their default account are created in the SAME
  * transaction as the status change (S-308, S-309). A member without the
@@ -378,13 +464,79 @@ export async function decideApplication(
   const actor: Actor = { userId: principal.userId, email: principal.email };
   const step = await assertMayAct(principal, application, {
     permission: 'application.approve',
-    stepCode: 'president_decision',
+    stepCode: STEP_CODE_PRESIDENT_DECISION,
     action: ACTION_APPROVED,
   });
 
-  const toStatus = decision.outcome === 'approve' ? step.toStatus : 'rejected';
+  return withTransaction(async client => {
+    // One sign-off per person per step per application: checked before the
+    // write, the same shape as the segregation check assertMayAct already
+    // ran, so a repeat attempt reads as a conflict rather than a vote change.
+    const already = await client.query(
+      `select 1 from application_step_signoff
+        where application_id = $1 and step_code = $2 and actor_user_id = $3`,
+      [application.id, step.code, actor.userId]
+    );
+    if ((already.rowCount ?? 0) > 0) {
+      throw new ApplicationError(
+        'You have already recorded a decision for this step.'
+      );
+    }
 
-  const created = await withTransaction(async client => {
+    await client.query(
+      `insert into application_step_signoff
+         (application_id, step_code, actor_user_id, outcome, comment)
+       values ($1, $2, $3, $4, $5)`,
+      [
+        application.id,
+        step.code,
+        actor.userId,
+        decision.outcome,
+        comment || null,
+      ]
+    );
+
+    let recorded = 1;
+    let quorumMet = decision.outcome === 'reject';
+    if (decision.outcome === 'approve') {
+      const count = await client.query<{ n: string }>(
+        `select count(*)::int as n from application_step_signoff
+          where application_id = $1 and step_code = $2 and outcome = 'approve'`,
+        [application.id, step.code]
+      );
+      recorded = Number(count.rows[0].n);
+      quorumMet = recorded >= step.quorumCount;
+    }
+
+    // Every sign-off is audited, whether or not it is the one that completes
+    // the step — S-609 asks for the decision recorded with who signed off,
+    // not only the final outcome.
+    if (!quorumMet) {
+      await recordAudit(
+        {
+          actorUserId: actor.userId,
+          actorDescription: actor.email,
+          action: ACTION_APPROVED,
+          entityType: ENTITY_TYPE,
+          entityId: application.id,
+          newValue: {
+            outcome: decision.outcome,
+            stepCode: step.code,
+            signoffsRecorded: recorded,
+            signoffsRequired: step.quorumCount,
+          },
+        },
+        client
+      );
+      return {
+        status: application.status,
+        signoff: { recorded, required: step.quorumCount },
+      };
+    }
+
+    const toStatus =
+      decision.outcome === 'approve' ? step.toStatus : 'rejected';
+
     await client.query(
       `update membership_application
           set status = $2, decided_at = now()
@@ -413,11 +565,48 @@ export async function decideApplication(
       client
     );
 
-    if (decision.outcome !== 'approve') return undefined;
-    return createMember(client, application, actor);
+    if (decision.outcome !== 'approve') return { status: toStatus };
+    const member = await createMember(client, application, actor);
+    return { status: toStatus, member };
   });
+}
 
-  return { status: toStatus, member: created };
+export interface StepSignoff {
+  actorName: string;
+  actorEmail: string;
+  outcome: 'approve' | 'reject';
+  comment: string | null;
+  occurredAt: Date;
+}
+
+// S-609: who has signed off on a quorum step so far, for the Board (and
+// whoever is waiting on them) to see — the row this table exists for.
+export async function signoffsFor(
+  applicationId: string,
+  stepCode: string = STEP_CODE_PRESIDENT_DECISION
+): Promise<StepSignoff[]> {
+  const result = await query<{
+    actor_name: string;
+    actor_email: string;
+    outcome: 'approve' | 'reject';
+    comment: string | null;
+    occurred_at: Date;
+  }>(
+    `select u.display_name as actor_name, u.email::text as actor_email,
+            s.outcome, s.comment, s.occurred_at
+       from application_step_signoff s
+       join app_user u on u.id = s.actor_user_id
+      where s.application_id = $1 and s.step_code = $2
+      order by s.occurred_at`,
+    [applicationId, stepCode]
+  );
+  return result.rows.map(r => ({
+    actorName: r.actor_name,
+    actorEmail: r.actor_email,
+    outcome: r.outcome,
+    comment: r.comment,
+    occurredAt: r.occurred_at,
+  }));
 }
 
 // S-307 · The chain, in order, as an auditor reads it.
@@ -460,6 +649,10 @@ export interface AvailableAction {
   stepCode: string;
   label: string;
   permission: string;
+  // S-609: how many distinct sign-offs this step needs before it completes.
+  // 1 everywhere today (S-209's shipped default) — the same single-decision
+  // behaviour as before quorum existed.
+  quorumCount: number;
 }
 
 /**
@@ -496,6 +689,7 @@ export async function availableActions(
       stepCode: step.code,
       label: meta.label,
       permission: meta.permission,
+      quorumCount: step.quorumCount,
     });
   }
 
