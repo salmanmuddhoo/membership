@@ -1,6 +1,6 @@
 ---
 // The seven-step journey from capture to a decision (S-301 to S-308), drawn as
-// a row of connected boxes rather than a list.
+// a row of connected, arrow-shaped boxes rather than a list.
 //
 // Deliberately the first thing on both pages that work an application — the
 // capture form and the full application page — so an officer orients before
@@ -11,9 +11,15 @@ import type { TimelineStep } from '@lib/applications/timeline';
 
 interface Props {
   steps: TimelineStep[];
+  // Omitted on the capture page (`/applications/new`), which has no
+  // application yet for a step to link to. When present, every step becomes
+  // a real link — including one not yet reached, which lands back on the
+  // furthest step actually unlocked (the same redirect `[id].astro` already
+  // does for a hand-typed `?step=`), not a dead end.
+  applicationId?: string;
 }
 
-const { steps } = Astro.props;
+const { steps, applicationId } = Astro.props;
 
 const BOX: Record<string, string> = {
   done: 'bg-mint-300 text-neutral-800 dark:bg-mint-700 dark:text-neutral-100',
@@ -21,6 +27,12 @@ const BOX: Record<string, string> = {
     'bg-neutral-800 text-white ring-2 ring-mint-400 dark:bg-neutral-100 dark:text-neutral-900',
   todo: 'bg-neutral-200 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400',
 };
+
+// A problem overrides the state colour for the label and detail text only —
+// the box itself still reads current/todo/done at a glance, but the words
+// turn red wherever something is actually missing, on top of whichever box
+// colour it lands on.
+const PROBLEM_TEXT = 'text-red-600 dark:text-red-400';
 
 const DETAIL: Record<string, string> = {
   done: 'text-neutral-700/80 dark:text-neutral-100/70',
@@ -35,50 +47,106 @@ const READS: Record<string, string> = {
   current: '(next)',
   todo: '(to come)',
 };
+
+// Where clicking a step goes. Steps 6 and 7 are the Secretary's and the
+// President's, not a page an officer steps through — both simply land on the
+// application as a whole, which is everything once it is no longer editable.
+const STEP_HREF: Record<string, (id: string) => string> = {
+  capture: id => `/applications/${id}?step=1`,
+  sign: id => `/applications/${id}/print`,
+  documents: id => `/applications/${id}?step=3`,
+  payment: id => `/applications/${id}?step=4`,
+  submitted: id => `/applications/${id}?step=5`,
+  secretary: id => `/applications/${id}`,
+  decision: id => `/applications/${id}`,
+};
 ---
 
 <section
-  class="rounded-2xl border border-neutral-200 bg-neutral-100 p-4 sm:p-6 dark:border-neutral-800 dark:bg-neutral-950"
+  id="application-timeline"
+  class="sticky z-30 -mx-4 rounded-2xl border border-neutral-200 bg-neutral-100 p-4 sm:mx-0 sm:p-6 dark:border-neutral-800 dark:bg-neutral-950"
+  style="top: var(--app-header-height, 3.75rem)"
   aria-label="Application progress"
 >
-  <ol class="flex flex-wrap items-stretch gap-2 sm:flex-nowrap sm:gap-0">
+  <ol class="flex flex-wrap items-stretch gap-3 sm:flex-nowrap">
     {
-      steps.map((step, index) => (
-        <li class="flex flex-1 items-stretch gap-2 sm:min-w-0">
-          <div
-            class:list={[
-              'flex min-w-[8rem] flex-1 flex-col justify-center rounded-xl px-3 py-2 text-center transition',
-              BOX[step.state],
-            ]}
-          >
-            <span class="block text-[0.65rem] font-bold tracking-wide uppercase opacity-75">
-              Step {index + 1}
-            </span>
-            <span class="block text-sm leading-tight font-semibold">
-              {step.label}
-            </span>
-            {step.detail && (
+      steps.map((step, index) => {
+        const href = applicationId
+          ? STEP_HREF[step.key]?.(applicationId)
+          : undefined;
+        const Tag = href ? 'a' : 'div';
+        return (
+          <li class="flex min-w-[8rem] flex-1 items-stretch sm:min-w-0">
+            <Tag
+              href={href}
+              class:list={[
+                'step-arrow flex w-full flex-col justify-center py-2 pr-6 pl-3 text-center transition',
+                BOX[step.state],
+                href && 'cursor-pointer hover:brightness-95',
+              ]}
+            >
+              <span class="block text-[0.65rem] font-bold tracking-wide uppercase opacity-75">
+                Step {index + 1}
+              </span>
               <span
                 class:list={[
-                  'mt-0.5 block text-[0.7rem] leading-tight',
-                  DETAIL[step.state],
+                  'block text-sm leading-tight font-semibold',
+                  step.problem && PROBLEM_TEXT,
                 ]}
               >
-                {step.detail}
+                {step.label}
               </span>
-            )}
-            <span class="sr-only">{READS[step.state]}</span>
-          </div>
-          {index < steps.length - 1 && (
-            <span
-              aria-hidden="true"
-              class="hidden shrink-0 self-center px-1 text-neutral-300 sm:block dark:text-neutral-700"
-            >
-              &rarr;
-            </span>
-          )}
-        </li>
-      ))
+              {step.detail && (
+                <span
+                  class:list={[
+                    'mt-0.5 block text-[0.7rem] leading-tight',
+                    step.problem ? PROBLEM_TEXT : DETAIL[step.state],
+                  ]}
+                >
+                  {step.detail}
+                </span>
+              )}
+              <span class="sr-only">{READS[step.state]}</span>
+            </Tag>
+          </li>
+        );
+      })
     }
   </ol>
 </section>
+
+<style>
+  /* A shallow point on the right, flat on the left — "towards the right"
+     without needing to nest into the box before it, which spacing between
+     boxes (the gap-3 above) rules out anyway. Applied to every step alike,
+     including the last: it is what makes the row read as a sequence rather
+     than seven unrelated tiles. */
+  .step-arrow {
+    clip-path: polygon(
+      0 0,
+      calc(100% - 14px) 0,
+      100% 50%,
+      calc(100% - 14px) 100%,
+      0 100%
+    );
+  }
+</style>
+
+<script>
+  // Sticks below the app header rather than under it — the header is
+  // `sticky top-0` with a height this component cannot know in advance (it
+  // wraps differently at different widths), so it is measured once the page
+  // has laid out and written to a custom property this section's `top` reads.
+  // A resize can change that wrap, so it is re-measured then too.
+  const header = document.getElementById('app-header');
+  if (header) {
+    const sync = () => {
+      document.documentElement.style.setProperty(
+        '--app-header-height',
+        `${header.offsetHeight}px`
+      );
+    };
+    sync();
+    window.addEventListener('resize', sync);
+  }
+</script>

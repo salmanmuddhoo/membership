@@ -209,7 +209,6 @@ if (Astro.request.method === 'POST') {
 
   if (form && status) {
     let dirty = false;
-    let inFlight = false;
     let pending: number | undefined;
     // Set the moment the first save creates the application. Once this is
     // known, a later response is judged only by whether the request
@@ -225,10 +224,7 @@ if (Astro.request.method === 'POST') {
           key.startsWith('field.') && String(value).trim() !== ''
       );
 
-    const save = async () => {
-      if (!dirty || inFlight || !anythingEntered()) return;
-      inFlight = true;
-
+    const performSave = async () => {
       const body = new FormData(form);
       body.set('intent', 'autosave');
 
@@ -267,9 +263,27 @@ if (Astro.request.method === 'POST') {
         // Saying "saved" when nothing was saved is the one thing this must
         // never do: the officer would close the tablet trusting it.
         status.textContent = 'Not saved — check your connection.';
-      } finally {
-        inFlight = false;
       }
+    };
+
+    // Dispatches a save and makes every caller genuinely wait for it. A plain
+    // "in flight" boolean used to let a second caller — Next, arriving right
+    // behind focusout's own un-awaited save — walk straight past a save
+    // already running with nothing to await, so Next navigated before that
+    // save's fetch had finished and the browser could cancel it mid-flight.
+    // That is how a field filled in a moment before Next was clicked (a
+    // Nominee detail, say) went unsaved. Chaining onto the in-flight promise
+    // instead means a caller that arrives mid-save waits for it to land, then
+    // saves again if something changed in the meantime, rather than skipping
+    // its turn.
+    let saveInFlight: Promise<void> | null = null;
+    const save = (): Promise<void> => {
+      if (saveInFlight) return saveInFlight.then(save);
+      if (!dirty || !anythingEntered()) return Promise.resolve();
+      saveInFlight = performSave().finally(() => {
+        saveInFlight = null;
+      });
+      return saveInFlight;
     };
 
     form.addEventListener('input', () => {

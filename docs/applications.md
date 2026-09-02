@@ -50,16 +50,55 @@ documents, the payment, the actions the capture form never grows into.
 history where the tab has one to go back to, `/applications` otherwise, so it
 always lands somewhere real rather than depending on how the tab got here.
 
+**Flushing has to wait for a save already running, not skip it.** Leaving a
+field fires `focusout`'s own save; clicking Next a moment later used to call
+`save()` again to flush, and a plain "in flight" boolean made that second call
+a no-op if the first was still in flight — Next then navigated before the real
+save's `fetch` had landed, and the browser could cancel it mid-flight, losing
+whatever that field had just been given (a Nominee detail, reliably enough to
+be the reported symptom). Both `new.astro` and `[id].astro` now track the
+in-flight save as a promise: a caller that arrives while one is running chains
+onto it and, once it resolves, saves again only if something changed in the
+meantime — so Next's flush always waits for the real thing rather than racing
+it.
+
 ## The progress timeline
 
-`applicationTimeline` (`src/lib/applications/timeline.ts`) is unchanged by any
-of this — the seven steps and how far a status/checklist/payment combination
-has got through them are exactly as before. What changed is where it is drawn
-and what it looks like: `ApplicationTimeline.astro` renders it as a row of
-coloured boxes, one per step, rather than a numbered list, and it is the first
-thing on the page — above the status line, above every section it summarises
-— on **both** the capture form and the full application page. An officer
-orients before they read anything else.
+`applicationTimeline` (`src/lib/applications/timeline.ts`) computes the seven
+steps and how far a status/checklist/payment combination has got through
+them. `ApplicationTimeline.astro` draws that as a row of arrow-shaped boxes,
+one per step (a `clip-path` chevron pointing right, with real spacing between
+them rather than a nested/overlapping row) — the first thing on the page,
+above the status line, above every section it summarises, on **both** the
+capture form and the full application page. An officer orients before they
+read anything else.
+
+Each step's label and detail turn red when `applicationTimeline` marks it a
+`problem` — a mandatory field still empty, a required document still
+outstanding, a return for correction — as distinct from merely `current`,
+which is true of plenty of steps nothing is wrong with (being next in line to
+record a payment is not a problem). The box colour still shows done/current/
+todo; the red is layered on top of whichever it lands on, and it comes from
+the same computation the rest of the timeline reads rather than the component
+re-deriving "is this wrong" from the detail string.
+
+On `[id].astro` every step is a real link — `applicationId` is passed in, and
+each step's `href` (`ApplicationTimeline.astro`'s `STEP_HREF` map) goes
+straight to that step: capture, documents and payment land on their
+`?step=N`, sign lands on the print page, and the Secretary/President steps
+land on the application as a whole, since neither is a page an officer steps
+through. A step not yet reached still links — same redirect `[id].astro`
+already does for a hand-typed `?step=` ahead of `furthestStep`, landing back
+on the furthest step actually unlocked rather than a dead end. The capture
+page (`/applications/new`) has no application yet for a step to link to, so
+its boxes render as plain `<div>`s instead.
+
+The section is `sticky`, positioned just under the app header rather than
+under it: the header's own height varies with viewport and content wrap, so a
+small script in `ApplicationTimeline.astro` measures `#app-header` (added on
+`DashboardLayout.astro`'s `<header>`) after layout and on resize, and writes
+it to a `--app-header-height` custom property the timeline's `top` reads.
+Scrolling the page never scrolls the timeline out of view.
 
 The capture page has no application behind it yet (see above), so its
 timeline is a starting position rather than a read of a real record: every
