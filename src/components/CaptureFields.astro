@@ -60,6 +60,23 @@ const ordinalsFor = (subject: FieldSubject) =>
     { length: subject === 'nominee' ? Math.max(nomineeCount, 1) : 1 },
     (_, i) => i + 1
   );
+
+// The guardian's own details come from a record that already exists — the
+// point of the search above is that the officer never types them, only
+// picks the right person. So once a type asks for both Member No. and NIC
+// (isGuardianSearch), every field the search fills in is read-only: surname,
+// name, NIC and Member No. straight from the pick, mobile from the same
+// record, and relationship worked out from the minor's own gender rather
+// than typed at all. A type with a guardian block but no search (missing
+// either field) is untouched — nothing here to auto-fill it from.
+const AUTO_FILLED_GUARDIAN_FIELDS = new Set([
+  'surname',
+  'name',
+  'nic',
+  'member_id',
+  'mobile',
+  'relationship',
+]);
 ---
 
 {
@@ -119,6 +136,9 @@ const ordinalsFor = (subject: FieldSubject) =>
             {subjectFields.map(field => {
               const name = `field.${subject}.${ordinal}.${field.fieldKey}`;
               const value = values[field.fieldKey] ?? '';
+              const isAutoFilled =
+                isGuardianSearch &&
+                AUTO_FILLED_GUARDIAN_FIELDS.has(field.fieldKey);
               return (
                 <label class="text-sm text-neutral-600 dark:text-neutral-300">
                   <span>
@@ -158,12 +178,20 @@ const ordinalsFor = (subject: FieldSubject) =>
                       name={name}
                       value={value}
                       disabled={!isEditable}
+                      readonly={isAutoFilled || undefined}
                       placeholder={
-                        field.dataType === 'phone' ? '5789 1234' : undefined
+                        isAutoFilled
+                          ? 'Picked up from the search above'
+                          : field.dataType === 'phone'
+                            ? '5789 1234'
+                            : undefined
                       }
                       data-mandatory={field.isMandatory ? 'yes' : undefined}
                       class:list={[
-                        'mt-1 w-full rounded-lg border bg-white px-3 py-1.5 text-sm dark:bg-neutral-900 dark:text-neutral-100',
+                        'mt-1 w-full rounded-lg border px-3 py-1.5 text-sm',
+                        isAutoFilled
+                          ? 'bg-neutral-100 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400'
+                          : 'bg-white dark:bg-neutral-900 dark:text-neutral-100',
                         missing.has(field.fieldKey)
                           ? 'border-red-400 dark:border-red-700'
                           : 'border-neutral-300 dark:border-neutral-600',
@@ -184,11 +212,14 @@ const ordinalsFor = (subject: FieldSubject) =>
   // S-604: the parent has to be findable before they are a member — a
   // Corporate/Individual applicant registering at the same visit as their
   // minor is exactly the case this exists for. Picking a result fills in
-  // the surname/name/NIC/Member No. fields the same way typing them would;
-  // it is a shortcut to what was already a valid form, not a new kind of
-  // field. Submission still refuses until the picked parent actually is an
-  // active member (capture.ts, problemsBlockingSubmission) — this only
-  // helps the officer name who they mean, before or after that is true.
+  // the surname/name/NIC/Member No./mobile fields the same way typing them
+  // would; it is a shortcut to what was already a valid form, not a new
+  // kind of field — and since it is the only way these fields are meant to
+  // be filled, CaptureFields.astro renders them readonly, so nothing here
+  // needs to guard against the officer overwriting a real record by hand.
+  // Submission accepts an active member or an Individual application still
+  // in progress (capture.ts, problemsBlockingSubmission) — this only helps
+  // the officer name who they mean, whichever of those they turn out to be.
   const wrapper = document.querySelector<HTMLElement>('[data-guardian-search]');
   const input = wrapper?.querySelector<HTMLInputElement>(
     '[data-guardian-search-input]'
@@ -208,6 +239,7 @@ const ordinalsFor = (subject: FieldSubject) =>
       surname: string;
       name: string;
       nic: string;
+      mobile: string;
     }
 
     const STATUS_TEXT: Record<string, string> = {
@@ -236,6 +268,24 @@ const ordinalsFor = (subject: FieldSubject) =>
       el.dispatchEvent(new Event('change', { bubbles: true }));
     };
 
+    // The minor's own applicant block, not the guardian's — relationship
+    // reads *their* gender ("Male" files as Son, "Female" as Daughter),
+    // not anything about the person just picked. Kept in sync live too: a
+    // guardian picked before the minor's gender is filled in still ends up
+    // correct once it is.
+    const applicantGender = () =>
+      document.querySelector<HTMLSelectElement>(
+        '[name="field.applicant.1.gender"]'
+      );
+    const syncRelationship = () => {
+      const gender = applicantGender()?.value;
+      setField(
+        'relationship',
+        gender === 'Male' ? 'Son' : gender === 'Female' ? 'Daughter' : ''
+      );
+    };
+    applicantGender()?.addEventListener('change', syncRelationship);
+
     const close = () => {
       results.hidden = true;
       results.replaceChildren();
@@ -262,6 +312,8 @@ const ordinalsFor = (subject: FieldSubject) =>
           setField('name', candidate.name);
           setField('nic', candidate.nic);
           setField('member_id', candidate.reference);
+          setField('mobile', candidate.mobile);
+          syncRelationship();
           input.value = name;
           status.textContent = `Linked ${name || candidate.reference}.`;
           close();

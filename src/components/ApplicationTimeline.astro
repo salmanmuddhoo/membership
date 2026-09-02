@@ -69,7 +69,7 @@ const STEP_HREF: Record<string, (id: string) => string> = {
 >
   <ol class="flex flex-wrap items-stretch gap-3 sm:flex-nowrap">
     {
-      steps.map((step, index) => {
+      steps.map(step => {
         const href = applicationId
           ? STEP_HREF[step.key]?.(applicationId)
           : undefined;
@@ -79,14 +79,11 @@ const STEP_HREF: Record<string, (id: string) => string> = {
             <Tag
               href={href}
               class:list={[
-                'step-arrow flex w-full flex-col justify-center py-2 pr-6 pl-3 text-center transition',
+                'step-arrow flex w-full flex-col justify-center py-2 pr-6 pl-6 text-center transition',
                 BOX[step.state],
                 href && 'cursor-pointer hover:brightness-95',
               ]}
             >
-              <span class="block text-[0.65rem] font-bold tracking-wide uppercase opacity-75">
-                Step {index + 1}
-              </span>
               <span
                 class:list={[
                   'block text-sm leading-tight font-semibold',
@@ -115,18 +112,20 @@ const STEP_HREF: Record<string, (id: string) => string> = {
 </section>
 
 <style>
-  /* A shallow point on the right, flat on the left — "towards the right"
-     without needing to nest into the box before it, which spacing between
-     boxes (the gap-3 above) rules out anyway. Applied to every step alike,
-     including the last: it is what makes the row read as a sequence rather
-     than seven unrelated tiles. */
+  /* A full chevron, not a rectangle with a point tacked onto one side: the
+     right edge comes to a point and the left edge is notched to match, so
+     the box's own outline is the arrow rather than a separate shape drawn
+     over a square back. Applied to every step alike, including the first
+     and last — it is what makes the row read as a sequence rather than
+     seven unrelated tiles. */
   .step-arrow {
     clip-path: polygon(
       0 0,
       calc(100% - 14px) 0,
       100% 50%,
       calc(100% - 14px) 100%,
-      0 100%
+      0 100%,
+      14px 50%
     );
   }
 </style>
@@ -137,13 +136,27 @@ const STEP_HREF: Record<string, (id: string) => string> = {
   // wraps differently at different widths), so it is measured once the page
   // has laid out and written to a custom property this section's `top` reads.
   // A resize can change that wrap, so it is re-measured then too.
+  //
+  // This section's own height is published the same way, for whatever sticks
+  // below it in turn (the id page's "All applications" nav row) — that
+  // wraps differently by width too, and neither side should have to guess
+  // the other's height.
   const header = document.getElementById('app-header');
-  if (header) {
+  const timeline = document.getElementById('application-timeline');
+  if (header || timeline) {
     const sync = () => {
-      document.documentElement.style.setProperty(
-        '--app-header-height',
-        `${header.offsetHeight}px`
-      );
+      if (header) {
+        document.documentElement.style.setProperty(
+          '--app-header-height',
+          `${header.offsetHeight}px`
+        );
+      }
+      if (timeline) {
+        document.documentElement.style.setProperty(
+          '--app-timeline-height',
+          `${timeline.offsetHeight}px`
+        );
+      }
     };
     sync();
     window.addEventListener('resize', sync);

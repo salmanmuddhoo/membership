@@ -745,17 +745,23 @@ column (migration 0020). See `docs/documents.md`.
 `problemsBlockingSubmission` (`capture.ts`) resolves the guardian block's
 Member No. or NIC against `member`, joined back to whichever application's
 applicant party carries that NIC (NIC is not a column on `member` itself).
-Not found, or found but not active, is a "Needs attention" item on the
-capture page itself — not only at submit time. See `docs/applications.md`.
+Not found is a "Needs attention" item on the capture page itself — not only
+at submit time. See `docs/applications.md`.
 
-The guardian does not have to be an approved member yet to be found and
-linked — a parent and their minor can register at the same visit, the parent
-first. `GET /api/v1/applications/guardian-search` searches active members
-**and** Individual applications still being captured; picking a result fills
-in the guardian block the same way typing it would. Submission still refuses
-until the linked parent actually is an active member — this only helps the
-officer name who they mean, before or after that is true. See
-`docs/applications.md`.
+**The guardian does not have to be an approved member yet to be found,
+linked, or submitted with.** A parent and their minor can register at the
+same visit, the parent first. `GET /api/v1/applications/guardian-search`
+searches active members **and** Individual applications still being
+captured; picking a result fills in the guardian's surname, name, NIC,
+Member No. and mobile the same way typing them would — and, since the
+search is the only intended way to fill them, `CaptureFields.astro` renders
+those fields read-only. Relationship is read-only too, worked out
+automatically from the minor's own gender rather than typed. Submission
+itself accepts either kind of match, on officer feedback that requiring the
+parent's own approval first forced a second visit for no reason their
+status actually changed — what it still refuses is a guardian nobody can
+find, a member who is not active, or an application already rejected (a
+dead end). See `docs/applications.md`.
 
 ### S-605 · Block submission without a valid Guardian ✅
 
@@ -806,9 +812,9 @@ it, **so that** board time is not spent on incomplete files. _(FRD 7.10.8)_
 `boardReadiness` (`workflow.ts`) re-checks the three things submission
 cannot guarantee stay true — documents actually Verified (not merely
 filed), the payment still live (not voided or refunded since), and a
-guardian still an active member — and `reviewApplication` refuses a
-`forward` outcome naming every outstanding one together. Return for
-correction is untouched. See `docs/applications.md`.
+guardian still resolving the same way submission accepted them — and
+`reviewApplication` refuses a `forward` outcome naming every outstanding one
+together. Return for correction is untouched. See `docs/applications.md`.
 
 ### S-609 · Board decision record with sign-offs ✅
 

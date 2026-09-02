@@ -597,7 +597,8 @@
                               "status",
                               "surname",
                               "name",
-                              "nic"
+                              "nic",
+                              "mobile"
                             ],
                             "properties": {
                               "kind": {
@@ -621,6 +622,9 @@
                                 "type": "string"
                               },
                               "nic": {
+                                "type": "string"
+                              },
+                              "mobile": {
                                 "type": "string"
                               }
                             }

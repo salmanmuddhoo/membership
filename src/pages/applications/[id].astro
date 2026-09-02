@@ -551,7 +551,11 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
   <div class="mx-auto max-w-4xl space-y-6">
     <ApplicationTimeline steps={timeline} applicationId={application!.id} />
 
-    <div class="flex flex-wrap items-center justify-between gap-2">
+    <div
+      id="application-nav"
+      class="sticky z-20 -mx-4 flex flex-wrap items-center justify-between gap-2 border-b border-neutral-200/80 bg-neutral-200/95 px-4 py-3 backdrop-blur-md sm:mx-0 sm:rounded-xl sm:border-b-0 sm:px-3 sm:py-1.5 dark:border-neutral-800/80 dark:bg-neutral-900/95"
+      style="top: calc(var(--app-header-height, 3.75rem) + var(--app-timeline-height, 0px) + 1.5rem)"
+    >
       <div class="flex flex-wrap items-center gap-x-4 gap-y-1">
         {
           /* A real navigation, not history-dependent JavaScript: the officer
@@ -734,9 +738,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                 disabled={blocking.length > 0}
                 class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {blocking.length > 0
-                  ? `Next (${blocking.length} item${blocking.length === 1 ? '' : 's'} still need attention)`
-                  : 'Next: print the form'}
+                {blocking.length > 0 ? 'Next' : 'Next: print the form'}
               </button>
             </div>
           )}
@@ -996,7 +998,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                   ]}
                 >
                   {requiredDocumentsMissing > 0
-                    ? `Next (${requiredDocumentsMissing} required document${requiredDocumentsMissing === 1 ? '' : 's'} still missing)`
+                    ? 'Next'
                     : 'Next: record the payment'}
                 </a>
               </div>
@@ -1221,9 +1223,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                       : 'bg-mint-300 hover:bg-mint-400 text-neutral-800',
                   ]}
                 >
-                  {livePayment === null
-                    ? 'Next (payment not yet recorded)'
-                    : 'Next: submit for review'}
+                  {livePayment === null ? 'Next' : 'Next: submit for review'}
                 </a>
               </div>
             )}
@@ -1250,7 +1250,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                 >
                   {blocking.length > 0
                     ? `Submit (${blocking.length} item${blocking.length === 1 ? '' : 's'} still need attention)`
-                    : 'Submit for central processing'}
+                    : 'Submit for Processing'}
                 </button>
               )}
 
@@ -1481,9 +1481,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     ).length;
     captureNextButton.disabled = remaining > 0;
     captureNextButton.textContent =
-      remaining > 0
-        ? `Next (${remaining} item${remaining === 1 ? '' : 's'} still need attention)`
-        : 'Next: print the form';
+      remaining > 0 ? 'Next' : 'Next: print the form';
   };
 
   for (const el of mandatoryFields) {

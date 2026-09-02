@@ -4,8 +4,7 @@
 // captured — a parent and their minor can be registered at the same visit,
 // the parent first, and this is what lets the officer find and point at the
 // parent's own application before it is anywhere near approved. Submission
-// still refuses until the guardian actually is an active member; this only
-// helps the officer name who they mean.
+// accepts either kind of match, the same way this search offers them.
 import type { APIRoute } from 'astro';
 import { defineEndpoint, apiSuccess } from '@lib/api/endpoint';
 import { searchGuardianCandidates } from '@lib/applications/capture';
@@ -37,7 +36,15 @@ const endpoint = defineEndpoint(
           type: 'array',
           items: {
             type: 'object',
-            required: ['kind', 'reference', 'status', 'surname', 'name', 'nic'],
+            required: [
+              'kind',
+              'reference',
+              'status',
+              'surname',
+              'name',
+              'nic',
+              'mobile',
+            ],
             properties: {
               kind: { type: 'string', enum: ['member', 'application'] },
               reference: {
@@ -49,6 +56,7 @@ const endpoint = defineEndpoint(
               surname: { type: 'string' },
               name: { type: 'string' },
               nic: { type: 'string' },
+              mobile: { type: 'string' },
             },
           },
         },

@@ -673,7 +673,7 @@ export async function availableActions(
 
   const forStep: Record<string, { label: string; permission: string }> = {
     capture: {
-      label: 'Submit for central processing',
+      label: 'Submit for Processing',
       permission: 'application.submit',
     },
     secretary_review: { label: 'Review', permission: 'application.review' },

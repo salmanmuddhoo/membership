@@ -71,11 +71,14 @@ has got through them. Submission and Secretary review read as the one
 "Submit" step: an officer has exactly one thing left to do at that point, and
 everything from there through the Secretary forwarding it on is out of their
 hands. `ApplicationTimeline.astro` draws the six as a row of arrow-shaped
-boxes (a `clip-path` chevron pointing right, with real spacing between them
-rather than a nested/overlapping row) — the first thing on the page, above
+boxes — a `clip-path` chevron on both the right edge (pointed) and the left
+(notched to match), so the box's own outline is the arrow rather than a
+rectangle with a point tacked onto one side, with real spacing between them
+rather than a nested/overlapping row — the first thing on the page, above
 the status line, above every section it summarises, on **both** the capture
 form and the full application page. An officer orients before they read
-anything else.
+anything else. The label alone says what a step is; nothing numbers them,
+since the chevron shape already reads as a sequence on its own.
 
 Each step's label and detail turn red when `applicationTimeline` marks it a
 `problem` — a mandatory field still empty, a required document still
@@ -210,16 +213,28 @@ neither can drift from what the other allows.
 
 The guardian block on a Minor application asks for a Member No. and a NIC —
 plain text fields, like any other — but filling them in is not the same as
-naming a real guardian. FRD 7.10.2 requires the guardian to be an **existing,
-active member**, so `problemsBlockingSubmission` (`capture.ts`) resolves
-whatever was typed against `member`, joined back to the applicant party of
-whichever application created that member (NIC is not a column on `member`
-itself — it only ever lived on the application that produced it). Either
-identifier resolving is enough; neither resolving, or resolving to someone no
-longer active, is reported the same way an empty mandatory field is: it
-blocks submission, and it blocks the wizard from reaching Documents or
-Payment, on the same `blocking` count the timeline and the Next button
-already read.
+naming a real guardian. So `problemsBlockingSubmission` (`capture.ts`)
+resolves whatever was typed the same way `findGuardian` below does: against
+`member` first, joined back to the applicant party of whichever application
+created that member (NIC is not a column on `member` itself — it only ever
+lived on the application that produced it); failing that, against an
+Individual application still in progress, by its own reference or by NIC.
+Either identifier resolving to either kind of match is enough; neither
+resolving, resolving to someone who is a member but not active, or resolving
+to an application that was rejected (a dead end — it will never produce a
+member) is reported the same way an empty mandatory field is: it blocks
+submission, and it blocks the wizard from reaching Documents or Payment, on
+the same `blocking` count the timeline and the Next button already read.
+
+**A guardian does not have to be approved yet.** A parent and their minor
+routinely join at the same visit — the parent captured first, exactly as any
+Individual application is, and not yet decided when the officer starts the
+minor's form. Requiring the parent's own approval before the minor's
+application could even be submitted would force a second visit for no
+reason the parent's status actually changes, so submission accepts a
+guardian who resolves to either kind of match, not only an active member.
+What it still refuses is a guardian nobody can find at all, or one whose own
+application has already been rejected.
 
 The difference from an empty field is that a filled-in, wrong Member No.
 looks fine at a glance — the red border it gets is the same one an empty
@@ -243,14 +258,14 @@ membership type by name — the generic pipeline just had to be pointed at it
 by a test to be sure. `workflow.test.ts` now carries end-to-end tests for
 both.
 
-### Finding a parent before they are a member
+### Finding a parent before they are a member, and never typing them by hand
 
 The guardian block asks for a Member No. and a NIC, which used to mean typing
-both in blind. `CaptureFields.astro` now shows a search box above them
-whenever a type's guardian subject configures both fields (checked by field
-key, not by assuming "guardian" always means this — the type still decides):
-type two characters and it calls `GET /api/v1/applications/guardian-search`,
-which wraps `searchGuardianCandidates` (`capture.ts`).
+both in blind. `CaptureFields.astro` shows a search box above them whenever a
+type's guardian subject configures both fields (checked by field key, not by
+assuming "guardian" always means this — the type still decides): type two
+characters and it calls `GET /api/v1/applications/guardian-search`, which
+wraps `searchGuardianCandidates` (`capture.ts`).
 
 **The search finds two different kinds of person, on purpose.** A parent and
 their minor can join at the same visit — the parent captured first, exactly
@@ -258,29 +273,39 @@ as any Individual application is, and _not yet decided_ when the officer
 starts the minor's form. So the search matches:
 
 - **Active members**, by surname, name, NIC or Member No. — read the same way
-  `findGuardianMember` above resolves one.
+  `findGuardian` above resolves one.
 - **Individual applications not yet decided** (any status except `approved`
   or `rejected`) — by surname, name or NIC. `rejected` is excluded because it
   will never produce a member; `approved` is excluded because that person
   already has a member row, found by the first arm — listing both would show
   the same parent twice.
 
-Picking a result fills in the guardian's surname, name, NIC and Member No.
-fields exactly as if the officer had typed them — a shortcut to a form that
-was already valid, not a new kind of field, so nothing about how those values
-are stored, normalised or validated changes. What goes in the Member No.
-field for someone who is not a member yet is their **application's own
-reference** (`APP-2026-000123`), not a real Member No. — human-recognisable
+Picking a result fills in the guardian's surname, name, NIC, Member No. and
+mobile fields exactly as if the officer had typed them — a shortcut to a
+form that was already valid, not a new kind of field, so nothing about how
+those values are stored, normalised or validated changes. What goes in the
+Member No. field for someone who is not a member yet is their **application's
+own reference** (`APP-2026-000123`), not a real Member No. — human-recognisable
 on the form, and never confusable with one (the two never share a shape).
 
-**This does not change when a minor can be submitted.** `findGuardianMember`
-still resolves purely against `member`, by Member No. **or NIC** — and NIC is
-what actually carries a not-yet-a-member parent through: it does not change
-when their application is renamed on approval (`reference` becomes their
-`member_no`, see Identifiers below), so nothing about the minor's own form
-needs revisiting once the parent is approved. The Member No. field the search
-filled in with an `APP-` reference simply stops mattering at that point; the
-NIC match is what resolves them.
+**These fields are read-only, not merely pre-filled.** Since the search is
+the only legitimate way to name a real guardian, `CaptureFields.astro`
+renders the guardian's surname, name, NIC, Member No. and mobile as `readonly`
+whenever the search is offered — an officer can pick a different result, but
+cannot hand-edit a real record's details into something that no longer
+matches it. Relationship is read-only too, but never typed or picked at
+all: it is worked out from the minor's own gender (Male files as _Son_,
+Female as _Daughter_), synced live so a guardian picked before the minor's
+gender is filled in still ends up correct once it is.
+
+**This does not change when a minor can be submitted.** `findGuardian` still
+resolves against `member` or a not-yet-decided Individual application, by
+Member No. **or NIC** — and NIC is what actually carries a not-yet-a-member
+parent through: it does not change when their application is renamed on
+approval (`reference` becomes their `member_no`, see Identifiers below), so
+nothing about the minor's own form needs revisiting once the parent is
+approved. The Member No. field the search filled in with an `APP-` reference
+simply stops mattering at that point; the NIC match is what resolves them.
 
 ## Nominees: how many, and whether they must add up (S-602)
 
