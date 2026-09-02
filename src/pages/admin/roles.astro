@@ -77,6 +77,54 @@ const allPermissions = (
     'select code, description from permission order by code'
   )
 ).rows;
+
+// Grouped by the page each permission governs, so "everything about
+// Applications" reads together rather than as one alphabetised wall — the
+// prefix before the dot is the contract (`application.*`, `document.*`, …),
+// the same one the route guards in src/lib/access/authorise.ts key on.
+const PERMISSION_GROUPS: Record<string, string> = {
+  application: 'Applications',
+  member: 'Members',
+  document: 'Documents',
+  payment: 'Payments & receipts',
+  receipt: 'Payments & receipts',
+  config: 'Configuration',
+  fee: 'Configuration',
+  role: 'Roles',
+  user: 'Staff accounts',
+  segregation: 'Segregation of duties',
+  system: 'System',
+};
+const GROUP_ORDER = [
+  'Applications',
+  'Members',
+  'Documents',
+  'Payments & receipts',
+  'Configuration',
+  'Roles',
+  'Staff accounts',
+  'Segregation of duties',
+  'System',
+];
+
+function groupPermissions(
+  permissions: { code: string; description: string }[]
+) {
+  const byGroup = new Map<string, typeof permissions>();
+  for (const permission of permissions) {
+    const prefix = permission.code.split('.')[0];
+    const label = PERMISSION_GROUPS[prefix] ?? prefix;
+    const list = byGroup.get(label) ?? [];
+    list.push(permission);
+    byGroup.set(label, list);
+  }
+  const order = [...GROUP_ORDER, ...byGroup.keys()];
+  return [...byGroup.keys()]
+    .sort((a, b) => order.indexOf(a) - order.indexOf(b))
+    .map(label => ({ label, permissions: byGroup.get(label)! }));
+}
+
+const permissionGroups = groupPermissions(allPermissions);
 ---
 
 <DashboardLayout title="Roles · Al Barakah MCSL" heading="Roles">
@@ -135,27 +183,38 @@ const allPermissions = (
               <form method="post" class="mt-4 space-y-3">
                 <input type="hidden" name="roleId" value={role.id} />
 
-                <fieldset class="grid gap-2 sm:grid-cols-2">
-                  <legend class="mb-2 text-sm font-medium text-neutral-700 dark:text-neutral-200">
+                <fieldset class="space-y-4">
+                  <legend class="mb-1 text-sm font-medium text-neutral-700 dark:text-neutral-200">
                     Permissions
                   </legend>
-                  {allPermissions.map(permission => (
-                    <label class="flex items-start gap-x-2 text-sm text-neutral-600 dark:text-neutral-300">
-                      <input
-                        type="checkbox"
-                        name="permissions"
-                        value={permission.code}
-                        checked={role.permissions.includes(permission.code)}
-                        disabled={!canManage}
-                        class="text-mint-500 focus:ring-mint-400 mt-0.5 rounded border-neutral-300 dark:border-neutral-600"
-                      />
-                      <span>
-                        <code class="text-xs">{permission.code}</code>
-                        <span class="block text-xs text-neutral-400 dark:text-neutral-500">
-                          {permission.description}
-                        </span>
-                      </span>
-                    </label>
+                  {permissionGroups.map(group => (
+                    <div>
+                      <p class="mb-2 text-xs font-semibold tracking-wide text-neutral-500 uppercase dark:text-neutral-400">
+                        {group.label}
+                      </p>
+                      <div class="grid gap-2 sm:grid-cols-2">
+                        {group.permissions.map(permission => (
+                          <label class="flex items-start gap-x-2 text-sm text-neutral-600 dark:text-neutral-300">
+                            <input
+                              type="checkbox"
+                              name="permissions"
+                              value={permission.code}
+                              checked={role.permissions.includes(
+                                permission.code
+                              )}
+                              disabled={!canManage}
+                              class="text-mint-500 focus:ring-mint-400 mt-0.5 rounded border-neutral-300 dark:border-neutral-600"
+                            />
+                            <span>
+                              <code class="text-xs">{permission.code}</code>
+                              <span class="block text-xs text-neutral-400 dark:text-neutral-500">
+                                {permission.description}
+                              </span>
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
                   ))}
                 </fieldset>
 
@@ -238,20 +297,29 @@ const allPermissions = (
               />
             </label>
 
-            <fieldset class="grid gap-2 sm:grid-cols-2">
-              <legend class="mb-2 text-sm font-medium text-neutral-700 dark:text-neutral-200">
+            <fieldset class="space-y-4">
+              <legend class="mb-1 text-sm font-medium text-neutral-700 dark:text-neutral-200">
                 Permissions
               </legend>
-              {allPermissions.map(permission => (
-                <label class="flex items-start gap-x-2 text-sm text-neutral-600 dark:text-neutral-300">
-                  <input
-                    type="checkbox"
-                    name="permissions"
-                    value={permission.code}
-                    class="text-mint-500 focus:ring-mint-400 mt-0.5 rounded border-neutral-300 dark:border-neutral-600"
-                  />
-                  <code class="text-xs">{permission.code}</code>
-                </label>
+              {permissionGroups.map(group => (
+                <div>
+                  <p class="mb-2 text-xs font-semibold tracking-wide text-neutral-500 uppercase dark:text-neutral-400">
+                    {group.label}
+                  </p>
+                  <div class="grid gap-2 sm:grid-cols-2">
+                    {group.permissions.map(permission => (
+                      <label class="flex items-start gap-x-2 text-sm text-neutral-600 dark:text-neutral-300">
+                        <input
+                          type="checkbox"
+                          name="permissions"
+                          value={permission.code}
+                          class="text-mint-500 focus:ring-mint-400 mt-0.5 rounded border-neutral-300 dark:border-neutral-600"
+                        />
+                        <code class="text-xs">{permission.code}</code>
+                      </label>
+                    ))}
+                  </div>
+                </div>
               ))}
             </fieldset>
 

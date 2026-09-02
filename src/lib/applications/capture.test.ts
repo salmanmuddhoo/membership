@@ -421,7 +421,7 @@ async function seedMember(
   return { memberNo: member.rows[0].member_no, applicationId };
 }
 
-describe('S-604/S-605: a minor’s guardian must be an existing, active member', () => {
+describe('S-604/S-605: a minor’s guardian must be a real, findable person', () => {
   const minorParties = (
     guardian: Record<string, string> = {}
   ): PartyValues[] => [
@@ -531,6 +531,88 @@ describe('S-604/S-605: a minor’s guardian must be an existing, active member',
     );
     expect(guardianProblem?.label).toMatch(/not an active member/);
   });
+
+  // The whole point of the relaxation: a parent and their minor can join at
+  // the same visit, the parent's own application not yet anywhere near a
+  // decision — the minor's should not have to wait for that.
+  it('passes when the guardian is an Individual application still in progress', async () => {
+    const { capture } = await load();
+    const parentActor = { userId: officer.userId, email: officer.email };
+    const { id: parentApplicationId } = await capture.startApplication(
+      'individual',
+      parentActor
+    );
+    await capture.saveDraft(
+      parentApplicationId,
+      [
+        {
+          subject: 'applicant',
+          ordinal: 1,
+          values: { surname: 'Ramdin', name: 'Farah', nic: 'G1231231231230' },
+        },
+      ],
+      parentActor
+    );
+    const parentApplication =
+      await capture.loadApplication(parentApplicationId);
+
+    const { id } = await capture.startApplication('minor', officer);
+    await capture.saveDraft(
+      id,
+      minorParties({
+        member_id: parentApplication!.reference,
+        nic: 'not-the-lookup',
+      }),
+      officer
+    );
+
+    const application = await capture.loadApplication(id);
+    const problems = await capture.problemsBlockingSubmission(application!);
+    expect(
+      problems.some(p => p.subject === 'guardian' && p.fieldKey === 'member_id')
+    ).toBe(false);
+  });
+
+  it('still blocks when the guardian’s own application was rejected', async () => {
+    const { capture } = await load();
+    const parentActor = { userId: officer.userId, email: officer.email };
+    const { id: parentApplicationId } = await capture.startApplication(
+      'individual',
+      parentActor
+    );
+    await capture.saveDraft(
+      parentApplicationId,
+      [
+        {
+          subject: 'applicant',
+          ordinal: 1,
+          values: { surname: 'Auckbur', name: 'Imran', nic: 'G4564564564560' },
+        },
+      ],
+      parentActor
+    );
+    await run(
+      appUrl,
+      `update membership_application set status = 'rejected' where id = $1`,
+      [parentApplicationId]
+    );
+    const parentApplication =
+      await capture.loadApplication(parentApplicationId);
+
+    const { id } = await capture.startApplication('minor', officer);
+    await capture.saveDraft(
+      id,
+      minorParties({ member_id: parentApplication!.reference }),
+      officer
+    );
+
+    const application = await capture.loadApplication(id);
+    const problems = await capture.problemsBlockingSubmission(application!);
+    const guardianProblem = problems.find(
+      p => p.subject === 'guardian' && p.fieldKey === 'member_id'
+    );
+    expect(guardianProblem?.label).toMatch(/must join as a member first/);
+  });
 });
 
 describe('finding a parent to link, before or after they are a member', () => {
@@ -576,6 +658,36 @@ describe('finding a parent to link, before or after they are a member', () => {
       name: 'Nadia',
       nic: 'S7777777777777',
     });
+  });
+
+  // S-604 follow-up: picking a result fills in the guardian's mobile too,
+  // so this is the one field left for the officer to type by hand otherwise.
+  it('carries the mobile number through, for the guardian block to fill in', async () => {
+    const { capture } = await load();
+    const { id } = await capture.startApplication('individual', officer);
+    await capture.saveDraft(
+      id,
+      [
+        {
+          subject: 'applicant',
+          ordinal: 1,
+          values: {
+            surname: 'Domun',
+            name: 'Kavi',
+            nic: 'S1112223334440',
+            mobile: '5789 4321',
+          },
+        },
+      ],
+      officer
+    );
+    const application = await capture.loadApplication(id);
+
+    const candidates = await capture.searchGuardianCandidates('domun');
+    const found = candidates.find(c => c.reference === application!.reference);
+    // Stored in E.164 (S-301) by the time it is saved, which is what a pick
+    // fills the guardian's own mobile field in with.
+    expect(found?.mobile).toBe('+23057894321');
   });
 
   it('does not offer a rejected application — it will never become a member', async () => {

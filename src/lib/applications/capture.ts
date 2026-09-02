@@ -403,18 +403,24 @@ export async function saveDraft(
   return { savedAt, problems };
 }
 
-// S-604: resolves a guardian to an existing member, by Member No. or NIC —
-// the two identifiers a guardian's block already asks for (FRD 7.10.2). NIC
-// is not stored on `member` itself, only on the applicant party of whatever
-// application created it, which is why this joins back to that party rather
-// than reading a column.
-async function findGuardianMember(
+// S-604, relaxed on officer feedback: a guardian resolves the same way
+// searchGuardianCandidates finds them — an active member, or someone still
+// on the way to becoming one (an Individual application not yet decided).
+// NIC is not stored on `member` itself, only on the applicant party of
+// whatever application created it, which is why this joins back to that
+// party rather than reading a column; the not-yet-a-member arm reads the
+// same column directly off the application in progress.
+//
+// A rejected application is the one dead end: it will never produce a
+// member, so it resolves to nobody — the same reasoning that keeps it out
+// of the search results a Member No. field like this was filled in from.
+async function findGuardian(
   memberNoCandidate: string,
   nicCandidate: string
-): Promise<{ memberNo: string; status: string } | null> {
+): Promise<{ memberNo: string; status: string; isMember: boolean } | null> {
   if (!memberNoCandidate && !nicCandidate) return null;
 
-  const result = await query<{ member_no: string; status: string }>(
+  const member = await query<{ member_no: string; status: string }>(
     `select m.member_no, m.status
        from member m
        left join application_party p
@@ -425,8 +431,36 @@ async function findGuardianMember(
       limit 1`,
     [memberNoCandidate, nicCandidate]
   );
-  if (result.rowCount === 0) return null;
-  return { memberNo: result.rows[0].member_no, status: result.rows[0].status };
+  if (member.rowCount! > 0) {
+    return {
+      memberNo: member.rows[0].member_no,
+      status: member.rows[0].status,
+      isMember: true,
+    };
+  }
+
+  const application = await query<{ reference: string; status: string }>(
+    `select a.reference, a.status
+       from membership_application a
+       join membership_type t on t.id = a.membership_type_id
+       left join application_party p
+         on p.application_id = a.id and p.subject = 'applicant' and p.ordinal = 1
+      where t.code = 'individual'
+        and a.status not in ('approved', 'rejected')
+        and (($1 <> '' and lower(a.reference) = lower($1))
+             or ($2 <> '' and p.values->>'nic' = $2))
+      limit 1`,
+    [memberNoCandidate, nicCandidate]
+  );
+  if (application.rowCount! > 0) {
+    return {
+      memberNo: application.rows[0].reference,
+      status: application.rows[0].status,
+      isMember: false,
+    };
+  }
+
+  return null;
 }
 
 export interface GuardianCandidate {
@@ -439,12 +473,16 @@ export interface GuardianCandidate {
   surname: string;
   name: string;
   nic: string;
+  // S-604 follow-up: the guardian block also asks for a mobile number, so a
+  // picked result fills that in too rather than leaving it the one field the
+  // officer still has to type by hand.
+  mobile: string;
 }
 
 // Lets an officer find a parent to link as guardian — an existing member, or
 // someone joining as an Individual applicant at the same time as the minor
 // (FRD 7.10.2 does not require the parent to already be a member; only
-// submission does, see findGuardianMember/problemsBlockingSubmission below).
+// submission does, see findGuardian/problemsBlockingSubmission below).
 // A rejected application produced no member and never will; an approved one
 // already has its own member row, found by the first half of the union —
 // listing it again under the second half would show the same person twice.
@@ -462,10 +500,11 @@ export async function searchGuardianCandidates(
     surname: string | null;
     name: string | null;
     nic: string | null;
+    mobile: string | null;
   }>(
     `select 'member' as kind, m.member_no as reference, m.status as status,
             p.values->>'surname' as surname, p.values->>'name' as name,
-            p.values->>'nic' as nic
+            p.values->>'nic' as nic, p.values->>'mobile' as mobile
        from member m
        join membership_application a on a.id = m.application_id
        join membership_type t on t.id = a.membership_type_id
@@ -481,7 +520,7 @@ export async function searchGuardianCandidates(
 
       select 'application' as kind, a.reference as reference, a.status as status,
              p.values->>'surname' as surname, p.values->>'name' as name,
-             p.values->>'nic' as nic
+             p.values->>'nic' as nic, p.values->>'mobile' as mobile
        from membership_application a
        join membership_type t on t.id = a.membership_type_id
        left join application_party p
@@ -505,6 +544,7 @@ export async function searchGuardianCandidates(
     surname: r.surname ?? '',
     name: r.name ?? '',
     nic: r.nic ?? '',
+    mobile: r.mobile ?? '',
   }));
 }
 
@@ -551,12 +591,18 @@ export async function problemsBlockingSubmission(
     }
   }
 
-  // S-604/S-605: a guardian is not just a filled-in field, it is a claim
-  // about an existing member — a minor's application cannot be submitted on
-  // the strength of a name and a Member No. nobody has verified. Checked
-  // here rather than at save time (S-302): an officer mid-typing has not
-  // necessarily reached the guardian block yet, and a lookup on every
-  // keystroke would be a query the save does not need to make.
+  // S-604/S-605, relaxed on officer feedback: a guardian is not just a
+  // filled-in field, it is a claim about a real person — a minor's
+  // application cannot be submitted on the strength of a name and a Member
+  // No. nobody has verified. What counts as real is exactly what the search
+  // above offers to link: an active member, or an Individual application
+  // still on its way to becoming one. A parent and their minor can join at
+  // the same visit, and requiring the parent's approval first would force
+  // the officer to hold the minor's form until a second visit for no reason
+  // the parent's own status changes. Checked here rather than at save time
+  // (S-302): an officer mid-typing has not necessarily reached the guardian
+  // block yet, and a lookup on every keystroke would be a query the save
+  // does not need to make.
   const guardianFields = fields.get('guardian');
   if (guardianFields?.some(f => f.fieldKey === 'member_id')) {
     for (const party of application.parties.filter(
@@ -568,17 +614,20 @@ export async function problemsBlockingSubmission(
       // is for a value that is there but does not resolve to anyone real.
       if (!memberNo && !nic) continue;
 
-      const guardian = await findGuardianMember(memberNo, nic);
+      const guardian = await findGuardian(memberNo, nic);
       if (!guardian) {
         problems.push({
           subject: 'guardian',
           ordinal: party.ordinal,
           fieldKey: 'member_id',
           label:
-            'No active member matches the guardian’s Member No. or NIC ' +
-            '— they must join as a member first.',
+            'No member or application matches the guardian’s Member No. ' +
+            'or NIC — they must join as a member first.',
         });
-      } else if (guardian.status !== 'active') {
+      } else if (guardian.isMember && guardian.status !== 'active') {
+        // Only a real member can be inactive in this sense — an in-progress
+        // application has no "active" to fall short of; it is simply still
+        // in progress, which is exactly the case this relaxation exists for.
         problems.push({
           subject: 'guardian',
           ordinal: party.ordinal,
