@@ -57,13 +57,19 @@ const requiredDocumentsTotal = [
 ]
   .flat()
   .filter(item => item.requirement === 'required').length;
+// Every field and document reads as outstanding here (see above), which
+// would otherwise mark Applicant details red before the officer has typed a
+// single character — nothing has actually been attempted yet, so nothing
+// here is a problem yet either. That only becomes true once there is a real
+// application to fall short on, which is what the id page's own read of
+// `applicationTimeline` is for.
 const timeline = applicationTimeline({
   status: 'draft',
   mandatoryFieldsOutstanding: mandatoryFieldsTotal,
   signedFormFiled: false,
   requiredDocumentsOutstanding: requiredDocumentsTotal,
   paymentRecorded: false,
-});
+}).map(({ problem: _problem, ...step }) => step);
 
 let error: string | null = null;
 
@@ -135,13 +141,13 @@ if (Astro.request.method === 'POST') {
   heading={`New ${type.name} application`}
 >
   <div class="mx-auto max-w-4xl space-y-6">
+    <ApplicationTimeline steps={timeline} />
+
     <a
       href="/applications"
       class="inline-block text-sm text-neutral-500 underline dark:text-neutral-400"
       >← All applications</a
     >
-
-    <ApplicationTimeline steps={timeline} />
 
     {
       error && (

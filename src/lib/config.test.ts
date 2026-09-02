@@ -170,3 +170,26 @@ describe('getDatabaseConfig TLS enforcement', () => {
     expect(config.sslMode).toBe('verify');
   });
 });
+
+describe('isProductionEnvironment', () => {
+  it('is true when PUBLIC_APP_ENV is unset', async () => {
+    delete process.env.PUBLIC_APP_ENV;
+    const { isProductionEnvironment } = await loadConfig();
+
+    expect(isProductionEnvironment()).toBe(true);
+  });
+
+  it('is true when PUBLIC_APP_ENV is production', async () => {
+    process.env.PUBLIC_APP_ENV = 'production';
+    const { isProductionEnvironment } = await loadConfig();
+
+    expect(isProductionEnvironment()).toBe(true);
+  });
+
+  it('is false for any other value', async () => {
+    process.env.PUBLIC_APP_ENV = 'test';
+    const { isProductionEnvironment } = await loadConfig();
+
+    expect(isProductionEnvironment()).toBe(false);
+  });
+});

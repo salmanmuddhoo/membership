@@ -1,5 +1,5 @@
 ---
-// The seven-step journey from capture to a decision (S-301 to S-308), drawn as
+// The six-step journey from capture to a decision (S-301 to S-308), drawn as
 // a row of connected, arrow-shaped boxes rather than a list.
 //
 // Deliberately the first thing on both pages that work an application — the
@@ -48,16 +48,15 @@ const READS: Record<string, string> = {
   todo: '(to come)',
 };
 
-// Where clicking a step goes. Steps 6 and 7 are the Secretary's and the
-// President's, not a page an officer steps through — both simply land on the
+// Where clicking a step goes. Step 6, Approval Stage, is the Secretary's and
+// the President's, not a page an officer steps through — it lands on the
 // application as a whole, which is everything once it is no longer editable.
 const STEP_HREF: Record<string, (id: string) => string> = {
   capture: id => `/applications/${id}?step=1`,
   sign: id => `/applications/${id}/print`,
   documents: id => `/applications/${id}?step=3`,
   payment: id => `/applications/${id}?step=4`,
-  submitted: id => `/applications/${id}?step=5`,
-  secretary: id => `/applications/${id}`,
+  submit: id => `/applications/${id}?step=5`,
   decision: id => `/applications/${id}`,
 };
 ---

@@ -171,6 +171,17 @@ export function normaliseSslMode(
   return url.toString();
 }
 
+// Whether this deployment is production, on the one signal the app is given
+// for it (PUBLIC_APP_ENV: unset on a developer's machine, "test" on the
+// staging deployment, "production" in front of real members). Unset reads as
+// production — the safe default for every caller that gates something
+// dangerous on this, from a plaintext database connection to a full data
+// wipe, is to refuse rather than to assume a value was simply forgotten.
+export function isProductionEnvironment(): boolean {
+  const appEnv = readEnv('PUBLIC_APP_ENV');
+  return appEnv === undefined || appEnv === 'production';
+}
+
 // PostgreSQL configuration. Throws with an actionable message when the
 // database has not been configured, so a missing variable surfaces as a
 // deployment problem rather than an obscure driver error (S-101).
@@ -188,10 +199,8 @@ export function getDatabaseConfig(): DatabaseConfig {
   // plaintext instance is the one exception, and it has to be asked for
   // explicitly rather than being inferred from the host name.
   const allowInsecure = readEnv('DATABASE_ALLOW_INSECURE') === 'true';
-  const appEnv = readEnv('PUBLIC_APP_ENV');
-  const isProduction = appEnv === undefined || appEnv === 'production';
 
-  if (allowInsecure && isProduction) {
+  if (allowInsecure && isProductionEnvironment()) {
     throw new Error(
       'DATABASE_ALLOW_INSECURE must never be enabled outside local ' +
         'development. Unset it, or set PUBLIC_APP_ENV to a non-production value.'

@@ -142,6 +142,9 @@ describe('the live route map', () => {
   it('protects the administration pages by name', () => {
     expect(requiredPermissionFor('/admin/roles')).toBe('role.view');
     expect(requiredPermissionFor('/admin/users')).toBe('user.view');
+    expect(requiredPermissionFor('/admin/reset-data')).toBe(
+      'system.reset_data'
+    );
   });
 
   it('covers every configuration page with one prefix rule', () => {
