@@ -30,6 +30,14 @@ export interface TimelineStep {
   // One short phrase, only where it tells the officer something the label
   // does not.
   detail?: string;
+  // True when this step's own detail describes something missing rather than
+  // merely upcoming — fields still empty, documents still outstanding, a
+  // return for correction. Distinct from `state`: `current` just means "the
+  // next thing to do," which is a normal thing for an untouched step ahead in
+  // the chain to be. This is for the screen to say "something here needs
+  // attention" specifically, which is not true of every current step (being
+  // next in line to record a payment is not a problem).
+  problem?: boolean;
 }
 
 export interface TimelineInput {
@@ -78,6 +86,7 @@ export function applicationTimeline(input: TimelineInput): TimelineStep[] {
     label: string;
     done: boolean;
     detail?: string;
+    problem?: boolean;
   }> = [
     {
       key: 'capture',
@@ -90,6 +99,7 @@ export function applicationTimeline(input: TimelineInput): TimelineStep[] {
               input.mandatoryFieldsOutstanding === 1 ? 'field' : 'fields'
             } empty`
           : undefined,
+      problem: returned || input.mandatoryFieldsOutstanding > 0,
     },
     {
       key: 'sign',
@@ -105,6 +115,7 @@ export function applicationTimeline(input: TimelineInput): TimelineStep[] {
         input.requiredDocumentsOutstanding > 0
           ? `${input.requiredDocumentsOutstanding} outstanding`
           : undefined,
+      problem: input.requiredDocumentsOutstanding > 0,
     },
     {
       key: 'payment',
@@ -167,6 +178,7 @@ export function applicationTimeline(input: TimelineInput): TimelineStep[] {
       label: step.label,
       state,
       ...(step.detail ? { detail: step.detail } : {}),
+      ...(step.problem ? { problem: true } : {}),
     };
   });
 }

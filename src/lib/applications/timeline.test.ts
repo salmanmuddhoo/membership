@@ -218,6 +218,49 @@ describe('when it comes back for correction', () => {
   });
 });
 
+describe('marking a step as a problem, not merely current', () => {
+  // "current" is true of any step waiting its turn, including one nothing is
+  // wrong with — being next in line to record a payment is not a problem.
+  // `problem` is specifically for a step whose own detail says something is
+  // missing, so the screen can put it in red without reading every detail
+  // string to guess.
+  it('is a problem while a mandatory field is empty', () => {
+    const steps = applicationTimeline(FRESH);
+    expect(steps.find(s => s.key === 'capture')!.problem).toBe(true);
+  });
+
+  it('is a problem when returned for correction, even with nothing empty', () => {
+    const steps = applicationTimeline({
+      ...FRESH,
+      status: 'returned',
+      mandatoryFieldsOutstanding: 0,
+    });
+    expect(steps.find(s => s.key === 'capture')!.problem).toBe(true);
+  });
+
+  it('is a problem while a required document is outstanding', () => {
+    const steps = applicationTimeline({
+      ...FRESH,
+      mandatoryFieldsOutstanding: 0,
+      signedFormFiled: true,
+    });
+    expect(steps.find(s => s.key === 'documents')!.problem).toBe(true);
+  });
+
+  it('is not a problem once complete, nor for a step nothing is wrong with', () => {
+    const steps = applicationTimeline({
+      ...FRESH,
+      mandatoryFieldsOutstanding: 0,
+      signedFormFiled: true,
+      requiredDocumentsOutstanding: 0,
+    });
+    expect(steps.find(s => s.key === 'capture')!.problem).toBeUndefined();
+    expect(steps.find(s => s.key === 'documents')!.problem).toBeUndefined();
+    // Current, waiting on a payment — not a problem.
+    expect(steps.find(s => s.key === 'payment')!.problem).toBeUndefined();
+  });
+});
+
 describe('a status nothing recognises', () => {
   // A status added in configuration that this code has never heard of must
   // read as "with the officer" rather than crashing or claiming completion.
