@@ -190,6 +190,14 @@ and can be filed afresh. Available on any state Replace already is — S-409
 lets an officer replace even a verified document without restriction, so this
 is not a new door, only the other side of an existing one.
 
+The **Replace** button itself is gone from `[id].astro`. It offered upload and
+delete-then-upload as one control, which read as one action while quietly
+being two; a filed document now shows a small × (`removeFiledDocument`,
+above) instead, and the Upload control only reappears once that × has been
+used — one thing to do with a document at a time, visible rather than
+implied. Both — the × and Upload — sit on the same line as the document's own
+name and status, not in a row underneath it.
+
 Still open for later in M4: HEIC previews (accepted, but a browser cannot render
 one, so the thumbnail is a generic icon), and resuming a dropped transfer via
 `nextExpectedRanges` rather than restarting it.

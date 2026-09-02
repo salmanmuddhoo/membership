@@ -21,6 +21,8 @@ import { recordAudit } from '../access/audit';
 import { checkSegregation } from '../admin/segregation';
 import { activeChain, type WorkflowStep } from '../config/reference';
 import { query, withTransaction } from '../db/pool';
+import { checklistFor } from '../documents/documents';
+import { paymentsForApplication } from '../payments/payments';
 import type { Principal } from '../access/principal';
 import {
   ApplicationError,
@@ -142,6 +144,41 @@ async function recordTransition(
  * Nothing is submitted while a mandatory field is empty, and the caller is
  * told every one of them.
  */
+export interface SubmissionReadiness {
+  fieldProblems: MissingField[];
+  documentsOutstanding: number;
+  paymentRecorded: boolean;
+}
+
+/**
+ * Everything S-304 requires before an application may leave the officer's
+ * hands — not just the form fields `problemsBlockingSubmission` checks, but
+ * the KYC pack being filed and the money being taken, both of which
+ * `submitApplication` below refuses without. One function rather than three
+ * separate checks repeated wherever "is this ready" is asked: the capture
+ * page uses the same three counts to gate Next and Submit before the officer
+ * ever tries, and this is what makes the two agree.
+ */
+export async function submissionReadiness(
+  application: Application
+): Promise<SubmissionReadiness> {
+  const [fieldProblems, checklist, payments] = await Promise.all([
+    problemsBlockingSubmission(application),
+    checklistFor({ applicationId: application.id }),
+    paymentsForApplication(application.id),
+  ]);
+
+  return {
+    fieldProblems,
+    // Filed, not verified — verifying is the Secretary's job, which is the
+    // next step in the chain and cannot be a precondition of reaching it.
+    documentsOutstanding: checklist.filter(
+      e => e.requirement === 'required' && e.state === 'missing'
+    ).length,
+    paymentRecorded: payments.some(p => p.kind === 'payment' && !p.voidedAt),
+  };
+}
+
 export async function submitApplication(
   applicationId: string,
   principal: Principal
@@ -161,8 +198,21 @@ export async function submitApplication(
     action: ACTION_CAPTURED,
   });
 
-  const problems = await problemsBlockingSubmission(application);
-  if (problems.length > 0) return { problems };
+  const readiness = await submissionReadiness(application);
+  if (readiness.fieldProblems.length > 0) {
+    return { problems: readiness.fieldProblems };
+  }
+  if (readiness.documentsOutstanding > 0) {
+    throw new ApplicationError(
+      `${readiness.documentsOutstanding} required document(s) still need ` +
+        'to be filed before this can be submitted.'
+    );
+  }
+  if (!readiness.paymentRecorded) {
+    throw new ApplicationError(
+      'Payment must be recorded before this can be submitted.'
+    );
+  }
 
   await withTransaction(async client => {
     await client.query(

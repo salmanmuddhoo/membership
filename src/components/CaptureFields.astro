@@ -77,6 +77,7 @@ const valuesFor = (subject: FieldSubject) =>
                   <select
                     name={name}
                     disabled={!isEditable}
+                    data-mandatory={field.isMandatory ? 'yes' : undefined}
                     class:list={[
                       'mt-1 w-full rounded-lg border bg-white px-3 py-1.5 text-sm dark:bg-neutral-900 dark:text-neutral-100',
                       missing.has(field.fieldKey)
@@ -100,6 +101,7 @@ const valuesFor = (subject: FieldSubject) =>
                     placeholder={
                       field.dataType === 'phone' ? '5789 1234' : undefined
                     }
+                    data-mandatory={field.isMandatory ? 'yes' : undefined}
                     class:list={[
                       'mt-1 w-full rounded-lg border bg-white px-3 py-1.5 text-sm dark:bg-neutral-900 dark:text-neutral-100',
                       missing.has(field.fieldKey)
