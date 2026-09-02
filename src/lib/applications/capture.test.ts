@@ -772,7 +772,7 @@ describe('S-602: as many nominee rows as the type configures', () => {
     }
   });
 
-  it('names a missing mandatory field on whichever nominee left it blank', async () => {
+  it('names a missing mandatory field left blank on the first nominee', async () => {
     const { capture, config } = await load();
     const individual = (await config.listMembershipTypes()).find(
       t => t.code === 'individual'
@@ -804,9 +804,41 @@ describe('S-602: as many nominee rows as the type configures', () => {
       expect(
         problems.some(p => p.subject === 'nominee' && p.ordinal === 1)
       ).toBe(false);
+      // The second nominee is optional (below) — leaving it blank is not
+      // reported here at all.
       expect(
-        problems.filter(p => p.subject === 'nominee' && p.ordinal === 2).length
-      ).toBeGreaterThan(0);
+        problems.some(p => p.subject === 'nominee' && p.ordinal === 2)
+      ).toBe(false);
+    } finally {
+      await config.setNomineeCount(individual.id, 1, officer);
+    }
+  });
+
+  it('only the first nominee is mandatory — the rest may be left blank', async () => {
+    const { capture, config } = await load();
+    const individual = (await config.listMembershipTypes()).find(
+      t => t.code === 'individual'
+    )!;
+
+    await config.setNomineeCount(individual.id, 3, officer);
+    try {
+      // Nothing typed at all — every nominee row starts empty.
+      const { id } = await capture.startApplication('individual', officer);
+      const application = await capture.loadApplication(id);
+      const problems = await capture.problemsBlockingSubmission(application!);
+
+      // FRD 5.3's "one or more Nominees where configured" reads as at least
+      // one — the first nominee's mandatory fields still block submission.
+      expect(
+        problems.some(p => p.subject === 'nominee' && p.ordinal === 1)
+      ).toBe(true);
+      // The second and third are optional: blank is not a problem.
+      expect(
+        problems.some(p => p.subject === 'nominee' && p.ordinal === 2)
+      ).toBe(false);
+      expect(
+        problems.some(p => p.subject === 'nominee' && p.ordinal === 3)
+      ).toBe(false);
     } finally {
       await config.setNomineeCount(individual.id, 1, officer);
     }
@@ -889,21 +921,18 @@ describe('S-602: nominee percentages, only where the type asks for them', () => 
     ).toBe(false);
   });
 
-  it('says nothing about the total while a nominee has not entered one yet', async () => {
+  it('says nothing about the total while the second nominee has not entered one yet', async () => {
     const { capture } = await load();
-    // Ordinal 2's percentage is missing — already reported as its own
-    // mandatory-field problem; totalling an incomplete split would be noise
-    // on top of that.
+    // The second nominee is optional (S-602 relaxed) — leaving its
+    // percentage blank is not a missing-field problem of its own, and with
+    // the split still incomplete there is nothing to total either.
     const application = await draftWithPercentages(['60', undefined]);
 
     const problems = await capture.problemsBlockingSubmission(application);
     const percentageProblems = problems.filter(
       p => p.subject === 'nominee' && p.fieldKey === 'percentage'
     );
-    // Exactly the missing-field problem for ordinal 2, not a second one about
-    // the total.
-    expect(percentageProblems).toHaveLength(1);
-    expect(percentageProblems[0].ordinal).toBe(2);
+    expect(percentageProblems).toHaveLength(0);
   });
 
   it('is inert for a type that never configured the field', async () => {

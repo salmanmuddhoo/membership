@@ -61,6 +61,17 @@ const ordinalsFor = (subject: FieldSubject) =>
     (_, i) => i + 1
   );
 
+// S-602, relaxed on officer feedback: "one or more Nominees where
+// configured" means at least one, not every slot a type happens to allow.
+// The first nominee is still mandatory the same as any other subject; a
+// second or third is there for a family that wants to name one, so nothing
+// here marks it required — matches problemsBlockingSubmission in capture.ts.
+const isMandatoryHere = (
+  subject: FieldSubject,
+  ordinal: number,
+  field: MembershipTypeField
+) => field.isMandatory && !(subject === 'nominee' && ordinal !== 1);
+
 // The guardian's own details come from a record that already exists — the
 // point of the search above is that the officer never types them, only
 // picks the right person. So once a type asks for both Member No. and NIC
@@ -104,10 +115,18 @@ const AUTO_FILLED_GUARDIAN_FIELDS = new Set([
         subject === 'nominee' && nomineeCount > 1
           ? `${SUBJECT_LABELS[subject] ?? subject} ${ordinal} of ${nomineeCount}`
           : (SUBJECT_LABELS[subject] ?? subject);
+      // Only the first nominee is required (S-602, relaxed) — said once on
+      // the heading rather than repeated on every field's label.
+      const isOptionalNominee = subject === 'nominee' && ordinal !== 1;
       return (
         <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
           <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
             {heading}
+            {isOptionalNominee && (
+              <span class="ml-2 text-sm font-normal text-neutral-500 dark:text-neutral-400">
+                (optional)
+              </span>
+            )}
           </h2>
           {isGuardianSearch && (
             <div class="relative mt-3" data-guardian-search>
@@ -139,11 +158,12 @@ const AUTO_FILLED_GUARDIAN_FIELDS = new Set([
               const isAutoFilled =
                 isGuardianSearch &&
                 AUTO_FILLED_GUARDIAN_FIELDS.has(field.fieldKey);
+              const mandatoryHere = isMandatoryHere(subject, ordinal, field);
               return (
                 <label class="text-sm text-neutral-600 dark:text-neutral-300">
                   <span>
                     {field.label}
-                    {field.isMandatory && (
+                    {mandatoryHere && (
                       <span
                         class="text-red-600 dark:text-red-400"
                         aria-hidden="true"
@@ -157,7 +177,7 @@ const AUTO_FILLED_GUARDIAN_FIELDS = new Set([
                     <select
                       name={name}
                       disabled={!isEditable}
-                      data-mandatory={field.isMandatory ? 'yes' : undefined}
+                      data-mandatory={mandatoryHere ? 'yes' : undefined}
                       class:list={[
                         'mt-1 w-full rounded-lg border bg-white px-3 py-1.5 text-sm dark:bg-neutral-900 dark:text-neutral-100',
                         missing.has(field.fieldKey)
@@ -186,7 +206,7 @@ const AUTO_FILLED_GUARDIAN_FIELDS = new Set([
                             ? '5789 1234'
                             : undefined
                       }
-                      data-mandatory={field.isMandatory ? 'yes' : undefined}
+                      data-mandatory={mandatoryHere ? 'yes' : undefined}
                       class:list={[
                         'mt-1 w-full rounded-lg border px-3 py-1.5 text-sm',
                         isAutoFilled

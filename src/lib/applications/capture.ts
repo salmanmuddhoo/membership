@@ -576,6 +576,14 @@ export async function problemsBlockingSubmission(
       parties.length > 0 ? parties : [{ subject, ordinal: 1, values: {} }];
 
     for (const party of rows) {
+      // S-602, relaxed on officer feedback: FRD 5.3 asks for "one or more
+      // Nominees where configured" — read as "at least one", not "all N a
+      // type happens to configure". The first nominee still has to be
+      // complete; a second or third is there for a family that wants to
+      // name one, not a form that demands every slot be filled. Every other
+      // subject is unaffected — nominee is the only one ever asked for more
+      // than a single instance.
+      if (subject === 'nominee' && party.ordinal !== 1) continue;
       for (const field of subjectFields) {
         if (!field.isMandatory) continue;
         const value = (party.values[field.fieldKey] ?? '').trim();

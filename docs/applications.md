@@ -320,22 +320,31 @@ back off the form instead of always `.1.`. An administrator changes the count
 from **Membership types**, next to the fields it applies to — the control
 only appears for a type that has a `nominee` subject at all.
 
-Nothing about validation had to change to make this work.
-`problemsBlockingSubmission` already looped over every `application_party`
-row for a subject, not a hardcoded one — so a type with three nominees
-configured gets three sets of missing-field checks, each naming its own
-nominee, for free.
+**Only the first nominee is mandatory.** "One or more Nominees where
+configured" reads as _at least_ one, not every slot a type happens to allow
+— a family naming a single nominee should not be told to invent two more.
+`problemsBlockingSubmission` and `CaptureFields.astro` both skip mandatory-
+field enforcement for any nominee row past ordinal 1: the first nominee's
+mandatory fields still block submission exactly as any other subject's
+would, the second and third are free to stay blank, and the form marks them
+"(optional)" rather than with a red asterisk so nothing looks unfinished
+when it isn't. Filled in or not, an application still gets exactly as many
+`nominee` rows as `nominee_count` configures — this only changes which of
+them submission insists on.
 
 **A percentage split needs no flag of its own.** A type that wants its
 nominees to divide the membership by percentage adds a mandatory
 `percentage` field to the `nominee` subject the same way it adds any other
 field — `problemsBlockingSubmission` detects the rule from that field's
 presence alone, so it can never drift out of sync with whether the field
-actually exists. It only totals the split once every nominee has entered a
-value: an incomplete one is already reported as its own missing field, and
-totalling it too would be noise on top of that. A total that is not (allowing
-for rounding) exactly 100 blocks submission, naming the actual total so the
-officer knows which way to correct it.
+actually exists. It only totals the split once every nominee that is still
+mandatory has entered a value: an incomplete one is already reported as its
+own missing field, and totalling it too would be noise on top of that. A
+total that is not (allowing for rounding) exactly 100 blocks submission,
+naming the actual total so the officer knows which way to correct it. A
+second or third nominee left blank altogether — being optional — never
+enters into the total at all; only nominees the officer actually names get
+weighed against 100.
 
 ## The chain
 
