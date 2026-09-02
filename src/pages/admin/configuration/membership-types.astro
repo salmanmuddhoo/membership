@@ -8,6 +8,7 @@ import {
   listMembershipTypes,
   setFieldRule,
   setMembershipTypeReferences,
+  setNomineeCount,
 } from '@lib/config/reference';
 
 const principal = Astro.locals.principal!;
@@ -52,6 +53,13 @@ if (Astro.request.method === 'POST') {
           );
         }
         notice = `Field rules updated for ${ids.length} field(s).`;
+      } else if (intent === 'nomineeCount') {
+        await setNomineeCount(
+          String(form.get('typeId')),
+          Number(form.get('nomineeCount')),
+          actor
+        );
+        notice = 'Nominee count updated.';
       }
     } catch (err) {
       if (err instanceof ConfigError) {
@@ -165,6 +173,34 @@ const SUBJECT_LABELS: Record<string, string> = {
               </div>
             )}
           </form>
+
+          {type.fields.some(f => f.subject === 'nominee') && (
+            <form method="post" class="mt-4 flex flex-wrap items-end gap-3">
+              <input type="hidden" name="typeId" value={type.id} />
+              <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                Nominees to capture
+                <input
+                  type="number"
+                  name="nomineeCount"
+                  min="1"
+                  max="10"
+                  value={type.nomineeCount}
+                  disabled={!canManage}
+                  class="mt-1 block w-24 rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                />
+              </label>
+              {canManage && (
+                <button
+                  type="submit"
+                  name="intent"
+                  value="nomineeCount"
+                  class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+                >
+                  Save nominee count
+                </button>
+              )}
+            </form>
+          )}
 
           <details class="mt-4 rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
             <summary class="cursor-pointer text-sm font-medium text-neutral-700 dark:text-neutral-200">

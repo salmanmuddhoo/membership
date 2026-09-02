@@ -61,6 +61,10 @@ export interface MembershipType {
   isActive: boolean;
   sortOrder: number;
   fields: MembershipTypeField[];
+  // S-602: how many nominee instances (application_party.subject =
+  // 'nominee', ordinal 1..N) this type's capture form renders and accepts.
+  // Confirmed default is 1 nominee, no percentages (docs/backlog.md M6).
+  nomineeCount: number;
 }
 
 export async function listMembershipTypes(): Promise<MembershipType[]> {
@@ -75,11 +79,12 @@ export async function listMembershipTypes(): Promise<MembershipType[]> {
     fee_schedule_name: string | null;
     is_active: boolean;
     sort_order: number;
+    nominee_count: number;
   }>(
     `select m.id, m.code, m.name, m.description,
             m.checklist_id, c.name as checklist_name,
             m.fee_schedule_id, f.name as fee_schedule_name,
-            m.is_active, m.sort_order
+            m.is_active, m.sort_order, m.nominee_count
        from membership_type m
        left join document_checklist c on c.id = m.checklist_id
        left join fee_schedule f       on f.id = m.fee_schedule_id
@@ -136,7 +141,34 @@ export async function listMembershipTypes(): Promise<MembershipType[]> {
     isActive: t.is_active,
     sortOrder: t.sort_order,
     fields: byType.get(t.id) ?? [],
+    nomineeCount: t.nominee_count,
   }));
+}
+
+// S-602: how many nominees this type's capture form renders and accepts.
+export async function setNomineeCount(
+  typeId: string,
+  count: number,
+  actor: Actor
+): Promise<void> {
+  if (!Number.isInteger(count) || count < 1 || count > 10) {
+    throw new ConfigError(
+      'The nominee count must be a whole number from 1 to 10.'
+    );
+  }
+
+  await withConfigurationActor(actorFor(actor), async client => {
+    const result = await client.query(
+      `update membership_type set nominee_count = $2 where id = $1`,
+      [typeId, count]
+    );
+    if (result.rowCount === 0) {
+      throw new ConfigError(
+        'That membership type no longer exists.',
+        'not_found'
+      );
+    }
+  });
 }
 
 // Which checklist and which fee schedule this type uses (S-205).

@@ -77,14 +77,17 @@ if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
   const isAutosave = String(form.get('intent') ?? '') === 'autosave';
 
-  const parties: PartyValues[] = subjects.map(subject => {
-    const values: Record<string, string> = {};
-    for (const field of fields.get(subject) ?? []) {
-      values[field.fieldKey] = String(
-        form.get(`field.${subject}.1.${field.fieldKey}`) ?? ''
-      );
-    }
-    return { subject, ordinal: 1, values };
+  const parties: PartyValues[] = subjects.flatMap(subject => {
+    const ordinals = subject === 'nominee' ? type.nomineeCount : 1;
+    return Array.from({ length: ordinals }, (_, i) => i + 1).map(ordinal => {
+      const values: Record<string, string> = {};
+      for (const field of fields.get(subject) ?? []) {
+        values[field.fieldKey] = String(
+          form.get(`field.${subject}.${ordinal}.${field.fieldKey}`) ?? ''
+        );
+      }
+      return { subject, ordinal, values };
+    });
   });
 
   try {
@@ -158,7 +161,11 @@ if (Astro.request.method === 'POST') {
     }
 
     <form method="post" id="capture-form" class="space-y-6">
-      <CaptureFields fields={fields} parties={[]} />
+      <CaptureFields
+        fields={fields}
+        parties={[]}
+        nomineeCount={type.nomineeCount}
+      />
 
       <div class="flex flex-wrap items-center gap-3">
         {

@@ -282,6 +282,36 @@ needs revisiting once the parent is approved. The Member No. field the search
 filled in with an `APP-` reference simply stops mattering at that point; the
 NIC match is what resolves them.
 
+## Nominees: how many, and whether they must add up (S-602)
+
+FRD 5.3 asks for "one or more Nominees where configured" — the schema has
+supported that since S-301 (`application_party.ordinal`), but capture only
+ever created and rendered one. `membership_type.nominee_count` is the
+setting that changes that, per type, without a release: `insertApplication`
+creates that many `nominee` rows at capture time, `CaptureFields.astro`
+renders that many field-grid blocks (each labelled "Nominee _n_ of _N_" once
+there is more than one), and both capture pages read `field.nominee.<n>.*`
+back off the form instead of always `.1.`. An administrator changes the count
+from **Membership types**, next to the fields it applies to — the control
+only appears for a type that has a `nominee` subject at all.
+
+Nothing about validation had to change to make this work.
+`problemsBlockingSubmission` already looped over every `application_party`
+row for a subject, not a hardcoded one — so a type with three nominees
+configured gets three sets of missing-field checks, each naming its own
+nominee, for free.
+
+**A percentage split needs no flag of its own.** A type that wants its
+nominees to divide the membership by percentage adds a mandatory
+`percentage` field to the `nominee` subject the same way it adds any other
+field — `problemsBlockingSubmission` detects the rule from that field's
+presence alone, so it can never drift out of sync with whether the field
+actually exists. It only totals the split once every nominee has entered a
+value: an incomplete one is already reported as its own missing field, and
+totalling it too would be noise on top of that. A total that is not (allowing
+for rounding) exactly 100 blocks submission, naming the actual total so the
+officer knows which way to correct it.
+
 ## The chain
 
 ```
@@ -349,8 +379,9 @@ permission model and the segregation rules above it.
 - `membership_application` — the application, its status and who captured it.
 - `application_party` — one row per subject instance, values as `jsonb` keyed
   by `field_key`. A column per field would put the form's shape back in the
-  schema and undo Feature 2.2. `ordinal` means FRD 5.3's "one or more
-  Nominees" needs no migration.
+  schema and undo Feature 2.2. `ordinal` is what lets FRD 5.3's "one or more
+  Nominees" be a row count rather than a schema change — see S-602 below for
+  how many rows a given type actually gets.
 - `application_transition` — the chain itself (S-307), append-only. `audit_event`
   records everything; this records the approval chain in order, so
   reconstructing it does not mean filtering a table that holds every action.

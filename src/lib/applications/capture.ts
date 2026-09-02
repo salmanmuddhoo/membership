@@ -102,14 +102,20 @@ async function insertApplication(
   const { id, reference } = created.rows[0];
 
   // One empty party per subject the type configures, so the form has
-  // something to render into and a draft save has somewhere to land.
+  // something to render into and a draft save has somewhere to land. Every
+  // subject gets exactly one — except nominee, which gets as many as the
+  // type configures (S-602): "one or more Nominees where configured"
+  // (FRD 5.3) is a fact about ordinal count, not about a different subject.
   const subjects = [...new Set(type.fields.map(f => f.subject))];
   for (const subject of subjects) {
-    await client.query(
-      `insert into application_party (application_id, subject, ordinal)
-       values ($1, $2, 1)`,
-      [id, subject]
-    );
+    const ordinals = subject === 'nominee' ? type.nomineeCount : 1;
+    for (let ordinal = 1; ordinal <= ordinals; ordinal++) {
+      await client.query(
+        `insert into application_party (application_id, subject, ordinal)
+         values ($1, $2, $3)`,
+        [id, subject, ordinal]
+      );
+    }
   }
 
   await recordAudit(
@@ -578,6 +584,35 @@ export async function problemsBlockingSubmission(
           ordinal: party.ordinal,
           fieldKey: 'member_id',
           label: `The guardian (${guardian.memberNo}) is not an active member.`,
+        });
+      }
+    }
+  }
+
+  // S-602: a type that wants nominees to divide the membership by percentage
+  // asks for it the same way it asks for any other nominee field — a
+  // mandatory 'percentage' field, nothing more. Detected from that alone, so
+  // it can never drift out of sync with whether the field actually exists.
+  // Checked only once every nominee has entered one: an empty percentage is
+  // already reported above as its own missing field, and totalling a split
+  // that is not yet complete would just be noise on top of that.
+  const nomineeFields = fields.get('nominee');
+  if (nomineeFields?.some(f => f.fieldKey === 'percentage' && f.isMandatory)) {
+    const nomineeParties = application.parties.filter(
+      p => p.subject === 'nominee'
+    );
+    const entered = nomineeParties.map(p => (p.values.percentage ?? '').trim());
+    if (entered.length > 0 && entered.every(v => v !== '')) {
+      const total = entered.reduce((sum, v) => sum + Number(v), 0);
+      // Percentages are typed as whole-ish numbers; rounding away floating
+      // point noise (33.33 x 3) before comparing avoids refusing a split that
+      // is, for any practical purpose, exactly 100.
+      if (Math.round(total * 100) / 100 !== 100) {
+        problems.push({
+          subject: 'nominee',
+          ordinal: nomineeParties[0].ordinal,
+          fieldKey: 'percentage',
+          label: `Nominee percentages must add up to 100% (currently ${total}%).`,
         });
       }
     }

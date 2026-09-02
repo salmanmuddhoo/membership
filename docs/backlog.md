@@ -671,15 +671,12 @@ is found by the system rather than by an auditor. _(FRD 7.8.2)_
 **Goal:** Corporate and Minor applications work end to end, with nominees,
 witnesses, guardians and the board decision the FRD describes.
 
-**Needs confirming first:** nominee count and whether percentages apply
-(S-602). Default until then: a single nominee, no percentages.
-
-**Done:** S-601, S-603, S-604, S-605, S-606, S-607 — Corporate capture, the
-four-signature verification gate, the Guardian link (searchable, and findable
-before the parent is even a member), and the successor guardian/beneficiary
-subjects, all the way through to an approved member. Remaining: S-602
-(configurable nominee count/percentages), S-608/S-609 (Board completeness
-gate and quorum sign-off), S-610 (majority transition, Could).
+**Done:** S-601, S-602, S-603, S-604, S-605, S-606, S-607 — Corporate capture,
+configurable nominee count and percentage splits, the four-signature
+verification gate, the Guardian link (searchable, and findable before the
+parent is even a member), and the successor guardian/beneficiary subjects,
+all the way through to an approved member. Remaining: S-608/S-609 (Board
+completeness gate and quorum sign-off), S-610 (majority transition, Could).
 
 ### S-601 · Corporate application capture ✅
 
@@ -698,7 +695,7 @@ capture through an approved member, with the right documents asked for and
 none extra — in `workflow.test.ts`'s "S-601: a Corporate application, end to
 end".
 
-### S-602 · Nominee capture with configurable count and optional percentages
+### S-602 · Nominee capture with configurable count and optional percentages ✅
 
 **As** a Regional Officer, **I need** to capture the nominees the rules allow,
 **so that** the nomination is valid. _(MEM-US-008, decision 7, FRD 5.3)_
@@ -708,6 +705,15 @@ end".
 - **Given** percentages are enabled **Then** they must total 100 before
   submission
 - **Depends on** the confirmed count and percentage rule
+
+New `membership_type.nominee_count` (migration 0021, default 1, 1–10),
+changed from **Membership types** admin without a release. `insertApplication`
+creates that many `nominee` rows; `problemsBlockingSubmission` already looped
+over every row for a subject, so per-nominee mandatory-field checks needed no
+change at all. Percentages need no flag of their own: a type that adds a
+mandatory `percentage` field to the nominee subject gets its split totalled
+at submission — refused unless it comes to exactly 100, and silent for every
+type that never configured the field. See `docs/applications.md`.
 
 ### S-603 · Two attesting witnesses verified before the Secretary may verify ✅
 
@@ -1118,11 +1124,11 @@ Every user story named in FRD Section 22 is covered.
 Each is absorbed by configuration, so none blocks the start of development.
 They must be confirmed before the milestone that consumes them.
 
-| Value                                          | Needed by    | Default if unconfirmed                       |
-| ---------------------------------------------- | ------------ | -------------------------------------------- |
-| Minor MSA deposit                              | M5 · S-501   | Not required — **shipped this way**          |
-| Processing fee amount and applicability        | M5 · S-507   | Zero / not applicable — **shipped this way** |
-| Nominee count and percentage rules             | M6 · S-602   | Single nominee, no percentages               |
-| Dormant reactivation rule                      | M8 · S-805   | Flag for staff action                        |
-| KYC and audit retention periods                | M10          | Retain indefinitely                          |
-| Whether Abeyance and Manager review are wanted | Post-go-live | Available but disabled                       |
+| Value                                          | Needed by    | Default if unconfirmed                                                                       |
+| ---------------------------------------------- | ------------ | -------------------------------------------------------------------------------------------- |
+| Minor MSA deposit                              | M5 · S-501   | Not required — **shipped this way**                                                          |
+| Processing fee amount and applicability        | M5 · S-507   | Zero / not applicable — **shipped this way**                                                 |
+| Nominee count and percentage rules             | M6 · S-602   | Single nominee, no percentages — **shipped this way, changeable per type without a release** |
+| Dormant reactivation rule                      | M8 · S-805   | Flag for staff action                                                                        |
+| KYC and audit retention periods                | M10          | Retain indefinitely                                                                          |
+| Whether Abeyance and Manager review are wanted | Post-go-live | Available but disabled                                                                       |
