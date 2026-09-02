@@ -13,6 +13,7 @@ import {
 } from '../src/lib/jobs/chunked-sweep';
 import { runJob, JobAlreadyRunning } from '../src/lib/jobs/runner';
 import { expireDocuments } from '../src/lib/documents/documents';
+import { transitionMinorsAtMajority } from '../src/lib/members/majority';
 
 // Jobs are named here rather than passed as arbitrary strings: the container's
 // arguments are configuration, and configuration should not be able to name a
@@ -40,6 +41,26 @@ const JOBS: Record<string, () => Promise<unknown>> = {
         // number an operator looking at the run wants.
         await context.save({ sweptAt: new Date().toISOString() }, expired);
         context.log('documents expired', { expired });
+      },
+    }),
+
+  // S-610. Finds nothing to do until a type's majority_age and
+  // majority_transition_type_id are both configured (migration 0023) — safe
+  // to run at any time even before the Society confirms them. Run daily,
+  // alongside document-expiry.
+  'minor-majority-transition': () =>
+    runJob<{ sweptAt: string }>({
+      name: 'minor-majority-transition',
+      run: async context => {
+        const { transitioned } = await transitionMinorsAtMajority();
+        await context.save(
+          { sweptAt: new Date().toISOString() },
+          transitioned.length
+        );
+        context.log('minors transitioned at majority', {
+          transitioned: transitioned.length,
+          memberNos: transitioned.map(t => t.memberNo),
+        });
       },
     }),
 };

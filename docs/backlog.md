@@ -666,17 +666,17 @@ is found by the system rather than by an auditor. _(FRD 7.8.2)_
 
 ---
 
-# M6 — Full membership depth
+# M6 — Full membership depth ✅
 
 **Goal:** Corporate and Minor applications work end to end, with nominees,
 witnesses, guardians and the board decision the FRD describes.
 
-**Done:** S-601 to S-609 — Corporate capture, configurable nominee count and
+**Done:** S-601 to S-610 — Corporate capture, configurable nominee count and
 percentage splits, the four-signature verification gate, the Guardian link
 (searchable, and findable before the parent is even a member), the successor
-guardian/beneficiary subjects, the pre-Board completeness gate and the Board
-quorum sign-off, all the way through to an approved member. Remaining: S-610
-(majority transition, Could — the only story left in M6).
+guardian/beneficiary subjects, the pre-Board completeness gate, the Board
+quorum sign-off, and the minor-majority transition, all the way through to
+an approved member. Every M6 story is built.
 
 ### S-601 · Corporate application capture ✅
 
@@ -830,7 +830,7 @@ decision is one person's, not a vote nobody can trace. `signoffsFor` reads
 who has acted so far; `[id].astro` shows it only when a step's quorum is
 actually above 1. See `docs/applications.md`.
 
-### S-610 · Minor reaching majority — configurable transition
+### S-610 · Minor reaching majority — configurable transition ✅
 
 **As** an administrator, **I need** the majority transition configured, **so
 that** a minor becomes a full member without manual tracking. _(FRD 7.10.10)_
@@ -839,6 +839,18 @@ that** a minor becomes a full member without manual tracking. _(FRD 7.10.10)_
 - Scheduled detection, on the job runner from M1
 - **Depends on** what the Society requires at majority — an MSA deposit is an
   open point in FRD 7.10.6
+
+Unblocked once M5 confirmed the minor MSA deposit is not required — nothing
+financial changes at majority under that default, so what remained was the
+type change itself. New `membership_type.majority_age` and
+`majority_transition_type_id` (migration 0023), both null by default —
+inert until an administrator sets both from **Membership types**. The
+`minor-majority-transition` scheduled job (`transitionMinorsAtMajority`,
+`src/lib/members/majority.ts`) reads a member's applicant `date_of_birth`
+against their type's configured age and moves them into the configured
+type, auditing every move with a null actor and a job-naming description —
+the same shape `document-expiry` (S-410) already established. See
+`docs/jobs.md`.
 
 ---
 

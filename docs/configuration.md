@@ -63,6 +63,13 @@ form and the mandatory-field check both already work per row of
 the membership by percentage adds a mandatory `percentage` field the same way
 it adds any other one — see `docs/applications.md`.
 
+`membership_type.majority_age` and `majority_transition_type_id` (S-610,
+FRD 7.10.10) are how a type's members automatically become another type's,
+changed together from the same screen — set together or cleared together,
+since one without the other is not something the scheduled job could act on.
+Both null by default: the transition exists but does nothing until an
+administrator sets both. See `docs/jobs.md`.
+
 ### Account types (S-206, FRD 7.6)
 
 `account_type`. Exactly one row is `is_membership_default` — the product a

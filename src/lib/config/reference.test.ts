@@ -325,6 +325,107 @@ describe('S-205: membership types and their field rules', () => {
       ).rejects.toThrowError(/no longer exists/);
     });
   });
+
+  describe('S-610: the majority transition a type configures', () => {
+    it('defaults to none, and can be turned on without a release', async () => {
+      const { config } = await load();
+      const types = await config.listMembershipTypes();
+      const minor = types.find(t => t.code === 'minor')!;
+      const individual = types.find(t => t.code === 'individual')!;
+
+      expect(minor.majorityAge).toBeNull();
+      expect(minor.majorityTransitionTypeId).toBeNull();
+
+      await config.setMajorityTransition(
+        minor.id,
+        { age: 18, transitionTypeId: individual.id },
+        actor
+      );
+
+      const after = (await config.listMembershipTypes()).find(
+        t => t.code === 'minor'
+      )!;
+      expect(after.majorityAge).toBe(18);
+      expect(after.majorityTransitionTypeId).toBe(individual.id);
+      expect(after.majorityTransitionTypeName).toBe(individual.name);
+
+      await config.setMajorityTransition(
+        minor.id,
+        { age: null, transitionTypeId: null },
+        actor
+      );
+    });
+
+    it('refuses an age with no target, or a target with no age', async () => {
+      const { config } = await load();
+      const types = await config.listMembershipTypes();
+      const minor = types.find(t => t.code === 'minor')!;
+      const individual = types.find(t => t.code === 'individual')!;
+
+      await expect(
+        config.setMajorityTransition(
+          minor.id,
+          { age: 18, transitionTypeId: null },
+          actor
+        )
+      ).rejects.toThrowError(/one without the other/);
+
+      await expect(
+        config.setMajorityTransition(
+          minor.id,
+          { age: null, transitionTypeId: individual.id },
+          actor
+        )
+      ).rejects.toThrowError(/one without the other/);
+    });
+
+    it('refuses an age outside 1 to 100', async () => {
+      const { config } = await load();
+      const types = await config.listMembershipTypes();
+      const minor = types.find(t => t.code === 'minor')!;
+      const individual = types.find(t => t.code === 'individual')!;
+
+      for (const age of [0, -1, 101, 17.5]) {
+        await expect(
+          config.setMajorityTransition(
+            minor.id,
+            { age, transitionTypeId: individual.id },
+            actor
+          )
+        ).rejects.toThrowError(/whole number from 1 to 100/);
+      }
+    });
+
+    it('refuses a type transitioning into itself', async () => {
+      const { config } = await load();
+      const minor = (await config.listMembershipTypes()).find(
+        t => t.code === 'minor'
+      )!;
+
+      await expect(
+        config.setMajorityTransition(
+          minor.id,
+          { age: 18, transitionTypeId: minor.id },
+          actor
+        )
+      ).rejects.toThrowError(/cannot transition into itself/);
+    });
+
+    it('refuses a target membership type that does not exist', async () => {
+      const { config } = await load();
+      const minor = (await config.listMembershipTypes()).find(
+        t => t.code === 'minor'
+      )!;
+
+      await expect(
+        config.setMajorityTransition(
+          minor.id,
+          { age: 18, transitionTypeId: '00000000-0000-0000-0000-000000000000' },
+          actor
+        )
+      ).rejects.toThrowError(/no longer exists/);
+    });
+  });
 });
 
 describe('S-206: the accounts a membership opens', () => {

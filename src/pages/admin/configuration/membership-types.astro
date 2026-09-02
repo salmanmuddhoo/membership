@@ -7,6 +7,7 @@ import {
   listFeeSchedules,
   listMembershipTypes,
   setFieldRule,
+  setMajorityTransition,
   setMembershipTypeReferences,
   setNomineeCount,
 } from '@lib/config/reference';
@@ -60,6 +61,21 @@ if (Astro.request.method === 'POST') {
           actor
         );
         notice = 'Nominee count updated.';
+      } else if (intent === 'majorityTransition') {
+        const ageRaw = String(form.get('majorityAge') ?? '').trim();
+        const transitionTypeIdRaw = String(
+          form.get('majorityTransitionTypeId') ?? ''
+        ).trim();
+        await setMajorityTransition(
+          String(form.get('typeId')),
+          {
+            age: ageRaw === '' ? null : Number(ageRaw),
+            transitionTypeId:
+              transitionTypeIdRaw === '' ? null : transitionTypeIdRaw,
+          },
+          actor
+        );
+        notice = 'Majority transition updated.';
       }
     } catch (err) {
       if (err instanceof ConfigError) {
@@ -201,6 +217,53 @@ const SUBJECT_LABELS: Record<string, string> = {
               )}
             </form>
           )}
+
+          <form method="post" class="mt-4 flex flex-wrap items-end gap-3">
+            <input type="hidden" name="typeId" value={type.id} />
+            <label class="text-sm text-neutral-600 dark:text-neutral-300">
+              Age of majority
+              <input
+                type="number"
+                name="majorityAge"
+                min="1"
+                max="100"
+                placeholder="none"
+                value={type.majorityAge ?? ''}
+                disabled={!canManage}
+                class="mt-1 block w-24 rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+              />
+            </label>
+            <label class="text-sm text-neutral-600 dark:text-neutral-300">
+              Automatically becomes
+              <select
+                name="majorityTransitionTypeId"
+                disabled={!canManage}
+                class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+              >
+                <option value="">— no automatic transition —</option>
+                {types
+                  .filter(t => t.id !== type.id)
+                  .map(t => (
+                    <option
+                      value={t.id}
+                      selected={t.id === type.majorityTransitionTypeId}
+                    >
+                      {t.name}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            {canManage && (
+              <button
+                type="submit"
+                name="intent"
+                value="majorityTransition"
+                class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+              >
+                Save majority transition
+              </button>
+            )}
+          </form>
 
           <details class="mt-4 rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
             <summary class="cursor-pointer text-sm font-medium text-neutral-700 dark:text-neutral-200">
