@@ -50,13 +50,47 @@ const valuesFor = (subject: FieldSubject) =>
     const missing = new Set(
       blocking.filter(b => b.subject === subject).map(b => b.fieldKey)
     );
+    const subjectFields = fields.get(subject) ?? [];
+    // A guardian is identified by Member No. and NIC (S-604) — where a type
+    // asks for both, search helps the officer find the parent rather than
+    // typing those in blind. Not every type that could have a `guardian`
+    // subject need configure it this way, so this checks for the fields
+    // rather than the subject's name.
+    const isGuardianSearch =
+      subject === 'guardian' &&
+      isEditable &&
+      subjectFields.some(f => f.fieldKey === 'member_id') &&
+      subjectFields.some(f => f.fieldKey === 'nic');
     return (
       <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
         <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
           {SUBJECT_LABELS[subject] ?? subject}
         </h2>
+        {isGuardianSearch && (
+          <div class="relative mt-3" data-guardian-search>
+            <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+              Search for the parent
+              <input
+                type="text"
+                autocomplete="off"
+                placeholder="Name, NIC or Member No."
+                data-guardian-search-input
+                class="mt-1 block w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+              />
+            </label>
+            <p
+              data-guardian-search-status
+              class="mt-1 text-xs text-neutral-500 dark:text-neutral-400"
+            />
+            <ul
+              data-guardian-search-results
+              hidden
+              class="absolute z-10 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-neutral-300 bg-white text-sm shadow-lg dark:border-neutral-600 dark:bg-neutral-900"
+            />
+          </div>
+        )}
         <div class="mt-4 grid gap-4 sm:grid-cols-2">
-          {(fields.get(subject) ?? []).map(field => {
+          {subjectFields.map(field => {
             const name = `field.${subject}.1.${field.fieldKey}`;
             const value = values[field.fieldKey] ?? '';
             return (
@@ -118,3 +152,127 @@ const valuesFor = (subject: FieldSubject) =>
     );
   })
 }
+
+<script>
+  // S-604: the parent has to be findable before they are a member — a
+  // Corporate/Individual applicant registering at the same visit as their
+  // minor is exactly the case this exists for. Picking a result fills in
+  // the surname/name/NIC/Member No. fields the same way typing them would;
+  // it is a shortcut to what was already a valid form, not a new kind of
+  // field. Submission still refuses until the picked parent actually is an
+  // active member (capture.ts, problemsBlockingSubmission) — this only
+  // helps the officer name who they mean, before or after that is true.
+  const wrapper = document.querySelector<HTMLElement>('[data-guardian-search]');
+  const input = wrapper?.querySelector<HTMLInputElement>(
+    '[data-guardian-search-input]'
+  );
+  const results = wrapper?.querySelector<HTMLUListElement>(
+    '[data-guardian-search-results]'
+  );
+  const status = wrapper?.querySelector<HTMLElement>(
+    '[data-guardian-search-status]'
+  );
+
+  if (wrapper && input && results && status) {
+    interface Candidate {
+      kind: 'member' | 'application';
+      reference: string;
+      status: string;
+      surname: string;
+      name: string;
+      nic: string;
+    }
+
+    const STATUS_TEXT: Record<string, string> = {
+      active: 'active member',
+      draft: 'application in progress',
+      returned: 'application in progress',
+      new: 'application submitted',
+      submitted_for_review: 'with the Secretary',
+      submitted_for_approval: 'with the President',
+      abeyance: 'application in progress',
+    };
+
+    const field = (key: string) =>
+      document.querySelector<HTMLInputElement>(
+        `[name="field.guardian.1.${key}"]`
+      );
+
+    // Fires the same events the live mandatory-field sync on the id page
+    // already listens for, so a red border clears the instant a result is
+    // picked rather than waiting for a reload.
+    const setField = (key: string, value: string) => {
+      const el = field(key);
+      if (!el) return;
+      el.value = value;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+
+    const close = () => {
+      results.hidden = true;
+      results.replaceChildren();
+    };
+
+    const render = (candidates: Candidate[]) => {
+      results.replaceChildren();
+      if (candidates.length === 0) {
+        results.hidden = true;
+        return;
+      }
+      for (const candidate of candidates) {
+        const item = document.createElement('li');
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className =
+          'block w-full px-3 py-2 text-left hover:bg-neutral-100 dark:hover:bg-neutral-800';
+        const name = `${candidate.name} ${candidate.surname}`.trim();
+        button.innerHTML =
+          `<span class="block font-medium text-neutral-800 dark:text-neutral-100">${name || '(no name yet)'}</span>` +
+          `<span class="block text-xs text-neutral-500 dark:text-neutral-400">${candidate.reference} · ${STATUS_TEXT[candidate.status] ?? candidate.status}</span>`;
+        button.addEventListener('click', () => {
+          setField('surname', candidate.surname);
+          setField('name', candidate.name);
+          setField('nic', candidate.nic);
+          setField('member_id', candidate.reference);
+          input.value = name;
+          status.textContent = `Linked ${name || candidate.reference}.`;
+          close();
+        });
+        item.appendChild(button);
+        results.appendChild(item);
+      }
+      results.hidden = false;
+    };
+
+    let pending: number | undefined;
+    input.addEventListener('input', () => {
+      window.clearTimeout(pending);
+      const term = input.value.trim();
+      if (term.length < 2) {
+        close();
+        status.textContent = '';
+        return;
+      }
+      pending = window.setTimeout(async () => {
+        status.textContent = 'Searching…';
+        try {
+          const response = await fetch(
+            `/api/v1/applications/guardian-search?q=${encodeURIComponent(term)}`
+          );
+          const body = await response.json();
+          if (!response.ok) throw new Error(body?.error?.message);
+          const candidates = body.data.candidates as Candidate[];
+          render(candidates);
+          status.textContent = candidates.length === 0 ? 'No match found.' : '';
+        } catch {
+          status.textContent = 'Search failed — check your connection.';
+        }
+      }, 300);
+    });
+
+    document.addEventListener('click', event => {
+      if (!wrapper.contains(event.target as Node)) close();
+    });
+  }
+</script>

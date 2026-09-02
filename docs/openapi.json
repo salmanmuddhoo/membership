@@ -560,6 +560,136 @@
         }
       }
     },
+    "/api/v1/applications/guardian-search": {
+      "get": {
+        "summary": "Search for a minor's guardian by name, NIC or Member No.",
+        "description": "Matches existing active members and Individual applications not yet decided, so a parent joining alongside their child can be found before their own application is approved.",
+        "tags": [
+          "Applications"
+        ],
+        "operationId": "getApplicationsGuardianSearch",
+        "x-required-permission": "application.capture",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "candidates"
+                      ],
+                      "properties": {
+                        "candidates": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "kind",
+                              "reference",
+                              "status",
+                              "surname",
+                              "name",
+                              "nic"
+                            ],
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "member",
+                                  "application"
+                                ]
+                              },
+                              "reference": {
+                                "type": "string",
+                                "description": "Member No. once one exists, the application reference until then."
+                              },
+                              "status": {
+                                "type": "string"
+                              },
+                              "surname": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "nic": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Matched against surname, name, NIC and Member No./reference.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/api/v1/config/reference": {
       "get": {
         "summary": "Read the reference configuration",

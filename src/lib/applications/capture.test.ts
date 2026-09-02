@@ -366,8 +366,9 @@ describe('S-301: the form comes from the configuration, not from code', () => {
 // not a column on `member` itself (FRD 7.10.2: found by Member No. or NIC).
 async function seedMember(
   nic: string,
-  status: 'active' | 'inactive' = 'active'
-): Promise<{ memberNo: string }> {
+  status: 'active' | 'inactive' = 'active',
+  applicant: { surname?: string; name?: string } = {}
+): Promise<{ memberNo: string; applicationId: string }> {
   const type = await run(
     appUrl,
     `select id from membership_type where code = 'individual'`
@@ -383,7 +384,14 @@ async function seedMember(
     appUrl,
     `insert into application_party (application_id, subject, ordinal, values)
      values ($1, 'applicant', 1, $2::jsonb)`,
-    [applicationId, JSON.stringify({ nic })]
+    [
+      applicationId,
+      JSON.stringify({
+        nic,
+        surname: applicant.surname ?? 'Ramdin',
+        name: applicant.name ?? 'Farah',
+      }),
+    ]
   );
   const member = await run(
     appUrl,
@@ -391,7 +399,7 @@ async function seedMember(
      values ($1, $2, $3) returning member_no`,
     [applicationId, type.rows[0].id, status]
   );
-  return { memberNo: member.rows[0].member_no };
+  return { memberNo: member.rows[0].member_no, applicationId };
 }
 
 describe('S-604/S-605: a minor’s guardian must be an existing, active member', () => {
@@ -503,6 +511,112 @@ describe('S-604/S-605: a minor’s guardian must be an existing, active member',
       p => p.subject === 'guardian' && p.fieldKey === 'member_id'
     );
     expect(guardianProblem?.label).toMatch(/not an active member/);
+  });
+});
+
+describe('finding a parent to link, before or after they are a member', () => {
+  it('finds an active member by name, NIC or Member No.', async () => {
+    const { capture } = await load();
+    const { memberNo } = await seedMember('S6666666666666', 'active', {
+      surname: 'Peerthum',
+      name: 'Devendra',
+    });
+
+    for (const term of ['peerthum', 'S6666666666666', memberNo]) {
+      const candidates = await capture.searchGuardianCandidates(term);
+      expect(
+        candidates.some(c => c.kind === 'member' && c.reference === memberNo),
+        term
+      ).toBe(true);
+    }
+  });
+
+  // The point of the whole feature: a parent registering alongside their
+  // minor has no Member No. yet, and has to be findable anyway.
+  it('finds an Individual application still in progress, by name or NIC', async () => {
+    const { capture } = await load();
+    const { id } = await capture.startApplication('individual', officer);
+    await capture.saveDraft(
+      id,
+      [
+        {
+          subject: 'applicant',
+          ordinal: 1,
+          values: { surname: 'Joomun', name: 'Nadia', nic: 'S7777777777777' },
+        },
+      ],
+      officer
+    );
+    const application = await capture.loadApplication(id);
+
+    const candidates = await capture.searchGuardianCandidates('joomun');
+    const found = candidates.find(c => c.reference === application!.reference);
+    expect(found).toMatchObject({
+      kind: 'application',
+      surname: 'Joomun',
+      name: 'Nadia',
+      nic: 'S7777777777777',
+    });
+  });
+
+  it('does not offer a rejected application — it will never become a member', async () => {
+    const { capture } = await load();
+    const { id } = await capture.startApplication('individual', officer);
+    await capture.saveDraft(
+      id,
+      [
+        {
+          subject: 'applicant',
+          ordinal: 1,
+          values: { surname: 'Auckbur', name: 'Imran', nic: 'S8888888888888' },
+        },
+      ],
+      officer
+    );
+    await run(
+      appUrl,
+      `update membership_application set status = 'rejected' where id = $1`,
+      [id]
+    );
+
+    const candidates = await capture.searchGuardianCandidates('auckbur');
+    expect(candidates).toEqual([]);
+  });
+
+  it('does not offer an approved application twice — the member row already covers it', async () => {
+    const { capture } = await load();
+    const { memberNo, applicationId } = await seedMember(
+      'S9999999999999',
+      'active',
+      { surname: 'Ah-Kong', name: 'Li' }
+    );
+    await run(
+      appUrl,
+      `update membership_application set status = 'approved' where id = $1`,
+      [applicationId]
+    );
+
+    try {
+      const candidates = await capture.searchGuardianCandidates('ah-kong');
+      expect(candidates).toHaveLength(1);
+      expect(candidates[0]).toMatchObject({
+        kind: 'member',
+        reference: memberNo,
+      });
+    } finally {
+      // Other tests in this file (the application list) assume theirs is the
+      // only 'approved' row in the shared database — put this one back.
+      await run(
+        appUrl,
+        `update membership_application set status = 'draft' where id = $1`,
+        [applicationId]
+      );
+    }
+  });
+
+  it('returns nothing for a blank search rather than the whole register', async () => {
+    const { capture } = await load();
+    expect(await capture.searchGuardianCandidates('  ')).toEqual([]);
   });
 });
 

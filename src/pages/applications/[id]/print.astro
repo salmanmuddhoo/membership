@@ -11,6 +11,7 @@
 import BaseLayout from '@layouts/BaseLayout.astro';
 import { loadApplication, visibleFields } from '@lib/applications/capture';
 import { listMembershipTypes, type FieldSubject } from '@lib/config/reference';
+import { SIGNATURES } from '@lib/documents/documents';
 
 const { id } = Astro.params;
 const application = id ? await loadApplication(id) : null;
@@ -31,10 +32,6 @@ const SUBJECT_LABELS: Record<string, string> = {
   guardian: 'Parent / Guardian',
   beneficiary: 'Takaful beneficiary',
 };
-
-// FRD 5.4. Four blocks, always all four: a form printed with three is a form
-// that will come back needing another visit.
-const SIGNATURES = ['Applicant', 'Nominee', 'Witness 1', 'Witness 2'] as const;
 
 // An unsigned print of a draft must not be mistaken for the real thing.
 const isDraft = application.status === 'draft';

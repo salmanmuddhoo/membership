@@ -674,11 +674,12 @@ witnesses, guardians and the board decision the FRD describes.
 **Needs confirming first:** nominee count and whether percentages apply
 (S-602). Default until then: a single nominee, no percentages.
 
-**Done:** S-601, S-604, S-605, S-606, S-607 — Corporate capture, the
-Guardian link, and the successor guardian/beneficiary subjects, all the way
-through to an approved member. Remaining: S-602 (configurable nominee
-count/percentages), S-603 (witness verification gate), S-608/S-609 (Board
-completeness gate and quorum sign-off), S-610 (majority transition, Could).
+**Done:** S-601, S-603, S-604, S-605, S-606, S-607 — Corporate capture, the
+four-signature verification gate, the Guardian link (searchable, and findable
+before the parent is even a member), and the successor guardian/beneficiary
+subjects, all the way through to an approved member. Remaining: S-602
+(configurable nominee count/percentages), S-608/S-609 (Board completeness
+gate and quorum sign-off), S-610 (majority transition, Could).
 
 ### S-601 · Corporate application capture ✅
 
@@ -708,7 +709,7 @@ end".
   submission
 - **Depends on** the confirmed count and percentage rule
 
-### S-603 · Two attesting witnesses verified before the Secretary may verify
+### S-603 · Two attesting witnesses verified before the Secretary may verify ✅
 
 **As** the Secretary, **I need** both witnesses present on the scan, **so
 that** the nomination is legally valid. _(FRD 5.4)_
@@ -716,6 +717,14 @@ that** the nomination is legally valid. _(FRD 5.4)_
 
 - **Given** fewer than four signatures are confirmed **Then** the Signed
   Application Form cannot be marked Verified
+
+The printed form's four signature blocks (Applicant, Nominee, Witness 1,
+Witness 2 — `SIGNATURES`, shared between `print.astro` and `documents.ts`)
+are a fixed, universal check, not something configuration decides.
+Reviewing a `signed_form` document shows a checkbox per block;
+`reviewDocument` (`documents.ts`) refuses to mark it Verified until all four
+are checked, naming which are missing. New `document.confirmed_signatures`
+column (migration 0020). See `docs/documents.md`.
 
 ### S-604 · Minor application with a validated Guardian member link ✅
 
@@ -732,6 +741,15 @@ Member No. or NIC against `member`, joined back to whichever application's
 applicant party carries that NIC (NIC is not a column on `member` itself).
 Not found, or found but not active, is a "Needs attention" item on the
 capture page itself — not only at submit time. See `docs/applications.md`.
+
+The guardian does not have to be an approved member yet to be found and
+linked — a parent and their minor can register at the same visit, the parent
+first. `GET /api/v1/applications/guardian-search` searches active members
+**and** Individual applications still being captured; picking a result fills
+in the guardian block the same way typing it would. Submission still refuses
+until the linked parent actually is an active member — this only helps the
+officer name who they mean, before or after that is true. See
+`docs/applications.md`.
 
 ### S-605 · Block submission without a valid Guardian ✅
 

@@ -58,6 +58,18 @@ export const ACTION_VERIFIED = 'document.verified';
 export type ChecklistState =
   'missing' | 'uploaded' | 'under_review' | 'verified' | 'rejected' | 'expired';
 
+// S-603, FRD 5.4. The printed form always carries these four signature
+// blocks — print.astro — regardless of membership type, so this is a fixed,
+// universal check rather than something configuration decides. Shared here
+// so the print page and the verification gate below can never disagree
+// about what "all four" means.
+export const SIGNATURES = [
+  'Applicant',
+  'Nominee',
+  'Witness 1',
+  'Witness 2',
+] as const;
+
 export interface ChecklistEntry {
   documentTypeId: string;
   documentCode: string;
@@ -75,6 +87,10 @@ export interface ChecklistEntry {
   rejectionReason: string | null;
   expiresAt: Date | null;
   versionCount: number;
+  // Only meaningful for documentCode === 'signed_form' (S-603): which of
+  // SIGNATURES the Secretary has confirmed are present on the scan. Empty
+  // for every other document type.
+  confirmedSignatures: string[];
 }
 
 /**
@@ -254,9 +270,10 @@ export async function checklistFor(options: {
     committed_at: Date | null;
     verified_by_name: string | null;
     version_count: string;
+    confirmed_signatures: string[];
   }>(
     `select d.id, d.document_type_id, d.subject, d.state, d.rejection_reason,
-            d.expires_at,
+            d.expires_at, d.confirmed_signatures,
             v.file_name, v.sharepoint_path, v.committed_at,
             up.display_name as uploaded_by_name,
             vp.display_name as verified_by_name,
@@ -305,6 +322,7 @@ export async function checklistFor(options: {
         rejectionReason: found?.rejection_reason ?? null,
         expiresAt: found?.expires_at ?? null,
         versionCount: Number(found?.version_count ?? 0),
+        confirmedSignatures: found?.confirmed_signatures ?? [],
       });
     }
   }
@@ -614,7 +632,17 @@ async function markVersionFailed(
  */
 export async function reviewDocument(
   documentId: string,
-  decision: { outcome: 'verify' | 'reject'; reason?: string },
+  decision: {
+    outcome: 'verify' | 'reject';
+    reason?: string;
+    // S-603: which of SIGNATURES the reviewer confirmed are present on the
+    // scan. Stored whichever way the review goes — a Secretary who rejects
+    // for an unrelated reason (a blurry scan) should not lose the signatures
+    // they had already checked. Ignored for any document type but
+    // signed_form, which is the only one the printed form's four blocks
+    // apply to.
+    confirmedSignatures?: string[];
+  },
   principal: { userId: string; email: string; permissions: ReadonlySet<string> }
 ): Promise<{ state: ChecklistState }> {
   if (!principal.permissions.has('document.verify')) {
@@ -632,8 +660,15 @@ export async function reviewDocument(
     );
   }
 
-  const document = await query<{ id: string; state: string }>(
-    'select id, state from document where id = $1',
+  const document = await query<{
+    id: string;
+    state: string;
+    document_code: string;
+  }>(
+    `select d.id, d.state, t.code as document_code
+       from document d
+       join document_type t on t.id = d.document_type_id
+      where d.id = $1`,
     [documentId]
   );
   if (document.rowCount === 0) {
@@ -666,6 +701,24 @@ export async function reviewDocument(
     );
   }
 
+  // S-603: fewer than all four signatures confirmed present means this is
+  // not what "Verified" says it is, whatever the scan otherwise looks like.
+  const confirmedSignatures = (decision.confirmedSignatures ?? []).filter(
+    (s): s is (typeof SIGNATURES)[number] =>
+      (SIGNATURES as readonly string[]).includes(s)
+  );
+  if (
+    document.rows[0].document_code === 'signed_form' &&
+    decision.outcome === 'verify' &&
+    confirmedSignatures.length < SIGNATURES.length
+  ) {
+    const missing = SIGNATURES.filter(s => !confirmedSignatures.includes(s));
+    throw new DocumentError(
+      `All four signatures must be confirmed present before this can be ` +
+        `Verified. Still missing: ${missing.join(', ')}.`
+    );
+  }
+
   const state: ChecklistState =
     decision.outcome === 'verify' ? 'verified' : 'rejected';
 
@@ -673,13 +726,15 @@ export async function reviewDocument(
     await client.query(
       `update document
           set state = $2, rejection_reason = $3,
-              verified_by = $4, verified_at = now()
+              verified_by = $4, verified_at = now(),
+              confirmed_signatures = $5
         where id = $1`,
       [
         documentId,
         state,
         decision.outcome === 'reject' ? reason : null,
         principal.userId,
+        confirmedSignatures,
       ]
     );
 
@@ -691,7 +746,7 @@ export async function reviewDocument(
         entityType: ENTITY_TYPE,
         entityId: documentId,
         previousValue: { state: document.rows[0].state },
-        newValue: { state, reason: reason || null },
+        newValue: { state, reason: reason || null, confirmedSignatures },
       },
       client
     );
