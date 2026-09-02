@@ -15,8 +15,11 @@ import { listMembershipTypes, type FieldSubject } from '@lib/config/reference';
 import { createMemberFromApplication } from '@lib/members/create';
 import {
   availableActions,
+  boardReadiness,
+  boardReadinessReasons,
   decideApplication,
   reviewApplication,
+  signoffsFor,
   submitApplication,
   transitionsFor,
 } from '@lib/applications/workflow';
@@ -243,11 +246,23 @@ if (Astro.request.method === 'POST') {
           principal,
           createMemberFromApplication
         );
-        notice = result.member
-          ? `Approved. Member ${result.member.memberNo} created with ` +
-            `${result.member.accounts.map(a => a.typeName).join(' and ')}.`
-          : 'Rejected and returned to the originating staff.';
-        createdMember = result.member ?? null;
+        if (result.signoff) {
+          // S-609: this sign-off did not by itself complete the step —
+          // nothing about the application has changed yet, only who has
+          // acted so far.
+          const remaining = result.signoff.required - result.signoff.recorded;
+          notice =
+            `Sign-off recorded (${result.signoff.recorded} of ` +
+            `${result.signoff.required}). Waiting for ${remaining} more ` +
+            `${remaining === 1 ? 'decision' : 'decisions'} before this ` +
+            `completes.`;
+        } else {
+          notice = result.member
+            ? `Approved. Member ${result.member.memberNo} created with ` +
+              `${result.member.accounts.map(a => a.typeName).join(' and ')}.`
+            : 'Rejected and returned to the originating staff.';
+          createdMember = result.member ?? null;
+        }
       }
       application = await loadApplication(application.id);
     } catch (err) {
@@ -331,6 +346,22 @@ const [blocking, actions, history] = await Promise.all([
   availableActions(application!, principal),
   transitionsFor(application!.id),
 ]);
+
+// S-608: named up front, the same way a missing mandatory field is, rather
+// than only after the Secretary tries and is refused.
+const forwardAction = actions.find(a => a.stepCode === 'secretary_review');
+const boardReasons = forwardAction
+  ? boardReadinessReasons(await boardReadiness(application!))
+  : [];
+
+// S-609: only worth a round trip when this step actually asks for more than
+// one sign-off, or already has one recorded from a quorum that has since
+// changed — the common case (quorum 1) never shows this at all.
+const decideAction = actions.find(a => a.stepCode === 'president_decision');
+const signoffs =
+  decideAction && decideAction.quorumCount > 1
+    ? await signoffsFor(application!.id)
+    : [];
 
 // Most of `blocking` is a field left empty, which the red border and the
 // field's own asterisk already explain — a list repeating "Surname" back at
@@ -1223,6 +1254,37 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                 </button>
               )}
 
+              {action.stepCode === 'secretary_review' &&
+                boardReasons.length > 0 && (
+                  <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+                    <p class="font-medium">Not ready for the Board yet:</p>
+                    <ul class="mt-1 list-disc pl-5">
+                      {boardReasons.map(reason => (
+                        <li>{reason}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+              {action.stepCode === 'president_decision' &&
+                signoffs.length > 0 && (
+                  <div class="rounded-lg border border-neutral-300 bg-white px-4 py-3 text-sm dark:border-neutral-700 dark:bg-neutral-900">
+                    <p class="font-medium text-neutral-700 dark:text-neutral-200">
+                      {signoffs.filter(s => s.outcome === 'approve').length} of{' '}
+                      {action.quorumCount} sign-off
+                      {action.quorumCount === 1 ? '' : 's'} recorded
+                    </p>
+                    <ul class="mt-1 space-y-0.5 text-neutral-600 dark:text-neutral-300">
+                      {signoffs.map(s => (
+                        <li>
+                          {s.outcome === 'approve' ? 'Approved' : 'Rejected'} by{' '}
+                          {s.actorName}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
               {(action.stepCode === 'secretary_review' ||
                 action.stepCode === 'president_decision') && (
                 <>
@@ -1248,7 +1310,11 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                           ? 'forward'
                           : 'approve'
                       }
-                      class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
+                      disabled={
+                        action.stepCode === 'secretary_review' &&
+                        boardReasons.length > 0
+                      }
+                      class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {action.stepCode === 'secretary_review'
                         ? 'Forward to the President'

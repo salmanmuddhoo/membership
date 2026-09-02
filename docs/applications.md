@@ -336,6 +336,55 @@ anticipates.
 but no enabled step produces it: it is the state for a Secretary _claim_
 action, which the walking skeleton does not need.
 
+## Nothing incomplete reaches the Board (S-608)
+
+Submission (S-304) already refuses an empty mandatory field, an unfiled
+document, or money not yet taken. Forwarding to the Board re-checks three
+things submission cannot guarantee stay true between then and now:
+
+- Every required document has actually been **Verified**, not merely filed —
+  filing is the officer's job, verifying is the Secretary's own, and it is
+  what this gate exists to make sure happened before the file leaves their
+  hands.
+- The payment recorded at submission is still live — voided or refunded
+  since, and the money submission checked for is no longer there.
+- A guardian is a claim about another member's status, not a fact frozen at
+  submission — re-resolved the same way `problemsBlockingSubmission` does,
+  in case that member has since stopped being active.
+
+`boardReadiness` (`workflow.ts`) reports all three at once; `reviewApplication`
+refuses a `forward` outcome while any is outstanding, naming every one
+together so the Secretary chases them in one pass rather than one refusal at
+a time. **Return for correction is untouched by this gate** — sending work
+back to the officer never needed the Board's own preconditions met, and
+still does not. `[id].astro` shows the same list before the Secretary even
+tries, next to a disabled Forward button, exactly the way a missing
+mandatory field is shown before Submit is tried.
+
+## A quorum above one needs that many sign-offs (S-609)
+
+`workflow_step.quorum_count` (S-209) has shipped at 1 everywhere since M2,
+where a single decision has always transitioned the record immediately —
+`decideApplication` still does exactly that at quorum 1. Configured above 1,
+the President's decision becomes a Board's: `application_step_signoff`
+records one row per distinct person who acts, and the step itself does not
+complete until enough of them have approved.
+
+**A reject is never something a quorum waits out.** FRD 7.10.9 asks for an
+attributable decision, not a vote nobody can trace to a person, so a single
+reject — from anyone entitled to decide — ends it immediately, whatever else
+is already signed off. Quorum only ever governs how many _approvals_ it
+takes to move forward.
+
+The same person cannot sign off twice on the same step of the same
+application — checked before the write, refused the same way a segregation
+conflict is. Every sign-off is audited under `membership.application.approved`
+whether or not it is the one that completes the step, so who signed off is
+never only in this one table. `signoffsFor` reads them back in order;
+`[id].astro` shows who has signed off and how many more are needed, but only
+when a step's quorum is actually above 1 — the common case shows none of
+this at all, exactly as before S-609 existed.
+
 ## Three controls, and they are not interchangeable
 
 Every action passes all three:

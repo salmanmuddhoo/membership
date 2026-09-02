@@ -115,8 +115,12 @@ acted on before the chain proceeds but does not move the record. The Regional
 Manager review is one. FRD 7.4.3 confirms no status for it, and inventing one
 would put a state in the model the business has not agreed to.
 
-`quorum_count` is 1 everywhere today. The column exists so a board quorum can
-be turned on without a migration.
+`quorum_count` is 1 everywhere today, changed from **Workflows** with
+`setStepQuorum` (S-209). Execution honours it (S-609): above 1 on
+`president_decision`, a single decision no longer completes the step —
+`decideApplication` waits for that many distinct people to approve (a
+reject still ends it immediately, whatever else is recorded) — so turning on
+a board quorum needs no migration and no code change, only this setting.
 
 Statuses are configuration (decision 8). **Abeyance** ships `is_active = false`:
 the FRD names it, the business has not confirmed it for phase 1, so it is

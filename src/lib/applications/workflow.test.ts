@@ -273,6 +273,36 @@ async function fileRequiredDocuments(
   }
 }
 
+// Verifies every required document a fixture has already filed (S-608: the
+// Board readiness gate needs Verified, not merely filed). The Secretary
+// verifies in the real chain, and never the person who filed it — officer
+// files, secretary verifies, so there is no segregation conflict here.
+async function verifyRequiredDocuments(
+  documents: Awaited<ReturnType<typeof load>>['documents'],
+  applicationId: string
+) {
+  const verifier = {
+    ...secretary,
+    permissions: new Set([...secretary.permissions, 'document.verify']),
+  };
+  const checklist = await documents.checklistFor({ applicationId });
+
+  for (const entry of checklist.filter(e => e.requirement === 'required')) {
+    await documents.reviewDocument(
+      entry.documentId!,
+      {
+        outcome: 'verify',
+        // S-603: the signed form alone needs all four signatures confirmed
+        // before it can be Verified — every other document type ignores this.
+        ...(entry.documentCode === 'signed_form'
+          ? { confirmedSignatures: [...documents.SIGNATURES] }
+          : {}),
+      },
+      verifier
+    );
+  }
+}
+
 // The full schedule, in cash, exactly as it stands — no variance to explain.
 async function recordFullPayment(
   payments: Awaited<ReturnType<typeof load>>['payments'],
@@ -314,6 +344,7 @@ async function captureComplete() {
   const { id } = await capture.startApplication('individual', actor);
   await capture.saveDraft(id, COMPLETE_INDIVIDUAL, actor);
   await fileRequiredDocuments(documents, id);
+  await verifyRequiredDocuments(documents, id);
   await recordFullPayment(payments, id);
   return id;
 }
@@ -357,6 +388,7 @@ async function captureCompleteCorporate() {
   const { id } = await capture.startApplication('corporate', actor);
   await capture.saveDraft(id, COMPLETE_CORPORATE, actor);
   await fileRequiredDocuments(documents, id);
+  await verifyRequiredDocuments(documents, id);
   await recordFullPayment(payments, id);
   return id;
 }
@@ -440,6 +472,7 @@ describe('S-604/S-605: a Minor application with a valid guardian, end to end', (
     const documents = await import('../documents/documents');
     const payments = await import('../payments/payments');
     await fileRequiredDocuments(documents, id);
+    await verifyRequiredDocuments(documents, id);
     await recordFullPayment(payments, id);
 
     // Not a member yet — submission refuses, and says the guardian is why.
@@ -926,6 +959,358 @@ describe('S-305 and S-306: a return or a rejection must say why', () => {
     expect((await capture.loadApplication(id))!.reference).toBe(
       capturedReference
     );
+  });
+});
+
+describe('S-608: nothing incomplete reaches the Board', () => {
+  it('refuses to forward while a required document is filed but not Verified', async () => {
+    const { capture, workflow, documents, payments } = await load();
+    const actor = { userId: officer.userId, email: officer.email };
+    const { id } = await capture.startApplication('individual', actor);
+    await capture.saveDraft(id, COMPLETE_INDIVIDUAL, actor);
+    await fileRequiredDocuments(documents, id);
+    await recordFullPayment(payments, id);
+    await workflow.submitApplication(id, officer);
+
+    await expect(
+      workflow.reviewApplication(
+        id,
+        { outcome: 'forward', comment: 'Looks fine.' },
+        secretary
+      )
+    ).rejects.toThrowError(/not ready for the Board.*Verified/);
+  });
+
+  it('re-checks payment at review time, not just at submission', async () => {
+    const { workflow, payments } = await load();
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+
+    // Not officer: officer recorded it, and segregation refuses the same
+    // person both recording and voiding a payment.
+    const [payment] = await payments.paymentsForApplication(id);
+    await payments.voidPayment(
+      payment.id,
+      'Recorded against the wrong application.',
+      {
+        ...secretary,
+        permissions: new Set([...secretary.permissions, 'payment.void']),
+      }
+    );
+
+    await expect(
+      workflow.reviewApplication(
+        id,
+        { outcome: 'forward', comment: 'Ready.' },
+        secretary
+      )
+    ).rejects.toThrowError(/not ready for the Board.*payment/);
+  });
+
+  it('re-checks the guardian at review time, and names every outstanding item together', async () => {
+    const { capture, workflow, documents, payments } = await load();
+    const actor = { userId: officer.userId, email: officer.email };
+    const { memberNo } = await seedGuardianMember('S1231231231230');
+    const { id } = await capture.startApplication('minor', actor);
+
+    const parties: PartyValues[] = [
+      {
+        subject: 'applicant',
+        ordinal: 1,
+        values: {
+          surname: 'Ramdin',
+          name: 'Zaid',
+          date_of_birth: '2015-01-01',
+          gender: 'Male',
+          address: '4 Pope Hennessy Street, Port Louis',
+        },
+      },
+      {
+        subject: 'guardian',
+        ordinal: 1,
+        values: {
+          surname: 'Ramdin',
+          name: 'Farah',
+          nic: 'G0000000000001',
+          member_id: memberNo,
+          relationship: 'Mother',
+          mobile: '5789 1234',
+        },
+      },
+      {
+        subject: 'nominee',
+        ordinal: 1,
+        values: { surname: 'Peerthum', name: 'Ismail', nic: 'H1111111111112' },
+      },
+      {
+        subject: 'beneficiary',
+        ordinal: 1,
+        values: { surname: 'Ramdin', name: 'Zaid', nic: 'H2222222222223' },
+      },
+    ];
+    await capture.saveDraft(id, parties, actor);
+    await fileRequiredDocuments(documents, id);
+    // Deliberately left unverified, alongside the guardian problem below —
+    // this is also the test that both are named together, not just one.
+    await recordFullPayment(payments, id);
+    await workflow.submitApplication(id, officer);
+
+    // The guardian was an active member at submission. Not any more.
+    await run(
+      appUrl,
+      `update member set status = 'inactive' where member_no = $1`,
+      [memberNo]
+    );
+
+    const attempt = workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Ready.' },
+      secretary
+    );
+    await expect(attempt).rejects.toThrowError(/Verified/);
+    await expect(attempt).rejects.toThrowError(/not an active member/);
+  });
+
+  it('does not block Return for correction on the same incompleteness', async () => {
+    const { capture, workflow, documents, payments } = await load();
+    const actor = { userId: officer.userId, email: officer.email };
+    const { id } = await capture.startApplication('individual', actor);
+    await capture.saveDraft(id, COMPLETE_INDIVIDUAL, actor);
+    await fileRequiredDocuments(documents, id);
+    await recordFullPayment(payments, id);
+    await workflow.submitApplication(id, officer);
+
+    const returned = await workflow.reviewApplication(
+      id,
+      { outcome: 'return', comment: 'Please refile a clearer scan.' },
+      secretary
+    );
+    expect(returned.status).toBe('returned');
+  });
+
+  it('goes through once every document is Verified, payment stands and the guardian is valid', async () => {
+    const { workflow } = await load();
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+
+    const forwarded = await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Complete.' },
+      secretary
+    );
+    expect(forwarded.status).toBe('submitted_for_approval');
+  });
+});
+
+describe('S-609: a quorum above one needs that many distinct sign-offs', () => {
+  async function setQuorum(count: number) {
+    const { config } = await load();
+    const definition = (await config.listWorkflows()).find(
+      d => d.code === 'membership_application_approval'
+    )!;
+    const step = definition.steps.find(s => s.code === 'president_decision')!;
+    await config.setStepQuorum(step.id, count, {
+      userId: officer.userId,
+      email: officer.email,
+    });
+  }
+
+  afterEach(async () => {
+    // Every other describe block in this file assumes the shipped default
+    // (quorum 1) — restore it so a test order change elsewhere never
+    // inherits a quorum this block turned on.
+    await setQuorum(1);
+  });
+
+  // A second board member, entitled to decide exactly as president is.
+  let boardMember2: Principal;
+  beforeAll(async () => {
+    const user = await run(
+      appUrl,
+      `insert into app_user (email, display_name)
+       values ('board2@albarakah.mu', 'Board Member 2') returning id`
+    );
+    boardMember2 = principalFor(user.rows[0].id, 'board2@albarakah.mu', [
+      'application.view',
+      'application.approve',
+    ]);
+  });
+
+  it('does not transition until enough distinct approvals are in', async () => {
+    const { workflow, members } = await load();
+    await setQuorum(2);
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+    await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Complete.' },
+      secretary
+    );
+
+    const first = await workflow.decideApplication(
+      id,
+      { outcome: 'approve', comment: '' },
+      president,
+      members.createMemberFromApplication
+    );
+    expect(first.signoff).toEqual({ recorded: 1, required: 2 });
+    expect(first.member).toBeUndefined();
+
+    const { capture } = await load();
+    expect((await capture.loadApplication(id))!.status).toBe(
+      'submitted_for_approval'
+    );
+
+    const second = await workflow.decideApplication(
+      id,
+      { outcome: 'approve', comment: '' },
+      boardMember2,
+      members.createMemberFromApplication
+    );
+    expect(second.signoff).toBeUndefined();
+    expect(second.status).toBe('approved');
+    expect(second.member).toBeDefined();
+  });
+
+  it('lets one reject veto immediately, even with an approval already recorded', async () => {
+    const { workflow, members, capture } = await load();
+    await setQuorum(3);
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+    await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Complete.' },
+      secretary
+    );
+
+    const partial = await workflow.decideApplication(
+      id,
+      { outcome: 'approve', comment: '' },
+      president,
+      members.createMemberFromApplication
+    );
+    expect(partial.signoff).toEqual({ recorded: 1, required: 3 });
+
+    const rejected = await workflow.decideApplication(
+      id,
+      { outcome: 'reject', comment: 'Documents do not match.' },
+      boardMember2,
+      members.createMemberFromApplication
+    );
+    expect(rejected.status).toBe('rejected');
+    expect(rejected.signoff).toBeUndefined();
+
+    // Vetoed, whatever quorum still has not been reached — a third board
+    // member showing up to approve finds nothing left to act on.
+    expect((await capture.loadApplication(id))!.status).toBe('rejected');
+  });
+
+  it('refuses the same person a second sign-off on the same step', async () => {
+    const { workflow, members } = await load();
+    await setQuorum(2);
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+    await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Complete.' },
+      secretary
+    );
+
+    await workflow.decideApplication(
+      id,
+      { outcome: 'approve', comment: '' },
+      president,
+      members.createMemberFromApplication
+    );
+
+    await expect(
+      workflow.decideApplication(
+        id,
+        { outcome: 'approve', comment: '' },
+        president,
+        members.createMemberFromApplication
+      )
+    ).rejects.toThrowError(/already recorded a decision/);
+  });
+
+  it('records who signed off, readable back in order', async () => {
+    const { workflow, members } = await load();
+    await setQuorum(2);
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+    await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Complete.' },
+      secretary
+    );
+    await workflow.decideApplication(
+      id,
+      { outcome: 'approve', comment: '' },
+      president,
+      members.createMemberFromApplication
+    );
+    await workflow.decideApplication(
+      id,
+      { outcome: 'approve', comment: '' },
+      boardMember2,
+      members.createMemberFromApplication
+    );
+
+    const signoffs = await workflow.signoffsFor(id, 'president_decision');
+    expect(signoffs.map(s => [s.actorEmail, s.outcome])).toEqual([
+      [president.email, 'approve'],
+      [boardMember2.email, 'approve'],
+    ]);
+  });
+
+  it('audits every sign-off, not just the one that completes the step', async () => {
+    const { workflow, members } = await load();
+    await setQuorum(2);
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+    await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Complete.' },
+      secretary
+    );
+    await workflow.decideApplication(
+      id,
+      { outcome: 'approve', comment: '' },
+      president,
+      members.createMemberFromApplication
+    );
+
+    const audited = await run(
+      appUrl,
+      `select actor_description from audit_event
+        where action = 'membership.application.approved' and entity_id = $1
+        order by occurred_at`,
+      [id]
+    );
+    expect(audited.rows.map(r => r.actor_description)).toEqual([
+      president.email,
+    ]);
+  });
+
+  it('at the default quorum of one, still transitions on a single decision', async () => {
+    const { workflow, members } = await load();
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+    await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Complete.' },
+      secretary
+    );
+
+    const decided = await workflow.decideApplication(
+      id,
+      { outcome: 'approve', comment: '' },
+      president,
+      members.createMemberFromApplication
+    );
+    expect(decided.signoff).toBeUndefined();
+    expect(decided.status).toBe('approved');
+    expect(decided.member).toBeDefined();
   });
 });
 
