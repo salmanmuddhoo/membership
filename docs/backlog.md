@@ -674,7 +674,13 @@ witnesses, guardians and the board decision the FRD describes.
 **Needs confirming first:** nominee count and whether percentages apply
 (S-602). Default until then: a single nominee, no percentages.
 
-### S-601 · Corporate application capture
+**Done:** S-601, S-604, S-605, S-606, S-607 — Corporate capture, the
+Guardian link, and the successor guardian/beneficiary subjects, all the way
+through to an approved member. Remaining: S-602 (configurable nominee
+count/percentages), S-603 (witness verification gate), S-608/S-609 (Board
+completeness gate and quorum sign-off), S-610 (majority transition, Could).
+
+### S-601 · Corporate application capture ✅
 
 **As** a Regional Officer, **I need** to capture a corporate applicant,
 **so that** entities can join. _(FRD 5.2)_
@@ -683,6 +689,13 @@ witnesses, guardians and the board decision the FRD describes.
 - Fields come from the Corporate membership type configured in M2
 - **Given** the corporate checklist **Then** a Certificate of Registration,
   Memorandum and Written Resolution are required, and no ID card is
+
+Already built by the config-driven capture pipeline (M2/M3): the Corporate
+fields, checklist and fee schedule were seeded in migration 0010, and nothing
+in `capture.ts` knows a membership type by name. Confirmed end to end —
+capture through an approved member, with the right documents asked for and
+none extra — in `workflow.test.ts`'s "S-601: a Corporate application, end to
+end".
 
 ### S-602 · Nominee capture with configurable count and optional percentages
 
@@ -704,7 +717,7 @@ that** the nomination is legally valid. _(FRD 5.4)_
 - **Given** fewer than four signatures are confirmed **Then** the Signed
   Application Form cannot be marked Verified
 
-### S-604 · Minor application with a validated Guardian member link
+### S-604 · Minor application with a validated Guardian member link ✅
 
 **As** a Regional Officer, **I need** to link a minor to their guardian,
 **so that** the guardian's responsibility is recorded. _(MEM-US-007, FRD 7.10.2)_
@@ -714,7 +727,13 @@ that** the nomination is legally valid. _(FRD 5.4)_
 - **Given** the named guardian is not a member **Then** capture explains that
   they must join first
 
-### S-605 · Block submission without a valid Guardian
+`problemsBlockingSubmission` (`capture.ts`) resolves the guardian block's
+Member No. or NIC against `member`, joined back to whichever application's
+applicant party carries that NIC (NIC is not a column on `member` itself).
+Not found, or found but not active, is a "Needs attention" item on the
+capture page itself — not only at submit time. See `docs/applications.md`.
+
+### S-605 · Block submission without a valid Guardian ✅
 
 **As** the Society, **I need** a minor's application to be unsubmittable
 without a guardian, **so that** the rule cannot be bypassed. _(FRD 7.10.2)_
@@ -722,7 +741,12 @@ without a guardian, **so that** the rule cannot be bypassed. _(FRD 7.10.2)_
 
 - **Given** no valid guardian link **Then** submission is refused and says why
 
-### S-606 · Successor Guardian nomination
+Same check, in the same list `submitApplication` already refuses on. See
+`workflow.test.ts`'s "S-604/S-605: a Minor application with a valid
+guardian, end to end" for a refusal that becomes a decided member once a
+real guardian exists.
+
+### S-606 · Successor Guardian nomination ✅
 
 **As** a Regional Officer, **I need** to record a successor guardian, **so
 that** the minor is covered if the guardian cannot act. _(FRD 7.10.3)_
@@ -731,11 +755,19 @@ that** the minor is covered if the guardian cannot act. _(FRD 7.10.3)_
 - Captured as its own subject, with its own checklist items (already
   configured in M2)
 
-### S-607 · Takaful Ta'awuni beneficiary nomination
+Already configured (migration 0010): the successor guardian is the minor
+type's own `nominee` subject, distinct from an Individual or Corporate
+nominee. Exercised by the same end-to-end test as S-604/S-605.
+
+### S-607 · Takaful Ta'awuni beneficiary nomination ✅
 
 **As** a Regional Officer, **I need** to record the Takaful beneficiary,
 **so that** the fund knows who benefits. _(FRD 7.10.4)_
 `Must · 5 · EPIC-04`
+
+Already configured (migration 0010): its own `beneficiary` subject on the
+Minor type, with its own checklist requirement. Exercised by the same
+end-to-end test as S-604/S-605.
 
 ### S-608 · Pre-Board completeness gate
 

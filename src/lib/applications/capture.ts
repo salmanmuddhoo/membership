@@ -397,8 +397,34 @@ export async function saveDraft(
   return { savedAt, problems };
 }
 
+// S-604: resolves a guardian to an existing member, by Member No. or NIC —
+// the two identifiers a guardian's block already asks for (FRD 7.10.2). NIC
+// is not stored on `member` itself, only on the applicant party of whatever
+// application created it, which is why this joins back to that party rather
+// than reading a column.
+async function findGuardianMember(
+  memberNoCandidate: string,
+  nicCandidate: string
+): Promise<{ memberNo: string; status: string } | null> {
+  if (!memberNoCandidate && !nicCandidate) return null;
+
+  const result = await query<{ member_no: string; status: string }>(
+    `select m.member_no, m.status
+       from member m
+       left join application_party p
+         on p.application_id = m.application_id
+        and p.subject = 'applicant' and p.ordinal = 1
+      where ($1 <> '' and lower(m.member_no) = lower($1))
+         or ($2 <> '' and p.values->>'nic' = $2)
+      limit 1`,
+    [memberNoCandidate, nicCandidate]
+  );
+  if (result.rowCount === 0) return null;
+  return { memberNo: result.rows[0].member_no, status: result.rows[0].status };
+}
+
 /**
- * What stops this application being submitted (S-301, S-304).
+ * What stops this application being submitted (S-301, S-304, S-605).
  *
  * Returns every problem, not the first: an officer told about one missing
  * field at a time, on a form of forty, will fill it in and be told about the
@@ -436,6 +462,44 @@ export async function problemsBlockingSubmission(
             label: field.label,
           });
         }
+      }
+    }
+  }
+
+  // S-604/S-605: a guardian is not just a filled-in field, it is a claim
+  // about an existing member — a minor's application cannot be submitted on
+  // the strength of a name and a Member No. nobody has verified. Checked
+  // here rather than at save time (S-302): an officer mid-typing has not
+  // necessarily reached the guardian block yet, and a lookup on every
+  // keystroke would be a query the save does not need to make.
+  const guardianFields = fields.get('guardian');
+  if (guardianFields?.some(f => f.fieldKey === 'member_id')) {
+    for (const party of application.parties.filter(
+      p => p.subject === 'guardian'
+    )) {
+      const memberNo = (party.values.member_id ?? '').trim();
+      const nic = (party.values.nic ?? '').trim();
+      // Empty is already reported above as a missing mandatory field; this
+      // is for a value that is there but does not resolve to anyone real.
+      if (!memberNo && !nic) continue;
+
+      const guardian = await findGuardianMember(memberNo, nic);
+      if (!guardian) {
+        problems.push({
+          subject: 'guardian',
+          ordinal: party.ordinal,
+          fieldKey: 'member_id',
+          label:
+            'No active member matches the guardian’s Member No. or NIC ' +
+            '— they must join as a member first.',
+        });
+      } else if (guardian.status !== 'active') {
+        problems.push({
+          subject: 'guardian',
+          ordinal: party.ordinal,
+          fieldKey: 'member_id',
+          label: `The guardian (${guardian.memberNo}) is not an active member.`,
+        });
       }
     }
   }
