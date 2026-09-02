@@ -618,6 +618,117 @@ describe('S-407: verifying, and who may', () => {
   });
 });
 
+describe('S-603: all four signatures before the signed form can be Verified', () => {
+  async function fileSignedForm() {
+    const { documents } = await load();
+    const typeId = (
+      await run(
+        appUrl,
+        `select id from document_type where code = 'signed_form'`
+      )
+    ).rows[0].id;
+    const begun = await documents.beginUpload(
+      {
+        applicationId,
+        documentTypeId: typeId,
+        subject: 'applicant',
+        fileName: 'signed.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 2048,
+      },
+      officer
+    );
+    drive.files.set(begun.ticket.itemPath, { id: 'graph-signed', size: 2048 });
+    await documents.commitUpload(begun.versionId, officer);
+    return { documents, documentId: begun.documentId };
+  }
+
+  it('refuses to verify with none confirmed', async () => {
+    const { documents, documentId } = await fileSignedForm();
+
+    await expect(
+      documents.reviewDocument(documentId, { outcome: 'verify' }, secretary)
+    ).rejects.toThrowError(/All four signatures/);
+  });
+
+  it('names exactly which are still missing', async () => {
+    const { documents, documentId } = await fileSignedForm();
+
+    await expect(
+      documents.reviewDocument(
+        documentId,
+        { outcome: 'verify', confirmedSignatures: ['Applicant', 'Nominee'] },
+        secretary
+      )
+    ).rejects.toThrowError(/Witness 1, Witness 2/);
+  });
+
+  it('verifies once all four are confirmed', async () => {
+    const { documents, documentId } = await fileSignedForm();
+
+    const result = await documents.reviewDocument(
+      documentId,
+      { outcome: 'verify', confirmedSignatures: [...documents.SIGNATURES] },
+      secretary
+    );
+    expect(result.state).toBe('verified');
+
+    const entry = (await documents.checklistFor({ applicationId })).find(
+      e => e.documentId === documentId
+    )!;
+    expect(entry.confirmedSignatures.sort()).toEqual(
+      [...documents.SIGNATURES].sort()
+    );
+  });
+
+  it('does not gate any other document type — only signed_form carries this rule', async () => {
+    const { documents } = await load();
+    const begun = await documents.beginUpload(
+      {
+        applicationId,
+        documentTypeId: idCardTypeId,
+        subject: 'nominee',
+        fileName: 'nominee2.jpg',
+        contentType: 'image/jpeg',
+        sizeBytes: 100,
+        expiresAt: new Date('2030-01-01'),
+      },
+      officer
+    );
+    drive.files.set(begun.ticket.itemPath, { id: 'graph-nominee2', size: 100 });
+    await documents.commitUpload(begun.versionId, officer);
+
+    const result = await documents.reviewDocument(
+      begun.documentId,
+      { outcome: 'verify' },
+      secretary
+    );
+    expect(result.state).toBe('verified');
+  });
+
+  it('lets a rejection keep whatever signatures were already confirmed', async () => {
+    const { documents, documentId } = await fileSignedForm();
+
+    await documents.reviewDocument(
+      documentId,
+      {
+        outcome: 'reject',
+        reason: 'Scan is too blurry to read the second witness.',
+        confirmedSignatures: ['Applicant', 'Nominee', 'Witness 1'],
+      },
+      secretary
+    );
+
+    const entry = (await documents.checklistFor({ applicationId })).find(
+      e => e.documentId === documentId
+    )!;
+    expect(entry.state).toBe('rejected');
+    expect(entry.confirmedSignatures.sort()).toEqual(
+      ['Applicant', 'Nominee', 'Witness 1'].sort()
+    );
+  });
+});
+
 describe('S-409: replacing a document keeps the original', () => {
   it('supersedes the old version rather than deleting it', async () => {
     const { documents } = await load();
@@ -689,7 +800,7 @@ describe('S-409: replacing a document keeps the original', () => {
     await documents.commitUpload(first.versionId, officer);
     await documents.reviewDocument(
       first.documentId,
-      { outcome: 'verify' },
+      { outcome: 'verify', confirmedSignatures: [...documents.SIGNATURES] },
       secretary
     );
 

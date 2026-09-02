@@ -166,6 +166,19 @@ than API endpoints: the Secretary is at a desk, and a form works without
 scripting. Filing cannot be, because the bytes go from the device to Microsoft
 — so the file input is disabled until the script enables it, and says why.
 
+**The signed form cannot be marked Verified on the strength of the file
+existing alone (S-603, FRD 5.4).** The printed form always carries four
+signature blocks — Applicant, Nominee, Witness 1, Witness 2
+(`SIGNATURES`, `documents.ts`, shared with the print page so the two can
+never disagree about what "all four" means) — regardless of membership type.
+Reviewing a `signed_form` document shows four checkboxes, one per block; a
+verify attempt with fewer than four checked is refused, naming which are
+still missing. Every other document type is untouched by this — the check
+is keyed on the document TYPE's code, not on being reviewed at all.
+Rejecting still records whichever were checked (`document.confirmed_signatures`),
+so a Secretary who rejects for an unrelated reason — a blurry scan — does not
+lose the ones they had already confirmed when the replacement arrives.
+
 ### Viewing and removing what was filed
 
 **Viewing is brokered the same way filing is, in the other direction.**

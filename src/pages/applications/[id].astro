@@ -26,6 +26,7 @@ import {
   removeFiledDocument,
   reviewDocument,
   DocumentError,
+  SIGNATURES,
 } from '@lib/documents/documents';
 import { applicationTimeline } from '@lib/applications/timeline';
 import {
@@ -179,7 +180,11 @@ if (Astro.request.method === 'POST') {
       const outcome = intent === 'verify-document' ? 'verify' : 'reject';
       const result = await reviewDocument(
         String(form.get('documentId') ?? ''),
-        { outcome, reason: String(form.get('reason') ?? '') },
+        {
+          outcome,
+          reason: String(form.get('reason') ?? ''),
+          confirmedSignatures: form.getAll('confirmedSignatures').map(String),
+        },
         principal
       );
       notice =
@@ -878,6 +883,29 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                               name="documentId"
                               value={entry.documentId}
                             />
+                            {entry.documentCode === 'signed_form' && (
+                              <fieldset class="rounded-lg border border-neutral-300 px-3 py-2 dark:border-neutral-600">
+                                <legend class="px-1 text-xs font-medium text-neutral-600 dark:text-neutral-300">
+                                  Signatures confirmed present on the scan
+                                </legend>
+                                <div class="grid grid-cols-2 gap-1.5">
+                                  {SIGNATURES.map(who => (
+                                    <label class="flex items-center gap-x-2 text-sm text-neutral-600 dark:text-neutral-300">
+                                      <input
+                                        type="checkbox"
+                                        name="confirmedSignatures"
+                                        value={who}
+                                        checked={entry.confirmedSignatures.includes(
+                                          who
+                                        )}
+                                        class="text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600"
+                                      />
+                                      {who}
+                                    </label>
+                                  ))}
+                                </div>
+                              </fieldset>
+                            )}
                             <input
                               type="text"
                               name="reason"
