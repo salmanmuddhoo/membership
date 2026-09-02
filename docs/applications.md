@@ -243,6 +243,45 @@ membership type by name — the generic pipeline just had to be pointed at it
 by a test to be sure. `workflow.test.ts` now carries end-to-end tests for
 both.
 
+### Finding a parent before they are a member
+
+The guardian block asks for a Member No. and a NIC, which used to mean typing
+both in blind. `CaptureFields.astro` now shows a search box above them
+whenever a type's guardian subject configures both fields (checked by field
+key, not by assuming "guardian" always means this — the type still decides):
+type two characters and it calls `GET /api/v1/applications/guardian-search`,
+which wraps `searchGuardianCandidates` (`capture.ts`).
+
+**The search finds two different kinds of person, on purpose.** A parent and
+their minor can join at the same visit — the parent captured first, exactly
+as any Individual application is, and _not yet decided_ when the officer
+starts the minor's form. So the search matches:
+
+- **Active members**, by surname, name, NIC or Member No. — read the same way
+  `findGuardianMember` above resolves one.
+- **Individual applications not yet decided** (any status except `approved`
+  or `rejected`) — by surname, name or NIC. `rejected` is excluded because it
+  will never produce a member; `approved` is excluded because that person
+  already has a member row, found by the first arm — listing both would show
+  the same parent twice.
+
+Picking a result fills in the guardian's surname, name, NIC and Member No.
+fields exactly as if the officer had typed them — a shortcut to a form that
+was already valid, not a new kind of field, so nothing about how those values
+are stored, normalised or validated changes. What goes in the Member No.
+field for someone who is not a member yet is their **application's own
+reference** (`APP-2026-000123`), not a real Member No. — human-recognisable
+on the form, and never confusable with one (the two never share a shape).
+
+**This does not change when a minor can be submitted.** `findGuardianMember`
+still resolves purely against `member`, by Member No. **or NIC** — and NIC is
+what actually carries a not-yet-a-member parent through: it does not change
+when their application is renamed on approval (`reference` becomes their
+`member_no`, see Identifiers below), so nothing about the minor's own form
+needs revisiting once the parent is approved. The Member No. field the search
+filled in with an `APP-` reference simply stops mattering at that point; the
+NIC match is what resolves them.
+
 ## The chain
 
 ```
@@ -370,7 +409,9 @@ onto nine digits produces something that looks right and can never be dialled.
 
 ## Not built yet
 
-No `/api/v1` endpoints for applications. M3's stories are all staff-facing, and
-the API surface FRD Section 12 describes is better designed once M4's document
-flow and M5's payments are known. The service layer is already separate from
-the pages, so adding endpoints is a wrapper, not a rewrite.
+`GET /api/v1/applications/guardian-search` (S-604, above) is the one
+`/api/v1` endpoint applications has today, and it exists to serve the
+capture form's own search widget, not FRD Section 12's public API surface —
+that is still better designed once M4's document flow and M5's payments are
+known. The service layer is already separate from the pages, so adding the
+rest is a wrapper, not a rewrite.

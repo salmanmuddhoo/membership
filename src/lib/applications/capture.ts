@@ -423,6 +423,85 @@ async function findGuardianMember(
   return { memberNo: result.rows[0].member_no, status: result.rows[0].status };
 }
 
+export interface GuardianCandidate {
+  // A not-yet-a-member parent has no Member No. yet — reference is theirs
+  // to have anyway: the application's own reference, human-recognisable on
+  // the form and unambiguous with a real Member No. (never the same shape).
+  kind: 'member' | 'application';
+  reference: string;
+  status: string;
+  surname: string;
+  name: string;
+  nic: string;
+}
+
+// Lets an officer find a parent to link as guardian — an existing member, or
+// someone joining as an Individual applicant at the same time as the minor
+// (FRD 7.10.2 does not require the parent to already be a member; only
+// submission does, see findGuardianMember/problemsBlockingSubmission below).
+// A rejected application produced no member and never will; an approved one
+// already has its own member row, found by the first half of the union —
+// listing it again under the second half would show the same person twice.
+export async function searchGuardianCandidates(
+  search: string,
+  limit = 10
+): Promise<GuardianCandidate[]> {
+  const term = search.trim();
+  if (!term) return [];
+
+  const result = await query<{
+    kind: 'member' | 'application';
+    reference: string;
+    status: string;
+    surname: string | null;
+    name: string | null;
+    nic: string | null;
+  }>(
+    `select 'member' as kind, m.member_no as reference, m.status as status,
+            p.values->>'surname' as surname, p.values->>'name' as name,
+            p.values->>'nic' as nic
+       from member m
+       join membership_application a on a.id = m.application_id
+       join membership_type t on t.id = a.membership_type_id
+       left join application_party p
+         on p.application_id = a.id and p.subject = 'applicant' and p.ordinal = 1
+      where t.code = 'individual'
+        and (strpos(lower(coalesce(p.values->>'surname', '')), lower($1)) > 0
+             or strpos(lower(coalesce(p.values->>'name', '')), lower($1)) > 0
+             or strpos(lower(coalesce(p.values->>'nic', '')), lower($1)) > 0
+             or strpos(lower(m.member_no), lower($1)) > 0)
+
+      union all
+
+      select 'application' as kind, a.reference as reference, a.status as status,
+             p.values->>'surname' as surname, p.values->>'name' as name,
+             p.values->>'nic' as nic
+       from membership_application a
+       join membership_type t on t.id = a.membership_type_id
+       left join application_party p
+         on p.application_id = a.id and p.subject = 'applicant' and p.ordinal = 1
+      where t.code = 'individual'
+        and a.status not in ('approved', 'rejected')
+        and (strpos(lower(coalesce(p.values->>'surname', '')), lower($1)) > 0
+             or strpos(lower(coalesce(p.values->>'name', '')), lower($1)) > 0
+             or strpos(lower(coalesce(p.values->>'nic', '')), lower($1)) > 0
+             or strpos(lower(a.reference), lower($1)) > 0)
+
+      order by surname nulls last, name nulls last
+      limit $2`,
+    [term, limit]
+  );
+
+  return result.rows.map(r => ({
+    kind: r.kind,
+    reference: r.reference,
+    status: r.status,
+    surname: r.surname ?? '',
+    name: r.name ?? '',
+    nic: r.nic ?? '',
+  }));
+}
+
 /**
  * What stops this application being submitted (S-301, S-304, S-605).
  *

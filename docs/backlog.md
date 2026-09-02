@@ -733,6 +733,15 @@ applicant party carries that NIC (NIC is not a column on `member` itself).
 Not found, or found but not active, is a "Needs attention" item on the
 capture page itself — not only at submit time. See `docs/applications.md`.
 
+The guardian does not have to be an approved member yet to be found and
+linked — a parent and their minor can register at the same visit, the parent
+first. `GET /api/v1/applications/guardian-search` searches active members
+**and** Individual applications still being captured; picking a result fills
+in the guardian block the same way typing it would. Submission still refuses
+until the linked parent actually is an active member — this only helps the
+officer name who they mean, before or after that is true. See
+`docs/applications.md`.
+
 ### S-605 · Block submission without a valid Guardian ✅
 
 **As** the Society, **I need** a minor's application to be unsubmittable
