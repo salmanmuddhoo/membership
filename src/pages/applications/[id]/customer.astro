@@ -1,4 +1,17 @@
 ---
+// The officer-facing page for a customer_account application (S-614, phase
+// 3) — someone not yet on the system at all, opening an account of their
+// own.
+//
+// A separate page from both [id].astro and account.astro, not a retrofit of
+// either: this kind needs what [id].astro's capture step needs (an
+// applicant, captured against a membership type's own field configuration —
+// here always Individual, business direction) AND what account.astro's
+// documents/payment/review sections need (selected account types, no
+// membership fee schedule to charge). Reusing both engines — capture.ts's
+// saveDraft/problemsBlockingSubmission already widened for this kind (S-614
+// phase 2), workflow.ts unchanged since S-612 — rather than duplicating
+// either.
 import ApplicationTimeline from '@components/ApplicationTimeline.astro';
 import CaptureFields from '@components/CaptureFields.astro';
 import DashboardLayout from '@layouts/DashboardLayout.astro';
@@ -9,11 +22,11 @@ import {
   problemsBlockingSubmission,
   saveDraft,
   visibleFields,
-  type MembershipApplication,
+  type CustomerAccountApplication,
   type PartyValues,
 } from '@lib/applications/capture';
-import { listMembershipTypes, type FieldSubject } from '@lib/config/reference';
-import { createMemberFromApplication } from '@lib/members/create';
+import { listMembershipTypes } from '@lib/config/reference';
+import { openAccountsForCustomerApplication } from '@lib/members/create';
 import {
   availableActions,
   boardReadiness,
@@ -35,18 +48,17 @@ import {
 } from '@lib/documents/documents';
 import { applicationTimeline } from '@lib/applications/timeline';
 import {
-  amountDueForApplication,
+  amountDueForAdditionalAccount,
   paymentsForApplication,
-  recordPayment,
+  recordAccountOpeningPayment,
   METHOD_LABELS,
   PAYMENT_METHODS,
   PaymentError,
-  type AmountDue,
+  type AccountAmountDue,
   type Payment,
   type PaymentMethod,
 } from '@lib/payments/payments';
 import { formatMoney, fromCents, sumCents } from '@lib/payments/money';
-import type { FeeComponentCode } from '@lib/config/reference';
 
 const principal = Astro.locals.principal!;
 const canCapture = principal.permissions.has('application.capture');
@@ -57,49 +69,37 @@ const canSeePayments = principal.permissions.has('payment.view');
 const canRecordPayment = principal.permissions.has('payment.record');
 const { id } = Astro.params;
 
-// This page is built for the membership capture/review flow only — an
-// additional-account application has its own, at /applications/<id>/account
-// (S-613 phase 8), and a customer_account application (someone not yet on
-// the system, S-614) has its own at /applications/<id>/customer. Reloading
-// after a POST below always returns the same application this narrowed on
-// the way in, since applicationKind is not a field any action here can
-// change — asserted rather than re-checked there, so a mismatch on a RELOAD
-// fails loudly as the bug it would be. The initial load is different: a
-// stale bookmark or a hand-edited URL is not a bug, so it is sent to the
-// page that actually knows this kind, below.
-async function loadMembershipApplication(
+// Mirrors [id].astro's own loadMembershipApplication and account.astro's
+// loadAccountApplication: the application this narrowed on the way in never
+// changes kind underneath a reload, so a mismatch here is a bug in the
+// wiring, not an ordinary "not found".
+async function loadCustomerApplication(
   applicationId: string
-): Promise<MembershipApplication | null> {
+): Promise<CustomerAccountApplication | null> {
   const found = await loadApplication(applicationId);
   if (!found) return null;
-  if (found.applicationKind !== 'membership') {
+  if (found.applicationKind !== 'customer_account') {
     throw new Error(
-      `Application ${applicationId} is not a membership application.`
+      `Application ${applicationId} is not a customer-account application.`
     );
   }
   return found;
 }
 
-const initial = id ? await loadApplication(id) : null;
+const initial = id ? await loadCustomerApplication(id) : null;
 if (!initial) return new Response('Not found', { status: 404 });
-if (initial.applicationKind === 'additional_account') {
-  return Astro.redirect(`/applications/${initial.id}/account`);
-}
-if (initial.applicationKind === 'customer_account') {
-  return Astro.redirect(`/applications/${initial.id}/customer`);
-}
-let application: MembershipApplication | null = initial;
+let application: CustomerAccountApplication | null = initial;
 
+// Individual specifically — startCustomerAccountApplication never captures
+// against anything else (business direction, not a choice this page offers)
+// — but read through membershipTypeId rather than named again here, the
+// same way [id].astro reads whichever type a membership application names.
 const type = (await listMembershipTypes()).find(
   t => t.id === application!.membershipTypeId
 )!;
 const fields = visibleFields(type);
 const subjects = [...fields.keys()];
 
-// Read what the form posted back, for every subject the type configures. The
-// whole form is posted every time, so a value the officer cleared arrives as
-// an empty string and is removed — a partial post would make deleting a wrong
-// entry impossible.
 async function partiesFromForm(form: FormData): Promise<PartyValues[]> {
   return subjects.flatMap(subject => {
     const ordinals = subject === 'nominee' ? type.nomineeCount : 1;
@@ -119,10 +119,14 @@ let error: string | null = null;
 let notice: string | null = null;
 let formatProblems: { fieldKey: string; label: string }[] = [];
 let blockingOnSubmit: { label: string; subject: string }[] = [];
-let createdMember: {
+let openedAccounts: {
   id: string;
-  memberNo: string;
-  accounts: { id: string; typeCode: string; typeName: string }[];
+  accounts: {
+    id: string;
+    typeCode: string;
+    typeName: string;
+    accountNo?: string;
+  }[];
 } | null = null;
 
 let isEditable =
@@ -133,10 +137,6 @@ if (Astro.request.method === 'POST') {
   const intent = String(form.get('intent') ?? 'save');
   const isAutosave = intent === 'autosave';
 
-  // Every refusal below has to reach the autosave caller as a failure status.
-  // A refusal that renders the page instead answers 200, and the client — which
-  // can only look at response.ok — would report "Saved" for work that was
-  // thrown away. The officer then closes the tablet trusting it.
   const refuse = (message: string, status: number): Response | null => {
     error = message;
     return isAutosave
@@ -147,8 +147,6 @@ if (Astro.request.method === 'POST') {
       : null;
   };
 
-  // Deleting leaves no page to come back to, so it redirects rather than
-  // re-rendering an application that is no longer there.
   if (intent === 'delete') {
     try {
       const deleted = await deleteDraftApplication(application.id, principal);
@@ -159,25 +157,24 @@ if (Astro.request.method === 'POST') {
       if (err instanceof ApplicationError) {
         error = err.message;
       } else {
-        console.error('[applications/delete]', err);
+        console.error('[applications/customer/delete]', err);
         error =
           'The draft could not be deleted. Nothing has been removed — ' +
           'please try again.';
       }
-      application = await loadMembershipApplication(application.id);
+      application = await loadCustomerApplication(application.id);
       if (!application) return Astro.redirect('/applications');
     }
   } else if (intent === 'record-payment') {
     try {
-      const amounts: Partial<Record<FeeComponentCode, string>> = {};
+      const amounts: Record<string, string> = {};
       for (const [key, value] of form.entries()) {
         if (key.startsWith('amount.')) {
-          amounts[key.slice('amount.'.length) as FeeComponentCode] =
-            String(value);
+          amounts[key.slice('amount.'.length)] = String(value);
         }
       }
 
-      const payment = await recordPayment(
+      const payment = await recordAccountOpeningPayment(
         {
           applicationId: application.id,
           method: String(form.get('method') ?? '') as PaymentMethod,
@@ -192,7 +189,7 @@ if (Astro.request.method === 'POST') {
       if (err instanceof PaymentError) {
         error = err.message;
       } else {
-        console.error('[payments/record]', err);
+        console.error('[applications/customer/payments]', err);
         error =
           'The payment could not be recorded. Nothing has been taken — ' +
           'please try again.';
@@ -209,7 +206,7 @@ if (Astro.request.method === 'POST') {
       if (err instanceof DocumentError) {
         error = err.message;
       } else {
-        console.error('[documents/delete]', err);
+        console.error('[applications/customer/documents]', err);
         error = 'The document could not be removed. Please try again.';
       }
     }
@@ -233,7 +230,7 @@ if (Astro.request.method === 'POST') {
       if (err instanceof DocumentError) {
         error = err.message;
       } else {
-        console.error('[documents/review]', err);
+        console.error('[applications/customer/documents]', err);
         error = 'The document could not be reviewed. Please try again.';
       }
     }
@@ -254,11 +251,6 @@ if (Astro.request.method === 'POST') {
           notice = 'Submitted for central processing.';
         }
       } else if (intent === 'review') {
-        // S-611: which step this is reviewing — Regional oversight or
-        // Secretary review — travels with the form as a hidden field, since
-        // a signed-in person only ever sees the one their own role covers
-        // (availableActions filters by role), but the server still has to be
-        // told which so it checks the right one.
         const stepCode = String(form.get('stepCode') ?? 'secretary_review');
         const result = await reviewApplication(
           application.id,
@@ -285,12 +277,9 @@ if (Astro.request.method === 'POST') {
             comment: String(form.get('comment') ?? ''),
           },
           principal,
-          createMemberFromApplication
+          openAccountsForCustomerApplication
         );
         if (result.signoff) {
-          // S-609: this sign-off did not by itself complete the step —
-          // nothing about the application has changed yet, only who has
-          // acted so far.
           const remaining = result.signoff.required - result.signoff.recorded;
           notice =
             `Sign-off recorded (${result.signoff.recorded} of ` +
@@ -299,19 +288,20 @@ if (Astro.request.method === 'POST') {
             `completes.`;
         } else {
           notice = result.member
-            ? `Approved. Member ${result.member.memberNo} created with ` +
-              `${result.member.accounts.map(a => a.typeName).join(' and ')}.`
+            ? `Approved. Opened ${result.member.accounts
+                .map(a => `${a.typeName} (${a.accountNo})`)
+                .join(' and ')}.`
             : 'Rejected and returned to the originating staff.';
-          createdMember = result.member ?? null;
+          openedAccounts = result.member ?? null;
         }
       }
-      application = await loadMembershipApplication(application.id);
+      application = await loadCustomerApplication(application.id);
     } catch (err) {
       if (err instanceof ApplicationError || err instanceof Error) {
         error = err.message;
       }
       if (!(err instanceof ApplicationError)) {
-        console.error('[applications/workflow]', err);
+        console.error('[applications/customer/workflow]', err);
       }
     }
   } else if (!canCapture) {
@@ -335,7 +325,6 @@ if (Astro.request.method === 'POST') {
       );
       formatProblems = problems;
 
-      // The autosave posts the same form and wants no page of its own.
       if (isAutosave) {
         return new Response(
           JSON.stringify({ savedAt: new Date().toISOString(), problems }),
@@ -347,7 +336,7 @@ if (Astro.request.method === 'POST') {
         problems.length > 0
           ? 'Draft saved, but some entries need attention.'
           : 'Draft saved.';
-      application = await loadMembershipApplication(application.id);
+      application = await loadCustomerApplication(application.id);
     } catch (err) {
       if (err instanceof ApplicationError) {
         const response = refuse(
@@ -356,7 +345,7 @@ if (Astro.request.method === 'POST') {
         );
         if (response) return response;
       } else {
-        console.error('[applications/capture]', err);
+        console.error('[applications/customer/capture]', err);
         const response = refuse('Something went wrong. Please try again.', 500);
         if (response) return response;
       }
@@ -364,21 +353,10 @@ if (Astro.request.method === 'POST') {
   }
 }
 
-// Recomputed after the POST: a submit that just succeeded leaves an
-// application that is no longer editable, and the page below is describing it
-// as it is now, not as it was when the request arrived.
 isEditable =
   application!.status === 'draft' || application!.status === 'returned';
-
-// A returned application is editable in exactly the same way as a draft but
-// has been through the Secretary, and that history is not anyone's to discard.
 const isDeletableDraft = canCapture && application!.status === 'draft';
 
-// Read for everyone who can reach this page, not only those who may see
-// scans: the progress timeline reports how many documents are outstanding
-// regardless of document.view, and that count is not itself sensitive. The
-// Documents section below still shows nothing — file names, uploaders — to
-// someone without canSeeDocuments.
 const checklist = await checklistFor({ applicationId: application!.id });
 const documentsComplete = checklist.length > 0 && isDocumentComplete(checklist);
 
@@ -389,20 +367,11 @@ const [blocking, actions, history, stageLabel] = await Promise.all([
   reviewStageLabel(application!),
 ]);
 
-// S-608: named up front, the same way a missing mandatory field is, rather
-// than only after the Secretary tries and is refused.
 const forwardAction = actions.find(a => a.stepCode === 'secretary_review');
 const boardReasons = forwardAction
   ? boardReadinessReasons(await boardReadiness(application!))
   : [];
 
-// S-611: what a review-type step's own buttons say and post — the "forward"
-// verb, the "return"/"reject" verb, and the comment's placeholder — kept as
-// one small table instead of a chain of stepCode comparisons repeated in the
-// markup below, so a step's wording lives in exactly one place. Regional
-// oversight is a gate (S-209): "forward" records that it happened without
-// moving the record on its own, the same reviewApplication call as Secretary
-// review's, just with a different stepCode (see the POST handler above).
 const REVIEW_STEP_META: Record<
   string,
   {
@@ -440,27 +409,19 @@ const REVIEW_STEP_META: Record<
   },
 };
 
-// S-609: only worth a round trip when this step actually asks for more than
-// one sign-off, or already has one recorded from a quorum that has since
-// changed — the common case (quorum 1) never shows this at all.
 const decideAction = actions.find(a => a.stepCode === 'president_decision');
 const signoffs =
   decideAction && decideAction.quorumCount > 1
     ? await signoffsFor(application!.id)
     : [];
 
-// Most of `blocking` is a field left empty, which the red border and the
-// field's own asterisk already explain — a list repeating "Surname" back at
-// an officer who has not typed anything yet is noise. What is worth spelling
-// out is the other kind: a value that IS there but does not stand up (a
-// guardian's Member No. nobody can find, S-604/S-605). That one needs saying,
-// because a red border alone does not explain why a filled-in field is red.
 const explainedProblems = blocking.filter(b => {
   const party = application!.parties.find(
     p => p.subject === b.subject && p.ordinal === b.ordinal
   );
   return (party?.values[b.fieldKey] ?? '').trim() !== '';
 });
+
 const DOCUMENT_STATE_LABELS: Record<string, string> = {
   missing: 'Missing',
   uploaded: 'Uploaded',
@@ -469,7 +430,6 @@ const DOCUMENT_STATE_LABELS: Record<string, string> = {
   rejected: 'Rejected',
   expired: 'Expired',
 };
-
 const DOCUMENT_STATE_CLASSES: Record<string, string> = {
   missing:
     'bg-neutral-200 text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200',
@@ -482,10 +442,6 @@ const DOCUMENT_STATE_CLASSES: Record<string, string> = {
   rejected: 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200',
   expired: 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200',
 };
-
-// What the file picker offers, matching what the upload service accepts. A
-// device that offers a file the backend will refuse wastes the officer's time
-// and their data allowance.
 const ACCEPTED_FILES =
   'image/jpeg,image/png,image/heic,image/webp,application/pdf';
 
@@ -499,47 +455,30 @@ for (const entry of checklist) {
 const requiredOutstanding = checklist.filter(
   e => e.requirement === 'required' && e.state !== 'verified'
 ).length;
-
-// The officer's job is to FILE the documents; verifying them is the
-// Secretary's. So the timeline counts what has nothing against it at all,
-// which is a different number from the one the Documents heading shows.
 const requiredDocumentsMissing = checklist.filter(
   e => e.requirement === 'required' && e.state === 'missing'
 ).length;
 
-// What has been taken against this application (M5). Read for everyone who
-// can see the application: the timeline has to say whether the payment step is
-// done, and a receipt number is not a figure. The amounts below are what
-// payment.view gates.
 const payments: Payment[] = await paymentsForApplication(application!.id);
 const livePayment =
   payments.find(p => p.kind === 'payment' && !p.voidedAt) ?? null;
 const refunds = payments.filter(p => p.kind === 'refund' && !p.voidedAt);
 
-// A terminal application is not one to take money on: an approved member pays
-// through their account, and a rejected one is owed a refund, not a receipt.
 const isDecided =
   application!.status === 'approved' || application!.status === 'rejected';
 
-let due: AmountDue | null = null;
+let due: AccountAmountDue | null = null;
 let dueProblem: string | null = null;
 if (canRecordPayment && !livePayment && !isDecided) {
   try {
-    due = await amountDueForApplication(application!.id);
+    due = await amountDueForAdditionalAccount(application!.id);
   } catch (err) {
     dueProblem =
       err instanceof PaymentError
         ? err.message
-        : 'The fee schedule could not be read.';
+        : 'The amount due could not be read.';
   }
 }
-
-// What Total reads on load — every component's default, required and
-// optional alike, not just the required ones due.expectedTotal sums (that
-// figure exists to test a payment against the schedule, not to be shown as a
-// total that ignores what the optional row already carries). The script
-// below recomputes this live as the optional amount changes; this is only
-// its starting value.
 const initialTotal = due
   ? fromCents(sumCents(due.components.map(c => c.amount)))
   : '0';
@@ -547,7 +486,6 @@ const initialTotal = due
 const timeline = applicationTimeline({
   status: application!.status,
   mandatoryFieldsOutstanding: blocking.length,
-  // The only evidence a signature exists is the signed form coming back.
   signedFormFiled: checklist.some(
     e => e.documentCode === 'signed_form' && e.state !== 'missing'
   ),
@@ -557,22 +495,13 @@ const timeline = applicationTimeline({
   reviewStageLabel: stageLabel,
 });
 
-// The wizard steps an officer walks while the application is still theirs to
-// work on — narrower than the seven the timeline shows, which also cover what
-// the Secretary and President do afterwards. Paginating them is what makes
-// "payment only once documents are filed" true on the screen and not just in
-// the service: each step is unreachable until the one before it actually is
-// done, on the SAME evidence the timeline reads, so the two can never
-// disagree about what is unlocked.
-//
-// Step 2 (print and sign) has no section of its own here — it already has a
-// page, `/applications/<id>/print`, and a step whose "done" signal is a
-// document filed in step 3 cannot also gate entry to step 3.
+// No print step in this flow (print.astro is built for a membership
+// application's own four-signature form) — capture leads straight into
+// documents.
 const CAPTURE_STEP = 1;
-const PRINT_STEP = 2;
-const DOCUMENTS_STEP = 3;
-const PAYMENT_STEP = 4;
-const SUBMIT_STEP = 5;
+const DOCUMENTS_STEP = 2;
+const PAYMENT_STEP = 3;
+const SUBMIT_STEP = 4;
 
 const furthestStep = !isEditable
   ? SUBMIT_STEP
@@ -584,15 +513,9 @@ const furthestStep = !isEditable
         ? PAYMENT_STEP
         : SUBMIT_STEP;
 
-// Once submitted this application is read entirely, not stepped through — the
-// Secretary and President need the whole picture, and only an editable
-// application has an officer working through it in order.
 let currentStep = SUBMIT_STEP;
 if (isEditable) {
   const stepParam = Astro.url.searchParams.get('step');
-  // No step in the URL means "wherever I left off", not "back to the start":
-  // an officer re-opening a draft they already finished capturing should not
-  // have to click through it again to reach where they actually are.
   const requested = stepParam ? Number(stepParam) : furthestStep;
   const clamped = Math.min(
     Math.max(
@@ -601,23 +524,14 @@ if (isEditable) {
     ),
     SUBMIT_STEP
   );
-
-  // Defensive only — nothing in this page links to ?step=2, since Next and
-  // Back go straight to and from the print page. A hand-edited URL still
-  // lands somewhere real rather than rendering an empty step.
-  if (clamped === PRINT_STEP) {
-    return Astro.redirect(`/applications/${application!.id}/print`);
-  }
   if (clamped > furthestStep) {
     return Astro.redirect(
-      `/applications/${application!.id}?step=${furthestStep}`
+      `/applications/${application!.id}/customer?step=${furthestStep}`
     );
   }
   currentStep = clamped;
 }
 
-// For the documents section. The capture form carries its own, in the
-// component that renders it.
 const SUBJECT_LABELS: Record<string, string> = {
   applicant: 'Applicant',
   nominee: 'Nominee',
@@ -644,14 +558,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       style="top: calc(var(--app-header-height, 3.75rem) + var(--app-timeline-height, 0px) + 1.5rem)"
     >
       <div class="flex flex-wrap items-center gap-x-4 gap-y-1">
-        {
-          /* A real navigation, not history-dependent JavaScript: the officer
-             may have arrived here from a link, a bookmark or Next, and every
-             one of those has "the list" as a safe place to land. Where the
-             browser actually does have somewhere to go back to, the script
-             below prefers that instead — closer to what "Back" means after
-             clicking Next. */
-        }
         <a
           href="/applications"
           id="back-link"
@@ -664,11 +570,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           >All applications</a
         >
       </div>
-      <a
-        href={`/applications/${application!.id}/print`}
-        class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
-        >Printable form</a
-      >
     </div>
 
     {
@@ -703,7 +604,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     >
       <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
         <span class="font-medium text-neutral-800 dark:text-neutral-100">
-          {application!.membershipTypeName}
+          {application!.selectedAccountTypes.map(t => t.name).join(' + ')}
         </span>
         <span
           class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200"
@@ -716,6 +617,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           }
         </span>
       </div>
+      <p class="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+        Not a member — this opens an account of their own.
+      </p>
 
       {
         blocking.length > 0 && isEditable && (
@@ -730,22 +634,18 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     </section>
 
     {
-      createdMember && (
+      openedAccounts && (
         <section class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-2xl border p-6">
           <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-            Member created
+            Accounts opened
           </h2>
-          <p class="mt-1 text-sm text-neutral-700 dark:text-neutral-200">
-            <a
-              href={`/members/${createdMember.id}`}
-              class="font-medium underline"
-            >
-              {createdMember.memberNo}
-            </a>{' '}
-            with {createdMember.accounts.map(a => a.typeName).join(' and ')},
-            opened automatically because the membership was approved. Both carry
-            the member's number.
-          </p>
+          <ul class="mt-2 space-y-1 text-sm text-neutral-700 dark:text-neutral-200">
+            {openedAccounts.accounts.map(a => (
+              <li>
+                <span class="font-medium">{a.accountNo}</span> — {a.typeName}
+              </li>
+            ))}
+          </ul>
         </section>
       )
     }
@@ -801,9 +701,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                   class="text-xs text-neutral-500 dark:text-neutral-400"
                   aria-live="polite"
                 />
-                {/* Saving is automatic. Without scripting it cannot be, so
-                      the button appears for the one reader who needs it
-                      rather than for everyone. */}
                 <noscript>
                   <button
                     type="submit"
@@ -815,17 +712,13 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                   </button>
                 </noscript>
               </div>
-              {/* Disabled to start with whatever the page already knows;
-                    kept honest as the officer types by the script below,
-                    which is the same fix the red-bordered fields below get —
-                    autosave has no reload to refresh either of them with. */}
               <button
                 type="button"
                 id="capture-next-button"
                 disabled={blocking.length > 0}
                 class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {blocking.length > 0 ? 'Next' : 'Next: print the form'}
+                Next
               </button>
             </div>
           )}
@@ -885,12 +778,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                           )}
                         </div>
 
-                        {/* Upload when there is nothing filed, or the small ×
-                           when there is — never both, so there is exactly one
-                           thing to do with a document at a time. Replacing
-                           directly is gone: delete, then upload, is the same
-                           two steps made visible instead of hidden behind one
-                           button that quietly did both. */}
                         {canUpload && entry.state === 'missing' && (
                           <div
                             class="flex flex-wrap items-center gap-3"
@@ -914,11 +801,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                             )}
                             <label class="cursor-pointer rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-200 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800">
                               Upload
-                              {/* The native control writes its own "no file
-                                chosen" text in the browser's language, which
-                                on a French-locale device puts French in an
-                                English app. Hidden, and driven by this label
-                                instead. */}
                               <input
                                 type="file"
                                 data-file
@@ -1065,7 +947,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             {isEditable && currentStep === DOCUMENTS_STEP && (
               <div class="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800">
                 <a
-                  href={`/applications/${application!.id}/print`}
+                  href={`/applications/${application!.id}/customer?step=${CAPTURE_STEP}`}
                   class="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
                 >
                   ← Back
@@ -1073,7 +955,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                 <a
                   href={
                     requiredDocumentsMissing === 0
-                      ? `/applications/${application!.id}?step=${PAYMENT_STEP}`
+                      ? `/applications/${application!.id}/customer?step=${PAYMENT_STEP}`
                       : undefined
                   }
                   aria-disabled={requiredDocumentsMissing > 0}
@@ -1114,9 +996,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                     Receipt {livePayment.receiptNo}
                   </a>
                 ) : (
-                  /* Not a link: the receipt page needs payment.view, and
-                   offering a link that refuses is how someone ends up
-                   clicking through to a denial. */
                   <span class="text-sm text-neutral-600 dark:text-neutral-300">
                     Receipt {livePayment.receiptNo}
                   </span>
@@ -1131,9 +1010,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 
             {livePayment && (
               <div class="mt-4">
-                {/* Everyone who can see the application sees that it was paid,
-                  and by whom — the timeline says as much already. The figures
-                  are what payment.view gates. */}
                 <p class="text-sm text-neutral-600 dark:text-neutral-300">
                   {canSeePayments
                     ? `${formatMoney(livePayment.totalAmount, livePayment.currency)} · ${METHOD_LABELS[livePayment.method]}`
@@ -1145,7 +1021,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                 {canSeePayments && (
                   <table class="mt-3 w-full text-sm">
                     <tbody>
-                      {livePayment.lines.map(line => (
+                      {livePayment.accountLines.map(line => (
                         <tr class="border-t border-neutral-200 dark:border-neutral-800">
                           <td class="py-1.5 text-neutral-600 dark:text-neutral-300">
                             {line.label}
@@ -1200,34 +1076,19 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                     {due.components.map(component => (
                       <tr class="border-t border-neutral-200 dark:border-neutral-800">
                         <td class="py-2 text-neutral-600 dark:text-neutral-300">
-                          <label for={`amount-${component.code}`}>
+                          <label for={`amount-${component.accountTypeId}`}>
                             {component.label}
                           </label>
-                          {component.requirement === 'optional' ? (
-                            <span class="ml-2 text-xs text-neutral-500 dark:text-neutral-400">
-                              optional
-                            </span>
-                          ) : (
-                            <span class="ml-2 text-xs text-neutral-500 dark:text-neutral-400">
-                              set by Configuration
-                            </span>
-                          )}
                         </td>
                         <td class="w-40 py-2 text-right">
                           <input
-                            id={`amount-${component.code}`}
+                            id={`amount-${component.accountTypeId}`}
                             type="text"
                             inputmode="decimal"
-                            name={`amount.${component.code}`}
+                            name={`amount.${component.accountTypeId}`}
                             value={component.amount}
-                            readonly={component.requirement !== 'optional'}
                             data-amount-input
-                            class:list={[
-                              'w-full rounded-lg border px-3 py-1.5 text-right text-sm tabular-nums',
-                              component.requirement === 'optional'
-                                ? 'border-neutral-300 bg-white dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100'
-                                : 'cursor-not-allowed border-neutral-200 bg-neutral-100 text-neutral-600 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300',
-                            ]}
+                            class="w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-right text-sm tabular-nums dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
                           />
                         </td>
                       </tr>
@@ -1269,7 +1130,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                 </div>
 
                 <label class="block text-sm text-neutral-600 dark:text-neutral-300">
-                  Reason, if the amount differs from the fee schedule
+                  Reason, if the amount differs from what is due
                   <input
                     type="text"
                     name="varianceReason"
@@ -1291,7 +1152,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             {isEditable && currentStep === PAYMENT_STEP && (
               <div class="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800">
                 <a
-                  href={`/applications/${application!.id}?step=${DOCUMENTS_STEP}`}
+                  href={`/applications/${application!.id}/customer?step=${DOCUMENTS_STEP}`}
                   class="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
                 >
                   ← Back
@@ -1299,7 +1160,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                 <a
                   href={
                     livePayment
-                      ? `/applications/${application!.id}?step=${SUBMIT_STEP}`
+                      ? `/applications/${application!.id}/customer?step=${SUBMIT_STEP}`
                       : undefined
                   }
                   aria-disabled={livePayment === null}
@@ -1432,7 +1293,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       isEditable && currentStep === SUBMIT_STEP && (
         <div class="flex">
           <a
-            href={`/applications/${application!.id}?step=${PAYMENT_STEP}`}
+            href={`/applications/${application!.id}/customer?step=${PAYMENT_STEP}`}
             class="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
           >
             ← Back
@@ -1502,11 +1363,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 </DashboardLayout>
 
 <script>
-  // "Back", after Next brought the officer here from capture. A plain link to
-  // the list is the safe default (it works whichever page sent them here, or
-  // if they arrived on a fresh tab with no history at all) — but where the
-  // browser actually has somewhere to go back to, that is closer to what
-  // "Back" means right after clicking Next, so it is preferred when available.
   const backLink = document.getElementById(
     'back-link'
   ) as HTMLAnchorElement | null;
@@ -1517,22 +1373,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     });
   }
 
-  // A mandatory field's red border is drawn once, from what was still empty
-  // when the page rendered — but autosave keeps saving in the background with
-  // no reload, so a field the officer just filled in would otherwise stay red
-  // until they reloaded, looking like data that never saved when it did. Kept
-  // honest here instead: as the officer types, each mandatory field's own
-  // border reacts to its own current value, and the Next button's label and
-  // disabled state react to how many are still empty overall.
-  //
-  // This only tracks emptiness, which is not quite everything `blocking`
-  // covers server-side — a guardian's Member No. that resolves to nobody
-  // (S-604/S-605) is a field that is not empty, so filling every other
-  // mandatory field can re-enable Next here a beat before the next reload
-  // confirms it. The reload is what actually gates Submit either way
-  // (`blocking` is recomputed fresh on every request), so nothing is
-  // submitted on the strength of this button alone; it is just not as live
-  // for that one case as it is for an empty field.
   const mandatoryFields = [
     ...document.querySelectorAll<HTMLInputElement | HTMLSelectElement>(
       '#capture-form [data-mandatory]'
@@ -1556,8 +1396,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       el => el.value.trim() === ''
     ).length;
     captureNextButton.disabled = remaining > 0;
-    captureNextButton.textContent =
-      remaining > 0 ? 'Next' : 'Next: print the form';
   };
 
   for (const el of mandatoryFields) {
@@ -1565,29 +1403,12 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       syncMandatoryField(el);
       syncCaptureNextButton();
     });
-    // A select's value can change without an 'input' event in some browsers;
-    // 'change' is the one every browser fires for it.
     el.addEventListener('change', () => {
       syncMandatoryField(el);
       syncCaptureNextButton();
     });
   }
 
-  // S-302, decision 14: an officer on a tablet must not lose work to a dropped
-  // connection. Saving is now automatic and there is no button to fall back
-  // on, so this has to be the guarantee rather than a convenience: a short
-  // pause after typing stops, a backstop interval, and every way of leaving
-  // the page. Without scripting the noscript button above is the fallback.
-  // S-403, S-404 · Filing a document from the device.
-  //
-  // The bytes go from here straight to Microsoft, over a short-lived URL the
-  // backend obtained for this one file in this one folder (see
-  // docs/documents.md, decision of 26 August 2026). They never pass through
-  // this application, which is what makes a 12 MB photograph of an identity
-  // card possible at all: the platform's request body limit is about 4.5 MB.
-  //
-  // The upload therefore cannot work without scripting, which is why the file
-  // input starts disabled with an explanation, and is enabled here.
   for (const panel of document.querySelectorAll<HTMLElement>('[data-upload]')) {
     const file = panel.querySelector<HTMLInputElement>('[data-file]');
     const expiry = panel.querySelector<HTMLInputElement>('[data-expires]');
@@ -1615,8 +1436,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       say('Preparing…');
 
       try {
-        // Phase one. The backend decides where this goes and whether it is
-        // allowed at all; all this sends is what the file is.
         const begun = await fetch('/api/v1/documents/begin-upload', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
@@ -1638,9 +1457,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         }
         const { versionId, uploadUrl, chunkSize } = begunBody.data;
 
-        // Phase two: the transfer. In chunks, because the connection in a
-        // regional office is the least reliable part of this, and a chunk that
-        // fails costs one chunk rather than the whole photograph.
         for (let start = 0; start < chosen.size; start += chunkSize) {
           const end = Math.min(start + chunkSize, chosen.size);
           const response = await fetch(uploadUrl, {
@@ -1656,8 +1472,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           say(`Sending… ${Math.round((end / chosen.size) * 100)}%`);
         }
 
-        // Phase three. Our word that the transfer finished is not what files
-        // the document — the backend asks SharePoint.
         say('Confirming…');
         const committed = await fetch('/api/v1/documents/commit-upload', {
           method: 'POST',
@@ -1671,10 +1485,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           );
         }
 
-        // Reload rather than patch the row: the checklist state, the version
-        // count and whether the Secretary may now act all come from the
-        // server, and guessing them here is how a screen starts disagreeing
-        // with the record.
         window.location.reload();
       } catch (error) {
         say(error instanceof Error ? error.message : 'The upload failed.');
@@ -1684,9 +1494,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     });
   }
 
-  // Deleting a draft cannot be undone, so ask. Without JavaScript the button
-  // simply deletes: a confirmation is a courtesy, and a control that only
-  // works with scripting would not be.
   document
     .querySelector<HTMLFormElement>('form[data-confirm-delete]')
     ?.addEventListener('submit', event => {
@@ -1700,9 +1507,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       }
     });
 
-  // Removing a filed document is reversible in the sense that it can always
-  // be filed again — but the officer does not know that mid-click, so this
-  // asks first exactly as deleting the draft does.
   for (const deleteForm of document.querySelectorAll<HTMLFormElement>(
     'form[data-confirm-delete-document]'
   )) {
@@ -1715,11 +1519,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     });
   }
 
-  // S-403 · Viewing a filed document. The URL is fetched fresh on each click
-  // rather than embedded on the page: it is pre-authenticated (good for one
-  // GET, no further sign-in), so it is a secret in the same sense an upload
-  // ticket is one, and belongs in a short-lived response rather than in HTML
-  // that sits in the page for as long as the tab is open.
   for (const viewButton of document.querySelectorAll<HTMLButtonElement>(
     '[data-view-document]'
   )) {
@@ -1757,12 +1556,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     });
   }
 
-  // The mandatory component's amount is fixed and its input is readonly, so
-  // only the optional one ever changes here — but Total sums every amount
-  // input, mandatory included, so it stays right without caring which field
-  // moved. Mirrors money.ts's own cents arithmetic rather than importing it:
-  // this is a plain script tag, and the server re-derives the real total from
-  // the posted amounts regardless of what this shows.
   const paymentForm = document.querySelector<HTMLFormElement>(
     '[data-payment-form]'
   );
@@ -1802,7 +1595,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     };
 
     for (const input of amountInputs) {
-      if (!input.readOnly) input.addEventListener('input', recomputeTotal);
+      input.addEventListener('input', recomputeTotal);
     }
   }
 
@@ -1829,22 +1622,10 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         dirty = false;
         status.textContent = `Saved at ${new Date().toLocaleTimeString('en-GB')}`;
       } catch {
-        // Saying "saved" when nothing was saved is the one thing this must
-        // never do: the officer would close the tablet trusting it.
         status.textContent = 'Not saved — check your connection.';
       }
     };
 
-    // Dispatches a save and makes every caller genuinely wait for it. A plain
-    // "in flight" boolean used to let a second caller — Next, arriving right
-    // behind focusout's own un-awaited save — walk straight past a save
-    // already running with nothing to await, so Next navigated before that
-    // save's fetch had finished and the browser could cancel it mid-flight.
-    // That is how a field filled in a moment before Next was clicked (a
-    // Nominee detail, say) went unsaved. Chaining onto the in-flight promise
-    // instead means a caller that arrives mid-save waits for it to land, then
-    // saves again if something changed in the meantime, rather than skipping
-    // its turn.
     let saveInFlight: Promise<void> | null = null;
     const save = (): Promise<void> => {
       if (saveInFlight) return saveInFlight.then(save);
@@ -1859,12 +1640,8 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       captureNextButton.addEventListener('click', async () => {
         window.clearTimeout(pending);
         captureNextButton.disabled = true;
-        // Flushes whatever autosave has not yet sent. A no-op if nothing
-        // changed since the last save — save() itself checks `dirty`.
         await save();
-        window.location.assign(
-          window.location.pathname.replace(/\/$/, '') + '/print'
-        );
+        window.location.assign(window.location.pathname + '?step=2');
       });
     }
 
@@ -1873,10 +1650,8 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       window.clearTimeout(pending);
       pending = window.setTimeout(save, 2_000);
     });
-    // Moving off a field is the moment the officer has finished with it.
     form.addEventListener('focusout', () => void save());
     window.setInterval(save, 20_000);
-    // Leaving the page or switching away is exactly when work is lost.
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') void save();
     });

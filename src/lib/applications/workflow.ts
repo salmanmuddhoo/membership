@@ -501,7 +501,14 @@ export interface DecisionResult {
   member?: {
     id: string;
     memberNo: string;
-    accounts: { id: string; typeCode: string; typeName: string }[];
+    // accountNo: set only by openAccountsForCustomerApplication (S-614) — a
+    // customer's accounts each carry their own number, unlike a member's.
+    accounts: {
+      id: string;
+      typeCode: string;
+      typeName: string;
+      accountNo?: string;
+    }[];
   };
   // Present when a quorum above one (S-609) has not yet been reached by this
   // sign-off: it was recorded, but the step has not completed and `status`

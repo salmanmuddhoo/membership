@@ -1303,6 +1303,68 @@ checklist, not only the selected account types' — `documents.ts`'s
 `resolveOwner` does not know that yet), the approval path that creates the
 customer, and the officer-facing review page.
 
+### S-614, phase 3: the entry point, the checklist union, and the officer
+
+page ✅
+
+Built together this time, unlike S-613's own split across phases 2/4/5/8 —
+the lesson from that flow was to not ship a backend an officer cannot
+reach.
+
+`/applications/new-account` (S-613 phase 5's own page) now asks "is this
+for an existing member?" before anything else. Yes is the unchanged member
+search and account-type picker; No drops the member search and, on submit,
+calls `startCustomerAccountApplication` and lands the officer straight on
+the new application rather than back on the list — there is an applicant to
+capture here, which an additional_account application never had.
+
+`documents.ts`'s `resolveOwner` gained a third `ChecklistSource`,
+`membership_type_and_account_types`, and `checklistForMembershipTypeAndAccountTypes`
+(reference.ts) merges `checklistForMembershipType('individual')` with
+`checklistForAccountTypes` the same way `checklistForAccountTypes` itself
+merges several account types' checklists — a document required by either
+side is required on the application, and where both sides configure the
+same document type, required wins.
+
+`openAccountsForCustomerApplication` (members/create.ts) is the third decide
+callback beside `createMemberFromApplication` and `openAccountsForApplication`
+— it creates the bare `customer` row (migration 0027) and numbers each
+selected account through `next_customer_account_number`, refusing up front,
+by name, an account type with no `number_prefix` configured rather than
+surfacing that function's own database exception to whoever is approving.
+`account_type.number_prefix` is now settable from Configuration → Account
+types, in plain language ("Number prefix for a non-member's account") —
+migration 0027 added the column but nothing before this phase could set it,
+which would have made every customer_account approval fail regardless of
+capture.
+
+The officer-facing page is new, at `/applications/<id>/customer` — not a
+retrofit of `[id].astro` (built entirely around a membership's four-signature
+form) or of `account.astro` (built with no capture step at all), but the
+two engines those already prove out, combined: `[id].astro`'s capture step,
+reusing the Individual type's own field configuration exactly as a
+membership application's capture does, and `account.astro`'s
+documents/payment/review sections, reusing `amountDueForAdditionalAccount`
+and `openAccountsForApplication`'s own account-opening machinery — both
+already widened for this kind in earlier phases. No print step: printing is
+built around a membership application's four-signature form (`print.astro`),
+which this flow does not use; capture leads straight into documents instead.
+`[id].astro`'s own kind-routing redirect now sends a `customer_account`
+application here the same way it already sent `additional_account` to
+`account.astro`.
+
+`DecisionResult`'s `member.accounts` gained an optional `accountNo`, set
+only by `openAccountsForCustomerApplication` — a member-owned account
+carries none of its own (the member's own AB number already identifies it,
+migration 0018), but a customer's does (migration 0027), and the officer
+page shows it once approved rather than the meaningless empty `memberNo`
+this kind returns instead.
+
+**Still ahead**: the single-signature form and itemised refunds for
+account-opening payments (both already deferred from M11); an admin listing
+for customers, parallel to Members, if one turns out to be needed once this
+is in use.
+
 ---
 
 # M7 — Legacy migration
