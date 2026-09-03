@@ -1551,3 +1551,178 @@ describe('S-612: additional-account applications share the table, not the type',
     expect(selected.rows[0].n).toBe(1);
   });
 });
+
+describe('S-613: starting an additional-account application for an existing member', () => {
+  // Out of the box every account_type ships is_membership_default (Shares,
+  // MSA) — none of them a valid selection for this flow (S-613 refuses
+  // exactly that). A selectable one has to exist for these tests the same
+  // way an administrator would create HSA or Investment from Configuration.
+  let selectableTypeId: string;
+  let membershipDefaultTypeId: string;
+
+  beforeAll(async () => {
+    const selectable = await runAsConfigurator(
+      appUrl,
+      `insert into account_type (code, name, category, is_membership_default)
+       values ('hsa_test', 'Hajj Savings (test)', 'savings', false)
+       returning id`
+    );
+    selectableTypeId = selectable.rows[0].id;
+    const membershipDefault = await run(
+      appUrl,
+      `select id from account_type where is_membership_default limit 1`
+    );
+    membershipDefaultTypeId = membershipDefault.rows[0].id;
+  });
+
+  // No afterAll cleanup: the applications this describe block creates
+  // reference hsa_test via a foreign key, and the whole database — this
+  // file's own throwaway one — is dropped once every test here has run.
+
+  describe('searchExistingMembers', () => {
+    it('finds an active member by name, NIC or Member No.', async () => {
+      const { capture } = await load();
+      const { memberNo } = await seedMember('S6666666666666', 'active', {
+        surname: 'Aumjaud',
+        name: 'Kavish',
+      });
+
+      const bySurname = await capture.searchExistingMembers('Aumjaud');
+      expect(bySurname.some(m => m.memberNo === memberNo)).toBe(true);
+
+      const byNic = await capture.searchExistingMembers('S6666666666666');
+      expect(byNic.some(m => m.memberNo === memberNo)).toBe(true);
+
+      const byMemberNo = await capture.searchExistingMembers(memberNo);
+      expect(byMemberNo.some(m => m.memberNo === memberNo)).toBe(true);
+    });
+
+    it('does not offer an inactive member', async () => {
+      const { capture } = await load();
+      const { memberNo } = await seedMember('S5555555555555', 'inactive', {
+        surname: 'Ramgoolam',
+        name: 'Devesh',
+      });
+
+      const results = await capture.searchExistingMembers('Ramgoolam');
+      expect(results.some(m => m.memberNo === memberNo)).toBe(false);
+    });
+  });
+
+  describe('startAdditionalAccountApplication', () => {
+    it('creates the application and records the selected account type(s)', async () => {
+      const { capture } = await load();
+      const { memberNo } = await seedMember('S4444444444444', 'active');
+      const member = await run(
+        appUrl,
+        `select id from member where member_no = $1`,
+        [memberNo]
+      );
+
+      const { id } = await capture.startAdditionalAccountApplication(
+        member.rows[0].id,
+        [selectableTypeId],
+        officer
+      );
+
+      const application = await run(
+        appUrl,
+        `select application_kind, existing_member_id, membership_type_id
+           from membership_application where id = $1`,
+        [id]
+      );
+      expect(application.rows[0].application_kind).toBe('additional_account');
+      expect(application.rows[0].existing_member_id).toBe(member.rows[0].id);
+      expect(application.rows[0].membership_type_id).toBeNull();
+
+      const selected = await run(
+        appUrl,
+        `select account_type_id from application_account_selection
+          where application_id = $1`,
+        [id]
+      );
+      expect(selected.rows.map(r => r.account_type_id)).toEqual([
+        selectableTypeId,
+      ]);
+    });
+
+    it('refuses with no account type selected', async () => {
+      const { capture } = await load();
+      const { memberNo } = await seedMember('S3333333333333', 'active');
+      const member = await run(
+        appUrl,
+        `select id from member where member_no = $1`,
+        [memberNo]
+      );
+
+      await expect(
+        capture.startAdditionalAccountApplication(
+          member.rows[0].id,
+          [],
+          officer
+        )
+      ).rejects.toThrowError(/at least one account type/);
+    });
+
+    it('refuses an inactive member', async () => {
+      const { capture } = await load();
+      const { memberNo } = await seedMember('S2222222222222', 'inactive');
+      const member = await run(
+        appUrl,
+        `select id from member where member_no = $1`,
+        [memberNo]
+      );
+
+      await expect(
+        capture.startAdditionalAccountApplication(
+          member.rows[0].id,
+          [selectableTypeId],
+          officer
+        )
+      ).rejects.toThrowError(/active member/);
+    });
+
+    it('refuses a membership-default account type — Shares and the MSA open only on approval', async () => {
+      const { capture } = await load();
+      const { memberNo } = await seedMember('S1111111111111', 'active');
+      const member = await run(
+        appUrl,
+        `select id from member where member_no = $1`,
+        [memberNo]
+      );
+
+      await expect(
+        capture.startAdditionalAccountApplication(
+          member.rows[0].id,
+          [membershipDefaultTypeId],
+          officer
+        )
+      ).rejects.toThrowError(/no longer available to open this way/);
+    });
+
+    it('records who started it, the same audit action a membership application uses', async () => {
+      const { capture } = await load();
+      const { memberNo } = await seedMember('S0000000000001', 'active');
+      const member = await run(
+        appUrl,
+        `select id from member where member_no = $1`,
+        [memberNo]
+      );
+
+      const { id } = await capture.startAdditionalAccountApplication(
+        member.rows[0].id,
+        [selectableTypeId],
+        officer
+      );
+
+      const audit = await run(
+        appUrl,
+        `select action, actor_user_id from audit_event
+          where entity_type = 'membership_application' and entity_id = $1`,
+        [id]
+      );
+      expect(audit.rows[0].action).toBe('membership.application.started');
+      expect(audit.rows[0].actor_user_id).toBe(officer.userId);
+    });
+  });
+});

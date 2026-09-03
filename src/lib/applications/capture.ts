@@ -141,6 +141,157 @@ export async function startApplication(
   return withTransaction(client => insertApplication(client, type, actor));
 }
 
+export interface MemberCandidate {
+  memberId: string;
+  memberNo: string;
+  surname: string;
+  name: string;
+  nic: string;
+}
+
+/**
+ * S-613 · Find the member an additional-account application opens an
+ * account for.
+ *
+ * Active only — an additional account is something an active member does,
+ * the same restriction problemsBlockingSubmission's own guardian check
+ * applies to an active member found there (S-604). Left joined rather than
+ * inner joined to `membership_application`/`application_party`: a legacy
+ * member imported without one (M7's `member.application_id` is nullable for
+ * exactly that reason) is still found by Member No., just without a name to
+ * show alongside it.
+ */
+export async function searchExistingMembers(
+  search: string,
+  limit = 10
+): Promise<MemberCandidate[]> {
+  const term = search.trim();
+  if (!term) return [];
+
+  const result = await query<{
+    member_id: string;
+    member_no: string;
+    surname: string | null;
+    name: string | null;
+    nic: string | null;
+  }>(
+    `select m.id as member_id, m.member_no,
+            p.values->>'surname' as surname, p.values->>'name' as name,
+            p.values->>'nic' as nic
+       from member m
+       left join membership_application a on a.id = m.application_id
+       left join application_party p
+         on p.application_id = a.id and p.subject = 'applicant' and p.ordinal = 1
+      where m.status = 'active'
+        and (strpos(lower(coalesce(p.values->>'surname', '')), lower($1)) > 0
+             or strpos(lower(coalesce(p.values->>'name', '')), lower($1)) > 0
+             or strpos(lower(coalesce(p.values->>'nic', '')), lower($1)) > 0
+             or strpos(lower(m.member_no), lower($1)) > 0)
+      order by surname nulls last, name nulls last
+      limit $2`,
+    [term, limit]
+  );
+
+  return result.rows.map(r => ({
+    memberId: r.member_id,
+    memberNo: r.member_no,
+    surname: r.surname ?? '',
+    name: r.name ?? '',
+    nic: r.nic ?? '',
+  }));
+}
+
+/**
+ * S-613 · Start an additional-account application for an existing member —
+ * opening an account type their membership did not already open for them
+ * (HSA, Investment, or anything else an administrator adds), through the
+ * same chain a membership application already uses (S-612).
+ *
+ * Unlike a membership application, there is no long form an officer
+ * gradually fills in before anything is worth keeping — picking a member
+ * and at least one account type already IS the value, so this creates the
+ * row immediately rather than waiting for a first keystroke the way
+ * startApplicationWithValues does.
+ */
+export async function startAdditionalAccountApplication(
+  existingMemberId: string,
+  accountTypeIds: string[],
+  actor: Actor
+): Promise<{ id: string; reference: string }> {
+  if (accountTypeIds.length === 0) {
+    throw new ApplicationError('Select at least one account type to open.');
+  }
+
+  return withTransaction(async client => {
+    const member = await client.query<{ status: string }>(
+      `select status from member where id = $1`,
+      [existingMemberId]
+    );
+    if (member.rowCount === 0) {
+      throw new ApplicationError('That member no longer exists.', 'not_found');
+    }
+    if (member.rows[0].status !== 'active') {
+      throw new ApplicationError(
+        'Only an active member may open a new account.'
+      );
+    }
+
+    // Neither active nor non-membership-default is optional here: the first
+    // keeps someone from opening an account for a type an administrator has
+    // since retired, the second is what keeps this flow from being used to
+    // open Shares or the MSA a second time — those open only on a
+    // membership's own approval (S-308, S-309).
+    const types = await client.query<{ id: string }>(
+      `select id from account_type
+        where id = any($1::uuid[]) and is_active and not is_membership_default`,
+      [accountTypeIds]
+    );
+    if (types.rowCount !== accountTypeIds.length) {
+      throw new ApplicationError(
+        'One of the selected account types is no longer available to open ' +
+          'this way.'
+      );
+    }
+
+    const created = await client.query<{ id: string; reference: string }>(
+      `insert into membership_application
+         (application_kind, existing_member_id, captured_by)
+       values ('additional_account', $1, $2)
+       returning id, reference`,
+      [existingMemberId, actor.userId]
+    );
+    const { id, reference } = created.rows[0];
+
+    for (const accountTypeId of accountTypeIds) {
+      await client.query(
+        `insert into application_account_selection
+           (application_id, account_type_id)
+         values ($1, $2)`,
+        [id, accountTypeId]
+      );
+    }
+
+    await recordAudit(
+      {
+        actorUserId: actor.userId,
+        actorDescription: actor.email,
+        action: 'membership.application.started',
+        entityType: 'membership_application',
+        entityId: id,
+        newValue: {
+          reference,
+          applicationKind: 'additional_account',
+          existingMemberId,
+          accountTypeIds,
+        },
+      },
+      client
+    );
+
+    return { id, reference };
+  });
+}
+
 // Is there anything here at all? What decides whether an application exists.
 export function hasAnyValue(parties: PartyValues[]): boolean {
   return parties.some(party =>

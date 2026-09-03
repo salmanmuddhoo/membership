@@ -974,13 +974,47 @@ Nothing yet creates a row with `application_kind = 'additional_account'` —
 every existing application defaults to `'membership'`, unaffected, so this
 migration changes no behaviour on its own. `capture.test.ts` exercises the
 constraint directly against the database rather than through application
-code that does not exist yet. The capture flow — selecting an existing
-member, choosing account type(s), the document/signature/payment shape that
-flow actually needs (no applicant to capture, no four-signature form,
-payment against each account type's own `minimum_opening_amount` rather
-than a membership fee schedule) and approval opening the selected
-account(s) under the existing member instead of creating one — is S-613,
-not yet built.
+code that does not exist yet.
+
+### S-613 · Additional-account applications, phase 2: the capture entry point
+
+**As** a Regional Officer, **I need** to start an additional-account
+application by finding the member and choosing what to open, **so that** an
+existing member does not need a fresh membership application for HSA,
+Investment, or any other product. _(officer feedback)_
+`Must · 5 · EPIC-04`
+
+- **Given** a search term matching a member's name, NIC or Member No.
+  **Then** only active members are offered — an additional account is
+  something an active member does
+- **Given** at least one account type is selected **Then** the application
+  is created immediately, the same way picking a membership type does —
+  there is no long form to wait on a first keystroke from first
+- **Given** a membership-default account type (Shares, the MSA) **Then** it
+  is refused — those open only on a membership's own approval (S-308, S-309),
+  never through this flow
+
+`searchExistingMembers` (`capture.ts`) mirrors `searchGuardianCandidates`'s
+own shape (S-604) — matched by surname, name, NIC or Member No., active
+only — left joined to `membership_application`/`application_party` rather
+than inner joined, so a legacy member M7 imports without an application
+(`member.application_id` is nullable for exactly that) is still found by
+Member No. once that milestone lands, not silently excluded.
+`startAdditionalAccountApplication` creates the `membership_application` row
+(`application_kind = 'additional_account'`) and its
+`application_account_selection` rows inside one transaction, refusing an
+inactive member, an empty selection, or a membership-default account type
+before anything is written.
+
+**What this phase does not yet reach**: `loadApplication` and everywhere
+else that reads an `Application` (the id page, `problemsBlockingSubmission`,
+document checklist, payment, and approval opening the selected account(s)
+instead of creating a member) still only ever sees a `'membership'` kind
+row — an additional-account application exists once started, but nothing
+yet lets an officer carry on working it. That is the next increment, not
+this one; `loadApplication` on such a row currently reports "not found"
+rather than a wrong or misleading read, since the query it runs still
+requires a `membership_type_id` no additional-account row has.
 
 ---
 
