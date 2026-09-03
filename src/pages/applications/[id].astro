@@ -635,7 +635,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
   title={`${application!.reference} · Al Barakah MCSL`}
   heading={`Application ${application!.reference}`}
 >
-  <div class="mx-auto max-w-4xl space-y-6">
+  <div class="mx-auto max-w-5xl space-y-6">
     <ApplicationTimeline steps={timeline} applicationId={application!.id} />
 
     <div
@@ -801,9 +801,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                   class="text-xs text-neutral-500 dark:text-neutral-400"
                   aria-live="polite"
                 />
-                {/* Saving is automatic. Without scripting it cannot be, so
-                      the button appears for the one reader who needs it
-                      rather than for everyone. */}
+                {/* Saving happens when Next is clicked, which is scripted.
+                      Without scripting neither Next nor autosave can run, so
+                      this button is the fallback for that one reader. */}
                 <noscript>
                   <button
                     type="submit"
@@ -1573,11 +1573,11 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     });
   }
 
-  // S-302, decision 14: an officer on a tablet must not lose work to a dropped
-  // connection. Saving is now automatic and there is no button to fall back
-  // on, so this has to be the guarantee rather than a convenience: a short
-  // pause after typing stops, a backstop interval, and every way of leaving
-  // the page. Without scripting the noscript button above is the fallback.
+  // S-614: saving happens once, when the officer clicks Next, rather than
+  // continuously while typing — a network call on every keystroke read as
+  // the app being slow. (Replaces the continuous background saving from
+  // S-302, decision 14; the noscript button above is still the fallback for
+  // a reader without scripting, since Next itself needs it.)
   // S-403, S-404 · Filing a document from the device.
   //
   // The bytes go from here straight to Microsoft, over a short-lived URL the
@@ -1812,10 +1812,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
   const status = document.getElementById('autosave-status');
 
   if (form && status) {
-    let dirty = false;
-    let pending: number | undefined;
-
-    const performSave = async () => {
+    const save = async (): Promise<boolean> => {
       const body = new FormData(form);
       body.set('intent', 'autosave');
 
@@ -1826,59 +1823,28 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           headers: { 'x-requested-with': 'autosave' },
         });
         if (!response.ok) throw new Error(String(response.status));
-        dirty = false;
         status.textContent = `Saved at ${new Date().toLocaleTimeString('en-GB')}`;
+        return true;
       } catch {
         // Saying "saved" when nothing was saved is the one thing this must
         // never do: the officer would close the tablet trusting it.
         status.textContent = 'Not saved — check your connection.';
+        return false;
       }
-    };
-
-    // Dispatches a save and makes every caller genuinely wait for it. A plain
-    // "in flight" boolean used to let a second caller — Next, arriving right
-    // behind focusout's own un-awaited save — walk straight past a save
-    // already running with nothing to await, so Next navigated before that
-    // save's fetch had finished and the browser could cancel it mid-flight.
-    // That is how a field filled in a moment before Next was clicked (a
-    // Nominee detail, say) went unsaved. Chaining onto the in-flight promise
-    // instead means a caller that arrives mid-save waits for it to land, then
-    // saves again if something changed in the meantime, rather than skipping
-    // its turn.
-    let saveInFlight: Promise<void> | null = null;
-    const save = (): Promise<void> => {
-      if (saveInFlight) return saveInFlight.then(save);
-      if (!dirty) return Promise.resolve();
-      saveInFlight = performSave().finally(() => {
-        saveInFlight = null;
-      });
-      return saveInFlight;
     };
 
     if (captureNextButton) {
       captureNextButton.addEventListener('click', async () => {
-        window.clearTimeout(pending);
         captureNextButton.disabled = true;
-        // Flushes whatever autosave has not yet sent. A no-op if nothing
-        // changed since the last save — save() itself checks `dirty`.
-        await save();
+        const saved = await save();
+        if (!saved) {
+          captureNextButton.disabled = false;
+          return;
+        }
         window.location.assign(
           window.location.pathname.replace(/\/$/, '') + '/print'
         );
       });
     }
-
-    form.addEventListener('input', () => {
-      dirty = true;
-      window.clearTimeout(pending);
-      pending = window.setTimeout(save, 2_000);
-    });
-    // Moving off a field is the moment the officer has finished with it.
-    form.addEventListener('focusout', () => void save());
-    window.setInterval(save, 20_000);
-    // Leaving the page or switching away is exactly when work is lost.
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'hidden') void save();
-    });
   }
 </script>

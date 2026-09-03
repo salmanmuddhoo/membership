@@ -1483,6 +1483,37 @@ routing is operational configuration, where a few seconds of staleness
 after a rare administrative change is a reasonable trade against paying
 for the same two queries three to five times on every click.
 
+### S-614, phase 7: save on Next instead of while typing, and one width for every capture form ✅
+
+**Saves once, on Next — not continuously while typing.** S-302, decision 14
+made autosave continuous (a pause after typing, a backstop interval, every
+way of leaving the page) so an officer on a tablet never lost work to a
+dropped connection. In practice a network call on every keystroke read as
+the application being slow. The three capture pages that autosaved this way
+(`applications/new.astro`, `applications/[id].astro`,
+`applications/[id]/customer.astro`) now save exactly once, when Next is
+clicked, in one request that carries everything on the form — the
+`intent=autosave` endpoint each posts to is unchanged, only what triggers it.
+The noscript fallback button (for a reader without scripting, who never sees
+a scripted Next at all) is unaffected.
+
+**One width for every capture form.** `new.astro`, `[id].astro`,
+`[id]/customer.astro`, `[id]/account.astro` and `new-account.astro` had
+drifted to four different outer widths (`max-w-4xl`, `max-w-3xl`,
+`max-w-2xl`) for no reason tied to what each form holds — a two-field
+"which account type" form read as a noticeably smaller box than the
+membership capture form next to it. All five, plus the `applications` list
+page they lead from, now share `max-w-5xl`.
+
+**"Start an application" matches the table below it, and its two actions
+share a line.** The `max-w-2xl` wrapper phase 6 put around the "Start an
+application" card (to match `new-account.astro`'s width at the time) is
+gone now that every width is `max-w-5xl` — the card reads at the same width
+as the "Applications" table underneath it, rather than narrower. "Member
+Registration" and "Open other account" moved from a stacked layout with a
+divider between them onto one row, the second pushed to the right-hand
+edge.
+
 ---
 
 # M7 — Legacy migration
