@@ -1552,6 +1552,235 @@ describe('S-612: additional-account applications share the table, not the type',
   });
 });
 
+describe('S-614: a non-member opening an account of their own — schema', () => {
+  // Phase 1 (migration 0027) is schema only, the same way S-612's own first
+  // phase was — no code yet creates a customer_account row, so this
+  // exercises the database's own constraints directly.
+  it('accepts a customer_account row that captures an applicant, no existing member', async () => {
+    const type = await run(
+      appUrl,
+      `select id from membership_type where code = 'individual'`
+    );
+    const application = await run(
+      appUrl,
+      `insert into membership_application
+         (application_kind, membership_type_id, captured_by)
+       values ('customer_account', $1, $2)
+       returning id, existing_member_id`,
+      [type.rows[0].id, officer.userId]
+    );
+    expect(application.rows[0].existing_member_id).toBeNull();
+  });
+
+  it('refuses a customer_account row with no membership type to capture against', async () => {
+    await expect(
+      run(
+        appUrl,
+        `insert into membership_application (application_kind, captured_by)
+         values ('customer_account', $1)`,
+        [officer.userId]
+      )
+    ).rejects.toThrowError(/membership_application_kind_shape/);
+  });
+
+  it('refuses a customer_account row that also names an existing member', async () => {
+    const { memberNo } = await seedMember('S6666666666660');
+    const member = await run(
+      appUrl,
+      `select id from member where member_no = $1`,
+      [memberNo]
+    );
+    const type = await run(
+      appUrl,
+      `select id from membership_type where code = 'individual'`
+    );
+
+    await expect(
+      run(
+        appUrl,
+        `insert into membership_application
+           (application_kind, membership_type_id, existing_member_id, captured_by)
+         values ('customer_account', $1, $2, $3)`,
+        [type.rows[0].id, member.rows[0].id, officer.userId]
+      )
+    ).rejects.toThrowError(/membership_application_kind_shape/);
+  });
+
+  it('is as bare as member — no name or NIC of its own', async () => {
+    const type = await run(
+      appUrl,
+      `select id from membership_type where code = 'individual'`
+    );
+    const application = await run(
+      appUrl,
+      `insert into membership_application
+         (application_kind, membership_type_id, captured_by)
+       values ('customer_account', $1, $2)
+       returning id`,
+      [type.rows[0].id, officer.userId]
+    );
+    const customer = await run(
+      appUrl,
+      `insert into customer (application_id) values ($1) returning id, status`,
+      [application.rows[0].id]
+    );
+    expect(customer.rows[0].status).toBe('active');
+
+    // One customer per application, the same way member.application_id is
+    // unique.
+    await expect(
+      run(appUrl, `insert into customer (application_id) values ($1)`, [
+        application.rows[0].id,
+      ])
+    ).rejects.toThrowError(/duplicate key/);
+  });
+
+  describe('a customer-owned account, beside a member-owned one', () => {
+    let hsaTypeId: string;
+
+    beforeAll(async () => {
+      const hsa = await runAsConfigurator(
+        appUrl,
+        `insert into account_type (code, name, category, number_prefix, is_membership_default)
+         values ('hsa_schema_test', 'HSA (schema test)', 'savings', 'HSA', false)
+         returning id`
+      );
+      hsaTypeId = hsa.rows[0].id;
+    });
+
+    async function newCustomer(): Promise<string> {
+      const type = await run(
+        appUrl,
+        `select id from membership_type where code = 'individual'`
+      );
+      const application = await run(
+        appUrl,
+        `insert into membership_application
+           (application_kind, membership_type_id, captured_by)
+         values ('customer_account', $1, $2)
+         returning id`,
+        [type.rows[0].id, officer.userId]
+      );
+      const customer = await run(
+        appUrl,
+        `insert into customer (application_id) values ($1) returning id`,
+        [application.rows[0].id]
+      );
+      return customer.rows[0].id;
+    }
+
+    it('accepts a customer-owned account with a number, no member', async () => {
+      const customerId = await newCustomer();
+      const number = await run(
+        appUrl,
+        `select next_customer_account_number($1) as n`,
+        [hsaTypeId]
+      );
+      const account = await run(
+        appUrl,
+        `insert into account (customer_id, account_type_id, account_no)
+         values ($1, $2, $3)
+         returning member_id`,
+        [customerId, hsaTypeId, number.rows[0].n]
+      );
+      expect(account.rows[0].member_id).toBeNull();
+      expect(number.rows[0].n).toMatch(/^HSA\d{4}$/);
+    });
+
+    it('refuses a customer-owned account with no number', async () => {
+      const customerId = await newCustomer();
+      await expect(
+        run(
+          appUrl,
+          `insert into account (customer_id, account_type_id) values ($1, $2)`,
+          [customerId, hsaTypeId]
+        )
+      ).rejects.toThrowError(/account_owner_shape/);
+    });
+
+    it('refuses an account with both a member and a customer', async () => {
+      const { memberNo } = await seedMember('S6666666666661');
+      const member = await run(
+        appUrl,
+        `select id from member where member_no = $1`,
+        [memberNo]
+      );
+      const customerId = await newCustomer();
+      const number = await run(
+        appUrl,
+        `select next_customer_account_number($1) as n`,
+        [hsaTypeId]
+      );
+
+      await expect(
+        run(
+          appUrl,
+          `insert into account (member_id, customer_id, account_type_id, account_no)
+           values ($1, $2, $3, $4)`,
+          [member.rows[0].id, customerId, hsaTypeId, number.rows[0].n]
+        )
+      ).rejects.toThrowError(/account_owner_shape/);
+    });
+
+    it('numbers each account sequentially, per account type', async () => {
+      const a = await run(
+        appUrl,
+        `select next_customer_account_number($1) as n`,
+        [hsaTypeId]
+      );
+      const b = await run(
+        appUrl,
+        `select next_customer_account_number($1) as n`,
+        [hsaTypeId]
+      );
+      expect(b.rows[0].n > a.rows[0].n).toBe(true);
+    });
+
+    it('refuses to number an account type with no prefix configured', async () => {
+      const noPrefix = await runAsConfigurator(
+        appUrl,
+        `insert into account_type (code, name, category, is_membership_default)
+         values ('no_prefix_schema_test', 'No prefix (test)', 'savings', false)
+         returning id`
+      );
+      await expect(
+        run(appUrl, `select next_customer_account_number($1) as n`, [
+          noPrefix.rows[0].id,
+        ])
+      ).rejects.toThrowError(/has no number_prefix set/);
+    });
+
+    it('lets a customer hold at most one account of each type', async () => {
+      const customerId = await newCustomer();
+      const first = await run(
+        appUrl,
+        `select next_customer_account_number($1) as n`,
+        [hsaTypeId]
+      );
+      await run(
+        appUrl,
+        `insert into account (customer_id, account_type_id, account_no)
+         values ($1, $2, $3)`,
+        [customerId, hsaTypeId, first.rows[0].n]
+      );
+      const second = await run(
+        appUrl,
+        `select next_customer_account_number($1) as n`,
+        [hsaTypeId]
+      );
+
+      await expect(
+        run(
+          appUrl,
+          `insert into account (customer_id, account_type_id, account_no)
+           values ($1, $2, $3)`,
+          [customerId, hsaTypeId, second.rows[0].n]
+        )
+      ).rejects.toThrowError(/account_one_per_type_per_customer_idx/);
+    });
+  });
+});
+
 describe('S-613: starting an additional-account application for an existing member', () => {
   // Out of the box every account_type ships is_membership_default (Shares,
   // MSA) — none of them a valid selection for this flow (S-613 refuses
