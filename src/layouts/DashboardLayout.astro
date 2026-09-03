@@ -35,10 +35,12 @@ const can = (permission: string) =>
 // Regional Manager, Secretary and President each see their own count, live
 // off the same query the "Your next step" section on an application itself
 // resolves from, not a number stored and incremented by hand. Zero renders
-// as no badge at all, same as nothing pending ever having existed.
+// as no badge at all, same as nothing pending ever having existed. The
+// middleware starts the count before the page's own reads (locals
+// .pendingActions) so it is usually already in by the time this awaits it.
 const applicationsBadge =
   principal && can('application.view')
-    ? await pendingActionCount(principal)
+    ? await (Astro.locals.pendingActions ?? pendingActionCount(principal))
     : 0;
 
 interface NavItem {

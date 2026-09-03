@@ -210,7 +210,7 @@ export function getDatabaseConfig(): DatabaseConfig {
   return {
     connectionString: normaliseSslMode(connectionString, allowInsecure),
     poolMax: readIntEnv('DATABASE_POOL_MAX', 3),
-    idleTimeoutMillis: readIntEnv('DATABASE_IDLE_TIMEOUT_MS', 10_000),
+    idleTimeoutMillis: readIntEnv('DATABASE_IDLE_TIMEOUT_MS', 60_000),
     connectionTimeoutMillis: readIntEnv('DATABASE_CONNECT_TIMEOUT_MS', 10_000),
     sslMode: allowInsecure ? 'disable' : 'verify',
   };

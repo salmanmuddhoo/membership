@@ -289,11 +289,11 @@ export async function loadPayment(id: string): Promise<Payment | null> {
     id,
   ]);
   if (result.rows.length === 0) return null;
-  return assemble(
-    result.rows,
-    await linesFor([id]),
-    await accountLinesFor([id])
-  )[0];
+  const [lines, accountLines] = await Promise.all([
+    linesFor([id]),
+    accountLinesFor([id]),
+  ]);
+  return assemble(result.rows, lines, accountLines)[0];
 }
 
 // Everything recorded against one application: the payment, and any refunds
@@ -306,7 +306,11 @@ export async function paymentsForApplication(
     [applicationId]
   );
   const ids = result.rows.map(r => r.id);
-  return assemble(result.rows, await linesFor(ids), await accountLinesFor(ids));
+  const [lines, accountLines] = await Promise.all([
+    linesFor(ids),
+    accountLinesFor(ids),
+  ]);
+  return assemble(result.rows, lines, accountLines);
 }
 
 /**
@@ -327,7 +331,11 @@ export async function paymentsForMember(memberId: string): Promise<Payment[]> {
     [memberId]
   );
   const ids = result.rows.map(r => r.id);
-  return assemble(result.rows, await linesFor(ids), await accountLinesFor(ids));
+  const [lines, accountLines] = await Promise.all([
+    linesFor(ids),
+    accountLinesFor(ids),
+  ]);
+  return assemble(result.rows, lines, accountLines);
 }
 
 // Has this application been paid for? What the timeline asks.
