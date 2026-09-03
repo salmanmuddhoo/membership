@@ -1060,6 +1060,36 @@ two account types both ask for is not listed twice.
 **Still ahead**, unchanged from phase 3's list above; this phase only fixed
 the checklist source.
 
+### S-613, phase 5 · The entry point actually exists — search, select, create ✅
+
+Phase 2 was titled "the capture entry point," but only ever shipped
+`searchExistingMembers` and `startAdditionalAccountApplication`
+(`capture.ts`) — nothing under `src/pages` called either, so there was no
+way for an officer to reach them. `/applications/new-account` is that page:
+search for an active member (mirrors the guardian search on the capture
+form, S-604, against a new `/api/v1/applications/existing-member-search`
+endpoint), select one or more account types (`listAccountTypes`, active and
+not membership-default), submit. A new "Open an account for an existing
+member" link sits under Start an application on `/applications`.
+
+Making the application reachable surfaced two more spots with the same
+inner-join bug phase 4 closed in `documents.ts` — `listApplications` and
+`deleteDraftApplication` (`capture.ts`) both joined `membership_type`, so an
+`additional_account` row (`membership_type_id` always null) would have
+vanished from the officer's own applications list, and an abandoned draft
+of one could not have been deleted. Both are left joins now;
+`listApplications` also names the row by the existing member and the
+account type(s) selected (`"Account: HSA + Investment"`) rather than a
+membership type it does not have.
+
+**Still no review page.** The list links a membership application's
+reference to `/applications/<id>` as before; an `additional_account` row's
+reference is plain text — `[id].astro` does not know how to show it yet
+(phase 3), so a dead link would be worse than none. Creating one redirects
+back to the list with a confirmation instead. **Still ahead**, unchanged:
+the officer-facing review page, the single-signature form, payment against
+`minimum_opening_amount`, and the approval path that opens the account(s).
+
 ---
 
 # M7 — Legacy migration

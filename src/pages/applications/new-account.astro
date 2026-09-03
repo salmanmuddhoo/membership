@@ -1,0 +1,254 @@
+---
+// Starting an additional-account application (S-613, phase 5).
+//
+// The "Existing Member" flow: find who this is for, choose what to open,
+// and the application exists — no applicant to capture, since the member
+// already is one. What happens after (documents, signature, payment, the
+// same Regional Manager → Secretary → President chain a membership
+// application already uses) is still ahead, the same way it was for
+// capture and read before this (docs/backlog.md, S-613).
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import {
+  ApplicationError,
+  startAdditionalAccountApplication,
+} from '@lib/applications/capture';
+import { listAccountTypes } from '@lib/config/reference';
+
+const principal = Astro.locals.principal!;
+if (!principal.permissions.has('application.capture')) {
+  return Astro.redirect('/denied');
+}
+
+// Any active, non-membership-default account type is a valid selection
+// (S-612) — nothing here names HSA or Investment specifically. Shares and
+// the MSA open only on a membership's own approval and never appear here.
+const accountTypes = (await listAccountTypes()).filter(
+  t => t.isActive && !t.isMembershipDefault
+);
+
+let error: string | null = null;
+// Echoed back on a failed submission so the officer is not made to search
+// again for a member or reselect account types they already picked.
+let memberId = '';
+let memberLabel = '';
+let selected = new Set<string>();
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  memberId = String(form.get('memberId') ?? '');
+  memberLabel = String(form.get('memberLabel') ?? '');
+  selected = new Set(form.getAll('accountTypeId').map(String));
+
+  if (!memberId) {
+    error = 'Search for the member and pick one before continuing.';
+  } else if (selected.size === 0) {
+    error = 'Select at least one account type to open.';
+  } else {
+    try {
+      const created = await startAdditionalAccountApplication(
+        memberId,
+        [...selected],
+        { userId: principal.userId, email: principal.email }
+      );
+      return Astro.redirect(
+        `/applications?created=${encodeURIComponent(created.reference)}`
+      );
+    } catch (err) {
+      if (err instanceof ApplicationError) {
+        error = err.message;
+      } else {
+        console.error('[applications/new-account]', err);
+        error = 'Something went wrong. Please try again.';
+      }
+    }
+  }
+}
+---
+
+<DashboardLayout
+  title="Open an account · Al Barakah MCSL"
+  heading="Open an account for an existing member"
+>
+  <div class="mx-auto max-w-2xl space-y-6">
+    <a
+      href="/applications"
+      class="inline-block text-sm text-neutral-500 underline dark:text-neutral-400"
+      >← All applications</a
+    >
+
+    {
+      error && (
+        <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+          {error}
+        </div>
+      )
+    }
+
+    {
+      accountTypes.length === 0 ? (
+        <p class="text-sm text-neutral-500 dark:text-neutral-400">
+          No account type is configured for this yet. Add one under
+          Configuration → Account types.
+        </p>
+      ) : (
+        <form
+          method="post"
+          class="space-y-6 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
+        >
+          <div class="relative" data-member-search>
+            <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+              Member
+              <input
+                type="text"
+                autocomplete="off"
+                placeholder="Name, NIC or Member No."
+                value={memberLabel}
+                data-member-search-input
+                class="mt-1 block w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+              />
+            </label>
+            <input type="hidden" name="memberId" value={memberId} />
+            <input type="hidden" name="memberLabel" value={memberLabel} />
+            <p
+              data-member-search-status
+              class="mt-1 text-xs text-neutral-500 dark:text-neutral-400"
+            />
+            <ul
+              data-member-search-results
+              hidden
+              class="absolute z-10 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-neutral-300 bg-white text-sm shadow-lg dark:border-neutral-600 dark:bg-neutral-900"
+            />
+          </div>
+
+          <fieldset>
+            <legend class="text-sm text-neutral-600 dark:text-neutral-300">
+              Account type(s) to open
+            </legend>
+            <div class="mt-2 space-y-2">
+              {accountTypes.map(t => (
+                <label class="flex items-center gap-2 text-sm text-neutral-800 dark:text-neutral-100">
+                  <input
+                    type="checkbox"
+                    name="accountTypeId"
+                    value={t.id}
+                    checked={selected.has(t.id)}
+                    class="rounded border-neutral-300 dark:border-neutral-600"
+                  />
+                  {t.name}
+                </label>
+              ))}
+            </div>
+          </fieldset>
+
+          <button
+            type="submit"
+            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
+          >
+            Open account
+          </button>
+        </form>
+      )
+    }
+  </div>
+</DashboardLayout>
+
+<script>
+  // Mirrors the guardian search on the capture form (CaptureFields.astro,
+  // S-604) — same debounce, same picker — against a different endpoint and
+  // active members only (S-613).
+  const wrapper = document.querySelector<HTMLElement>('[data-member-search]');
+  const input = wrapper?.querySelector<HTMLInputElement>(
+    '[data-member-search-input]'
+  );
+  const results = wrapper?.querySelector<HTMLUListElement>(
+    '[data-member-search-results]'
+  );
+  const status = wrapper?.querySelector<HTMLElement>(
+    '[data-member-search-status]'
+  );
+  const memberIdField = document.querySelector<HTMLInputElement>(
+    'input[name="memberId"]'
+  );
+  const memberLabelField = document.querySelector<HTMLInputElement>(
+    'input[name="memberLabel"]'
+  );
+
+  if (wrapper && input && results && status && memberIdField) {
+    interface Candidate {
+      memberId: string;
+      memberNo: string;
+      surname: string;
+      name: string;
+      nic: string;
+    }
+
+    const close = () => {
+      results.hidden = true;
+      results.replaceChildren();
+    };
+
+    const render = (candidates: Candidate[]) => {
+      results.replaceChildren();
+      if (candidates.length === 0) {
+        results.hidden = true;
+        return;
+      }
+      for (const candidate of candidates) {
+        const item = document.createElement('li');
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className =
+          'block w-full px-3 py-2 text-left hover:bg-neutral-100 dark:hover:bg-neutral-800';
+        const name = `${candidate.name} ${candidate.surname}`.trim();
+        button.innerHTML =
+          `<span class="block font-medium text-neutral-800 dark:text-neutral-100">${name || '(no name)'}</span>` +
+          `<span class="block text-xs text-neutral-500 dark:text-neutral-400">${candidate.memberNo}</span>`;
+        button.addEventListener('click', () => {
+          memberIdField.value = candidate.memberId;
+          const label = `${name} (${candidate.memberNo})`.trim();
+          if (memberLabelField) memberLabelField.value = label;
+          input.value = label;
+          status.textContent = `Selected ${candidate.memberNo}.`;
+          close();
+        });
+        item.appendChild(button);
+        results.appendChild(item);
+      }
+      results.hidden = false;
+    };
+
+    let pending: number | undefined;
+    input.addEventListener('input', () => {
+      // A fresh search means the previous pick no longer holds — the officer
+      // is looking for someone else, or correcting a mistake, and the form
+      // must not submit the old member under a changed search term.
+      memberIdField.value = '';
+      window.clearTimeout(pending);
+      const term = input.value.trim();
+      if (term.length < 2) {
+        close();
+        status.textContent = '';
+        return;
+      }
+      pending = window.setTimeout(async () => {
+        status.textContent = 'Searching…';
+        try {
+          const response = await fetch(
+            `/api/v1/applications/existing-member-search?q=${encodeURIComponent(term)}`
+          );
+          const body = await response.json();
+          if (!response.ok) throw new Error(body?.error?.message);
+          const candidates = body.data.candidates as Candidate[];
+          render(candidates);
+          status.textContent = candidates.length === 0 ? 'No match found.' : '';
+        } catch {
+          status.textContent = 'Search failed — check your connection.';
+        }
+      }, 300);
+    });
+
+    document.addEventListener('click', event => {
+      if (!wrapper.contains(event.target as Node)) close();
+    });
+  }
+</script>

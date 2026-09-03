@@ -958,12 +958,15 @@ export async function deleteDraftApplication(
       status: string;
       captured_by: string;
       created_at: Date;
-      membership_type_code: string;
+      membership_type_code: string | null;
     }>(
+      // Left joined: an additional_account draft (S-613) has no membership
+      // type to name, and an inner join here would read as "no such
+      // application" for an abandoned one an officer is trying to delete.
       `select a.reference, a.status, a.captured_by, a.created_at,
               m.code as membership_type_code
          from membership_application a
-         join membership_type m on m.id = a.membership_type_id
+         left join membership_type m on m.id = a.membership_type_id
         where a.id = $1
           for no key update of a`,
       [applicationId]
@@ -1079,6 +1082,10 @@ export async function listApplications(options: {
   Array<{
     id: string;
     reference: string;
+    applicationKind: 'membership' | 'additional_account';
+    // A membership type's name for a membership application; the selected
+    // account type(s), joined, for an additional_account one — there is no
+    // membership type to name (migration 0025).
     membershipTypeName: string;
     status: string;
     applicantName: string;
@@ -1089,22 +1096,40 @@ export async function listApplications(options: {
   const result = await query<{
     id: string;
     reference: string;
-    membership_type_name: string;
+    application_kind: 'membership' | 'additional_account';
+    membership_type_name: string | null;
+    account_type_names: string | null;
     status: string;
     applicant_name: string | null;
     captured_by_name: string;
     updated_at: Date;
   }>(
-    `select a.id, a.reference, m.name as membership_type_name, a.status,
-            trim(coalesce(p.values->>'name', '') || ' '
-                 || coalesce(p.values->>'surname', '')) as applicant_name,
+    `select a.id, a.reference, a.application_kind,
+            m.name as membership_type_name, accounts.names as account_type_names,
+            a.status,
+            trim(coalesce(p.values->>'name', ep.values->>'name', '') || ' '
+                 || coalesce(p.values->>'surname', ep.values->>'surname', ''))
+              as applicant_name,
             u.display_name as captured_by_name,
             a.updated_at
        from membership_application a
-       join membership_type m on m.id = a.membership_type_id
+       left join membership_type m on m.id = a.membership_type_id
        join app_user u        on u.id = a.captured_by
        left join application_party p
          on p.application_id = a.id and p.subject = 'applicant' and p.ordinal = 1
+       -- S-613: an additional_account application captures no applicant of
+       -- its own — the person is the existing member it names, whose own
+       -- name comes from the membership application that made them one.
+       left join member em on em.id = a.existing_member_id
+       left join application_party ep
+         on ep.application_id = em.application_id
+        and ep.subject = 'applicant' and ep.ordinal = 1
+       left join lateral (
+         select string_agg(t.name, ' + ' order by t.sort_order) as names
+           from application_account_selection s
+           join account_type t on t.id = s.account_type_id
+          where s.application_id = a.id
+       ) accounts on true
       where ($1::uuid is null or a.captured_by = $1::uuid)
         and ($2::text[] is null or a.status = any($2::text[]))
       order by a.updated_at desc
@@ -1115,7 +1140,11 @@ export async function listApplications(options: {
   return result.rows.map(r => ({
     id: r.id,
     reference: r.reference,
-    membershipTypeName: r.membership_type_name,
+    applicationKind: r.application_kind,
+    membershipTypeName:
+      r.application_kind === 'membership'
+        ? r.membership_type_name!
+        : `Account: ${r.account_type_names ?? '—'}`,
     status: r.status,
     applicantName: r.applicant_name || '(no name yet)',
     capturedByName: r.captured_by_name,
