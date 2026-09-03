@@ -75,6 +75,14 @@ async function loadAccountApplication(
 
 let application = id ? await loadAccountApplication(id) : null;
 if (!application) return new Response('Not found', { status: 404 });
+// A draft is the capturing officer's own work in progress — not something a
+// colleague browsing by URL should be able to open before it is submitted.
+if (
+  application.status === 'draft' &&
+  application.capturedBy !== principal.userId
+) {
+  return new Response('Not found', { status: 404 });
+}
 
 let error: string | null = null;
 let notice: string | null = null;

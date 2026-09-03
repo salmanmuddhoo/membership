@@ -1727,6 +1727,61 @@ nothing new. Clicking again reverses the order; an arrow marks which
 column and which direction. Selected checkboxes survive a sort — the
 rows are moved, not rebuilt.
 
+### Draft privacy, a persistent signature, and the Members page's own account buttons ✅
+
+**A draft was visible to every officer who could see the list, not just the
+one who started it.** Officer feedback: "only the officer that filled in
+that form should see those draft status applications." `listApplications`
+(capture.ts) gains a `viewerUserId` option that hides a `draft` row unless
+the viewer captured it — every other status stays exactly as visible as it
+already was to anyone holding `application.view`, since a draft is the
+only status that is still one officer's own work rather than something the
+Society has been handed. Hiding it from the list is not enough on its own:
+`[id].astro`, `customer.astro`, `account.astro` and `print.astro` each
+gain the same check on the record they load, so a colleague who already
+has the URL cannot open someone else's draft by typing it in either —
+answered as an ordinary "not found," the same as an id that does not
+exist, rather than a "forbidden" that would confirm a draft is there to
+someone not meant to see it.
+
+**A signature drawn on the print page vanished if the officer stepped
+back to fix something on capture.** The canvas was deliberately never
+persisted server-side (S-613 phase 8) — pixels on the page until printed,
+the same as ink is pixels on paper until scanned — but "until printed" was
+also, accidentally, "until the tab navigates," and Back is a navigation an
+officer needs for an ordinary correction, not a reason to redo every
+signature already collected. Each signed box now also saves its data URL
+to `sessionStorage`, keyed by the application and who signed, and restores
+it automatically when the print page loads — surviving Back-and-return the
+same tab already supports, gone the moment the tab actually closes, which
+is the same lifetime the signature already had.
+
+**The Members page led with an id nobody needed first, and could not show
+what a name search actually turns up until the officer followed a link
+away.** Officer feedback: drop the Type and From columns outright, move
+the id to the end of the row, and make it look like the account it names
+rather than a bare code — grey for an HSA account, blue for Investment,
+a third colour shared by Shares and the MSA, styled by the account type's
+own code and name (Configuration → Account types) rather than a fixed set
+this page would otherwise have to know by name. The row itself is now the
+link to the member's full record — applicant details, and, new on that
+page, a Nominee section (or, for a minor, the successor guardian and
+Takaful beneficiary) read from the same application the applicant details
+already come from, which that page had never shown before. Clicking an
+account's own button instead opens a small panel giving that account's
+opening deposit and when it was made, fetched from a new endpoint
+(`GET /api/v1/accounts/{id}/deposit`) only once a box is actually opened —
+groundwork for the transaction history (deposit, withdrawal, transfer)
+this is not yet: `depositForAccount` (payments.ts) reads what the account's
+own opening payment recorded, traced back through whichever application
+opened it, since the account row itself keeps no link to that payment.
+
+**Starting a fresh application lost the "← All applications" link the
+moment the page scrolled.** `new.astro` and `new-account.astro` — every
+entry point into capture, membership or an additional account alike — now
+wrap it in the same sticky `#application-nav` bar the id pages already
+use, rather than a plain link at the top of the page.
+
 ---
 
 # M7 — Legacy migration

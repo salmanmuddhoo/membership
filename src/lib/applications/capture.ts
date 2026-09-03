@@ -1370,6 +1370,12 @@ export async function deleteDraftApplication(
 
 export async function listApplications(options: {
   capturedBy?: string;
+  // Officer feedback: a draft is the officer's own work in progress, not
+  // something a colleague browsing the same list should see before they
+  // have chosen to submit it. Every OTHER status stays visible to anyone
+  // who already holds application.view — this narrows drafts alone, to
+  // whoever captured them.
+  viewerUserId?: string;
   statuses?: string[];
   limit?: number;
 }): Promise<
@@ -1428,9 +1434,17 @@ export async function listApplications(options: {
        ) accounts on true
       where ($1::uuid is null or a.captured_by = $1::uuid)
         and ($2::text[] is null or a.status = any($2::text[]))
+        and (a.status != 'draft'
+             or $3::uuid is null
+             or a.captured_by = $3::uuid)
       order by a.updated_at desc
-      limit $3::int`,
-    [options.capturedBy ?? null, options.statuses ?? null, options.limit ?? 100]
+      limit $4::int`,
+    [
+      options.capturedBy ?? null,
+      options.statuses ?? null,
+      options.viewerUserId ?? null,
+      options.limit ?? 100,
+    ]
   );
 
   return result.rows.map(r => ({

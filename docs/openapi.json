@@ -77,6 +77,106 @@
     }
   ],
   "paths": {
+    "/api/v1/accounts/{id}/deposit": {
+      "get": {
+        "summary": "Read one account's opening deposit",
+        "description": "The amount and date of the payment that opened this account, if one has been recorded. Not a running balance — there is no transaction history behind this account yet, only the deposit that opened it.",
+        "tags": [
+          "Payments"
+        ],
+        "operationId": "getAccountsIdDeposit",
+        "x-required-permission": "payment.view",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "deposit": {
+                          "type": [
+                            "object",
+                            "null"
+                          ],
+                          "required": [
+                            "amount",
+                            "currency",
+                            "depositedAt"
+                          ],
+                          "properties": {
+                            "amount": {
+                              "type": "string"
+                            },
+                            "currency": {
+                              "type": "string"
+                            },
+                            "depositedAt": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/admin/roles": {
       "get": {
         "summary": "List roles",

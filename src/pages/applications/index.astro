@@ -81,7 +81,10 @@ const created = Astro.url.searchParams.get('created');
 
 const filter = Astro.url.searchParams.get('status') ?? '';
 const [applications, types, chain] = await Promise.all([
-  listApplications(filter ? { statuses: [filter] } : {}),
+  listApplications({
+    ...(filter ? { statuses: [filter] } : {}),
+    viewerUserId: principal.userId,
+  }),
   listMembershipTypes(),
   activeChain(WORKFLOW_CODE),
 ]);

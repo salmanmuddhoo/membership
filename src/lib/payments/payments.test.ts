@@ -1075,6 +1075,85 @@ describe('what a member has paid', () => {
   });
 });
 
+// Members page feedback: what one account has received, and when — traced
+// back to the founding payment for Shares/the MSA (the account carries no
+// link of its own; see depositForAccount's own comment).
+describe('depositForAccount', () => {
+  it("reads the Shares deposit from the member's founding payment", async () => {
+    const { payments } = await load();
+    const application = await newApplication();
+    const payment = await payments.recordPayment(
+      { applicationId: application.id, method: 'cash', amounts: FULL },
+      principalFor(officer)
+    );
+    await run(
+      appUrl,
+      `update membership_application set status = 'approved' where id = $1`,
+      [application.id]
+    );
+    const member = await run(
+      appUrl,
+      `insert into member (application_id, membership_type_id)
+       select $1, membership_type_id from membership_application where id = $1
+       returning id`,
+      [application.id]
+    );
+    const sharesType = await run(
+      appUrl,
+      `select id from account_type where code = 'shares'`
+    );
+    const account = await run(
+      appUrl,
+      `insert into account (member_id, account_type_id, is_membership_default)
+       values ($1, $2, true) returning id`,
+      [member.rows[0].id, sharesType.rows[0].id]
+    );
+
+    const deposit = await payments.depositForAccount(account.rows[0].id);
+    expect(deposit).toEqual({
+      amount: FULL.shares,
+      currency: 'MUR',
+      depositedAt: payment.receivedAt,
+    });
+  });
+
+  it('finds nothing for an account with no recorded deposit', async () => {
+    const { payments } = await load();
+    const application = await newApplication();
+    await run(
+      appUrl,
+      `update membership_application set status = 'approved' where id = $1`,
+      [application.id]
+    );
+    const member = await run(
+      appUrl,
+      `insert into member (application_id, membership_type_id)
+       select $1, membership_type_id from membership_application where id = $1
+       returning id`,
+      [application.id]
+    );
+    const sharesType = await run(
+      appUrl,
+      `select id from account_type where code = 'shares'`
+    );
+    const account = await run(
+      appUrl,
+      `insert into account (member_id, account_type_id, is_membership_default)
+       values ($1, $2, true) returning id`,
+      [member.rows[0].id, sharesType.rows[0].id]
+    );
+
+    expect(await payments.depositForAccount(account.rows[0].id)).toBeNull();
+  });
+
+  it('returns null for an account that does not exist', async () => {
+    const { payments } = await load();
+    expect(
+      await payments.depositForAccount('00000000-0000-0000-0000-000000000000')
+    ).toBeNull();
+  });
+});
+
 describe('S-506: an exception leads back to its receipt', () => {
   // "An anomaly is found by the system rather than by an auditor" is only half
   // the job if the Treasurer then has to hunt for the receipt by hand.

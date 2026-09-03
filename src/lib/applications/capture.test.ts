@@ -1206,6 +1206,48 @@ describe('the application list staff work from', () => {
       []
     );
   });
+
+  // Officer feedback: "only the officer that filled in that form should see
+  // those draft status applications" — every other status stays visible to
+  // whoever already holds application.view, this narrows drafts alone.
+  it("hides another officer's draft from a viewer, but shows the officer their own", async () => {
+    const { capture } = await load();
+    const { id, reference } = await capture.startApplication(
+      'individual',
+      officer
+    );
+
+    const forColleague = await capture.listApplications({
+      viewerUserId: colleague.userId,
+    });
+    expect(forColleague.find(a => a.id === id)).toBeUndefined();
+
+    const forOfficer = await capture.listApplications({
+      viewerUserId: officer.userId,
+    });
+    expect(forOfficer.find(a => a.id === id)?.reference).toBe(reference);
+
+    // No viewer named at all (the option omitted) is the old, unnarrowed
+    // behaviour — still available to a caller that means to see every draft.
+    const unfiltered = await capture.listApplications({});
+    expect(unfiltered.find(a => a.id === id)?.reference).toBe(reference);
+  });
+
+  it('does not hide a non-draft application from another officer', async () => {
+    const { capture } = await load();
+    const { id } = await capture.startApplication('individual', officer);
+    await run(
+      appUrl,
+      `update membership_application set status = 'submitted_for_review'
+        where id = $1`,
+      [id]
+    );
+
+    const forColleague = await capture.listApplications({
+      viewerUserId: colleague.userId,
+    });
+    expect(forColleague.find(a => a.id === id)).toBeDefined();
+  });
 });
 
 describe('deleting a draft that is no longer needed', () => {
