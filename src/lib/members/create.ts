@@ -19,11 +19,20 @@ export class MemberCreationError extends Error {
 
 export interface CreatedMember {
   id: string;
+  // Empty for a customer (S-614's openAccountsForCustomerApplication) — a
+  // customer has no number of their own the way a member's AB number is one;
+  // each of their accounts carries its own instead (see accountNo below).
   memberNo: string;
-  // The accounts opened alongside the member, in configured order. They all
-  // carry the member's number — AB0001 is the member, their Shares account and
-  // their MSA — so the number is not repeated here.
-  accounts: { id: string; typeCode: string; typeName: string }[];
+  // The accounts opened alongside the member, in configured order. A
+  // member's carry no number of their own — the member's own number (above)
+  // already identifies them, which is why accountNo is optional here and set
+  // only by openAccountsForCustomerApplication.
+  accounts: {
+    id: string;
+    typeCode: string;
+    typeName: string;
+    accountNo?: string;
+  }[];
 }
 
 /**
@@ -298,6 +307,132 @@ export async function openAccountsForApplication(
   }
 
   return { id: application.existingMemberId, memberNo, accounts };
+}
+
+/**
+ * S-614 · Turn an approved customer_account application into a customer and
+ * the selected account(s), numbered from account_type.number_prefix
+ * (next_customer_account_number, migration 0027).
+ *
+ * The counterpart to openAccountsForApplication above, for someone who was
+ * never a member to begin with rather than one who already is — same reason
+ * that one sits beside createMemberFromApplication instead of inside it.
+ * `application.parties` already carries what a customer needs (captured the
+ * same way a membership application's applicant is); this only opens the
+ * accounts and creates the bare `customer` row (as bare as `member`, for the
+ * same reason — migration 0027) that ties them to it.
+ */
+export async function openAccountsForCustomerApplication(
+  client: PoolClient,
+  application: Application,
+  actor: Actor
+): Promise<CreatedMember> {
+  if (application.applicationKind !== 'customer_account') {
+    throw new MemberCreationError(
+      'This application does not open accounts for a non-member applicant.'
+    );
+  }
+
+  // Re-read now, not trusted from capture time — the same reason
+  // openAccountsForApplication above re-reads its own selection fresh.
+  const typeIds = application.selectedAccountTypes.map(t => t.id);
+  const types = await client.query<{
+    id: string;
+    code: string;
+    name: string;
+    default_status: string;
+    is_active: boolean;
+    number_prefix: string | null;
+  }>(
+    `select id, code, name, default_status, is_active, number_prefix
+       from account_type where id = any($1::uuid[])`,
+    [typeIds]
+  );
+  const byId = new Map(types.rows.map(t => [t.id, t]));
+  for (const selected of application.selectedAccountTypes) {
+    const type = byId.get(selected.id);
+    if (!type || !type.is_active) {
+      throw new MemberCreationError(
+        `${selected.name} is no longer available to open. Ask an ` +
+          'administrator before approving this application.'
+      );
+    }
+    // Checked here, not left to next_customer_account_number's own refusal,
+    // so a missing prefix is named against the type an administrator needs
+    // to fix rather than surfacing as a database error to whoever approves.
+    if (!type.number_prefix?.trim()) {
+      throw new MemberCreationError(
+        `${selected.name} has no account numbering set. Set one in ` +
+          'Configuration → Account types before approving.'
+      );
+    }
+  }
+
+  const customer = await client.query<{ id: string }>(
+    `insert into customer (application_id) values ($1) returning id`,
+    [application.id]
+  );
+  const customerId = customer.rows[0].id;
+
+  const accounts: CreatedMember['accounts'] = [];
+  for (const selected of application.selectedAccountTypes) {
+    const type = byId.get(selected.id)!;
+    const numbered = await client.query<{ account_no: string }>(
+      `select next_customer_account_number($1) as account_no`,
+      [type.id]
+    );
+    const accountNo = numbered.rows[0].account_no;
+
+    const account = await client.query<{ id: string }>(
+      `insert into account
+         (customer_id, account_type_id, account_no, is_membership_default,
+          status)
+       values ($1, $2, $3, false, $4)
+       returning id`,
+      [customerId, type.id, accountNo, type.default_status]
+    );
+    accounts.push({
+      id: account.rows[0].id,
+      typeCode: type.code,
+      typeName: type.name,
+      accountNo,
+    });
+  }
+
+  await recordAudit(
+    {
+      actorUserId: actor.userId,
+      actorDescription: actor.email,
+      action: 'customer.created',
+      entityType: 'customer',
+      entityId: customerId,
+      newValue: { fromApplication: application.reference },
+    },
+    client
+  );
+
+  // One entry per account, the same reason the other two creation paths
+  // above audit each one separately: they opened together, but each is its
+  // own thing to answer for.
+  for (const account of accounts) {
+    await recordAudit(
+      {
+        actorUserId: actor.userId,
+        actorDescription: actor.email,
+        action: 'account.opened',
+        entityType: 'account',
+        entityId: account.id,
+        newValue: {
+          accountNo: account.accountNo,
+          accountType: account.typeCode,
+          openedBecause: 'customer-account application approved',
+        },
+      },
+      client
+    );
+  }
+
+  return { id: customerId, memberNo: '', accounts };
 }
 
 export interface MemberSummary {

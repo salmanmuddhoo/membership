@@ -37,6 +37,7 @@ if (Astro.request.method === 'POST') {
             checklistId: String(form.get('checklistId') ?? '') || null,
             requiresApproval: form.get('requiresApproval') === 'on',
             defaultStatus: String(form.get('defaultStatus') ?? 'active'),
+            numberPrefix: String(form.get('numberPrefix') ?? '') || null,
           },
           actor
         );
@@ -54,6 +55,7 @@ if (Astro.request.method === 'POST') {
             requiresApproval: form.get('requiresApproval') === 'on',
             defaultStatus: String(form.get('defaultStatus') ?? 'active'),
             isActive: form.get('isActive') === 'on',
+            numberPrefix: String(form.get('numberPrefix') ?? '') || null,
           },
           actor
         );
@@ -190,6 +192,16 @@ const STATUSES = ['active', 'pending', 'inactive', 'dormant'];
                     ))}
                   </select>
                 </label>
+                <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                  Number prefix for a non-member's account (e.g. HSA)
+                  <input
+                    type="text"
+                    name="numberPrefix"
+                    value={type.numberPrefix ?? ''}
+                    disabled={!canManage}
+                    class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                  />
+                </label>
                 <label class="text-sm text-neutral-600 sm:col-span-2 dark:text-neutral-300">
                   Documents required to open
                   <select
@@ -307,6 +319,15 @@ const STATUSES = ['active', 'pending', 'inactive', 'dormant'];
                 inputmode="decimal"
                 name="minimumOpeningAmount"
                 value="0.00"
+                class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+              />
+            </label>
+            <label class="text-sm text-neutral-600 dark:text-neutral-300">
+              Number prefix for a non-member's account (e.g. HSA)
+              <input
+                type="text"
+                name="numberPrefix"
+                placeholder="Only needed to open this for a non-member"
                 class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
               />
             </label>

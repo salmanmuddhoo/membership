@@ -16,6 +16,7 @@ import { checkSegregation } from '../admin/segregation';
 import {
   checklistForAccountTypes,
   checklistForMembershipType,
+  checklistForMembershipTypeAndAccountTypes,
   type FieldSubject,
 } from '../config/reference';
 import { query, withTransaction } from '../db/pool';
@@ -166,11 +167,19 @@ export async function ensureFolderPath(
 }
 
 // What decides the checklist for this owner: a membership type's own
-// checklist, or — for an S-612 additional-account application, which has no
-// membership type — the union of its selected account types' checklists.
+// checklist; for an S-612 additional-account application, which has no
+// membership type, the union of its selected account types' checklists; or
+// for an S-614 customer_account application — which has both, reusing a
+// membership type's field configuration to capture an applicant who selects
+// account types the same way additional_account does — the union of both.
 type ChecklistSource =
   | { kind: 'membership_type'; code: string }
-  | { kind: 'account_types'; codes: string[] };
+  | { kind: 'account_types'; codes: string[] }
+  | {
+      kind: 'membership_type_and_account_types';
+      membershipCode: string;
+      accountCodes: string[];
+    };
 
 interface OwnerRow {
   application_id: string | null;
@@ -186,7 +195,8 @@ async function resolveOwner(
   if (applicationId) {
     const result = await query<{
       reference: string;
-      application_kind: 'membership' | 'additional_account';
+      application_kind:
+        'membership' | 'additional_account' | 'customer_account';
       membership_type_code: string | null;
     }>(
       `select a.reference, a.application_kind, m.code as membership_type_code
@@ -203,21 +213,27 @@ async function resolveOwner(
     }
     const row = result.rows[0];
 
+    const selectedAccountCodes = async (): Promise<string[]> =>
+      (
+        await query<{ code: string }>(
+          `select t.code
+             from application_account_selection s
+             join account_type t on t.id = s.account_type_id
+            where s.application_id = $1`,
+          [applicationId]
+        )
+      ).rows.map(r => r.code);
+
     const checklistSource: ChecklistSource =
       row.application_kind === 'membership'
         ? { kind: 'membership_type', code: row.membership_type_code! }
-        : {
-            kind: 'account_types',
-            codes: (
-              await query<{ code: string }>(
-                `select t.code
-                   from application_account_selection s
-                   join account_type t on t.id = s.account_type_id
-                  where s.application_id = $1`,
-                [applicationId]
-              )
-            ).rows.map(r => r.code),
-          };
+        : row.application_kind === 'customer_account'
+          ? {
+              kind: 'membership_type_and_account_types',
+              membershipCode: row.membership_type_code!,
+              accountCodes: await selectedAccountCodes(),
+            }
+          : { kind: 'account_types', codes: await selectedAccountCodes() };
 
     return {
       application_id: applicationId,
@@ -286,7 +302,12 @@ export async function checklistFor(options: {
   const configured =
     owner.checklist_source.kind === 'membership_type'
       ? await checklistForMembershipType(owner.checklist_source.code)
-      : await checklistForAccountTypes(owner.checklist_source.codes);
+      : owner.checklist_source.kind === 'membership_type_and_account_types'
+        ? await checklistForMembershipTypeAndAccountTypes(
+            owner.checklist_source.membershipCode,
+            owner.checklist_source.accountCodes
+          )
+        : await checklistForAccountTypes(owner.checklist_source.codes);
 
   const filed = await query<{
     id: string;

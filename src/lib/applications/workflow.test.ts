@@ -2071,3 +2071,167 @@ describe('S-613: an additional-account application, end to end', () => {
     ).rejects.toThrowError(/does not open an account/);
   });
 });
+
+// S-614, phase 3: someone not yet on the system at all shares the exact same
+// chain both a membership and an additional-account application do — proved
+// here the same way S-613's own end-to-end test proves it for an existing
+// member. openAccountsForCustomerApplication (members/create.ts) is the
+// decide callback, the counterpart to createMemberFromApplication and
+// openAccountsForApplication for someone who was never a member to begin
+// with.
+describe('S-614: a customer_account application, end to end', () => {
+  let accountTypeId: string;
+  let accountTypeName: string;
+
+  beforeAll(async () => {
+    const type = await runAsActor(
+      `insert into account_type
+         (code, name, category, minimum_opening_amount, is_membership_default,
+          number_prefix)
+       values ('hsa_customer_test', 'Hajj Savings (customer test)', 'savings',
+               1000.00, false, 'HSA')
+       returning id, name`
+    );
+    accountTypeId = type.rows[0].id;
+    accountTypeName = type.rows[0].name;
+  });
+
+  it('takes an application from capture to an opened, numbered account for a non-member', async () => {
+    const { capture, workflow, members, documents, payments } = await load();
+    const actor = { userId: officer.userId, email: officer.email };
+
+    const application = await capture.startCustomerAccountApplication(
+      [accountTypeId],
+      officer
+    );
+    // Nothing was captured at start — the applicant's own details are filled
+    // in the same way a membership application's are, against the same
+    // fields (S-614 phase 2).
+    await capture.saveDraft(application.id, COMPLETE_INDIVIDUAL, actor);
+    await fileRequiredDocuments(documents, application.id);
+    await verifyRequiredDocuments(documents, application.id);
+
+    const paymentClerk: Principal = {
+      ...officer,
+      permissions: new Set([...officer.permissions, 'payment.record']),
+    };
+    await payments.recordAccountOpeningPayment(
+      {
+        applicationId: application.id,
+        method: 'cash',
+        amounts: { [accountTypeId]: '1000.00' },
+      },
+      paymentClerk
+    );
+
+    const submitted = await workflow.submitApplication(application.id, officer);
+    expect(submitted).toEqual({ status: 'new' });
+
+    const reviewed = await workflow.reviewApplication(
+      application.id,
+      { outcome: 'forward', comment: 'Payment confirmed.' },
+      secretary
+    );
+    expect(reviewed.status).toBe('submitted_for_approval');
+
+    const decided = await workflow.decideApplication(
+      application.id,
+      { outcome: 'approve', comment: '' },
+      president,
+      members.openAccountsForCustomerApplication
+    );
+
+    expect(decided.status).toBe('approved');
+    // Not a member — nothing named memberNo here, unlike either of the other
+    // two kinds.
+    expect(decided.member?.memberNo).toBe('');
+    expect(decided.member?.accounts).toEqual([
+      expect.objectContaining({
+        typeName: accountTypeName,
+        accountNo: expect.stringMatching(/^HSA\d{4}$/),
+      }),
+    ]);
+
+    const customer = await run(
+      appUrl,
+      `select id, application_id from customer where id = $1`,
+      [decided.member!.id]
+    );
+    expect(customer.rows[0].application_id).toBe(application.id);
+
+    const account = await run(
+      appUrl,
+      `select member_id, customer_id, account_no
+         from account where id = $1`,
+      [decided.member!.accounts[0].id]
+    );
+    expect(account.rows[0].member_id).toBeNull();
+    expect(account.rows[0].customer_id).toBe(decided.member!.id);
+    expect(account.rows[0].account_no).toBe(
+      decided.member!.accounts[0].accountNo
+    );
+  });
+
+  it('refuses to open an account of a type with no numbering configured', async () => {
+    const { capture, workflow, members, documents, payments } = await load();
+    const actor = { userId: officer.userId, email: officer.email };
+
+    const unprefixed = await runAsActor(
+      `insert into account_type
+         (code, name, category, minimum_opening_amount, is_membership_default)
+       values ('inv_no_prefix_test', 'Investment (no prefix)', 'savings',
+               500.00, false)
+       returning id`
+    );
+
+    const application = await capture.startCustomerAccountApplication(
+      [unprefixed.rows[0].id],
+      officer
+    );
+    await capture.saveDraft(application.id, COMPLETE_INDIVIDUAL, actor);
+    await fileRequiredDocuments(documents, application.id);
+    await verifyRequiredDocuments(documents, application.id);
+    await payments.recordAccountOpeningPayment(
+      {
+        applicationId: application.id,
+        method: 'cash',
+        amounts: { [unprefixed.rows[0].id]: '500.00' },
+      },
+      {
+        ...officer,
+        permissions: new Set([...officer.permissions, 'payment.record']),
+      }
+    );
+    await workflow.submitApplication(application.id, officer);
+    await workflow.reviewApplication(
+      application.id,
+      { outcome: 'forward', comment: 'ok' },
+      secretary
+    );
+
+    await expect(
+      workflow.decideApplication(
+        application.id,
+        { outcome: 'approve', comment: '' },
+        president,
+        members.openAccountsForCustomerApplication
+      )
+    ).rejects.toThrowError(/no account numbering set/);
+  });
+
+  it('refuses openAccountsForCustomerApplication for a membership application', async () => {
+    const { capture, members } = await load();
+    const id = await captureComplete();
+    const application = (await capture.loadApplication(id))!;
+
+    const { withTransaction } = await import('../db/pool');
+    await expect(
+      withTransaction(client =>
+        members.openAccountsForCustomerApplication(client, application, {
+          userId: officer.userId,
+          email: officer.email,
+        })
+      )
+    ).rejects.toThrowError(/does not open accounts for a non-member/);
+  });
+});

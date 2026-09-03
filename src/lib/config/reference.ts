@@ -305,6 +305,11 @@ export interface AccountType {
   isMembershipDefault: boolean;
   isActive: boolean;
   sortOrder: number;
+  // S-614: what a non-member's account of this type is numbered with —
+  // HSA0001, INV0001, whatever an administrator sets. Null until a
+  // customer_account application needs one (next_customer_account_number,
+  // migration 0027, refuses to open an account of a type with none set).
+  numberPrefix: string | null;
 }
 
 // numeric comes back from node-postgres as a string, and it stays one all the
@@ -324,11 +329,12 @@ export async function listAccountTypes(): Promise<AccountType[]> {
     is_membership_default: boolean;
     is_active: boolean;
     sort_order: number;
+    number_prefix: string | null;
   }>(
     `select a.id, a.code, a.name, a.category, a.minimum_opening_amount,
             a.checklist_id, c.name as checklist_name,
             a.requires_approval, a.default_status, a.is_membership_default,
-            a.is_active, a.sort_order
+            a.is_active, a.sort_order, a.number_prefix
        from account_type a
        left join document_checklist c on c.id = a.checklist_id
       order by a.sort_order, a.name`
@@ -347,6 +353,7 @@ export async function listAccountTypes(): Promise<AccountType[]> {
     isMembershipDefault: r.is_membership_default,
     isActive: r.is_active,
     sortOrder: r.sort_order,
+    numberPrefix: r.number_prefix,
   }));
 }
 
@@ -358,6 +365,9 @@ export interface AccountTypeInput {
   checklistId: string | null;
   requiresApproval: boolean;
   defaultStatus: string;
+  // S-614: optional — most account types (Shares, the MSA) never open
+  // through the customer_account flow and need no number of their own.
+  numberPrefix?: string | null;
 }
 
 const CODE_PATTERN = /^[a-z][a-z0-9_]{1,39}$/;
@@ -400,9 +410,9 @@ export async function createAccountType(
     const result = await client.query<{ id: string }>(
       `insert into account_type
          (code, name, category, minimum_opening_amount, checklist_id,
-          requires_approval, default_status,
+          requires_approval, default_status, number_prefix,
           sort_order)
-       values ($1, $2, $3, $4, $5, $6, $7,
+       values ($1, $2, $3, $4, $5, $6, $7, $8,
                coalesce((select max(sort_order) + 1 from account_type), 1))
        returning id`,
       [
@@ -413,6 +423,7 @@ export async function createAccountType(
         input.checklistId,
         input.requiresApproval,
         input.defaultStatus,
+        input.numberPrefix?.trim() || null,
       ]
     );
     return result.rows[0].id;
@@ -455,7 +466,7 @@ export async function updateAccountType(
       `update account_type
           set name = $2, category = $3, minimum_opening_amount = $4,
               checklist_id = $5, requires_approval = $6, default_status = $7,
-              is_active = $8
+              is_active = $8, number_prefix = $9
         where id = $1`,
       [
         id,
@@ -466,6 +477,7 @@ export async function updateAccountType(
         input.requiresApproval,
         input.defaultStatus,
         input.isActive,
+        input.numberPrefix?.trim() || null,
       ]
     );
     if (result.rowCount === 0) {
@@ -1141,6 +1153,44 @@ export async function checklistForAccountTypes(
       sortOrder: r.sort_order,
     });
     bySubject.set(r.subject, list);
+  }
+  return bySubject;
+}
+
+// S-614 · The checklist for a customer_account application — the union of
+// the Individual membership type's own checklist (the applicant is captured
+// the same way a membership application's is, so the same KYC pack applies)
+// and the selected account types' own checklist (checklistForAccountTypes'
+// own union, unchanged). A document required by either side is required
+// here; where the same document type appears on both sides, "required" wins
+// over "optional", the same rule checklistForAccountTypes already applies
+// between its own several account types.
+export async function checklistForMembershipTypeAndAccountTypes(
+  membershipTypeCode: string,
+  accountTypeCodes: string[]
+): Promise<Map<FieldSubject, ChecklistItem[]>> {
+  const [membership, accounts] = await Promise.all([
+    checklistForMembershipType(membershipTypeCode),
+    checklistForAccountTypes(accountTypeCodes),
+  ]);
+
+  const bySubject = new Map<FieldSubject, ChecklistItem[]>();
+  for (const [subject, items] of membership) {
+    bySubject.set(subject, [...items]);
+  }
+  for (const [subject, items] of accounts) {
+    const existing = bySubject.get(subject) ?? [];
+    for (const item of items) {
+      const already = existing.find(
+        e => e.documentTypeId === item.documentTypeId
+      );
+      if (already) {
+        if (item.requirement === 'required') already.requirement = 'required';
+      } else {
+        existing.push(item);
+      }
+    }
+    bySubject.set(subject, existing);
   }
   return bySubject;
 }

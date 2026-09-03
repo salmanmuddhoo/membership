@@ -135,6 +135,7 @@ async function load() {
   return {
     documents: await import('./documents'),
     config: await import('../config/reference'),
+    capture: await import('../applications/capture'),
   };
 }
 
@@ -299,6 +300,48 @@ describe('S-612: the checklist for an additional-account application comes from 
     expect(checklist.every(e => e.state === 'missing')).toBe(true);
     expect(checklist.map(e => e.documentCode)).toEqual(
       expect.arrayContaining(['id_card'])
+    );
+  });
+});
+
+// S-614: a customer_account application reuses the Individual type's own
+// field configuration to capture an applicant (S-614 phase 2) — its
+// checklist has to reuse that type's own KYC pack the same way, unioned
+// with whatever the selected account type asks for, rather than falling
+// into the additional_account branch above and losing the KYC pack
+// entirely.
+describe('S-614: the checklist for a customer_account application unions the applicant’s own KYC pack with the account type’s', () => {
+  it('lists both the Individual KYC pack and what the selected account type requires', async () => {
+    const { capture, documents } = await load();
+
+    const checklist = await run(
+      appUrl,
+      `select id from document_checklist where code = 'msa_opening'`
+    );
+    const accountType = await runAsConfigurator(
+      appUrl,
+      `insert into account_type
+         (code, name, category, minimum_opening_amount, checklist_id,
+          is_membership_default)
+       values ('hsa_customer_docs_test', 'HSA (customer documents test)',
+               'savings', 1000, '${checklist.rows[0].id}', false)
+       returning id`
+    );
+
+    const application = await capture.startCustomerAccountApplication(
+      [accountType.rows[0].id],
+      { userId: officer.userId, email: officer.email }
+    );
+
+    const entries = await documents.checklistFor({
+      applicationId: application.id,
+    });
+
+    // Individual's own applicant pack — utility_bill and signed_form are not
+    // part of msa_opening's own checklist, so their presence proves the
+    // union reaches beyond the account type's side.
+    expect(entries.map(e => e.documentCode)).toEqual(
+      expect.arrayContaining(['id_card', 'utility_bill', 'signed_form'])
     );
   });
 });

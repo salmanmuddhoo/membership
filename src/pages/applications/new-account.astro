@@ -1,16 +1,21 @@
 ---
-// Starting an additional-account application (S-613, phase 5).
+// Starting an application to open an account outside a membership (S-613,
+// phase 5; S-614, phase 3).
 //
-// The "Existing Member" flow: find who this is for, choose what to open,
-// and the application exists — no applicant to capture, since the member
-// already is one. What happens after (documents, signature, payment, the
-// same Regional Manager → Secretary → President chain a membership
-// application already uses) is still ahead, the same way it was for
-// capture and read before this (docs/backlog.md, S-613).
+// Two people can want this: an existing member opening a type their
+// membership did not already open for them, and someone not on the system
+// at all, opening one of their own. Both pick from the same account types
+// and go through the same review chain after this (Regional Manager →
+// Secretary → President), so this page asks one question — "is this for
+// an existing member?" — and only then differs in what else it needs:
+// which member, for one; the applicant's own details, captured the same way
+// a membership application's are, for the other (business direction: no new
+// form to design for this).
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import {
   ApplicationError,
   startAdditionalAccountApplication,
+  startCustomerAccountApplication,
 } from '@lib/applications/capture';
 import { listAccountTypes } from '@lib/config/reference';
 
@@ -29,21 +34,23 @@ const accountTypes = (await listAccountTypes()).filter(
 let error: string | null = null;
 // Echoed back on a failed submission so the officer is not made to search
 // again for a member or reselect account types they already picked.
+let isMember = true;
 let memberId = '';
 let memberLabel = '';
 let selected = new Set<string>();
 
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
+  isMember = String(form.get('isMember') ?? 'yes') !== 'no';
   memberId = String(form.get('memberId') ?? '');
   memberLabel = String(form.get('memberLabel') ?? '');
   selected = new Set(form.getAll('accountTypeId').map(String));
 
-  if (!memberId) {
+  if (isMember && !memberId) {
     error = 'Search for the member and pick one before continuing.';
   } else if (selected.size === 0) {
     error = 'Select at least one account type to open.';
-  } else {
+  } else if (isMember) {
     try {
       const created = await startAdditionalAccountApplication(
         memberId,
@@ -61,13 +68,31 @@ if (Astro.request.method === 'POST') {
         error = 'Something went wrong. Please try again.';
       }
     }
+  } else {
+    try {
+      const created = await startCustomerAccountApplication([...selected], {
+        userId: principal.userId,
+        email: principal.email,
+      });
+      // Nothing about the applicant is captured yet — the officer fills that
+      // in on the application itself, the same way a membership
+      // application's capture form works.
+      return Astro.redirect(`/applications/${created.id}/customer`);
+    } catch (err) {
+      if (err instanceof ApplicationError) {
+        error = err.message;
+      } else {
+        console.error('[applications/new-account]', err);
+        error = 'Something went wrong. Please try again.';
+      }
+    }
   }
 }
 ---
 
 <DashboardLayout
   title="Open an account · Al Barakah MCSL"
-  heading="Open an account for an existing member"
+  heading="Open an account"
 >
   <div class="mx-auto max-w-2xl space-y-6">
     <a
@@ -95,7 +120,37 @@ if (Astro.request.method === 'POST') {
           method="post"
           class="space-y-6 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
         >
-          <div class="relative" data-member-search>
+          <fieldset>
+            <legend class="text-sm text-neutral-600 dark:text-neutral-300">
+              Is this for an existing member?
+            </legend>
+            <div class="mt-2 flex gap-4">
+              <label class="flex items-center gap-2 text-sm text-neutral-800 dark:text-neutral-100">
+                <input
+                  type="radio"
+                  name="isMember"
+                  value="yes"
+                  checked={isMember}
+                  data-is-member-toggle
+                  class="text-mint-500 focus:ring-mint-400 border-neutral-300 dark:border-neutral-600"
+                />
+                Yes
+              </label>
+              <label class="flex items-center gap-2 text-sm text-neutral-800 dark:text-neutral-100">
+                <input
+                  type="radio"
+                  name="isMember"
+                  value="no"
+                  checked={!isMember}
+                  data-is-member-toggle
+                  class="text-mint-500 focus:ring-mint-400 border-neutral-300 dark:border-neutral-600"
+                />
+                No
+              </label>
+            </div>
+          </fieldset>
+
+          <div class="relative" data-member-search hidden={!isMember}>
             <label class="block text-sm text-neutral-600 dark:text-neutral-300">
               Member
               <input
@@ -119,6 +174,13 @@ if (Astro.request.method === 'POST') {
               class="absolute z-10 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-neutral-300 bg-white text-sm shadow-lg dark:border-neutral-600 dark:bg-neutral-900"
             />
           </div>
+
+          {!isMember && (
+            <p class="text-sm text-neutral-500 dark:text-neutral-400">
+              Their own details are filled in on the next screen — the same
+              information an Individual membership application asks for.
+            </p>
+          )}
 
           <fieldset>
             <legend class="text-sm text-neutral-600 dark:text-neutral-300">
@@ -153,6 +215,25 @@ if (Astro.request.method === 'POST') {
 </DashboardLayout>
 
 <script>
+  // Yes/No toggles whether the member search shows at all — without
+  // scripting the server's own isMember default (checked on load) is what
+  // decides it, since there is no other way to react to a choice not yet
+  // submitted.
+  const memberToggles = [
+    ...document.querySelectorAll<HTMLInputElement>('[data-is-member-toggle]'),
+  ];
+  const memberSearchWrapper = document.querySelector<HTMLElement>(
+    '[data-member-search]'
+  );
+  const syncMemberSearchVisibility = () => {
+    if (!memberSearchWrapper) return;
+    const checked = memberToggles.find(t => t.checked);
+    memberSearchWrapper.hidden = checked?.value === 'no';
+  };
+  for (const toggle of memberToggles) {
+    toggle.addEventListener('change', syncMemberSearchVisibility);
+  }
+
   // Mirrors the guardian search on the capture form (CaptureFields.astro,
   // S-604) — same debounce, same picker — against a different endpoint and
   // active members only (S-613).

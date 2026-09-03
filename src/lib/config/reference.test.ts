@@ -556,6 +556,47 @@ describe('S-206: the accounts a membership opens', () => {
       )
     ).rejects.toThrowError(/lowercase letters/);
   });
+
+  // S-614: what a non-member's account of this type is numbered with —
+  // read back through listAccountTypes and settable through both create and
+  // update, the same as every other fact about an account type.
+  it('persists the number prefix a non-member’s account is numbered with', async () => {
+    const { config } = await load();
+
+    const id = await config.createAccountType(
+      {
+        code: 's614_prefix_test',
+        name: 'S-614 prefix test',
+        category: 'savings',
+        minimumOpeningAmount: '0',
+        checklistId: null,
+        requiresApproval: false,
+        defaultStatus: 'active',
+        numberPrefix: 'HSA',
+      },
+      actor
+    );
+
+    let type = (await config.listAccountTypes()).find(t => t.id === id)!;
+    expect(type.numberPrefix).toBe('HSA');
+
+    await config.updateAccountType(
+      id,
+      {
+        name: type.name,
+        category: type.category,
+        minimumOpeningAmount: type.minimumOpeningAmount,
+        checklistId: type.checklistId,
+        requiresApproval: type.requiresApproval,
+        defaultStatus: type.defaultStatus,
+        isActive: type.isActive,
+        numberPrefix: null,
+      },
+      actor
+    );
+    type = (await config.listAccountTypes()).find(t => t.id === id)!;
+    expect(type.numberPrefix).toBeNull();
+  });
 });
 
 describe('S-207: fee schedules', () => {
@@ -906,6 +947,76 @@ describe('S-208: document types and dynamic checklists', () => {
     it('is empty for no selection', async () => {
       const { config } = await load();
       expect(await config.checklistForAccountTypes([])).toEqual(new Map());
+    });
+  });
+
+  describe('S-614: the checklist for a customer_account application', () => {
+    it('unions the Individual type’s own checklist with the selected account types', async () => {
+      const { config } = await load();
+
+      const certRegistration = (await config.listDocumentTypes()).find(
+        d => d.code === 'cert_registration'
+      )!;
+      const idCard = (await config.listDocumentTypes()).find(
+        d => d.code === 'id_card'
+      )!;
+      const list = await runAsConfigurator(
+        appUrl,
+        `insert into document_checklist (code, name, description)
+         values ('s614_test', 'S-614 test', '') returning id`
+      );
+      await runAsConfigurator(
+        appUrl,
+        `insert into document_checklist_item
+           (checklist_id, document_type_id, subject, requirement, sort_order)
+         values
+           ('${list.rows[0].id}', '${certRegistration.id}', 'applicant',
+            'optional', 1),
+           ('${list.rows[0].id}', '${idCard.id}', 'applicant', 'optional', 2)`
+      );
+      const type = await runAsConfigurator(
+        appUrl,
+        `insert into account_type
+           (code, name, category, checklist_id, is_membership_default)
+         values ('s614_type', 'S-614 type', 'savings',
+                 '${list.rows[0].id}', false)
+         returning code`
+      );
+
+      const union = await config.checklistForMembershipTypeAndAccountTypes(
+        'individual',
+        [type.rows[0].code]
+      );
+      const applicant = union.get('applicant')!;
+
+      // Individual's own KYC pack is still there — none of it dropped for
+      // the account type's own checklist being unioned in.
+      expect(applicant.map(i => i.documentCode)).toEqual(
+        expect.arrayContaining(['id_card', 'utility_bill', 'signed_form'])
+      );
+
+      // cert_registration is not part of Individual's own checklist at all
+      // — added here purely because the selected account type asks for it.
+      expect(
+        applicant.find(i => i.documentCode === 'cert_registration')?.requirement
+      ).toBe('optional');
+
+      // id_card is required on Individual's own checklist; the account
+      // type here leaves it optional, and the stricter side still wins.
+      const idCardItems = applicant.filter(i => i.documentCode === 'id_card');
+      expect(idCardItems).toHaveLength(1);
+      expect(idCardItems[0].requirement).toBe('required');
+    });
+
+    it('is just the membership type’s own checklist with no account types selected', async () => {
+      const { config } = await load();
+      const individualOnly =
+        await config.checklistForMembershipType('individual');
+      const union = await config.checklistForMembershipTypeAndAccountTypes(
+        'individual',
+        []
+      );
+      expect(union).toEqual(individualOnly);
     });
   });
 });
