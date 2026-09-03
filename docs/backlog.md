@@ -1433,6 +1433,56 @@ other one goes through. Approval creates a new Member; it does not touch
 the customer record or reassign the account(s) they already hold, which
 would be its own, separate decision this does not make.
 
+### S-614, phase 6: the account moves too, two renames, and a universal query fix ✅
+
+**The account moves with them.** Phase 5's "does not touch the customer
+record or reassign the account(s)" was the honest state of that phase, not
+the final word — this phase does the transfer. `membership_application`
+gains `source_customer_id` (migration 0029), set by
+`startMembershipApplicationFromCustomer` and read by
+`createMemberFromApplication` (members/create.ts) at approval: every
+account the customer held moves to the new member — `member_id` set,
+`customer_id` and `account_no` cleared (a member-owned account carries no
+number of its own, the same rule every other member-owned account already
+follows) — alongside whichever type(s) open on approval as usual (Shares,
+the MSA). The customer record itself is marked `status = 'converted'`
+rather than deleted: the account(s) it once held are the historical link
+back to it, and a converted customer refuses a second application
+(`startMembershipApplicationFromCustomer`'s own "must be active" guard).
+`/members/<id>` stops offering "Apply to become a member" once converted,
+and reads "Moved to their new membership when it was approved" in place of
+"No account has opened yet."
+
+**Renames**: "Start capture" → "Member Registration"; "Open an account for
+an existing member" → "Open other account" (`/applications`).
+
+**Sizing**: the "Start an application" card and the `/applications/new-account`
+page it links to read as two different sizes for the same reason two pages
+usually do — different outer page widths (`max-w-5xl` against `max-w-2xl`).
+The card is now wrapped at the same `max-w-2xl` the destination page
+already uses, rather than widening a two-field form to fill a five-column
+table's own width.
+
+**A universal query fix.** `pendingActionCount` (workflow.ts) — the sidebar
+badge `DashboardLayout` computes on every dashboard page for anyone with
+`application.view` — reads the active workflow chain
+(`activeChain`/`listWorkflows`, reference.ts) fresh on every call, and nets
+two queries against `workflow_definition` and `workflow_step` neither of
+which changes mid-request. `availableActions` and `reviewStageLabel`
+(workflow.ts) each read the same chain again on an application's own page,
+and `/applications` reads it a third time directly — none aware the other
+callers just asked the same question. `listWorkflows` now keeps what it
+read for a few seconds on the warm instance, cleared by the three
+functions that can actually change it (`setStepEnabled`, `setStepRole`,
+`setStepQuorum`) so an administrator's own change is never read back
+stale — proved by an existing S-209 test that already toggles a step and
+reads the chain again in the same request. Not the kind of cache
+`resolvePrincipal` deliberately does without (S-107's "no cache to
+invalidate" is about permissions, a security boundary); workflow step
+routing is operational configuration, where a few seconds of staleness
+after a rare administrative change is a reasonable trade against paying
+for the same two queries three to five times on every click.
+
 ---
 
 # M7 — Legacy migration

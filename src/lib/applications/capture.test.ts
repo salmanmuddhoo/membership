@@ -2338,6 +2338,9 @@ describe('S-614: a non-member applying to become one', () => {
       name: 'Devi',
       nic: 'D1234567890123',
     });
+    // Named on the application itself (migration 0029), so approval knows
+    // whose account(s) to transfer without reading the audit trail.
+    expect(application!.sourceCustomerId).toBe(customerId);
   });
 
   it('is an ordinary draft from here — editable, saveable, the same as any other', async () => {

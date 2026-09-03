@@ -185,6 +185,88 @@ export async function createMemberFromApplication(
     );
   }
 
+  // S-614: this application was started from an existing non-member
+  // (startMembershipApplicationFromCustomer) — whatever account(s) they
+  // already held move to the member they now are, rather than being left
+  // behind under a customer record nobody reaches from here on. Read fresh,
+  // not trusted from capture time, the same reason the account types
+  // opened above are (S-206): an administrator may have changed something
+  // since.
+  if (application.sourceCustomerId) {
+    const held = await client.query<{
+      id: string;
+      account_type_id: string;
+      code: string;
+      name: string;
+    }>(
+      `select a.id, a.account_type_id, t.code, t.name
+         from account a
+         join account_type t on t.id = a.account_type_id
+        where a.customer_id = $1`,
+      [application.sourceCustomerId]
+    );
+
+    // Refused here, one at a time, rather than left to
+    // account_one_per_type_per_member_idx (migration 0018) to turn a
+    // collision into an opaque constraint violation — not expected in
+    // practice (a customer never holds a membership-default type to begin
+    // with, S-614), but a type reconfigured since is not this function's
+    // to guess about.
+    const alreadyHeld = new Set(accounts.map(a => a.typeCode));
+    for (const row of held.rows) {
+      if (alreadyHeld.has(row.code)) {
+        throw new MemberCreationError(
+          `${row.name} is opened for every new membership, and this member ` +
+            'already held one as a customer. Resolve which one stands ' +
+            'before approving.'
+        );
+      }
+    }
+
+    for (const row of held.rows) {
+      await client.query(
+        `update account
+            set member_id = $2, customer_id = null, account_no = null,
+                is_membership_default = false
+          where id = $1`,
+        [row.id, memberId]
+      );
+      accounts.push({ id: row.id, typeCode: row.code, typeName: row.name });
+
+      await recordAudit(
+        {
+          actorUserId: actor.userId,
+          actorDescription: actor.email,
+          action: 'account.transferred',
+          entityType: 'account',
+          entityId: row.id,
+          newValue: {
+            memberNo,
+            accountType: row.code,
+            transferredBecause: 'customer became a member',
+          },
+        },
+        client
+      );
+    }
+
+    await client.query(
+      `update customer set status = 'converted' where id = $1`,
+      [application.sourceCustomerId]
+    );
+    await recordAudit(
+      {
+        actorUserId: actor.userId,
+        actorDescription: actor.email,
+        action: 'customer.converted',
+        entityType: 'customer',
+        entityId: application.sourceCustomerId,
+        newValue: { becameMemberNo: memberNo },
+      },
+      client
+    );
+  }
+
   return { id: memberId, memberNo, accounts };
 }
 

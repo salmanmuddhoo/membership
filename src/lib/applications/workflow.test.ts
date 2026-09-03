@@ -2311,3 +2311,180 @@ describe('S-614: a customer_account application, end to end', () => {
     expect(await members.loadCustomer(anyMember.id)).toBeNull();
   });
 });
+
+// S-614, phase 6: an existing non-member's account moves with them when
+// they become a member — createMemberFromApplication (members/create.ts)
+// reads application.sourceCustomerId (migration 0029), set only by
+// startMembershipApplicationFromCustomer (capture.ts).
+describe('S-614: the account a non-member already held transfers when they become a member', () => {
+  it('transfers the account, opens Shares and the MSA alongside it, and marks the customer converted', async () => {
+    const { capture, workflow, members, documents, payments } = await load();
+    const actor = { userId: officer.userId, email: officer.email };
+
+    const accountType = await runAsActor(
+      `insert into account_type
+         (code, name, category, minimum_opening_amount, is_membership_default,
+          number_prefix)
+       values ('hsa_transfer_test', 'Hajj Savings (transfer test)', 'savings',
+               1000.00, false, 'HST')
+       returning id, name`
+    );
+
+    // A real customer, holding a real account, through the same chain
+    // S-614's own end-to-end test above already proves.
+    const custApp = await capture.startCustomerAccountApplication(
+      [accountType.rows[0].id],
+      officer
+    );
+    await capture.saveDraft(custApp.id, COMPLETE_INDIVIDUAL, actor);
+    await fileRequiredDocuments(documents, custApp.id);
+    await verifyRequiredDocuments(documents, custApp.id);
+    await payments.recordAccountOpeningPayment(
+      {
+        applicationId: custApp.id,
+        method: 'cash',
+        amounts: { [accountType.rows[0].id]: '1000.00' },
+      },
+      {
+        ...officer,
+        permissions: new Set([...officer.permissions, 'payment.record']),
+      }
+    );
+    await workflow.submitApplication(custApp.id, officer);
+    await workflow.reviewApplication(
+      custApp.id,
+      { outcome: 'forward', comment: 'ok' },
+      secretary
+    );
+    const custDecided = await workflow.decideApplication(
+      custApp.id,
+      { outcome: 'approve', comment: '' },
+      president,
+      members.openAccountsForCustomerApplication
+    );
+    const customerId = custDecided.member!.id;
+    const heldAccountId = custDecided.member!.accounts[0].id;
+
+    // Now they apply to become a member. Parties are already complete
+    // (copied from the customer_account application), so this goes
+    // straight to documents and payment — an ordinary Individual
+    // application from here, per startMembershipApplicationFromCustomer's
+    // own contract.
+    const memApp = await capture.startMembershipApplicationFromCustomer(
+      customerId,
+      officer
+    );
+    await fileRequiredDocuments(documents, memApp.id);
+    await verifyRequiredDocuments(documents, memApp.id);
+    await recordFullPayment(payments, memApp.id);
+    await workflow.submitApplication(memApp.id, officer);
+    await workflow.reviewApplication(
+      memApp.id,
+      { outcome: 'forward', comment: 'ok' },
+      secretary
+    );
+    const memDecided = await workflow.decideApplication(
+      memApp.id,
+      { outcome: 'approve', comment: '' },
+      president,
+      members.createMemberFromApplication
+    );
+
+    // Shares and the MSA open the same way any membership approval opens
+    // them; the HSA is not a third, freshly opened account but the one
+    // already held, now under the new member.
+    expect(memDecided.member!.accounts.map(a => a.typeCode).sort()).toEqual(
+      ['hsa_transfer_test', 'msa', 'shares'].sort()
+    );
+    expect(
+      memDecided.member!.accounts.find(a => a.id === heldAccountId)
+    ).toBeDefined();
+
+    const transferred = await run(
+      appUrl,
+      `select member_id, customer_id, account_no, is_membership_default
+         from account where id = $1`,
+      [heldAccountId]
+    );
+    expect(transferred.rows[0].member_id).toBe(memDecided.member!.id);
+    expect(transferred.rows[0].customer_id).toBeNull();
+    expect(transferred.rows[0].account_no).toBeNull();
+    expect(transferred.rows[0].is_membership_default).toBe(false);
+
+    const customerRow = await run(
+      appUrl,
+      `select status from customer where id = $1`,
+      [customerId]
+    );
+    expect(customerRow.rows[0].status).toBe('converted');
+  });
+
+  it('refuses to apply again once converted', async () => {
+    const { capture, workflow, members, documents, payments } = await load();
+    const actor = { userId: officer.userId, email: officer.email };
+
+    const accountType = await runAsActor(
+      `insert into account_type
+         (code, name, category, minimum_opening_amount, is_membership_default,
+          number_prefix)
+       values ('inv_transfer_test', 'Investment (transfer test)', 'savings',
+               500.00, false, 'INV')
+       returning id`
+    );
+    const custApp = await capture.startCustomerAccountApplication(
+      [accountType.rows[0].id],
+      officer
+    );
+    await capture.saveDraft(custApp.id, COMPLETE_INDIVIDUAL, actor);
+    await fileRequiredDocuments(documents, custApp.id);
+    await verifyRequiredDocuments(documents, custApp.id);
+    await payments.recordAccountOpeningPayment(
+      {
+        applicationId: custApp.id,
+        method: 'cash',
+        amounts: { [accountType.rows[0].id]: '500.00' },
+      },
+      {
+        ...officer,
+        permissions: new Set([...officer.permissions, 'payment.record']),
+      }
+    );
+    await workflow.submitApplication(custApp.id, officer);
+    await workflow.reviewApplication(
+      custApp.id,
+      { outcome: 'forward', comment: 'ok' },
+      secretary
+    );
+    const custDecided = await workflow.decideApplication(
+      custApp.id,
+      { outcome: 'approve', comment: '' },
+      president,
+      members.openAccountsForCustomerApplication
+    );
+    const customerId = custDecided.member!.id;
+
+    const memApp = await capture.startMembershipApplicationFromCustomer(
+      customerId,
+      officer
+    );
+    await fileRequiredDocuments(documents, memApp.id);
+    await verifyRequiredDocuments(documents, memApp.id);
+    await recordFullPayment(payments, memApp.id);
+    await workflow.submitApplication(memApp.id, officer);
+    await workflow.reviewApplication(
+      memApp.id,
+      { outcome: 'forward', comment: 'ok' },
+      secretary
+    );
+    await workflow.decideApplication(
+      memApp.id,
+      { outcome: 'approve', comment: '' },
+      president,
+      members.createMemberFromApplication
+    );
+
+    await expect(
+      capture.startMembershipApplicationFromCustomer(customerId, officer)
+    ).rejects.toThrowError(/Only an active customer/);
+  });
+});

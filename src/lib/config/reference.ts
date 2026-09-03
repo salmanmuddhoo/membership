@@ -1340,7 +1340,28 @@ export async function listWorkflowStatuses(
   }));
 }
 
+// Read on nearly every page load — availableActions, reviewStageLabel and
+// pendingActionCount (workflow.ts) each read the active chain, and
+// pendingActionCount alone runs once per request from DashboardLayout, on
+// top of whatever the page itself asks for. Querying two tables freshly
+// for each of those, when the workflow does not change mid-request, was
+// costing several redundant round trips on every click. Cached for a few
+// seconds on the warm instance and cleared by the three functions below
+// that can change it — a toggle an administrator makes taking up to a
+// few seconds to reach every other request is an acceptable trade for not
+// paying this cost on every page a request never touches configuration.
+let workflowsCache: { at: number; value: WorkflowDefinition[] } | null = null;
+const WORKFLOWS_CACHE_MS = 5_000;
+
+function clearWorkflowsCache(): void {
+  workflowsCache = null;
+}
+
 export async function listWorkflows(): Promise<WorkflowDefinition[]> {
+  if (workflowsCache && Date.now() - workflowsCache.at < WORKFLOWS_CACHE_MS) {
+    return workflowsCache.value;
+  }
+
   const definitions = await query<{
     id: string;
     code: string;
@@ -1394,7 +1415,7 @@ export async function listWorkflows(): Promise<WorkflowDefinition[]> {
     byDefinition.set(s.definition_id, list);
   }
 
-  return definitions.rows.map(d => ({
+  const value = definitions.rows.map(d => ({
     id: d.id,
     code: d.code,
     name: d.name,
@@ -1403,6 +1424,8 @@ export async function listWorkflows(): Promise<WorkflowDefinition[]> {
     isActive: d.is_active,
     steps: byDefinition.get(d.id) ?? [],
   }));
+  workflowsCache = { at: Date.now(), value };
+  return value;
 }
 
 // The steps that actually run: disabled ones are configuration an administrator
@@ -1452,6 +1475,7 @@ export async function setStepEnabled(
       throw new ConfigError('That step no longer exists.', 'not_found');
     }
   });
+  clearWorkflowsCache();
 }
 
 export async function setStepRole(
@@ -1474,6 +1498,7 @@ export async function setStepRole(
       throw new ConfigError('That step no longer exists.', 'not_found');
     }
   });
+  clearWorkflowsCache();
 }
 
 export async function setStepQuorum(
@@ -1493,6 +1518,7 @@ export async function setStepQuorum(
       throw new ConfigError('That step no longer exists.', 'not_found');
     }
   });
+  clearWorkflowsCache();
 }
 
 export async function setStatusActive(
