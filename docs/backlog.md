@@ -1304,6 +1304,7 @@ checklist, not only the selected account types' — `documents.ts`'s
 customer, and the officer-facing review page.
 
 ### S-614, phase 3: the entry point, the checklist union, and the officer
+
 page ✅
 
 Built together this time, unlike S-613's own split across phases 2/4/5/8 —
