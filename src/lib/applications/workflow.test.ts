@@ -1987,6 +1987,18 @@ describe('S-613: an additional-account application, end to end', () => {
       loaded!.accounts.find(a => a.accountTypeName === accountTypeName)!
         .accountNo
     ).toBe(member.memberNo);
+
+    // Members page feedback: clicking this account's button gives its
+    // opening deposit and when it was made — traced back through the
+    // additional_account application that opened it, since the account row
+    // itself keeps no link to it.
+    const openedAccountId = loaded!.accounts.find(
+      a => a.accountTypeName === accountTypeName
+    )!.id;
+    const deposit = await payments.depositForAccount(openedAccountId);
+    expect(deposit).toEqual(
+      expect.objectContaining({ amount: '1000.00', currency: 'MUR' })
+    );
   });
 
   it('refuses a second application for an account type already open', async () => {

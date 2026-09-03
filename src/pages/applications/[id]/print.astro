@@ -13,9 +13,18 @@ import { loadApplication, visibleFields } from '@lib/applications/capture';
 import { listMembershipTypes, type FieldSubject } from '@lib/config/reference';
 import { SIGNATURES } from '@lib/documents/documents';
 
+const principal = Astro.locals.principal!;
 const { id } = Astro.params;
 const application = id ? await loadApplication(id) : null;
 if (!application) return new Response('Not found', { status: 404 });
+// A draft is the capturing officer's own work in progress — not something a
+// colleague browsing by URL should be able to open before it is submitted.
+if (
+  application.status === 'draft' &&
+  application.capturedBy !== principal.userId
+) {
+  return new Response('Not found', { status: 404 });
+}
 // S-613: printed forms exist for a flow that actually captures applicant
 // fields — an additional-account application (opening an extra account for
 // an existing member) has none, so there is nothing here to print. A
@@ -134,7 +143,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
           </p>
         )
       }
-      <div class="signatures">
+      <div class="signatures" data-application-id={application.id}>
         {
           SIGNATURES.map(who => (
             <div class="sig">
@@ -533,6 +542,39 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
   const modalClear = document.querySelector('[data-sig-modal-clear]');
   const modalDone = document.querySelector('[data-sig-modal-done]');
 
+  // A signature drawn here is otherwise just pixels on this page — gone the
+  // moment the officer taps Back to fix something on capture and returns.
+  // sessionStorage survives that round trip (same tab, Back/Next, a
+  // re-visit via Next from capture) without turning a still-unsigned draft
+  // into something the server has to store: it clears with the tab, the
+  // same lifetime the signature already had before today.
+  const signaturesEl = document.querySelector('[data-application-id]');
+  const applicationId = signaturesEl?.getAttribute('data-application-id') ?? '';
+  const sigStorageKey = (who: string) => `sig:${applicationId}:${who}`;
+  const storeSignature = (who: string, dataUrl: string) => {
+    try {
+      sessionStorage.setItem(sigStorageKey(who), dataUrl);
+    } catch {
+      // Private browsing or a full quota — the signature still works for
+      // this visit, it just won't survive a navigation. Not worth failing
+      // the signing over.
+    }
+  };
+  const forgetSignature = (who: string) => {
+    try {
+      sessionStorage.removeItem(sigStorageKey(who));
+    } catch {
+      // See storeSignature.
+    }
+  };
+  const recallSignature = (who: string): string | null => {
+    try {
+      return sessionStorage.getItem(sigStorageKey(who));
+    } catch {
+      return null;
+    }
+  };
+
   if (
     modal &&
     modalCanvas &&
@@ -617,6 +659,15 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
       const image = pad.querySelector<HTMLImageElement>('[data-sig-image]');
       if (!openButton || !image) continue;
 
+      const who = pad.dataset.sigWho ?? '';
+      const recalled = recallSignature(who);
+      if (recalled) {
+        image.src = recalled;
+        image.hidden = false;
+        openButton.textContent = 'Re-sign';
+        if (clearImageButton) clearImageButton.hidden = false;
+      }
+
       openButton.addEventListener('click', () => {
         activePad = pad;
         modalTitle.textContent = `Sign — ${pad.dataset.sigWho ?? ''}`;
@@ -632,6 +683,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
         image.removeAttribute('src');
         openButton.textContent = 'Sign';
         clearImageButton.hidden = true;
+        forgetSignature(who);
       });
     }
 
@@ -653,6 +705,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
       if (image) {
         image.src = modalCanvas.toDataURL('image/png');
         image.hidden = false;
+        storeSignature(activePad.dataset.sigWho ?? '', image.src);
       }
       if (openButton) openButton.textContent = 'Re-sign';
       if (clearImageButton) clearImageButton.hidden = false;

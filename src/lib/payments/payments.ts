@@ -350,6 +350,143 @@ export async function hasLivePayment(applicationId: string): Promise<boolean> {
   return result.rows[0].exists;
 }
 
+// Officer feedback: what has actually gone into one account and when — the
+// Members page's own read, ahead of a real transaction ledger ("later on we
+// will have transaction where there will be deposit or withdrawal or
+// transfer"). Not a running balance built from a ledger, because there is
+// none yet: it is what the opening payment recorded, which today is the
+// only money this account has ever received.
+//
+// Deliberately its own small queries rather than a reuse of
+// paymentsForMember/paymentsForApplication above: those load and assemble
+// every payment a member has, which is right for a page about the member —
+// here the caller already knows the one account it is asking about, and
+// only one line, from one payment, ever answers it.
+export interface AccountDeposit {
+  amount: string;
+  currency: string;
+  depositedAt: Date;
+}
+
+export async function depositForAccount(
+  accountId: string
+): Promise<AccountDeposit | null> {
+  const found = await query<{
+    account_type_id: string;
+    type_code: string;
+    member_id: string | null;
+    customer_id: string | null;
+    is_membership_default: boolean;
+  }>(
+    `select a.account_type_id, t.code as type_code,
+            a.member_id, a.customer_id, a.is_membership_default
+       from account a
+       join account_type t on t.id = a.account_type_id
+      where a.id = $1`,
+    [accountId]
+  );
+  if (found.rows.length === 0) return null;
+  const account = found.rows[0];
+
+  // Which application's payment funded this account — the only place the
+  // deposit is recorded, since the account row itself keeps no link back to
+  // it (S-612/S-614 opened neither account_no nor application_id onto
+  // account for this).
+  let applicationId: string | null = null;
+  if (account.is_membership_default) {
+    // Shares and the MSA open with the same founding application that made
+    // the member (migration 0018) — there is only ever one.
+    const member = await query<{ application_id: string | null }>(
+      `select application_id from member where id = $1`,
+      [account.member_id]
+    );
+    applicationId = member.rows[0]?.application_id ?? null;
+  } else if (account.member_id) {
+    // An existing member's HSA/Investment-style account (S-612): opened by
+    // whichever additional_account application selected this type and was
+    // approved. account_one_per_type_per_member_idx (migration 0018) means
+    // there is at most one to find.
+    const opened = await query<{ id: string }>(
+      `select ma.id
+         from membership_application ma
+         join application_account_selection s on s.application_id = ma.id
+        where ma.existing_member_id = $1
+          and ma.application_kind = 'additional_account'
+          and s.account_type_id = $2
+        order by ma.decided_at desc nulls last
+        limit 1`,
+      [account.member_id, account.account_type_id]
+    );
+    applicationId = opened.rows[0]?.id ?? null;
+  } else if (account.customer_id) {
+    // A non-member's account (S-614): one application opened it, and only
+    // it.
+    const customer = await query<{ application_id: string }>(
+      `select application_id from customer where id = $1`,
+      [account.customer_id]
+    );
+    applicationId = customer.rows[0]?.application_id ?? null;
+  }
+  if (!applicationId) return null;
+
+  if (account.is_membership_default) {
+    // The only two membership-default account types this schema seeds
+    // (migrations 0010, 0018); an administrator-added default account has
+    // no fee component to read a deposit from.
+    const componentCode =
+      account.type_code === 'shares'
+        ? 'shares'
+        : account.type_code === 'msa'
+          ? 'msa_deposit'
+          : null;
+    if (!componentCode) return null;
+
+    const line = await query<{
+      amount: string;
+      currency: string;
+      received_at: Date;
+    }>(
+      `select pl.amount, p.currency, p.received_at
+         from payment_line pl
+         join payment p on p.id = pl.payment_id
+        where p.application_id = $1
+          and p.kind = 'payment' and p.voided_at is null
+          and pl.component_code = $2
+        order by p.received_at desc
+        limit 1`,
+      [applicationId, componentCode]
+    );
+    if (line.rows.length === 0) return null;
+    return {
+      amount: line.rows[0].amount,
+      currency: line.rows[0].currency,
+      depositedAt: line.rows[0].received_at,
+    };
+  }
+
+  const line = await query<{
+    amount: string;
+    currency: string;
+    received_at: Date;
+  }>(
+    `select pal.amount, p.currency, p.received_at
+       from payment_account_line pal
+       join payment p on p.id = pal.payment_id
+      where p.application_id = $1
+        and pal.account_type_id = $2
+        and p.kind = 'payment' and p.voided_at is null
+      order by p.received_at desc
+      limit 1`,
+    [applicationId, account.account_type_id]
+  );
+  if (line.rows.length === 0) return null;
+  return {
+    amount: line.rows[0].amount,
+    currency: line.rows[0].currency,
+    depositedAt: line.rows[0].received_at,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // S-501 · What is due
 // ---------------------------------------------------------------------------

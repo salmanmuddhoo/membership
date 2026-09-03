@@ -3,6 +3,7 @@ import DashboardLayout from '@layouts/DashboardLayout.astro';
 import { loadMember, loadCustomer } from '@lib/members/create';
 import {
   ApplicationError,
+  loadApplication,
   startMembershipApplicationFromCustomer,
 } from '@lib/applications/capture';
 import { forDisplay } from '@lib/applications/phone';
@@ -84,6 +85,45 @@ const details = Object.entries(applicantValues).map(([key, value]) => ({
   key,
   label: key.replace(/_/g, ' '),
   value: PHONE_KEYS.has(key) ? forDisplay(value) : value,
+}));
+
+// Officer feedback: the applicant's own details are the person; a nominee
+// (or, for a minor, the successor guardian and Takaful beneficiary) is who
+// this record concerns beyond them, and both belong on the same page. Read
+// from the application itself — the member/customer record only ever kept
+// the applicant's own values (loadMember/loadCustomer above) — via the
+// applicationId both already carry.
+const SUBJECT_LABELS: Record<string, string> = {
+  nominee: 'Nominee',
+  guardian: 'Parent / Guardian',
+  beneficiary: 'Takaful beneficiary',
+};
+const applicationId = (member ?? customer)!.applicationId;
+const sourceApplication = applicationId
+  ? await loadApplication(applicationId)
+  : null;
+const otherParties = (sourceApplication?.parties ?? []).filter(
+  p => p.subject !== 'applicant'
+);
+const subjectOccurrences = otherParties.reduce<Record<string, number>>(
+  (counts, p) => {
+    counts[p.subject] = (counts[p.subject] ?? 0) + 1;
+    return counts;
+  },
+  {}
+);
+const otherPartyGroups = otherParties.map(p => ({
+  key: `${p.subject}-${p.ordinal}`,
+  label:
+    (SUBJECT_LABELS[p.subject] ?? p.subject) +
+    (subjectOccurrences[p.subject] > 1 ? ` ${p.ordinal}` : ''),
+  details: Object.entries(p.values)
+    .filter(([, value]) => value.trim() !== '')
+    .map(([key, value]) => ({
+      key,
+      label: key.replace(/_/g, ' '),
+      value: PHONE_KEYS.has(key) ? forDisplay(value) : value,
+    })),
 }));
 
 const name = (member ?? customer)!.name;
@@ -194,6 +234,37 @@ const pageTitle = member ? member.memberNo : name;
         )
       }
     </section>
+
+    {
+      otherPartyGroups.length > 0 && (
+        <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+          <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+            Nominee
+          </h2>
+          <div class="mt-4 space-y-4">
+            {otherPartyGroups.map(group => (
+              <div>
+                <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-200">
+                  {group.label}
+                </h3>
+                <dl class="mt-2 grid gap-x-6 gap-y-2 sm:grid-cols-2">
+                  {group.details.map(d => (
+                    <div class="flex gap-2 text-sm">
+                      <dt class="min-w-32 text-neutral-500 capitalize dark:text-neutral-400">
+                        {d.label}
+                      </dt>
+                      <dd class="text-neutral-800 dark:text-neutral-100">
+                        {d.value}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
+            ))}
+          </div>
+        </section>
+      )
+    }
 
     <section
       class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"

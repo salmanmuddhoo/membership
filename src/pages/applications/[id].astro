@@ -82,6 +82,11 @@ async function loadMembershipApplication(
 
 const initial = id ? await loadApplication(id) : null;
 if (!initial) return new Response('Not found', { status: 404 });
+// A draft is the capturing officer's own work in progress — not something a
+// colleague browsing by URL should be able to open before it is submitted.
+if (initial.status === 'draft' && initial.capturedBy !== principal.userId) {
+  return new Response('Not found', { status: 404 });
+}
 if (initial.applicationKind === 'additional_account') {
   return Astro.redirect(`/applications/${initial.id}/account`);
 }

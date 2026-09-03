@@ -1,11 +1,36 @@
 ---
 import DashboardLayout from '@layouts/DashboardLayout.astro';
-import { listMembers } from '@lib/members/create';
+import { listMembers, type MemberListAccount } from '@lib/members/create';
+
+const principal = Astro.locals.principal!;
+const canSeePayments = principal.permissions.has('payment.view');
 
 const search = Astro.url.searchParams.get('q') ?? '';
 const { members, total, truncated } = await listMembers({ search });
 
 const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium' });
+
+// Officer feedback: the account's own number, styled by what kind of
+// account it is, is the identity a colleague reads off this list — not a
+// plain id column up front. Matched on the account type's code and name
+// rather than a fixed set this schema knows by name (Configuration ->
+// Account types is where HSA and Investment, like every other account
+// type, are actually defined — migrations 0025/0027) so a type added later
+// still gets a button, just the same neutral one an unrecognised name
+// falls back to.
+function accountButtonClasses(account: MemberListAccount): string {
+  const key = `${account.code} ${account.name}`.toLowerCase();
+  if (key.includes('hsa')) {
+    return 'bg-neutral-300 text-neutral-800 dark:bg-neutral-600 dark:text-neutral-100';
+  }
+  if (key.includes('invest')) {
+    return 'bg-blue-600 text-white dark:bg-blue-500';
+  }
+  if (key.includes('shares') || key.includes('msa')) {
+    return 'bg-amber-400 text-neutral-900 dark:bg-amber-500 dark:text-neutral-900';
+  }
+  return 'bg-slate-500 text-white dark:bg-slate-600';
+}
 ---
 
 <DashboardLayout title="Members · Al Barakah MCSL" heading="Members">
@@ -63,25 +88,18 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium' });
             <table class="w-full text-sm">
               <thead>
                 <tr class="text-left text-xs text-neutral-500 dark:text-neutral-400">
-                  <th class="py-2 pr-4 font-medium">ID</th>
                   <th class="py-2 pr-4 font-medium">Name</th>
-                  <th class="py-2 pr-4 font-medium">Type</th>
                   <th class="py-2 pr-4 font-medium">Status</th>
-                  <th class="py-2 pr-4 font-medium">From</th>
-                  <th class="py-2 font-medium">Joined</th>
+                  <th class="py-2 pr-4 font-medium">Joined</th>
+                  <th class="py-2 font-medium">Accounts</th>
                 </tr>
               </thead>
               <tbody>
                 {members.map(m => (
-                  <tr class="border-t border-neutral-200 dark:border-neutral-800">
-                    <td class="py-2 pr-4">
-                      <a
-                        href={`/members/${m.id}`}
-                        class="text-mint-700 dark:text-mint-300 font-medium underline"
-                      >
-                        {m.memberNo || '—'}
-                      </a>
-                    </td>
+                  <tr
+                    data-href={`/members/${m.id}`}
+                    class="cursor-pointer border-t border-neutral-200 hover:bg-neutral-200/60 dark:border-neutral-800 dark:hover:bg-neutral-900"
+                  >
                     <td class="py-2 pr-4 text-neutral-700 dark:text-neutral-200">
                       <span class="flex flex-wrap items-center gap-x-2">
                         {m.name}
@@ -93,16 +111,56 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium' });
                       </span>
                     </td>
                     <td class="py-2 pr-4 text-neutral-600 dark:text-neutral-300">
-                      {m.membershipTypeName}
-                    </td>
-                    <td class="py-2 pr-4 text-neutral-600 dark:text-neutral-300">
                       {m.status}
                     </td>
                     <td class="py-2 pr-4 text-xs text-neutral-500 dark:text-neutral-400">
-                      {m.applicationReference ?? '—'}
-                    </td>
-                    <td class="py-2 text-xs text-neutral-500 dark:text-neutral-400">
                       {dateFormat.format(m.joinedAt)}
+                    </td>
+                    <td class="py-2">
+                      {m.accountBadges.length === 0 ? (
+                        <span class="text-xs text-neutral-400 dark:text-neutral-500">
+                          —
+                        </span>
+                      ) : (
+                        <div class="flex flex-wrap gap-1.5">
+                          {m.accountBadges.map(account =>
+                            canSeePayments ? (
+                              <details
+                                class="inline-block"
+                                data-account-id={account.id}
+                              >
+                                <summary
+                                  class:list={[
+                                    'cursor-pointer list-none rounded-md px-2 py-1 text-xs font-semibold whitespace-nowrap',
+                                    accountButtonClasses(account),
+                                  ]}
+                                  title={account.name}
+                                >
+                                  {account.no}
+                                </summary>
+                                <div class="mt-1 rounded-lg border border-neutral-200 bg-white p-2 text-xs text-neutral-600 shadow-sm dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300">
+                                  <p class="font-medium text-neutral-800 dark:text-neutral-100">
+                                    {account.name}
+                                  </p>
+                                  <p data-deposit class="mt-0.5">
+                                    Loading…
+                                  </p>
+                                </div>
+                              </details>
+                            ) : (
+                              <span
+                                class:list={[
+                                  'rounded-md px-2 py-1 text-xs font-semibold whitespace-nowrap',
+                                  accountButtonClasses(account),
+                                ]}
+                                title={account.name}
+                              >
+                                {account.no}
+                              </span>
+                            )
+                          )}
+                        </div>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -114,3 +172,63 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium' });
     </section>
   </div>
 </DashboardLayout>
+
+<script>
+  // Officer feedback: the row itself opens the member's full record — the
+  // account buttons inside it are their own click target (see below), so a
+  // click landing on one of those must not also navigate the row.
+  for (const row of document.querySelectorAll<HTMLTableRowElement>(
+    'tr[data-href]'
+  )) {
+    row.addEventListener('click', e => {
+      const target = e.target as HTMLElement;
+      if (target.closest('a, button, details, summary')) return;
+      const href = row.dataset.href;
+      if (href) window.location.assign(href);
+    });
+  }
+
+  // Officer feedback: clicking an HSA/Investment/etc. button gives that
+  // account's balance and when the deposit was made — read only, and only
+  // fetched once a box is actually opened, since most of the ones on a long
+  // list never will be.
+  for (const box of document.querySelectorAll<HTMLDetailsElement>(
+    '[data-account-id]'
+  )) {
+    const accountId = box.dataset.accountId;
+    const panel = box.querySelector<HTMLElement>('[data-deposit]');
+    if (!accountId || !panel) continue;
+
+    let loaded = false;
+    box.addEventListener('toggle', () => {
+      if (!box.open || loaded) return;
+      loaded = true;
+
+      fetch(`/api/v1/accounts/${accountId}/deposit`)
+        .then(response => {
+          if (!response.ok) throw new Error(String(response.status));
+          return response.json();
+        })
+        .then((body: { data?: { deposit: null | Record<string, string> } }) => {
+          const deposit = body.data?.deposit;
+          if (!deposit) {
+            panel.textContent = 'No deposit recorded.';
+            return;
+          }
+          const amount = Number(deposit.amount).toLocaleString('en-US', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          });
+          const depositedAt = new Date(deposit.depositedAt).toLocaleDateString(
+            'en-GB',
+            { day: 'numeric', month: 'short', year: 'numeric' }
+          );
+          panel.textContent = `${deposit.currency} ${amount} · deposited ${depositedAt}`;
+        })
+        .catch(() => {
+          loaded = false;
+          panel.textContent = 'Could not load balance.';
+        });
+    });
+  }
+</script>

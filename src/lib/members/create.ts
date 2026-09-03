@@ -517,6 +517,19 @@ export async function openAccountsForCustomerApplication(
   return { id: customerId, memberNo: '', accounts };
 }
 
+// One button in the Members list's own last column — officer feedback:
+// the account's number, styled by what kind of account it is (accountButtonClasses
+// in members/index.astro), rather than a plain id column up front.
+export interface MemberListAccount {
+  id: string;
+  code: string;
+  name: string;
+  // A member's accounts all carry the member's own number (S-309); a
+  // customer's each carry their own (S-614) — identifier already differs
+  // per row above for the same reason, this is that same value per account.
+  no: string;
+}
+
 export interface MemberSummary {
   id: string;
   // S-614: a customer never was, and never becomes, a member — kept in the
@@ -584,13 +597,24 @@ export async function listMembers(
     name: string;
     joined_at: Date;
     application_reference: string | null;
+    accounts: MemberListAccount[];
     total_count: string;
   }>(
     `with rows as (
        select m.id, 'member'::text as kind, m.member_no as identifier,
               t.name as type_label, m.status,
               ${NAME_SQL} as name, m.joined_at,
-              a.reference as application_reference
+              a.reference as application_reference,
+              coalesce(
+                (select json_agg(json_build_object(
+                           'id', acc.id, 'code', act.code,
+                           'name', act.name, 'no', m.member_no
+                         ) order by act.sort_order, act.name)
+                   from account acc
+                   join account_type act on act.id = acc.account_type_id
+                  where acc.member_id = m.id),
+                '[]'
+              ) as accounts
          from member m
          join membership_type t on t.id = m.membership_type_id
          left join membership_application a on a.id = m.application_id
@@ -616,7 +640,17 @@ export async function listMembers(
               ) as type_label,
               c.status,
               ${NAME_SQL} as name, c.joined_at,
-              capp.reference as application_reference
+              capp.reference as application_reference,
+              coalesce(
+                (select json_agg(json_build_object(
+                           'id', acc.id, 'code', act.code,
+                           'name', act.name, 'no', acc.account_no
+                         ) order by act.sort_order, act.name)
+                   from account acc
+                   join account_type act on act.id = acc.account_type_id
+                  where acc.customer_id = c.id),
+                '[]'
+              ) as accounts
          from customer c
          join membership_application capp on capp.id = c.application_id
          left join application_party p
@@ -624,7 +658,7 @@ export async function listMembers(
           and p.subject = 'applicant' and p.ordinal = 1
      )
      select id, kind, identifier, type_label, status, name, joined_at,
-            application_reference,
+            application_reference, accounts,
             count(*) over () as total_count
        from rows
       where $1::text is null
@@ -647,6 +681,7 @@ export async function listMembers(
       name: r.name || '(unnamed)',
       joinedAt: r.joined_at,
       applicationReference: r.application_reference,
+      accountBadges: r.accounts ?? [],
     })),
     total,
     truncated: result.rows.length < total,
