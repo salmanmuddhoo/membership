@@ -68,6 +68,12 @@ export interface MembershipApplication extends ApplicationCommon {
   membershipTypeId: string;
   membershipTypeCode: string;
   membershipTypeName: string;
+  // S-614: set only when this application was started from an existing
+  // non-member customer (startMembershipApplicationFromCustomer) — names
+  // whose account(s) transfer to the new Member on approval
+  // (createMemberFromApplication, members/create.ts). Null for every
+  // ordinary membership application.
+  sourceCustomerId: string | null;
 }
 
 // S-613's application, opening an account type an existing member's
@@ -488,6 +494,15 @@ export async function startMembershipApplicationFromCustomer(
 
     const { id, reference } = await insertApplication(client, type, actor);
 
+    // Named on the application itself — not only in the audit entry below —
+    // so createMemberFromApplication (members/create.ts) knows at approval
+    // time whose account(s) transfer to the new Member, without going back
+    // to the audit trail to find out (migration 0029).
+    await client.query(
+      `update membership_application set source_customer_id = $2 where id = $1`,
+      [id, customerId]
+    );
+
     // insertApplication just seeded one empty party row per subject
     // Individual currently configures — filled in here from what the
     // customer already gave, not created again. A subject or nominee
@@ -589,6 +604,7 @@ export async function loadApplication(id: string): Promise<Application | null> {
     membership_type_name: string | null;
     existing_member_id: string | null;
     existing_member_no: string | null;
+    source_customer_id: string | null;
     status: string;
     captured_by: string;
     captured_by_name: string;
@@ -603,6 +619,7 @@ export async function loadApplication(id: string): Promise<Application | null> {
     `select a.id, a.reference, a.application_kind, a.membership_type_id,
             mt.code as membership_type_code, mt.name as membership_type_name,
             a.existing_member_id, mb.member_no as existing_member_no,
+            a.source_customer_id,
             a.status, a.captured_by,
             u.display_name as captured_by_name,
             u.email::text as captured_by_email,
@@ -673,6 +690,7 @@ export async function loadApplication(id: string): Promise<Application | null> {
     membershipTypeId: row.membership_type_id!,
     membershipTypeCode: row.membership_type_code!,
     membershipTypeName: row.membership_type_name!,
+    sourceCustomerId: row.source_customer_id,
   };
 }
 

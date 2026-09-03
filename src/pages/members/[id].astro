@@ -174,7 +174,7 @@ const pageTitle = member ? member.memberNo : name;
       }
 
       {
-        customer && canCapture && (
+        customer && customer.status === 'active' && canCapture && (
           <form
             method="post"
             class="mt-5 border-t border-neutral-200 pt-4 dark:border-neutral-800"
@@ -206,7 +206,9 @@ const pageTitle = member ? member.memberNo : name;
           <p class="mt-1 text-sm text-red-700 dark:text-red-300">
             {member
               ? 'This member has no account. That should not be possible — the default account is opened at the same moment as the member. Please report it.'
-              : 'No account has opened yet.'}
+              : customer!.status === 'converted'
+                ? 'Moved to their new membership when it was approved.'
+                : 'No account has opened yet.'}
           </p>
         ) : (
           <ul class="mt-4 space-y-3">

@@ -130,47 +130,49 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 
     {
       canCapture && (
-        <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-          <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-            Start an application
-          </h2>
-          {/* A GET, deliberately. Opening the form creates nothing — the
-              application exists once a detail is entered. */}
-          <form
-            method="get"
-            action="/applications/new"
-            class="mt-4 flex flex-wrap items-end gap-2"
-          >
-            <label class="text-sm text-neutral-600 dark:text-neutral-300">
-              Applicant status
-              <select
-                name="type"
-                class="mt-1 block rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+        <div class="max-w-2xl">
+          <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+            <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+              Start an application
+            </h2>
+            {/* A GET, deliberately. Opening the form creates nothing — the
+                application exists once a detail is entered. */}
+            <form
+              method="get"
+              action="/applications/new"
+              class="mt-4 flex flex-wrap items-end gap-2"
+            >
+              <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                Applicant status
+                <select
+                  name="type"
+                  class="mt-1 block rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                >
+                  {types
+                    .filter(t => t.isActive)
+                    .map(t => (
+                      <option value={t.code}>{t.name}</option>
+                    ))}
+                </select>
+              </label>
+              <button
+                type="submit"
+                class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
               >
-                {types
-                  .filter(t => t.isActive)
-                  .map(t => (
-                    <option value={t.code}>{t.name}</option>
-                  ))}
-              </select>
-            </label>
-            <button
-              type="submit"
-              class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
-            >
-              Start capture
-            </button>
-          </form>
+                Member Registration
+              </button>
+            </form>
 
-          <div class="mt-4 border-t border-neutral-200 pt-4 dark:border-neutral-800">
-            <a
-              href="/applications/new-account"
-              class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
-            >
-              Open an account for an existing member
-            </a>
-          </div>
-        </section>
+            <div class="mt-4 border-t border-neutral-200 pt-4 dark:border-neutral-800">
+              <a
+                href="/applications/new-account"
+                class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+              >
+                Open other account
+              </a>
+            </div>
+          </section>
+        </div>
       )
     }
 
