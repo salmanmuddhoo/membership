@@ -117,6 +117,7 @@ function principalFor(
     email: actor.email,
     displayName: actor.email,
     roles: [],
+    roleNames: [],
     permissions: new Set(permissions),
   };
 }

@@ -165,6 +165,7 @@ function principalFor(
     email,
     displayName: email,
     roles,
+    roleNames: [],
     permissions: new Set(permissions),
   };
 }

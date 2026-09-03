@@ -9,6 +9,7 @@ function principal(overrides: Partial<Principal> = {}): Principal {
     email: 'officer@albarakah.mu',
     displayName: 'Officer',
     roles: [],
+    roleNames: [],
     permissions: new Set(),
     ...overrides,
   };

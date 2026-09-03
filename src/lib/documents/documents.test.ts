@@ -351,16 +351,18 @@ describe('S-614: the checklist for a customer_account application unions the non
     });
     const codes = entries.map(e => e.documentCode);
 
-    // Migration 0028's own seed for Individual's non-member checklist, and
-    // the selected account type's own — both sides of the union present.
+    // Migration 0028's own seed for Individual's non-member checklist
+    // (id_card, utility_bill, and — since migration 0030, S-614 phase 8 —
+    // signed_form, once the flow gained a print step of its own) union
+    // the selected account type's own (cert_registration).
     expect(codes).toEqual(
-      expect.arrayContaining(['id_card', 'utility_bill', 'cert_registration'])
+      expect.arrayContaining([
+        'id_card',
+        'utility_bill',
+        'signed_form',
+        'cert_registration',
+      ])
     );
-
-    // signed_form is part of Individual's own MEMBER checklist
-    // (individual_kyc, checklist_id) — this flow has no print step and no
-    // signature to confirm, and must not ask for one.
-    expect(codes).not.toContain('signed_form');
   });
 });
 

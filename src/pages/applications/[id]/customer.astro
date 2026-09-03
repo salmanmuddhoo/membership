@@ -513,13 +513,16 @@ const timeline = applicationTimeline({
   reviewStageLabel: stageLabel,
 });
 
-// No print step in this flow (print.astro is built for a membership
-// application's own four-signature form) — capture leads straight into
-// documents.
+// Mirrors [id].astro's own step numbering exactly (S-614, phase 8): print
+// has no section of its own here, the same way it has none there — it has
+// its own page, `/applications/<id>/print`, widened to serve this kind
+// alongside membership's, and a step whose "done" signal is a document
+// filed in step 3 cannot also gate entry to step 3.
 const CAPTURE_STEP = 1;
-const DOCUMENTS_STEP = 2;
-const PAYMENT_STEP = 3;
-const SUBMIT_STEP = 4;
+const PRINT_STEP = 2;
+const DOCUMENTS_STEP = 3;
+const PAYMENT_STEP = 4;
+const SUBMIT_STEP = 5;
 
 const furthestStep = !isEditable
   ? SUBMIT_STEP
@@ -542,6 +545,11 @@ if (isEditable) {
     ),
     SUBMIT_STEP
   );
+  // Defensive only — nothing in this page links to ?step=2, since Next and
+  // Back go straight to and from the print page.
+  if (clamped === PRINT_STEP) {
+    return Astro.redirect(`/applications/${application!.id}/print`);
+  }
   if (clamped > furthestStep) {
     return Astro.redirect(
       `/applications/${application!.id}/customer?step=${furthestStep}`
@@ -588,6 +596,11 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           >All applications</a
         >
       </div>
+      <a
+        href={`/applications/${application!.id}/print`}
+        class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+        >Printable form</a
+      >
     </div>
 
     {
@@ -965,7 +978,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             {isEditable && currentStep === DOCUMENTS_STEP && (
               <div class="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800">
                 <a
-                  href={`/applications/${application!.id}/customer?step=${CAPTURE_STEP}`}
+                  href={`/applications/${application!.id}/print`}
                   class="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
                 >
                   ← Back
@@ -1650,7 +1663,12 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           captureNextButton.disabled = false;
           return;
         }
-        window.location.assign(window.location.pathname + '?step=2');
+        // S-614, phase 8: the print page now, same as [id].astro's own
+        // Next — not straight to documents, since there is something to
+        // sign first.
+        window.location.assign(
+          window.location.pathname.replace(/\/customer\/?$/, '') + '/print'
+        );
       });
     }
   }
