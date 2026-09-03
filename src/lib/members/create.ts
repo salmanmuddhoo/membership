@@ -39,6 +39,20 @@ export async function createMemberFromApplication(
   application: Application,
   actor: Actor
 ): Promise<CreatedMember> {
+  // S-613: an additional-account application already has its member —
+  // opening one is exactly what it is not allowed to do (S-612's own
+  // check constraint agrees: existing_member_id and membership_type_id are
+  // never both set). Its own approval path opens the selected account
+  // type(s) under existing_member_id instead; nothing wires that up to this
+  // function yet, but the guard is here so a mistake in that wiring fails
+  // loudly rather than creating a member nobody asked for.
+  if (application.applicationKind !== 'membership') {
+    throw new MemberCreationError(
+      'This application does not create a member — it opens an account for ' +
+        'one that already exists.'
+    );
+  }
+
   // Every type configured to open on approval, not one: a membership opens a
   // Shares account and an MSA together, and which types those are is
   // configuration read at approval time (S-206).

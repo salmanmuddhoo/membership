@@ -16,6 +16,11 @@ import { SIGNATURES } from '@lib/documents/documents';
 const { id } = Astro.params;
 const application = id ? await loadApplication(id) : null;
 if (!application) return new Response('Not found', { status: 404 });
+// S-613: printed forms exist for the membership capture flow only — an
+// additional-account application has no field-based form to print.
+if (application.applicationKind !== 'membership') {
+  return new Response('Not found', { status: 404 });
+}
 
 const type = (await listMembershipTypes()).find(
   t => t.id === application.membershipTypeId
