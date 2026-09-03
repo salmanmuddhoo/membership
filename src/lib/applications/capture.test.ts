@@ -1444,3 +1444,110 @@ describe('deleting a draft that is no longer needed', () => {
     });
   });
 });
+
+describe('S-612: additional-account applications share the table, not the type', () => {
+  // Phase 1 of the additional-account feature (migration 0025) is schema
+  // only — no code yet creates one of these rows, so this exercises the
+  // database's own constraint directly rather than through capture.ts.
+  it('accepts a typeless application once it names an existing member', async () => {
+    const { memberNo } = await seedMember('S9999999999999');
+    const member = await run(
+      appUrl,
+      `select id from member where member_no = $1`,
+      [memberNo]
+    );
+
+    const application = await run(
+      appUrl,
+      `insert into membership_application
+         (application_kind, existing_member_id, captured_by)
+       values ('additional_account', $1, $2)
+       returning id, membership_type_id`,
+      [member.rows[0].id, officer.userId]
+    );
+    expect(application.rows[0].membership_type_id).toBeNull();
+  });
+
+  it('refuses an additional_account row with no member named', async () => {
+    await expect(
+      run(
+        appUrl,
+        `insert into membership_application (application_kind, captured_by)
+         values ('additional_account', $1)`,
+        [officer.userId]
+      )
+    ).rejects.toThrowError(/membership_application_kind_shape/);
+  });
+
+  it('refuses a membership row with no type, same as it always has', async () => {
+    await expect(
+      run(
+        appUrl,
+        `insert into membership_application (captured_by) values ($1)`,
+        [officer.userId]
+      )
+    ).rejects.toThrowError(/membership_application_kind_shape/);
+  });
+
+  it('refuses a membership row that also names an existing member', async () => {
+    const { memberNo } = await seedMember('S8888888888888');
+    const member = await run(
+      appUrl,
+      `select id from member where member_no = $1`,
+      [memberNo]
+    );
+    const type = await run(
+      appUrl,
+      `select id from membership_type where code = 'individual'`
+    );
+
+    await expect(
+      run(
+        appUrl,
+        `insert into membership_application
+           (membership_type_id, existing_member_id, captured_by)
+         values ($1, $2, $3)`,
+        [type.rows[0].id, member.rows[0].id, officer.userId]
+      )
+    ).rejects.toThrowError(/membership_application_kind_shape/);
+  });
+
+  it('records which account type(s) an additional_account application opens', async () => {
+    const { memberNo } = await seedMember('S7777777777777');
+    const member = await run(
+      appUrl,
+      `select id from member where member_no = $1`,
+      [memberNo]
+    );
+    const application = await run(
+      appUrl,
+      `insert into membership_application
+         (application_kind, existing_member_id, captured_by)
+       values ('additional_account', $1, $2)
+       returning id`,
+      [member.rows[0].id, officer.userId]
+    );
+    // Any active account type is a valid selection — nothing here is
+    // seeded as "HSA" or "Investment" by name, only Shares and MSA exist
+    // out of the box, and either stands in fine for this constraint check.
+    const accountType = await run(
+      appUrl,
+      `select id from account_type where code = 'shares'`
+    );
+
+    await run(
+      appUrl,
+      `insert into application_account_selection (application_id, account_type_id)
+       values ($1, $2)`,
+      [application.rows[0].id, accountType.rows[0].id]
+    );
+
+    const selected = await run(
+      appUrl,
+      `select count(*)::int as n from application_account_selection
+        where application_id = $1`,
+      [application.rows[0].id]
+    );
+    expect(selected.rows[0].n).toBe(1);
+  });
+});

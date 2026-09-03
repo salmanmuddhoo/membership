@@ -924,6 +924,66 @@ person's role covers. See `docs/applications.md` and `docs/configuration.md`.
 
 ---
 
+# M11 — Opening an account without a fresh membership
+
+**Goal:** a member (or, later, someone who is not yet on the system at all)
+can open an account type membership did not already open for them — HSA,
+Investment, or anything else an administrator adds — through the exact same
+approval chain a membership application already uses.
+
+**Shipping in phases, each its own reviewable change**, the way S-611's own
+follow-up did: the schema first, since every later phase depends on it and
+it changes nothing on its own; the capture flow, document/signature/payment
+shape and officer-facing pages after.
+
+### S-612 · Additional-account applications, phase 1: schema ✅
+
+**As** an existing member, **I need** to open an account type my membership
+did not already open for me, **so that** I do not need a fresh membership
+application to add HSA, Investment, or any other product. _(officer
+feedback)_
+`Must · 5 · EPIC-04`
+
+- **Given** Regional oversight is enabled for membership applications
+  **Then** it governs an additional-account application too — one setting,
+  not two to keep in step
+- Any active, non-membership-default account type is a valid selection, one
+  or more at once — nothing names HSA or Investment specifically
+- **Depends on:** which non-member holder concept a later phase uses for
+  someone who is not yet a member at all — open, not needed by this phase
+
+`membership_application` gained `application_kind` (`'membership'` |
+`'additional_account'`), `existing_member_id`, and `membership_type_id`
+became nullable — enforced together by a single check constraint,
+`membership_application_kind_shape` (migration 0025), so a row can never
+half-belong to both shapes. A new `application_account_selection` table
+records which account type(s) an additional_account application opens,
+since "HSA or Investment or both" is a set, not a single column.
+
+**The point of staying in the same table**: `workflow_step`,
+`segregation_rule` and every audit action already key on `entity_type =
+'membership_application'` (S-209, S-611). An additional-account application
+inherits `activeChain`, `assertMayAct`, Regional oversight and its
+segregation rules with **zero changes** to `workflow.ts` — the same payoff
+S-611 gave a gate added to an existing chain, now given to an entirely
+different kind of application sharing that chain. A second
+`workflow_definition` an administrator would have to configure twice, and
+could let drift apart, was the alternative this avoids.
+
+Nothing yet creates a row with `application_kind = 'additional_account'` —
+every existing application defaults to `'membership'`, unaffected, so this
+migration changes no behaviour on its own. `capture.test.ts` exercises the
+constraint directly against the database rather than through application
+code that does not exist yet. The capture flow — selecting an existing
+member, choosing account type(s), the document/signature/payment shape that
+flow actually needs (no applicant to capture, no four-signature form,
+payment against each account type's own `minimum_opening_amount` rather
+than a membership fee schedule) and approval opening the selected
+account(s) under the existing member instead of creating one — is S-613,
+not yet built.
+
+---
+
 # M7 — Legacy migration
 
 **Goal:** the existing register becomes members in this system, phase-wise —
