@@ -1084,6 +1084,67 @@ export async function checklistForMembershipType(
   return bySubject;
 }
 
+// S-612 · The checklist for an additional-account application — the union of
+// each selected account type's own checklist (account_type.checklist_id),
+// not a membership type's. A document required by any selected account type
+// is required on this application; one required by two selected types is
+// not asked for twice, and if either leaves it optional while the other
+// requires it, the application asks for it (bool_or below).
+export async function checklistForAccountTypes(
+  accountTypeCodes: string[]
+): Promise<Map<FieldSubject, ChecklistItem[]>> {
+  const bySubject = new Map<FieldSubject, ChecklistItem[]>();
+  if (accountTypeCodes.length === 0) return bySubject;
+
+  const result = await query<{
+    id: string;
+    document_type_id: string;
+    document_code: string;
+    document_name: string;
+    tracks_expiry: boolean;
+    subject: FieldSubject;
+    requirement: 'required' | 'optional';
+    sort_order: number;
+  }>(
+    `with selected as (
+       select i.document_type_id, i.subject,
+              bool_or(i.requirement = 'required') as required,
+              min(i.sort_order) as sort_order,
+              (array_agg(i.id))[1] as id
+         from account_type a
+         join document_checklist_item i on i.checklist_id = a.checklist_id
+        where a.code = any($1::text[])
+        group by i.document_type_id, i.subject
+     )
+     select s.id, s.document_type_id, d.code as document_code,
+            d.name as document_name, d.tracks_expiry, s.subject,
+            case when s.required then 'required' else 'optional' end
+              as requirement,
+            s.sort_order
+       from selected s
+       join document_type d on d.id = s.document_type_id
+      where d.is_active
+      order by s.subject, s.sort_order`,
+    [accountTypeCodes]
+  );
+
+  for (const r of result.rows) {
+    const list = bySubject.get(r.subject) ?? [];
+    list.push({
+      id: r.id,
+      documentTypeId: r.document_type_id,
+      documentCode: r.document_code,
+      documentName: r.document_name,
+      tracksExpiry: r.tracks_expiry,
+      subject: r.subject,
+      requirement: r.requirement,
+      sortOrder: r.sort_order,
+    });
+    bySubject.set(r.subject, list);
+  }
+  return bySubject;
+}
+
 // ---------------------------------------------------------------------------
 // S-209 · Workflow definitions
 // ---------------------------------------------------------------------------

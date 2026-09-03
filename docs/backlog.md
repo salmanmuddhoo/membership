@@ -1032,13 +1032,33 @@ non-existent field, reporting a phantom missing field, or creating a member
 nobody asked for.
 
 **Still ahead**: the officer-facing pages an additional-account application
-actually needs — reviewing it, its own document checklist (sourced from the
-selected account type(s)' own checklists, not a membership type's), a
-single-signature form in place of the four-signature one, payment against
-each selected account type's `minimum_opening_amount` rather than a
-membership fee schedule, and the approval path that opens the selected
-account(s) under `existingMemberId` instead of creating a member. Each is
-its own increment, the same way this one was.
+actually needs — reviewing it, a single-signature form in place of the
+four-signature one, payment against each selected account type's
+`minimum_opening_amount` rather than a membership fee schedule, and the
+approval path that opens the selected account(s) under `existingMemberId`
+instead of creating a member. Each is its own increment, the same way this
+one was.
+
+### S-613, phase 4 · The document checklist reads account types, not a membership type ✅
+
+`documents.ts`'s `resolveOwner` inner-joined `membership_type` to find an
+application's checklist — for an `additional_account` row, whose
+`membership_type_id` is always null (migration 0025), that join silently
+matched zero rows and `checklistFor` reported "That application no longer
+exists," even though it did. The application was never missing; the
+checklist source was just the wrong table.
+
+`resolveOwner` now reads `application_kind` first and resolves the checklist
+from whichever table actually applies: a membership type's own checklist for
+`'membership'`, or — new — the union of the selected account types' own
+checklists (`account_type.checklist_id`, migration 0010) for
+`'additional_account'`. `config.checklistForAccountTypes` (`reference.ts`)
+does the union: a document required by any selected account type is
+required on the application (`bool_or` across the selected types), and one
+two account types both ask for is not listed twice.
+
+**Still ahead**, unchanged from phase 3's list above; this phase only fixed
+the checklist source.
 
 ---
 

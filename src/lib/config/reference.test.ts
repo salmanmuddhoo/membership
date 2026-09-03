@@ -834,6 +834,80 @@ describe('S-208: document types and dynamic checklists', () => {
       false
     );
   });
+
+  // S-612: an additional-account application has no membership type, so its
+  // checklist is the union of what each selected account type asks for —
+  // required wins if either account type requires it, and a document both
+  // ask for is not listed twice.
+  describe('S-612: the checklist for a set of selected account types', () => {
+    it('unions two account types, required winning over optional', async () => {
+      const { config } = await load();
+
+      const idCard = (await config.listDocumentTypes()).find(
+        d => d.code === 'id_card'
+      )!;
+      const utilityBill = (await config.listDocumentTypes()).find(
+        d => d.code === 'utility_bill'
+      )!;
+
+      const listA = await runAsConfigurator(
+        appUrl,
+        `insert into document_checklist (code, name, description)
+         values ('s612_test_a', 'S-612 test A', '') returning id`
+      );
+      const listB = await runAsConfigurator(
+        appUrl,
+        `insert into document_checklist (code, name, description)
+         values ('s612_test_b', 'S-612 test B', '') returning id`
+      );
+      await runAsConfigurator(
+        appUrl,
+        `insert into document_checklist_item
+           (checklist_id, document_type_id, subject, requirement, sort_order)
+         values
+           ('${listA.rows[0].id}', '${idCard.id}', 'applicant', 'optional', 1),
+           ('${listB.rows[0].id}', '${idCard.id}', 'applicant', 'required', 1),
+           ('${listB.rows[0].id}', '${utilityBill.id}', 'applicant', 'optional', 2)`
+      );
+      const typeA = await runAsConfigurator(
+        appUrl,
+        `insert into account_type
+           (code, name, category, checklist_id, is_membership_default)
+         values ('s612_type_a', 'S-612 type A', 'savings',
+                 '${listA.rows[0].id}', false)
+         returning code`
+      );
+      const typeB = await runAsConfigurator(
+        appUrl,
+        `insert into account_type
+           (code, name, category, checklist_id, is_membership_default)
+         values ('s612_type_b', 'S-612 type B', 'savings',
+                 '${listB.rows[0].id}', false)
+         returning code`
+      );
+
+      const union = await config.checklistForAccountTypes([
+        typeA.rows[0].code,
+        typeB.rows[0].code,
+      ]);
+      const applicant = union.get('applicant')!;
+
+      // id_card appears once, required — type A left it optional but type B
+      // requires it, and the stricter selection wins.
+      const idCardItems = applicant.filter(i => i.documentCode === 'id_card');
+      expect(idCardItems).toHaveLength(1);
+      expect(idCardItems[0].requirement).toBe('required');
+
+      expect(
+        applicant.find(i => i.documentCode === 'utility_bill')?.requirement
+      ).toBe('optional');
+    });
+
+    it('is empty for no selection', async () => {
+      const { config } = await load();
+      expect(await config.checklistForAccountTypes([])).toEqual(new Map());
+    });
+  });
 });
 
 describe('S-209: workflow definitions', () => {

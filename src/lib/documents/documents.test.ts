@@ -233,6 +233,76 @@ describe('S-407: the checklist comes from the configuration', () => {
   });
 });
 
+// S-612: an additional-account application has no membership_type_id — the
+// bug this closes is resolveOwner's old inner join to membership_type
+// silently returning zero rows for one of these, which checklistFor then
+// misreported as "That application no longer exists." The application was
+// never missing; the checklist source was just the wrong table.
+describe('S-612: the checklist for an additional-account application comes from its account types', () => {
+  let additionalAccountApplicationId: string;
+
+  beforeAll(async () => {
+    const member = await run(
+      appUrl,
+      `select id from membership_type where code = 'individual'`
+    );
+    const holder = await run(
+      appUrl,
+      `insert into member (membership_type_id, status) values ($1, 'active')
+       returning id`,
+      [member.rows[0].id]
+    );
+
+    // Reuses the seeded 'msa_opening' checklist rather than inventing a new
+    // one — what is under test is that an additional_account application
+    // reads its checklist from account_type at all, not which checklist.
+    const checklist = await run(
+      appUrl,
+      `select id from document_checklist where code = 'msa_opening'`
+    );
+    const accountType = await runAsConfigurator(
+      appUrl,
+      `insert into account_type
+         (code, name, category, minimum_opening_amount, checklist_id,
+          is_membership_default)
+       values ('hsa_docs_test', 'HSA (documents test)', 'savings', 1000,
+               '${checklist.rows[0].id}', false)
+       returning id`
+    );
+
+    const application = await run(
+      appUrl,
+      `insert into membership_application
+         (application_kind, existing_member_id, captured_by)
+       values ('additional_account', $1, $2)
+       returning id`,
+      [holder.rows[0].id, officer.userId]
+    );
+    additionalAccountApplicationId = application.rows[0].id;
+
+    await run(
+      appUrl,
+      `insert into application_account_selection
+         (application_id, account_type_id)
+       values ($1, $2)`,
+      [additionalAccountApplicationId, accountType.rows[0].id]
+    );
+  });
+
+  it('lists what the selected account type requires, not "not found"', async () => {
+    const { documents } = await load();
+    const checklist = await documents.checklistFor({
+      applicationId: additionalAccountApplicationId,
+    });
+
+    expect(checklist.length).toBeGreaterThan(0);
+    expect(checklist.every(e => e.state === 'missing')).toBe(true);
+    expect(checklist.map(e => e.documentCode)).toEqual(
+      expect.arrayContaining(['id_card'])
+    );
+  });
+});
+
 describe('S-408: a document is filed only when SharePoint says so', () => {
   it('still reads Missing after begin, before the bytes arrive', async () => {
     const { documents } = await load();
