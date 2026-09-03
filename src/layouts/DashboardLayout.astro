@@ -21,6 +21,10 @@ const email = user?.email ?? '';
 // the system finds them.
 const displayName = Astro.locals.principal?.displayName || user?.name || email;
 const initial = (displayName.charAt(0) || 'A').toUpperCase();
+// What tells one colleague's account from another sharing their name here —
+// their role(s), not their address, which nobody in this office needed to
+// see to know who they were signed in as.
+const roleLabel = Astro.locals.principal?.roleNames.join(', ') || '';
 
 // Navigation is built from the permissions this person actually holds, so a
 // link is never shown to someone the middleware would refuse. The permission
@@ -260,15 +264,15 @@ const currentPath = Astro.url.pathname;
               </p>
               {
                 /*
-                The address stays here, small, because two colleagues can share
-                a name and this is where someone checks which account they are
-                actually using.
+                What tells one colleague's account from another sharing their
+                name apart here — not the address, which nobody needed to see
+                to know whose account this was.
               */
               }
               {
-                email && email !== displayName && (
+                roleLabel && (
                   <p class="truncate text-xs text-neutral-500 dark:text-neutral-400">
-                    {email}
+                    {roleLabel}
                   </p>
                 )
               }
@@ -279,6 +283,7 @@ const currentPath = Astro.url.pathname;
             </div>
             <a
               href="/auth/logout"
+              data-astro-prefetch="false"
               class="flex w-full items-center gap-x-3 rounded-lg px-3 py-2 text-sm text-neutral-700 hover:bg-neutral-200 dark:text-neutral-300 dark:hover:bg-neutral-800"
               role="menuitem"
             >

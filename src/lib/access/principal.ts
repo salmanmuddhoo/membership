@@ -17,6 +17,10 @@ export interface Principal {
   email: string;
   displayName: string;
   roles: string[];
+  // The human-readable name of each role above (e.g. "Regional Officer"),
+  // same order not guaranteed — read for display only (the user menu, S-107
+  // follow-up), never for an access decision, which stays on `roles`' codes.
+  roleNames: string[];
   permissions: ReadonlySet<string>;
 }
 
@@ -39,6 +43,7 @@ interface PrincipalRow {
   display_name: string;
   is_active: boolean;
   roles: string[] | null;
+  role_names: string[] | null;
   permissions: string[] | null;
 }
 
@@ -55,6 +60,10 @@ const PRINCIPAL_QUERY = `
            array_agg(distinct r.code) filter (where r.code is not null),
            '{}'
          )                          as roles,
+         coalesce(
+           array_agg(distinct r.name) filter (where r.name is not null),
+           '{}'
+         )                          as role_names,
          coalesce(
            array_agg(distinct p.code) filter (where p.code is not null),
            '{}'
@@ -155,6 +164,7 @@ export async function resolvePrincipal(
       email: row.email,
       displayName: row.display_name,
       roles: row.roles ?? [],
+      roleNames: row.role_names ?? [],
       permissions: new Set(row.permissions ?? []),
     },
   };

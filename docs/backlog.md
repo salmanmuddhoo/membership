@@ -1566,6 +1566,60 @@ the function runs in the default `iad1`, every query crosses the Atlantic
 twice — pinning the region next to the database is the single largest
 remaining lever, and a one-line `regions` entry in `vercel.json`.
 
+**Prefetch was configured but silent.** `prefetch: true` in astro.config.mjs
+only makes the `data-astro-prefetch` attribute available on a link — it does
+not turn prefetching on for any link by itself, and nothing in the project
+carried that attribute, so it had been doing nothing since it was added. Now
+`{ prefetchAll: true, defaultStrategy: 'tap' }`: every same-origin link
+prefetches with no per-link markup, and `tap` (touchstart/mousedown) rather
+than the default `hover` — an officer on a tablet has no hover to fire it,
+only what `tap` listens for, and it still lands before the click's own
+request goes out. A prefetch is a real request through the same middleware
+and page code the click would run, so it also warms the reference cache and
+the database connection moments before the real navigation needs them.
+Two links do something other than navigate on GET — `/auth/logout` clears
+the session, `/auth/login` sets OAuth state cookies — and opt out with
+`data-astro-prefetch="false"`; touching down on "Sign out" must never end
+the session by itself. Verified in a real browser: a `mousedown` on an
+ordinary link produces a `<link rel="prefetch">`, the same event on "Sign
+out" produces none.
+
+### S-614, phase 8: printing and signing a non-member's own account application ✅
+
+**A non-member opening an HSA or Investment account had nowhere to print
+the form, or sign it.** Migration 0028 (phase 4) deliberately left
+`signed_form` off the non-member checklist, reasoning that the flow "has no
+print step of its own" — true at the time, and no longer: officer feedback
+is that it needs one. Migration 0030 adds `signed_form` back
+(`non_member_kyc`, required); `print.astro` now accepts a `customer_account`
+application the same way it already accepts a `membership` one (same field
+configuration, same parties, same four signature lines), with the heading
+and declaration wording swapped for an account rather than a membership
+one; `customer.astro`'s own step numbering gained the `PRINT_STEP` between
+capture and documents that `[id].astro` already had, so Next from capture
+goes to the print page first, and the print page's own Next leads into
+documents, mirroring `[id].astro` exactly. The timeline's "Application
+signature" step and the "Signatures confirmed present on the scan" checklist
+UI were already generic across every application kind — the checklist item
+was the only thing missing for either to do anything on this flow.
+
+**Signing happens on the page, not only on paper afterward.** Each
+signature box on the print page is now a `<canvas>` an officer or applicant
+can draw into with a finger or stylus, layered over the same ruled line
+that was already there — the line stays the fallback for an actual pen, or
+for a reader without scripting, so nothing is lost for either. Print
+(choosing "Save as PDF" in the browser's own print dialog) carries the ink
+straight into the file, which the officer then uploads on the documents
+step the same way any signed form already gets filed. Nothing is
+persisted server-side by the signing itself — the canvas is pixels on the
+page until printed, the same as a signature on paper is ink until scanned.
+
+**The user menu shows a role, not an address.** `Principal` gains
+`roleNames` (principal.ts, alongside the existing `roles` codes, read from
+the same query) — the "Signed in as" panel in the header now reads e.g.
+"Regional Officer" instead of the signed-in email, which told a colleague
+nothing an internal tool needed to say out loud.
+
 ---
 
 # M7 — Legacy migration

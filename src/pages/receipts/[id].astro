@@ -91,20 +91,21 @@ if (Astro.request.method === 'POST') {
   }
 }
 
-const prints = await printHistoryFor(payment.id);
-const isReprint = prints.count > 0;
-
-const refundable: RefundableComponent[] =
+// None of the three below depends on another — they all read off `payment`
+// alone — so they go out together rather than one after another.
+const [prints, refundable, related] = await Promise.all([
+  printHistoryFor(payment.id),
   canRefund && payment.kind === 'payment' && !payment.voidedAt
-    ? await refundableComponents(payment.id)
-    : [];
+    ? refundableComponents(payment.id)
+    : Promise.resolve([] as RefundableComponent[]),
+  // Refunds already made against this one, so the Treasurer is not deciding
+  // blind.
+  payment.applicationId
+    ? paymentsForApplication(payment.applicationId)
+    : Promise.resolve([] as Payment[]),
+]);
+const isReprint = prints.count > 0;
 const anythingRefundable = refundable.some(c => Number(c.refundable) > 0);
-
-// Refunds already made against this one, so the Treasurer is not deciding
-// blind.
-const related: Payment[] = payment.applicationId
-  ? await paymentsForApplication(payment.applicationId)
-  : [];
 const refunds = related.filter(p => p.refundsId === payment!.id && !p.voidedAt);
 
 const owner = payment.applicationReference ?? payment.memberNo ?? '—';

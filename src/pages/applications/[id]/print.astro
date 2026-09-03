@@ -16,11 +16,27 @@ import { SIGNATURES } from '@lib/documents/documents';
 const { id } = Astro.params;
 const application = id ? await loadApplication(id) : null;
 if (!application) return new Response('Not found', { status: 404 });
-// S-613: printed forms exist for the membership capture flow only — an
-// additional-account application has no field-based form to print.
-if (application.applicationKind !== 'membership') {
+// S-613: printed forms exist for a flow that actually captures applicant
+// fields — an additional-account application (opening an extra account for
+// an existing member) has none, so there is nothing here to print. A
+// customer_account application (S-614: a non-member opening an account of
+// their own) captures exactly the same way a membership application does,
+// against the same field configuration, so it prints the same way too
+// (S-614, phase 8 — this page used to refuse it, on the reasoning that the
+// flow had no print step; it does now).
+if (
+  application.applicationKind !== 'membership' &&
+  application.applicationKind !== 'customer_account'
+) {
   return new Response('Not found', { status: 404 });
 }
+const isAccountApplication = application.applicationKind === 'customer_account';
+// Where Back and Next lead: customer.astro mirrors this page's own step
+// numbering exactly (capture=1, print=2, documents=3) for this reason, so
+// only the base path differs between the two kinds.
+const basePath = isAccountApplication
+  ? `/applications/${application.id}/customer`
+  : `/applications/${application.id}`;
 
 const type = (await listMembershipTypes()).find(
   t => t.id === application.membershipTypeId
@@ -60,7 +76,13 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
     <header class="head">
       <div>
         <h1>Al Barakah MCSL</h1>
-        <p class="sub">Application for Membership — {type.name}</p>
+        <p class="sub">
+          {
+            isAccountApplication
+              ? `Account application — ${type.name}`
+              : `Application for Membership — ${type.name}`
+          }
+        </p>
       </div>
       <div class="ref">
         <p><strong>{application.reference}</strong></p>
@@ -96,20 +118,41 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
     <section class="declaration block">
       <h2>Declaration</h2>
       <p>
-        I declare that the information given above is true and complete to the
-        best of my knowledge. I have read and accept the rules and by-laws of Al
-        Barakah Multipurpose Co-operative Society Limited, and I undertake to
-        abide by them. I understand that any information found to be false may
-        result in my application being refused or my membership terminated.
+        {
+          isAccountApplication
+            ? 'I declare that the information given above is true and complete to the best of my knowledge. I have read and accept the terms governing this account and the rules and by-laws of Al Barakah Multipurpose Co-operative Society Limited, and I undertake to abide by them. I understand that any information found to be false may result in my application being refused or the account being closed.'
+            : 'I declare that the information given above is true and complete to the best of my knowledge. I have read and accept the rules and by-laws of Al Barakah Multipurpose Co-operative Society Limited, and I undertake to abide by them. I understand that any information found to be false may result in my application being refused or my membership terminated.'
+        }
       </p>
     </section>
 
     <section class="block">
+      {
+        isEditable && (
+          <p class="sig-help no-print">
+            Sign in each box below, or print and sign by hand.
+          </p>
+        )
+      }
       <div class="signatures">
         {
           SIGNATURES.map(who => (
             <div class="sig">
-              <div class="sig-line" />
+              {isEditable ? (
+                <div class="sig-pad" data-sig-pad>
+                  <div class="sig-line" />
+                  <canvas class="sig-canvas" data-sig-canvas />
+                  <button
+                    type="button"
+                    class="sig-clear no-print"
+                    data-sig-clear
+                  >
+                    Clear
+                  </button>
+                </div>
+              ) : (
+                <div class="sig-line" />
+              )}
               <p class="sig-name">{who}</p>
               <p class="sig-date">Name and date</p>
               <div class="sig-line short" />
@@ -124,15 +167,13 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
       {
         isEditable ? (
           <>
-            <a href={`/applications/${application.id}?step=1`}>← Back</a>
-            <a href={`/applications/${application.id}?step=3`} class="next">
+            <a href={`${basePath}?step=1`}>← Back</a>
+            <a href={`${basePath}?step=3`} class="next">
               Next: upload documents →
             </a>
           </>
         ) : (
-          <a href={`/applications/${application.id}`}>
-            Back to the application
-          </a>
+          <a href={basePath}>Back to the application</a>
         )
       }
     </div>
@@ -254,6 +295,37 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
     color: #555;
   }
 
+  .sig-help {
+    margin: 0 0 3mm;
+    font-family: system-ui, sans-serif;
+    font-size: 9pt;
+    color: #666;
+  }
+  /* The line stays underneath as the fallback a pen can still use — without
+     scripting, or if the officer prefers it, this is unchanged from before. */
+  .sig-pad {
+    position: relative;
+  }
+  .sig-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 14mm;
+    /* A drawing surface, not a page to scroll past — the pointer must not
+       drag the screen while someone is mid-signature. */
+    touch-action: none;
+    cursor: crosshair;
+  }
+  .sig-clear {
+    margin-top: 1mm;
+    padding: 0.5mm 2mm;
+    border: 1px solid #999;
+    background: #f5f5f5;
+    font: inherit;
+    font-size: 8pt;
+    cursor: pointer;
+  }
+
   .watermark {
     position: absolute;
     inset: 0;
@@ -289,8 +361,12 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
 
   @media print {
     /* The controls are for the screen; the paper carries the form. */
-    .actions {
+    .actions,
+    .no-print {
       display: none;
+    }
+    .sig-canvas {
+      cursor: default;
     }
     .print-page {
       max-width: none;
@@ -312,4 +388,74 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
   document.getElementById('print')?.addEventListener('click', () => {
     window.print();
   });
+
+  // Lets whoever is holding the tablet sign directly into the box with a
+  // finger or stylus instead of only on paper afterward — the ink becomes
+  // part of the page, so Print (choose "Save as PDF" in the print dialog)
+  // carries it straight into the file the officer uploads on the documents
+  // step. The ruled line underneath is still there and still usable with an
+  // actual pen: this is a second way to sign the same box, not the only one,
+  // which is also what a reader without scripting gets by default.
+  for (const canvas of document.querySelectorAll<HTMLCanvasElement>(
+    '[data-sig-canvas]'
+  )) {
+    const ctx = canvas.getContext('2d');
+    if (!ctx) continue;
+
+    // Sized once from the box the CSS above already gives it, at the
+    // device's actual pixel density so the line does not look soft on a
+    // sharp tablet screen. A canvas' bitmap is a fixed pixel grid, unlike
+    // an ordinary element — this is what makes it one.
+    const rect = canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.max(1, Math.round(rect.width * dpr));
+    canvas.height = Math.max(1, Math.round(rect.height * dpr));
+    ctx.scale(dpr, dpr);
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = '#1a1a2e';
+
+    let drawing = false;
+    let last: { x: number; y: number } | null = null;
+    const pointFrom = (e: PointerEvent) => {
+      const box = canvas.getBoundingClientRect();
+      return { x: e.clientX - box.left, y: e.clientY - box.top };
+    };
+
+    canvas.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      canvas.setPointerCapture(e.pointerId);
+      drawing = true;
+      last = pointFrom(e);
+    });
+    canvas.addEventListener('pointermove', e => {
+      if (!drawing || !last) return;
+      const point = pointFrom(e);
+      ctx.beginPath();
+      ctx.moveTo(last.x, last.y);
+      ctx.lineTo(point.x, point.y);
+      ctx.stroke();
+      last = point;
+    });
+    const stop = () => {
+      drawing = false;
+      last = null;
+    };
+    canvas.addEventListener('pointerup', stop);
+    canvas.addEventListener('pointercancel', stop);
+    canvas.addEventListener('pointerleave', stop);
+
+    canvas
+      .closest('[data-sig-pad]')
+      ?.querySelector('[data-sig-clear]')
+      ?.addEventListener('click', () => {
+        // Reset the transform first: clearRect is drawn in the CURRENT
+        // coordinate space, and that space is scaled by dpr above.
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.restore();
+      });
+  }
 </script>
