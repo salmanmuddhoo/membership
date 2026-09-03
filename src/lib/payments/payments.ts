@@ -93,6 +93,18 @@ export interface PaymentLine {
   amount: string;
 }
 
+// S-613, phase 6: a payment against an additional_account application has no
+// fee schedule to itemise by component — each line is a selected account
+// type, snapshotted (migration 0026) the same reason payment_line already
+// keeps scheduledAmount: an account type renamed later must not rewrite what
+// a receipt already printed.
+export interface PaymentAccountLine {
+  accountTypeId: string;
+  accountTypeCode: string;
+  label: string;
+  amount: string;
+}
+
 export interface Payment {
   id: string;
   receiptNo: string;
@@ -104,7 +116,9 @@ export interface Payment {
   applicationReference: string | null;
   memberId: string | null;
   memberNo: string | null;
-  feeVersionId: string;
+  // Null for a payment against an additional_account application (S-613) —
+  // see accountLines instead, which is empty for every other payment.
+  feeVersionId: string | null;
   method: PaymentMethod;
   methodReference: string;
   currency: string;
@@ -117,6 +131,7 @@ export interface Payment {
   voidedByName: string | null;
   voidReason: string | null;
   lines: PaymentLine[];
+  accountLines: PaymentAccountLine[];
 }
 
 // ---------------------------------------------------------------------------
@@ -149,7 +164,7 @@ interface PaymentRow {
   refunds_id: string | null;
   application_id: string | null;
   member_id: string | null;
-  fee_version_id: string;
+  fee_version_id: string | null;
   method: PaymentMethod;
   method_reference: string;
   currency: string;
@@ -176,7 +191,20 @@ interface LineRow {
   sort_order: number;
 }
 
-function assemble(rows: PaymentRow[], lines: LineRow[]): Payment[] {
+interface AccountLineRow {
+  payment_id: string;
+  account_type_id: string;
+  account_type_code: string;
+  account_type_name: string;
+  amount: string;
+  sort_order: number;
+}
+
+function assemble(
+  rows: PaymentRow[],
+  lines: LineRow[],
+  accountLines: AccountLineRow[]
+): Payment[] {
   const byPayment = new Map<string, PaymentLine[]>();
   for (const l of lines) {
     const list = byPayment.get(l.payment_id) ?? [];
@@ -187,6 +215,18 @@ function assemble(rows: PaymentRow[], lines: LineRow[]): Payment[] {
       amount: l.amount,
     });
     byPayment.set(l.payment_id, list);
+  }
+
+  const byPaymentAccount = new Map<string, PaymentAccountLine[]>();
+  for (const l of accountLines) {
+    const list = byPaymentAccount.get(l.payment_id) ?? [];
+    list.push({
+      accountTypeId: l.account_type_id,
+      accountTypeCode: l.account_type_code,
+      label: l.account_type_name,
+      amount: l.amount,
+    });
+    byPaymentAccount.set(l.payment_id, list);
   }
 
   return rows.map(p => ({
@@ -213,6 +253,7 @@ function assemble(rows: PaymentRow[], lines: LineRow[]): Payment[] {
     voidedByName: p.voided_by_name,
     voidReason: p.void_reason,
     lines: byPayment.get(p.id) ?? [],
+    accountLines: byPaymentAccount.get(p.id) ?? [],
   }));
 }
 
@@ -228,12 +269,31 @@ async function linesFor(paymentIds: string[]): Promise<LineRow[]> {
   return result.rows;
 }
 
+async function accountLinesFor(
+  paymentIds: string[]
+): Promise<AccountLineRow[]> {
+  if (paymentIds.length === 0) return [];
+  const result = await query<AccountLineRow>(
+    `select payment_id, account_type_id, account_type_code, account_type_name,
+            amount, sort_order
+       from payment_account_line
+      where payment_id = any($1::uuid[])
+      order by sort_order, account_type_code`,
+    [paymentIds]
+  );
+  return result.rows;
+}
+
 export async function loadPayment(id: string): Promise<Payment | null> {
   const result = await query<PaymentRow>(`${PAYMENT_SELECT} where p.id = $1`, [
     id,
   ]);
   if (result.rows.length === 0) return null;
-  return assemble(result.rows, await linesFor([id]))[0];
+  return assemble(
+    result.rows,
+    await linesFor([id]),
+    await accountLinesFor([id])
+  )[0];
 }
 
 // Everything recorded against one application: the payment, and any refunds
@@ -245,7 +305,8 @@ export async function paymentsForApplication(
     `${PAYMENT_SELECT} where p.application_id = $1 order by p.received_at`,
     [applicationId]
   );
-  return assemble(result.rows, await linesFor(result.rows.map(r => r.id)));
+  const ids = result.rows.map(r => r.id);
+  return assemble(result.rows, await linesFor(ids), await accountLinesFor(ids));
 }
 
 /**
@@ -265,7 +326,8 @@ export async function paymentsForMember(memberId: string): Promise<Payment[]> {
       order by p.received_at`,
     [memberId]
   );
-  return assemble(result.rows, await linesFor(result.rows.map(r => r.id)));
+  const ids = result.rows.map(r => r.id);
+  return assemble(result.rows, await linesFor(ids), await accountLinesFor(ids));
 }
 
 // Has this application been paid for? What the timeline asks.
@@ -351,6 +413,76 @@ export async function amountDueForApplication(
       chargeable
         .filter(c => c.requirement === 'required')
         .reduce((total, c) => total + toCents(c.amount), 0)
+    ),
+  };
+}
+
+// S-613, phase 6: what is due for an additional_account application — the
+// selected account types' own minimum_opening_amount, not a fee schedule
+// (officer direction: nothing new for an administrator to configure here).
+// A separate type and function rather than folding into AmountDue/
+// amountDueForApplication above: the caller already knows which kind of
+// application it is holding (a membership-only page and an
+// additional-account-only page, never both), so there is nothing for one
+// function to dispatch on that the caller does not already know — and
+// widening AmountDue into a union would ripple through every membership
+// page that reads it today for no reader's benefit.
+export interface AccountDueComponent {
+  accountTypeId: string;
+  code: string;
+  label: string;
+  amount: string;
+}
+
+export interface AccountAmountDue {
+  components: AccountDueComponent[];
+  // Every selected account type's opening amount is required — there is no
+  // "optional" component here the way a membership fee schedule has one.
+  expectedTotal: string;
+}
+
+export async function amountDueForAdditionalAccount(
+  applicationId: string
+): Promise<AccountAmountDue> {
+  const application = await query<{ application_kind: string }>(
+    `select application_kind from membership_application where id = $1`,
+    [applicationId]
+  );
+  if (application.rows.length === 0) {
+    throw new PaymentError('That application no longer exists.', 'not_found');
+  }
+  if (application.rows[0].application_kind !== 'additional_account') {
+    throw new PaymentError(
+      'This application opens accounts for a membership, and is charged ' +
+        'through the membership fee schedule instead.'
+    );
+  }
+
+  const selected = await query<{
+    account_type_id: string;
+    code: string;
+    name: string;
+    minimum_opening_amount: string;
+  }>(
+    `select t.id as account_type_id, t.code, t.name, t.minimum_opening_amount
+       from application_account_selection s
+       join account_type t on t.id = s.account_type_id
+      where s.application_id = $1
+      order by t.sort_order, t.name`,
+    [applicationId]
+  );
+
+  const components = selected.rows.map(r => ({
+    accountTypeId: r.account_type_id,
+    code: r.code,
+    label: r.name,
+    amount: r.minimum_opening_amount,
+  }));
+
+  return {
+    components,
+    expectedTotal: fromCents(
+      components.reduce((total, c) => total + toCents(c.amount), 0)
     ),
   };
 }
@@ -610,6 +742,266 @@ export async function recordPayment(
   }
 }
 
+// S-613, phase 6: recording payment for an additional_account application.
+// Deliberately a separate function from recordPayment above rather than a
+// branch inside it — the input shape genuinely differs (amounts keyed by
+// account_type_id, not FeeComponentCode), the same reason
+// startAdditionalAccountApplication sits beside startApplication rather than
+// inside it. What is shared (allocate the receipt, lock the application,
+// refuse a second live payment, emit the audit trail and financial event) is
+// still exactly the same sequence — it just writes payment_account_line
+// instead of payment_line, and no fee_version_id.
+export interface RecordAccountOpeningPaymentInput {
+  applicationId: string;
+  method: PaymentMethod;
+  methodReference?: string;
+  receivedAt?: Date;
+  // Keyed by account_type_id — every selected account type needs an amount
+  // entered, since none of them is optional the way a membership fee
+  // schedule's own components can be. Less than what is due still needs
+  // varianceReason below, the same as a membership payment.
+  amounts: Record<string, string>;
+  // Required only when the total differs from what is due.
+  varianceReason?: string;
+}
+
+export async function recordAccountOpeningPayment(
+  input: RecordAccountOpeningPaymentInput,
+  principal: Principal
+): Promise<Payment> {
+  if (!principal.permissions.has('payment.record')) {
+    throw new PaymentError(
+      'You do not have permission to record payments.',
+      'forbidden'
+    );
+  }
+
+  if (!PAYMENT_METHODS.includes(input.method)) {
+    throw new PaymentError('Choose how the payment was made.');
+  }
+
+  // Mirrors recordPayment's own status guard: a decided application is not
+  // one to take money on.
+  const status = await query<{ status: string }>(
+    'select status from membership_application where id = $1',
+    [input.applicationId]
+  );
+  if (status.rows.length === 0) {
+    throw new PaymentError('That application no longer exists.', 'not_found');
+  }
+  if (status.rows[0].status === 'approved') {
+    throw new PaymentError(
+      'This application has been approved. Record the payment against the ' +
+        'member instead.',
+      'conflict'
+    );
+  }
+  if (status.rows[0].status === 'rejected') {
+    throw new PaymentError(
+      'This application was rejected, so no receipt can be issued against it.',
+      'conflict'
+    );
+  }
+
+  const due = await amountDueForAdditionalAccount(input.applicationId);
+  if (due.components.length === 0) {
+    throw new PaymentError('This application has no account type selected.');
+  }
+  const chargeable = new Map(due.components.map(c => [c.accountTypeId, c]));
+
+  for (const accountTypeId of Object.keys(input.amounts)) {
+    if (!chargeable.has(accountTypeId)) {
+      throw new PaymentError(
+        'That account type is not part of this application.'
+      );
+    }
+  }
+
+  let total = 0;
+  const lines: Array<{
+    accountTypeId: string;
+    code: string;
+    name: string;
+    amount: string;
+    sortOrder: number;
+  }> = [];
+
+  due.components.forEach((component, index) => {
+    const raw = (input.amounts[component.accountTypeId] ?? '0').trim() || '0';
+    let cents: number;
+    try {
+      cents = toCents(raw);
+    } catch (error) {
+      throw new PaymentError(
+        error instanceof MoneyError
+          ? `${component.label}: ${error.message}`
+          : `${component.label} is not an amount.`
+      );
+    }
+    if (cents <= 0) {
+      // Not "the wrong amount" — that is the variance check below, which
+      // allows less than the schedule with a reason. This is "nothing was
+      // entered for an account being opened", which no reason excuses.
+      throw new PaymentError(`Enter what was paid to open ${component.label}.`);
+    }
+
+    total += cents;
+    lines.push({
+      accountTypeId: component.accountTypeId,
+      code: component.code,
+      name: component.label,
+      amount: fromCents(cents),
+      sortOrder: index,
+    });
+  });
+
+  const variance = total - toCents(due.expectedTotal);
+  const varianceReason = (input.varianceReason ?? '').trim();
+  if (variance !== 0 && varianceReason === '') {
+    const word = variance > 0 ? 'more' : 'less';
+    throw new PaymentError(
+      `That is ${fromCents(Math.abs(variance))} ${word} than the ` +
+        `${due.expectedTotal} due. Say why before recording it.`
+    );
+  }
+
+  const existing = await query<{ receipt_no: string }>(
+    `select r.receipt_no
+       from payment p
+       join receipt_number r on r.id = p.receipt_number_id
+      where p.application_id = $1 and p.kind = 'payment'
+        and p.voided_at is null`,
+    [input.applicationId]
+  );
+  if (existing.rows.length > 0) {
+    throw new PaymentError(
+      `This application was already receipted as ${existing.rows[0].receipt_no}. ` +
+        'Void that receipt if it was wrong.',
+      'conflict'
+    );
+  }
+
+  const allocation = await allocateReceiptNumber(principal.userId);
+
+  try {
+    const id = await withTransaction(async client => {
+      const locked = await client.query<{ id: string; reference: string }>(
+        `select id, reference from membership_application
+          where id = $1 for no key update`,
+        [input.applicationId]
+      );
+      if (locked.rows.length === 0) {
+        throw new PaymentError(
+          'That application no longer exists.',
+          'not_found'
+        );
+      }
+
+      const duplicate = await client.query(
+        `select 1 from payment
+          where application_id = $1 and kind = 'payment' and voided_at is null`,
+        [input.applicationId]
+      );
+      if ((duplicate.rowCount ?? 0) > 0) {
+        throw new PaymentError(
+          'This application has just been receipted by someone else.',
+          'conflict'
+        );
+      }
+
+      const inserted = await client.query<{ id: string }>(
+        `insert into payment
+           (receipt_number_id, kind, application_id, fee_version_id, method,
+            method_reference, total_amount, variance_reason, received_at,
+            recorded_by)
+         values ($1, 'payment', $2, null, $3, $4, $5, $6, coalesce($7, now()), $8)
+         returning id`,
+        [
+          allocation.id,
+          input.applicationId,
+          input.method,
+          (input.methodReference ?? '').trim(),
+          fromCents(total),
+          varianceReason,
+          input.receivedAt ?? null,
+          principal.userId,
+        ]
+      );
+      const paymentId = inserted.rows[0].id;
+
+      for (const line of lines) {
+        await client.query(
+          `insert into payment_account_line
+             (payment_id, account_type_id, account_type_code, account_type_name,
+              amount, sort_order)
+           values ($1, $2, $3, $4, $5, $6)`,
+          [
+            paymentId,
+            line.accountTypeId,
+            line.code,
+            line.name,
+            line.amount,
+            line.sortOrder,
+          ]
+        );
+      }
+
+      await markReceiptIssued(allocation.id, client);
+
+      await emitFinancialEvent(client, {
+        eventType: 'payment.recorded',
+        paymentId,
+        receiptNo: allocation.receiptNo,
+        payload: {
+          kind: 'payment',
+          applicationId: input.applicationId,
+          applicationReference: locked.rows[0].reference,
+          currency: 'MUR',
+          totalAmount: fromCents(total),
+          method: input.method,
+          accountTypes: lines.map(l => ({
+            accountTypeId: l.accountTypeId,
+            code: l.code,
+            amount: l.amount,
+          })),
+          variance: variance === 0 ? null : fromCents(variance),
+          varianceReason: varianceReason || null,
+          recordedBy: principal.email,
+        },
+      });
+
+      await recordAudit(
+        {
+          actorUserId: principal.userId,
+          actorDescription: principal.email,
+          action: ACTION_RECORDED,
+          entityType: ENTITY_TYPE,
+          entityId: paymentId,
+          newValue: {
+            receiptNo: allocation.receiptNo,
+            applicationReference: locked.rows[0].reference,
+            totalAmount: fromCents(total),
+            method: input.method,
+          },
+        },
+        client
+      );
+
+      return paymentId;
+    });
+
+    return (await loadPayment(id))!;
+  } catch (error) {
+    await abandonReceiptNumber(
+      allocation.id,
+      error instanceof PaymentError
+        ? error.message
+        : 'The payment failed while being recorded.'
+    );
+    throw error;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // S-505 · Refunds
 // ---------------------------------------------------------------------------
@@ -717,6 +1109,16 @@ export async function refundPayment(
     throw new PaymentError(
       `Receipt ${original.receiptNo} was voided; there is nothing to refund.`,
       'conflict'
+    );
+  }
+  // S-613, phase 6: refunding an account-opening payment (no fee schedule,
+  // itemised in payment_account_line instead) is its own increment, not yet
+  // built — voidPayment (a full, whole-receipt reversal) already covers
+  // "this was a mistake" for one in the meantime.
+  if (!original.feeVersionId) {
+    throw new PaymentError(
+      'A partial refund is not yet available for this kind of payment. ' +
+        'Void the receipt instead if it was taken in error.'
     );
   }
 
@@ -1162,5 +1564,8 @@ export async function financialEventsSince(
 export async function feeVersionFor(
   payment: Payment
 ): Promise<{ versionNo: number; components: FeeComponent[] } | null> {
+  // Null for a payment against an additional_account application (S-613),
+  // which was never charged against a fee schedule to begin with.
+  if (!payment.feeVersionId) return null;
   return feeVersionById(payment.feeVersionId);
 }

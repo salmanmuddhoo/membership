@@ -41,6 +41,25 @@ async function run(url: string, sql: string, params: unknown[] = []) {
   }
 }
 
+// Configuration tables refuse a write that cannot be attributed (S-210), so a
+// fixture that touches one has to say who it is, exactly as the application
+// does through withConfigurationActor.
+async function runAsConfigurator(url: string, sql: string) {
+  const client = new pg.Client({ connectionString: url, ssl: false });
+  await client.connect();
+  try {
+    await client.query('begin');
+    await client.query(
+      `select set_config('albarakah.actor_description', 'test fixture', true)`
+    );
+    const result = await client.query(sql);
+    await client.query('commit');
+    return result;
+  } finally {
+    await client.end();
+  }
+}
+
 // The pool the last load() built.
 //
 // Each load() calls vi.resetModules(), which builds a NEW pool on the next
@@ -1091,5 +1110,238 @@ describe('S-506: an exception leads back to its receipt', () => {
     );
     expect(abandoned).toBeDefined();
     expect(abandoned!.paymentId).toBeNull();
+  });
+});
+
+// S-613, phase 6: paying to open an account for an existing member — the
+// amount due is each selected account type's own minimum_opening_amount
+// (account_type, migration 0010), not a fee schedule. No afterAll cleanup:
+// the whole throwaway database is dropped once every test here has run.
+describe('S-613: paying to open an account for an existing member', () => {
+  let hsaId: string;
+  let investmentId: string;
+
+  beforeAll(async () => {
+    const hsa = await runAsConfigurator(
+      appUrl,
+      `insert into account_type (code, name, category, minimum_opening_amount, is_membership_default)
+       values ('hsa_pay_test', 'Hajj Savings (test)', 'savings', 1000.00, false)
+       returning id`
+    );
+    hsaId = hsa.rows[0].id;
+    const investment = await runAsConfigurator(
+      appUrl,
+      `insert into account_type (code, name, category, minimum_opening_amount, is_membership_default)
+       values ('inv_pay_test', 'Investment (test)', 'savings', 2500.00, false)
+       returning id`
+    );
+    investmentId = investment.rows[0].id;
+  });
+
+  async function newAdditionalAccountApplication(accountTypeIds: string[]) {
+    const { capture } = await load();
+    const member = await run(
+      appUrl,
+      `select id from membership_type where code = 'individual'`
+    );
+    const application = await run(
+      appUrl,
+      `insert into membership_application (membership_type_id, captured_by)
+       values ($1, $2) returning id`,
+      [member.rows[0].id, officer.userId]
+    );
+    const created = await run(
+      appUrl,
+      `insert into member (application_id, membership_type_id, status)
+       values ($1, $2, 'active') returning id`,
+      [application.rows[0].id, member.rows[0].id]
+    );
+    return capture.startAdditionalAccountApplication(
+      created.rows[0].id,
+      accountTypeIds,
+      officer
+    );
+  }
+
+  describe('what is due', () => {
+    it('is each selected account type’s own opening amount', async () => {
+      const { payments } = await load();
+      const application = await newAdditionalAccountApplication([
+        hsaId,
+        investmentId,
+      ]);
+
+      const due = await payments.amountDueForAdditionalAccount(application.id);
+      expect(due.components).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ accountTypeId: hsaId, amount: '1000.00' }),
+          expect.objectContaining({
+            accountTypeId: investmentId,
+            amount: '2500.00',
+          }),
+        ])
+      );
+      expect(due.expectedTotal).toBe('3500.00');
+    });
+
+    it('refuses a membership application — it has a fee schedule instead', async () => {
+      const { payments } = await load();
+      const application = await newApplication();
+
+      await expect(
+        payments.amountDueForAdditionalAccount(application.id)
+      ).rejects.toThrowError(/membership fee schedule/);
+    });
+  });
+
+  describe('recording the payment', () => {
+    it('records one payment line per selected account type, no fee version', async () => {
+      const { payments } = await load();
+      const application = await newAdditionalAccountApplication([hsaId]);
+
+      const payment = await payments.recordAccountOpeningPayment(
+        {
+          applicationId: application.id,
+          method: 'cash',
+          amounts: { [hsaId]: '1000.00' },
+        },
+        principalFor(officer)
+      );
+
+      expect(payment.feeVersionId).toBeNull();
+      expect(payment.totalAmount).toBe('1000.00');
+      expect(payment.lines).toEqual([]);
+      expect(payment.accountLines).toEqual([
+        expect.objectContaining({
+          accountTypeId: hsaId,
+          accountTypeCode: 'hsa_pay_test',
+          label: 'Hajj Savings (test)',
+          amount: '1000.00',
+        }),
+      ]);
+    });
+
+    it('refuses less than the full opening amount, without a reason', async () => {
+      const { payments } = await load();
+      const application = await newAdditionalAccountApplication([hsaId]);
+
+      await expect(
+        payments.recordAccountOpeningPayment(
+          {
+            applicationId: application.id,
+            method: 'cash',
+            amounts: { [hsaId]: '500.00' },
+          },
+          principalFor(officer)
+        )
+      ).rejects.toThrowError(/less than the 1,?000\.00 due|Say why/);
+    });
+
+    it('is satisfied by the workflow’s own payment gate', async () => {
+      const { payments, capture } = await load();
+      const application = await newAdditionalAccountApplication([hsaId]);
+      expect(await payments.hasLivePayment(application.id)).toBe(false);
+
+      await payments.recordAccountOpeningPayment(
+        {
+          applicationId: application.id,
+          method: 'cash',
+          amounts: { [hsaId]: '1000.00' },
+        },
+        principalFor(officer)
+      );
+
+      expect(await payments.hasLivePayment(application.id)).toBe(true);
+      // Confirms the row really is visible the same generic way a membership
+      // payment already is — nothing about paymentsForApplication changed.
+      const loaded = await capture.loadApplication(application.id);
+      expect(loaded!.applicationKind).toBe('additional_account');
+    });
+  });
+
+  describe('the receipt', () => {
+    it('shows the account types charged, and a printed line each', async () => {
+      const { payments } = await load();
+      const application = await newAdditionalAccountApplication([
+        hsaId,
+        investmentId,
+      ]);
+      const payment = await payments.recordAccountOpeningPayment(
+        {
+          applicationId: application.id,
+          method: 'cash',
+          amounts: { [hsaId]: '1000.00', [investmentId]: '2500.00' },
+        },
+        principalFor(officer)
+      );
+
+      const reloaded = await payments.loadPayment(payment.id);
+      expect(reloaded!.accountLines.map(l => l.label).sort()).toEqual([
+        'Hajj Savings (test)',
+        'Investment (test)',
+      ]);
+    });
+
+    it('reports no fee version to print, rather than throwing', async () => {
+      const { payments } = await load();
+      const application = await newAdditionalAccountApplication([hsaId]);
+      const payment = await payments.recordAccountOpeningPayment(
+        {
+          applicationId: application.id,
+          method: 'cash',
+          amounts: { [hsaId]: '1000.00' },
+        },
+        principalFor(officer)
+      );
+
+      expect(await payments.feeVersionFor(payment)).toBeNull();
+    });
+  });
+
+  describe('refunding', () => {
+    it('is refused for now — void the receipt instead', async () => {
+      const { payments } = await load();
+      const application = await newAdditionalAccountApplication([hsaId]);
+      const payment = await payments.recordAccountOpeningPayment(
+        {
+          applicationId: application.id,
+          method: 'cash',
+          amounts: { [hsaId]: '1000.00' },
+        },
+        principalFor(officer)
+      );
+
+      await expect(
+        payments.refundPayment(
+          {
+            paymentId: payment.id,
+            method: 'cash',
+            reason: 'Wrong account',
+            amounts: {},
+          },
+          principalFor(treasurer)
+        )
+      ).rejects.toThrowError(/not yet available/);
+    });
+
+    it('can still be voided outright', async () => {
+      const { payments } = await load();
+      const application = await newAdditionalAccountApplication([hsaId]);
+      const payment = await payments.recordAccountOpeningPayment(
+        {
+          applicationId: application.id,
+          method: 'cash',
+          amounts: { [hsaId]: '1000.00' },
+        },
+        principalFor(officer)
+      );
+
+      const voided = await payments.voidPayment(
+        payment.id,
+        'Opened in error.',
+        principalFor(treasurer)
+      );
+      expect(voided.voidedAt).not.toBeNull();
+    });
   });
 });

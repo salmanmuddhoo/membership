@@ -190,7 +190,10 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     <table class="lines">
       <tbody>
         {
-          payment.lines.map(line => (
+          // Never both: a payment is either against a membership fee
+          // schedule (lines) or an additional-account opening amount
+          // (accountLines, S-613) — one of the two is always empty.
+          [...payment.lines, ...payment.accountLines].map(line => (
             <tr>
               <td>{line.label}</td>
               <td class="amount">
