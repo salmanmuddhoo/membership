@@ -16,7 +16,7 @@ import { checkSegregation } from '../admin/segregation';
 import {
   checklistForAccountTypes,
   checklistForMembershipType,
-  checklistForMembershipTypeAndAccountTypes,
+  checklistForNonMemberAccount,
   type FieldSubject,
 } from '../config/reference';
 import { query, withTransaction } from '../db/pool';
@@ -303,7 +303,7 @@ export async function checklistFor(options: {
     owner.checklist_source.kind === 'membership_type'
       ? await checklistForMembershipType(owner.checklist_source.code)
       : owner.checklist_source.kind === 'membership_type_and_account_types'
-        ? await checklistForMembershipTypeAndAccountTypes(
+        ? await checklistForNonMemberAccount(
             owner.checklist_source.membershipCode,
             owner.checklist_source.accountCodes
           )

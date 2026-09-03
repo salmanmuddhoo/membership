@@ -32,6 +32,8 @@ if (Astro.request.method === 'POST') {
           String(form.get('typeId')),
           {
             checklistId: String(form.get('checklistId') ?? '') || null,
+            nonMemberChecklistId:
+              String(form.get('nonMemberChecklistId') ?? '') || null,
             feeScheduleId: String(form.get('feeScheduleId') ?? '') || null,
           },
           actor
@@ -161,6 +163,26 @@ const SUBJECT_LABELS: Record<string, string> = {
                 ))}
               </select>
             </label>
+            {type.code === 'individual' && (
+              <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                Documents required from a non-member applicant
+                <select
+                  name="nonMemberChecklistId"
+                  disabled={!canManage}
+                  class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                >
+                  <option value="">— none —</option>
+                  {checklists.map(c => (
+                    <option
+                      value={c.id}
+                      selected={c.id === type.nonMemberChecklistId}
+                    >
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <label class="text-sm text-neutral-600 dark:text-neutral-300">
               Fee schedule
               <select

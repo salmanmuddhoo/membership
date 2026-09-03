@@ -437,7 +437,18 @@ export async function openAccountsForCustomerApplication(
 
 export interface MemberSummary {
   id: string;
+  // S-614: a customer never was, and never becomes, a member — kept in the
+  // same list because an officer looking someone up does not know in
+  // advance which one they are, but always tagged so the two are never
+  // mistaken for each other.
+  kind: 'member' | 'customer';
+  // A member's own AB number. A customer has none of their own — this is
+  // their held account number(s) instead (comma-joined; empty if none has
+  // opened yet, which openAccountsForCustomerApplication never actually
+  // leaves true, but nothing stops a read the instant after approval).
   memberNo: string;
+  // A member's own membership type. For a customer, the account type(s)
+  // they hold instead — there is no membership type to name.
   membershipTypeName: string;
   status: string;
   name: string;
@@ -477,30 +488,67 @@ export async function listMembers(
   const search = options.search?.trim() ? options.search.trim() : null;
   const limit = Math.min(Math.max(options.limit ?? 100, 1), 100);
 
+  // S-614: a customer (never a member — customer table, migration 0027)
+  // appears in the same list, tagged, since an officer searching by name or
+  // number does not know in advance which one they are looking for. Unioned
+  // rather than two separate lists, so one search and one page of results
+  // covers both.
   const result = await query<{
     id: string;
-    member_no: string;
-    membership_type_name: string;
+    kind: 'member' | 'customer';
+    identifier: string;
+    type_label: string;
     status: string;
     name: string;
     joined_at: Date;
     application_reference: string | null;
     total_count: string;
   }>(
-    `select m.id, m.member_no, t.name as membership_type_name, m.status,
-            ${NAME_SQL} as name, m.joined_at,
-            a.reference as application_reference,
+    `with rows as (
+       select m.id, 'member'::text as kind, m.member_no as identifier,
+              t.name as type_label, m.status,
+              ${NAME_SQL} as name, m.joined_at,
+              a.reference as application_reference
+         from member m
+         join membership_type t on t.id = m.membership_type_id
+         left join membership_application a on a.id = m.application_id
+         left join application_party p
+           on p.application_id = m.application_id
+          and p.subject = 'applicant' and p.ordinal = 1
+       union all
+       select c.id, 'customer'::text as kind,
+              coalesce(
+                (select string_agg(acc.account_no, ', '
+                          order by act.sort_order, acc.account_no)
+                   from account acc
+                   join account_type act on act.id = acc.account_type_id
+                  where acc.customer_id = c.id),
+                ''
+              ) as identifier,
+              coalesce(
+                (select string_agg(distinct act.name, ' + ' order by act.name)
+                   from account acc
+                   join account_type act on act.id = acc.account_type_id
+                  where acc.customer_id = c.id),
+                ''
+              ) as type_label,
+              c.status,
+              ${NAME_SQL} as name, c.joined_at,
+              capp.reference as application_reference
+         from customer c
+         join membership_application capp on capp.id = c.application_id
+         left join application_party p
+           on p.application_id = c.application_id
+          and p.subject = 'applicant' and p.ordinal = 1
+     )
+     select id, kind, identifier, type_label, status, name, joined_at,
+            application_reference,
             count(*) over () as total_count
-       from member m
-       join membership_type t on t.id = m.membership_type_id
-       left join membership_application a on a.id = m.application_id
-       left join application_party p
-         on p.application_id = m.application_id
-        and p.subject = 'applicant' and p.ordinal = 1
+       from rows
       where $1::text is null
-         or strpos(lower(m.member_no), lower($1::text)) > 0
-         or strpos(lower(${NAME_SQL}), lower($1::text)) > 0
-      order by m.member_no
+         or strpos(lower(identifier), lower($1::text)) > 0
+         or strpos(lower(name), lower($1::text)) > 0
+      order by identifier
       limit $2::int`,
     [search, limit]
   );
@@ -510,8 +558,9 @@ export async function listMembers(
   return {
     members: result.rows.map(r => ({
       id: r.id,
-      memberNo: r.member_no,
-      membershipTypeName: r.membership_type_name,
+      kind: r.kind,
+      memberNo: r.identifier,
+      membershipTypeName: r.type_label,
       status: r.status,
       name: r.name || '(unnamed)',
       joinedAt: r.joined_at,
@@ -574,6 +623,7 @@ export async function loadMember(id: string): Promise<MemberDetail | null> {
 
   return {
     id: row.id,
+    kind: 'member',
     memberNo: row.member_no,
     membershipTypeName: row.membership_type_name,
     status: row.status,
@@ -589,6 +639,96 @@ export async function loadMember(id: string): Promise<MemberDetail | null> {
       category: a.category,
       status: a.status,
       isMembershipDefault: a.is_membership_default,
+      openedAt: a.opened_at,
+    })),
+  };
+}
+
+export interface CustomerAccount {
+  id: string;
+  // Unlike a member's, a customer's own — each carries its own number
+  // (migration 0027), since there is no shared number to lean on.
+  accountNo: string;
+  accountTypeName: string;
+  category: string;
+  status: string;
+  openedAt: Date;
+}
+
+export interface CustomerDetail {
+  id: string;
+  kind: 'customer';
+  status: string;
+  name: string;
+  joinedAt: Date;
+  applicationReference: string | null;
+  applicationId: string;
+  applicantValues: Record<string, string>;
+  accounts: CustomerAccount[];
+}
+
+// S-614 · A customer and their accounts — the counterpart to loadMember
+// above, for someone who was never a member to begin with. Read separately
+// rather than folded into loadMember: the two tables share no primary key
+// space to look up by id across, and the shapes differ (no member_no, no
+// membership type) enough that a single function returning either would
+// have to branch on every field anyway.
+export async function loadCustomer(id: string): Promise<CustomerDetail | null> {
+  const result = await query<{
+    id: string;
+    status: string;
+    name: string;
+    joined_at: Date;
+    application_reference: string;
+    application_id: string;
+    applicant_values: Record<string, string> | null;
+  }>(
+    `select c.id, c.status, ${NAME_SQL} as name, c.joined_at,
+            capp.reference as application_reference, c.application_id,
+            p.values as applicant_values
+       from customer c
+       join membership_application capp on capp.id = c.application_id
+       left join application_party p
+         on p.application_id = c.application_id
+        and p.subject = 'applicant' and p.ordinal = 1
+      where c.id = $1`,
+    [id]
+  );
+  if (result.rowCount === 0) return null;
+  const row = result.rows[0];
+
+  const accounts = await query<{
+    id: string;
+    account_no: string;
+    account_type_name: string;
+    category: string;
+    status: string;
+    opened_at: Date;
+  }>(
+    `select a.id, a.account_no, t.name as account_type_name, t.category,
+            a.status, a.opened_at
+       from account a
+       join account_type t on t.id = a.account_type_id
+      where a.customer_id = $1
+      order by t.sort_order, t.name`,
+    [id]
+  );
+
+  return {
+    id: row.id,
+    kind: 'customer',
+    status: row.status,
+    name: row.name || '(unnamed)',
+    joinedAt: row.joined_at,
+    applicationReference: row.application_reference,
+    applicationId: row.application_id,
+    applicantValues: row.applicant_values ?? {},
+    accounts: accounts.rows.map(a => ({
+      id: a.id,
+      accountNo: a.account_no,
+      accountTypeName: a.account_type_name,
+      category: a.category,
+      status: a.status,
       openedAt: a.opened_at,
     })),
   };

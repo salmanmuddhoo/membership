@@ -24,7 +24,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium' });
           type="search"
           name="q"
           value={search}
-          placeholder="Search by Member ID or name"
+          placeholder="Search by ID or name"
           class="focus:border-mint-400 focus:ring-mint-400 min-w-64 flex-1 rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm text-neutral-800 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
         />
         <button
@@ -63,7 +63,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium' });
             <table class="w-full text-sm">
               <thead>
                 <tr class="text-left text-xs text-neutral-500 dark:text-neutral-400">
-                  <th class="py-2 pr-4 font-medium">Member ID</th>
+                  <th class="py-2 pr-4 font-medium">ID</th>
                   <th class="py-2 pr-4 font-medium">Name</th>
                   <th class="py-2 pr-4 font-medium">Type</th>
                   <th class="py-2 pr-4 font-medium">Status</th>
@@ -79,11 +79,18 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium' });
                         href={`/members/${m.id}`}
                         class="text-mint-700 dark:text-mint-300 font-medium underline"
                       >
-                        {m.memberNo}
+                        {m.memberNo || '—'}
                       </a>
                     </td>
                     <td class="py-2 pr-4 text-neutral-700 dark:text-neutral-200">
-                      {m.name}
+                      <span class="flex flex-wrap items-center gap-x-2">
+                        {m.name}
+                        {m.kind === 'customer' && (
+                          <span class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
+                            Non-member
+                          </span>
+                        )}
+                      </span>
                     </td>
                     <td class="py-2 pr-4 text-neutral-600 dark:text-neutral-300">
                       {m.membershipTypeName}
