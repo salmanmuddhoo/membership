@@ -1006,15 +1006,39 @@ Member No. once that milestone lands, not silently excluded.
 inactive member, an empty selection, or a membership-default account type
 before anything is written.
 
-**What this phase does not yet reach**: `loadApplication` and everywhere
-else that reads an `Application` (the id page, `problemsBlockingSubmission`,
-document checklist, payment, and approval opening the selected account(s)
-instead of creating a member) still only ever sees a `'membership'` kind
-row — an additional-account application exists once started, but nothing
-yet lets an officer carry on working it. That is the next increment, not
-this one; `loadApplication` on such a row currently reports "not found"
-rather than a wrong or misleading read, since the query it runs still
-requires a `membership_type_id` no additional-account row has.
+### S-613, phase 3 · `loadApplication` reads both kinds correctly ✅
+
+`Application` became a discriminated union —
+`MembershipApplication | AdditionalAccountApplication`, split on
+`applicationKind` — rather than adding nullable fields to one shape. Every
+existing reader of `Application` narrows automatically once it checks
+`applicationKind`, which is what turns "did I forget a spot this needed to
+handle the other kind" into a compile error instead of a silent wrong read.
+`loadApplication` left-joins `membership_type` and `member` (exactly one is
+ever populated, enforced by `membership_application_kind_shape`, migration 0025) and, for an `additional_account` row, also reads its
+`application_account_selection` rows joined to `account_type`.
+
+**Every existing page that reads an `Application` is scoped to
+`'membership'` on purpose, for now.** `[id].astro` and `print.astro` — both
+built entirely around a membership type's field configuration and its
+four-signature form — treat an `additional_account` row as "not found"
+rather than attempt to render it: nothing about the record is wrong, these
+pages simply do not know how to work it yet. `saveDraft` and
+`problemsBlockingSubmission` (`capture.ts`) and `createMemberFromApplication`
+(`members/create.ts`) each refuse or short-circuit for the other kind, so a
+mistake in the wiring that eventually connects an additional-account
+application to the workflow engine fails loudly rather than saving a
+non-existent field, reporting a phantom missing field, or creating a member
+nobody asked for.
+
+**Still ahead**: the officer-facing pages an additional-account application
+actually needs — reviewing it, its own document checklist (sourced from the
+selected account type(s)' own checklists, not a membership type's), a
+single-signature form in place of the four-signature one, payment against
+each selected account type's `minimum_opening_amount` rather than a
+membership fee schedule, and the approval path that opens the selected
+account(s) under `existingMemberId` instead of creating a member. Each is
+its own increment, the same way this one was.
 
 ---
 

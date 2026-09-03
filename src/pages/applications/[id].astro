@@ -9,6 +9,7 @@ import {
   problemsBlockingSubmission,
   saveDraft,
   visibleFields,
+  type MembershipApplication,
   type PartyValues,
 } from '@lib/applications/capture';
 import { listMembershipTypes, type FieldSubject } from '@lib/config/reference';
@@ -56,7 +57,27 @@ const canSeePayments = principal.permissions.has('payment.view');
 const canRecordPayment = principal.permissions.has('payment.record');
 const { id } = Astro.params;
 
-let application = id ? await loadApplication(id) : null;
+// S-613: this page is built for the membership capture/review flow only —
+// an additional-account application has its own, not yet built (docs/
+// backlog.md). Reloading after a POST below always returns the same
+// application this narrowed on the way in, since applicationKind is not a
+// field any action here can change — asserted rather than re-checked with
+// a redirect, so a mismatch fails loudly as the bug it would be rather than
+// reading as an ordinary "not found".
+async function loadMembershipApplication(
+  applicationId: string
+): Promise<MembershipApplication | null> {
+  const found = await loadApplication(applicationId);
+  if (!found) return null;
+  if (found.applicationKind !== 'membership') {
+    throw new Error(
+      `Application ${applicationId} is not a membership application.`
+    );
+  }
+  return found;
+}
+
+let application = id ? await loadMembershipApplication(id) : null;
 if (!application) return new Response('Not found', { status: 404 });
 
 const type = (await listMembershipTypes()).find(
@@ -133,7 +154,7 @@ if (Astro.request.method === 'POST') {
           'The draft could not be deleted. Nothing has been removed — ' +
           'please try again.';
       }
-      application = await loadApplication(application.id);
+      application = await loadMembershipApplication(application.id);
       if (!application) return Astro.redirect('/applications');
     }
   } else if (intent === 'record-payment') {
@@ -274,7 +295,7 @@ if (Astro.request.method === 'POST') {
           createdMember = result.member ?? null;
         }
       }
-      application = await loadApplication(application.id);
+      application = await loadMembershipApplication(application.id);
     } catch (err) {
       if (err instanceof ApplicationError || err instanceof Error) {
         error = err.message;
@@ -316,7 +337,7 @@ if (Astro.request.method === 'POST') {
         problems.length > 0
           ? 'Draft saved, but some entries need attention.'
           : 'Draft saved.';
-      application = await loadApplication(application.id);
+      application = await loadMembershipApplication(application.id);
     } catch (err) {
       if (err instanceof ApplicationError) {
         const response = refuse(

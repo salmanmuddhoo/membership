@@ -45,12 +45,9 @@ export interface PartyValues {
   values: Record<string, string>;
 }
 
-export interface Application {
+interface ApplicationCommon {
   id: string;
   reference: string;
-  membershipTypeId: string;
-  membershipTypeCode: string;
-  membershipTypeName: string;
   status: string;
   capturedBy: string;
   // Both, deliberately: the screen shows the name, because that is how a
@@ -63,6 +60,40 @@ export interface Application {
   updatedAt: Date;
   parties: PartyValues[];
 }
+
+// S-301's original application, capturing an applicant and, on approval,
+// creating a Member.
+export interface MembershipApplication extends ApplicationCommon {
+  applicationKind: 'membership';
+  membershipTypeId: string;
+  membershipTypeCode: string;
+  membershipTypeName: string;
+}
+
+// S-613's application, opening an account type an existing member's
+// membership did not already open for them. No applicant to capture —
+// `parties` is always empty — and nothing to approve into existence:
+// approval opens `selectedAccountTypes` under `existingMemberId` instead of
+// creating a member (S-612).
+export interface AdditionalAccountApplication extends ApplicationCommon {
+  applicationKind: 'additional_account';
+  existingMemberId: string;
+  existingMemberNo: string;
+  selectedAccountTypes: {
+    id: string;
+    code: string;
+    name: string;
+    minimumOpeningAmount: string;
+  }[];
+}
+
+// The two kinds share one workflow (S-612) — submitApplication,
+// reviewApplication, decideApplication and everything in workflow.ts read
+// this union without needing to know which they were handed. A page working
+// one kind narrows on `applicationKind` the same way any discriminated union
+// does; that narrowing is what makes it a compile error to read
+// `membershipTypeId` off an application that might be the other kind.
+export type Application = MembershipApplication | AdditionalAccountApplication;
 
 // A field that must be filled in but is not, named the way the form names it.
 export interface MissingField {
@@ -357,9 +388,12 @@ export async function loadApplication(id: string): Promise<Application | null> {
   const result = await query<{
     id: string;
     reference: string;
-    membership_type_id: string;
-    membership_type_code: string;
-    membership_type_name: string;
+    application_kind: 'membership' | 'additional_account';
+    membership_type_id: string | null;
+    membership_type_code: string | null;
+    membership_type_name: string | null;
+    existing_member_id: string | null;
+    existing_member_no: string | null;
     status: string;
     captured_by: string;
     captured_by_name: string;
@@ -368,15 +402,20 @@ export async function loadApplication(id: string): Promise<Application | null> {
     decided_at: Date | null;
     updated_at: Date;
   }>(
-    `select a.id, a.reference, a.membership_type_id,
-            m.code as membership_type_code, m.name as membership_type_name,
+    // Both membership_type and member are left joins: exactly one of the two
+    // is ever populated for a given row, decided by application_kind, never
+    // both (membership_application_kind_shape, migration 0025).
+    `select a.id, a.reference, a.application_kind, a.membership_type_id,
+            mt.code as membership_type_code, mt.name as membership_type_name,
+            a.existing_member_id, mb.member_no as existing_member_no,
             a.status, a.captured_by,
             u.display_name as captured_by_name,
             u.email::text as captured_by_email,
             a.submitted_at, a.decided_at, a.updated_at
        from membership_application a
-       join membership_type m on m.id = a.membership_type_id
-       join app_user u        on u.id = a.captured_by
+       left join membership_type mt on mt.id = a.membership_type_id
+       left join member mb          on mb.id = a.existing_member_id
+       join app_user u               on u.id = a.captured_by
       where a.id = $1`,
     [id]
   );
@@ -395,12 +434,9 @@ export async function loadApplication(id: string): Promise<Application | null> {
     [id]
   );
 
-  return {
+  const common = {
     id: row.id,
     reference: row.reference,
-    membershipTypeId: row.membership_type_id,
-    membershipTypeCode: row.membership_type_code,
-    membershipTypeName: row.membership_type_name,
     status: row.status,
     capturedBy: row.captured_by,
     capturedByName: row.captured_by_name,
@@ -413,6 +449,42 @@ export async function loadApplication(id: string): Promise<Application | null> {
       ordinal: p.ordinal,
       values: p.values,
     })),
+  };
+
+  if (row.application_kind === 'additional_account') {
+    const selection = await query<{
+      id: string;
+      code: string;
+      name: string;
+      minimum_opening_amount: string;
+    }>(
+      `select t.id, t.code, t.name, t.minimum_opening_amount
+         from application_account_selection s
+         join account_type t on t.id = s.account_type_id
+        where s.application_id = $1
+        order by t.sort_order, t.name`,
+      [id]
+    );
+    return {
+      ...common,
+      applicationKind: 'additional_account',
+      existingMemberId: row.existing_member_id!,
+      existingMemberNo: row.existing_member_no!,
+      selectedAccountTypes: selection.rows.map(r => ({
+        id: r.id,
+        code: r.code,
+        name: r.name,
+        minimumOpeningAmount: r.minimum_opening_amount,
+      })),
+    };
+  }
+
+  return {
+    ...common,
+    applicationKind: 'membership',
+    membershipTypeId: row.membership_type_id!,
+    membershipTypeCode: row.membership_type_code!,
+    membershipTypeName: row.membership_type_name!,
   };
 }
 
@@ -515,6 +587,17 @@ export async function saveDraft(
       `This application has been submitted and can no longer be edited ` +
         `(status: ${application.status}).`,
       'locked'
+    );
+  }
+
+  // S-613: an additional-account application has no applicant fields to
+  // autosave — member and account type are chosen once, at
+  // startAdditionalAccountApplication, and nothing after that is a form
+  // field the way a membership application's own capture is.
+  if (application.applicationKind !== 'membership') {
+    throw new ApplicationError(
+      'This application has no fields to save.',
+      'invalid'
     );
   }
 
@@ -709,6 +792,12 @@ export async function searchGuardianCandidates(
 export async function problemsBlockingSubmission(
   application: Application
 ): Promise<MissingField[]> {
+  // S-613: an additional-account application has no applicant fields, and
+  // therefore nothing here to be missing — startAdditionalAccountApplication
+  // already refuses to create one with an empty account-type selection, so
+  // there is nothing left for this to catch by the time one exists.
+  if (application.applicationKind !== 'membership') return [];
+
   const type = (await listMembershipTypes()).find(
     t => t.id === application.membershipTypeId
   );

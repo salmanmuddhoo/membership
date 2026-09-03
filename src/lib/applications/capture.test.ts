@@ -1725,4 +1725,96 @@ describe('S-613: starting an additional-account application for an existing memb
       expect(audit.rows[0].actor_user_id).toBe(officer.userId);
     });
   });
+
+  describe('loadApplication', () => {
+    it('reads an additional-account application back with no membership type and its selection', async () => {
+      const { capture } = await load();
+      const { memberNo } = await seedMember('S0000000000002', 'active');
+      const member = await run(
+        appUrl,
+        `select id from member where member_no = $1`,
+        [memberNo]
+      );
+
+      const { id } = await capture.startAdditionalAccountApplication(
+        member.rows[0].id,
+        [selectableTypeId],
+        officer
+      );
+
+      const application = await capture.loadApplication(id);
+      expect(application).not.toBeNull();
+      if (
+        !application ||
+        application.applicationKind !== 'additional_account'
+      ) {
+        throw new Error('expected an additional_account application');
+      }
+      expect(application.applicationKind).toBe('additional_account');
+      expect(application.existingMemberId).toBe(member.rows[0].id);
+      expect(application.existingMemberNo).toBe(memberNo);
+      expect(application.selectedAccountTypes).toEqual([
+        expect.objectContaining({ id: selectableTypeId, code: 'hsa_test' }),
+      ]);
+      // No applicant to capture — this kind has no fields.
+      expect(application.parties).toEqual([]);
+    });
+
+    it('still reads a membership application exactly as before', async () => {
+      const { capture } = await load();
+      const { id } = await capture.startApplication('individual', officer);
+
+      const application = await capture.loadApplication(id);
+      expect(application).not.toBeNull();
+      if (!application || application.applicationKind !== 'membership') {
+        throw new Error('expected a membership application');
+      }
+      expect(application.membershipTypeCode).toBe('individual');
+    });
+  });
+
+  it('refuses saveDraft and reports no missing fields — nothing here is a form', async () => {
+    const { capture } = await load();
+    const { memberNo } = await seedMember('S0000000000003', 'active');
+    const member = await run(
+      appUrl,
+      `select id from member where member_no = $1`,
+      [memberNo]
+    );
+    const { id } = await capture.startAdditionalAccountApplication(
+      member.rows[0].id,
+      [selectableTypeId],
+      officer
+    );
+    const application = await capture.loadApplication(id);
+
+    await expect(capture.saveDraft(id, [], officer)).rejects.toThrowError(
+      /no fields to save/
+    );
+    expect(await capture.problemsBlockingSubmission(application!)).toEqual([]);
+  });
+
+  it('refuses createMemberFromApplication — this application already has its member', async () => {
+    const { capture } = await load();
+    const { memberNo } = await seedMember('S0000000000004', 'active');
+    const member = await run(
+      appUrl,
+      `select id from member where member_no = $1`,
+      [memberNo]
+    );
+    const { id } = await capture.startAdditionalAccountApplication(
+      member.rows[0].id,
+      [selectableTypeId],
+      officer
+    );
+    const application = await capture.loadApplication(id);
+
+    const { withTransaction } = await import('../db/pool');
+    const members = await import('../members/create');
+    await withTransaction(async client => {
+      await expect(
+        members.createMemberFromApplication(client, application!, officer)
+      ).rejects.toThrowError(/does not create a member/);
+    });
+  });
 });
