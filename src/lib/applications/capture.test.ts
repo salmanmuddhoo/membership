@@ -1726,6 +1726,74 @@ describe('S-613: starting an additional-account application for an existing memb
     });
   });
 
+  // S-613 phase 5: listApplications and deleteDraftApplication both used to
+  // inner-join membership_type — the same bug just closed in documents.ts's
+  // resolveOwner (docs/backlog.md, phase 4) for a different reader. An
+  // additional_account row has no membership_type_id, so that join silently
+  // dropped it from the list and reported "no longer exists" to a delete.
+  describe('an additional-account application on the officer-facing list', () => {
+    it('is named by the member it is for and the account type(s) selected', async () => {
+      const { capture } = await load();
+      const { memberNo } = await seedMember('S0000000000002', 'active', {
+        surname: 'Bhugun',
+        name: 'Ashish',
+      });
+      const member = await run(
+        appUrl,
+        `select id from member where member_no = $1`,
+        [memberNo]
+      );
+
+      const { id, reference } = await capture.startAdditionalAccountApplication(
+        member.rows[0].id,
+        [selectableTypeId],
+        officer
+      );
+
+      const listed = (await capture.listApplications({})).find(
+        a => a.id === id
+      )!;
+      expect(listed.reference).toBe(reference);
+      expect(listed.applicationKind).toBe('additional_account');
+      expect(listed.applicantName).toBe('Ashish Bhugun');
+      expect(listed.membershipTypeName).toContain('Hajj Savings (test)');
+    });
+
+    it('can be deleted while still a draft, the same as a membership one', async () => {
+      const { capture } = await load();
+      const { memberNo } = await seedMember('S0000000000003', 'active');
+      const member = await run(
+        appUrl,
+        `select id from member where member_no = $1`,
+        [memberNo]
+      );
+      const { id, reference } = await capture.startAdditionalAccountApplication(
+        member.rows[0].id,
+        [selectableTypeId],
+        officer
+      );
+
+      const noFiles = async () => {
+        throw new Error(
+          'SharePoint should not have been asked to delete anything'
+        );
+      };
+      const deleted = await capture.deleteDraftApplication(
+        id,
+        principalFor(officer),
+        noFiles
+      );
+      expect(deleted.reference).toBe(reference);
+
+      const gone = await run(
+        appUrl,
+        `select 1 from membership_application where id = $1`,
+        [id]
+      );
+      expect(gone.rowCount).toBe(0);
+    });
+  });
+
   describe('loadApplication', () => {
     it('reads an additional-account application back with no membership type and its selection', async () => {
       const { capture } = await load();
