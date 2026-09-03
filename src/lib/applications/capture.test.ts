@@ -2275,3 +2275,153 @@ describe('S-613: starting an additional-account application for an existing memb
     });
   });
 });
+
+describe('S-614: a non-member applying to become one', () => {
+  // Not the full approval chain — customer_account applications open into a
+  // `customer` row only once approved (openAccountsForCustomerApplication,
+  // members/create.ts, exercised in workflow.test.ts's own end-to-end test).
+  // What this describes is capture-only, so a customer row is created
+  // directly, pointing at an application already carrying real values —
+  // exactly what an approved one looks like from this function's own read.
+  async function seedCustomer(values: {
+    surname: string;
+    name: string;
+    nic: string;
+  }) {
+    const { capture } = await load();
+    const { id: applicationId } = await capture.startCustomerAccountApplication(
+      [
+        (
+          await run(
+            appUrl,
+            `select id from account_type where not is_membership_default limit 1`
+          )
+        ).rows[0].id,
+      ],
+      officer
+    );
+    await capture.saveDraft(
+      applicationId,
+      [{ subject: 'applicant', ordinal: 1, values }],
+      officer
+    );
+    const customer = await run(
+      appUrl,
+      `insert into customer (application_id) values ($1) returning id, status`,
+      [applicationId]
+    );
+    return { customerId: customer.rows[0].id as string, applicationId };
+  }
+
+  it('starts an Individual membership application prefilled from what the customer already gave', async () => {
+    const { capture } = await load();
+    const { customerId } = await seedCustomer({
+      surname: 'Peerthum',
+      name: 'Devi',
+      nic: 'D1234567890123',
+    });
+
+    const { id, reference } =
+      await capture.startMembershipApplicationFromCustomer(customerId, officer);
+    expect(reference).toMatch(/^APP-\d{4}-\d{6}$/);
+
+    const application = await capture.loadApplication(id);
+    expect(application!.applicationKind).toBe('membership');
+    if (application!.applicationKind !== 'membership') throw new Error();
+    expect(application!.membershipTypeCode).toBe('individual');
+    expect(
+      application!.parties.find(
+        p => p.subject === 'applicant' && p.ordinal === 1
+      )!.values
+    ).toMatchObject({
+      surname: 'Peerthum',
+      name: 'Devi',
+      nic: 'D1234567890123',
+    });
+  });
+
+  it('is an ordinary draft from here — editable, saveable, the same as any other', async () => {
+    const { capture } = await load();
+    const { customerId } = await seedCustomer({
+      surname: 'Ah-Kong',
+      name: 'Li',
+      nic: 'L1234567890123',
+    });
+
+    const { id } = await capture.startMembershipApplicationFromCustomer(
+      customerId,
+      officer
+    );
+    const { problems } = await capture.saveDraft(
+      id,
+      [
+        {
+          subject: 'applicant',
+          ordinal: 1,
+          values: {
+            surname: 'Ah-Kong',
+            name: 'Li',
+            nic: 'L1234567890123',
+            address: '4 Cascade Street, Port Louis',
+          },
+        },
+      ],
+      officer
+    );
+    expect(problems).toEqual([]);
+
+    const reloaded = await capture.loadApplication(id);
+    expect(
+      reloaded!.parties.find(p => p.subject === 'applicant')!.values.address
+    ).toBe('4 Cascade Street, Port Louis');
+  });
+
+  it('records its own audit action, naming the customer it came from', async () => {
+    const { capture } = await load();
+    const { customerId } = await seedCustomer({
+      surname: 'Bissessur',
+      name: 'Kavi',
+      nic: 'K1234567890123',
+    });
+
+    const { id } = await capture.startMembershipApplicationFromCustomer(
+      customerId,
+      officer
+    );
+    const audit = await run(
+      appUrl,
+      `select action, new_value from audit_event
+        where entity_type = 'membership_application' and entity_id = $1
+          and action = 'membership.application.started_from_customer'`,
+      [id]
+    );
+    expect(audit.rowCount).toBe(1);
+    expect(audit.rows[0].new_value.fromCustomerId).toBe(customerId);
+  });
+
+  it('refuses a customer id that does not exist', async () => {
+    const { capture } = await load();
+    await expect(
+      capture.startMembershipApplicationFromCustomer(
+        '00000000-0000-0000-0000-000000000000',
+        officer
+      )
+    ).rejects.toThrowError(/no longer exists/);
+  });
+
+  it('refuses a customer who is not active', async () => {
+    const { capture } = await load();
+    const { customerId } = await seedCustomer({
+      surname: 'Gopal',
+      name: 'Nita',
+      nic: 'N1234567890123',
+    });
+    await run(appUrl, `update customer set status = 'closed' where id = $1`, [
+      customerId,
+    ]);
+
+    await expect(
+      capture.startMembershipApplicationFromCustomer(customerId, officer)
+    ).rejects.toThrowError(/Only an active customer/);
+  });
+});

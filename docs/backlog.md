@@ -1405,6 +1405,34 @@ sections either way — a customer's own payment is found through their
 application (`paymentsForApplication`), since payment carries no
 customer-equivalent of `member_id` yet.
 
+### S-614, phase 5: a routing bug fixed, and a non-member's own path to membership ✅
+
+**Bug, found in use**: `/applications` linked every non-membership
+application to `/applications/<id>/account` — a two-way ternary written
+back when `additional_account` was the only other kind (S-613), never
+widened for `customer_account` (S-614 phase 2). Opening a draft
+customer_account application from the list sent it to a page built to
+refuse anything but `additional_account`, which threw and answered 500.
+Fixed the same way `[id].astro`'s own redirect already was in phase 3:
+three branches, one per kind.
+
+**A non-member can apply to become one.** `startMembershipApplicationFromCustomer`
+(capture.ts) is a new way in beside `startApplication`/`startApplicationWithValues`
+— always against Individual, the only type a customer_account application
+is ever captured against, so its own field values line up with Individual's
+exactly. Copies the customer's existing `application_party` rows into a
+freshly started Individual application rather than starting empty; refuses
+a customer who no longer exists or is not active, the same shape of guard
+`startAdditionalAccountApplication` puts on the member it opens an account
+for. `/members/<id>` gained an "Apply to become a member" action, shown
+only on a customer's own page, posting straight to
+`startMembershipApplicationFromCustomer` and landing on the ordinary
+`/applications/<id>` capture page — from there it is exactly a membership
+application, edited, submitted and approved through the same chain any
+other one goes through. Approval creates a new Member; it does not touch
+the customer record or reassign the account(s) they already hold, which
+would be its own, separate decision this does not make.
+
 ---
 
 # M7 — Legacy migration
