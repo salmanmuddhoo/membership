@@ -595,28 +595,32 @@ export async function startApplicationWithValues(
 }
 
 export async function loadApplication(id: string): Promise<Application | null> {
-  const result = await query<{
-    id: string;
-    reference: string;
-    application_kind: 'membership' | 'additional_account' | 'customer_account';
-    membership_type_id: string | null;
-    membership_type_code: string | null;
-    membership_type_name: string | null;
-    existing_member_id: string | null;
-    existing_member_no: string | null;
-    source_customer_id: string | null;
-    status: string;
-    captured_by: string;
-    captured_by_name: string;
-    captured_by_email: string;
-    submitted_at: Date | null;
-    decided_at: Date | null;
-    updated_at: Date;
-  }>(
-    // Both membership_type and member are left joins: exactly one of the two
-    // is ever populated for a given row, decided by application_kind, never
-    // both (membership_application_kind_shape, migration 0025).
-    `select a.id, a.reference, a.application_kind, a.membership_type_id,
+  // The row and its parties are independent reads on the same id, so they
+  // go out together rather than one after the other.
+  const [result, parties] = await Promise.all([
+    query<{
+      id: string;
+      reference: string;
+      application_kind:
+        'membership' | 'additional_account' | 'customer_account';
+      membership_type_id: string | null;
+      membership_type_code: string | null;
+      membership_type_name: string | null;
+      existing_member_id: string | null;
+      existing_member_no: string | null;
+      source_customer_id: string | null;
+      status: string;
+      captured_by: string;
+      captured_by_name: string;
+      captured_by_email: string;
+      submitted_at: Date | null;
+      decided_at: Date | null;
+      updated_at: Date;
+    }>(
+      // Both membership_type and member are left joins: exactly one of the two
+      // is ever populated for a given row, decided by application_kind, never
+      // both (membership_application_kind_shape, migration 0025).
+      `select a.id, a.reference, a.application_kind, a.membership_type_id,
             mt.code as membership_type_code, mt.name as membership_type_name,
             a.existing_member_id, mb.member_no as existing_member_no,
             a.source_customer_id,
@@ -629,22 +633,22 @@ export async function loadApplication(id: string): Promise<Application | null> {
        left join member mb          on mb.id = a.existing_member_id
        join app_user u               on u.id = a.captured_by
       where a.id = $1`,
-    [id]
-  );
+      [id]
+    ),
+    query<{
+      subject: FieldSubject;
+      ordinal: number;
+      values: Record<string, string>;
+    }>(
+      `select subject, ordinal, values
+         from application_party
+        where application_id = $1
+        order by subject, ordinal`,
+      [id]
+    ),
+  ]);
   if (result.rowCount === 0) return null;
   const row = result.rows[0];
-
-  const parties = await query<{
-    subject: FieldSubject;
-    ordinal: number;
-    values: Record<string, string>;
-  }>(
-    `select subject, ordinal, values
-       from application_party
-      where application_id = $1
-      order by subject, ordinal`,
-    [id]
-  );
 
   const common = {
     id: row.id,

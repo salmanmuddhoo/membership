@@ -21,6 +21,19 @@ interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
 
+// Preline ships type declarations only for its self-registering ("auto")
+// builds. The non-auto builds BaseLayout imports are the same classes minus
+// that registration, so they borrow the auto builds' types.
+declare module 'preline/plugins/dropdown-non-auto' {
+  export { default } from 'preline/plugins/dropdown';
+}
+declare module 'preline/plugins/overlay-non-auto' {
+  export { default } from 'preline/plugins/overlay';
+}
+declare module 'preline/plugins/theme-switch-non-auto' {
+  export { default } from 'preline/plugins/theme-switch';
+}
+
 declare namespace App {
   interface Locals {
     // Populated by the auth middleware from the session cookie.
@@ -30,5 +43,10 @@ declare namespace App {
     // permissions their roles confer. Null until the middleware has matched an
     // active account — a valid Entra session alone does not produce one.
     principal: import('@lib/access/principal').Principal | null;
+
+    // The "Applications" badge count, started by the middleware before the
+    // page's own reads so the two overlap; DashboardLayout awaits it. Absent
+    // for API requests and for anyone without application.view.
+    pendingActions?: Promise<number>;
   }
 }

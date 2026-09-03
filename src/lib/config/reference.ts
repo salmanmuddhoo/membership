@@ -9,6 +9,7 @@
 // write one itself: two trails would only disagree.
 import type { PoolClient } from 'pg';
 import { query, withConfigurationActor } from '../db/pool';
+import { cached } from './cache';
 import type { ConfigurationActor } from '../db/pool';
 
 // A refusal the caller should show the person who asked, as opposed to a
@@ -79,7 +80,7 @@ export interface MembershipType {
   majorityTransitionTypeName: string | null;
 }
 
-export async function listMembershipTypes(): Promise<MembershipType[]> {
+async function readMembershipTypes(): Promise<MembershipType[]> {
   const types = await query<{
     id: string;
     code: string;
@@ -332,7 +333,7 @@ export interface AccountType {
 // numeric comes back from node-postgres as a string, and it stays one all the
 // way to the page. Money through a float is a rounding error waiting for a
 // reconciliation to find it.
-export async function listAccountTypes(): Promise<AccountType[]> {
+async function readAccountTypes(): Promise<AccountType[]> {
   const result = await query<{
     id: string;
     code: string;
@@ -734,7 +735,7 @@ export interface CurrentFeeVersion {
   components: FeeComponent[];
 }
 
-export async function currentFeeVersion(
+async function readCurrentFeeVersion(
   scheduleId: string
 ): Promise<CurrentFeeVersion | null> {
   const version = await query<{
@@ -917,7 +918,7 @@ export interface DocumentChecklist {
   items: ChecklistItem[];
 }
 
-export async function listDocumentTypes(): Promise<DocumentType[]> {
+async function readDocumentTypes(): Promise<DocumentType[]> {
   const result = await query<{
     id: string;
     code: string;
@@ -939,7 +940,7 @@ export async function listDocumentTypes(): Promise<DocumentType[]> {
   }));
 }
 
-export async function listChecklists(): Promise<DocumentChecklist[]> {
+async function readChecklists(): Promise<DocumentChecklist[]> {
   const lists = await query<{
     id: string;
     code: string;
@@ -1071,7 +1072,7 @@ export async function removeChecklistItem(
 // The checklist that applies to an applicant of this membership type (S-208).
 // Grouped by subject because that is how the capture screen presents it: the
 // applicant's documents, then the nominee's, then the guardian's.
-export async function checklistForMembershipType(
+async function readChecklistForMembershipType(
   membershipTypeCode: string
 ): Promise<Map<FieldSubject, ChecklistItem[]>> {
   const result = await query<{
@@ -1119,7 +1120,7 @@ export async function checklistForMembershipType(
 // is required on this application; one required by two selected types is
 // not asked for twice, and if either leaves it optional while the other
 // requires it, the application asks for it (bool_or below).
-export async function checklistForAccountTypes(
+async function readChecklistForAccountTypes(
   accountTypeCodes: string[]
 ): Promise<Map<FieldSubject, ChecklistItem[]>> {
   const bySubject = new Map<FieldSubject, ChecklistItem[]>();
@@ -1183,7 +1184,7 @@ export async function checklistForAccountTypes(
 // have. Configured independently (Configuration → Membership types) rather
 // than filtered out of checklistId's own items in code, so an administrator
 // can add or remove items without this function needing to know why.
-export async function checklistForNonMemberApplicant(
+async function readChecklistForNonMemberApplicant(
   membershipTypeCode: string
 ): Promise<Map<FieldSubject, ChecklistItem[]>> {
   const result = await query<{
@@ -1234,7 +1235,7 @@ export async function checklistForNonMemberApplicant(
 // both sides, "required" wins over "optional", the same rule
 // checklistForAccountTypes already applies between its own several account
 // types.
-export async function checklistForNonMemberAccount(
+async function readChecklistForNonMemberAccount(
   membershipTypeCode: string,
   accountTypeCodes: string[]
 ): Promise<Map<FieldSubject, ChecklistItem[]>> {
@@ -1308,7 +1309,7 @@ export interface WorkflowStatus {
   sortOrder: number;
 }
 
-export async function listWorkflowStatuses(
+async function readWorkflowStatuses(
   entityType?: string
 ): Promise<WorkflowStatus[]> {
   const result = await query<{
@@ -1343,25 +1344,10 @@ export async function listWorkflowStatuses(
 // Read on nearly every page load — availableActions, reviewStageLabel and
 // pendingActionCount (workflow.ts) each read the active chain, and
 // pendingActionCount alone runs once per request from DashboardLayout, on
-// top of whatever the page itself asks for. Querying two tables freshly
-// for each of those, when the workflow does not change mid-request, was
-// costing several redundant round trips on every click. Cached for a few
-// seconds on the warm instance and cleared by the three functions below
-// that can change it — a toggle an administrator makes taking up to a
-// few seconds to reach every other request is an acceptable trade for not
-// paying this cost on every page a request never touches configuration.
-let workflowsCache: { at: number; value: WorkflowDefinition[] } | null = null;
-const WORKFLOWS_CACHE_MS = 5_000;
-
-function clearWorkflowsCache(): void {
-  workflowsCache = null;
-}
-
-export async function listWorkflows(): Promise<WorkflowDefinition[]> {
-  if (workflowsCache && Date.now() - workflowsCache.at < WORKFLOWS_CACHE_MS) {
-    return workflowsCache.value;
-  }
-
+// top of whatever the page itself asks for. Served from the shared
+// reference cache (cache.ts) like every other read on this page; the
+// setters below clear it through withConfigurationActor.
+async function readWorkflows(): Promise<WorkflowDefinition[]> {
   const definitions = await query<{
     id: string;
     code: string;
@@ -1424,7 +1410,6 @@ export async function listWorkflows(): Promise<WorkflowDefinition[]> {
     isActive: d.is_active,
     steps: byDefinition.get(d.id) ?? [],
   }));
-  workflowsCache = { at: Date.now(), value };
   return value;
 }
 
@@ -1475,7 +1460,6 @@ export async function setStepEnabled(
       throw new ConfigError('That step no longer exists.', 'not_found');
     }
   });
-  clearWorkflowsCache();
 }
 
 export async function setStepRole(
@@ -1498,7 +1482,6 @@ export async function setStepRole(
       throw new ConfigError('That step no longer exists.', 'not_found');
     }
   });
-  clearWorkflowsCache();
 }
 
 export async function setStepQuorum(
@@ -1518,7 +1501,6 @@ export async function setStepQuorum(
       throw new ConfigError('That step no longer exists.', 'not_found');
     }
   });
-  clearWorkflowsCache();
 }
 
 export async function setStatusActive(
@@ -1558,4 +1540,79 @@ export async function setStatusActive(
       throw new ConfigError('That status no longer exists.', 'not_found');
     }
   });
+}
+
+// ---------------------------------------------------------------------------
+// The reads above, served from the reference cache (cache.ts): a few seconds
+// on the warm instance, cleared by any configuration write. Keys carry the
+// arguments, so two membership types never share an entry.
+
+export function listMembershipTypes(): Promise<MembershipType[]> {
+  return cached('membership-types', readMembershipTypes);
+}
+
+export function listAccountTypes(): Promise<AccountType[]> {
+  return cached('account-types', readAccountTypes);
+}
+
+export function currentFeeVersion(
+  scheduleId: string
+): Promise<CurrentFeeVersion | null> {
+  return cached(`fee-version:${scheduleId}`, () =>
+    readCurrentFeeVersion(scheduleId)
+  );
+}
+
+export function listDocumentTypes(): Promise<DocumentType[]> {
+  return cached('document-types', readDocumentTypes);
+}
+
+export function listChecklists(): Promise<DocumentChecklist[]> {
+  return cached('checklists', readChecklists);
+}
+
+export function checklistForMembershipType(
+  membershipTypeCode: string
+): Promise<Map<FieldSubject, ChecklistItem[]>> {
+  return cached(`checklist:membership:${membershipTypeCode}`, () =>
+    readChecklistForMembershipType(membershipTypeCode)
+  );
+}
+
+export function checklistForAccountTypes(
+  accountTypeCodes: string[]
+): Promise<Map<FieldSubject, ChecklistItem[]>> {
+  return cached(`checklist:accounts:${accountTypeCodes.join(',')}`, () =>
+    readChecklistForAccountTypes(accountTypeCodes)
+  );
+}
+
+export function checklistForNonMemberApplicant(
+  membershipTypeCode: string
+): Promise<Map<FieldSubject, ChecklistItem[]>> {
+  return cached(`checklist:non-member-applicant:${membershipTypeCode}`, () =>
+    readChecklistForNonMemberApplicant(membershipTypeCode)
+  );
+}
+
+export function checklistForNonMemberAccount(
+  membershipTypeCode: string,
+  accountTypeCodes: string[]
+): Promise<Map<FieldSubject, ChecklistItem[]>> {
+  return cached(
+    `checklist:non-member-account:${membershipTypeCode}:${accountTypeCodes.join(',')}`,
+    () => readChecklistForNonMemberAccount(membershipTypeCode, accountTypeCodes)
+  );
+}
+
+export function listWorkflowStatuses(
+  entityType?: string
+): Promise<WorkflowStatus[]> {
+  return cached(`workflow-statuses:${entityType ?? ''}`, () =>
+    readWorkflowStatuses(entityType)
+  );
+}
+
+export function listWorkflows(): Promise<WorkflowDefinition[]> {
+  return cached('workflows', readWorkflows);
 }

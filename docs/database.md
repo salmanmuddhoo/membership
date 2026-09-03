@@ -106,6 +106,26 @@ If sustained traffic outgrows that, the answer is **Azure's built-in PgBouncer**
 (enable `pgbouncer` on the server and connect on port **6432**), not a larger
 pool here.
 
+An idle connection is kept for **60 seconds** (`DATABASE_IDLE_TIMEOUT_MS`),
+with TCP keepalives on. Opening a connection to the database's region — TCP,
+TLS, authentication — costs more than most of the queries that then run on
+it, and an officer's clicks are typically seconds apart, so a connection that
+is dropped after ten seconds of idleness is opened again for nearly every
+page. A minute keeps it warm between clicks while still returning it well
+before the next officer's session needs one.
+
+## What is cached
+
+Reference configuration — membership types and their fields, account types,
+document types and checklists, fee versions, the workflow chain — is kept for
+a few seconds on the warm instance (`src/lib/config/cache.ts`). Every
+configuration write goes through `withConfigurationActor`, which clears it
+after the commit, so a change an administrator makes reads back correctly on
+the instance that made it and reaches every other warm instance within
+seconds. Permissions are **not** cached: `resolvePrincipal` reads them fresh
+on every request, which is what makes a revoked role take effect on the very
+next click.
+
 ## Setting up a new environment
 
 Run these once per server, connected as the Azure admin account:

@@ -227,17 +227,37 @@ if (Astro.request.method === 'POST') {
 // non-null assertion on every read below.
 if (!application) return Astro.redirect('/applications');
 
-const checklist = await checklistFor({ applicationId: application.id });
+const isDecided =
+  application!.status === 'approved' || application!.status === 'rejected';
+
+// Everything here depends only on the application itself, so it is read in
+// one round of parallel queries rather than one after another — and the
+// Board-readiness check below reuses two of these reads instead of
+// repeating them.
+const [checklist, actions, history, stageLabel, payments, dueRead] =
+  await Promise.all([
+    checklistFor({ applicationId: application.id }),
+    availableActions(application!, principal),
+    transitionsFor(application!.id),
+    reviewStageLabel(application!),
+    paymentsForApplication(application!.id),
+    canRecordPayment && !isDecided
+      ? amountDueForAdditionalAccount(application!.id).then(
+          due => ({ due, problem: null as string | null }),
+          (err: unknown) => ({
+            due: null as AccountAmountDue | null,
+            problem:
+              err instanceof PaymentError
+                ? err.message
+                : 'The amount due could not be read.',
+          })
+        )
+      : Promise.resolve(null),
+  ]);
 const documentsComplete = checklist.length > 0 && isDocumentComplete(checklist);
 const requiredOutstanding = checklist.filter(
   e => e.requirement === 'required' && e.state !== 'verified'
 ).length;
-
-const [actions, history, stageLabel] = await Promise.all([
-  availableActions(application!, principal),
-  transitionsFor(application!.id),
-  reviewStageLabel(application!),
-]);
 
 const REVIEW_STEP_META: Record<
   string,
@@ -278,7 +298,9 @@ const REVIEW_STEP_META: Record<
 
 const forwardAction = actions.find(a => a.stepCode === 'secretary_review');
 const boardReasons = forwardAction
-  ? boardReadinessReasons(await boardReadiness(application!))
+  ? boardReadinessReasons(
+      await boardReadiness(application!, { checklist, payments })
+    )
   : [];
 
 const decideAction = actions.find(a => a.stepCode === 'president_decision');
@@ -309,25 +331,17 @@ const DOCUMENT_STATE_CLASSES: Record<string, string> = {
 const ACCEPTED_FILES =
   'image/jpeg,image/png,image/heic,image/heif,application/pdf';
 
-const payments: Payment[] = await paymentsForApplication(application!.id);
-const livePayment =
+const livePayment: Payment | null =
   payments.find(p => p.kind === 'payment' && !p.voidedAt) ?? null;
 
-const isDecided =
-  application!.status === 'approved' || application!.status === 'rejected';
-
-let due: AccountAmountDue | null = null;
-let dueProblem: string | null = null;
-if (canRecordPayment && !livePayment && !isDecided) {
-  try {
-    due = await amountDueForAdditionalAccount(application!.id);
-  } catch (err) {
-    dueProblem =
-      err instanceof PaymentError
-        ? err.message
-        : 'The amount due could not be read.';
-  }
-}
+// Read above alongside everything else; only shown while nothing has been
+// taken yet — once a payment stands, the figure has been settled.
+const due: AccountAmountDue | null = livePayment
+  ? null
+  : (dueRead?.due ?? null);
+const dueProblem: string | null = livePayment
+  ? null
+  : (dueRead?.problem ?? null);
 const initialTotal = due
   ? fromCents(sumCents(due.components.map(c => c.amount)))
   : '0';

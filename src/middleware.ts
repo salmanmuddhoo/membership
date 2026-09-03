@@ -4,6 +4,7 @@ import { recordAuditQuietly } from '@lib/access/audit';
 import { authorise } from '@lib/access/authorise';
 import { resolvePrincipal, type Principal } from '@lib/access/principal';
 import { apiError, correlationIdFrom } from '@lib/api/envelope';
+import { pendingActionCount } from '@lib/applications/workflow';
 
 const LOGIN_PATH = '/login';
 const HOME_PATH = '/dashboard';
@@ -150,6 +151,19 @@ export const onRequest = defineMiddleware(async (context, next) => {
       ipAddress: clientAddress(context.request.headers),
     });
     return context.redirect(DENIED_PATH);
+  }
+
+  // The "Applications" badge in DashboardLayout is a count with queries of
+  // its own. Started here, before the page runs, so it overlaps the page's
+  // own reads instead of queueing behind them; the layout awaits it. Never
+  // allowed to reject — a badge is not worth a failed page.
+  if (principal.permissions.has('application.view')) {
+    context.locals.pendingActions = pendingActionCount(principal).catch(
+      error => {
+        console.error('[access] could not count pending actions:', error);
+        return 0;
+      }
+    );
   }
 
   return next();

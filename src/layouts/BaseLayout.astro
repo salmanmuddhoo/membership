@@ -36,12 +36,20 @@ const { title = 'Al Barakah MCSL', description, bodyClass = '' } = Astro.props;
   >
     <slot />
     <script>
-      // Preline UI interactive components (dropdowns, overlays, theme toggle).
-      import 'preline';
-      const init = () =>
-        (
-          window as Window & { HSStaticMethods?: { autoInit?: () => void } }
-        ).HSStaticMethods?.autoInit?.();
+      // Only the three Preline components this layout actually uses — the
+      // user-menu dropdown, the off-canvas sidebar and the theme toggle —
+      // rather than the whole library, which was five times the script to
+      // download, parse and run on every page. The non-auto builds, because
+      // the auto ones register themselves purely by side effect, and the
+      // package does not declare that, so the bundler drops them as unused.
+      import HSDropdown from 'preline/plugins/dropdown-non-auto';
+      import HSOverlay from 'preline/plugins/overlay-non-auto';
+      import HSThemeSwitch from 'preline/plugins/theme-switch-non-auto';
+      const init = () => {
+        HSDropdown.autoInit();
+        HSOverlay.autoInit();
+        HSThemeSwitch.autoInit();
+      };
       if (document.readyState === 'loading')
         document.addEventListener('DOMContentLoaded', init);
       else init();

@@ -1514,6 +1514,58 @@ Registration" and "Open other account" moved from a stacked layout with a
 divider between them onto one row, the second pushed to the right-hand
 edge.
 
+### Performance pass: fewer round trips per click ✅
+
+Every page felt slow for one reason more than any other: a serverless
+function on Vercel talking to a database in another region, one query at a
+time. An application page ran twenty to thirty queries, most of them one
+after another, several of them the same question asked twice. This pass
+takes the query count down and runs what remains side by side, without
+changing what any page shows.
+
+**Reference configuration is cached** (`src/lib/config/cache.ts`): membership
+types and their fields, account types, document types and checklists, fee
+versions, workflow statuses and the workflow chain (whose own cache from
+phase 6 folds into this one). A few seconds on the warm instance, cleared by
+`withConfigurationActor` (db/pool.ts) after any configuration write — the
+one door every such write already had to go through, so no setter can
+forget. The promise is cached, not the value, so concurrent callers in one
+request share a single query. Permissions stay uncached (S-107).
+
+**One read per application instead of one per step.** `gatePassed` ran a
+query for every workflow step asked about, from `availableActions`,
+`reviewStageLabel` and `assertMayAct` alike; `passedSteps` (workflow.ts)
+reads the steps an application has passed once and `unmetGates` consults
+that set in memory. `pendingActionCount`'s per-step counts go out together.
+`loadApplication` reads the row and its parties together; the payment line
+reads in payments.ts likewise.
+
+**The three application pages read in one round.** Checklist, blocking
+problems, available actions, history, stage label, payments and the amount
+due all depend only on the application, so they go out in one `Promise.all`
+rather than in sequence, and `boardReadiness` now accepts what the page has
+already read instead of repeating three of those queries itself. The
+"Applications" badge count is started by the middleware
+(`locals.pendingActions`) before the page's own reads, so it overlaps them;
+`DashboardLayout` awaits it.
+
+**A warm connection between clicks.** The pool's idle timeout goes from 10 s
+to 60 s with TCP keepalives, so an officer's next click reuses the
+connection rather than paying TCP + TLS + authentication to the database's
+region again (docs/database.md). Tunable with `DATABASE_IDLE_TIMEOUT_MS`.
+
+**Five times less script per page.** `BaseLayout` imported the whole of
+Preline (385 kB) for a dropdown, an overlay and a theme toggle; it now
+imports those three plugins. `vercel.json`'s catch-all `Cache-Control:
+max-age=0` no longer applies to the hashed `/_astro/` assets, which are
+immutable and are now sent as such.
+
+Not done here, because it needs a fact this repository does not record: the
+Vercel function region. If the database is in, say, South Africa North and
+the function runs in the default `iad1`, every query crosses the Atlantic
+twice — pinning the region next to the database is the single largest
+remaining lever, and a one-line `regions` entry in `vercel.json`.
+
 ---
 
 # M7 — Legacy migration

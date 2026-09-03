@@ -21,8 +21,8 @@ import { recordAudit } from '../access/audit';
 import { checkSegregation } from '../admin/segregation';
 import { activeChain, type WorkflowStep } from '../config/reference';
 import { query, withTransaction } from '../db/pool';
-import { checklistFor } from '../documents/documents';
-import { paymentsForApplication } from '../payments/payments';
+import { checklistFor, type ChecklistEntry } from '../documents/documents';
+import { paymentsForApplication, type Payment } from '../payments/payments';
 import type { Principal } from '../access/principal';
 import {
   ApplicationError,
@@ -67,17 +67,15 @@ export interface Transition {
 // which is exactly why the record's status alone cannot say whether it has
 // already happened. A recorded transition is the only signal there is:
 // `recordTransition` writes one every time a step completes, gate or not.
-async function gatePassed(
-  applicationId: string,
-  stepCode: string
-): Promise<boolean> {
-  const result = await query(
-    `select 1 from application_transition
-      where application_id = $1 and step_code = $2
-      limit 1`,
-    [applicationId, stepCode]
+// Every step this application has ever been through — one read, consulted
+// for every gate question below, rather than one query per step asked.
+async function passedSteps(applicationId: string): Promise<Set<string>> {
+  const result = await query<{ step_code: string }>(
+    `select distinct step_code from application_transition
+      where application_id = $1`,
+    [applicationId]
   );
-  return (result.rowCount ?? 0) > 0;
+  return new Set(result.rows.map(r => r.step_code));
 }
 
 // Every enabled gate earlier in the chain, sitting on the same status this
@@ -86,22 +84,18 @@ async function gatePassed(
 // later needs no change here. Disabling a gate (Regional oversight's default)
 // drops it from `chain` entirely, so it contributes nothing: that is what
 // lets the chain go straight to the next step with no code change.
-async function unmetGates(
+function unmetGates(
   chain: WorkflowStep[],
   step: WorkflowStep,
-  applicationId: string
-): Promise<WorkflowStep[]> {
-  const earlierGates = chain.filter(
+  passed: ReadonlySet<string>
+): WorkflowStep[] {
+  return chain.filter(
     s =>
       s.stepNo < step.stepNo &&
       s.fromStatus === step.fromStatus &&
-      s.fromStatus === s.toStatus
+      s.fromStatus === s.toStatus &&
+      !passed.has(s.code)
   );
-  const unmet: WorkflowStep[] = [];
-  for (const gate of earlierGates) {
-    if (!(await gatePassed(applicationId, gate.code))) unmet.push(gate);
-  }
-  return unmet;
 }
 
 /**
@@ -159,17 +153,15 @@ async function assertMayAct(
   // exactly as ready for it as before. Checked here, once, for both this
   // step (has it already happened?) and every gate earlier in the chain
   // (has each of THEM already happened?).
-  if (
-    step.fromStatus === step.toStatus &&
-    (await gatePassed(application.id, step.code))
-  ) {
+  const passed = await passedSteps(application.id);
+  if (step.fromStatus === step.toStatus && passed.has(step.code)) {
     throw new ApplicationError(
       `${step.name} has already been completed.`,
       'locked'
     );
   }
 
-  const unmet = await unmetGates(chain, step, application.id);
+  const unmet = unmetGates(chain, step, passed);
   if (unmet.length > 0) {
     throw new ApplicationError(
       `${unmet.map(g => g.name).join(', ')} must happen first.`,
@@ -361,12 +353,20 @@ export interface BoardReadiness {
 }
 
 export async function boardReadiness(
-  application: Application
+  application: Application,
+  // What the caller has already read for its own purposes — the application
+  // page reads all three to render itself, and repeating them here was three
+  // more round trips for the same answer. Anything not supplied is read.
+  known: {
+    checklist?: ChecklistEntry[];
+    payments?: Payment[];
+    problems?: MissingField[];
+  } = {}
 ): Promise<BoardReadiness> {
   const [checklist, payments, problems] = await Promise.all([
-    checklistFor({ applicationId: application.id }),
-    paymentsForApplication(application.id),
-    problemsBlockingSubmission(application),
+    known.checklist ?? checklistFor({ applicationId: application.id }),
+    known.payments ?? paymentsForApplication(application.id),
+    known.problems ?? problemsBlockingSubmission(application),
   ]);
 
   return {
@@ -796,7 +796,10 @@ export async function availableActions(
   application: Application,
   principal: Principal
 ): Promise<AvailableAction[]> {
-  const chain = await activeChain(WORKFLOW_CODE);
+  const [chain, passed] = await Promise.all([
+    activeChain(WORKFLOW_CODE),
+    passedSteps(application.id),
+  ]);
   const actions: AvailableAction[] = [];
 
   for (const step of chain) {
@@ -810,13 +813,8 @@ export async function availableActions(
     if (!principal.roles.includes(step.roleCode)) continue;
     // A gate's own status never moves once passed, so it would otherwise
     // keep offering itself back to whoever just completed it.
-    if (
-      step.fromStatus === step.toStatus &&
-      (await gatePassed(application.id, step.code))
-    ) {
-      continue;
-    }
-    if ((await unmetGates(chain, step, application.id)).length > 0) continue;
+    if (step.fromStatus === step.toStatus && passed.has(step.code)) continue;
+    if (unmetGates(chain, step, passed).length > 0) continue;
     actions.push({
       stepCode: step.code,
       label: meta.label,
@@ -843,7 +841,7 @@ export async function pendingActionCount(
   principal: Principal
 ): Promise<number> {
   const chain = await activeChain(WORKFLOW_CODE);
-  let total = 0;
+  const counts: Promise<number>[] = [];
 
   for (const step of chain) {
     if (step.code === 'capture') continue;
@@ -881,16 +879,19 @@ export async function pendingActionCount(
       );
     }
 
-    const result = await query<{ n: string }>(
-      `select count(*)::int as n
-         from membership_application a
-        where ${conditions.join(' and ')}`,
-      params
+    // One count per step this person waits at, all in flight at once — a
+    // President who also reviews should not pay for them one after another.
+    counts.push(
+      query<{ n: string }>(
+        `select count(*)::int as n
+           from membership_application a
+          where ${conditions.join(' and ')}`,
+        params
+      ).then(result => Number(result.rows[0]?.n ?? 0))
     );
-    total += Number(result.rows[0]?.n ?? 0);
   }
 
-  return total;
+  return (await Promise.all(counts)).reduce((sum, n) => sum + n, 0);
 }
 
 /**
@@ -910,17 +911,15 @@ export async function reviewStageLabel(
   application: Application
 ): Promise<string | null> {
   if (application.status !== 'new') return null;
-  const chain = await activeChain(WORKFLOW_CODE);
+  const [chain, passed] = await Promise.all([
+    activeChain(WORKFLOW_CODE),
+    passedSteps(application.id),
+  ]);
 
   for (const step of chain) {
     if (step.fromStatus !== application.status) continue;
-    if (
-      step.fromStatus === step.toStatus &&
-      (await gatePassed(application.id, step.code))
-    ) {
-      continue;
-    }
-    if ((await unmetGates(chain, step, application.id)).length > 0) continue;
+    if (step.fromStatus === step.toStatus && passed.has(step.code)) continue;
+    if (unmetGates(chain, step, passed).length > 0) continue;
     return `With the ${step.roleName}`;
   }
 
