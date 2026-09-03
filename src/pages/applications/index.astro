@@ -239,7 +239,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                         href={
                           a.applicationKind === 'membership'
                             ? `/applications/${a.id}`
-                            : `/applications/${a.id}/account`
+                            : a.applicationKind === 'additional_account'
+                              ? `/applications/${a.id}/account`
+                              : `/applications/${a.id}/customer`
                         }
                         class="text-mint-700 dark:text-mint-300 font-medium underline"
                       >

@@ -434,6 +434,90 @@ export async function startCustomerAccountApplication(
   });
 }
 
+/**
+ * S-614 · Start a membership application for a non-member already on the
+ * system, prefilled from what their customer_account application already
+ * captured — an officer reviewing it corrects or adds to what is there
+ * rather than retyping a name and NIC the applicant already gave once.
+ *
+ * Always against Individual: the only membership type a customer_account
+ * application is ever captured against (capture.ts's own business
+ * decision — startCustomerAccountApplication, above), so the customer's own
+ * field values line up with Individual's own field configuration exactly.
+ * From here on this is an ordinary Individual application — the same
+ * capture, review and approval chain, unrelated to the account(s) the
+ * customer already holds. Approval creates a new Member; it does not touch
+ * the existing customer record or reassign their account(s) to it, which
+ * would be its own, separate decision this does not make.
+ */
+export async function startMembershipApplicationFromCustomer(
+  customerId: string,
+  actor: Actor
+): Promise<{ id: string; reference: string }> {
+  const type = await acceptingType('individual');
+
+  return withTransaction(async client => {
+    const customer = await client.query<{
+      status: string;
+      application_id: string;
+    }>(`select status, application_id from customer where id = $1`, [
+      customerId,
+    ]);
+    if (customer.rowCount === 0) {
+      throw new ApplicationError(
+        'That customer no longer exists.',
+        'not_found'
+      );
+    }
+    if (customer.rows[0].status !== 'active') {
+      throw new ApplicationError(
+        'Only an active customer may apply to become a member.'
+      );
+    }
+
+    const priorParties = await client.query<{
+      subject: FieldSubject;
+      ordinal: number;
+      values: Record<string, string>;
+    }>(
+      `select subject, ordinal, values
+         from application_party
+        where application_id = $1`,
+      [customer.rows[0].application_id]
+    );
+
+    const { id, reference } = await insertApplication(client, type, actor);
+
+    // insertApplication just seeded one empty party row per subject
+    // Individual currently configures — filled in here from what the
+    // customer already gave, not created again. A subject or nominee
+    // ordinal added to Individual's own configuration since the customer
+    // applied has no prior value to carry over and is simply left as
+    // insertApplication made it: empty, for the officer to fill in.
+    for (const party of priorParties.rows) {
+      await client.query(
+        `update application_party set values = $4
+           where application_id = $1 and subject = $2 and ordinal = $3`,
+        [id, party.subject, party.ordinal, JSON.stringify(party.values)]
+      );
+    }
+
+    await recordAudit(
+      {
+        actorUserId: actor.userId,
+        actorDescription: actor.email,
+        action: 'membership.application.started_from_customer',
+        entityType: 'membership_application',
+        entityId: id,
+        newValue: { reference, fromCustomerId: customerId },
+      },
+      client
+    );
+
+    return { id, reference };
+  });
+}
+
 // Is there anything here at all? What decides whether an application exists.
 export function hasAnyValue(parties: PartyValues[]): boolean {
   return parties.some(party =>

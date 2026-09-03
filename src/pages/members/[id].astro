@@ -1,6 +1,10 @@
 ---
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import { loadMember, loadCustomer } from '@lib/members/create';
+import {
+  ApplicationError,
+  startMembershipApplicationFromCustomer,
+} from '@lib/applications/capture';
 import { forDisplay } from '@lib/applications/phone';
 import {
   paymentsForApplication,
@@ -12,6 +16,7 @@ import { formatMoney } from '@lib/payments/money';
 
 const principal = Astro.locals.principal!;
 const canSeePayments = principal.permissions.has('payment.view');
+const canCapture = principal.permissions.has('application.capture');
 
 const { id } = Astro.params;
 // Two different tables (member, customer — migration 0027), and no way to
@@ -23,6 +28,36 @@ const { id } = Astro.params;
 const member = id ? await loadMember(id) : null;
 const customer = !member && id ? await loadCustomer(id) : null;
 if (!member && !customer) return new Response('Not found', { status: 404 });
+
+let error: string | null = null;
+
+// S-614: a non-member applying to become one. Handled here, on their own
+// page, rather than on /applications/new — that page starts an application
+// from nothing, and this one starts from what customer_account capture
+// already collected.
+if (Astro.request.method === 'POST' && customer) {
+  if (!canCapture) {
+    error = 'You do not have permission to capture applications.';
+  } else {
+    const form = await Astro.request.formData();
+    if (String(form.get('intent') ?? '') === 'apply-for-membership') {
+      try {
+        const created = await startMembershipApplicationFromCustomer(
+          customer.id,
+          { userId: principal.userId, email: principal.email }
+        );
+        return Astro.redirect(`/applications/${created.id}`);
+      } catch (err) {
+        if (err instanceof ApplicationError) {
+          error = err.message;
+        } else {
+          console.error('[members/apply-for-membership]', err);
+          error = 'Something went wrong. Please try again.';
+        }
+      }
+    }
+  }
+}
 
 // What has been paid: for a member, including the receipt that admitted
 // them (paymentsForMember reads member_id and, falling back, the
@@ -68,6 +103,14 @@ const pageTitle = member ? member.memberNo : name;
       class="inline-block text-sm text-neutral-500 underline dark:text-neutral-400"
       >← All members</a
     >
+
+    {
+      error && (
+        <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+          {error}
+        </div>
+      )
+    }
 
     <section
       class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
@@ -127,6 +170,27 @@ const pageTitle = member ? member.memberNo : name;
               </div>
             ))}
           </dl>
+        )
+      }
+
+      {
+        customer && canCapture && (
+          <form
+            method="post"
+            class="mt-5 border-t border-neutral-200 pt-4 dark:border-neutral-800"
+          >
+            <input type="hidden" name="intent" value="apply-for-membership" />
+            <button
+              type="submit"
+              class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+            >
+              Apply to become a member
+            </button>
+            <p class="mt-1.5 text-xs text-neutral-500 dark:text-neutral-400">
+              Starts a membership application with their details already filled
+              in.
+            </p>
+          </form>
         )
       }
     </section>
