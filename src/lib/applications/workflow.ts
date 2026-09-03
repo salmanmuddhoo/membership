@@ -885,3 +885,54 @@ export async function pendingActionCount(
 
   return total;
 }
+
+/**
+ * S-611 follow-up: who actually holds this application right now, for as
+ * long as its status stays 'new'.
+ *
+ * `applicationTimeline` (`timeline.ts`) folds capture, Regional oversight and
+ * Secretary review into one "Submit" step — an officer has exactly one thing
+ * left to do once they submit, and the rest is out of their hands either way
+ * — but a Regional oversight gate the record's own `status` cannot reflect
+ * (S-209: a gate never moves it) left every application at 'new' reading
+ * "With the Secretary" whether or not the Regional Manager had acted yet.
+ * This walks the same chain `availableActions` does, minus a principal to
+ * filter by, and returns the role of whichever step is actually current.
+ */
+export async function reviewStageLabel(
+  application: Application
+): Promise<string | null> {
+  if (application.status !== 'new') return null;
+  const chain = await activeChain(WORKFLOW_CODE);
+
+  for (const step of chain) {
+    if (step.fromStatus !== application.status) continue;
+    if (
+      step.fromStatus === step.toStatus &&
+      (await gatePassed(application.id, step.code))
+    ) {
+      continue;
+    }
+    if ((await unmetGates(chain, step, application.id)).length > 0) continue;
+    return `With the ${step.roleName}`;
+  }
+
+  return null;
+}
+
+/**
+ * Which of these applications (assumed already at 'new') have passed the
+ * Regional oversight gate — one query for the whole applications list
+ * rather than `reviewStageLabel` called once per row.
+ */
+export async function regionalReviewPassedIds(
+  applicationIds: string[]
+): Promise<Set<string>> {
+  if (applicationIds.length === 0) return new Set();
+  const result = await query<{ application_id: string }>(
+    `select distinct application_id from application_transition
+      where step_code = 'regional_review' and application_id = any($1::uuid[])`,
+    [applicationIds]
+  );
+  return new Set(result.rows.map(r => r.application_id));
+}

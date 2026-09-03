@@ -1814,4 +1814,66 @@ describe('S-611: Regional oversight, enabled or not, gates the chain', () => {
       secretaryBaseline + 1
     );
   });
+
+  it('says who actually holds it while status is still new', async () => {
+    await setRegionalReviewEnabled(true);
+    const { capture, workflow } = await load();
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+
+    let application = (await capture.loadApplication(id))!;
+    expect(await workflow.reviewStageLabel(application)).toBe(
+      'With the Regional Manager'
+    );
+
+    await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Checked at the regional office.' },
+      regionalManager,
+      'regional_review'
+    );
+    application = (await capture.loadApplication(id))!;
+    expect(await workflow.reviewStageLabel(application)).toBe(
+      'With the Secretary'
+    );
+
+    // Nothing to say once it has moved past 'new' altogether.
+    await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Complete.' },
+      secretary
+    );
+    application = (await capture.loadApplication(id))!;
+    expect(await workflow.reviewStageLabel(application)).toBeNull();
+  });
+
+  it('says "With the Secretary" straight away while disabled', async () => {
+    const { capture, workflow } = await load();
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+
+    const application = (await capture.loadApplication(id))!;
+    expect(await workflow.reviewStageLabel(application)).toBe(
+      'With the Secretary'
+    );
+  });
+
+  it('marks only the applications that have actually passed the gate', async () => {
+    await setRegionalReviewEnabled(true);
+    const { capture, workflow } = await load();
+    const pending = await captureComplete();
+    const passed = await captureComplete();
+    await workflow.submitApplication(pending, officer);
+    await workflow.submitApplication(passed, officer);
+    await workflow.reviewApplication(
+      passed,
+      { outcome: 'forward', comment: 'Checked.' },
+      regionalManager,
+      'regional_review'
+    );
+
+    const passedIds = await workflow.regionalReviewPassedIds([pending, passed]);
+    expect(passedIds.has(pending)).toBe(false);
+    expect(passedIds.has(passed)).toBe(true);
+  });
 });

@@ -55,6 +55,12 @@ export interface TimelineInput {
   // Shown on the step once there is one, so the officer can quote it without
   // scrolling.
   paymentReceiptNo?: string | null;
+  // S-611 follow-up: who actually holds it while status is still 'new' —
+  // "With the Regional Manager" or "With the Secretary", from
+  // workflow.ts's reviewStageLabel. Falls back to "With the Secretary" when
+  // absent, the only thing this could ever have meant before Regional
+  // oversight was ever enforced.
+  reviewStageLabel?: string | null;
 }
 
 // How far through the approval chain a status is. Two statuses share a rank
@@ -126,15 +132,19 @@ export function applicationTimeline(input: TimelineInput): TimelineStep[] {
           ? input.paymentReceiptNo
           : undefined,
     },
-    // Submission and Secretary review used to be two steps. An officer has
-    // exactly one thing to do at this point — submit — and everything after
-    // that is the Secretary's, all the way through to forwarding it on, so
-    // it reads as one step: done once it is fully past the Secretary.
+    // Submission, Regional oversight (S-611, where enabled) and Secretary
+    // review used to be two steps and are now as many as three. An officer
+    // has exactly one thing to do at this point — submit — and everything
+    // after that is out of their hands either way, so it still reads as one
+    // step: done once it is fully past the Secretary.
     {
       key: 'submit',
       label: 'Submit',
       done: rank >= 3,
-      detail: rank >= 1 && rank < 3 ? 'With the Secretary' : undefined,
+      detail:
+        rank >= 1 && rank < 3
+          ? (input.reviewStageLabel ?? 'With the Secretary')
+          : undefined,
     },
     {
       key: 'decision',

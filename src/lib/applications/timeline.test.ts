@@ -148,6 +148,26 @@ describe('once it has left the officer', () => {
     expect(stateOf(steps, 'decision')).toBe('todo');
   });
 
+  // S-611 follow-up: Regional oversight, where enabled, is a second stage
+  // folded into this same "Submit" step — reviewStageLabel (workflow.ts)
+  // says which one actually holds it, and this is the one place that label
+  // reaches the screen.
+  it('shows the Regional Manager holding it, once workflow.ts says so', () => {
+    const steps = applicationTimeline({
+      ...FRESH,
+      status: 'new',
+      mandatoryFieldsOutstanding: 0,
+      signedFormFiled: true,
+      requiredDocumentsOutstanding: 0,
+      paymentRecorded: true,
+      reviewStageLabel: 'With the Regional Manager',
+    });
+
+    expect(steps.find(s => s.key === 'submit')!.detail).toBe(
+      'With the Regional Manager'
+    );
+  });
+
   it('shows the President holding it once the Secretary has forwarded it', () => {
     const steps = applicationTimeline({
       ...FRESH,
