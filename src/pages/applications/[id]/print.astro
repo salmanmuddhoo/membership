@@ -362,26 +362,37 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
 
   /* Fixed to the real viewport (see the comment above the markup), not to
      this page's own layout — sized in ordinary CSS units, not the
-     millimetres the rest of this sheet uses for paper. */
+     millimetres the rest of this sheet uses for paper. Two heights: a
+     browser that does not know `dvh` keeps the first and ignores the
+     second, one that does gets the one that actually tracks a mobile
+     browser's own address bar showing or hiding, rather than assuming the
+     larger figure and running the bars below the visible screen. */
   .sig-modal {
     position: fixed;
     inset: 0;
+    height: 100vh;
+    height: 100dvh;
     z-index: 1000;
     display: flex;
     flex-direction: column;
     background: #fff;
     color: #111;
     font-family: system-ui, sans-serif;
-    /* The one thing this box exists to stop: a drag meant for the pen
-       reaching past the canvas and moving the page, or the browser's own
-       pull-to-refresh, behind it. */
-    touch-action: none;
-    overscroll-behavior: none;
+    /* Scrollable, not clipped: belt and braces against the same thing the
+       two heights above already guard against — if a bar ever still ends
+       up outside the visible area, the officer can reach it by scrolling
+       the box itself rather than being unable to reach it at all. Only the
+       canvas below blocks touch, and only there, since a drag meant for
+       the pen reaching past it and moving the page is what this guards
+       against — the bars need every tap to reach the button underneath it,
+       plainly, the first time. */
+    overflow-y: auto;
   }
   .sig-modal[hidden] {
     display: none;
   }
   .sig-modal-bar {
+    flex-shrink: 0;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -396,6 +407,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
   }
   .sig-modal-canvas {
     flex: 1;
+    min-height: 40vh;
     width: 100%;
     touch-action: none;
     cursor: crosshair;

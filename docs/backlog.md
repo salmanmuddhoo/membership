@@ -1690,6 +1690,43 @@ short-TTL cache pattern already serving reference configuration
 (config/cache.ts) if a few seconds of staleness is acceptable, which
 would keep most reads off the database entirely.
 
+### Signature modal: reachable buttons, and bulk deleting drafts ✅
+
+**The signing box's own buttons could end up out of reach.** The
+full-screen signing box from phase 8 blocked all touch scrolling on
+itself (`touch-action: none`) to stop a drag meant for the pen from
+moving the page — reasonable for the canvas, wrong for the bar above and
+below it carrying Cancel, Clear and Use this signature: on a phone whose
+address bar changes the actually-visible height after the box opens,
+those bars could end up sized or positioned outside what was on screen,
+with no way to scroll to them because scrolling was exactly what had
+been switched off everywhere in the box, not just on the canvas.
+Touch-blocking now applies to the canvas alone; the box sizes itself
+with `100dvh` (falls back to `100vh` where unsupported) instead of
+trusting `inset: 0` alone to track a moving toolbar; and the box can
+still be scrolled as a last resort if a bar ever does end up outside the
+visible area for a device this does not already fix.
+
+**Selecting several drafts and deleting them together.** The applications
+table gains a checkbox per draft row (the only status `deleteDraftApplication`
+already accepted) and a "select all" in the header; a bulk action bar
+reports the count and submits them all under the same `delete` intent the
+single-row button already used — one checkbox or twenty is the same
+action, not a separate one. Each draft is still deleted as its own
+transaction, in order, with its own checks (not submitted, no receipt, no
+filed documents): a batch is several independent deletions succeeding or
+failing on their own terms, not rows removed in one statement, and a
+failure part-way through is reported by reference with what stopped it
+rather than silently rolled into "something went wrong."
+
+**Sorting the table.** Every column header is now a button that reorders
+the rows already on the page — client-side, since the list this page
+reads is already capped and already loaded, and asking the server for
+the same hundred rows in a different order would be a round trip spent on
+nothing new. Clicking again reverses the order; an arrow marks which
+column and which direction. Selected checkboxes survive a sort — the
+rows are moved, not rebuilt.
+
 ---
 
 # M7 — Legacy migration
