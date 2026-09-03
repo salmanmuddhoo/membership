@@ -549,7 +549,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
   title={`${application!.reference} · Al Barakah MCSL`}
   heading={`Application ${application!.reference}`}
 >
-  <div class="mx-auto max-w-4xl space-y-6">
+  <div class="mx-auto max-w-5xl space-y-6">
     <ApplicationTimeline steps={timeline} applicationId={application!.id} />
 
     <div
@@ -1605,10 +1605,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
   const status = document.getElementById('autosave-status');
 
   if (form && status) {
-    let dirty = false;
-    let pending: number | undefined;
-
-    const performSave = async () => {
+    const save = async (): Promise<boolean> => {
       const body = new FormData(form);
       body.set('intent', 'autosave');
 
@@ -1619,41 +1616,24 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           headers: { 'x-requested-with': 'autosave' },
         });
         if (!response.ok) throw new Error(String(response.status));
-        dirty = false;
         status.textContent = `Saved at ${new Date().toLocaleTimeString('en-GB')}`;
+        return true;
       } catch {
         status.textContent = 'Not saved — check your connection.';
+        return false;
       }
-    };
-
-    let saveInFlight: Promise<void> | null = null;
-    const save = (): Promise<void> => {
-      if (saveInFlight) return saveInFlight.then(save);
-      if (!dirty) return Promise.resolve();
-      saveInFlight = performSave().finally(() => {
-        saveInFlight = null;
-      });
-      return saveInFlight;
     };
 
     if (captureNextButton) {
       captureNextButton.addEventListener('click', async () => {
-        window.clearTimeout(pending);
         captureNextButton.disabled = true;
-        await save();
+        const saved = await save();
+        if (!saved) {
+          captureNextButton.disabled = false;
+          return;
+        }
         window.location.assign(window.location.pathname + '?step=2');
       });
     }
-
-    form.addEventListener('input', () => {
-      dirty = true;
-      window.clearTimeout(pending);
-      pending = window.setTimeout(save, 2_000);
-    });
-    form.addEventListener('focusout', () => void save());
-    window.setInterval(save, 20_000);
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'hidden') void save();
-    });
   }
 </script>

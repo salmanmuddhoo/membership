@@ -143,7 +143,7 @@ if (Astro.request.method === 'POST') {
   title={`New ${type.name} application · Al Barakah MCSL`}
   heading={`New ${type.name} application`}
 >
-  <div class="mx-auto max-w-4xl space-y-6">
+  <div class="mx-auto max-w-5xl space-y-6">
     <ApplicationTimeline steps={timeline} />
 
     <a
@@ -184,8 +184,7 @@ if (Astro.request.method === 'POST') {
         <span
           id="autosave-status"
           class="text-xs text-neutral-500 dark:text-neutral-400"
-          aria-live="polite">Saved as you type.</span
-        >
+          aria-live="polite"></span>
         {
           /* Next is driven by the script below. Without it, submitting this
             button the ordinary way saves and moves on in one step, which is
@@ -205,9 +204,10 @@ if (Astro.request.method === 'POST') {
 </DashboardLayout>
 
 <script>
-  // Saving is automatic, so it has to be quick enough that nobody wonders. A
-  // short pause after typing stops, a backstop interval, and every way of
-  // leaving the page.
+  // S-614: saves once, when the officer clicks Next, rather than continuously
+  // while typing — a network call on every keystroke read as the app being
+  // slow. (Replaces the continuous background saving from S-302, decision
+  // 14.)
   //
   // Until the first value is entered this posts nothing at all: an empty form
   // must not create an application, and a request that would create nothing is
@@ -221,14 +221,10 @@ if (Astro.request.method === 'POST') {
   ) as HTMLButtonElement | null;
 
   if (form && status) {
-    let dirty = false;
-    let pending: number | undefined;
-    // Set the moment the first save creates the application. Once this is
-    // known, a later response is judged only by whether the request
-    // succeeded — not by re-checking `created`/`reference`, which this same
-    // endpoint stops returning after the application exists. Getting that
-    // wrong before left every save after the first quietly unable to report
-    // itself, though the data was still being saved underneath.
+    // Set once the save creates the application, so a later response is
+    // judged only by whether the request succeeded — not by re-checking
+    // `created`/`reference`, which this same endpoint stops returning after
+    // the application exists.
     let applicationId: string | null = null;
 
     const anythingEntered = () =>
@@ -237,7 +233,7 @@ if (Astro.request.method === 'POST') {
           key.startsWith('field.') && String(value).trim() !== ''
       );
 
-    const performSave = async () => {
+    const save = async (): Promise<void> => {
       const body = new FormData(form);
       body.set('intent', 'autosave');
 
@@ -253,25 +249,14 @@ if (Astro.request.method === 'POST') {
         if (!response.ok) throw new Error(String(response.status));
 
         const result = await response.json();
+        if (!result.created) return;
+        applicationId = result.id;
 
-        if (!applicationId) {
-          // Nothing existed before this save, so this response is the one
-          // that says whether it does now.
-          if (!result.created) return;
-          applicationId = result.id;
-
-          // From here on this IS an application. replaceState rather than a
-          // navigation: the officer is mid-word, and reloading the page under
-          // them to show a heading they did not ask for is not worth the
-          // interruption. window.location updates with it, so the next save
-          // above posts to /applications/<id> rather than back here.
-          window.history.replaceState({}, '', `/applications/${result.id}`);
-          status.textContent = `${result.reference} saved at ${new Date().toLocaleTimeString('en-GB')}`;
-        } else {
-          status.textContent = `Saved at ${new Date().toLocaleTimeString('en-GB')}`;
-        }
-
-        dirty = false;
+        // From here on this IS an application. replaceState rather than a
+        // navigation: the page is about to navigate away for real in a
+        // moment anyway.
+        window.history.replaceState({}, '', `/applications/${result.id}`);
+        status.textContent = `${result.reference} saved.`;
       } catch {
         // Saying "saved" when nothing was saved is the one thing this must
         // never do: the officer would close the tablet trusting it.
@@ -279,47 +264,16 @@ if (Astro.request.method === 'POST') {
       }
     };
 
-    // Dispatches a save and makes every caller genuinely wait for it. A plain
-    // "in flight" boolean used to let a second caller — Next, arriving right
-    // behind focusout's own un-awaited save — walk straight past a save
-    // already running with nothing to await, so Next navigated before that
-    // save's fetch had finished and the browser could cancel it mid-flight.
-    // That is how a field filled in a moment before Next was clicked (a
-    // Nominee detail, say) went unsaved. Chaining onto the in-flight promise
-    // instead means a caller that arrives mid-save waits for it to land, then
-    // saves again if something changed in the meantime, rather than skipping
-    // its turn.
-    let saveInFlight: Promise<void> | null = null;
-    const save = (): Promise<void> => {
-      if (saveInFlight) return saveInFlight.then(save);
-      if (!dirty || !anythingEntered()) return Promise.resolve();
-      saveInFlight = performSave().finally(() => {
-        saveInFlight = null;
-      });
-      return saveInFlight;
-    };
-
-    form.addEventListener('input', () => {
-      dirty = true;
-      window.clearTimeout(pending);
-      pending = window.setTimeout(save, 2_000);
-    });
-    form.addEventListener('focusout', () => void save());
-    window.setInterval(save, 20_000);
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'hidden') void save();
-    });
-
     if (nextButton) {
       nextButton.hidden = false;
 
       nextButton.addEventListener('click', async () => {
-        window.clearTimeout(pending);
-        nextButton.disabled = true;
+        if (!anythingEntered()) {
+          status.textContent = 'Add at least one detail before continuing.';
+          return;
+        }
 
-        // Flushes whatever is still unsaved. If the application already
-        // exists and nothing changed since the last save, this is a no-op —
-        // save() itself checks `dirty`.
+        nextButton.disabled = true;
         await save();
 
         if (applicationId) {
@@ -332,9 +286,6 @@ if (Astro.request.method === 'POST') {
         }
 
         nextButton.disabled = false;
-        if (!anythingEntered()) {
-          status.textContent = 'Add at least one detail before continuing.';
-        }
         // Otherwise save() already explained itself (e.g. a dropped
         // connection), and that message should stand rather than being
         // overwritten here.
