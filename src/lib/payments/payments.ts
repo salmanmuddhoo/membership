@@ -367,14 +367,27 @@ export async function amountDueForApplication(
   applicationId: string
 ): Promise<AmountDue> {
   const application = await query<{
+    application_kind: string;
     membership_type_id: string;
     status: string;
   }>(
-    `select membership_type_id, status from membership_application where id = $1`,
+    `select application_kind, membership_type_id, status
+       from membership_application where id = $1`,
     [applicationId]
   );
   if (application.rows.length === 0) {
     throw new PaymentError('That application no longer exists.', 'not_found');
+  }
+  // A customer_account application (S-614) also carries membership_type_id
+  // — it reuses that type's field configuration to capture the applicant —
+  // but is charged for the account(s) it opens, the same as an
+  // additional_account application, via amountDueForAdditionalAccount, not
+  // against that type's own fee schedule.
+  if (application.rows[0].application_kind === 'customer_account') {
+    throw new PaymentError(
+      'This application opens an account, and is charged against what is ' +
+        'due to open it instead.'
+    );
   }
 
   const type = (await listMembershipTypes()).find(
@@ -451,7 +464,15 @@ export async function amountDueForAdditionalAccount(
   if (application.rows.length === 0) {
     throw new PaymentError('That application no longer exists.', 'not_found');
   }
-  if (application.rows[0].application_kind !== 'additional_account') {
+  // Both additional_account (S-612) and customer_account (S-614) open the
+  // account(s) selected against them, at the account type's own opening
+  // amount — a customer_account row also carries membership_type_id (it
+  // reuses that type's field configuration to capture the applicant), but
+  // that is not a fee schedule to charge, only a form to render.
+  if (
+    application.rows[0].application_kind !== 'additional_account' &&
+    application.rows[0].application_kind !== 'customer_account'
+  ) {
     throw new PaymentError(
       'This application opens accounts for a membership, and is charged ' +
         'through the membership fee schedule instead.'

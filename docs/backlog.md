@@ -1266,6 +1266,43 @@ approval path that creates the customer and numbers the account(s), and the
 officer-facing review page — each its own increment, the way every phase of
 M11 before this one was.
 
+### S-614, phase 2: the capture engine itself ✅
+
+`CustomerAccountApplication` joined `Application`'s union in `capture.ts` —
+the union of what the other two kinds each need: `parties` and a
+membership type to source field configuration from, the same as
+`MembershipApplication`; `selectedAccountTypes`, the same as
+`AdditionalAccountApplication`. `startCustomerAccountApplication` mirrors
+`startAdditionalAccountApplication`'s own account-type validation (active,
+not membership-default) and `insertApplication`'s own empty-party seeding,
+against the Individual membership type specifically — business direction,
+not a choice this function offers.
+
+`saveDraft` and `problemsBlockingSubmission` each carried a guard reading
+`applicationKind !== 'membership'`, added in S-613 when `additional_account`
+was the only other kind and had no fields to save or validate. Widened to
+name `additional_account` specifically rather than exclude everything but
+`membership` — a `customer_account` application captures an applicant the
+same way a membership application does, so it saves and validates the same
+way too. The same shape of gap existed in `payments.ts`:
+`amountDueForApplication` would have read a `customer_account`
+application's `membership_type_id` (there to source field configuration,
+not to be charged against) and quietly charged the Individual type's own
+fee schedule — entrance fee, Takaful, Shares — instead of what is actually
+due to open the selected account(s). Both directions are guarded now:
+`amountDueForApplication` refuses a `customer_account` application by name,
+and `amountDueForAdditionalAccount`/`recordAccountOpeningPayment` (S-613
+phase 6) accept it alongside `additional_account`, since both are charged
+identically — each selected account type's own `minimum_opening_amount`.
+
+**Still ahead**: the actual entry point (nothing yet calls
+`startCustomerAccountApplication` from a page — the exact gap S-613 phase 2
+first shipped, corrected in its own phase 5), the document checklist for
+this kind (a customer_account row also needs the Individual type's own KYC
+checklist, not only the selected account types' — `documents.ts`'s
+`resolveOwner` does not know that yet), the approval path that creates the
+customer, and the officer-facing review page.
+
 ---
 
 # M7 — Legacy migration

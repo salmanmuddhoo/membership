@@ -1781,6 +1781,166 @@ describe('S-614: a non-member opening an account of their own — schema', () =>
   });
 });
 
+describe('S-614, phase 2: starting an application for someone not yet on the system', () => {
+  let selectableTypeId: string;
+  let membershipDefaultTypeId: string;
+
+  beforeAll(async () => {
+    const selectable = await runAsConfigurator(
+      appUrl,
+      `insert into account_type (code, name, category, is_membership_default)
+       values ('hsa_customer_test', 'Hajj Savings (customer test)', 'savings', false)
+       returning id`
+    );
+    selectableTypeId = selectable.rows[0].id;
+    const membershipDefault = await run(
+      appUrl,
+      `select id from account_type where is_membership_default limit 1`
+    );
+    membershipDefaultTypeId = membershipDefault.rows[0].id;
+  });
+
+  it('creates it against the Individual membership type, with an empty applicant to fill in', async () => {
+    const { capture } = await load();
+    const { id, reference } = await capture.startCustomerAccountApplication(
+      [selectableTypeId],
+      officer
+    );
+    expect(reference).toMatch(/^APP-\d{4}-\d{6}$/);
+
+    const application = await capture.loadApplication(id);
+    expect(application!.applicationKind).toBe('customer_account');
+    if (application!.applicationKind !== 'customer_account') throw new Error();
+    expect(application!.membershipTypeCode).toBe('individual');
+    expect(application!.selectedAccountTypes.map(t => t.id)).toEqual([
+      selectableTypeId,
+    ]);
+    // An empty applicant row, the same as starting a membership application
+    // gives capture something to render into from the first load.
+    expect(
+      application!.parties.find(
+        p => p.subject === 'applicant' && p.ordinal === 1
+      )
+    ).toBeDefined();
+  });
+
+  it('refuses with no account type selected', async () => {
+    const { capture } = await load();
+    await expect(
+      capture.startCustomerAccountApplication([], officer)
+    ).rejects.toThrowError(/at least one account type/);
+  });
+
+  it('refuses a membership-default account type — Shares and the MSA open only on approval', async () => {
+    const { capture } = await load();
+    await expect(
+      capture.startCustomerAccountApplication(
+        [membershipDefaultTypeId],
+        officer
+      )
+    ).rejects.toThrowError(/no longer available to open this way/);
+  });
+
+  it('records the same audit action a membership application uses', async () => {
+    const { capture } = await load();
+    const { id } = await capture.startCustomerAccountApplication(
+      [selectableTypeId],
+      officer
+    );
+    const audit = await run(
+      appUrl,
+      `select action, actor_user_id from audit_event
+        where entity_type = 'membership_application' and entity_id = $1`,
+      [id]
+    );
+    expect(audit.rows[0].action).toBe('membership.application.started');
+    expect(audit.rows[0].actor_user_id).toBe(officer.userId);
+  });
+
+  it('saves a draft the same way a membership application does', async () => {
+    const { capture } = await load();
+    const { id } = await capture.startCustomerAccountApplication(
+      [selectableTypeId],
+      officer
+    );
+
+    const { problems } = await capture.saveDraft(
+      id,
+      [
+        {
+          subject: 'applicant',
+          ordinal: 1,
+          values: { surname: 'Ramtohul', name: 'Priya', nic: 'P1234567890123' },
+        },
+      ],
+      officer
+    );
+    expect(problems).toEqual([]);
+
+    const reloaded = await capture.loadApplication(id);
+    expect(
+      reloaded!.parties.find(p => p.subject === 'applicant')!.values.surname
+    ).toBe('Ramtohul');
+  });
+
+  it('reports missing mandatory fields, the same way a membership application does', async () => {
+    const { capture } = await load();
+    const { id } = await capture.startCustomerAccountApplication(
+      [selectableTypeId],
+      officer
+    );
+    const application = await capture.loadApplication(id);
+
+    const blocking = await capture.problemsBlockingSubmission(application!);
+    expect(blocking.length).toBeGreaterThan(0);
+    expect(blocking.some(p => p.subject === 'applicant')).toBe(true);
+  });
+
+  it('can be deleted while still a draft', async () => {
+    const { capture } = await load();
+    const { id, reference } = await capture.startCustomerAccountApplication(
+      [selectableTypeId],
+      officer
+    );
+
+    const noFiles = async () => {
+      throw new Error(
+        'SharePoint should not have been asked to delete anything'
+      );
+    };
+    const deleted = await capture.deleteDraftApplication(
+      id,
+      principalFor(officer),
+      noFiles
+    );
+    expect(deleted.reference).toBe(reference);
+    expect(await capture.loadApplication(id)).toBeNull();
+  });
+
+  it('appears on the officer-facing list, named by the applicant just typed', async () => {
+    const { capture } = await load();
+    const { id } = await capture.startCustomerAccountApplication(
+      [selectableTypeId],
+      officer
+    );
+    await capture.saveDraft(
+      id,
+      [
+        {
+          subject: 'applicant',
+          ordinal: 1,
+          values: { surname: 'Bundhoo', name: 'Vikash' },
+        },
+      ],
+      officer
+    );
+
+    const listed = (await capture.listApplications({})).find(a => a.id === id)!;
+    expect(listed.applicationKind).toBe('customer_account');
+    expect(listed.applicantName).toBe('Vikash Bundhoo');
+  });
+});
+
 describe('S-613: starting an additional-account application for an existing member', () => {
   // Out of the box every account_type ships is_membership_default (Shares,
   // MSA) — none of them a valid selection for this flow (S-613 refuses

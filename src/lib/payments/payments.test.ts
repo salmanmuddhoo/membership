@@ -1345,3 +1345,68 @@ describe('S-613: paying to open an account for an existing member', () => {
     });
   });
 });
+
+// S-614, phase 2: a customer_account application (S-614) carries
+// membership_type_id too — it reuses that type's own field configuration
+// to capture the applicant — but is charged for the account(s) it opens,
+// the same as an additional_account application, never against that
+// type's own fee schedule.
+describe('S-614: a customer_account application is charged the same way an additional_account one is', () => {
+  let hsaId: string;
+
+  beforeAll(async () => {
+    const hsa = await runAsConfigurator(
+      appUrl,
+      `insert into account_type (code, name, category, minimum_opening_amount, is_membership_default)
+       values ('hsa_customer_pay_test', 'Hajj Savings (customer pay test)', 'savings', 1000.00, false)
+       returning id`
+    );
+    hsaId = hsa.rows[0].id;
+  });
+
+  it('amountDueForAdditionalAccount reads a customer_account application too', async () => {
+    const { capture, payments } = await load();
+    const application = await capture.startCustomerAccountApplication(
+      [hsaId],
+      officer
+    );
+
+    const due = await payments.amountDueForAdditionalAccount(application.id);
+    expect(due.components).toEqual([
+      expect.objectContaining({ accountTypeId: hsaId, amount: '1000.00' }),
+    ]);
+  });
+
+  it('amountDueForApplication refuses it — there is no fee schedule to charge', async () => {
+    const { capture, payments } = await load();
+    const application = await capture.startCustomerAccountApplication(
+      [hsaId],
+      officer
+    );
+
+    await expect(
+      payments.amountDueForApplication(application.id)
+    ).rejects.toThrowError(/charged against what is due to open it/);
+  });
+
+  it('records the payment the same way an additional_account one does', async () => {
+    const { capture, payments } = await load();
+    const application = await capture.startCustomerAccountApplication(
+      [hsaId],
+      officer
+    );
+
+    const payment = await payments.recordAccountOpeningPayment(
+      {
+        applicationId: application.id,
+        method: 'cash',
+        amounts: { [hsaId]: '1000.00' },
+      },
+      principalFor(officer)
+    );
+    expect(payment.feeVersionId).toBeNull();
+    expect(payment.accountLines).toEqual([
+      expect.objectContaining({ accountTypeId: hsaId, amount: '1000.00' }),
+    ]);
+  });
+});
