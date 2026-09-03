@@ -1090,6 +1090,43 @@ back to the list with a confirmation instead. **Still ahead**, unchanged:
 the officer-facing review page, the single-signature form, payment against
 `minimum_opening_amount`, and the approval path that opens the account(s).
 
+### S-613, phase 6 · Paying to open an account ✅
+
+Officer direction: the amount due is simply each selected account type's
+own `minimum_opening_amount` (`account_type`, migration 0010) — nothing new
+for an administrator to configure. That is not a fee schedule by another
+name: `payment_line.component_code` is deliberately a closed set of five
+FRD-defined codes (migration 0017) an open-ended, admin-created account type
+cannot be squeezed into, and `payment.fee_version_id` was `not null` —
+recording a payment against an `additional_account` application, which has
+no fee schedule at all, was impossible at the schema level.
+
+Migration 0026 makes `fee_version_id` nullable and adds
+`payment_account_line` — `payment_line`'s counterpart, snapshotting the
+account type and amount charged the same reason `payment_line` already
+keeps `scheduled_amount` beside `amount`. `Payment` gained `accountLines`,
+empty for every existing payment. New, parallel functions —
+`amountDueForAdditionalAccount` and `recordAccountOpeningPayment`
+(`payments.ts`) — sit beside `amountDueForApplication`/`recordPayment`
+rather than branching inside them, the same reason
+`startAdditionalAccountApplication` sits beside `startApplication`: the
+input shape genuinely differs, and every caller already knows which kind of
+application it holds.
+
+Recording one this way satisfies `submissionReadiness`'s payment gate
+(`workflow.ts`) with **no change to `workflow.ts` at all** —
+`paymentsForApplication` was already generic — which is the same "no code
+change" payoff S-612's schema decision gave `activeChain`. The printed
+receipt (`receipts/[id].astro`) now reads either `lines` or `accountLines`,
+whichever the payment actually has.
+
+**Refunding an account-opening payment is refused for now** — the itemised,
+component-by-component refund exists only for a fee-schedule payment; voiding
+the whole receipt outright (`voidPayment`, unaffected by any of this) still
+covers a mistake in the meantime. **Still ahead**: the officer-facing review
+page itself (nothing yet calls either new function), the single-signature
+form, and the approval path that opens the account(s) on decision.
+
 ---
 
 # M7 — Legacy migration
