@@ -1190,6 +1190,84 @@ open item; voiding the receipt outright still covers a mistake.
 
 ---
 
+# M12 — Opening an account for someone who is not a member
+
+**Goal:** someone not yet on the system at all can open an HSA, Investment,
+or any other account through the exact same approval chain a membership
+application already uses — the "later" M11 named and deferred.
+
+**Officer feedback, business direction**: an accounts-only applicant never
+becomes a Member. They get their own kind of record, and their own account
+numbering (HSA0001, INV0001-style) rather than sharing one AB number the way
+a member's Shares and MSA already do (migration 0018). What they are asked
+to provide reuses the Individual membership application's own fields and
+documents — no new form to design, and familiar to the officers who already
+capture one.
+
+**Shipping in phases, each its own reviewable change**, the way M11 itself
+did: the schema first, since every later phase depends on it and it changes
+nothing on its own.
+
+### S-614 · Non-member account applications, phase 1: schema ✅
+
+**As** someone not yet on the system, **I need** to open an HSA or
+Investment account by providing my own details, **so that** I do not need
+to become a full Member to do it. _(officer feedback)_
+`Must · 5 · EPIC-04`
+
+- **Given** the applicant's own details and KYC documents **Then** they are
+  captured the same way an Individual membership application already
+  captures them — chosen at capture, the same field and checklist
+  configuration, not a new form
+- **Given** approval **Then** a customer is created, never a member, and the
+  selected account(s) are numbered HSA0001/INV0001-style rather than
+  sharing one number the way a member's accounts do
+
+`membership_application.application_kind` gained a third value,
+`'customer_account'` — captures an applicant (`membership_type_id` set, the
+same as `'membership'`) and selects account type(s)
+(`application_account_selection`, already generic since S-612), but creates
+neither a member nor opens an account under an existing one on approval.
+`membership_application_kind_shape` (migration 0025) grew a third branch
+rather than a parallel constraint, the same table every application kind
+now shares.
+
+A new `customer` table is deliberately as bare as `member` (S-308) — no
+name or NIC of its own, both read from `application_party` against the
+application a customer came from, exactly how a member's own name already
+is. `account` gained a nullable `customer_id` beside its existing
+`member_id`, and `account_no` — dropped for members in migration 0018
+because two shared accounts inviting one number to disagree with itself was
+worse than not storing it — is reintroduced here nullable, for exactly the
+opposite reason: a customer's accounts have no shared number to lean on, so
+each needs its own. `account_owner_shape` enforces exactly one of
+`member_id`/`customer_id`, with `account_no` set if and only if the account
+is a customer's.
+
+Numbering itself is `next_customer_account_number(account_type_id)`, a
+per-type counter table rather than a Postgres sequence per type — account
+types are administrator-created and open-ended (S-206), so a fixed sequence
+per type cannot exist ahead of time. Its prefix (`HSA`, `INV`, ...) is a new
+`account_type.number_prefix` column an administrator sets the same way they
+set every other fact about an account type, nullable until a customer flow
+actually needs one — nothing here names HSA or Investment specifically,
+the same reasoning S-612 gave for account type selection itself.
+
+Nothing yet creates a row of any new shape — every existing application
+defaults to `application_kind = 'membership'`, and no account exists
+without a `member_id` yet, so this migration changes no behaviour on its
+own. `capture.test.ts` exercises every new constraint directly against the
+database, the same way S-612's own phase 1 did.
+
+**Still ahead**: the capture entry point (the "are you an existing member?"
+branch on Applications → Open an account, and the applicant-details form
+behind "no"), the document checklist and payment for this kind, the
+approval path that creates the customer and numbers the account(s), and the
+officer-facing review page — each its own increment, the way every phase of
+M11 before this one was.
+
+---
+
 # M7 — Legacy migration
 
 **Goal:** the existing register becomes members in this system, phase-wise —
