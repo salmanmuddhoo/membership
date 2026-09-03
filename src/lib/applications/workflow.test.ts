@@ -1877,3 +1877,197 @@ describe('S-611: Regional oversight, enabled or not, gates the chain', () => {
     expect(passedIds.has(passed)).toBe(true);
   });
 });
+
+// S-613, phase 7: an additional-account application shares the exact same
+// chain a membership application does (S-612) — proved here by driving one
+// through submit, review and decide with zero changes to the functions
+// above, the same way M3's own walking-skeleton test above proves the
+// membership path. openAccountsForApplication (members/create.ts) is the
+// counterpart to createMemberFromApplication as the decide callback.
+describe('S-613: an additional-account application, end to end', () => {
+  let accountTypeId: string;
+  let accountTypeName: string;
+
+  beforeAll(async () => {
+    const type = await runAsActor(
+      `insert into account_type
+         (code, name, category, minimum_opening_amount, is_membership_default)
+       values ('hsa_workflow_test', 'Hajj Savings (test)', 'savings', 1000.00, false)
+       returning id, name`
+    );
+    accountTypeId = type.rows[0].id;
+    accountTypeName = type.rows[0].name;
+  });
+
+  async function activeMember() {
+    const membershipType = await run(
+      appUrl,
+      `select id from membership_type where code = 'individual'`
+    );
+    const application = await run(
+      appUrl,
+      `insert into membership_application (membership_type_id, captured_by)
+       values ($1, $2) returning id`,
+      [membershipType.rows[0].id, officer.userId]
+    );
+    const member = await run(
+      appUrl,
+      `insert into member (application_id, membership_type_id, status)
+       values ($1, $2, 'active') returning id, member_no`,
+      [application.rows[0].id, membershipType.rows[0].id]
+    );
+    return {
+      id: member.rows[0].id as string,
+      memberNo: member.rows[0].member_no as string,
+    };
+  }
+
+  it('takes an application from capture to an opened account, under the existing member', async () => {
+    const { capture, workflow, members, payments } = await load();
+    const member = await activeMember();
+
+    const application = await capture.startAdditionalAccountApplication(
+      member.id,
+      [accountTypeId],
+      officer
+    );
+
+    // The document checklist is complete with nothing filed: this test
+    // account type has no checklist_id, so checklistForAccountTypes
+    // (reference.ts, S-613 phase 4) has nothing required to offer.
+    const paymentClerk: Principal = {
+      ...officer,
+      permissions: new Set([...officer.permissions, 'payment.record']),
+    };
+    await payments.recordAccountOpeningPayment(
+      {
+        applicationId: application.id,
+        method: 'cash',
+        amounts: { [accountTypeId]: '1000.00' },
+      },
+      paymentClerk
+    );
+
+    const submitted = await workflow.submitApplication(application.id, officer);
+    expect(submitted).toEqual({ status: 'new' });
+
+    const reviewed = await workflow.reviewApplication(
+      application.id,
+      { outcome: 'forward', comment: 'Payment confirmed.' },
+      secretary
+    );
+    expect(reviewed.status).toBe('submitted_for_approval');
+
+    const decided = await workflow.decideApplication(
+      application.id,
+      { outcome: 'approve', comment: '' },
+      president,
+      members.openAccountsForApplication
+    );
+
+    expect(decided.status).toBe('approved');
+    // Unlike a membership approval, this is the member who already existed —
+    // not a fresh AB number.
+    expect(decided.member?.id).toBe(member.id);
+    expect(decided.member?.memberNo).toBe(member.memberNo);
+    expect(decided.member?.accounts).toEqual([
+      expect.objectContaining({ typeName: accountTypeName }),
+    ]);
+
+    const loaded = await members.loadMember(member.id);
+    expect(loaded!.accounts.map(a => a.accountTypeName)).toContain(
+      accountTypeName
+    );
+    // Opened under the member's own number, the same as any other account.
+    expect(
+      loaded!.accounts.find(a => a.accountTypeName === accountTypeName)!
+        .accountNo
+    ).toBe(member.memberNo);
+  });
+
+  it('refuses a second application for an account type already open', async () => {
+    const { capture, members, payments, workflow } = await load();
+    const member = await activeMember();
+
+    // First one goes all the way through and opens it.
+    const first = await capture.startAdditionalAccountApplication(
+      member.id,
+      [accountTypeId],
+      officer
+    );
+    await payments.recordAccountOpeningPayment(
+      {
+        applicationId: first.id,
+        method: 'cash',
+        amounts: { [accountTypeId]: '1000.00' },
+      },
+      {
+        ...officer,
+        permissions: new Set([...officer.permissions, 'payment.record']),
+      }
+    );
+    await workflow.submitApplication(first.id, officer);
+    await workflow.reviewApplication(
+      first.id,
+      { outcome: 'forward', comment: 'ok' },
+      secretary
+    );
+    await workflow.decideApplication(
+      first.id,
+      { outcome: 'approve', comment: '' },
+      president,
+      members.openAccountsForApplication
+    );
+
+    // A second application selecting the same account type is exactly what
+    // account_one_per_type_per_member_idx (migration 0018) exists to stop —
+    // refused here with a plain message rather than a raw constraint error.
+    const second = await capture.startAdditionalAccountApplication(
+      member.id,
+      [accountTypeId],
+      officer
+    );
+    await payments.recordAccountOpeningPayment(
+      {
+        applicationId: second.id,
+        method: 'cash',
+        amounts: { [accountTypeId]: '1000.00' },
+      },
+      {
+        ...officer,
+        permissions: new Set([...officer.permissions, 'payment.record']),
+      }
+    );
+    await workflow.submitApplication(second.id, officer);
+    await workflow.reviewApplication(
+      second.id,
+      { outcome: 'forward', comment: 'ok' },
+      secretary
+    );
+
+    await expect(
+      workflow.decideApplication(
+        second.id,
+        { outcome: 'approve', comment: '' },
+        president,
+        members.openAccountsForApplication
+      )
+    ).rejects.toThrowError(/already has/);
+  });
+
+  it('refuses openAccountsForApplication for a membership application', async () => {
+    const { capture, members } = await load();
+    const id = await captureComplete();
+    const application = (await capture.loadApplication(id))!;
+
+    const { withTransaction } = await import('../db/pool');
+    await expect(
+      withTransaction(client =>
+        members.openAccountsForApplication(client, application, {
+          userId: officer.userId,
+          email: officer.email,
+        })
+      )
+    ).rejects.toThrowError(/does not open an account/);
+  });
+});

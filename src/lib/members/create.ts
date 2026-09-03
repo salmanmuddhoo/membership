@@ -179,6 +179,127 @@ export async function createMemberFromApplication(
   return { id: memberId, memberNo, accounts };
 }
 
+/**
+ * S-613 · Turn an approved additional_account application into the
+ * selected account(s), under the member it already names.
+ *
+ * The counterpart to createMemberFromApplication above, and deliberately not
+ * a branch inside it — the same reason startAdditionalAccountApplication
+ * sits beside startApplication rather than inside it. Nothing here creates a
+ * member: existingMemberId already is one, and which account(s) to open
+ * comes from this application's own selection (S-612), not
+ * is_membership_default.
+ */
+export async function openAccountsForApplication(
+  client: PoolClient,
+  application: Application,
+  actor: Actor
+): Promise<CreatedMember> {
+  if (application.applicationKind !== 'additional_account') {
+    throw new MemberCreationError(
+      'This application creates a member — it does not open an account for ' +
+        'one that already exists.'
+    );
+  }
+
+  const member = await client.query<{ member_no: string; status: string }>(
+    `select member_no, status from member where id = $1 for no key update`,
+    [application.existingMemberId]
+  );
+  if (member.rowCount === 0) {
+    throw new MemberCreationError('That member no longer exists.');
+  }
+  if (member.rows[0].status !== 'active') {
+    throw new MemberCreationError(
+      'This member is no longer active, so no account can be opened for them.'
+    );
+  }
+  const memberNo = member.rows[0].member_no;
+
+  // Re-read now, not trusted from when the application was captured — the
+  // same reason createMemberFromApplication above reads the membership
+  // default fresh rather than caching it (S-206): an administrator may have
+  // deactivated one of these since.
+  const typeIds = application.selectedAccountTypes.map(t => t.id);
+  const types = await client.query<{
+    id: string;
+    code: string;
+    name: string;
+    default_status: string;
+    is_active: boolean;
+  }>(
+    `select id, code, name, default_status, is_active
+       from account_type where id = any($1::uuid[])`,
+    [typeIds]
+  );
+  const byId = new Map(types.rows.map(t => [t.id, t]));
+  for (const selected of application.selectedAccountTypes) {
+    const type = byId.get(selected.id);
+    if (!type || !type.is_active) {
+      throw new MemberCreationError(
+        `${selected.name} is no longer available to open. Ask an ` +
+          'administrator before approving this application.'
+      );
+    }
+  }
+
+  // Refused here, one at a time, rather than left to the database's own
+  // unique index (account_one_per_type_per_member_idx, migration 0018) to
+  // turn a second HSA into an opaque constraint violation for whoever
+  // approves this.
+  const already = await client.query<{ name: string }>(
+    `select t.name
+       from account a
+       join account_type t on t.id = a.account_type_id
+      where a.member_id = $1 and a.account_type_id = any($2::uuid[])`,
+    [application.existingMemberId, typeIds]
+  );
+  if ((already.rowCount ?? 0) > 0) {
+    throw new MemberCreationError(
+      `${memberNo} already has ${already.rows.map(r => r.name).join(', ')} open.`
+    );
+  }
+
+  const accounts: CreatedMember['accounts'] = [];
+  for (const selected of application.selectedAccountTypes) {
+    const type = byId.get(selected.id)!;
+    const account = await client.query<{ id: string }>(
+      `insert into account (member_id, account_type_id, is_membership_default, status)
+       values ($1, $2, false, $3)
+       returning id`,
+      [application.existingMemberId, type.id, type.default_status]
+    );
+    accounts.push({
+      id: account.rows[0].id,
+      typeCode: type.code,
+      typeName: type.name,
+    });
+  }
+
+  // One entry per account, the same reason createMemberFromApplication
+  // above audits each one separately: they opened together, but each is its
+  // own thing to answer for.
+  for (const account of accounts) {
+    await recordAudit(
+      {
+        actorUserId: actor.userId,
+        actorDescription: actor.email,
+        action: 'account.opened',
+        entityType: 'account',
+        entityId: account.id,
+        newValue: {
+          memberNo,
+          accountType: account.typeCode,
+          openedBecause: 'additional-account application approved',
+        },
+      },
+      client
+    );
+  }
+
+  return { id: application.existingMemberId, memberNo, accounts };
+}
+
 export interface MemberSummary {
   id: string;
   memberNo: string;

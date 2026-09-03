@@ -1127,6 +1127,33 @@ covers a mistake in the meantime. **Still ahead**: the officer-facing review
 page itself (nothing yet calls either new function), the single-signature
 form, and the approval path that opens the account(s) on decision.
 
+### S-613, phase 7 · The approval path — opening the account(s) ✅
+
+`openAccountsForApplication` (`members/create.ts`) is
+`createMemberFromApplication`'s counterpart as `decideApplication`'s decide
+callback (`workflow.ts`) — and, proved by an end-to-end test mirroring M3's
+own walking-skeleton test, driving an additional_account application through
+`submitApplication` → `reviewApplication` → `decideApplication` needed
+**zero changes to `workflow.ts`**, the same "share the exact same settings"
+payoff S-612's schema decision was chosen for.
+
+Unlike a membership approval, nothing here creates a member —
+`existingMemberId` already is one. What it opens comes from the
+application's own `selectedAccountTypes` (S-612), not
+`is_membership_default`, and each selected type is re-read fresh at approval
+time rather than trusted from capture — the same reason
+`createMemberFromApplication` re-reads the membership default fresh (S-206):
+an administrator may have deactivated one since. A member who already holds
+one of the selected account types is refused with a plain message before the
+insert, rather than left to `account_one_per_type_per_member_idx`
+(migration 0018) to surface as a raw constraint violation to whoever is
+approving.
+
+**Still ahead**: the officer-facing review page itself — every piece it
+needs (checklist, payment, workflow actions, and now approval) exists in
+`capture.ts`/`documents.ts`/`payments.ts`/`workflow.ts`/`members/create.ts`,
+but nothing yet calls them from a page. And the single-signature form.
+
 ---
 
 # M7 — Legacy migration
