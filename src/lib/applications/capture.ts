@@ -167,16 +167,27 @@ async function insertApplication(
   // subject gets exactly one — except nominee, which gets as many as the
   // type configures (S-602): "one or more Nominees where configured"
   // (FRD 5.3) is a fact about ordinal count, not about a different subject.
+  //
+  // One statement for every row rather than one round trip per row: on a
+  // database in another region that was measurable — several sequential
+  // inserts is several sequential round trips, purely for latency, before
+  // an officer's very first click on this application type gets anywhere.
   const subjects = [...new Set(type.fields.map(f => f.subject))];
+  const partySubjects: string[] = [];
+  const partyOrdinals: number[] = [];
   for (const subject of subjects) {
     const ordinals = subject === 'nominee' ? type.nomineeCount : 1;
     for (let ordinal = 1; ordinal <= ordinals; ordinal++) {
-      await client.query(
-        `insert into application_party (application_id, subject, ordinal)
-         values ($1, $2, $3)`,
-        [id, subject, ordinal]
-      );
+      partySubjects.push(subject);
+      partyOrdinals.push(ordinal);
     }
+  }
+  if (partySubjects.length > 0) {
+    await client.query(
+      `insert into application_party (application_id, subject, ordinal)
+       select $1, s, o from unnest($2::text[], $3::int[]) as t(s, o)`,
+      [id, partySubjects, partyOrdinals]
+    );
   }
 
   await recordAudit(
@@ -323,14 +334,15 @@ export async function startAdditionalAccountApplication(
     );
     const { id, reference } = created.rows[0];
 
-    for (const accountTypeId of accountTypeIds) {
-      await client.query(
-        `insert into application_account_selection
-           (application_id, account_type_id)
-         values ($1, $2)`,
-        [id, accountTypeId]
-      );
-    }
+    // One statement rather than one round trip per row — see
+    // insertApplication's own comment for why this matters on a database
+    // in another region.
+    await client.query(
+      `insert into application_account_selection
+         (application_id, account_type_id)
+       select $1, t from unnest($2::uuid[]) as t`,
+      [id, accountTypeIds]
+    );
 
     await recordAudit(
       {
@@ -398,26 +410,33 @@ export async function startCustomerAccountApplication(
     );
     const { id, reference } = created.rows[0];
 
+    // One statement per table rather than one round trip per row — see
+    // insertApplication's own comment for why this matters on a database
+    // in another region.
     const subjects = [...new Set(type.fields.map(f => f.subject))];
+    const partySubjects: string[] = [];
+    const partyOrdinals: number[] = [];
     for (const subject of subjects) {
       const ordinals = subject === 'nominee' ? type.nomineeCount : 1;
       for (let ordinal = 1; ordinal <= ordinals; ordinal++) {
-        await client.query(
-          `insert into application_party (application_id, subject, ordinal)
-           values ($1, $2, $3)`,
-          [id, subject, ordinal]
-        );
+        partySubjects.push(subject);
+        partyOrdinals.push(ordinal);
       }
     }
-
-    for (const accountTypeId of accountTypeIds) {
+    if (partySubjects.length > 0) {
       await client.query(
-        `insert into application_account_selection
-           (application_id, account_type_id)
-         values ($1, $2)`,
-        [id, accountTypeId]
+        `insert into application_party (application_id, subject, ordinal)
+         select $1, s, o from unnest($2::text[], $3::int[]) as t(s, o)`,
+        [id, partySubjects, partyOrdinals]
       );
     }
+
+    await client.query(
+      `insert into application_account_selection
+         (application_id, account_type_id)
+       select $1, t from unnest($2::uuid[]) as t`,
+      [id, accountTypeIds]
+    );
 
     await recordAudit(
       {
@@ -572,15 +591,31 @@ export async function startApplicationWithValues(
   return withTransaction(async client => {
     const { id, reference } = await insertApplication(client, type, actor);
 
+    // One statement for every party rather than one round trip each — see
+    // insertApplication's own comment for why this matters on a database
+    // in another region, and it matters more here: this is what runs on
+    // the officer's very first Next.
+    const partySubjects: string[] = [];
+    const partyOrdinals: number[] = [];
+    const partyValues: string[] = [];
     for (const party of parties) {
       const subjectFields = fields.get(party.subject) ?? [];
       const { values, errors } = normalise(party.values, subjectFields);
       problems.push(...errors.map(e => ({ ...e, ordinal: party.ordinal })));
-
+      partySubjects.push(party.subject);
+      partyOrdinals.push(party.ordinal);
+      partyValues.push(JSON.stringify(values));
+    }
+    if (partySubjects.length > 0) {
       await client.query(
-        `update application_party set values = $4
-          where application_id = $1 and subject = $2 and ordinal = $3`,
-        [id, party.subject, party.ordinal, JSON.stringify(values)]
+        `update application_party ap
+            set values = u.new_values::jsonb
+           from unnest($2::text[], $3::int[], $4::jsonb[])
+                  as u(subject, ordinal, new_values)
+          where ap.application_id = $1
+            and ap.subject = u.subject
+            and ap.ordinal = u.ordinal`,
+        [id, partySubjects, partyOrdinals, partyValues]
       );
     }
 
@@ -856,17 +891,30 @@ export async function saveDraft(
   const problems: MissingField[] = [];
 
   const savedAt = await withTransaction(async client => {
+    // One statement for every party rather than one round trip each — see
+    // insertApplication's own comment for why this matters on a database
+    // in another region, and it matters more here: this runs on every Next
+    // an officer clicks through the capture step.
+    const partySubjects: string[] = [];
+    const partyOrdinals: number[] = [];
+    const partyValues: string[] = [];
     for (const party of parties) {
       const subjectFields = fields.get(party.subject) ?? [];
       const { values, errors } = normalise(party.values, subjectFields);
       problems.push(...errors.map(e => ({ ...e, ordinal: party.ordinal })));
-
+      partySubjects.push(party.subject);
+      partyOrdinals.push(party.ordinal);
+      partyValues.push(JSON.stringify(values));
+    }
+    if (partySubjects.length > 0) {
       await client.query(
         `insert into application_party (application_id, subject, ordinal, values)
-         values ($1, $2, $3, $4)
+         select $1, u.subject, u.ordinal, u.new_values::jsonb
+           from unnest($2::text[], $3::int[], $4::jsonb[])
+                  as u(subject, ordinal, new_values)
          on conflict (application_id, subject, ordinal)
          do update set values = excluded.values`,
-        [applicationId, party.subject, party.ordinal, JSON.stringify(values)]
+        [applicationId, partySubjects, partyOrdinals, partyValues]
       );
     }
 

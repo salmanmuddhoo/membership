@@ -1564,7 +1564,8 @@ Not done here, because it needs a fact this repository does not record: the
 Vercel function region. If the database is in, say, South Africa North and
 the function runs in the default `iad1`, every query crosses the Atlantic
 twice — pinning the region next to the database is the single largest
-remaining lever, and a one-line `regions` entry in `vercel.json`.
+remaining lever, and a one-line `regions` entry in `vercel.json`. (It is:
+see "Performance pass 2" below.)
 
 **Prefetch was configured but silent.** `prefetch: true` in astro.config.mjs
 only makes the `data-astro-prefetch` attribute available on a link — it does
@@ -1619,6 +1620,75 @@ page until printed, the same as a signature on paper is ink until scanned.
 the same query) — the "Signed in as" panel in the header now reads e.g.
 "Regional Officer" instead of the signed-in email, which told a colleague
 nothing an internal tool needed to say out loud.
+
+### Performance pass 2: the database's own region, batched writes, real upload progress ✅
+
+**The database is in Azure South Africa North; the function now runs
+next to it.** Every earlier round of query-batching was working against a
+fixed cost per round trip this pass finally has a number for: `vercel.json`
+now pins the deployment to `cpt1` (Cape Town) instead of Vercel's US-East
+default, which is what the two reported cases — opening a fresh
+`customer_account` application, and opening an existing one from the
+`Applications` table — were mostly paying for for. Confirm after deploy
+(the `x-vercel-id` response header's prefix names the region a request
+actually ran in) — region pinning is a Pro-plan feature, so this has no
+effect on a Hobby-plan deployment, only a Vercel dashboard message saying
+so.
+
+**Starting an application wrote its rows one at a time.**
+`insertApplication` (shared by every membership application, so also by
+`startApplicationWithValues`'s own first save), `startAdditionalAccountApplication`,
+and `startCustomerAccountApplication` each looped a sequential `INSERT`
+per party or per selected account type — three, four, sometimes more round
+trips to create one row of actual content. Each now does it in one
+statement, built from `unnest()`'d arrays. `startApplicationWithValues`'s
+own per-party `UPDATE` and `saveDraft`'s per-party upsert — the save that
+runs on every Next an officer clicks through the capture step, not just at
+creation — batch the same way. `checklistFor` (documents.ts) had two
+further reads that did not depend on each other but ran in sequence;
+they now go out together.
+
+**Uploading felt stalled because nothing moved on screen for it.** A
+photo under about 8 MB uploads in one chunk (S-112's own chunking is
+sized for resilience against a dropped connection, not tuned here), and
+`fetch()` reports nothing until that whole chunk has landed — several
+seconds of "Sending… 0%" that reads as stuck even when the transfer is
+going fine. The three pages that drive an upload now use
+`XMLHttpRequest`'s `upload.progress` event instead, which reports as the
+bytes actually go.
+
+**Signing on a phone dragged the page instead of drawing.** The signature
+boxes added in phase 8 lived inside `print.astro`'s own layout, which is
+built in millimetres for the A4 page it becomes and does not fit a phone
+screen — on one narrower than about 700px the whole page was wider than
+the viewport and panned under a finger before it ever reached a `<canvas>`
+that could stop it. Signing now opens a full-screen box fixed to the
+actual device viewport, not to anything in the page's own layout, with a
+bigger canvas to draw in; "Use this signature" places the result where the
+line was, in the space that box makes for it. The page itself also gained
+a phone-width layout (`@media screen`, print output unchanged) so the
+rest of the form does not pan either.
+
+**10,000 external users reading their own balance, a phase from now.**
+Investigated, not built — there is no balance endpoint yet, and the
+identity a member's own mobile app would sign in with is undecided.
+What is already true: `docs/api.md` names this exact phase (AD-03) as the
+reason `/api/v1` is a versioned contract rather than an implementation
+detail, so a member-facing endpoint is additional surface on the existing
+framework, not a new one — `defineEndpoint`'s permission check, rate
+limiting and audit trail all apply the same way, scoped to "this caller's
+own balance" rather than an internal permission. Three things worth
+deciding before that phase starts, none of them urgent today: (1) member
+identity is a different problem from staff sign-in (S-106's Entra flow
+assumes a pre-provisioned internal account) and needs its own design; (2)
+`DATABASE_POOL_MAX` (3 per warm instance) scales with Vercel's own
+instance count, which is fine until concurrent instances × 3 approaches
+the Postgres tier's `max_connections` — Azure's built-in PgBouncer (port
+6432, docs/database.md) is the documented answer once real traffic gets
+there, not a bigger pool; (3) a balance is a natural fit for the same
+short-TTL cache pattern already serving reference configuration
+(config/cache.ts) if a few seconds of staleness is acceptable, which
+would keep most reads off the database entirely.
 
 ---
 

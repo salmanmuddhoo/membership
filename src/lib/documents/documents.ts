@@ -299,49 +299,53 @@ export async function checklistFor(options: {
     options.memberId ?? null
   );
 
-  const configured =
+  // Neither depends on the other's result, only on `owner` — one round trip
+  // rather than two in sequence. `configured` is usually free anyway: it is
+  // served from the reference cache (config/cache.ts) on everything but the
+  // first request for a given checklist in the last few seconds.
+  const [configured, filed] = await Promise.all([
     owner.checklist_source.kind === 'membership_type'
-      ? await checklistForMembershipType(owner.checklist_source.code)
+      ? checklistForMembershipType(owner.checklist_source.code)
       : owner.checklist_source.kind === 'membership_type_and_account_types'
-        ? await checklistForNonMemberAccount(
+        ? checklistForNonMemberAccount(
             owner.checklist_source.membershipCode,
             owner.checklist_source.accountCodes
           )
-        : await checklistForAccountTypes(owner.checklist_source.codes);
-
-  const filed = await query<{
-    id: string;
-    document_type_id: string;
-    subject: FieldSubject;
-    state: ChecklistState;
-    rejection_reason: string | null;
-    expires_at: Date | null;
-    file_name: string | null;
-    sharepoint_path: string | null;
-    uploaded_by_name: string | null;
-    committed_at: Date | null;
-    verified_by_name: string | null;
-    version_count: string;
-    confirmed_signatures: string[];
-  }>(
-    `select d.id, d.document_type_id, d.subject, d.state, d.rejection_reason,
-            d.expires_at, d.confirmed_signatures,
-            v.file_name, v.sharepoint_path, v.committed_at,
-            up.display_name as uploaded_by_name,
-            vp.display_name as verified_by_name,
-            (select count(*) from document_version dv
-              where dv.document_id = d.id and dv.state = 'committed')
-              as version_count
-       from document d
-       left join document_version v
-         on v.document_id = d.id
-        and v.state = 'committed' and v.superseded_at is null
-       left join app_user up on up.id = v.uploaded_by
-       left join app_user vp on vp.id = d.verified_by
-      where ($1::uuid is not null and d.application_id = $1::uuid)
-         or ($2::uuid is not null and d.member_id = $2::uuid)`,
-    [owner.application_id, owner.member_id]
-  );
+        : checklistForAccountTypes(owner.checklist_source.codes),
+    query<{
+      id: string;
+      document_type_id: string;
+      subject: FieldSubject;
+      state: ChecklistState;
+      rejection_reason: string | null;
+      expires_at: Date | null;
+      file_name: string | null;
+      sharepoint_path: string | null;
+      uploaded_by_name: string | null;
+      committed_at: Date | null;
+      verified_by_name: string | null;
+      version_count: string;
+      confirmed_signatures: string[];
+    }>(
+      `select d.id, d.document_type_id, d.subject, d.state, d.rejection_reason,
+              d.expires_at, d.confirmed_signatures,
+              v.file_name, v.sharepoint_path, v.committed_at,
+              up.display_name as uploaded_by_name,
+              vp.display_name as verified_by_name,
+              (select count(*) from document_version dv
+                where dv.document_id = d.id and dv.state = 'committed')
+                as version_count
+         from document d
+         left join document_version v
+           on v.document_id = d.id
+          and v.state = 'committed' and v.superseded_at is null
+         left join app_user up on up.id = v.uploaded_by
+         left join app_user vp on vp.id = d.verified_by
+        where ($1::uuid is not null and d.application_id = $1::uuid)
+           or ($2::uuid is not null and d.member_id = $2::uuid)`,
+      [owner.application_id, owner.member_id]
+    ),
+  ]);
 
   const byKey = new Map(
     filed.rows.map(r => [`${r.document_type_id}:${r.subject}`, r])
