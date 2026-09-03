@@ -235,24 +235,16 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                 {applications.map(a => (
                   <tr class="border-t border-neutral-200 dark:border-neutral-800">
                     <td class="py-2 pr-4">
-                      {a.applicationKind === 'membership' ? (
-                        <a
-                          href={`/applications/${a.id}`}
-                          class="text-mint-700 dark:text-mint-300 font-medium underline"
-                        >
-                          {a.reference}
-                        </a>
-                      ) : (
-                        // S-613: no review page for this kind yet
-                        // (docs/backlog.md) — a plain reference rather than a
-                        // link into a page that does not know how to show it.
-                        <span
-                          class="font-medium text-neutral-700 dark:text-neutral-200"
-                          title="Review page coming soon"
-                        >
-                          {a.reference}
-                        </span>
-                      )}
+                      <a
+                        href={
+                          a.applicationKind === 'membership'
+                            ? `/applications/${a.id}`
+                            : `/applications/${a.id}/account`
+                        }
+                        class="text-mint-700 dark:text-mint-300 font-medium underline"
+                      >
+                        {a.reference}
+                      </a>
                     </td>
                     <td class="py-2 pr-4 text-neutral-700 dark:text-neutral-200">
                       {a.applicantName}
