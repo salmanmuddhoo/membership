@@ -305,18 +305,31 @@ describe('S-612: the checklist for an additional-account application comes from 
 });
 
 // S-614: a customer_account application reuses the Individual type's own
-// field configuration to capture an applicant (S-614 phase 2) — its
-// checklist has to reuse that type's own KYC pack the same way, unioned
-// with whatever the selected account type asks for, rather than falling
-// into the additional_account branch above and losing the KYC pack
-// entirely.
-describe('S-614: the checklist for a customer_account application unions the applicant’s own KYC pack with the account type’s', () => {
-  it('lists both the Individual KYC pack and what the selected account type requires', async () => {
+// field configuration to capture an applicant (S-614 phase 2), but its
+// checklist reads Individual's non_member_checklist_id (migration 0028) —
+// deliberately not checklist_id, which is what a MEMBER of that type must
+// provide and is not all asked of a non-member — unioned with whatever the
+// selected account type asks for.
+describe('S-614: the checklist for a customer_account application unions the non-member checklist with the account type’s', () => {
+  it('lists the non-member checklist and what the selected account type requires, not the member’s own', async () => {
     const { capture, documents } = await load();
 
-    const checklist = await run(
+    const accountChecklist = await runAsConfigurator(
       appUrl,
-      `select id from document_checklist where code = 'msa_opening'`
+      `insert into document_checklist (code, name, description)
+       values ('s614_docs_account_test', 'S-614 docs account test', '')
+       returning id`
+    );
+    const certRegistration = await run(
+      appUrl,
+      `select id from document_type where code = 'cert_registration'`
+    );
+    await runAsConfigurator(
+      appUrl,
+      `insert into document_checklist_item
+         (checklist_id, document_type_id, subject, requirement, sort_order)
+       values ('${accountChecklist.rows[0].id}',
+               '${certRegistration.rows[0].id}', 'applicant', 'optional', 1)`
     );
     const accountType = await runAsConfigurator(
       appUrl,
@@ -324,7 +337,7 @@ describe('S-614: the checklist for a customer_account application unions the app
          (code, name, category, minimum_opening_amount, checklist_id,
           is_membership_default)
        values ('hsa_customer_docs_test', 'HSA (customer documents test)',
-               'savings', 1000, '${checklist.rows[0].id}', false)
+               'savings', 1000, '${accountChecklist.rows[0].id}', false)
        returning id`
     );
 
@@ -336,13 +349,18 @@ describe('S-614: the checklist for a customer_account application unions the app
     const entries = await documents.checklistFor({
       applicationId: application.id,
     });
+    const codes = entries.map(e => e.documentCode);
 
-    // Individual's own applicant pack — utility_bill and signed_form are not
-    // part of msa_opening's own checklist, so their presence proves the
-    // union reaches beyond the account type's side.
-    expect(entries.map(e => e.documentCode)).toEqual(
-      expect.arrayContaining(['id_card', 'utility_bill', 'signed_form'])
+    // Migration 0028's own seed for Individual's non-member checklist, and
+    // the selected account type's own — both sides of the union present.
+    expect(codes).toEqual(
+      expect.arrayContaining(['id_card', 'utility_bill', 'cert_registration'])
     );
+
+    // signed_form is part of Individual's own MEMBER checklist
+    // (individual_kyc, checklist_id) — this flow has no print step and no
+    // signature to confirm, and must not ask for one.
+    expect(codes).not.toContain('signed_form');
   });
 });
 

@@ -950,8 +950,80 @@ describe('S-208: document types and dynamic checklists', () => {
     });
   });
 
-  describe('S-614: the checklist for a customer_account application', () => {
-    it('unions the Individual type’s own checklist with the selected account types', async () => {
+  describe('S-614: what a non-member applicant must provide', () => {
+    // Its own type throughout — never 'individual' — so these tests do not
+    // depend on, and cannot disturb, what migration 0028 actually seeds for
+    // it.
+    async function typeWithChecklists(options: {
+      memberChecklistId?: string;
+      nonMemberChecklistId?: string;
+    }) {
+      const code = `s614_type_${Math.random().toString(36).slice(2, 8)}`;
+      const type = await runAsConfigurator(
+        appUrl,
+        `insert into membership_type
+           (code, name, checklist_id, non_member_checklist_id)
+         values ('${code}', 'S-614 test type',
+                 ${options.memberChecklistId ? `'${options.memberChecklistId}'` : 'null'},
+                 ${options.nonMemberChecklistId ? `'${options.nonMemberChecklistId}'` : 'null'})
+         returning code`
+      );
+      return type.rows[0].code as string;
+    }
+
+    it('reads non_member_checklist_id, never checklist_id — a member’s own pack does not leak in', async () => {
+      const { config } = await load();
+
+      const idCard = (await config.listDocumentTypes()).find(
+        d => d.code === 'id_card'
+      )!;
+      const utilityBill = (await config.listDocumentTypes()).find(
+        d => d.code === 'utility_bill'
+      )!;
+      const memberList = await runAsConfigurator(
+        appUrl,
+        `insert into document_checklist (code, name, description)
+         values ('s614_member_test', 'S-614 member test', '') returning id`
+      );
+      const nonMemberList = await runAsConfigurator(
+        appUrl,
+        `insert into document_checklist (code, name, description)
+         values ('s614_nonmember_test', 'S-614 non-member test', '')
+         returning id`
+      );
+      await runAsConfigurator(
+        appUrl,
+        `insert into document_checklist_item
+           (checklist_id, document_type_id, subject, requirement, sort_order)
+         values
+           ('${memberList.rows[0].id}', '${idCard.id}', 'nominee',
+            'required', 1),
+           ('${nonMemberList.rows[0].id}', '${utilityBill.id}', 'applicant',
+            'required', 1)`
+      );
+      const code = await typeWithChecklists({
+        memberChecklistId: memberList.rows[0].id,
+        nonMemberChecklistId: nonMemberList.rows[0].id,
+      });
+
+      const applicant = await config.checklistForNonMemberApplicant(code);
+      expect(
+        [...(applicant.get('applicant') ?? [])].map(i => i.documentCode)
+      ).toEqual(['utility_bill']);
+      // The member's own checklist (nominee's id_card) never appears — the
+      // two are read from different columns entirely.
+      expect(applicant.get('nominee')).toBeUndefined();
+    });
+
+    it('is empty when no non-member checklist is configured', async () => {
+      const { config } = await load();
+      const code = await typeWithChecklists({});
+      expect(await config.checklistForNonMemberApplicant(code)).toEqual(
+        new Map()
+      );
+    });
+
+    it('unions with the selected account types, required winning', async () => {
       const { config } = await load();
 
       const certRegistration = (await config.listDocumentTypes()).find(
@@ -960,64 +1032,130 @@ describe('S-208: document types and dynamic checklists', () => {
       const idCard = (await config.listDocumentTypes()).find(
         d => d.code === 'id_card'
       )!;
-      const list = await runAsConfigurator(
+      const nonMemberList = await runAsConfigurator(
         appUrl,
         `insert into document_checklist (code, name, description)
-         values ('s614_test', 'S-614 test', '') returning id`
+         values ('s614_union_nonmember_test', 'S-614 union non-member test', '')
+         returning id`
+      );
+      const accountList = await runAsConfigurator(
+        appUrl,
+        `insert into document_checklist (code, name, description)
+         values ('s614_union_account_test', 'S-614 union account test', '')
+         returning id`
       );
       await runAsConfigurator(
         appUrl,
         `insert into document_checklist_item
            (checklist_id, document_type_id, subject, requirement, sort_order)
          values
-           ('${list.rows[0].id}', '${certRegistration.id}', 'applicant',
-            'optional', 1),
-           ('${list.rows[0].id}', '${idCard.id}', 'applicant', 'optional', 2)`
+           ('${nonMemberList.rows[0].id}', '${idCard.id}', 'applicant',
+            'required', 1),
+           ('${accountList.rows[0].id}', '${certRegistration.id}',
+            'applicant', 'optional', 1),
+           ('${accountList.rows[0].id}', '${idCard.id}', 'applicant',
+            'optional', 2)`
       );
-      const type = await runAsConfigurator(
+      const membershipCode = await typeWithChecklists({
+        nonMemberChecklistId: nonMemberList.rows[0].id,
+      });
+      const accountType = await runAsConfigurator(
         appUrl,
         `insert into account_type
            (code, name, category, checklist_id, is_membership_default)
-         values ('s614_type', 'S-614 type', 'savings',
-                 '${list.rows[0].id}', false)
+         values ('s614_account_test', 'S-614 account test', 'savings',
+                 '${accountList.rows[0].id}', false)
          returning code`
       );
 
-      const union = await config.checklistForMembershipTypeAndAccountTypes(
-        'individual',
-        [type.rows[0].code]
-      );
+      const union = await config.checklistForNonMemberAccount(membershipCode, [
+        accountType.rows[0].code,
+      ]);
       const applicant = union.get('applicant')!;
 
-      // Individual's own KYC pack is still there — none of it dropped for
-      // the account type's own checklist being unioned in.
-      expect(applicant.map(i => i.documentCode)).toEqual(
-        expect.arrayContaining(['id_card', 'utility_bill', 'signed_form'])
-      );
-
-      // cert_registration is not part of Individual's own checklist at all
-      // — added here purely because the selected account type asks for it.
+      // cert_registration comes only from the account type's own checklist.
       expect(
         applicant.find(i => i.documentCode === 'cert_registration')?.requirement
       ).toBe('optional');
 
-      // id_card is required on Individual's own checklist; the account
-      // type here leaves it optional, and the stricter side still wins.
+      // id_card is required on the non-member checklist; the account type
+      // here leaves it optional, and the stricter side still wins.
       const idCardItems = applicant.filter(i => i.documentCode === 'id_card');
       expect(idCardItems).toHaveLength(1);
       expect(idCardItems[0].requirement).toBe('required');
     });
 
-    it('is just the membership type’s own checklist with no account types selected', async () => {
+    it('is just the non-member checklist with no account types selected', async () => {
       const { config } = await load();
-      const individualOnly =
-        await config.checklistForMembershipType('individual');
-      const union = await config.checklistForMembershipTypeAndAccountTypes(
-        'individual',
-        []
+      const nonMemberList = await runAsConfigurator(
+        appUrl,
+        `insert into document_checklist (code, name, description)
+         values ('s614_solo_test', 'S-614 solo test', '') returning id`
       );
-      expect(union).toEqual(individualOnly);
+      const code = await typeWithChecklists({
+        nonMemberChecklistId: nonMemberList.rows[0].id,
+      });
+
+      const applicantOnly = await config.checklistForNonMemberApplicant(code);
+      const union = await config.checklistForNonMemberAccount(code, []);
+      expect(union).toEqual(applicantOnly);
     });
+  });
+
+  // S-614: the non-member checklist is set the same way checklistId and
+  // feeScheduleId already are — one function, one form, both persisted or
+  // both cleared.
+  it('persists the non-member checklist a type uses', async () => {
+    const { config } = await load();
+
+    const nonMemberList = await runAsConfigurator(
+      appUrl,
+      `insert into document_checklist (code, name, description)
+       values ('s614_persist_test', 'S-614 persist test', '') returning id`
+    );
+    const type = (await config.listMembershipTypes()).find(
+      t => t.code === 'individual'
+    )!;
+
+    await config.setMembershipTypeReferences(
+      type.id,
+      {
+        checklistId: type.checklistId,
+        nonMemberChecklistId: nonMemberList.rows[0].id,
+        feeScheduleId: type.feeScheduleId,
+      },
+      actor
+    );
+    let reloaded = (await config.listMembershipTypes()).find(
+      t => t.id === type.id
+    )!;
+    expect(reloaded.nonMemberChecklistId).toBe(nonMemberList.rows[0].id);
+
+    await config.setMembershipTypeReferences(
+      type.id,
+      {
+        checklistId: type.checklistId,
+        nonMemberChecklistId: null,
+        feeScheduleId: type.feeScheduleId,
+      },
+      actor
+    );
+    reloaded = (await config.listMembershipTypes()).find(
+      t => t.id === type.id
+    )!;
+    expect(reloaded.nonMemberChecklistId).toBeNull();
+
+    // Restore what migration 0028 actually seeds, for whatever runs after
+    // this in the same database.
+    await config.setMembershipTypeReferences(
+      type.id,
+      {
+        checklistId: type.checklistId,
+        nonMemberChecklistId: type.nonMemberChecklistId,
+        feeScheduleId: type.feeScheduleId,
+      },
+      actor
+    );
   });
 });
 

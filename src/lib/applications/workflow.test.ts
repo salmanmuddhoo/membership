@@ -1442,13 +1442,16 @@ describe('S-308 and S-309: what approval creates', () => {
 
   it('gives every member a distinct number in the documented format', async () => {
     const { members } = await load();
-    const all = await members.listMembers({ limit: 100 });
-
-    expect(all.members.length).toBeGreaterThan(1);
-    expect(all.members.every(m => /^AB\d{4,}$/.test(m.memberNo))).toBe(true);
-    expect(new Set(all.members.map(m => m.memberNo)).size).toBe(
-      all.members.length
+    // listMembers also lists customers (S-614) — filtered here, since their
+    // own numbering (HSA0001-style, per selected account type) is not
+    // this test's concern.
+    const all = (await members.listMembers({ limit: 100 })).members.filter(
+      m => m.kind === 'member'
     );
+
+    expect(all.length).toBeGreaterThan(1);
+    expect(all.every(m => /^AB\d{4,}$/.test(m.memberNo))).toBe(true);
+    expect(new Set(all.map(m => m.memberNo)).size).toBe(all.length);
   });
 
   it('cannot open a second account of the same type for one member', async () => {
@@ -2233,5 +2236,78 @@ describe('S-614: a customer_account application, end to end', () => {
         })
       )
     ).rejects.toThrowError(/does not open accounts for a non-member/);
+  });
+
+  // S-614: an approved customer appears on the same list a member does —
+  // tagged, and findable both by name and by the account number just
+  // opened, since an officer searching does not know in advance which kind
+  // of record they are looking for.
+  it('lists on listMembers, tagged, and loads its own detail', async () => {
+    const { capture, workflow, members, documents, payments } = await load();
+    const actor = { userId: officer.userId, email: officer.email };
+
+    const application = await capture.startCustomerAccountApplication(
+      [accountTypeId],
+      officer
+    );
+    const values = COMPLETE_INDIVIDUAL.map(p =>
+      p.subject === 'applicant'
+        ? { ...p, values: { ...p.values, surname: 'Ramtoola' } }
+        : p
+    );
+    await capture.saveDraft(application.id, values, actor);
+    await fileRequiredDocuments(documents, application.id);
+    await verifyRequiredDocuments(documents, application.id);
+    await payments.recordAccountOpeningPayment(
+      {
+        applicationId: application.id,
+        method: 'cash',
+        amounts: { [accountTypeId]: '1000.00' },
+      },
+      {
+        ...officer,
+        permissions: new Set([...officer.permissions, 'payment.record']),
+      }
+    );
+    await workflow.submitApplication(application.id, officer);
+    await workflow.reviewApplication(
+      application.id,
+      { outcome: 'forward', comment: 'ok' },
+      secretary
+    );
+    const decided = await workflow.decideApplication(
+      application.id,
+      { outcome: 'approve', comment: '' },
+      president,
+      members.openAccountsForCustomerApplication
+    );
+    const accountNo = decided.member!.accounts[0].accountNo!;
+
+    const byName = await members.listMembers({ search: 'Ramtoola' });
+    expect(byName.members).toEqual([
+      expect.objectContaining({
+        id: decided.member!.id,
+        kind: 'customer',
+        memberNo: accountNo,
+        membershipTypeName: accountTypeName,
+      }),
+    ]);
+
+    const byAccountNo = await members.listMembers({ search: accountNo });
+    expect(byAccountNo.members.map(m => m.id)).toEqual([decided.member!.id]);
+
+    const loaded = await members.loadCustomer(decided.member!.id);
+    expect(loaded!.kind).toBe('customer');
+    expect(loaded!.applicationReference).toBe(application.reference);
+    expect(loaded!.accounts).toEqual([
+      expect.objectContaining({ accountNo, accountTypeName }),
+    ]);
+
+    // A member's own id is not found through loadCustomer, the same way a
+    // customer's is not found through loadMember.
+    const anyMember = (await members.listMembers({ limit: 100 })).members.find(
+      m => m.kind === 'member'
+    )!;
+    expect(await members.loadCustomer(anyMember.id)).toBeNull();
   });
 });

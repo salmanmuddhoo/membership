@@ -1303,9 +1303,7 @@ checklist, not only the selected account types' — `documents.ts`'s
 `resolveOwner` does not know that yet), the approval path that creates the
 customer, and the officer-facing review page.
 
-### S-614, phase 3: the entry point, the checklist union, and the officer
-
-page ✅
+### S-614, phase 3: the entry point, the checklist union, and the officer page ✅
 
 Built together this time, unlike S-613's own split across phases 2/4/5/8 —
 the lesson from that flow was to not ship a backend an officer cannot
@@ -1319,12 +1317,12 @@ the new application rather than back on the list — there is an applicant to
 capture here, which an additional_account application never had.
 
 `documents.ts`'s `resolveOwner` gained a third `ChecklistSource`,
-`membership_type_and_account_types`, and `checklistForMembershipTypeAndAccountTypes`
-(reference.ts) merges `checklistForMembershipType('individual')` with
-`checklistForAccountTypes` the same way `checklistForAccountTypes` itself
-merges several account types' checklists — a document required by either
-side is required on the application, and where both sides configure the
-same document type, required wins.
+`membership_type_and_account_types`, and `checklistForNonMemberAccount`
+(reference.ts, renamed in phase 4 below) merges what a non-member applicant
+must provide with `checklistForAccountTypes` the same way
+`checklistForAccountTypes` itself merges several account types' checklists
+— a document required by either side is required on the application, and
+where both sides configure the same document type, required wins.
 
 `openAccountsForCustomerApplication` (members/create.ts) is the third decide
 callback beside `createMemberFromApplication` and `openAccountsForApplication`
@@ -1364,6 +1362,48 @@ this kind returns instead.
 account-opening payments (both already deferred from M11); an admin listing
 for customers, parallel to Members, if one turns out to be needed once this
 is in use.
+
+### S-614, phase 4: a non-member checklist of its own, and customers on the Members page ✅
+
+Two gaps found in use, both closed here.
+
+**Not every document a member's own checklist asks for belongs on a
+non-member's.** Phase 3 unioned Individual's own checklist (`checklist_id`
+— a nominee's own ID card, the signed application form) straight into a
+customer_account application's own, because at the time that was the only
+KYC pack there was to reuse. `membership_type` now carries a second,
+independent reference, `non_member_checklist_id` (migration 0028) — what a
+non-member applicant must provide, configured separately from what a member
+of the same type must provide, from Configuration → Membership types
+("Documents required from a non-member applicant", shown only on
+Individual's own row — the only type this flow ever captures against,
+capture.ts's own business decision, not something this control makes
+configurable). Seeded with a starting pack of its own (`non_member_kyc`:
+ID card, proof of address) rather than left null, so a non-member's own
+identity is checked for something from the first approval, not only once an
+administrator notices a gap. `checklistForMembershipType` stayed exactly
+what it was — a member's own checklist, read by `checklist_id`; the new
+`checklistForNonMemberApplicant` reads the other column, and
+`checklistForNonMemberAccount` (renamed from
+`checklistForMembershipTypeAndAccountTypes`) unions that with the selected
+account types' own, unchanged.
+
+**A non-member is a real record, not a hidden one.** `listMembers`
+(members/create.ts) now unions `member` and `customer` rows into the one
+list the Members page already showed, each carrying a `kind` — `loadMember`
+returns `'member'`, and a new `loadCustomer` (the counterpart to
+`loadMember`, for someone who was never a member) returns `'customer'`. A
+customer has no AB number of their own to search or sort by, so the list's
+"ID" column reads their held account number(s) instead (HSA0001-style,
+comma-joined if they hold more than one), and its "Type" column reads the
+account type(s) they hold rather than a membership type they do not have.
+`/members` tags a customer's row "Non-member" rather than leaving the
+distinction to be inferred from the ID's own shape; `/members/<id>` tries
+`loadMember` first (the far more common case, not a priority judgement) and
+falls back to `loadCustomer`, rendering the same Accounts and Payments
+sections either way — a customer's own payment is found through their
+application (`paymentsForApplication`), since payment carries no
+customer-equivalent of `member_id` yet.
 
 ---
 

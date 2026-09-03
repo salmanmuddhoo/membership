@@ -1,8 +1,9 @@
 ---
 import DashboardLayout from '@layouts/DashboardLayout.astro';
-import { loadMember } from '@lib/members/create';
+import { loadMember, loadCustomer } from '@lib/members/create';
 import { forDisplay } from '@lib/applications/phone';
 import {
+  paymentsForApplication,
   paymentsForMember,
   METHOD_LABELS,
   type Payment,
@@ -13,13 +14,26 @@ const principal = Astro.locals.principal!;
 const canSeePayments = principal.permissions.has('payment.view');
 
 const { id } = Astro.params;
+// Two different tables (member, customer — migration 0027), and no way to
+// know which this id belongs to without asking: an account rows says which
+// (member_id vs customer_id) but the id here names the person, not their
+// account. S-614's own "not all members" — member is tried first only
+// because it is the far more common case, not because a customer is any
+// less a real record.
 const member = id ? await loadMember(id) : null;
-if (!member) return new Response('Not found', { status: 404 });
+const customer = !member && id ? await loadCustomer(id) : null;
+if (!member && !customer) return new Response('Not found', { status: 404 });
 
-// What this member has paid, including the receipt that admitted them — which
-// names their application, not them: they did not exist when it was taken.
+// What has been paid: for a member, including the receipt that admitted
+// them (paymentsForMember reads member_id and, falling back, the
+// application that created them — they did not exist when that one was
+// taken). A customer carries no such member_id-equivalent column on
+// payment; the account-opening receipt is the only one there ever is today,
+// and it is found the same way it was on the application itself.
 const payments: Payment[] = canSeePayments
-  ? await paymentsForMember(member.id)
+  ? member
+    ? await paymentsForMember(member.id)
+    : await paymentsForApplication(customer!.applicationId)
   : [];
 
 const dateFormat = new Intl.DateTimeFormat('en-GB', {
@@ -30,16 +44,23 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 // Phone values are stored in E.164; +23057891234 is not what anyone wants to
 // read off a screen.
 const PHONE_KEYS = new Set(['mobile', 'telephone', 'contact_telephone']);
-const details = Object.entries(member.applicantValues).map(([key, value]) => ({
+const applicantValues = (member ?? customer)!.applicantValues;
+const details = Object.entries(applicantValues).map(([key, value]) => ({
   key,
   label: key.replace(/_/g, ' '),
   value: PHONE_KEYS.has(key) ? forDisplay(value) : value,
 }));
+
+const name = (member ?? customer)!.name;
+const status = (member ?? customer)!.status;
+const joinedAt = (member ?? customer)!.joinedAt;
+const applicationReference = (member ?? customer)!.applicationReference;
+const pageTitle = member ? member.memberNo : name;
 ---
 
 <DashboardLayout
-  title={`${member.memberNo} · Al Barakah MCSL`}
-  heading={`Member ${member.memberNo}`}
+  title={`${pageTitle} · Al Barakah MCSL`}
+  heading={member ? `Member ${member.memberNo}` : name}
 >
   <div class="mx-auto max-w-4xl space-y-6">
     <a
@@ -55,29 +76,38 @@ const details = Object.entries(member.applicantValues).map(([key, value]) => ({
         <h2
           class="text-lg font-semibold text-neutral-800 dark:text-neutral-100"
         >
-          {member.name}
+          {name}
         </h2>
-        <code
-          class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300"
-        >
-          {member.memberNo}
-        </code>
+        {
+          member && (
+            <code class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
+              {member.memberNo}
+            </code>
+          )
+        }
+        {
+          customer && (
+            <span class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
+              Non-member
+            </span>
+          )
+        }
         <span
           class="bg-mint-200 dark:bg-mint-900 rounded px-1.5 py-0.5 text-xs text-neutral-800 dark:text-neutral-100"
         >
-          {member.status}
+          {status}
         </span>
       </div>
       <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
-        {member.membershipTypeName} · joined {
-          dateFormat.format(member.joinedAt)
+        {member && `${member.membershipTypeName} · `}joined {
+          dateFormat.format(joinedAt)
         }
         {
-          member.applicationReference && (
+          applicationReference && (
             <>
               {' '}
               · from application{' '}
-              <span class="font-medium">{member.applicationReference}</span>
+              <span class="font-medium">{applicationReference}</span>
             </>
           )
         }
@@ -108,15 +138,15 @@ const details = Object.entries(member.applicantValues).map(([key, value]) => ({
         Accounts
       </h2>
       {
-        member.accounts.length === 0 ? (
+        (member ?? customer)!.accounts.length === 0 ? (
           <p class="mt-1 text-sm text-red-700 dark:text-red-300">
-            This member has no account. That should not be possible — the
-            default account is opened at the same moment as the member. Please
-            report it.
+            {member
+              ? 'This member has no account. That should not be possible — the default account is opened at the same moment as the member. Please report it.'
+              : 'No account has opened yet.'}
           </p>
         ) : (
           <ul class="mt-4 space-y-3">
-            {member.accounts.map(account => (
+            {(member ?? customer)!.accounts.map(account => (
               <li class="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
                 <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
                   <code class="font-medium text-neutral-800 dark:text-neutral-100">
@@ -125,11 +155,12 @@ const details = Object.entries(member.applicantValues).map(([key, value]) => ({
                   <span class="text-sm text-neutral-600 dark:text-neutral-300">
                     {account.accountTypeName}
                   </span>
-                  {account.isMembershipDefault && (
-                    <span class="bg-mint-200 dark:bg-mint-900 rounded px-1.5 py-0.5 text-xs text-neutral-800 dark:text-neutral-100">
-                      opened on approval
-                    </span>
-                  )}
+                  {'isMembershipDefault' in account &&
+                    account.isMembershipDefault && (
+                      <span class="bg-mint-200 dark:bg-mint-900 rounded px-1.5 py-0.5 text-xs text-neutral-800 dark:text-neutral-100">
+                        opened on approval
+                      </span>
+                    )}
                   <span class="text-xs text-neutral-500 dark:text-neutral-400">
                     {account.category} · {account.status} · opened{' '}
                     {dateFormat.format(account.openedAt)}

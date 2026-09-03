@@ -56,6 +56,11 @@ export interface MembershipType {
   description: string;
   checklistId: string | null;
   checklistName: string | null;
+  // S-614: what a NON-MEMBER applicant must provide when this type backs a
+  // customer_account application — independent of checklistId, which is
+  // what a MEMBER of this type must provide.
+  nonMemberChecklistId: string | null;
+  nonMemberChecklistName: string | null;
   feeScheduleId: string | null;
   feeScheduleName: string | null;
   isActive: boolean;
@@ -82,6 +87,8 @@ export async function listMembershipTypes(): Promise<MembershipType[]> {
     description: string;
     checklist_id: string | null;
     checklist_name: string | null;
+    non_member_checklist_id: string | null;
+    non_member_checklist_name: string | null;
     fee_schedule_id: string | null;
     fee_schedule_name: string | null;
     is_active: boolean;
@@ -93,14 +100,16 @@ export async function listMembershipTypes(): Promise<MembershipType[]> {
   }>(
     `select m.id, m.code, m.name, m.description,
             m.checklist_id, c.name as checklist_name,
+            m.non_member_checklist_id, nc.name as non_member_checklist_name,
             m.fee_schedule_id, f.name as fee_schedule_name,
             m.is_active, m.sort_order, m.nominee_count,
             m.majority_age, m.majority_transition_type_id,
             mt.name as majority_transition_type_name
        from membership_type m
-       left join document_checklist c on c.id = m.checklist_id
-       left join fee_schedule f       on f.id = m.fee_schedule_id
-       left join membership_type mt   on mt.id = m.majority_transition_type_id
+       left join document_checklist c  on c.id = m.checklist_id
+       left join document_checklist nc on nc.id = m.non_member_checklist_id
+       left join fee_schedule f        on f.id = m.fee_schedule_id
+       left join membership_type mt    on mt.id = m.majority_transition_type_id
       order by m.sort_order, m.name`
   );
 
@@ -149,6 +158,8 @@ export async function listMembershipTypes(): Promise<MembershipType[]> {
     description: t.description,
     checklistId: t.checklist_id,
     checklistName: t.checklist_name,
+    nonMemberChecklistId: t.non_member_checklist_id,
+    nonMemberChecklistName: t.non_member_checklist_name,
     feeScheduleId: t.fee_schedule_id,
     feeScheduleName: t.fee_schedule_name,
     isActive: t.is_active,
@@ -240,18 +251,24 @@ export async function setMajorityTransition(
   });
 }
 
-// Which checklist and which fee schedule this type uses (S-205).
+// Which checklist, non-member checklist, and fee schedule this type uses
+// (S-205, S-614).
 export async function setMembershipTypeReferences(
   typeId: string,
-  refs: { checklistId: string | null; feeScheduleId: string | null },
+  refs: {
+    checklistId: string | null;
+    nonMemberChecklistId: string | null;
+    feeScheduleId: string | null;
+  },
   actor: Actor
 ): Promise<void> {
   await withConfigurationActor(actorFor(actor), async client => {
     const result = await client.query(
       `update membership_type
-          set checklist_id = $2, fee_schedule_id = $3
+          set checklist_id = $2, non_member_checklist_id = $3,
+              fee_schedule_id = $4
         where id = $1`,
-      [typeId, refs.checklistId, refs.feeScheduleId]
+      [typeId, refs.checklistId, refs.nonMemberChecklistId, refs.feeScheduleId]
     );
     if (result.rowCount === 0) {
       throw new ConfigError(
@@ -1157,25 +1174,77 @@ export async function checklistForAccountTypes(
   return bySubject;
 }
 
+// S-614 · What a non-member applicant must provide, read from
+// membership_type.non_member_checklist_id — deliberately NOT checklistId,
+// which is what a MEMBER of this type must provide. Not everything a
+// membership asks for applies to someone who never becomes one: a nominee's
+// own ID card and the signed application form both come from a shape
+// (a printed four-signature form, a Takaful nominee) this flow does not
+// have. Configured independently (Configuration → Membership types) rather
+// than filtered out of checklistId's own items in code, so an administrator
+// can add or remove items without this function needing to know why.
+export async function checklistForNonMemberApplicant(
+  membershipTypeCode: string
+): Promise<Map<FieldSubject, ChecklistItem[]>> {
+  const result = await query<{
+    id: string;
+    document_type_id: string;
+    document_code: string;
+    document_name: string;
+    tracks_expiry: boolean;
+    subject: FieldSubject;
+    requirement: 'required' | 'optional';
+    sort_order: number;
+  }>(
+    `select i.id, i.document_type_id, d.code as document_code,
+            d.name as document_name, d.tracks_expiry,
+            i.subject, i.requirement, i.sort_order
+       from membership_type m
+       join document_checklist_item i
+         on i.checklist_id = m.non_member_checklist_id
+       join document_type d on d.id = i.document_type_id
+      where m.code = $1 and d.is_active
+      order by i.subject, i.sort_order`,
+    [membershipTypeCode]
+  );
+
+  const bySubject = new Map<FieldSubject, ChecklistItem[]>();
+  for (const r of result.rows) {
+    const list = bySubject.get(r.subject) ?? [];
+    list.push({
+      id: r.id,
+      documentTypeId: r.document_type_id,
+      documentCode: r.document_code,
+      documentName: r.document_name,
+      tracksExpiry: r.tracks_expiry,
+      subject: r.subject,
+      requirement: r.requirement,
+      sortOrder: r.sort_order,
+    });
+    bySubject.set(r.subject, list);
+  }
+  return bySubject;
+}
+
 // S-614 · The checklist for a customer_account application — the union of
-// the Individual membership type's own checklist (the applicant is captured
-// the same way a membership application's is, so the same KYC pack applies)
-// and the selected account types' own checklist (checklistForAccountTypes'
-// own union, unchanged). A document required by either side is required
-// here; where the same document type appears on both sides, "required" wins
-// over "optional", the same rule checklistForAccountTypes already applies
-// between its own several account types.
-export async function checklistForMembershipTypeAndAccountTypes(
+// what the non-member applicant must provide (checklistForNonMemberApplicant,
+// above) and the selected account types' own checklist
+// (checklistForAccountTypes' own union, unchanged). A document required by
+// either side is required here; where the same document type appears on
+// both sides, "required" wins over "optional", the same rule
+// checklistForAccountTypes already applies between its own several account
+// types.
+export async function checklistForNonMemberAccount(
   membershipTypeCode: string,
   accountTypeCodes: string[]
 ): Promise<Map<FieldSubject, ChecklistItem[]>> {
-  const [membership, accounts] = await Promise.all([
-    checklistForMembershipType(membershipTypeCode),
+  const [applicant, accounts] = await Promise.all([
+    checklistForNonMemberApplicant(membershipTypeCode),
     checklistForAccountTypes(accountTypeCodes),
   ]);
 
   const bySubject = new Map<FieldSubject, ChecklistItem[]>();
-  for (const [subject, items] of membership) {
+  for (const [subject, items] of applicant) {
     bySubject.set(subject, [...items]);
   }
   for (const [subject, items] of accounts) {
