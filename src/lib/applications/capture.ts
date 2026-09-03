@@ -87,13 +87,37 @@ export interface AdditionalAccountApplication extends ApplicationCommon {
   }[];
 }
 
-// The two kinds share one workflow (S-612) — submitApplication,
+// S-614's application: someone not yet on the system at all, opening an
+// account of their own. An applicant IS captured here — `parties` behaves
+// exactly as it does for a membership application, reusing that type's own
+// field and checklist configuration (business direction: no new form to
+// design) — but approval creates a customer rather than a member, so it
+// also carries `selectedAccountTypes` the same way an additional_account
+// application does. The union of what the other two kinds each need, not a
+// third unrelated shape.
+export interface CustomerAccountApplication extends ApplicationCommon {
+  applicationKind: 'customer_account';
+  membershipTypeId: string;
+  membershipTypeCode: string;
+  membershipTypeName: string;
+  selectedAccountTypes: {
+    id: string;
+    code: string;
+    name: string;
+    minimumOpeningAmount: string;
+  }[];
+}
+
+// The three kinds share one workflow (S-612) — submitApplication,
 // reviewApplication, decideApplication and everything in workflow.ts read
 // this union without needing to know which they were handed. A page working
 // one kind narrows on `applicationKind` the same way any discriminated union
 // does; that narrowing is what makes it a compile error to read
-// `membershipTypeId` off an application that might be the other kind.
-export type Application = MembershipApplication | AdditionalAccountApplication;
+// `membershipTypeId` off an application that might be another kind.
+export type Application =
+  | MembershipApplication
+  | AdditionalAccountApplication
+  | CustomerAccountApplication;
 
 // A field that must be filled in but is not, named the way the form names it.
 export interface MissingField {
@@ -323,6 +347,93 @@ export async function startAdditionalAccountApplication(
   });
 }
 
+/**
+ * S-614 · Start an application for someone not yet on the system at all.
+ *
+ * Reuses the Individual membership type's own field and checklist
+ * configuration to capture the applicant (business direction: no new form
+ * to design for this) — every subject it configures gets an empty party
+ * row the same way insertApplication gives a membership application one,
+ * so there is something for the capture form to render into from the
+ * first load. Account type validation mirrors
+ * startAdditionalAccountApplication's own: active and not
+ * membership-default, since Shares and the MSA open only through a
+ * membership's own approval (S-308, S-309), never through this flow either.
+ */
+export async function startCustomerAccountApplication(
+  accountTypeIds: string[],
+  actor: Actor
+): Promise<{ id: string; reference: string }> {
+  if (accountTypeIds.length === 0) {
+    throw new ApplicationError('Select at least one account type to open.');
+  }
+
+  const type = await acceptingType('individual');
+
+  return withTransaction(async client => {
+    const types = await client.query<{ id: string }>(
+      `select id from account_type
+        where id = any($1::uuid[]) and is_active and not is_membership_default`,
+      [accountTypeIds]
+    );
+    if (types.rowCount !== accountTypeIds.length) {
+      throw new ApplicationError(
+        'One of the selected account types is no longer available to open ' +
+          'this way.'
+      );
+    }
+
+    const created = await client.query<{ id: string; reference: string }>(
+      `insert into membership_application
+         (application_kind, membership_type_id, captured_by)
+       values ('customer_account', $1, $2)
+       returning id, reference`,
+      [type.id, actor.userId]
+    );
+    const { id, reference } = created.rows[0];
+
+    const subjects = [...new Set(type.fields.map(f => f.subject))];
+    for (const subject of subjects) {
+      const ordinals = subject === 'nominee' ? type.nomineeCount : 1;
+      for (let ordinal = 1; ordinal <= ordinals; ordinal++) {
+        await client.query(
+          `insert into application_party (application_id, subject, ordinal)
+           values ($1, $2, $3)`,
+          [id, subject, ordinal]
+        );
+      }
+    }
+
+    for (const accountTypeId of accountTypeIds) {
+      await client.query(
+        `insert into application_account_selection
+           (application_id, account_type_id)
+         values ($1, $2)`,
+        [id, accountTypeId]
+      );
+    }
+
+    await recordAudit(
+      {
+        actorUserId: actor.userId,
+        actorDescription: actor.email,
+        action: 'membership.application.started',
+        entityType: 'membership_application',
+        entityId: id,
+        newValue: {
+          reference,
+          applicationKind: 'customer_account',
+          membershipType: type.code,
+          accountTypeIds,
+        },
+      },
+      client
+    );
+
+    return { id, reference };
+  });
+}
+
 // Is there anything here at all? What decides whether an application exists.
 export function hasAnyValue(parties: PartyValues[]): boolean {
   return parties.some(party =>
@@ -388,7 +499,7 @@ export async function loadApplication(id: string): Promise<Application | null> {
   const result = await query<{
     id: string;
     reference: string;
-    application_kind: 'membership' | 'additional_account';
+    application_kind: 'membership' | 'additional_account' | 'customer_account';
     membership_type_id: string | null;
     membership_type_code: string | null;
     membership_type_name: string | null;
@@ -452,30 +563,23 @@ export async function loadApplication(id: string): Promise<Application | null> {
   };
 
   if (row.application_kind === 'additional_account') {
-    const selection = await query<{
-      id: string;
-      code: string;
-      name: string;
-      minimum_opening_amount: string;
-    }>(
-      `select t.id, t.code, t.name, t.minimum_opening_amount
-         from application_account_selection s
-         join account_type t on t.id = s.account_type_id
-        where s.application_id = $1
-        order by t.sort_order, t.name`,
-      [id]
-    );
     return {
       ...common,
       applicationKind: 'additional_account',
       existingMemberId: row.existing_member_id!,
       existingMemberNo: row.existing_member_no!,
-      selectedAccountTypes: selection.rows.map(r => ({
-        id: r.id,
-        code: r.code,
-        name: r.name,
-        minimumOpeningAmount: r.minimum_opening_amount,
-      })),
+      selectedAccountTypes: await selectedAccountTypesFor(id),
+    };
+  }
+
+  if (row.application_kind === 'customer_account') {
+    return {
+      ...common,
+      applicationKind: 'customer_account',
+      membershipTypeId: row.membership_type_id!,
+      membershipTypeCode: row.membership_type_code!,
+      membershipTypeName: row.membership_type_name!,
+      selectedAccountTypes: await selectedAccountTypesFor(id),
     };
   }
 
@@ -486,6 +590,37 @@ export async function loadApplication(id: string): Promise<Application | null> {
     membershipTypeCode: row.membership_type_code!,
     membershipTypeName: row.membership_type_name!,
   };
+}
+
+// Shared by additional_account and customer_account (S-612, S-614) — the
+// account type(s) selected, whichever of the two kinds is asking.
+async function selectedAccountTypesFor(applicationId: string): Promise<
+  {
+    id: string;
+    code: string;
+    name: string;
+    minimumOpeningAmount: string;
+  }[]
+> {
+  const selection = await query<{
+    id: string;
+    code: string;
+    name: string;
+    minimum_opening_amount: string;
+  }>(
+    `select t.id, t.code, t.name, t.minimum_opening_amount
+       from application_account_selection s
+       join account_type t on t.id = s.account_type_id
+      where s.application_id = $1
+      order by t.sort_order, t.name`,
+    [applicationId]
+  );
+  return selection.rows.map(r => ({
+    id: r.id,
+    code: r.code,
+    name: r.name,
+    minimumOpeningAmount: r.minimum_opening_amount,
+  }));
 }
 
 // The fields this application's type configures, grouped as the form shows
@@ -593,8 +728,11 @@ export async function saveDraft(
   // S-613: an additional-account application has no applicant fields to
   // autosave — member and account type are chosen once, at
   // startAdditionalAccountApplication, and nothing after that is a form
-  // field the way a membership application's own capture is.
-  if (application.applicationKind !== 'membership') {
+  // field the way a membership application's own capture is. A
+  // customer_account application (S-614) is the opposite: it captures an
+  // applicant the same way a membership application does, reusing the same
+  // membership type's field configuration — so it saves the same way too.
+  if (application.applicationKind === 'additional_account') {
     throw new ApplicationError(
       'This application has no fields to save.',
       'invalid'
@@ -795,8 +933,10 @@ export async function problemsBlockingSubmission(
   // S-613: an additional-account application has no applicant fields, and
   // therefore nothing here to be missing — startAdditionalAccountApplication
   // already refuses to create one with an empty account-type selection, so
-  // there is nothing left for this to catch by the time one exists.
-  if (application.applicationKind !== 'membership') return [];
+  // there is nothing left for this to catch by the time one exists. A
+  // customer_account application (S-614) captures an applicant the same way
+  // a membership application does, so it is checked the same way too.
+  if (application.applicationKind === 'additional_account') return [];
 
   const type = (await listMembershipTypes()).find(
     t => t.id === application.membershipTypeId
@@ -1082,10 +1222,12 @@ export async function listApplications(options: {
   Array<{
     id: string;
     reference: string;
-    applicationKind: 'membership' | 'additional_account';
+    applicationKind: 'membership' | 'additional_account' | 'customer_account';
     // A membership type's name for a membership application; the selected
-    // account type(s), joined, for an additional_account one — there is no
-    // membership type to name (migration 0025).
+    // account type(s), joined, for the other two kinds — an
+    // additional_account row has no membership type to name at all
+    // (migration 0025), and a customer_account row has one only to source
+    // its field configuration from, not to describe itself by (S-614).
     membershipTypeName: string;
     status: string;
     applicantName: string;
@@ -1096,7 +1238,7 @@ export async function listApplications(options: {
   const result = await query<{
     id: string;
     reference: string;
-    application_kind: 'membership' | 'additional_account';
+    application_kind: 'membership' | 'additional_account' | 'customer_account';
     membership_type_name: string | null;
     account_type_names: string | null;
     status: string;
