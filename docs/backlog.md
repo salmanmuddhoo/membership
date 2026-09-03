@@ -1154,6 +1154,40 @@ needs (checklist, payment, workflow actions, and now approval) exists in
 `capture.ts`/`documents.ts`/`payments.ts`/`workflow.ts`/`members/create.ts`,
 but nothing yet calls them from a page. And the single-signature form.
 
+### S-613, phase 8 · The officer-facing review page ✅
+
+`/applications/<id>/account` — a separate page from `[id].astro`, not a
+retrofit of it (the decision recorded back in phase 3): that page is built
+entirely around a membership type's field configuration and its
+four-signature form, neither of which this kind has. What this page needs
+instead is smaller, since there is no applicant to capture: it opens
+straight on Documents, Payment and the review chain.
+
+Every section calls a function phases 1–7 already built and tested —
+`checklistFor`, `beginUpload`/`commitUpload`/`reviewDocument` (documents.ts),
+`amountDueForAdditionalAccount`/`recordAccountOpeningPayment` (payments.ts),
+`availableActions`/`submitApplication`/`reviewApplication`/
+`decideApplication` (workflow.ts, with `openAccountsForApplication` as the
+decide callback) — so this phase is genuinely just wiring a page to what
+already exists, the payoff every prior phase's own scoping was chosen for.
+The document-upload and payment-total scripts are copied from `[id].astro`
+rather than shared via a new component: refactoring the biggest, most
+heavily-relied-on page in the app to extract a component was judged a
+larger, riskier change than the size of this one justifies on its own.
+
+`/applications` now links an `additional_account` row's reference to this
+page instead of showing it as plain text. `[id].astro`'s own guard, which
+used to throw for a mismatched kind on the reasoning that nothing could
+ever reach that state, now redirects a stale bookmark or hand-edited URL to
+the page that actually knows it — a reload after its own POST still throws,
+since `applicationKind` cannot change under it.
+
+**Still ahead**: the single-signature form, in place of the four-signature
+one `[id].astro`'s own print page carries — nothing in this flow prints or
+signs anything yet, since there is no form built around the fields it
+would need. Refunding an account-opening payment (phase 6) is the other
+open item; voiding the receipt outright still covers a mistake.
+
 ---
 
 # M7 — Legacy migration
