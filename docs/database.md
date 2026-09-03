@@ -114,6 +114,18 @@ is dropped after ten seconds of idleness is opened again for nearly every
 page. A minute keeps it warm between clicks while still returning it well
 before the next officer's session needs one.
 
+## Where the function runs
+
+The database is **Azure South Africa North**. `vercel.json` pins the
+deployment's `regions` to **`cpt1`** (Cape Town) to sit next to it — every
+query this application makes crosses a real distance, and the difference
+between that and Vercel's US-East default was the largest single cost on
+every page, dwarfing any amount of query-batching on its own. Region
+pinning is a Vercel Pro-plan feature; a Hobby-plan deployment ignores the
+setting and stays on the platform default. Confirm which applies after a
+deploy — the `x-vercel-id` response header's prefix names the region a
+request actually ran in.
+
 ## What is cached
 
 Reference configuration — membership types and their fields, account types,

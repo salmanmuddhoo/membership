@@ -130,7 +130,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
       {
         isEditable && (
           <p class="sig-help no-print">
-            Sign in each box below, or print and sign by hand.
+            Tap Sign under each name, or print and sign by hand.
           </p>
         )
       }
@@ -138,20 +138,19 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
         {
           SIGNATURES.map(who => (
             <div class="sig">
-              {isEditable ? (
-                <div class="sig-pad" data-sig-pad>
-                  <div class="sig-line" />
-                  <canvas class="sig-canvas" data-sig-canvas />
-                  <button
-                    type="button"
-                    class="sig-clear no-print"
-                    data-sig-clear
-                  >
+              <div class="sig-pad" data-sig-pad data-sig-who={who}>
+                <div class="sig-line" />
+                <img class="sig-image" data-sig-image alt="" hidden />
+              </div>
+              {isEditable && (
+                <div class="sig-controls no-print">
+                  <button type="button" data-sig-open>
+                    Sign
+                  </button>
+                  <button type="button" data-sig-clear-image hidden>
                     Clear
                   </button>
                 </div>
-              ) : (
-                <div class="sig-line" />
               )}
               <p class="sig-name">{who}</p>
               <p class="sig-date">Name and date</p>
@@ -161,6 +160,35 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
         }
       </div>
     </section>
+
+    {
+      isEditable && (
+        // Fixed to the actual screen, not to anything in this page's own
+        // millimetre-based layout — that layout is built for the paper this
+        // becomes, not a phone, and does not fit one, which is exactly why
+        // signing directly inside it used to drag the whole page around
+        // under a finger instead of drawing. A modal sized to the real
+        // viewport cannot inherit a scroll or a pinch-zoom state that isn't
+        // its own.
+        <div id="sig-modal" class="sig-modal no-print" hidden>
+          <div class="sig-modal-bar">
+            <span data-sig-modal-title>Sign</span>
+            <button type="button" data-sig-modal-close>
+              Cancel
+            </button>
+          </div>
+          <canvas class="sig-modal-canvas" data-sig-modal-canvas />
+          <div class="sig-modal-bar">
+            <button type="button" data-sig-modal-clear>
+              Clear
+            </button>
+            <button type="button" data-sig-modal-done class="primary">
+              Use this signature
+            </button>
+          </div>
+        </div>
+      )
+    }
 
     <div class="actions">
       <button type="button" id="print">Print</button>
@@ -302,28 +330,87 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
     color: #666;
   }
   /* The line stays underneath as the fallback a pen can still use — without
-     scripting, or if the officer prefers it, this is unchanged from before. */
+     scripting, or once the box below carries a signature, this is what
+     Print (and Save as PDF) actually sees. */
   .sig-pad {
     position: relative;
+    height: 14mm;
   }
-  .sig-canvas {
+  .sig-image {
     position: absolute;
     inset: 0;
     width: 100%;
-    height: 14mm;
-    /* A drawing surface, not a page to scroll past — the pointer must not
-       drag the screen while someone is mid-signature. */
-    touch-action: none;
-    cursor: crosshair;
+    height: 100%;
+    /* Whatever aspect ratio the signing box drew at, contained rather than
+       stretched — a squashed signature is a strange thing to hand someone. */
+    object-fit: contain;
+    object-position: left center;
   }
-  .sig-clear {
+  .sig-controls {
     margin-top: 1mm;
+    display: flex;
+    gap: 2mm;
+  }
+  .sig-controls button {
     padding: 0.5mm 2mm;
     border: 1px solid #999;
     background: #f5f5f5;
     font: inherit;
     font-size: 8pt;
     cursor: pointer;
+  }
+
+  /* Fixed to the real viewport (see the comment above the markup), not to
+     this page's own layout — sized in ordinary CSS units, not the
+     millimetres the rest of this sheet uses for paper. */
+  .sig-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    background: #fff;
+    color: #111;
+    font-family: system-ui, sans-serif;
+    /* The one thing this box exists to stop: a drag meant for the pen
+       reaching past the canvas and moving the page, or the browser's own
+       pull-to-refresh, behind it. */
+    touch-action: none;
+    overscroll-behavior: none;
+  }
+  .sig-modal[hidden] {
+    display: none;
+  }
+  .sig-modal-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 3mm;
+    padding: 3mm 4mm;
+    font-size: 11pt;
+    border-bottom: 1px solid #ddd;
+  }
+  .sig-modal-bar:last-child {
+    border-bottom: none;
+    border-top: 1px solid #ddd;
+  }
+  .sig-modal-canvas {
+    flex: 1;
+    width: 100%;
+    touch-action: none;
+    cursor: crosshair;
+  }
+  .sig-modal button {
+    padding: 2mm 4mm;
+    border: 1px solid #333;
+    background: #eee;
+    font: inherit;
+    cursor: pointer;
+    color: #111;
+  }
+  .sig-modal button.primary {
+    background: #cdeedb;
+    font-weight: bold;
   }
 
   .watermark {
@@ -365,9 +452,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
     .no-print {
       display: none;
     }
-    .sig-canvas {
-      cursor: default;
-    }
     .print-page {
       max-width: none;
       padding: 0;
@@ -382,6 +466,35 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
       margin: 14mm;
     }
   }
+
+  /* The sheet above is built in millimetres for the A4 page it becomes,
+     which is wider than a phone screen — left alone, the whole page would
+     sit wider than the viewport and pan under a finger the same way signing
+     used to. Screen-only: none of this touches what actually prints. */
+  @media screen and (max-width: 700px) {
+    .print-page {
+      max-width: 100%;
+      padding: 6mm 4mm;
+    }
+    .head {
+      flex-direction: column;
+      gap: 2mm;
+    }
+    .ref {
+      text-align: left;
+    }
+    .row {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 0.5mm;
+    }
+    dt {
+      flex: none;
+    }
+    .signatures {
+      grid-template-columns: 1fr;
+    }
+  }
 </style>
 
 <script>
@@ -389,48 +502,77 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
     window.print();
   });
 
-  // Lets whoever is holding the tablet sign directly into the box with a
-  // finger or stylus instead of only on paper afterward — the ink becomes
-  // part of the page, so Print (choose "Save as PDF" in the print dialog)
-  // carries it straight into the file the officer uploads on the documents
-  // step. The ruled line underneath is still there and still usable with an
-  // actual pen: this is a second way to sign the same box, not the only one,
+  // Lets whoever is holding the phone or tablet sign on screen instead of
+  // only on paper afterward, in one shared full-screen box rather than a
+  // canvas living inside this page's own millimetre-wide layout — that
+  // layout does not fit a phone, and a drawing surface inside it inherited
+  // the same instability: the page panned under a finger trying to sign.
+  // Fixed to the viewport, the box cannot inherit a scroll or zoom state
+  // that isn't its own. Print (choose "Save as PDF" in the print dialog)
+  // carries the result straight into the file the officer uploads on the
+  // documents step. The ruled line stays the fallback for an actual pen,
   // which is also what a reader without scripting gets by default.
-  for (const canvas of document.querySelectorAll<HTMLCanvasElement>(
-    '[data-sig-canvas]'
-  )) {
-    const ctx = canvas.getContext('2d');
-    if (!ctx) continue;
+  const modal = document.getElementById('sig-modal');
+  const modalCanvas = document.querySelector<HTMLCanvasElement>(
+    '[data-sig-modal-canvas]'
+  );
+  const modalTitle = document.querySelector('[data-sig-modal-title]');
+  const modalClose = document.querySelector('[data-sig-modal-close]');
+  const modalClear = document.querySelector('[data-sig-modal-clear]');
+  const modalDone = document.querySelector('[data-sig-modal-done]');
 
-    // Sized once from the box the CSS above already gives it, at the
-    // device's actual pixel density so the line does not look soft on a
-    // sharp tablet screen. A canvas' bitmap is a fixed pixel grid, unlike
-    // an ordinary element — this is what makes it one.
-    const rect = canvas.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = Math.max(1, Math.round(rect.width * dpr));
-    canvas.height = Math.max(1, Math.round(rect.height * dpr));
-    ctx.scale(dpr, dpr);
-    ctx.lineWidth = 2;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.strokeStyle = '#1a1a2e';
+  if (
+    modal &&
+    modalCanvas &&
+    modalTitle &&
+    modalClose &&
+    modalClear &&
+    modalDone
+  ) {
+    const ctx = modalCanvas.getContext('2d');
+    let activePad: HTMLElement | null = null;
+
+    // Sized from the box actually on screen, at the device's pixel density
+    // so the line does not look soft. Done on open rather than at page
+    // load: a [hidden] element measures as zero, so there is nothing to
+    // size against before then.
+    const sizeCanvas = () => {
+      if (!ctx) return;
+      const rect = modalCanvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      modalCanvas.width = Math.max(1, Math.round(rect.width * dpr));
+      modalCanvas.height = Math.max(1, Math.round(rect.height * dpr));
+      ctx.scale(dpr, dpr);
+      ctx.lineWidth = 2.5;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = '#1a1a2e';
+    };
+
+    const clearCanvas = () => {
+      if (!ctx) return;
+      // Reset the transform first: clearRect is drawn in the CURRENT
+      // coordinate space, and that space is scaled by dpr above.
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, modalCanvas.width, modalCanvas.height);
+      ctx.restore();
+    };
 
     let drawing = false;
     let last: { x: number; y: number } | null = null;
     const pointFrom = (e: PointerEvent) => {
-      const box = canvas.getBoundingClientRect();
+      const box = modalCanvas.getBoundingClientRect();
       return { x: e.clientX - box.left, y: e.clientY - box.top };
     };
-
-    canvas.addEventListener('pointerdown', e => {
+    modalCanvas.addEventListener('pointerdown', e => {
       e.preventDefault();
-      canvas.setPointerCapture(e.pointerId);
+      modalCanvas.setPointerCapture(e.pointerId);
       drawing = true;
       last = pointFrom(e);
     });
-    canvas.addEventListener('pointermove', e => {
-      if (!drawing || !last) return;
+    modalCanvas.addEventListener('pointermove', e => {
+      if (!drawing || !last || !ctx) return;
       const point = pointFrom(e);
       ctx.beginPath();
       ctx.moveTo(last.x, last.y);
@@ -438,24 +580,71 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
       ctx.stroke();
       last = point;
     });
-    const stop = () => {
+    const stopDrawing = () => {
       drawing = false;
       last = null;
     };
-    canvas.addEventListener('pointerup', stop);
-    canvas.addEventListener('pointercancel', stop);
-    canvas.addEventListener('pointerleave', stop);
+    modalCanvas.addEventListener('pointerup', stopDrawing);
+    modalCanvas.addEventListener('pointercancel', stopDrawing);
+    modalCanvas.addEventListener('pointerleave', stopDrawing);
 
-    canvas
-      .closest('[data-sig-pad]')
-      ?.querySelector('[data-sig-clear]')
-      ?.addEventListener('click', () => {
-        // Reset the transform first: clearRect is drawn in the CURRENT
-        // coordinate space, and that space is scaled by dpr above.
-        ctx.save();
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.restore();
+    const closeModal = () => {
+      modal.hidden = true;
+      activePad = null;
+    };
+
+    for (const pad of document.querySelectorAll<HTMLElement>(
+      '[data-sig-pad]'
+    )) {
+      const controls = pad.closest('.sig');
+      const openButton =
+        controls?.querySelector<HTMLButtonElement>('[data-sig-open]');
+      const clearImageButton = controls?.querySelector<HTMLButtonElement>(
+        '[data-sig-clear-image]'
+      );
+      const image = pad.querySelector<HTMLImageElement>('[data-sig-image]');
+      if (!openButton || !image) continue;
+
+      openButton.addEventListener('click', () => {
+        activePad = pad;
+        modalTitle.textContent = `Sign — ${pad.dataset.sigWho ?? ''}`;
+        modal.hidden = false;
+        requestAnimationFrame(() => {
+          sizeCanvas();
+          clearCanvas();
+        });
       });
+
+      clearImageButton?.addEventListener('click', () => {
+        image.hidden = true;
+        image.removeAttribute('src');
+        openButton.textContent = 'Sign';
+        clearImageButton.hidden = true;
+      });
+    }
+
+    modalClose.addEventListener('click', closeModal);
+    modalClear.addEventListener('click', clearCanvas);
+    modalDone.addEventListener('click', () => {
+      if (!activePad) {
+        closeModal();
+        return;
+      }
+      const image =
+        activePad.querySelector<HTMLImageElement>('[data-sig-image]');
+      const controls = activePad.closest('.sig');
+      const openButton =
+        controls?.querySelector<HTMLButtonElement>('[data-sig-open]');
+      const clearImageButton = controls?.querySelector<HTMLButtonElement>(
+        '[data-sig-clear-image]'
+      );
+      if (image) {
+        image.src = modalCanvas.toDataURL('image/png');
+        image.hidden = false;
+      }
+      if (openButton) openButton.textContent = 'Re-sign';
+      if (clearImageButton) clearImageButton.hidden = false;
+      closeModal();
+    });
   }
 </script>

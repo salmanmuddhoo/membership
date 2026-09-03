@@ -972,19 +972,45 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         }
         const { versionId, uploadUrl, chunkSize } = begunBody.data;
 
+        // fetch() gives no signal until a whole chunk has landed — for an
+        // 8 MB photo in one chunk, that is several seconds of "Sending… 0%"
+        // on a weak connection, which reads as stuck even when it is not.
+        // XMLHttpRequest's own upload.progress event reports as the bytes
+        // actually go, so the number on screen moves the whole time.
+        const putChunk = (
+          start: number,
+          end: number
+        ): Promise<{ ok: boolean; status: number }> =>
+          new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open('PUT', uploadUrl);
+            xhr.setRequestHeader(
+              'content-range',
+              `bytes ${start}-${end - 1}/${chosen.size}`
+            );
+            xhr.upload.addEventListener('progress', e => {
+              if (!e.lengthComputable) return;
+              const sent = start + e.loaded;
+              say(`Sending… ${Math.round((sent / chosen.size) * 100)}%`);
+            });
+            xhr.addEventListener('load', () =>
+              resolve({
+                ok: xhr.status >= 200 && xhr.status < 300,
+                status: xhr.status,
+              })
+            );
+            xhr.addEventListener('error', () =>
+              reject(new Error('The transfer failed — check your connection.'))
+            );
+            xhr.send(chosen.slice(start, end));
+          });
+
         for (let start = 0; start < chosen.size; start += chunkSize) {
           const end = Math.min(start + chunkSize, chosen.size);
-          const response = await fetch(uploadUrl, {
-            method: 'PUT',
-            headers: {
-              'content-range': `bytes ${start}-${end - 1}/${chosen.size}`,
-            },
-            body: chosen.slice(start, end),
-          });
-          if (!response.ok && response.status !== 202) {
-            throw new Error(`The transfer failed (${response.status}).`);
+          const result = await putChunk(start, end);
+          if (!result.ok && result.status !== 202) {
+            throw new Error(`The transfer failed (${result.status}).`);
           }
-          say(`Sending… ${Math.round((end / chosen.size) * 100)}%`);
         }
 
         say('Confirming…');
