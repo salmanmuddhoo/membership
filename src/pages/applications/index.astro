@@ -5,7 +5,11 @@ import {
   deleteDraftApplication,
   listApplications,
 } from '@lib/applications/capture';
-import { listMembershipTypes } from '@lib/config/reference';
+import { activeChain, listMembershipTypes } from '@lib/config/reference';
+import {
+  regionalReviewPassedIds,
+  WORKFLOW_CODE,
+} from '@lib/applications/workflow';
 
 const principal = Astro.locals.principal!;
 const canCapture = principal.permissions.has('application.capture');
@@ -47,10 +51,22 @@ if (Astro.request.method === 'POST') {
 const deleted = Astro.url.searchParams.get('deleted');
 
 const filter = Astro.url.searchParams.get('status') ?? '';
-const [applications, types] = await Promise.all([
+const [applications, types, chain] = await Promise.all([
   listApplications(filter ? { statuses: [filter] } : {}),
   listMembershipTypes(),
+  activeChain(WORKFLOW_CODE),
 ]);
+
+// S-611 follow-up: 'new' means two different things once Regional oversight
+// is enabled — still waiting on the Regional Manager, or past them and
+// waiting on the Secretary — and the status badge alone cannot say which.
+// One query for every 'new' row on the page rather than one per row.
+const regionalReviewEnabled = chain.some(s => s.code === 'regional_review');
+const regionalReviewPassed = regionalReviewEnabled
+  ? await regionalReviewPassedIds(
+      applications.filter(a => a.status === 'new').map(a => a.id)
+    )
+  : new Set<string>();
 
 const STATUS_LABELS: Record<string, string> = {
   draft: 'Draft',
@@ -220,6 +236,13 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                       >
                         {STATUS_LABELS[a.status] ?? a.status}
                       </span>
+                      {a.status === 'new' && regionalReviewEnabled && (
+                        <span class="mt-1 block text-xs text-neutral-500 dark:text-neutral-400">
+                          {regionalReviewPassed.has(a.id)
+                            ? 'With the Secretary'
+                            : 'With the Regional Manager'}
+                        </span>
+                      )}
                     </td>
                     <td class="py-2 pr-4 text-xs text-neutral-500 dark:text-neutral-400">
                       {a.capturedByName}

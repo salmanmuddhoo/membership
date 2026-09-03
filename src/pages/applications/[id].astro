@@ -19,6 +19,7 @@ import {
   boardReadinessReasons,
   decideApplication,
   reviewApplication,
+  reviewStageLabel,
   signoffsFor,
   submitApplication,
   transitionsFor,
@@ -350,10 +351,11 @@ const isDeletableDraft = canCapture && application!.status === 'draft';
 const checklist = await checklistFor({ applicationId: application!.id });
 const documentsComplete = checklist.length > 0 && isDocumentComplete(checklist);
 
-const [blocking, actions, history] = await Promise.all([
+const [blocking, actions, history, stageLabel] = await Promise.all([
   problemsBlockingSubmission(application!),
   availableActions(application!, principal),
   transitionsFor(application!.id),
+  reviewStageLabel(application!),
 ]);
 
 // S-608: named up front, the same way a missing mandatory field is, rather
@@ -521,6 +523,7 @@ const timeline = applicationTimeline({
   requiredDocumentsOutstanding: requiredDocumentsMissing,
   paymentRecorded: livePayment !== null,
   paymentReceiptNo: livePayment?.receiptNo ?? null,
+  reviewStageLabel: stageLabel,
 });
 
 // The wizard steps an officer walks while the application is still theirs to

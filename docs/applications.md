@@ -437,6 +437,21 @@ includes ones that have been. Submitting one raises the Regional Manager's
 count (or the Secretary's, disabled) by exactly one; forwarding moves it off
 one queue and onto the next, never incremented or cleared by hand.
 
+**"New" alone stopped being enough to say who actually holds it.** With
+Regional oversight enabled, an application at `new` is either still waiting
+on the Regional Manager or already past them and waiting on the Secretary —
+two different things the status column cannot distinguish, since a gate
+never moves it (S-209). `reviewStageLabel` (`workflow.ts`) says which,
+reading the same `application_transition` evidence `unmetGates` does, and
+both places that show "New" without anywhere else to say more now show it:
+the applications list carries a small "With the Regional Manager" / "With
+the Secretary" line under the status badge (`regionalReviewPassedIds`, one
+query for the whole page rather than one per row), and `[id].astro`'s
+timeline passes the same label into the "Submit" step's own detail, which
+used to read "With the Secretary" unconditionally the moment status reached
+`new`. Disabled, or once status has moved past `new` altogether, there is
+nothing more to say and neither shows anything extra.
+
 ## Nothing incomplete reaches the Board (S-608)
 
 Submission (S-304) already refuses an empty mandatory field, an unfiled
