@@ -14,9 +14,15 @@ import {
   type Payment,
 } from '@lib/payments/payments';
 import { formatMoney } from '@lib/payments/money';
+import {
+  checklistFor,
+  documentsForMember,
+  type MemberDocumentGroup,
+} from '@lib/documents/documents';
 
 const principal = Astro.locals.principal!;
 const canSeePayments = principal.permissions.has('payment.view');
+const canSeeDocuments = principal.permissions.has('document.view');
 // Officer feedback: who may turn a non-member customer into a membership
 // applicant is its own, narrower question than who may capture applications
 // generally — configurable on its own under Configuration -> Roles
@@ -76,10 +82,52 @@ const payments: Payment[] = canSeePayments
     : await paymentsForApplication(customer!.applicationId)
   : [];
 
+// Officer feedback: what has been filed for this person, everywhere it was
+// filed — a member can have more than one application on file (the founding
+// membership application plus any additional_account application since),
+// each carrying its own checklist; a customer only ever has the one. Only
+// what has actually been uploaded — the checklist's own Missing rows belong
+// on the application page, not this summary.
+const documentGroups: MemberDocumentGroup[] = canSeeDocuments
+  ? member
+    ? await documentsForMember(member.id, member.applicationId)
+    : customer!.applicationId
+      ? [
+          {
+            applicationId: customer!.applicationId,
+            applicationReference: customer!.applicationReference!,
+            entries: (
+              await checklistFor({ applicationId: customer!.applicationId })
+            ).filter(entry => entry.uploadedAt !== null),
+          },
+        ].filter(g => g.entries.length > 0)
+      : []
+  : [];
+
 const dateFormat = new Intl.DateTimeFormat('en-GB', {
   dateStyle: 'medium',
   timeStyle: 'short',
 });
+
+const DOCUMENT_STATE_LABELS: Record<string, string> = {
+  missing: 'Missing',
+  uploaded: 'Uploaded',
+  under_review: 'Under review',
+  verified: 'Verified',
+  rejected: 'Rejected',
+  expired: 'Expired',
+};
+const DOCUMENT_STATE_CLASSES: Record<string, string> = {
+  missing:
+    'bg-neutral-200 text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200',
+  uploaded: 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200',
+  under_review:
+    'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200',
+  verified:
+    'bg-mint-200 text-neutral-800 dark:bg-mint-900 dark:text-neutral-100',
+  rejected: 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200',
+  expired: 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200',
+};
 
 // Phone values are stored in E.164; +23057891234 is not what anyone wants to
 // read off a screen.
@@ -106,9 +154,17 @@ const applicationId = (member ?? customer)!.applicationId;
 const sourceApplication = applicationId
   ? await loadApplication(applicationId)
   : null;
-const otherParties = (sourceApplication?.parties ?? []).filter(
-  p => p.subject !== 'applicant'
-);
+// Officer feedback: a membership type that captures two nominees writes a
+// row for each the moment the form is drafted (saveDraft, capture.ts) — one
+// exists in application_party whether or not the officer ever filled it in.
+// Left in, an untouched Nominee 2 showed up here as a heading over nothing.
+// Filtered out by whether anything was actually entered, not by presence of
+// the row — and before subjectOccurrences below, so a member with only
+// Nominee 1 filled in reads "Nominee", not "Nominee 1" for the one that
+// remains.
+const otherParties = (sourceApplication?.parties ?? [])
+  .filter(p => p.subject !== 'applicant')
+  .filter(p => Object.values(p.values).some(value => value.trim() !== ''));
 const subjectOccurrences = otherParties.reduce<Record<string, number>>(
   (counts, p) => {
     counts[p.subject] = (counts[p.subject] ?? 0) + 1;
@@ -311,6 +367,103 @@ const pageTitle = member ? member.memberNo : name;
     </section>
 
     {
+      canSeeDocuments && (
+        <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+          <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+            Documents
+          </h2>
+          {documentGroups.length === 0 ? (
+            <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+              Nothing filed for {member ? 'this member' : 'them'} yet.
+            </p>
+          ) : (
+            <div class="mt-4 space-y-5">
+              {documentGroups.map(group => (
+                <div>
+                  {documentGroups.length > 1 && (
+                    <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-200">
+                      {group.applicationReference}
+                    </h3>
+                  )}
+                  <ul class="mt-2 space-y-3">
+                    {group.entries.map(entry => (
+                      <li class="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+                        <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+                          <span class="font-medium text-neutral-800 dark:text-neutral-100">
+                            {entry.documentName}
+                          </span>
+                          <span
+                            class={`rounded px-1.5 py-0.5 text-xs ${DOCUMENT_STATE_CLASSES[entry.state]}`}
+                          >
+                            {DOCUMENT_STATE_LABELS[entry.state]}
+                          </span>
+                        </div>
+                        <p class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-neutral-500 dark:text-neutral-400">
+                          <span>
+                            {entry.fileName} · filed by {entry.uploadedByName}{' '}
+                            on {dateFormat.format(entry.uploadedAt!)}
+                            {entry.versionCount > 1 &&
+                              ` · version ${entry.versionCount}`}
+                            {entry.verifiedByName &&
+                              ` · verified by ${entry.verifiedByName}`}
+                            {entry.expiresAt &&
+                              ` · expires ${dateFormat.format(entry.expiresAt)}`}
+                          </span>
+                          <button
+                            type="button"
+                            data-view-document
+                            data-document-id={entry.documentId}
+                            class="font-medium text-neutral-700 underline hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-neutral-100"
+                          >
+                            View
+                          </button>
+                        </p>
+                        {entry.rejectionReason && (
+                          <p class="mt-2 rounded-lg border border-red-300 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:text-red-200">
+                            Rejected: {entry.rejectionReason}
+                          </p>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )
+    }
+
+    {
+      canSeeDocuments && (
+        <dialog
+          id="document-viewer-dialog"
+          class="fixed top-1/2 left-1/2 m-0 h-[85vh] w-[95vw] max-w-3xl -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-neutral-200 bg-white p-0 text-neutral-800 backdrop:bg-neutral-900/50 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100"
+        >
+          <div class="flex items-center justify-between gap-3 border-b border-neutral-200 px-5 py-3 dark:border-neutral-800">
+            <p
+              data-viewer-name
+              class="truncate text-sm font-semibold text-neutral-800 dark:text-neutral-100"
+            />
+            <button
+              type="button"
+              data-viewer-close
+              class="shrink-0 rounded-lg border border-neutral-300 px-2.5 py-1 text-xs font-medium text-neutral-600 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-300 dark:hover:bg-neutral-800"
+            >
+              Close
+            </button>
+          </div>
+          <div
+            data-viewer-body
+            class="flex h-[calc(85vh-3rem)] items-center justify-center overflow-auto p-4 text-sm"
+          >
+            Loading…
+          </div>
+        </dialog>
+      )
+    }
+
+    {
       canSeePayments && (
         <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
           <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
@@ -360,3 +513,113 @@ const pageTitle = member ? member.memberNo : name;
     }
   </div>
 </DashboardLayout>
+
+<script>
+  // S-403, S-404 · Viewing a filed document — identical to the application
+  // pages' own script for the same endpoint (documents.ts is generic across
+  // application kinds, and this reads it back the same way regardless of
+  // which application actually filed it).
+  //
+  // Officer feedback: this used to be window.open(url), which handed the
+  // browser a SharePoint download link — a save-to-disk prompt on some
+  // devices before the file could even be looked at. An <img> or a PDF's own
+  // <iframe> viewer renders the same URL in place instead, closed with an
+  // explicit Close rather than left to guess when a new tab was done with it.
+  const viewerDialog = document.getElementById(
+    'document-viewer-dialog'
+  ) as HTMLDialogElement | null;
+  const viewerName =
+    viewerDialog?.querySelector<HTMLElement>('[data-viewer-name]');
+  const viewerBody =
+    viewerDialog?.querySelector<HTMLElement>('[data-viewer-body]');
+  const viewerClose = viewerDialog?.querySelector<HTMLButtonElement>(
+    '[data-viewer-close]'
+  );
+
+  if (viewerDialog && viewerName && viewerBody && viewerClose) {
+    viewerClose.addEventListener('click', () => viewerDialog.close());
+    // Emptying the body on close, not just on the next open: a filled
+    // <iframe> or <img> left behind keeps loading, or keeps playing, in a
+    // dialog that is supposedly shut.
+    viewerDialog.addEventListener('close', () => {
+      viewerBody.replaceChildren();
+    });
+
+    for (const viewButton of document.querySelectorAll<HTMLButtonElement>(
+      '[data-view-document]'
+    )) {
+      viewButton.addEventListener('click', async () => {
+        const documentId = viewButton.dataset.documentId;
+        if (!documentId) return;
+
+        const original = viewButton.textContent;
+        viewButton.disabled = true;
+        viewButton.textContent = 'Opening…';
+
+        try {
+          const response = await fetch('/api/v1/documents/view-url', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ documentId }),
+          });
+          const body = await response.json();
+          if (!response.ok) {
+            throw new Error(
+              body?.error?.message ?? 'The file could not be opened.'
+            );
+          }
+          const {
+            url,
+            fileName,
+            contentType,
+          }: { url: string; fileName: string; contentType: string } = body.data;
+
+          viewerName.textContent = fileName;
+          viewerBody.replaceChildren();
+          if (
+            contentType.startsWith('image/') &&
+            contentType !== 'image/heic'
+          ) {
+            const img = document.createElement('img');
+            img.src = url;
+            img.alt = fileName;
+            img.className = 'max-h-full max-w-full object-contain';
+            viewerBody.appendChild(img);
+          } else if (contentType === 'application/pdf') {
+            const frame = document.createElement('iframe');
+            frame.src = url;
+            frame.title = fileName;
+            frame.className = 'h-full w-full';
+            viewerBody.appendChild(frame);
+          } else {
+            // HEIC (no browser renders it inline) and anything unforeseen:
+            // still openable, just not previewable here.
+            const p = document.createElement('p');
+            p.className = 'text-center text-neutral-600 dark:text-neutral-300';
+            p.textContent = "This file type can't be previewed here.";
+            const link = document.createElement('a');
+            link.href = url;
+            link.target = '_blank';
+            link.rel = 'noopener';
+            link.className = 'mt-2 inline-block underline';
+            link.textContent = 'Open in a new tab';
+            const wrap = document.createElement('div');
+            wrap.className = 'text-center';
+            wrap.append(p, link);
+            viewerBody.appendChild(wrap);
+          }
+          viewerDialog.showModal();
+        } catch (error) {
+          window.alert(
+            error instanceof Error
+              ? error.message
+              : 'The file could not be opened.'
+          );
+        } finally {
+          viewButton.disabled = false;
+          viewButton.textContent = original;
+        }
+      });
+    }
+  }
+</script>

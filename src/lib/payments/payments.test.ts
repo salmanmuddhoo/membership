@@ -1707,6 +1707,81 @@ describe('S-613: paying to open an account for an existing member', () => {
 
       expect(await payments.feeVersionFor(payment)).toBeNull();
     });
+
+    // Officer feedback: the receipt named the application or the member,
+    // never the person who actually paid.
+    it('carries the applicant’s own name', async () => {
+      const { payments } = await load();
+      const application = await newApplication();
+      // startApplication already seeds an empty applicant row for the form
+      // to render into (insertApplication, capture.ts) — updated, not
+      // inserted again.
+      await run(
+        appUrl,
+        `update application_party set values = $2
+          where application_id = $1 and subject = 'applicant' and ordinal = 1`,
+        [application.id, JSON.stringify({ name: 'Aisha', surname: 'Ramtoola' })]
+      );
+
+      const payment = await payments.recordPayment(
+        { applicationId: application.id, method: 'cash', amounts: FULL },
+        principalFor(officer)
+      );
+
+      expect(payment.applicantName).toBe('Aisha Ramtoola');
+      expect((await payments.loadPayment(payment.id))!.applicantName).toBe(
+        'Aisha Ramtoola'
+      );
+    });
+
+    // An additional_account application captures no applicant party of its
+    // own (S-613) — the person is the existing member it names, whose own
+    // name lives on the founding application instead. Mirrors the same
+    // fallback paymentsForMember already relies on.
+    it('falls back to the member’s own founding application for an additional-account payment', async () => {
+      const { capture, payments } = await load();
+      const type = await run(
+        appUrl,
+        `select id from membership_type where code = 'individual'`
+      );
+      const founding = await run(
+        appUrl,
+        `insert into membership_application (membership_type_id, captured_by)
+         values ($1, $2) returning id`,
+        [type.rows[0].id, officer.userId]
+      );
+      await run(
+        appUrl,
+        `insert into application_party (application_id, subject, ordinal, values)
+         values ($1, 'applicant', 1, $2)`,
+        [
+          founding.rows[0].id,
+          JSON.stringify({ name: 'Yusuf', surname: 'Beebeejaun' }),
+        ]
+      );
+      const member = await run(
+        appUrl,
+        `insert into member (application_id, membership_type_id, status)
+         values ($1, $2, 'active') returning id`,
+        [founding.rows[0].id, type.rows[0].id]
+      );
+
+      const application = await capture.startAdditionalAccountApplication(
+        member.rows[0].id,
+        [hsaId],
+        officer
+      );
+      const payment = await payments.recordAccountOpeningPayment(
+        {
+          applicationId: application.id,
+          method: 'cash',
+          amounts: { [hsaId]: '1000.00' },
+        },
+        principalFor(officer)
+      );
+
+      expect(payment.applicantName).toBe('Yusuf Beebeejaun');
+    });
   });
 
   describe('refunding', () => {

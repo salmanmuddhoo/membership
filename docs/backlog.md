@@ -2082,6 +2082,75 @@ permission the account buttons and receipts already require.
 
 ---
 
+### Seven more items: a member's own documents, two missing counts, an applicant's name, and two access-control questions ✅
+
+**The print page's signature box, on inspection, was already exactly this.**
+Officer feedback asked for a full-screen signing box with Clear and Save,
+closing back to the document on save — `print.astro`'s `.sig-modal` already
+does all of it (a fixed, full-viewport overlay; Clear resets the canvas;
+"Use this signature" writes the drawing onto the signature line and closes
+the modal), built across two earlier rounds (mobile drag, then unreachable
+buttons). No change made; flagged rather than silently closed, the same
+lesson the account-button colours taught two rounds ago — a report that
+sounds like a live bug is not always the same bug as last time's.
+
+**A member's own page had nowhere to see what had been filed for them —
+every document lived only on whichever application filed it, and a member
+can hold more than one (the founding membership application, plus any
+additional_account application approved since, S-612).**
+`documentsForMember` (documents.ts) walks every application that has ever
+filed something for a member and groups what it finds — the same
+`existing_member_id` trace `transactionsForAccount` already uses to find
+which application opened an account. A draft additional_account application
+is excluded outright: S-614's own privacy rule keeps a draft to its
+capturing officer, and a member's own page is not the exception. A customer
+has only ever the one application, so no grouping is needed there. Both
+pages reuse the existing document-viewer dialog and script verbatim.
+
+**The Applications page had no sense of how many applications there
+actually are — only however many rows a capped query happened to fetch.**
+`countApplications` (capture.ts) is a real `count(*)`, not `.length` on a
+`limit`-bounded list — excludes draft (an officer's own work in progress)
+and approved (already on the Members page) the same way `listApplications`
+itself does, and respects the same status filter when one is set. Shown as
+a badge beside the "Applications" heading; hidden when the filter is
+Draft specifically, where it would otherwise always read 0 beside a table
+that is, in fact, showing rows.
+
+**A membership type that captures two nominees writes a row for both the
+moment the form is drafted — one exists whether or not the officer ever
+filled it in, and Nominee 2 showed up on the member's page as a heading
+over nothing.** The member detail page now filters out a party with
+nothing entered before it counts occurrences for the "Nominee 2" label, not
+after — so a member with only Nominee 1 filled in reads "Nominee", not
+"Nominee 1" for the one that remains.
+
+**The payment receipt named the application or the member, never the
+person who actually paid.** `PAYMENT_SELECT` (payments.ts) now resolves the
+applicant's own name three ways, most specific first: the paid
+application's own applicant party (a membership or customer_account
+application captures one directly); failing that, an additional_account
+application names an existing member instead of capturing an applicant of
+its own (S-613), so it falls through to that member's founding application;
+failing that, `member_id` set directly (no insert populates it today, but
+the column and the fallback exist for when one does). `receipts/[id].astro`
+now reads "Jane Doe · AB0001" rather than just the reference or number.
+
+**Two questions, answered rather than built: can access be restricted to
+an IP allow-list, or to a time-of-day window, both configurable by a system
+administrator?** Both are technically straightforward — `middleware.ts`
+already runs on every request before a page is reached, and already
+extracts the client's own address (`clientAddress`, currently used for the
+audit trail only, explicitly never for a decision) from `x-forwarded-for`.
+Not built: the real risk with either is locking out every officer,
+including whoever configured it, from a single wrong entry — an office on a
+shared or dynamic ISP address (common locally) could be refused without
+warning, and Mauritius keeps no DST, so a time window has one fixed offset
+to get right rather than two. Put to the operator rather than assumed;
+answer was to leave both for now.
+
+---
+
 # M7 — Legacy migration
 
 **Goal:** the existing register becomes members in this system, phase-wise —

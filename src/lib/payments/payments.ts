@@ -164,6 +164,10 @@ export interface Payment {
   applicationReference: string | null;
   memberId: string | null;
   memberNo: string | null;
+  // The applicant's own name, from the application that was actually paid
+  // for — empty if that application never captured one (shouldn't happen in
+  // practice; every kind of application captures an applicant).
+  applicantName: string;
   // Null for a payment against an additional_account application (S-613) —
   // see accountLines instead, which is empty for every other payment.
   feeVersionId: string | null;
@@ -206,7 +210,23 @@ const PAYMENT_SELECT = `
          m.member_no,
          u.display_name as recorded_by_name, u.email as recorded_by_email,
          p.recorded_by_role,
-         v.display_name as voided_by_name
+         v.display_name as voided_by_name,
+         -- Officer feedback: the receipt named the application or the
+         -- member, never the person who actually paid. Found three ways,
+         -- most specific first: the paid application's own applicant
+         -- (a membership or customer_account application captures one
+         -- directly); failing that, an additional_account application
+         -- names an existing member instead (S-613) rather than capturing
+         -- an applicant of its own, so it falls through to THEIR founding
+         -- application; failing that, member_id set directly (no insert
+         -- populates it today, but the column and this join exist for when
+         -- one does) falls through the same way, mirroring the fallback
+         -- paymentsForMember already relies on.
+         trim(coalesce(pp_direct.values->>'name',
+                        pp_via_member.values->>'name', '') || ' '
+              || coalesce(pp_direct.values->>'surname',
+                           pp_via_member.values->>'surname', '')
+             ) as applicant_name
     from payment p
     join receipt_number r on r.id = p.receipt_number_id
     join app_user u       on u.id = p.recorded_by
@@ -214,6 +234,14 @@ const PAYMENT_SELECT = `
     left join receipt_number orig     on orig.id = orig_p.receipt_number_id
     left join membership_application a on a.id = p.application_id
     left join member m                 on m.id = p.member_id
+    left join application_party pp_direct
+      on pp_direct.application_id = a.id
+     and pp_direct.subject = 'applicant' and pp_direct.ordinal = 1
+    left join member existing_em on existing_em.id = a.existing_member_id
+    left join application_party pp_via_member
+      on pp_via_member.application_id
+         = coalesce(existing_em.application_id, m.application_id)
+     and pp_via_member.subject = 'applicant' and pp_via_member.ordinal = 1
     left join app_user v               on v.id = p.voided_by
 `;
 
@@ -239,6 +267,7 @@ interface PaymentRow {
   refunds_receipt_no: string | null;
   application_reference: string | null;
   member_no: string | null;
+  applicant_name: string | null;
   recorded_by_name: string;
   recorded_by_email: string;
   recorded_by_role: string;
@@ -302,6 +331,7 @@ function assemble(
     applicationReference: p.application_reference,
     memberId: p.member_id,
     memberNo: p.member_no,
+    applicantName: p.applicant_name || '',
     feeVersionId: p.fee_version_id,
     method: p.method,
     methodReference: p.method_reference,

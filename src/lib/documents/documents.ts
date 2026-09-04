@@ -399,6 +399,68 @@ export async function checklistFor(options: {
   return entries;
 }
 
+// Officer feedback: a member's own page had nowhere to see what had been
+// filed for them — every document lived only on whichever application filed
+// it. A member can have more than one: the founding membership application
+// (S-308) files the bulk of it, and each additional_account application
+// approved since (S-612) carries its own checklist for whatever it opened —
+// mirrors how transactionsForAccount (payments.ts) already traces an
+// account back to the application that opened it, the same reason.
+//
+// Grouped by application rather than flattened, so two applications that
+// both happened to require, say, a utility bill are never shown as if one
+// had two. Draft applications are excluded even though existing_member_id
+// is set as soon as one starts: a draft is the capturing officer's own work
+// in progress (S-614's own privacy rule), not yet something the member's own
+// page should surface to every other officer who can view documents.
+export interface MemberDocumentGroup {
+  applicationId: string;
+  applicationReference: string;
+  entries: ChecklistEntry[];
+}
+
+export async function documentsForMember(
+  memberId: string,
+  foundingApplicationId: string | null
+): Promise<MemberDocumentGroup[]> {
+  const additional = await query<{ id: string; reference: string }>(
+    `select id, reference from membership_application
+      where existing_member_id = $1 and application_kind = 'additional_account'
+        and status <> 'draft'
+      order by created_at`,
+    [memberId]
+  );
+
+  const applications: { id: string; reference: string }[] = [];
+  if (foundingApplicationId) {
+    const founding = await query<{ reference: string }>(
+      `select reference from membership_application where id = $1`,
+      [foundingApplicationId]
+    );
+    if (founding.rowCount) {
+      applications.push({
+        id: foundingApplicationId,
+        reference: founding.rows[0].reference,
+      });
+    }
+  }
+  applications.push(...additional.rows);
+
+  const groups = await Promise.all(
+    applications.map(async application => ({
+      applicationId: application.id,
+      applicationReference: application.reference,
+      // Only what has actually been filed — the checklist's Missing rows
+      // are what the application page itself is for, not this summary.
+      entries: (await checklistFor({ applicationId: application.id })).filter(
+        entry => entry.uploadedAt !== null
+      ),
+    }))
+  );
+
+  return groups.filter(g => g.entries.length > 0);
+}
+
 /** Whether every required item is Verified — and nothing else may assert it. */
 export function isDocumentComplete(entries: ChecklistEntry[]): boolean {
   return entries
