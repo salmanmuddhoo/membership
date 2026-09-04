@@ -108,7 +108,13 @@ const isReprint = prints.count > 0;
 const anythingRefundable = refundable.some(c => Number(c.refundable) > 0);
 const refunds = related.filter(p => p.refundsId === payment!.id && !p.voidedAt);
 
-const owner = payment.applicationReference ?? payment.memberNo ?? '—';
+// Officer feedback: this named the application or the member, never the
+// person who actually paid — the applicant's own name, with the reference
+// that ties it back to a specific record.
+const owner =
+  [payment.applicantName, payment.applicationReference ?? payment.memberNo]
+    .filter(Boolean)
+    .join(' · ') || '—';
 const ownerHref = payment.applicationId
   ? `/applications/${payment.applicationId}`
   : payment.memberId

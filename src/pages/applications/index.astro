@@ -2,6 +2,7 @@
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import {
   ApplicationError,
+  countApplications,
   deleteDraftApplication,
   listApplications,
 } from '@lib/applications/capture';
@@ -80,13 +81,19 @@ const deletedCount = Number(Astro.url.searchParams.get('deleted') ?? '');
 const created = Astro.url.searchParams.get('created');
 
 const filter = Astro.url.searchParams.get('status') ?? '';
-const [applications, types, chain] = await Promise.all([
+const [applications, types, chain, nonDraftCount] = await Promise.all([
   listApplications({
     ...(filter ? { statuses: [filter] } : {}),
     viewerUserId: principal.userId,
   }),
   listMembershipTypes(),
   activeChain(WORKFLOW_CODE),
+  // Meaningless filtered to Draft specifically — countApplications excludes
+  // every draft regardless, so that combination would always read 0 beside
+  // a table that is, in fact, showing rows.
+  filter === 'draft'
+    ? null
+    : countApplications(filter ? { statuses: [filter] } : {}),
 ]);
 
 // S-611 follow-up: 'new' means two different things once Regional oversight
@@ -209,9 +216,16 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     >
       <div class="flex flex-wrap items-center justify-between gap-2">
         <h2
-          class="text-lg font-semibold text-neutral-800 dark:text-neutral-100"
+          class="flex items-center gap-2 text-lg font-semibold text-neutral-800 dark:text-neutral-100"
         >
           Applications
+          {
+            nonDraftCount !== null && (
+              <span class="rounded-full bg-neutral-200 px-2 py-0.5 text-xs font-medium text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
+                {nonDraftCount}
+              </span>
+            )
+          }
         </h2>
         <form method="get" class="flex items-center gap-2">
           <label for="status" class="sr-only">Filter by status</label>

@@ -1466,3 +1466,27 @@ export async function listApplications(options: {
     updatedAt: r.updated_at,
   }));
 }
+
+// Officer feedback: the Applications section had no sense of how many
+// applications there actually are — only the (capped) rows a query happened
+// to fetch. A separate count() rather than reading listApplications'
+// row.length, which is bounded by its own `limit` and would silently
+// undercount once there are more applications than that.
+//
+// Drafts are excluded unconditionally — they are the capturing officer's own
+// work in progress (listApplications' own viewerUserId rule), not a count
+// every officer should read as "how many applications exist" — the same
+// reason 'approved' is excluded too: those already live on the Members page.
+export async function countApplications(
+  options: { statuses?: string[] } = {}
+): Promise<number> {
+  const result = await query<{ n: string }>(
+    `select count(*)::int as n
+       from membership_application a
+      where ($1::text[] is null or a.status = any($1::text[]))
+        and a.status != 'draft'
+        and a.status != 'approved'`,
+    [options.statuses ?? null]
+  );
+  return Number(result.rows[0].n);
+}

@@ -1271,6 +1271,62 @@ describe('the application list staff work from', () => {
     });
     expect(forColleague.find(a => a.id === id)).toBeDefined();
   });
+
+  // Officer feedback: the Applications page's own count of "how many
+  // applications there is" — draft and approved both excluded, the same
+  // universe listApplications itself shows (drafts are the capturing
+  // officer's own work in progress; approved ones already live on the
+  // Members page).
+  describe('countApplications: how many, once drafts and approvals are set aside', () => {
+    it('excludes drafts and approved applications from the count', async () => {
+      const { capture } = await load();
+      const before = await capture.countApplications({});
+
+      const draft = await capture.startApplication('individual', officer);
+      expect(await capture.countApplications({})).toBe(before);
+
+      await run(
+        appUrl,
+        `update membership_application set status = 'submitted_for_review'
+          where id = $1`,
+        [draft.id]
+      );
+      expect(await capture.countApplications({})).toBe(before + 1);
+
+      await run(
+        appUrl,
+        `update membership_application set status = 'approved' where id = $1`,
+        [draft.id]
+      );
+      expect(await capture.countApplications({})).toBe(before);
+    });
+
+    it('respects a status filter, still excluding drafts and approvals', async () => {
+      const { capture } = await load();
+      const { id } = await capture.startApplication('individual', officer);
+      await run(
+        appUrl,
+        `update membership_application set status = 'rejected' where id = $1`,
+        [id]
+      );
+
+      const rejectedCount = await capture.countApplications({
+        statuses: ['rejected'],
+      });
+      const rejectedRows = await capture.listApplications({
+        statuses: ['rejected'],
+        limit: 1000,
+      });
+      expect(rejectedCount).toBe(rejectedRows.length);
+      expect(rejectedRows.some(a => a.id === id)).toBe(true);
+
+      // Asked for by name, draft and approved still count as zero.
+      expect(await capture.countApplications({ statuses: ['draft'] })).toBe(0);
+      expect(await capture.countApplications({ statuses: ['approved'] })).toBe(
+        0
+      );
+    });
+  });
 });
 
 describe('deleting a draft that is no longer needed', () => {

@@ -308,6 +308,140 @@ describe('S-612: the checklist for an additional-account application comes from 
   });
 });
 
+// Officer feedback: the Members page's own member detail page had nowhere
+// to see what had been filed for that member — every document lived only
+// on whichever application filed it, and a member can have more than one
+// (the founding membership application, plus any additional_account
+// application approved since, S-612).
+describe('documentsForMember: everything filed for a member, grouped by application', () => {
+  it('groups by application, only what was actually filed, and excludes a draft application entirely', async () => {
+    const { documents } = await load();
+
+    const type = await run(
+      appUrl,
+      `select id from membership_type where code = 'individual'`
+    );
+    const founding = await run(
+      appUrl,
+      `insert into membership_application (membership_type_id, captured_by)
+       values ($1, $2) returning id`,
+      [type.rows[0].id, officer.userId]
+    );
+    const foundingId = founding.rows[0].id;
+    const member = await run(
+      appUrl,
+      `insert into member (membership_type_id, application_id, status)
+       values ($1, $2, 'active') returning id`,
+      [type.rows[0].id, foundingId]
+    );
+    const memberId = member.rows[0].id;
+
+    // Filed against the founding application, and against it alone so far.
+    const foundingUpload = await documents.beginUpload(
+      {
+        applicationId: foundingId,
+        documentTypeId: idCardTypeId,
+        subject: 'applicant',
+        fileName: 'id-founding.jpg',
+        contentType: 'image/jpeg',
+        sizeBytes: 100,
+      },
+      officer
+    );
+    drive.files.set(foundingUpload.ticket.itemPath, {
+      id: 'graph-founding',
+      size: 100,
+    });
+    await documents.commitUpload(foundingUpload.versionId, officer);
+
+    const noGroups = await documents.documentsForMember(memberId, null);
+    expect(noGroups).toEqual([]);
+
+    const oneGroup = await documents.documentsForMember(memberId, foundingId);
+    expect(oneGroup).toHaveLength(1);
+    expect(oneGroup[0].applicationId).toBe(foundingId);
+    expect(oneGroup[0].entries.map(e => e.documentCode)).toContain('id_card');
+    // Missing rows are what the application page itself shows — not this.
+    expect(oneGroup[0].entries.every(e => e.state !== 'missing')).toBe(true);
+
+    // A second application for the same member, still a draft: what it has
+    // filed must not appear yet — a draft is the capturing officer's own
+    // work in progress, not something the member's own page hands to every
+    // other officer who can view documents.
+    const additional = await run(
+      appUrl,
+      `insert into membership_application
+         (application_kind, existing_member_id, captured_by, status)
+       values ('additional_account', $1, $2, 'draft')
+       returning id`,
+      [memberId, officer.userId]
+    );
+    const additionalId = additional.rows[0].id;
+
+    const checklist = await run(
+      appUrl,
+      `select id from document_checklist where code = 'msa_opening'`
+    );
+    const accountType = await runAsConfigurator(
+      appUrl,
+      `insert into account_type
+         (code, name, category, minimum_opening_amount, checklist_id,
+          is_membership_default)
+       values ('hsa_member_docs_test', 'HSA (member documents test)',
+               'savings', 1000, '${checklist.rows[0].id}', false)
+       returning id`
+    );
+    await run(
+      appUrl,
+      `insert into application_account_selection
+         (application_id, account_type_id)
+       values ($1, $2)`,
+      [additionalId, accountType.rows[0].id]
+    );
+
+    const additionalUpload = await documents.beginUpload(
+      {
+        applicationId: additionalId,
+        documentTypeId: idCardTypeId,
+        subject: 'applicant',
+        fileName: 'id-additional.jpg',
+        contentType: 'image/jpeg',
+        sizeBytes: 100,
+      },
+      officer
+    );
+    drive.files.set(additionalUpload.ticket.itemPath, {
+      id: 'graph-additional',
+      size: 100,
+    });
+    await documents.commitUpload(additionalUpload.versionId, officer);
+
+    const stillOneGroup = await documents.documentsForMember(
+      memberId,
+      foundingId
+    );
+    expect(stillOneGroup).toHaveLength(1);
+
+    // Submitted — out of the officer's hands, on the member's page too.
+    await run(
+      appUrl,
+      `update membership_application set status = 'new' where id = $1`,
+      [additionalId]
+    );
+
+    const twoGroups = await documents.documentsForMember(memberId, foundingId);
+    expect(twoGroups.map(g => g.applicationId).sort()).toEqual(
+      [foundingId, additionalId].sort()
+    );
+    const additionalGroup = twoGroups.find(
+      g => g.applicationId === additionalId
+    )!;
+    expect(additionalGroup.entries.map(e => e.documentCode)).toContain(
+      'id_card'
+    );
+  });
+});
+
 // S-614: a customer_account application reuses the Individual type's own
 // field configuration to capture an applicant (S-614 phase 2), but its
 // checklist reads Individual's non_member_checklist_id (migration 0028) —
