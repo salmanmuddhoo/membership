@@ -1865,6 +1865,39 @@ picker both already read `listChecklists()` fresh, the same list this
 page shows — so nothing else needed to change for the new checklist to
 reach either KYC section.
 
+### Two popups, actually centred and actually visible ✅
+
+**A filed image or PDF showed as broken in the new document viewer.**
+`vercel.json`'s Content-Security-Policy allowed `<img>`/`<iframe>` sources
+from `'self'` only — never updated for the viewer dialog's own `<img>`/
+`<iframe>` pointing at SharePoint's `@microsoft.graph.downloadUrl`, which
+the browser silently refused to load. `img-src` and `frame-src` both gain
+`https://*.sharepoint.com`, the same host `connect-src` already trusted for
+the upload transfer itself.
+
+**Neither popup was actually centred.** Tailwind v4's preflight resets
+`margin: 0` on every element, including `<dialog>` — which is exactly what
+a browser's own centring trick for `showModal()` depends on
+(`margin: auto` with `inset-block: 0`). Both dialogs (the Members page's
+transactions popup, and the document viewer) now position themselves
+explicitly — `fixed`, `top-1/2 left-1/2`, shifted back by half their own
+size — rather than relying on a default the framework's own reset was
+quietly cancelling.
+
+**The transactions popup looked like a stray white box, not part of the
+app.** Restyled to match the light-grey card look every other section on
+this app already uses (`bg-neutral-100`/`dark:bg-neutral-950`), sized like
+a form rather than stretching to fill the screen.
+
+**Two more items reported as "not there" turned out not to be a code
+problem: Production hadn't been promoted.** `member.convert` (migration 0031) and the coloured account buttons were both already correct on
+`main` — `docs/environments.md`'s own promotion step
+(`main` → `production`) had not run since PR #10, so neither database
+migration nor months of front-end work had ever reached the Production
+deployment or its database. Not something a further code change fixes;
+recorded here since it is exactly the kind of "I can't find it" report
+this file exists to explain, not just the ones that turn out to be bugs.
+
 ---
 
 # M7 — Legacy migration
