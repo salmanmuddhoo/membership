@@ -21,10 +21,10 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium' });
 function accountButtonClasses(account: MemberListAccount): string {
   const key = `${account.code} ${account.name}`.toLowerCase();
   if (key.includes('hsa')) {
-    return 'bg-neutral-300 text-neutral-800 dark:bg-neutral-600 dark:text-neutral-100';
+    return 'bg-blue-600 text-white dark:bg-blue-500';
   }
   if (key.includes('invest')) {
-    return 'bg-blue-600 text-white dark:bg-blue-500';
+    return 'bg-rose-200 text-rose-900 dark:bg-rose-300 dark:text-rose-950';
   }
   if (key.includes('shares') || key.includes('msa')) {
     return 'bg-amber-400 text-neutral-900 dark:bg-amber-500 dark:text-neutral-900';
@@ -125,28 +125,19 @@ function accountButtonClasses(account: MemberListAccount): string {
                         <div class="flex flex-wrap gap-1.5">
                           {m.accountBadges.map(account =>
                             canSeePayments ? (
-                              <details
-                                class="inline-block"
+                              <button
+                                type="button"
                                 data-account-id={account.id}
+                                data-account-name={account.name}
+                                data-account-no={account.no}
+                                class:list={[
+                                  'cursor-pointer rounded-md px-2 py-1 text-xs font-semibold whitespace-nowrap',
+                                  accountButtonClasses(account),
+                                ]}
+                                title={account.name}
                               >
-                                <summary
-                                  class:list={[
-                                    'cursor-pointer list-none rounded-md px-2 py-1 text-xs font-semibold whitespace-nowrap',
-                                    accountButtonClasses(account),
-                                  ]}
-                                  title={account.name}
-                                >
-                                  {account.no}
-                                </summary>
-                                <div class="mt-1 rounded-lg border border-neutral-200 bg-white p-2 text-xs text-neutral-600 shadow-sm dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300">
-                                  <p class="font-medium text-neutral-800 dark:text-neutral-100">
-                                    {account.name}
-                                  </p>
-                                  <p data-deposit class="mt-0.5">
-                                    Loading…
-                                  </p>
-                                </div>
-                              </details>
+                                {account.no}
+                              </button>
                             ) : (
                               <span
                                 class:list={[
@@ -170,6 +161,41 @@ function accountButtonClasses(account: MemberListAccount): string {
         )
       }
     </section>
+
+    {
+      canSeePayments && (
+        <dialog
+          id="account-transactions-dialog"
+          class="w-full max-w-md rounded-2xl border border-neutral-200 bg-white p-0 text-neutral-800 backdrop:bg-neutral-900/50 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100"
+        >
+          <div class="flex items-center justify-between gap-3 border-b border-neutral-200 px-5 py-3 dark:border-neutral-800">
+            <div>
+              <p
+                data-dialog-name
+                class="text-sm font-semibold text-neutral-800 dark:text-neutral-100"
+              />
+              <code
+                data-dialog-no
+                class="text-xs text-neutral-500 dark:text-neutral-400"
+              />
+            </div>
+            <button
+              type="button"
+              data-dialog-close
+              class="rounded-lg border border-neutral-300 px-2.5 py-1 text-xs font-medium text-neutral-600 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-300 dark:hover:bg-neutral-800"
+            >
+              Close
+            </button>
+          </div>
+          <div
+            data-dialog-body
+            class="max-h-96 overflow-y-auto px-5 py-4 text-sm"
+          >
+            Loading…
+          </div>
+        </dialog>
+      )
+    }
   </div>
 </DashboardLayout>
 
@@ -182,53 +208,112 @@ function accountButtonClasses(account: MemberListAccount): string {
   )) {
     row.addEventListener('click', e => {
       const target = e.target as HTMLElement;
-      if (target.closest('a, button, details, summary')) return;
+      if (target.closest('a, button')) return;
       const href = row.dataset.href;
       if (href) window.location.assign(href);
     });
   }
 
-  // Officer feedback: clicking an HSA/Investment/etc. button gives that
-  // account's balance and when the deposit was made — read only, and only
-  // fetched once a box is actually opened, since most of the ones on a long
-  // list never will be.
-  for (const box of document.querySelectorAll<HTMLDetailsElement>(
-    '[data-account-id]'
-  )) {
-    const accountId = box.dataset.accountId;
-    const panel = box.querySelector<HTMLElement>('[data-deposit]');
-    if (!accountId || !panel) continue;
+  // Officer feedback: clicking an HSA/Investment/etc. button opens a popup
+  // with every credit and debit recorded against that account — read only,
+  // and closed explicitly rather than dismissed by clicking elsewhere, so a
+  // stray tap on the backdrop cannot be mistaken for reading it.
+  const dialog = document.getElementById(
+    'account-transactions-dialog'
+  ) as HTMLDialogElement | null;
+  const dialogName = dialog?.querySelector<HTMLElement>('[data-dialog-name]');
+  const dialogNo = dialog?.querySelector<HTMLElement>('[data-dialog-no]');
+  const dialogBody = dialog?.querySelector<HTMLElement>('[data-dialog-body]');
+  const dialogClose = dialog?.querySelector<HTMLButtonElement>(
+    '[data-dialog-close]'
+  );
 
-    let loaded = false;
-    box.addEventListener('toggle', () => {
-      if (!box.open || loaded) return;
-      loaded = true;
+  if (dialog && dialogName && dialogNo && dialogBody && dialogClose) {
+    dialogClose.addEventListener('click', () => dialog.close());
 
-      fetch(`/api/v1/accounts/${accountId}/deposit`)
-        .then(response => {
-          if (!response.ok) throw new Error(String(response.status));
-          return response.json();
-        })
-        .then((body: { data?: { deposit: null | Record<string, string> } }) => {
-          const deposit = body.data?.deposit;
-          if (!deposit) {
-            panel.textContent = 'No deposit recorded.';
-            return;
-          }
-          const amount = Number(deposit.amount).toLocaleString('en-US', {
-            minimumFractionDigits: 2,
-            maximumFractionDigits: 2,
+    const amountFormat = (amount: string) =>
+      Number(amount).toLocaleString('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
+    const dateFormat = (iso: string) =>
+      new Date(iso).toLocaleDateString('en-GB', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+      });
+
+    for (const button of document.querySelectorAll<HTMLButtonElement>(
+      '[data-account-id]'
+    )) {
+      button.addEventListener('click', () => {
+        const accountId = button.dataset.accountId;
+        if (!accountId) return;
+
+        dialogName.textContent = button.dataset.accountName ?? '';
+        dialogNo.textContent = button.dataset.accountNo ?? '';
+        dialogBody.textContent = 'Loading…';
+        dialog.showModal();
+
+        fetch(`/api/v1/accounts/${accountId}/transactions`)
+          .then(response => {
+            if (!response.ok) throw new Error(String(response.status));
+            return response.json();
+          })
+          .then(
+            (body: {
+              data?: {
+                transactions: {
+                  type: 'credit' | 'debit';
+                  amount: string;
+                  currency: string;
+                  occurredAt: string;
+                  description: string;
+                }[];
+              };
+            }) => {
+              const transactions = body.data?.transactions ?? [];
+              if (transactions.length === 0) {
+                dialogBody.textContent =
+                  'Nothing recorded against this account.';
+                return;
+              }
+
+              dialogBody.innerHTML = '';
+              const list = document.createElement('ul');
+              list.className = 'space-y-2';
+              for (const t of transactions) {
+                const item = document.createElement('li');
+                item.className =
+                  'flex items-center justify-between gap-3 rounded-lg border border-neutral-200 px-3 py-2 dark:border-neutral-800';
+                const left = document.createElement('div');
+                const description = document.createElement('p');
+                description.className =
+                  'font-medium text-neutral-800 dark:text-neutral-100';
+                description.textContent = t.description;
+                const date = document.createElement('p');
+                date.className =
+                  'text-xs text-neutral-500 dark:text-neutral-400';
+                date.textContent = dateFormat(t.occurredAt);
+                left.append(description, date);
+
+                const amount = document.createElement('span');
+                amount.className =
+                  t.type === 'debit'
+                    ? 'font-semibold tabular-nums text-red-700 dark:text-red-300'
+                    : 'font-semibold tabular-nums text-emerald-700 dark:text-emerald-300';
+                amount.textContent = `${t.type === 'debit' ? '−' : '+'}${t.currency} ${amountFormat(t.amount)}`;
+
+                item.append(left, amount);
+                list.appendChild(item);
+              }
+              dialogBody.appendChild(list);
+            }
+          )
+          .catch(() => {
+            dialogBody.textContent = 'Could not load this account.';
           });
-          const depositedAt = new Date(deposit.depositedAt).toLocaleDateString(
-            'en-GB',
-            { day: 'numeric', month: 'short', year: 'numeric' }
-          );
-          panel.textContent = `${deposit.currency} ${amount} · deposited ${depositedAt}`;
-        })
-        .catch(() => {
-          loaded = false;
-          panel.textContent = 'Could not load balance.';
-        });
-    });
+      });
+    }
   }
 </script>

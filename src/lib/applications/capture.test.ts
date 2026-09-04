@@ -1207,6 +1207,29 @@ describe('the application list staff work from', () => {
     );
   });
 
+  // Officer feedback: "if an application is of status Approved, it
+  // shouldn't be displayed anymore in the application page — it's already
+  // visible in the member page." Unconditional, not just the default view:
+  // even asking for it by name finds nothing.
+  it('never shows an approved application, even when asked for by status', async () => {
+    const { capture } = await load();
+    const { id } = await capture.startApplication('individual', officer);
+    await run(
+      appUrl,
+      `update membership_application set status = 'approved' where id = $1`,
+      [id]
+    );
+
+    expect(
+      (await capture.listApplications({})).find(a => a.id === id)
+    ).toBeUndefined();
+    expect(
+      (await capture.listApplications({ statuses: ['approved'] })).find(
+        a => a.id === id
+      )
+    ).toBeUndefined();
+  });
+
   // Officer feedback: "only the officer that filled in that form should see
   // those draft status applications" — every other status stays visible to
   // whoever already holds application.view, this narrows drafts alone.

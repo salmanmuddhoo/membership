@@ -1077,8 +1077,8 @@ describe('what a member has paid', () => {
 
 // Members page feedback: what one account has received, and when — traced
 // back to the founding payment for Shares/the MSA (the account carries no
-// link of its own; see depositForAccount's own comment).
-describe('depositForAccount', () => {
+// link of its own; see transactionsForAccount's own comment).
+describe('transactionsForAccount', () => {
   it("reads the Shares deposit from the member's founding payment", async () => {
     const { payments } = await load();
     const application = await newApplication();
@@ -1109,12 +1109,71 @@ describe('depositForAccount', () => {
       [member.rows[0].id, sharesType.rows[0].id]
     );
 
-    const deposit = await payments.depositForAccount(account.rows[0].id);
-    expect(deposit).toEqual({
-      amount: FULL.shares,
-      currency: 'MUR',
-      depositedAt: payment.receivedAt,
-    });
+    const transactions = await payments.transactionsForAccount(
+      account.rows[0].id
+    );
+    expect(transactions).toEqual([
+      {
+        type: 'credit',
+        amount: FULL.shares,
+        currency: 'MUR',
+        occurredAt: payment.receivedAt,
+        description: 'Opening deposit',
+      },
+    ]);
+  });
+
+  it('also lists a refund paid back against the opening deposit, as a debit', async () => {
+    const { payments } = await load();
+    const application = await newApplication();
+    const payment = await payments.recordPayment(
+      { applicationId: application.id, method: 'cash', amounts: FULL },
+      principalFor(officer)
+    );
+    await run(
+      appUrl,
+      `update membership_application set status = 'approved' where id = $1`,
+      [application.id]
+    );
+    const member = await run(
+      appUrl,
+      `insert into member (application_id, membership_type_id)
+       select $1, membership_type_id from membership_application where id = $1
+       returning id`,
+      [application.id]
+    );
+    const sharesType = await run(
+      appUrl,
+      `select id from account_type where code = 'shares'`
+    );
+    const account = await run(
+      appUrl,
+      `insert into account (member_id, account_type_id, is_membership_default)
+       values ($1, $2, true) returning id`,
+      [member.rows[0].id, sharesType.rows[0].id]
+    );
+    const refund = await payments.refundPayment(
+      {
+        paymentId: payment.id,
+        method: 'cash',
+        reason: 'Shares returned.',
+        amounts: { shares: '500.00' },
+      },
+      principalFor(treasurer)
+    );
+
+    const transactions = await payments.transactionsForAccount(
+      account.rows[0].id
+    );
+    expect(transactions).toEqual([
+      expect.objectContaining({ type: 'credit', amount: FULL.shares }),
+      expect.objectContaining({
+        type: 'debit',
+        amount: '500.00',
+        occurredAt: refund.receivedAt,
+        description: 'Refund',
+      }),
+    ]);
   });
 
   it('finds nothing for an account with no recorded deposit', async () => {
@@ -1143,14 +1202,18 @@ describe('depositForAccount', () => {
       [member.rows[0].id, sharesType.rows[0].id]
     );
 
-    expect(await payments.depositForAccount(account.rows[0].id)).toBeNull();
+    expect(await payments.transactionsForAccount(account.rows[0].id)).toEqual(
+      []
+    );
   });
 
-  it('returns null for an account that does not exist', async () => {
+  it('finds nothing for an account that does not exist', async () => {
     const { payments } = await load();
     expect(
-      await payments.depositForAccount('00000000-0000-0000-0000-000000000000')
-    ).toBeNull();
+      await payments.transactionsForAccount(
+        '00000000-0000-0000-0000-000000000000'
+      )
+    ).toEqual([]);
   });
 });
 

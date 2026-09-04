@@ -17,7 +17,11 @@ import { formatMoney } from '@lib/payments/money';
 
 const principal = Astro.locals.principal!;
 const canSeePayments = principal.permissions.has('payment.view');
-const canCapture = principal.permissions.has('application.capture');
+// Officer feedback: who may turn a non-member customer into a membership
+// applicant is its own, narrower question than who may capture applications
+// generally — configurable on its own under Configuration -> Roles
+// (migration 0031), not tied to application.capture.
+const canConvertCustomer = principal.permissions.has('member.convert');
 
 const { id } = Astro.params;
 // Two different tables (member, customer — migration 0027), and no way to
@@ -37,8 +41,8 @@ let error: string | null = null;
 // from nothing, and this one starts from what customer_account capture
 // already collected.
 if (Astro.request.method === 'POST' && customer) {
-  if (!canCapture) {
-    error = 'You do not have permission to capture applications.';
+  if (!canConvertCustomer) {
+    error = 'You do not have permission to do this.';
   } else {
     const form = await Astro.request.formData();
     if (String(form.get('intent') ?? '') === 'apply-for-membership') {
@@ -214,7 +218,7 @@ const pageTitle = member ? member.memberNo : name;
       }
 
       {
-        customer && customer.status === 'active' && canCapture && (
+        customer && customer.status === 'active' && canConvertCustomer && (
           <form
             method="post"
             class="mt-5 border-t border-neutral-200 pt-4 dark:border-neutral-800"

@@ -996,6 +996,49 @@ async function readChecklists(): Promise<DocumentChecklist[]> {
   }));
 }
 
+// Officer feedback: there was no way to start a new checklist at all — only
+// to add documents to one already seeded by a migration. A checklist is
+// itself configuration (S-208), the same as an account type or a role, so
+// creating one belongs here beside them rather than needing a migration
+// every time the Society wants a new KYC section. Once created it is
+// immediately selectable wherever a checklist is chosen — Account types'
+// own "Documents required to open" (admin/configuration/account-types.astro)
+// reads listChecklists() fresh, the same list this page shows.
+export async function createChecklist(
+  input: { code: string; name: string; description?: string },
+  actor: Actor
+): Promise<string> {
+  const code = input.code.trim().toLowerCase();
+  if (!CODE_PATTERN.test(code)) {
+    throw new ConfigError(
+      'A code must start with a letter and contain only lowercase letters, ' +
+        'digits and underscores.'
+    );
+  }
+  if (!input.name.trim()) throw new ConfigError('A name is required.');
+
+  return withConfigurationActor(actorFor(actor), async client => {
+    const existing = await client.query(
+      'select 1 from document_checklist where code = $1',
+      [code]
+    );
+    if (existing.rowCount) {
+      throw new ConfigError(
+        `A checklist with code ${code} already exists.`,
+        'conflict'
+      );
+    }
+
+    const result = await client.query<{ id: string }>(
+      `insert into document_checklist (code, name, description)
+       values ($1, $2, $3)
+       returning id`,
+      [code, input.name.trim(), input.description?.trim() ?? '']
+    );
+    return result.rows[0].id;
+  });
+}
+
 export async function addChecklistItem(
   checklistId: string,
   item: {

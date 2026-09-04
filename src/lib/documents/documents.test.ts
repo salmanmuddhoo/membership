@@ -1117,6 +1117,7 @@ describe('S-403: viewing a filed document', () => {
 
     const result = await documents.getDocumentViewUrl(begun.documentId);
     expect(result.fileName).toBe('bill.pdf');
+    expect(result.contentType).toBe('application/pdf');
     expect(result.url).toContain(encodeURIComponent(begun.ticket.itemPath));
   });
 
@@ -1286,5 +1287,59 @@ describe('undoing a mistaken upload, so it can be filed again', () => {
     await expect(
       documents.removeFiledDocument(documentId, asViewerOnly())
     ).rejects.toThrowError(/permission/);
+  });
+
+  // Officer feedback: once an application is out of the originating
+  // officer's hands, a filed document is a record of what was submitted —
+  // only 'draft' and 'returned' still allow removing one.
+  it('refuses once the application is no longer draft or returned', async () => {
+    const { documents } = await load();
+    const type = await run(
+      appUrl,
+      `select id from membership_type where code = 'individual'`
+    );
+    const submitted = await run(
+      appUrl,
+      `insert into membership_application
+         (membership_type_id, captured_by, status)
+       values ($1, $2, 'new') returning id`,
+      [type.rows[0].id, officer.userId]
+    );
+    const docType = await run(
+      appUrl,
+      `select id from document_type where code = 'utility_bill'`
+    );
+    const begun = await documents.beginUpload(
+      {
+        applicationId: submitted.rows[0].id,
+        documentTypeId: docType.rows[0].id,
+        subject: 'applicant',
+        fileName: 'bill-submitted.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 100,
+      },
+      officer
+    );
+    drive.files.set(begun.ticket.itemPath, {
+      id: 'graph-bill-submitted',
+      size: 100,
+    });
+    await documents.commitUpload(begun.versionId, officer);
+
+    await expect(
+      documents.removeFiledDocument(begun.documentId, asUploader())
+    ).rejects.toThrowError(/submitted/);
+
+    // Returned to the officer for correction — deletable again.
+    await run(
+      appUrl,
+      `update membership_application set status = 'returned' where id = $1`,
+      [submitted.rows[0].id]
+    );
+    const result = await documents.removeFiledDocument(
+      begun.documentId,
+      asUploader()
+    );
+    expect(result.state).toBe('missing');
   });
 });

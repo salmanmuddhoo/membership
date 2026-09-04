@@ -100,12 +100,15 @@ const regionalReviewPassed = regionalReviewEnabled
     )
   : new Set<string>();
 
+// No 'approved' entry: an approved application no longer appears in this
+// list at all (listApplications excludes it — it lives on the Members page
+// from then on), so offering it as a filter would only ever show "no
+// applications match."
 const STATUS_LABELS: Record<string, string> = {
   draft: 'Draft',
   new: 'New',
   submitted_for_review: 'Submit for Review',
   submitted_for_approval: 'Submit for Approval',
-  approved: 'Approved',
   rejected: 'Rejected',
   returned: 'Returned for Correction',
   abeyance: 'Abeyance',
@@ -117,8 +120,6 @@ const STATUS_CLASSES: Record<string, string> = {
   new: 'bg-mint-200 text-neutral-800 dark:bg-mint-900 dark:text-neutral-100',
   submitted_for_approval:
     'bg-mint-200 text-neutral-800 dark:bg-mint-900 dark:text-neutral-100',
-  approved:
-    'bg-mint-300 text-neutral-800 dark:bg-mint-800 dark:text-neutral-100',
   rejected: 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200',
   returned: 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200',
 };
