@@ -1889,14 +1889,50 @@ app.** Restyled to match the light-grey card look every other section on
 this app already uses (`bg-neutral-100`/`dark:bg-neutral-950`), sized like
 a form rather than stretching to fill the screen.
 
-**Two more items reported as "not there" turned out not to be a code
-problem: Production hadn't been promoted.** `member.convert` (migration 0031) and the coloured account buttons were both already correct on
-`main` — `docs/environments.md`'s own promotion step
-(`main` → `production`) had not run since PR #10, so neither database
-migration nor months of front-end work had ever reached the Production
-deployment or its database. Not something a further code change fixes;
-recorded here since it is exactly the kind of "I can't find it" report
-this file exists to explain, not just the ones that turn out to be bugs.
+**Two more items reported as "not there" were assumed to be Production not
+having been promoted — half right.** The coloured account buttons were
+already correct on `main`, and remain unexplained as a report against the
+Test URL specifically (see the next entry). `member.convert` was not a
+promotion problem at all: the next entry corrects this.
+
+---
+
+### Migration 0030 had never once applied, and a submitted application's documents stayed editable ✅
+
+**`member.convert` really was missing from the Test deployment — not a
+promotion gap, a migration that had failed on every single apply since the
+PR that introduced it.** `migrations/0030_non_member_signed_form.sql`'s
+`insert into document_checklist_item` carried no `on conflict` guard, and
+on the real Test database an administrator had already added the same row
+by hand from Configuration → Document checklists — the same "no print
+step" gap 0030 exists to formalise — ahead of the migration reaching it.
+A failed migration rolls back and stops the run, so every migration after
+0030 silently never applied either, 0031 (`member.convert`) included, on
+every deploy from the PR that introduced 0030 through the one before this.
+The insert now carries
+`on conflict (checklist_id, document_type_id, subject) do nothing`;
+`scripts/verify-migrations.sh` grandfathers this one file by name, since
+it never recorded a checksum anywhere for a checksum to drift from — the
+harm that check exists to prevent cannot happen to a migration nothing
+ever recorded; and `scripts/migrate.test.ts` proves it against the real
+migration files with the same pre-existing row planted first, not a
+synthetic stand-in.
+
+**A document missing from a submitted application could still be filed —
+the signed form among them — even though nothing else about the
+application could be touched.** `removeFiledDocument` already refused to
+remove a filed document once an application left `draft`/`returned`
+(previous entry), but `beginUpload` and `commitUpload` never checked at
+all: a required document nobody had filed by the time an officer
+submitted stayed uploadable indefinitely afterwards, which is how a
+signature meant only for print ended up editable on a submitted
+application, with no way back into review once it was. Both now carry the
+same guard, checked twice — once before a SharePoint folder or upload
+ticket is created, again at commit in case the application was submitted
+in the gap between a slow upload starting and finishing — and the Upload
+control (`[id].astro`, `account.astro`, `customer.astro`) is now hidden
+the same way the Delete control already was, rather than appearing and
+then failing.
 
 ---
 

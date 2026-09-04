@@ -181,7 +181,11 @@ const endpoint = defineEndpoint(
       }
       if (error instanceof DocumentError) {
         throw new ApiError(
-          error.reason === 'not_found' ? 'not_found' : 'validation_failed',
+          error.reason === 'not_found'
+            ? 'not_found'
+            : error.reason === 'conflict'
+              ? 'conflict'
+              : 'validation_failed',
           error.message
         );
       }

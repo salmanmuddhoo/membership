@@ -1298,11 +1298,14 @@ describe('undoing a mistaken upload, so it can be filed again', () => {
       appUrl,
       `select id from membership_type where code = 'individual'`
     );
+    // Filed while still a draft — the only status beginUpload itself allows
+    // — then submitted, so what's being tested is removeFiledDocument's own
+    // refusal on a document that was already legitimately on file.
     const submitted = await run(
       appUrl,
       `insert into membership_application
          (membership_type_id, captured_by, status)
-       values ($1, $2, 'new') returning id`,
+       values ($1, $2, 'draft') returning id`,
       [type.rows[0].id, officer.userId]
     );
     const docType = await run(
@@ -1326,6 +1329,12 @@ describe('undoing a mistaken upload, so it can be filed again', () => {
     });
     await documents.commitUpload(begun.versionId, officer);
 
+    await run(
+      appUrl,
+      `update membership_application set status = 'new' where id = $1`,
+      [submitted.rows[0].id]
+    );
+
     await expect(
       documents.removeFiledDocument(begun.documentId, asUploader())
     ).rejects.toThrowError(/submitted/);
@@ -1341,5 +1350,106 @@ describe('undoing a mistaken upload, so it can be filed again', () => {
       asUploader()
     );
     expect(result.state).toBe('missing');
+  });
+});
+
+// Officer feedback: "no details should be possible to edit" on a submitted
+// application turned out not to cover documents — removeFiledDocument had
+// this guard (S-614 above), but filing a fresh document, or replacing one
+// via begin/commit-upload, did not, so a document missing at submission time
+// (the signed form among them) stayed uploadable indefinitely after.
+describe('filing a document is restricted to draft and returned applications, the same as removing one', () => {
+  async function submittedApplication(): Promise<string> {
+    const type = await run(
+      appUrl,
+      `select id from membership_type where code = 'individual'`
+    );
+    const application = await run(
+      appUrl,
+      `insert into membership_application
+         (membership_type_id, captured_by, status)
+       values ($1, $2, 'new') returning id`,
+      [type.rows[0].id, officer.userId]
+    );
+    return application.rows[0].id;
+  }
+
+  it('refuses to begin an upload once the application is submitted', async () => {
+    const { documents } = await load();
+    const submittedId = await submittedApplication();
+    const docType = await run(
+      appUrl,
+      `select id from document_type where code = 'utility_bill'`
+    );
+
+    await expect(
+      documents.beginUpload(
+        {
+          applicationId: submittedId,
+          documentTypeId: docType.rows[0].id,
+          subject: 'applicant',
+          fileName: 'bill-late.pdf',
+          contentType: 'application/pdf',
+          sizeBytes: 100,
+        },
+        officer
+      )
+    ).rejects.toThrowError(/submitted/);
+
+    // Nothing was created for the refused upload to leave behind.
+    const documentRows = await run(
+      appUrl,
+      `select count(*)::int as n from document where application_id = $1`,
+      [submittedId]
+    );
+    expect(documentRows.rows[0].n).toBe(0);
+  });
+
+  it('refuses to begin an upload once returned goes back to submitted mid-flight, at commit', async () => {
+    const { documents } = await load();
+    const type = await run(
+      appUrl,
+      `select id from membership_type where code = 'individual'`
+    );
+    const application = await run(
+      appUrl,
+      `insert into membership_application
+         (membership_type_id, captured_by, status)
+       values ($1, $2, 'returned') returning id`,
+      [type.rows[0].id, officer.userId]
+    );
+    const returnedId = application.rows[0].id;
+    const docType = await run(
+      appUrl,
+      `select id from document_type where code = 'utility_bill'`
+    );
+
+    // Begun while still returned, so it is allowed to start...
+    const begun = await documents.beginUpload(
+      {
+        applicationId: returnedId,
+        documentTypeId: docType.rows[0].id,
+        subject: 'applicant',
+        fileName: 'bill-race.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 100,
+      },
+      officer
+    );
+    drive.files.set(begun.ticket.itemPath, {
+      id: 'graph-bill-race',
+      size: 100,
+    });
+
+    // ...but resubmitted by the time the transfer finishes.
+    await run(
+      appUrl,
+      `update membership_application set status = 'new' where id = $1`,
+      [returnedId]
+    );
+
+    await expect(
+      documents.commitUpload(begun.versionId, officer)
+    ).rejects.toThrowError(/submitted/);
   });
 });
