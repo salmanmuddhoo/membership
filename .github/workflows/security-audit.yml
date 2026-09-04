@@ -134,11 +134,27 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # registry.npmjs.org's own audit endpoint (POST .../security/audits/quick)
+      # times out often enough on hosted runners to have failed this gate on a
+      # diff that never touched a dependency — pnpm's defaults (2 retries, a
+      # 60s socket timeout) were not enough headroom for it. More retries and
+      # a longer per-attempt timeout, not a lower bar: this still blocks on
+      # AUDIT_BLOCK_LEVEL and above once the registry actually answers.
       - name: pnpm audit (blocking at ${{ env.AUDIT_BLOCK_LEVEL }} and above)
+        env:
+          npm_config_fetch_retries: 5
+          npm_config_fetch_retry_mintimeout: 15000
+          npm_config_fetch_retry_maxtimeout: 60000
+          npm_config_fetch_timeout: 120000
         run: pnpm audit --audit-level=${{ env.AUDIT_BLOCK_LEVEL }}
 
       - name: Full advisory report (never blocks)
         if: always()
+        env:
+          npm_config_fetch_retries: 5
+          npm_config_fetch_retry_mintimeout: 15000
+          npm_config_fetch_retry_maxtimeout: 60000
+          npm_config_fetch_timeout: 120000
         run: pnpm audit --json > pnpm-audit.json || true
 
       - name: Trivy — vulnerabilities (second opinion)
