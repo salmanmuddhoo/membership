@@ -79,9 +79,16 @@ const endpoint = defineEndpoint(
       if (error instanceof DocumentError) {
         // `refused` here is the file being absent or truncated, which the
         // officer can act on by uploading again — so it is a 422 they can read,
-        // not a 403 that reads as a permissions problem.
+        // not a 403 that reads as a permissions problem. `conflict` is the
+        // application having left the officer's hands between begin and
+        // commit — a 409, the same code every other "not editable any more"
+        // refusal in this app uses.
         throw new ApiError(
-          error.reason === 'not_found' ? 'not_found' : 'validation_failed',
+          error.reason === 'not_found'
+            ? 'not_found'
+            : error.reason === 'conflict'
+              ? 'conflict'
+              : 'validation_failed',
           error.message
         );
       }

@@ -1,11 +1,17 @@
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { migrate, status, checksum, loadMigrations } from './migrate';
 
 const ADMIN_URL = 'postgresql://postgres@127.0.0.1:5433/postgres';
+const REAL_MIGRATIONS_DIR = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..',
+  'migrations'
+);
 
 // Each test gets its own database so that a failure in one cannot leave state
 // behind that changes the outcome of another.
@@ -174,5 +180,74 @@ describe('loadMigrations', () => {
 
   it('treats line endings as insignificant', () => {
     expect(checksum('a\r\nb')).toBe(checksum('a\nb'));
+  });
+});
+
+// Officer feedback: migration 0030 failed on every real apply from the day
+// it merged (PR #83) until it gained an `on conflict do nothing`, because
+// the row it inserts already existed — added by hand from Configuration ->
+// Document checklists (checklists.astro's own "Add" form writes to the same
+// table) ahead of the migration that came along to formalise it. A failed
+// migration rolls back and stops the run, so every migration after 0030
+// (0031 included) silently never reached a database in that state, for six
+// merges running, with no other symptom.
+//
+// Against the real migrations, not synthetic ones written for this file's
+// other tests: what actually broke was these exact files against exactly
+// this kind of pre-existing configuration, and only the real files can
+// prove it stays fixed.
+describe('the real migrations, against a database with pre-existing configuration', () => {
+  async function copyRealMigrations(names: string[]): Promise<void> {
+    for (const name of names) {
+      const sql = await readFile(path.join(REAL_MIGRATIONS_DIR, name), 'utf8');
+      await writeMigration(name, sql);
+    }
+  }
+
+  it('does not fail 0030 when its own row already exists', async () => {
+    const real = await loadMigrations(REAL_MIGRATIONS_DIR);
+    const upTo0029 = real
+      .map(m => m.name)
+      .filter(name => name < '0030')
+      .sort();
+    expect(upTo0029).toContain('0029_membership_from_customer.sql');
+
+    await copyRealMigrations(upTo0029);
+    const first = await migrate(dbUrl, dir);
+    expect(first.applied).toEqual(upTo0029);
+
+    // What an administrator adds by hand from Configuration -> Document
+    // checklists, ahead of the migration that duplicates it — S-210's audit
+    // trigger requires an actor for the write, the same as the real page.
+    const client = new pg.Client({ connectionString: dbUrl, ssl: false });
+    await client.connect();
+    try {
+      await client.query('begin');
+      await client.query(
+        `select set_config('albarakah.actor_description', 'test fixture', true)`
+      );
+      await client.query(
+        `insert into document_checklist_item
+           (checklist_id, document_type_id, subject, requirement, sort_order)
+         select c.id, d.id, 'applicant', 'required', 3
+           from document_checklist c, document_type d
+          where c.code = 'non_member_kyc' and d.code = 'signed_form'`
+      );
+      await client.query('commit');
+    } finally {
+      await client.end();
+    }
+
+    await copyRealMigrations(
+      real.map(m => m.name).filter(name => name >= '0030')
+    );
+    const second = await migrate(dbUrl, dir);
+    expect(second.applied).toContain('0030_non_member_signed_form.sql');
+    expect(second.applied).toContain('0031_convert_customer_permission.sql');
+
+    const rows = await queryDb<{ code: string }>(
+      `select code from permission where code = 'member.convert'`
+    );
+    expect(rows).toHaveLength(1);
   });
 });

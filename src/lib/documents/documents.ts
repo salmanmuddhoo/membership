@@ -184,6 +184,7 @@ type ChecklistSource =
 interface OwnerRow {
   application_id: string | null;
   member_id: string | null;
+  application_status: string | null;
   checklist_source: ChecklistSource;
   folder_path: string;
 }
@@ -198,8 +199,10 @@ async function resolveOwner(
       application_kind:
         'membership' | 'additional_account' | 'customer_account';
       membership_type_code: string | null;
+      status: string;
     }>(
-      `select a.reference, a.application_kind, m.code as membership_type_code
+      `select a.reference, a.application_kind, a.status,
+              m.code as membership_type_code
          from membership_application a
          left join membership_type m on m.id = a.membership_type_id
         where a.id = $1`,
@@ -238,6 +241,7 @@ async function resolveOwner(
     return {
       application_id: applicationId,
       member_id: null,
+      application_status: row.status,
       checklist_source: checklistSource,
       folder_path: applicationFolderPath(row.reference),
     };
@@ -272,6 +276,7 @@ async function resolveOwner(
   return {
     application_id: null,
     member_id: memberId,
+    application_status: null,
     checklist_source: {
       kind: 'membership_type',
       code: result.rows[0].membership_type_code,
@@ -425,6 +430,24 @@ export async function beginUpload(
     input.memberId ?? null
   );
 
+  // Officer feedback: once an application has left the originating officer's
+  // hands (status 'new' and beyond), nothing about it — the signature
+  // included — is editable, and a document is not an exception. Filing a new
+  // version is how the signed form gets edited, so it needs the same guard
+  // `removeFiledDocument` already has, applied earlier: before a folder is
+  // touched or a ticket is issued, not just at commit.
+  if (
+    owner.application_status &&
+    owner.application_status !== 'draft' &&
+    owner.application_status !== 'returned'
+  ) {
+    throw new DocumentError(
+      'This application has been submitted. Its documents can only be ' +
+        'replaced if it is returned for correction.',
+      'conflict'
+    );
+  }
+
   const type = await query<{ code: string; tracks_expiry: boolean }>(
     'select code, tracks_expiry from document_type where id = $1 and is_active',
     [input.documentTypeId]
@@ -566,10 +589,15 @@ export async function commitUpload(
     file_name: string;
     intended_expires_at: Date | null;
     uploaded_by: string;
+    application_status: string | null;
   }>(
-    `select id, document_id, state, sharepoint_path, size_bytes, file_name,
-            intended_expires_at, uploaded_by
-       from document_version where id = $1`,
+    `select v.id, v.document_id, v.state, v.sharepoint_path, v.size_bytes,
+            v.file_name, v.intended_expires_at, v.uploaded_by,
+            a.status as application_status
+       from document_version v
+       join document d on d.id = v.document_id
+       left join membership_application a on a.id = d.application_id
+      where v.id = $1`,
     [versionId]
   );
   if (version.rowCount === 0) {
@@ -577,6 +605,22 @@ export async function commitUpload(
   }
   const row = version.rows[0];
   if (row.state === 'committed') return { state: 'committed' };
+
+  // Same guard as begin-upload, checked again here: the application could
+  // have been submitted in the time between a tablet starting this upload and
+  // finishing it. Without this, a slow upload would be the one way past the
+  // guard above.
+  if (
+    row.application_status &&
+    row.application_status !== 'draft' &&
+    row.application_status !== 'returned'
+  ) {
+    throw new DocumentError(
+      'This application has been submitted. Its documents can only be ' +
+        'replaced if it is returned for correction.',
+      'conflict'
+    );
+  }
 
   // Only the person who started this upload may finish it. Not a theft
   // concern — the bytes are whatever they are, and Graph is what confirms

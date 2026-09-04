@@ -489,7 +489,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                     </span>
                   </div>
 
-                  {canUpload && entry.state === 'missing' && (
+                  {canUpload && isEditable && entry.state === 'missing' && (
                     <div
                       class="flex flex-wrap items-center gap-3"
                       data-upload

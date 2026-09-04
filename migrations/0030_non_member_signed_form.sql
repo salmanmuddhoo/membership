@@ -13,6 +13,17 @@
 -- present on the scan" UI in customer.astro was already generic on
 -- documentCode === 'signed_form', unreachable only because nothing put one
 -- on the checklist).
+--
+-- `on conflict do nothing`: an administrator can add the same row by hand
+-- from Configuration -> Document checklists (checklists.astro), and on at
+-- least one real database did, between 0028 shipping and this migration
+-- being written — reaching the same end state this migration wants, ahead
+-- of it. Without the guard this insert's own unique constraint
+-- (checklist_id, document_type_id, subject) then refuses it, and because a
+-- failed migration rolls back and stops the run, every migration after this
+-- one silently never reaches that database either. That is exactly what
+-- happened: this migration failed on every apply from the day it was
+-- merged (PRs #83 through #88) until this line was added.
 set local albarakah.actor_description = 'migration 0030_non_member_signed_form';
 
 insert into document_checklist_item
@@ -20,4 +31,5 @@ insert into document_checklist_item
 select c.id, d.id, 'applicant', 'required', 3
   from document_checklist c, document_type d
  where c.code = 'non_member_kyc'
-   and d.code = 'signed_form';
+   and d.code = 'signed_form'
+on conflict (checklist_id, document_type_id, subject) do nothing;

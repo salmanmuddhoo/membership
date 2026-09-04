@@ -814,46 +814,48 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                           )}
                         </div>
 
-                        {canUpload && entry.state === 'missing' && (
-                          <div
-                            class="flex flex-wrap items-center gap-3"
-                            data-upload
-                            data-application-id={application!.id}
-                            data-document-type-id={entry.documentTypeId}
-                            data-subject={entry.subject}
-                            data-tracks-expiry={
-                              entry.tracksExpiry ? 'yes' : 'no'
-                            }
-                          >
-                            {entry.tracksExpiry && (
-                              <label class="text-xs text-neutral-600 dark:text-neutral-300">
-                                Expires on
+                        {canUpload &&
+                          isEditable &&
+                          entry.state === 'missing' && (
+                            <div
+                              class="flex flex-wrap items-center gap-3"
+                              data-upload
+                              data-application-id={application!.id}
+                              data-document-type-id={entry.documentTypeId}
+                              data-subject={entry.subject}
+                              data-tracks-expiry={
+                                entry.tracksExpiry ? 'yes' : 'no'
+                              }
+                            >
+                              {entry.tracksExpiry && (
+                                <label class="text-xs text-neutral-600 dark:text-neutral-300">
+                                  Expires on
+                                  <input
+                                    type="date"
+                                    data-expires
+                                    class="mt-1 block rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                                  />
+                                </label>
+                              )}
+                              <label class="cursor-pointer rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-200 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800">
+                                Upload
                                 <input
-                                  type="date"
-                                  data-expires
-                                  class="mt-1 block rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                                  type="file"
+                                  data-file
+                                  accept={ACCEPTED_FILES}
+                                  capture="environment"
+                                  disabled
+                                  class="sr-only"
                                 />
                               </label>
-                            )}
-                            <label class="cursor-pointer rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-200 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800">
-                              Upload
-                              <input
-                                type="file"
-                                data-file
-                                accept={ACCEPTED_FILES}
-                                capture="environment"
-                                disabled
-                                class="sr-only"
-                              />
-                            </label>
-                            <p
-                              data-status
-                              class="text-xs text-neutral-500 dark:text-neutral-400"
-                            >
-                              Uploading requires JavaScript.
-                            </p>
-                          </div>
-                        )}
+                              <p
+                                data-status
+                                class="text-xs text-neutral-500 dark:text-neutral-400"
+                              >
+                                Uploading requires JavaScript.
+                              </p>
+                            </div>
+                          )}
 
                         {canUpload &&
                           isEditable &&
