@@ -14,12 +14,22 @@ interface Props {
   // Omitted on the capture page (`/applications/new`), which has no
   // application yet for a step to link to. When present, every step becomes
   // a real link — including one not yet reached, which lands back on the
-  // furthest step actually unlocked (the same redirect `[id].astro` already
-  // does for a hand-typed `?step=`), not a dead end.
+  // furthest step actually unlocked (the same redirect the wizard page
+  // already does for a hand-typed `?step=`), not a dead end.
   applicationId?: string;
+  // Officer feedback: a customer_account application's wizard lives at
+  // `/applications/<id>/customer`, not `/applications/<id>` — that base
+  // path 302s straight to it (S-614), but drops the `?step=` query doing
+  // so, so a chevron built from the membership URL always landed back on
+  // whatever step the redirect's target defaulted to, not the one clicked.
+  // Defaults to the membership page's own path, so [id].astro need not pass
+  // this at all.
+  basePath?: string;
 }
 
-const { steps, applicationId } = Astro.props;
+const { steps, applicationId, basePath } = Astro.props;
+const base =
+  basePath ?? (applicationId ? `/applications/${applicationId}` : '');
 
 const BOX: Record<string, string> = {
   done: 'bg-mint-300 text-neutral-800 dark:bg-mint-700 dark:text-neutral-100',
@@ -51,13 +61,16 @@ const READS: Record<string, string> = {
 // Where clicking a step goes. Step 6, Approval Stage, is the Secretary's and
 // the President's, not a page an officer steps through — it lands on the
 // application as a whole, which is everything once it is no longer editable.
-const STEP_HREF: Record<string, (id: string) => string> = {
-  capture: id => `/applications/${id}?step=1`,
-  sign: id => `/applications/${id}/print`,
-  documents: id => `/applications/${id}?step=3`,
-  payment: id => `/applications/${id}?step=4`,
-  submit: id => `/applications/${id}?step=5`,
-  decision: id => `/applications/${id}`,
+// Print is the one step that is not part of a kind's own wizard base path —
+// print.astro serves every application kind at the same `/applications/<id>/
+// print`, so it reads the raw id rather than `base`.
+const STEP_HREF: Record<string, (base: string, id: string) => string> = {
+  capture: base => `${base}?step=1`,
+  sign: (_base, id) => `/applications/${id}/print`,
+  documents: base => `${base}?step=3`,
+  payment: base => `${base}?step=4`,
+  submit: base => `${base}?step=5`,
+  decision: base => base,
 };
 ---
 
@@ -71,7 +84,7 @@ const STEP_HREF: Record<string, (id: string) => string> = {
     {
       steps.map(step => {
         const href = applicationId
-          ? STEP_HREF[step.key]?.(applicationId)
+          ? STEP_HREF[step.key]?.(base, applicationId)
           : undefined;
         const Tag = href ? 'a' : 'div';
         return (
