@@ -38,9 +38,26 @@ changed=$(git diff --name-status --diff-filter=MDR "$merge_base..HEAD" -- migrat
 
 [ -z "$changed" ] && { echo "No existing migration has been modified."; exit 0; }
 
+# One narrow, named exception: migrations/0030_non_member_signed_form.sql
+# never once applied successfully anywhere — every attempt from the day it
+# merged (PR #83) through PR #88 failed on a pre-existing row and rolled
+# back, so no environment ever recorded its checksum, and every migration
+# after it was silently skipped the whole time. The usual harm this check
+# exists to prevent (a recorded checksum going stale) cannot happen for a
+# migration nothing ever recorded. Fixed in the PR that added this
+# exception (an `on conflict do nothing` guard) — never add a second name
+# here without the same "never once applied" evidence; the fix belongs in a
+# new migration otherwise, exactly as this check insists everywhere else.
+grandfathered='migrations/0030_non_member_signed_form.sql'
+
 offending=""
 while IFS=$'\t' read -r status path _rest; do
   [ -z "${path:-}" ] && continue
+
+  if [ "$path" = "$grandfathered" ]; then
+    echo "  grandfathered (never applied anywhere — see script comment): $path"
+    continue
+  fi
 
   if [ "${status:0:1}" = "M" ]; then
     # A modification that restores the file to a state it already had before
