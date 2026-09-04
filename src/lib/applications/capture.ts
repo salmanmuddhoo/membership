@@ -1437,6 +1437,11 @@ export async function listApplications(options: {
         and (a.status != 'draft'
              or $3::uuid is null
              or a.captured_by = $3::uuid)
+        -- Officer feedback: once approved, an application is a member (or an
+        -- opened account) already, and lives on the Members page from then
+        -- on — carrying it here too is a stale duplicate of a record this
+        -- list is not the place to keep showing.
+        and a.status != 'approved'
       order by a.updated_at desc
       limit $4::int`,
     [

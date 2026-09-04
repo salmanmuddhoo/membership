@@ -4,6 +4,7 @@ import ConfigNav from '@components/ConfigNav.astro';
 import {
   addChecklistItem,
   ConfigError,
+  createChecklist,
   listChecklists,
   listDocumentTypes,
   removeChecklistItem,
@@ -26,7 +27,17 @@ if (Astro.request.method === 'POST') {
     const actor = { userId: principal.userId, email: principal.email };
 
     try {
-      if (intent === 'add') {
+      if (intent === 'create-checklist') {
+        await createChecklist(
+          {
+            code: String(form.get('code') ?? ''),
+            name: String(form.get('name') ?? ''),
+            description: String(form.get('description') ?? ''),
+          },
+          actor
+        );
+        notice = 'Checklist created. Add documents to it below.';
+      } else if (intent === 'add') {
         await addChecklistItem(
           String(form.get('checklistId')),
           {
@@ -246,6 +257,65 @@ const SUBJECT_LABELS: Record<string, string> = {
           )}
         </section>
       ))
+    }
+
+    {
+      canManage && (
+        <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+          <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+            Add a checklist
+          </h2>
+          <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+            An empty checklist to start with — add documents to it below once it
+            exists. It becomes available immediately wherever a checklist is
+            chosen, such as an account type's own "Documents required to open".
+          </p>
+          <form method="post" class="mt-4 grid gap-3 sm:grid-cols-2">
+            <input type="hidden" name="intent" value="create-checklist" />
+            <label class="text-sm text-neutral-600 dark:text-neutral-300">
+              Code
+              <input
+                type="text"
+                name="code"
+                required
+                pattern="[a-z][a-z0-9_]{2,39}"
+                placeholder="hsa_opening"
+                class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+              />
+              <span class="mt-1 block text-xs text-neutral-400">
+                Lower-case letters, digits and underscores. Cannot be changed
+                later.
+              </span>
+            </label>
+            <label class="text-sm text-neutral-600 dark:text-neutral-300">
+              Name
+              <input
+                type="text"
+                name="name"
+                required
+                placeholder="HSA opening"
+                class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+              />
+            </label>
+            <label class="text-sm text-neutral-600 sm:col-span-2 dark:text-neutral-300">
+              Description
+              <input
+                type="text"
+                name="description"
+                class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+              />
+            </label>
+            <div class="sm:col-span-2">
+              <button
+                type="submit"
+                class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+              >
+                Create checklist
+              </button>
+            </div>
+          </form>
+        </section>
+      )
     }
   </div>
 </DashboardLayout>

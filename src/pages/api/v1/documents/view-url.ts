@@ -31,10 +31,11 @@ const endpoint = defineEndpoint(
     },
     responseSchema: {
       type: 'object',
-      required: ['url', 'fileName'],
+      required: ['url', 'fileName', 'contentType'],
       properties: {
         url: { type: 'string' },
         fileName: { type: 'string' },
+        contentType: { type: 'string' },
       },
     },
   },

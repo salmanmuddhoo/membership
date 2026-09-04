@@ -855,36 +855,38 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                           </div>
                         )}
 
-                        {canUpload && entry.state !== 'missing' && (
-                          <form method="post" data-confirm-delete-document>
-                            <input
-                              type="hidden"
-                              name="documentId"
-                              value={entry.documentId}
-                            />
-                            <button
-                              type="submit"
-                              name="intent"
-                              value="delete-document"
-                              title="Delete this document"
-                              aria-label="Delete this document"
-                              class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-red-600 transition hover:bg-red-100 dark:text-red-400 dark:hover:bg-red-950"
-                            >
-                              <svg
-                                class="size-4"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-width="2"
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                aria-hidden="true"
+                        {canUpload &&
+                          isEditable &&
+                          entry.state !== 'missing' && (
+                            <form method="post" data-confirm-delete-document>
+                              <input
+                                type="hidden"
+                                name="documentId"
+                                value={entry.documentId}
+                              />
+                              <button
+                                type="submit"
+                                name="intent"
+                                value="delete-document"
+                                title="Delete this document"
+                                aria-label="Delete this document"
+                                class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-red-600 transition hover:bg-red-100 dark:text-red-400 dark:hover:bg-red-950"
                               >
-                                <path d="M18 6 6 18M6 6l12 12" />
-                              </svg>
-                            </button>
-                          </form>
-                        )}
+                                <svg
+                                  class="size-4"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  stroke-width="2"
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
+                                  aria-hidden="true"
+                                >
+                                  <path d="M18 6 6 18M6 6l12 12" />
+                                </svg>
+                              </button>
+                            </form>
+                          )}
                       </div>
 
                       {entry.uploadedAt && (
@@ -1395,6 +1397,35 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         </section>
       )
     }
+
+    {
+      canSeeDocuments && (
+        <dialog
+          id="document-viewer-dialog"
+          class="h-[85vh] w-[95vw] max-w-3xl rounded-2xl border border-neutral-200 bg-white p-0 text-neutral-800 backdrop:bg-neutral-900/50 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100"
+        >
+          <div class="flex items-center justify-between gap-3 border-b border-neutral-200 px-5 py-3 dark:border-neutral-800">
+            <p
+              data-viewer-name
+              class="truncate text-sm font-semibold text-neutral-800 dark:text-neutral-100"
+            />
+            <button
+              type="button"
+              data-viewer-close
+              class="shrink-0 rounded-lg border border-neutral-300 px-2.5 py-1 text-xs font-medium text-neutral-600 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-300 dark:hover:bg-neutral-800"
+            >
+              Close
+            </button>
+          </div>
+          <div
+            data-viewer-body
+            class="flex h-[calc(85vh-3rem)] items-center justify-center overflow-auto p-4 text-sm"
+          >
+            Loading…
+          </div>
+        </dialog>
+      )
+    }
   </div>
 </DashboardLayout>
 
@@ -1445,6 +1476,16 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     });
   }
 
+  // Officer feedback: filing an identity card and a utility bill at the same
+  // time only kept one of them. Each box below runs its own upload
+  // independently — correctly — but the FIRST one to finish reloaded the
+  // page immediately, which aborted every other upload still in flight
+  // rather than waiting for it. Counted here instead, so the reload this
+  // page still wants (the checklist state is the server's to say, not a
+  // guess made here) waits for every upload that was running to finish
+  // first.
+  let uploadsInFlight = 0;
+
   for (const panel of document.querySelectorAll<HTMLElement>('[data-upload]')) {
     const file = panel.querySelector<HTMLInputElement>('[data-file]');
     const expiry = panel.querySelector<HTMLInputElement>('[data-expires]');
@@ -1468,6 +1509,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         return;
       }
 
+      uploadsInFlight++;
       file.disabled = true;
       say('Preparing…');
 
@@ -1547,8 +1589,14 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           );
         }
 
-        window.location.reload();
+        // Held back until every other upload started alongside this one has
+        // also finished, so none of them gets cut off mid-transfer by a
+        // reload that was never theirs.
+        say('Filed.');
+        uploadsInFlight--;
+        if (uploadsInFlight === 0) window.location.reload();
       } catch (error) {
+        uploadsInFlight--;
         say(error instanceof Error ? error.message : 'The upload failed.');
         file.disabled = false;
         file.value = '';
@@ -1581,41 +1629,102 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     });
   }
 
-  for (const viewButton of document.querySelectorAll<HTMLButtonElement>(
-    '[data-view-document]'
-  )) {
-    viewButton.addEventListener('click', async () => {
-      const documentId = viewButton.dataset.documentId;
-      if (!documentId) return;
+  // Officer feedback: this used to be window.open(url), which handed the
+  // browser a SharePoint download link — a save-to-disk prompt on some
+  // devices before the file could even be looked at. An <img> or a PDF's own
+  // <iframe> viewer renders the same URL in place instead, closed with an
+  // explicit Close rather than left to guess when a new tab was done with it.
+  const viewerDialog = document.getElementById(
+    'document-viewer-dialog'
+  ) as HTMLDialogElement | null;
+  const viewerName =
+    viewerDialog?.querySelector<HTMLElement>('[data-viewer-name]');
+  const viewerBody =
+    viewerDialog?.querySelector<HTMLElement>('[data-viewer-body]');
+  const viewerClose = viewerDialog?.querySelector<HTMLButtonElement>(
+    '[data-viewer-close]'
+  );
 
-      const original = viewButton.textContent;
-      viewButton.disabled = true;
-      viewButton.textContent = 'Opening…';
-
-      try {
-        const response = await fetch('/api/v1/documents/view-url', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ documentId }),
-        });
-        const body = await response.json();
-        if (!response.ok) {
-          throw new Error(
-            body?.error?.message ?? 'The file could not be opened.'
-          );
-        }
-        window.open(body.data.url, '_blank', 'noopener');
-      } catch (error) {
-        window.alert(
-          error instanceof Error
-            ? error.message
-            : 'The file could not be opened.'
-        );
-      } finally {
-        viewButton.disabled = false;
-        viewButton.textContent = original;
-      }
+  if (viewerDialog && viewerName && viewerBody && viewerClose) {
+    viewerClose.addEventListener('click', () => viewerDialog.close());
+    viewerDialog.addEventListener('close', () => {
+      viewerBody.replaceChildren();
     });
+
+    for (const viewButton of document.querySelectorAll<HTMLButtonElement>(
+      '[data-view-document]'
+    )) {
+      viewButton.addEventListener('click', async () => {
+        const documentId = viewButton.dataset.documentId;
+        if (!documentId) return;
+
+        const original = viewButton.textContent;
+        viewButton.disabled = true;
+        viewButton.textContent = 'Opening…';
+
+        try {
+          const response = await fetch('/api/v1/documents/view-url', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ documentId }),
+          });
+          const body = await response.json();
+          if (!response.ok) {
+            throw new Error(
+              body?.error?.message ?? 'The file could not be opened.'
+            );
+          }
+          const {
+            url,
+            fileName,
+            contentType,
+          }: { url: string; fileName: string; contentType: string } = body.data;
+
+          viewerName.textContent = fileName;
+          viewerBody.replaceChildren();
+          if (
+            contentType.startsWith('image/') &&
+            contentType !== 'image/heic'
+          ) {
+            const img = document.createElement('img');
+            img.src = url;
+            img.alt = fileName;
+            img.className = 'max-h-full max-w-full object-contain';
+            viewerBody.appendChild(img);
+          } else if (contentType === 'application/pdf') {
+            const frame = document.createElement('iframe');
+            frame.src = url;
+            frame.title = fileName;
+            frame.className = 'h-full w-full';
+            viewerBody.appendChild(frame);
+          } else {
+            const p = document.createElement('p');
+            p.className = 'text-center text-neutral-600 dark:text-neutral-300';
+            p.textContent = "This file type can't be previewed here.";
+            const link = document.createElement('a');
+            link.href = url;
+            link.target = '_blank';
+            link.rel = 'noopener';
+            link.className = 'mt-2 inline-block underline';
+            link.textContent = 'Open in a new tab';
+            const wrap = document.createElement('div');
+            wrap.className = 'text-center';
+            wrap.append(p, link);
+            viewerBody.appendChild(wrap);
+          }
+          viewerDialog.showModal();
+        } catch (error) {
+          window.alert(
+            error instanceof Error
+              ? error.message
+              : 'The file could not be opened.'
+          );
+        } finally {
+          viewButton.disabled = false;
+          viewButton.textContent = original;
+        }
+      });
+    }
   }
 
   const paymentForm = document.querySelector<HTMLFormElement>(

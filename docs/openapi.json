@@ -77,14 +77,14 @@
     }
   ],
   "paths": {
-    "/api/v1/accounts/{id}/deposit": {
+    "/api/v1/accounts/{id}/transactions": {
       "get": {
-        "summary": "Read one account's opening deposit",
-        "description": "The amount and date of the payment that opened this account, if one has been recorded. Not a running balance — there is no transaction history behind this account yet, only the deposit that opened it.",
+        "summary": "Read one account's credits and debits",
+        "description": "Every credit and debit recorded against this account, oldest first — not a running balance, and not a transaction history in the fuller sense: there is no ledger behind this account yet, only the payment that opened it and any refund paid back against it.",
         "tags": [
           "Payments"
         ],
-        "operationId": "getAccountsIdDeposit",
+        "operationId": "getAccountsIdTransactions",
         "x-required-permission": "payment.view",
         "responses": {
           "200": {
@@ -100,27 +100,42 @@
                   "properties": {
                     "data": {
                       "type": "object",
+                      "required": [
+                        "transactions"
+                      ],
                       "properties": {
-                        "deposit": {
-                          "type": [
-                            "object",
-                            "null"
-                          ],
-                          "required": [
-                            "amount",
-                            "currency",
-                            "depositedAt"
-                          ],
-                          "properties": {
-                            "amount": {
-                              "type": "string"
-                            },
-                            "currency": {
-                              "type": "string"
-                            },
-                            "depositedAt": {
-                              "type": "string",
-                              "format": "date-time"
+                        "transactions": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "type",
+                              "amount",
+                              "currency",
+                              "occurredAt",
+                              "description"
+                            ],
+                            "properties": {
+                              "type": {
+                                "type": "string",
+                                "enum": [
+                                  "credit",
+                                  "debit"
+                                ]
+                              },
+                              "amount": {
+                                "type": "string"
+                              },
+                              "currency": {
+                                "type": "string"
+                              },
+                              "occurredAt": {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              "description": {
+                                "type": "string"
+                              }
                             }
                           }
                         }
@@ -1746,13 +1761,17 @@
                       "type": "object",
                       "required": [
                         "url",
-                        "fileName"
+                        "fileName",
+                        "contentType"
                       ],
                       "properties": {
                         "url": {
                           "type": "string"
                         },
                         "fileName": {
+                          "type": "string"
+                        },
+                        "contentType": {
                           "type": "string"
                         }
                       }

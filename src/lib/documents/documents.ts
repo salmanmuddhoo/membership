@@ -823,9 +823,13 @@ export async function reviewDocument(
 export async function getDocumentViewUrl(
   documentId: string,
   config?: GraphConfig
-): Promise<{ url: string; fileName: string }> {
-  const row = await query<{ sharepoint_path: string; file_name: string }>(
-    `select sharepoint_path, file_name
+): Promise<{ url: string; fileName: string; contentType: string }> {
+  const row = await query<{
+    sharepoint_path: string;
+    file_name: string;
+    content_type: string;
+  }>(
+    `select sharepoint_path, file_name, content_type
        from document_version
       where document_id = $1 and state = 'committed' and superseded_at is null`,
     [documentId]
@@ -845,7 +849,11 @@ export async function getDocumentViewUrl(
     );
   }
 
-  return { url: item.downloadUrl, fileName: row.rows[0].file_name };
+  return {
+    url: item.downloadUrl,
+    fileName: row.rows[0].file_name,
+    contentType: row.rows[0].content_type,
+  };
 }
 
 /**
@@ -880,10 +888,13 @@ export async function removeFiledDocument(
       version_id: string;
       file_name: string;
       document_state: string;
+      application_status: string | null;
     }>(
-      `select v.id as version_id, v.file_name, d.state as document_state
+      `select v.id as version_id, v.file_name, d.state as document_state,
+              a.status as application_status
          from document_version v
          join document d on d.id = v.document_id
+         left join membership_application a on a.id = d.application_id
         where v.document_id = $1 and v.state = 'committed'
           and v.superseded_at is null
         for update of v`,
@@ -899,7 +910,28 @@ export async function removeFiledDocument(
       version_id: versionId,
       file_name: fileName,
       document_state,
+      application_status: applicationStatus,
     } = row.rows[0];
+
+    // Officer feedback: once an application has left the originating
+    // officer's hands (status 'new' and beyond), a filed document is a
+    // record of what was submitted — removable again only if the
+    // application comes back as 'returned', the same reason it was
+    // removable while still a 'draft'. A document filed against a member
+    // (application_status null — the application is long since decided)
+    // is unaffected: this guard only narrows what an in-flight application
+    // allows.
+    if (
+      applicationStatus &&
+      applicationStatus !== 'draft' &&
+      applicationStatus !== 'returned'
+    ) {
+      throw new DocumentError(
+        'This application has been submitted. Its documents can only be ' +
+          'removed if it is returned for correction.',
+        'refused'
+      );
+    }
 
     await client.query(
       `update document_version set superseded_at = now() where id = $1`,

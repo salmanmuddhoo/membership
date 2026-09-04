@@ -1782,6 +1782,89 @@ entry point into capture, membership or an additional account alike — now
 wrap it in the same sticky `#application-nav` bar the id pages already
 use, rather than a plain link at the top of the page.
 
+### Nine items of officer feedback: permissions, uploads, viewing, and configuration ✅
+
+**Who may turn a non-member customer into a membership applicant was tied
+to application.capture — anyone who could capture any application could
+convert any customer, whether or not that was the intent.** A new
+`member.convert` permission (migration 0031) governs "Apply to become a
+member" on its own, configurable on Configuration → Roles under the
+Members group like anything else with that prefix; granted by default only
+to Regional Officer, matching what application.capture already allowed
+there, so nothing changes on deploy until an administrator touches it.
+
+**The Members page's account buttons, and what they open.** HSA is now
+blue, Investment a light rose, matched the same way as before (the account
+type's own code and name, not a fixed set). Clicking one now opens a
+popup — a `<dialog>`, closed only by its own Close button, not by a stray
+click on the backdrop — listing every credit and debit recorded against
+that account, not only the opening deposit: `depositForAccount` becomes
+`transactionsForAccount` (payments.ts), reading both the opening payment
+and any refund paid back against it from `payment_line`/
+`payment_account_line` in one query each, since a refund already inserts
+its own row on its own `payment` (kind = 'refund') there. The endpoint
+moves with it, `GET /api/v1/accounts/{id}/transactions`.
+
+**Filing an identity card and a utility bill at the same time only kept
+one of them.** Each checklist box's own upload ran independently and
+correctly, but the FIRST one to finish reloaded the page immediately
+(`window.location.reload()`) — which aborted every other upload still in
+flight rather than waiting for it. `[id].astro`, `customer.astro` and
+`account.astro` each now count uploads in flight and hold the reload back
+until every one of them has finished.
+
+**A filed document could be deleted from an application that had already
+moved on.** Officer feedback: only 'draft' and 'returned' (sent back for
+exactly this kind of correction) should still allow it — every other
+status is a submitted record, view only. The Delete button is now gated
+on the same `isEditable` the rest of each page already reads (added to
+`account.astro`, which had none); `removeFiledDocument` (documents.ts)
+carries the same rule server-side, so a direct POST cannot reach around
+the hidden button either.
+
+**Viewing a filed document meant downloading it first.** `window.open(url)`
+handed the browser a SharePoint download link — a save-to-disk prompt on
+some devices before the file could even be looked at. Replaced with an
+in-app viewer: an `<img>` for a photo, a PDF's own browser-native
+`<iframe>` viewer for one of those, both fed the same pre-authenticated
+URL as before; HEIC (no browser renders it inline) and anything
+unforeseen fall back to "can't be previewed here" with a link to open it
+directly. `getDocumentViewUrl` (documents.ts) and
+`/api/v1/documents/view-url` now also return `contentType`, read from
+`document_version` where it was already stored, to decide which.
+
+**An approved application stayed on the Applications page after it was
+already a member.** `listApplications` now excludes `status = 'approved'`
+unconditionally — not just as the default view, but even when asked for
+by name — since from approval onward the record lives on the Members
+page and this list is not the place to keep a stale duplicate of it. The
+status filter drops "Approved" as an option to match: it would otherwise
+always read "no applications match."
+
+**Creating a staff account listed every role as its own checkbox, which
+got bulky as roles accumulated.** The "Add a staff account" section now
+offers a multi-select dropdown instead — `<select multiple>`, still
+driven by the same `listRoles()` read the checkboxes were, so a role
+added or removed on the Roles page is reflected here with no code change
+either way. The per-account "Roles" editor further down the same page is
+unchanged; only account creation had the bulk complaint.
+
+**"Show deactivated accounts" was offered even when there were none to
+show.** Now shown only when `deactivatedCount > 0`, or while actually
+viewing that (empty) list — the way back to the working list has to stay
+reachable even then.
+
+**There was no way to start a new document checklist — only to add
+documents to one a migration had already seeded.** `createChecklist`
+(reference.ts) creates an empty one, the same way `createAccountType` and
+`createRole` already do for their own configuration; a new "Add a
+checklist" section on Configuration → Document checklists calls it. It is
+immediately selectable wherever a checklist is chosen — Account types'
+own "Documents required to open" and Membership types' own checklist
+picker both already read `listChecklists()` fresh, the same list this
+page shows — so nothing else needed to change for the new checklist to
+reach either KYC section.
+
 ---
 
 # M7 — Legacy migration

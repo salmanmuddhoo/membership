@@ -793,6 +793,56 @@ describe('S-208: document types and dynamic checklists', () => {
     ).toBe('required');
   });
 
+  // Officer feedback: there was no way to start a new checklist at all —
+  // only to add documents to one a migration had already seeded.
+  it('creates a new, empty checklist, immediately available to add documents to', async () => {
+    const { config } = await load();
+
+    const id = await config.createChecklist(
+      { code: 'hsa_opening_test', name: 'HSA opening (test)' },
+      actor
+    );
+
+    const created = (await config.listChecklists()).find(c => c.id === id)!;
+    expect(created).toMatchObject({
+      code: 'hsa_opening_test',
+      name: 'HSA opening (test)',
+      items: [],
+    });
+
+    const idCard = (await config.listDocumentTypes()).find(
+      d => d.code === 'id_card'
+    )!;
+    await config.addChecklistItem(
+      id,
+      {
+        documentTypeId: idCard.id,
+        subject: 'applicant',
+        requirement: 'required',
+      },
+      actor
+    );
+    const withItem = (await config.listChecklists()).find(c => c.id === id)!;
+    expect(withItem.items.map(i => i.documentCode)).toEqual(['id_card']);
+  });
+
+  it('refuses a duplicate checklist code', async () => {
+    const { config } = await load();
+    await expect(
+      config.createChecklist(
+        { code: 'individual_kyc', name: 'Another name' },
+        actor
+      )
+    ).rejects.toThrowError(/already exists/);
+  });
+
+  it('refuses a code that is not lower-case letters, digits and underscores', async () => {
+    const { config } = await load();
+    await expect(
+      config.createChecklist({ code: 'Not Valid!', name: 'Bad code' }, actor)
+    ).rejects.toThrowError(/lowercase letters/);
+  });
+
   it('adds and removes a requirement without a release', async () => {
     const { config } = await load();
     const checklist = (await config.listChecklists()).find(
