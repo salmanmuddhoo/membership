@@ -187,6 +187,12 @@ interface OwnerRow {
   application_status: string | null;
   checklist_source: ChecklistSource;
   folder_path: string;
+  // The application's own reference, or the member's number once one
+  // exists (S-308: the application's reference becomes that number on
+  // approval, so the two are never a mismatched pair to choose between).
+  // Used to name a filed document after what it is and whose it is,
+  // rather than whatever name a camera or a phone gave the file.
+  reference: string;
 }
 
 async function resolveOwner(
@@ -244,6 +250,7 @@ async function resolveOwner(
       application_status: row.status,
       checklist_source: checklistSource,
       folder_path: applicationFolderPath(row.reference),
+      reference: row.reference,
     };
   }
 
@@ -285,6 +292,7 @@ async function resolveOwner(
       result.rows[0].member_no,
       result.rows[0].name ?? ''
     ),
+    reference: result.rows[0].member_no,
   };
 }
 
@@ -448,8 +456,12 @@ export async function beginUpload(
     );
   }
 
-  const type = await query<{ code: string; tracks_expiry: boolean }>(
-    'select code, tracks_expiry from document_type where id = $1 and is_active',
+  const type = await query<{
+    code: string;
+    name: string;
+    tracks_expiry: boolean;
+  }>(
+    'select code, name, tracks_expiry from document_type where id = $1 and is_active',
     [input.documentTypeId]
   );
   if (type.rowCount === 0) {
@@ -529,8 +541,20 @@ export async function beginUpload(
         [id]
       );
       const versionNo = nextVersion.rows[0].next;
-      const safeName = sanitiseFileName(input.fileName);
-      const name = versionNo === 1 ? safeName : `v${versionNo} ${safeName}`;
+
+      // Officer feedback: a filed document should be named for what it is
+      // and whose it is — "Utility Bill - AB0001" — not whatever a phone or
+      // a scanner called the file before it was chosen for this checklist
+      // item. The original name's own extension is kept (it is what tells
+      // SharePoint and every OS how to open the file); everything else
+      // about the original name is discarded.
+      const extensionMatch = /\.[^./\\]+$/.exec(input.fileName);
+      const extension = extensionMatch ? extensionMatch[0] : '';
+      const base = sanitiseFileName(
+        `${type.rows[0].name} - ${owner.reference}`
+      );
+      const name =
+        (versionNo === 1 ? base : `${base} v${versionNo}`) + extension;
 
       const version = await client.query<{ id: string }>(
         `insert into document_version
