@@ -191,17 +191,21 @@ to them. The URL is fetched on click rather than embedded in the page — it is
 a secret in the same sense an upload ticket is one, and a page that sat open
 for an hour would otherwise carry a live one in its HTML the whole time.
 
-**Removing a filed document is Replace without the replacement.**
-`removeFiledDocument` (`document.upload`) supersedes the live version exactly
-as a genuine replacement would (S-409) — it just does not insert one to take
-its place. What this does **not** do is touch SharePoint: versions are never
-deleted there, which is the same guarantee that keeps a signed form
-retrievable after it is superseded by a clearer scan, so undoing a mistaken
-upload undoes it from the checklist, not from the record that it was ever
-filed. The item reads Missing again, exactly as if nothing had been filed,
-and can be filed afresh. Available on any state Replace already is — S-409
-lets an officer replace even a verified document without restriction, so this
-is not a new door, only the other side of an existing one.
+**Removing a filed document is Replace without the replacement — and, unlike
+Replace, it does not keep the file.** `removeFiledDocument` (`document.upload`)
+supersedes the live version exactly as a genuine replacement would (S-409),
+then deletes it from SharePoint (officer feedback). Replace's own "versions
+are never deleted" guarantee is about a _superseded_ filing — it exists to
+keep a signed form retrievable after a clearer scan replaces it, which
+presumes the earlier filing was a real record of something. A mistaken
+upload was never that, so there is nothing worth keeping: the item reads
+Missing again, exactly as if nothing had been filed, and can be filed afresh.
+The database row updates first and the SharePoint delete happens after, so a
+delete that fails (or never runs) still leaves the checklist correctly at
+Missing — an orphaned file in that case is a cleanup problem, not a data
+one. Available on any state Replace already is — S-409 lets an officer
+replace even a verified document without restriction, so this is not a new
+door, only the other side of an existing one.
 
 The **Replace** button itself is gone from `[id].astro`. It offered upload and
 delete-then-upload as one control, which read as one action while quietly

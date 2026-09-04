@@ -597,6 +597,117 @@ describe('S-206: the accounts a membership opens', () => {
     type = (await config.listAccountTypes()).find(t => t.id === id)!;
     expect(type.numberPrefix).toBeNull();
   });
+
+  // Officer feedback: a mistaken or no-longer-needed account type had no way
+  // back out, only deactivation — which keeps it forever as a choice nobody
+  // can actually offer.
+  describe('deleting an account type', () => {
+    async function unusedType(
+      config: Awaited<ReturnType<typeof load>>['config']
+    ) {
+      const code = `del_test_${Math.random().toString(36).slice(2, 8)}`;
+      return config.createAccountType(
+        {
+          code,
+          name: 'Delete test',
+          category: 'savings',
+          minimumOpeningAmount: '0',
+          checklistId: null,
+          requiresApproval: false,
+          defaultStatus: 'active',
+        },
+        actor
+      );
+    }
+
+    it('deletes one nothing has ever used', async () => {
+      const { config } = await load();
+      const id = await unusedType(config);
+
+      await config.deleteAccountType(id, actor);
+
+      expect((await config.listAccountTypes()).find(t => t.id === id)).toBe(
+        undefined
+      );
+    });
+
+    it('refuses one a membership approval opens', async () => {
+      const { config } = await load();
+      const shares = (await config.listAccountTypes()).find(
+        t => t.code === 'shares'
+      )!;
+
+      await expect(
+        config.deleteAccountType(shares.id, actor)
+      ).rejects.toThrowError(/A membership approval opens this account type/);
+    });
+
+    it('refuses one that already has an account opened under it', async () => {
+      const { config } = await load();
+      const id = await unusedType(config);
+
+      const type = await run(
+        appUrl,
+        `select id from membership_type where code = 'individual'`
+      );
+      const member = await run(
+        appUrl,
+        `insert into member (membership_type_id) values ($1) returning id`,
+        [type.rows[0].id]
+      );
+      await run(
+        appUrl,
+        `insert into account (member_id, account_type_id) values ($1, $2)`,
+        [member.rows[0].id, id]
+      );
+
+      await expect(config.deleteAccountType(id, actor)).rejects.toThrowError(
+        /already been used/
+      );
+    });
+
+    it('refuses one an application has selected', async () => {
+      const { config } = await load();
+      const id = await unusedType(config);
+
+      const membershipType = await run(
+        appUrl,
+        `select id from membership_type where code = 'individual'`
+      );
+      const application = await run(
+        appUrl,
+        `insert into membership_application (membership_type_id, captured_by)
+         values ($1, $2) returning id`,
+        [membershipType.rows[0].id, actor.userId]
+      );
+      await run(
+        appUrl,
+        `insert into application_account_selection
+           (application_id, account_type_id)
+         values ($1, $2)`,
+        [application.rows[0].id, id]
+      );
+
+      await expect(config.deleteAccountType(id, actor)).rejects.toThrowError(
+        /already been used/
+      );
+    });
+
+    it('refuses one with a customer account number counter', async () => {
+      const { config } = await load();
+      const id = await unusedType(config);
+
+      await run(
+        appUrl,
+        `insert into account_number_counter (account_type_id) values ($1)`,
+        [id]
+      );
+
+      await expect(config.deleteAccountType(id, actor)).rejects.toThrowError(
+        /already been used/
+      );
+    });
+  });
 });
 
 describe('S-207: fee schedules', () => {
@@ -902,6 +1013,90 @@ describe('S-208: document types and dynamic checklists', () => {
         actor
       )
     ).rejects.toThrowError(/already on this checklist/);
+  });
+
+  // Officer feedback: a checklist created by mistake had no way back out.
+  describe('deleting a checklist', () => {
+    async function emptyChecklist(
+      config: Awaited<ReturnType<typeof load>>['config']
+    ) {
+      const code = `del_checklist_${Math.random().toString(36).slice(2, 8)}`;
+      return config.createChecklist({ code, name: 'Delete test' }, actor);
+    }
+
+    it('deletes one nothing uses, taking its items with it', async () => {
+      const { config } = await load();
+      const id = await emptyChecklist(config);
+      const idCard = (await config.listDocumentTypes()).find(
+        d => d.code === 'id_card'
+      )!;
+      await config.addChecklistItem(
+        id,
+        {
+          documentTypeId: idCard.id,
+          subject: 'applicant',
+          requirement: 'required',
+        },
+        actor
+      );
+
+      await config.deleteChecklist(id, actor);
+
+      expect((await config.listChecklists()).find(c => c.id === id)).toBe(
+        undefined
+      );
+    });
+
+    it('refuses one a membership type still uses for its members', async () => {
+      const { config } = await load();
+      const checklist = (await config.listChecklists()).find(
+        c => c.code === 'individual_kyc'
+      )!;
+
+      await expect(
+        config.deleteChecklist(checklist.id, actor)
+      ).rejects.toThrowError(/still uses this checklist/);
+    });
+
+    it('refuses one an account type still uses to open', async () => {
+      const { config } = await load();
+      const id = await emptyChecklist(config);
+      const msa = (await config.listAccountTypes()).find(
+        t => t.code === 'msa'
+      )!;
+      await config.updateAccountType(
+        msa.id,
+        {
+          name: msa.name,
+          category: msa.category,
+          minimumOpeningAmount: msa.minimumOpeningAmount,
+          checklistId: id,
+          requiresApproval: msa.requiresApproval,
+          defaultStatus: msa.defaultStatus,
+          isActive: msa.isActive,
+        },
+        actor
+      );
+
+      await expect(config.deleteChecklist(id, actor)).rejects.toThrowError(
+        /still uses this checklist/
+      );
+
+      // Put the MSA back the way the other tests in this file expect it.
+      await config.updateAccountType(
+        msa.id,
+        {
+          name: msa.name,
+          category: msa.category,
+          minimumOpeningAmount: msa.minimumOpeningAmount,
+          checklistId: msa.checklistId,
+          requiresApproval: msa.requiresApproval,
+          defaultStatus: msa.defaultStatus,
+          isActive: msa.isActive,
+        },
+        actor
+      );
+    });
   });
 
   // No document the Society currently accepts carries an expiry date — a

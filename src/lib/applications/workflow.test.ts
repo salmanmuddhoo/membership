@@ -1441,6 +1441,47 @@ describe('S-308 and S-309: what approval creates', () => {
     await config.setOpensOnApproval(premiumId, false, admin);
   });
 
+  // Officer feedback: the Members page's own "Total funds" column sums
+  // Shares and the MSA deposit, and nothing else — Entrance and Takaful are
+  // the Society's own charge, not the member's money, so recordFullPayment
+  // paying every fee component must not inflate the total by them.
+  it('sums Shares and the MSA deposit into the Members page total, not Entrance or Takaful', async () => {
+    const { workflow, members, payments } = await load();
+    const actor = { userId: officer.userId, email: officer.email };
+    const capture = await import('./capture');
+    const documents = await import('../documents/documents');
+
+    const { id } = await capture.startApplication('individual', actor);
+    await capture.saveDraft(id, COMPLETE_INDIVIDUAL, actor);
+    await fileRequiredDocuments(documents, id);
+    await verifyRequiredDocuments(documents, id);
+
+    const due = await payments.amountDueForApplication(id);
+    const expected = due.components
+      .filter(c => c.code === 'shares' || c.code === 'msa_deposit')
+      .reduce((sum, c) => sum + Number(c.amount), 0)
+      .toFixed(2);
+
+    await recordFullPayment(payments, id);
+    await workflow.submitApplication(id, officer);
+    await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Complete.' },
+      secretary
+    );
+    const decided = await workflow.decideApplication(
+      id,
+      { outcome: 'approve', comment: '' },
+      president,
+      members.createMemberFromApplication
+    );
+
+    const listed = (
+      await members.listMembers({ search: decided.member!.memberNo })
+    ).members[0];
+    expect(listed.totalFunds).toBe(expected);
+  });
+
   it('gives every member a distinct number in the documented format', async () => {
     const { members } = await load();
     // listMembers also lists customers (S-614) — filtered here, since their
@@ -2005,6 +2046,51 @@ describe('S-613: an additional-account application, end to end', () => {
     ]);
   });
 
+  // Officer feedback: the Members page's own "Total funds" column — the
+  // member's founding application here (activeMember) carries no Shares or
+  // MSA payment, so this account's own 1000.00 is the whole of it, proving
+  // the additional_account branch of listMembers' total_funds sum reaches an
+  // account this way — traced through the application, since the account row
+  // itself carries no link back to what opened it (same reason
+  // transactionsForAccount, above, has to trace it the same way).
+  it('counts an opened additional account towards the Members page total', async () => {
+    const { capture, workflow, members, payments } = await load();
+    const member = await activeMember();
+
+    const application = await capture.startAdditionalAccountApplication(
+      member.id,
+      [accountTypeId],
+      officer
+    );
+    await payments.recordAccountOpeningPayment(
+      {
+        applicationId: application.id,
+        method: 'cash',
+        amounts: { [accountTypeId]: '1000.00' },
+      },
+      {
+        ...officer,
+        permissions: new Set([...officer.permissions, 'payment.record']),
+      }
+    );
+    await workflow.submitApplication(application.id, officer);
+    await workflow.reviewApplication(
+      application.id,
+      { outcome: 'forward', comment: 'ok' },
+      secretary
+    );
+    await workflow.decideApplication(
+      application.id,
+      { outcome: 'approve', comment: '' },
+      president,
+      members.openAccountsForApplication
+    );
+
+    const listed = (await members.listMembers({ search: member.memberNo }))
+      .members[0];
+    expect(listed.totalFunds).toBe('1000.00');
+  });
+
   it('refuses a second application for an account type already open', async () => {
     const { capture, members, payments, workflow } = await load();
     const member = await activeMember();
@@ -2307,6 +2393,10 @@ describe('S-614: a customer_account application, end to end', () => {
         kind: 'customer',
         memberNo: accountNo,
         membershipTypeName: accountTypeName,
+        // The Members page's own "Total funds" column — a customer has no
+        // Shares or MSA (they are not a member), only what they paid to
+        // open this account.
+        totalFunds: '1000.00',
       }),
     ]);
 

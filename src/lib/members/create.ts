@@ -598,6 +598,7 @@ export async function listMembers(
     joined_at: Date;
     application_reference: string | null;
     accounts: MemberListAccount[];
+    total_funds: string;
     total_count: string;
   }>(
     `with rows as (
@@ -614,7 +615,44 @@ export async function listMembers(
                    join account_type act on act.id = acc.account_type_id
                   where acc.member_id = m.id),
                 '[]'
-              ) as accounts
+              ) as accounts,
+              -- Officer feedback: what the member actually has in the
+              -- Society — Shares, the MSA, and any HSA/Investment/other
+              -- account — never Entrance, the processing fee or Takaful,
+              -- which are one-time charges with no account behind them and
+              -- so never appear in payment_line/payment_account_line under
+              -- these components. Netted against any refund the same way
+              -- transactionsForAccount (payments.ts) treats one account's
+              -- own history — a refund is its own payment row (kind =
+              -- 'refund') carrying the same application_id.
+              coalesce(
+                (select sum(case when p.kind = 'payment' then pl.amount
+                                  else -pl.amount end)
+                   from payment_line pl
+                   join payment p on p.id = pl.payment_id
+                  where p.application_id = m.application_id
+                    and p.voided_at is null
+                    and pl.component_code in ('shares', 'msa_deposit')),
+                0
+              )
+              +
+              coalesce(
+                (select sum(case when p.kind = 'payment' then pal.amount
+                                  else -pal.amount end)
+                   from payment_account_line pal
+                   join payment p on p.id = pal.payment_id
+                  where p.voided_at is null
+                    and (
+                      p.application_id = m.application_id
+                      or p.application_id in (
+                        select ma.id from membership_application ma
+                         where ma.existing_member_id = m.id
+                           and ma.application_kind = 'additional_account'
+                           and ma.status = 'approved'
+                      )
+                    )),
+                0
+              ) as total_funds
          from member m
          join membership_type t on t.id = m.membership_type_id
          left join membership_application a on a.id = m.application_id
@@ -650,7 +688,19 @@ export async function listMembers(
                    join account_type act on act.id = acc.account_type_id
                   where acc.customer_id = c.id),
                 '[]'
-              ) as accounts
+              ) as accounts,
+              -- A customer never has Shares or an MSA (they are not a
+              -- member) — only whatever account type(s) their own S-614
+              -- application opened, the same payment_account_line source
+              -- HSA/Investment use for a member above.
+              coalesce(
+                (select sum(case when p.kind = 'payment' then pal.amount
+                                  else -pal.amount end)
+                   from payment_account_line pal
+                   join payment p on p.id = pal.payment_id
+                  where p.voided_at is null and p.application_id = c.application_id),
+                0
+              ) as total_funds
          from customer c
          join membership_application capp on capp.id = c.application_id
          left join application_party p
@@ -658,7 +708,7 @@ export async function listMembers(
           and p.subject = 'applicant' and p.ordinal = 1
      )
      select id, kind, identifier, type_label, status, name, joined_at,
-            application_reference, accounts,
+            application_reference, accounts, total_funds::numeric(14,2)::text as total_funds,
             count(*) over () as total_count
        from rows
       where $1::text is null
@@ -682,6 +732,7 @@ export async function listMembers(
       joinedAt: r.joined_at,
       applicationReference: r.application_reference,
       accountBadges: r.accounts ?? [],
+      totalFunds: r.total_funds,
     })),
     total,
     truncated: result.rows.length < total,

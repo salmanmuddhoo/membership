@@ -1,6 +1,7 @@
 ---
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import { listMembers, type MemberListAccount } from '@lib/members/create';
+import { formatMoney } from '@lib/payments/money';
 
 const principal = Astro.locals.principal!;
 const canSeePayments = principal.permissions.has('payment.view');
@@ -91,7 +92,10 @@ function accountButtonClasses(account: MemberListAccount): string {
                   <th class="py-2 pr-4 font-medium">Name</th>
                   <th class="py-2 pr-4 font-medium">Status</th>
                   <th class="py-2 pr-4 font-medium">Joined</th>
-                  <th class="py-2 font-medium">Accounts</th>
+                  <th class="py-2 pr-4 font-medium">Accounts</th>
+                  {canSeePayments && (
+                    <th class="py-2 text-right font-medium">Total funds</th>
+                  )}
                 </tr>
               </thead>
               <tbody>
@@ -116,7 +120,7 @@ function accountButtonClasses(account: MemberListAccount): string {
                     <td class="py-2 pr-4 text-xs text-neutral-500 dark:text-neutral-400">
                       {dateFormat.format(m.joinedAt)}
                     </td>
-                    <td class="py-2">
+                    <td class="py-2 pr-4">
                       {m.accountBadges.length === 0 ? (
                         <span class="text-xs text-neutral-400 dark:text-neutral-500">
                           —
@@ -153,6 +157,11 @@ function accountButtonClasses(account: MemberListAccount): string {
                         </div>
                       )}
                     </td>
+                    {canSeePayments && (
+                      <td class="py-2 text-right font-medium text-neutral-800 tabular-nums dark:text-neutral-100">
+                        {formatMoney(m.totalFunds)}
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>

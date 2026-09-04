@@ -535,7 +535,25 @@ describe('S-501: recording a payment', () => {
       ).rejects.toThrow(/source of fund note.*Source of Fund form/s);
     });
 
-    it('accepts it once a source of fund note is given', async () => {
+    it('refuses cash over the threshold with a note but no form confirmation', async () => {
+      const { payments, config } = await load();
+      await config.setCashSourceOfFundThreshold('5000', officer);
+      const application = await newApplication();
+
+      await expect(
+        payments.recordPayment(
+          {
+            applicationId: application.id,
+            method: 'cash',
+            amounts: FULL,
+            sourceOfFund: 'Sale of livestock, per the applicant.',
+          },
+          principalFor(officer)
+        )
+      ).rejects.toThrow(/Confirm.*Source of Fund form/s);
+    });
+
+    it('accepts it once a source of fund note is given and the form is confirmed', async () => {
       const { payments, config } = await load();
       await config.setCashSourceOfFundThreshold('5000', officer);
       const application = await newApplication();
@@ -546,12 +564,14 @@ describe('S-501: recording a payment', () => {
           method: 'cash',
           amounts: FULL,
           sourceOfFund: 'Sale of livestock, per the applicant.',
+          sourceOfFundFormConfirmed: true,
         },
         principalFor(officer)
       );
       expect(payment.sourceOfFund).toBe(
         'Sale of livestock, per the applicant.'
       );
+      expect(payment.sourceOfFundFormConfirmed).toBe(true);
     });
 
     it('does not require one at or under the threshold', async () => {
@@ -1612,7 +1632,25 @@ describe('S-613: paying to open an account for an existing member', () => {
       ).rejects.toThrow(/source of fund note.*Source of Fund form/s);
     });
 
-    it('accepts it once a source of fund note is given', async () => {
+    it('refuses cash over the threshold with a note but no form confirmation', async () => {
+      const { payments, config } = await load();
+      await config.setCashSourceOfFundThreshold('500', officer);
+      const application = await newAdditionalAccountApplication([hsaId]);
+
+      await expect(
+        payments.recordAccountOpeningPayment(
+          {
+            applicationId: application.id,
+            method: 'cash',
+            amounts: { [hsaId]: '1000.00' },
+            sourceOfFund: 'Savings, per the member.',
+          },
+          principalFor(officer)
+        )
+      ).rejects.toThrow(/Confirm.*Source of Fund form/s);
+    });
+
+    it('accepts it once a source of fund note is given and the form is confirmed', async () => {
       const { payments, config } = await load();
       await config.setCashSourceOfFundThreshold('500', officer);
       const application = await newAdditionalAccountApplication([hsaId]);
@@ -1623,10 +1661,12 @@ describe('S-613: paying to open an account for an existing member', () => {
           method: 'cash',
           amounts: { [hsaId]: '1000.00' },
           sourceOfFund: 'Savings, per the member.',
+          sourceOfFundFormConfirmed: true,
         },
         principalFor(officer)
       );
       expect(payment.sourceOfFund).toBe('Savings, per the member.');
+      expect(payment.sourceOfFundFormConfirmed).toBe(true);
     });
   });
 

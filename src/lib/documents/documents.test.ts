@@ -87,7 +87,7 @@ async function closeOpenPool() {
   await previous?.closePool();
 }
 
-async function load() {
+async function load(graphOverrides: Record<string, unknown> = {}) {
   await closeOpenPool();
   vi.resetModules();
   process.env.DATABASE_URL = appUrl;
@@ -113,6 +113,10 @@ async function load() {
             }
           : null;
       },
+      deleteItemByPath: async (itemPath: string) => {
+        drive.files.delete(itemPath);
+      },
+      ...graphOverrides,
     };
   });
 
@@ -1167,7 +1171,7 @@ describe('undoing a mistaken upload, so it can be filed again', () => {
     permissions: new Set(['document.view']),
   });
 
-  it('supersedes the live version, without touching the file in SharePoint', async () => {
+  it('supersedes the live version, and deletes the file from SharePoint', async () => {
     const { documents } = await load();
     const type = await run(
       appUrl,
@@ -1197,12 +1201,14 @@ describe('undoing a mistaken upload, so it can be filed again', () => {
     expect(result.state).toBe('missing');
 
     const after = await documents.versionsOf(begun.documentId);
-    // Nothing live — but the version itself is kept, exactly as a replacement
-    // keeps what it supersedes (S-409): the same guarantee, reached from a
-    // different direction.
+    // Nothing live — but the *row* is kept, exactly as a replacement keeps
+    // the version it supersedes (S-409): the audit trail still shows this
+    // was filed and then removed. The file itself, unlike a genuine
+    // replacement's, is gone — a mistaken upload was never a record worth
+    // keeping in SharePoint.
     expect(after.filter(v => v.supersededAt === null)).toHaveLength(0);
     expect(after).toHaveLength(before.length);
-    expect(drive.files.has(begun.ticket.itemPath)).toBe(true);
+    expect(drive.files.has(begun.ticket.itemPath)).toBe(false);
 
     const audited = await run(
       appUrl,
@@ -1254,6 +1260,64 @@ describe('undoing a mistaken upload, so it can be filed again', () => {
     // original file's own extension, not its name (bill3.pdf), which the
     // stored name never carries at all.
     expect(live.fileName).toMatch(/^Utility Bill - .+ v2\.pdf$/);
+  });
+
+  it('still returns Missing when the SharePoint delete itself fails', async () => {
+    // The database row is the source of truth for the checklist; a Graph
+    // outage on the way out must not leave the checklist stuck on a document
+    // that is, as far as this application's own records are concerned,
+    // already gone.
+    const { documents } = await load({
+      deleteItemByPath: async () => {
+        throw new Error('SharePoint is unreachable');
+      },
+    });
+    const type = await run(
+      appUrl,
+      `select id from document_type where code = 'utility_bill'`
+    );
+    const membershipType = await run(
+      appUrl,
+      `select id from membership_type where code = 'individual'`
+    );
+    // A dedicated draft, rather than the subjects reused elsewhere on the
+    // shared `applicationId` — this test does not want to depend on what
+    // another describe block already filed against that document.
+    const draft = await run(
+      appUrl,
+      `insert into membership_application
+         (membership_type_id, captured_by, status)
+       values ($1, $2, 'draft') returning id`,
+      [membershipType.rows[0].id, officer.userId]
+    );
+    const begun = await documents.beginUpload(
+      {
+        applicationId: draft.rows[0].id,
+        documentTypeId: type.rows[0].id,
+        subject: 'applicant',
+        fileName: 'bill4.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 200,
+      },
+      officer
+    );
+    drive.files.set(begun.ticket.itemPath, { id: 'graph-bill4', size: 200 });
+    await documents.commitUpload(begun.versionId, officer);
+
+    const originalError = console.error;
+    console.error = () => {};
+    try {
+      const result = await documents.removeFiledDocument(
+        begun.documentId,
+        asUploader()
+      );
+      expect(result.state).toBe('missing');
+
+      const after = await documents.versionsOf(begun.documentId);
+      expect(after.filter(v => v.supersededAt === null)).toHaveLength(0);
+    } finally {
+      console.error = originalError;
+    }
   });
 
   it('refuses when there is nothing filed to remove', async () => {
