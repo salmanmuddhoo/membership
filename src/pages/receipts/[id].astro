@@ -184,7 +184,10 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       }
       <div class="row">
         <dt>Received by</dt>
-        <dd>{payment.recordedByName}</dd>
+        <dd>
+          {payment.recordedByName}
+          {payment.recordedByRole && ` · ${payment.recordedByRole}`}
+        </dd>
       </div>
     </dl>
 
