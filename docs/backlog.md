@@ -1938,14 +1938,27 @@ then failing.
 
 ### Nine more items of officer feedback: fees, documents, receipts and one routing bug ✅
 
-**"Start an application" hidden without `application.capture`, and every
-account already a coloured button — both reported as still broken were
-already correct on `main`.** Verified rather than changed: `applications/
-index.astro`'s "Start an application" section was already `{canCapture &&
-...}`, and `members/index.astro`'s account column already rendered every
-account (not only HSA and Investment) as its own coloured button, one
-colour per account type's own code and name. Recorded here as confirmed,
-not left unexplained a second time.
+**"Start an application" hidden without `application.capture` was already
+correct on `main` — the account buttons reported alongside it were not,
+and this entry's own first pass got that wrong too.** `applications/
+index.astro`'s "Start an application" section was genuinely already
+`{canCapture && ...}`. The account buttons were a different kind of bug
+entirely: `members/index.astro`'s markup was correct — every account
+already rendered as its own coloured `<button>` — but `bg-blue-600`,
+`bg-rose-200`, `bg-amber-400` and `bg-slate-500` (and every `amber-*`
+status badge elsewhere in the app: applications, receipts
+reconciliation, the cash-payment reminder above) compiled to nothing.
+`global.css`'s `@theme` block resets Tailwind's entire default palette
+(`--color-*: initial`) and re-declares only a curated set — gray,
+indigo, neutral, mint, orange, red, zinc — and blue, rose, amber and
+slate were never added to it, even after code elsewhere started using
+them. A `bg-<colour>-<shade>` class with no matching `--color-<colour>-
+<shade>` compiles to an empty rule, not a build error and not a wrong
+colour — so every one of those elements had been rendering with no
+background at all, invisibly, since whichever commit first used a colour
+missing from the theme. All four are now defined, copied verbatim from
+Tailwind's own default palette the same way gray/indigo/neutral/mint/
+orange/red/zinc already were.
 
 **A filed document's name was whatever a phone or a scanner called it,
 not what it was or whose it was.** `beginUpload` (documents.ts) now names
