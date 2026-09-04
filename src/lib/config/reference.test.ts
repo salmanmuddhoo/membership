@@ -1359,3 +1359,53 @@ describe('S-209: workflow definitions', () => {
     ).rejects.toThrowError(/uses this status/);
   });
 });
+
+describe('the cash source-of-fund threshold (a system setting, not reference data)', () => {
+  afterEach(async () => {
+    const { config } = await load();
+    // Migration 0032 seeds 45000; put it back so no other test in this file
+    // reads a value a previous test left behind.
+    await config.setCashSourceOfFundThreshold('45000', actor);
+  });
+
+  it('reads the value migration 0032 seeded, before anyone has changed it', async () => {
+    const { config } = await load();
+    expect(await config.cashSourceOfFundThreshold()).toBe('45000');
+  });
+
+  it('can be changed, and the new value reads back', async () => {
+    const { config } = await load();
+    await config.setCashSourceOfFundThreshold('60000', actor);
+    expect(await config.cashSourceOfFundThreshold()).toBe('60000');
+  });
+
+  it('refuses a value that is not a whole amount in rupees', async () => {
+    const { config } = await load();
+    await expect(
+      config.setCashSourceOfFundThreshold('not a number', actor)
+    ).rejects.toThrowError(/not a whole amount/);
+    await expect(
+      config.setCashSourceOfFundThreshold('-100', actor)
+    ).rejects.toThrowError(/not a whole amount/);
+  });
+
+  it('keeps its own history, the same as every other config_entry row', async () => {
+    const { config, pool } = await load();
+    // Other tests in this describe block share the same row and each reset
+    // it to 45000 in afterEach, so history already has entries — only the
+    // tail this test itself just wrote is asserted on.
+    await config.setCashSourceOfFundThreshold('60000', actor);
+    await config.setCashSourceOfFundThreshold('70000', actor);
+
+    const rows = await run(
+      appUrl,
+      `select value::text as value, replaced_at is null as is_live
+         from config_entry_history
+        where config_key = 'payment.cash_source_of_fund_threshold'
+        order by effective_at`
+    );
+    expect(rows.rows.slice(-2).map(r => r.value)).toEqual(['60000', '70000']);
+    expect(rows.rows.at(-1)!.is_live).toBe(true);
+    await pool.closePool();
+  });
+});

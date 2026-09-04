@@ -16,6 +16,7 @@ import { recordAudit } from '../access/audit';
 import { checkSegregation } from '../admin/segregation';
 import { query, withTransaction } from '../db/pool';
 import {
+  cashSourceOfFundThreshold,
   currentFeeVersion,
   feeVersionById,
   listMembershipTypes,
@@ -85,6 +86,44 @@ const NON_REFUNDABLE_ONCE_APPROVED: ReadonlySet<FeeComponentCode> = new Set([
   'takaful',
 ]);
 
+// Officer feedback: the entrance fee and the Takaful contribution are the
+// Society's own charge, set by the fee schedule and not negotiable at the
+// counter — an officer cannot record any other amount for them, and there is
+// nothing to explain if they tried. Shares and the MSA deposit are the
+// member's own money going into their own account: the schedule sets a
+// floor, but paying more than it is always the payer's choice and needs no
+// reason — only paying less is refused.
+export const FIXED_FEE_COMPONENTS: ReadonlySet<FeeComponentCode> = new Set([
+  'entrance',
+  'takaful',
+]);
+export const FLOOR_FEE_COMPONENTS: ReadonlySet<FeeComponentCode> = new Set([
+  'shares',
+  'msa_deposit',
+]);
+
+// Officer feedback: a cash payment above a configurable threshold needs a
+// source of fund on record, and the officer reminded to also complete the
+// paper Source of Fund form — a form outside this application, so all this
+// can do is say so. Shared between recordPayment and
+// recordAccountOpeningPayment rather than written twice.
+async function requireSourceOfFundIfCash(
+  method: PaymentMethod,
+  totalCents: number,
+  sourceOfFund: string
+): Promise<void> {
+  if (method !== 'cash') return;
+  const thresholdCents = toCents(await cashSourceOfFundThreshold());
+  if (totalCents <= thresholdCents) return;
+  if (sourceOfFund.trim() === '') {
+    throw new PaymentError(
+      `Cash payments over ${fromCents(thresholdCents)} need a source of ` +
+        'fund note before a receipt can be issued. The officer must also ' +
+        'complete the paper Source of Fund form.'
+    );
+  }
+}
+
 export interface PaymentLine {
   componentCode: FeeComponentCode;
   label: string;
@@ -124,9 +163,14 @@ export interface Payment {
   currency: string;
   totalAmount: string;
   varianceReason: string;
+  sourceOfFund: string;
   receivedAt: Date;
   recordedByName: string;
   recordedByEmail: string;
+  // The role(s) recordedByName held at the moment this was recorded,
+  // comma-joined if more than one — snapshotted, so a later change to
+  // their roles cannot rewrite what a printed receipt already said.
+  recordedByRole: string;
   voidedAt: Date | null;
   voidedByName: string | null;
   voidReason: string | null;
@@ -140,13 +184,14 @@ export interface Payment {
 const PAYMENT_SELECT = `
   select p.id, p.kind, p.refunds_id, p.application_id, p.member_id,
          p.fee_version_id, p.method, p.method_reference, p.currency,
-         p.total_amount, p.variance_reason, p.received_at,
+         p.total_amount, p.variance_reason, p.source_of_fund, p.received_at,
          p.voided_at, p.void_reason,
          r.receipt_no, r.serial_no,
          orig.receipt_no as refunds_receipt_no,
          a.reference as application_reference,
          m.member_no,
          u.display_name as recorded_by_name, u.email as recorded_by_email,
+         p.recorded_by_role,
          v.display_name as voided_by_name
     from payment p
     join receipt_number r on r.id = p.receipt_number_id
@@ -170,6 +215,7 @@ interface PaymentRow {
   currency: string;
   total_amount: string;
   variance_reason: string;
+  source_of_fund: string;
   received_at: Date;
   voided_at: Date | null;
   void_reason: string | null;
@@ -180,6 +226,7 @@ interface PaymentRow {
   member_no: string | null;
   recorded_by_name: string;
   recorded_by_email: string;
+  recorded_by_role: string;
   voided_by_name: string | null;
 }
 
@@ -246,9 +293,11 @@ function assemble(
     currency: p.currency,
     totalAmount: p.total_amount,
     varianceReason: p.variance_reason,
+    sourceOfFund: p.source_of_fund,
     receivedAt: p.received_at,
     recordedByName: p.recorded_by_name,
     recordedByEmail: p.recorded_by_email,
+    recordedByRole: p.recorded_by_role,
     voidedAt: p.voided_at,
     voidedByName: p.voided_by_name,
     voidReason: p.void_reason,
@@ -671,8 +720,15 @@ export interface RecordPaymentInput {
   methodReference?: string;
   receivedAt?: Date;
   amounts: Partial<Record<FeeComponentCode, string>>;
-  // Required only when the total differs from the schedule.
+  // Entrance and Takaful cannot differ from the schedule at all (fixed, no
+  // reason can override it); Shares and the MSA deposit may exceed their
+  // schedule minimum freely, no reason needed. This is required only if
+  // some OTHER required component (in practice, none today) differs from
+  // its schedule amount.
   varianceReason?: string;
+  // Required only when method is 'cash' and the total is strictly above
+  // config's payment.cash_source_of_fund_threshold.
+  sourceOfFund?: string;
 }
 
 export async function recordPayment(
@@ -730,8 +786,14 @@ export async function recordPayment(
     }
   }
 
-  let requiredPaid = 0;
   let total = 0;
+  // Variance-with-reason is now the fallback for a component that is
+  // neither fixed nor floored (in practice, only the processing fee, which
+  // FRD 7.9 leaves at zero / not applicable) — entrance, Takaful, Shares and
+  // the MSA deposit are each governed by their own rule below instead, none
+  // of which a reason can override.
+  let otherVariance = 0;
+  const varianceReason = (input.varianceReason ?? '').trim();
   const lines: Array<{
     code: FeeComponentCode;
     scheduled: string;
@@ -755,8 +817,32 @@ export async function recordPayment(
       throw new PaymentError(`${component.label} cannot be negative.`);
     }
 
+    const scheduledCents = toCents(component.amount);
+    if (FIXED_FEE_COMPONENTS.has(component.code)) {
+      if (cents !== scheduledCents) {
+        throw new PaymentError(
+          `${component.label} is fixed at ${component.amount} by the fee ` +
+            'schedule and cannot be recorded as anything else.'
+        );
+      }
+    } else if (FLOOR_FEE_COMPONENTS.has(component.code)) {
+      // Optional and untouched (msa_deposit skipped entirely) stays at
+      // zero, not "below the minimum" — the floor only binds once a payer
+      // has chosen to pay it at all. A required floor component (shares)
+      // has no such exemption: zero is still below the minimum.
+      const skippedOptional =
+        component.requirement === 'optional' && cents === 0;
+      if (!skippedOptional && cents < scheduledCents) {
+        throw new PaymentError(
+          `${component.label} cannot be less than the ${component.amount} ` +
+            'minimum set by the fee schedule.'
+        );
+      }
+    } else if (component.requirement === 'required') {
+      otherVariance += cents - scheduledCents;
+    }
+
     total += cents;
-    if (component.requirement === 'required') requiredPaid += cents;
 
     lines.push({
       code: component.code,
@@ -770,16 +856,24 @@ export async function recordPayment(
     throw new PaymentError('Enter what was paid before recording a receipt.');
   }
 
-  // S-501: a difference from the schedule is allowed, but never by accident.
-  const variance = requiredPaid - toCents(due.expectedTotal);
-  const varianceReason = (input.varianceReason ?? '').trim();
-  if (variance !== 0 && varianceReason === '') {
-    const word = variance > 0 ? 'more' : 'less';
+  // S-501: a difference from the schedule is allowed, but never by accident
+  // — for whatever is left that isn't already governed by a fixed or a
+  // floor rule above.
+  if (otherVariance !== 0 && varianceReason === '') {
+    const word = otherVariance > 0 ? 'more' : 'less';
     throw new PaymentError(
-      `That is ${fromCents(Math.abs(variance))} ${word} than the ` +
-        `${due.expectedTotal} due. Say why before recording it.`
+      `That is ${fromCents(Math.abs(otherVariance))} ${word} than the fee ` +
+        'schedule. Say why before recording it.'
     );
   }
+
+  // Informational only from here on (nothing above still gates on it): what
+  // the financial event and the audit trail record as the difference from
+  // the schedule, over the payment as a whole.
+  const variance = total - toCents(due.expectedTotal);
+
+  const sourceOfFund = (input.sourceOfFund ?? '').trim();
+  await requireSourceOfFundIfCash(input.method, total, sourceOfFund);
 
   const existing = await query<{ receipt_no: string }>(
     `select r.receipt_no
@@ -830,9 +924,9 @@ export async function recordPayment(
       const inserted = await client.query<{ id: string }>(
         `insert into payment
            (receipt_number_id, kind, application_id, fee_version_id, method,
-            method_reference, total_amount, variance_reason, received_at,
-            recorded_by)
-         values ($1, 'payment', $2, $3, $4, $5, $6, $7, coalesce($8, now()), $9)
+            method_reference, total_amount, variance_reason, source_of_fund,
+            received_at, recorded_by, recorded_by_role)
+         values ($1, 'payment', $2, $3, $4, $5, $6, $7, $8, coalesce($9, now()), $10, $11)
          returning id`,
         [
           allocation.id,
@@ -842,8 +936,10 @@ export async function recordPayment(
           (input.methodReference ?? '').trim(),
           fromCents(total),
           varianceReason,
+          sourceOfFund,
           input.receivedAt ?? null,
           principal.userId,
+          principal.roleNames.join(', '),
         ]
       );
       const paymentId = inserted.rows[0].id;
@@ -933,11 +1029,16 @@ export interface RecordAccountOpeningPaymentInput {
   receivedAt?: Date;
   // Keyed by account_type_id — every selected account type needs an amount
   // entered, since none of them is optional the way a membership fee
-  // schedule's own components can be. Less than what is due still needs
-  // varianceReason below, the same as a membership payment.
+  // schedule's own components can be. Each is a minimum
+  // (account_type.minimum_opening_amount): less than it is refused
+  // outright, with no reason able to override that; more than it needs no
+  // reason either.
   amounts: Record<string, string>;
-  // Required only when the total differs from what is due.
+  // Optional free text an officer may still record; nothing here requires it.
   varianceReason?: string;
+  // Required only when method is 'cash' and the total is strictly above
+  // config's payment.cash_source_of_fund_threshold.
+  sourceOfFund?: string;
 }
 
 export async function recordAccountOpeningPayment(
@@ -1014,10 +1115,22 @@ export async function recordAccountOpeningPayment(
       );
     }
     if (cents <= 0) {
-      // Not "the wrong amount" — that is the variance check below, which
-      // allows less than the schedule with a reason. This is "nothing was
-      // entered for an account being opened", which no reason excuses.
+      // Not "the wrong amount" — that is the minimum check below. This is
+      // "nothing was entered for an account being opened", which nothing
+      // excuses, a reason least of all.
       throw new PaymentError(`Enter what was paid to open ${component.label}.`);
+    }
+
+    // Officer feedback: this amount IS a minimum (it is the account type's
+    // own minimum_opening_amount) — paying more is always the payer's own
+    // choice and needs no explanation; paying less is refused outright,
+    // with no reason able to override it.
+    const scheduledCents = toCents(component.amount);
+    if (cents < scheduledCents) {
+      throw new PaymentError(
+        `${component.label} cannot be less than the ${component.amount} ` +
+          'minimum to open it.'
+      );
     }
 
     total += cents;
@@ -1030,15 +1143,16 @@ export async function recordAccountOpeningPayment(
     });
   });
 
-  const variance = total - toCents(due.expectedTotal);
+  // No longer required to justify paying more than the minimum (above) —
+  // kept as a free-text field an officer may still fill in for their own
+  // reasons, and stored the same way either way.
   const varianceReason = (input.varianceReason ?? '').trim();
-  if (variance !== 0 && varianceReason === '') {
-    const word = variance > 0 ? 'more' : 'less';
-    throw new PaymentError(
-      `That is ${fromCents(Math.abs(variance))} ${word} than the ` +
-        `${due.expectedTotal} due. Say why before recording it.`
-    );
-  }
+  // Informational only: what the financial event and the audit trail record
+  // as the difference from the total due — nothing above gates on it.
+  const variance = total - toCents(due.expectedTotal);
+
+  const sourceOfFund = (input.sourceOfFund ?? '').trim();
+  await requireSourceOfFundIfCash(input.method, total, sourceOfFund);
 
   const existing = await query<{ receipt_no: string }>(
     `select r.receipt_no
@@ -1087,9 +1201,9 @@ export async function recordAccountOpeningPayment(
       const inserted = await client.query<{ id: string }>(
         `insert into payment
            (receipt_number_id, kind, application_id, fee_version_id, method,
-            method_reference, total_amount, variance_reason, received_at,
-            recorded_by)
-         values ($1, 'payment', $2, null, $3, $4, $5, $6, coalesce($7, now()), $8)
+            method_reference, total_amount, variance_reason, source_of_fund,
+            received_at, recorded_by, recorded_by_role)
+         values ($1, 'payment', $2, null, $3, $4, $5, $6, $7, coalesce($8, now()), $9, $10)
          returning id`,
         [
           allocation.id,
@@ -1098,8 +1212,10 @@ export async function recordAccountOpeningPayment(
           (input.methodReference ?? '').trim(),
           fromCents(total),
           varianceReason,
+          sourceOfFund,
           input.receivedAt ?? null,
           principal.userId,
+          principal.roleNames.join(', '),
         ]
       );
       const paymentId = inserted.rows[0].id;
@@ -1407,8 +1523,8 @@ export async function refundPayment(
         `insert into payment
            (receipt_number_id, kind, refunds_id, application_id, member_id,
             fee_version_id, method, method_reference, total_amount,
-            variance_reason, recorded_by)
-         values ($1, 'refund', $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            variance_reason, recorded_by, recorded_by_role)
+         values ($1, 'refund', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
          returning id`,
         [
           allocation.id,
@@ -1421,6 +1537,7 @@ export async function refundPayment(
           fromCents(total),
           reason,
           principal.userId,
+          principal.roleNames.join(', '),
         ]
       );
       const refundId = inserted.rows[0].id;

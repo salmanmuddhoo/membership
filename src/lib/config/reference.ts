@@ -1659,3 +1659,62 @@ export function listWorkflowStatuses(
 export function listWorkflows(): Promise<WorkflowDefinition[]> {
   return cached('workflows', readWorkflows);
 }
+
+// ---------------------------------------------------------------------------
+// System settings — plain config_entry rows (0003), rather than a
+// purpose-built table for a single number. Each setting here is exactly the
+// case that table exists for: a business value the FRD leaves open, changed
+// without a release, with its own history for free.
+// ---------------------------------------------------------------------------
+
+// Officer feedback: a cash payment above this needs a source of fund note,
+// and reminds the officer to also complete the paper Source of Fund form
+// (outside this application). Defaults to 45,000 (MUR) if never configured —
+// migration 0032 seeds the same value, so this default is only ever read
+// before that migration has run.
+const CASH_SOURCE_OF_FUND_THRESHOLD_KEY =
+  'payment.cash_source_of_fund_threshold';
+const DEFAULT_CASH_SOURCE_OF_FUND_THRESHOLD = '45000';
+
+async function readCashSourceOfFundThreshold(): Promise<string> {
+  const result = await query<{ value: string }>(
+    `select value::text as value from config_entry where key = $1`,
+    [CASH_SOURCE_OF_FUND_THRESHOLD_KEY]
+  );
+  return result.rows[0]?.value ?? DEFAULT_CASH_SOURCE_OF_FUND_THRESHOLD;
+}
+
+export function cashSourceOfFundThreshold(): Promise<string> {
+  return cached('cash-source-of-fund-threshold', readCashSourceOfFundThreshold);
+}
+
+export async function setCashSourceOfFundThreshold(
+  amount: string,
+  actor: Actor
+): Promise<void> {
+  // A light check, not money.ts's own toCents: this module sits below
+  // payments/, and pulling that dependency in the other direction for one
+  // regex is not worth it. Whatever passes here still has to parse as an
+  // amount everywhere it is actually used to gate a payment.
+  if (!/^\d+(\.\d{1,2})?$/.test(amount.trim())) {
+    throw new ConfigError(
+      `${amount || 'That'} is not a whole amount in rupees.`
+    );
+  }
+
+  await withConfigurationActor(actorFor(actor), async client => {
+    await client.query(
+      `insert into config_entry (key, value, value_type, description, updated_by)
+       values (
+         $1, to_jsonb($2::numeric), 'number',
+         'A cash payment strictly above this amount (MUR) requires a ' ||
+         'source of fund note before a receipt can be issued, and reminds ' ||
+         'the officer to also complete the paper Source of Fund form.',
+         $3
+       )
+       on conflict (key) do update
+         set value = excluded.value, updated_by = excluded.updated_by`,
+      [CASH_SOURCE_OF_FUND_THRESHOLD_KEY, amount, actor.userId]
+    );
+  });
+}

@@ -345,6 +345,43 @@ describe('S-501: recording a payment', () => {
     expect(payment.recordedByEmail).toBe(officer.email);
   });
 
+  // Officer feedback: the printed receipt should carry the issuing
+  // officer's role, not only their name.
+  it('snapshots the recording officer’s role, for the receipt to print', async () => {
+    const { payments } = await load();
+    const application = await newApplication();
+
+    const withRoles = principalFor(officer);
+    const payment = await payments.recordPayment(
+      { applicationId: application.id, method: 'cash', amounts: FULL },
+      { ...withRoles, roleNames: ['Regional Officer'] }
+    );
+
+    expect(payment.recordedByRole).toBe('Regional Officer');
+  });
+
+  it('joins more than one role, and reads back empty for none', async () => {
+    const { payments } = await load();
+
+    const multiRole = await newApplication();
+    const withTwoRoles = await payments.recordPayment(
+      {
+        applicationId: multiRole.id,
+        method: 'cash',
+        amounts: FULL,
+      },
+      { ...principalFor(officer), roleNames: ['Regional Officer', 'Treasurer'] }
+    );
+    expect(withTwoRoles.recordedByRole).toBe('Regional Officer, Treasurer');
+
+    const noRole = await newApplication();
+    const withNoRole = await payments.recordPayment(
+      { applicationId: noRole.id, method: 'cash', amounts: FULL },
+      principalFor(officer)
+    );
+    expect(withNoRole.recordedByRole).toBe('');
+  });
+
   it('records which fee version was charged, so a later change cannot reach it', async () => {
     const { payments, config } = await load();
     const application = await newApplication();
@@ -392,7 +429,12 @@ describe('S-501: recording a payment', () => {
     );
   });
 
-  it('refuses a shortfall until someone says why, then records what they said', async () => {
+  // Officer feedback: Shares is a minimum set by the fee schedule, and a
+  // shortfall against it is refused outright — no reason, however good, can
+  // record less than it. (Entrance and Takaful are fixed the same way;
+  // Shares and the MSA deposit are covered here and below because they are
+  // the two an officer can otherwise vary upward.)
+  it('refuses less than the Shares minimum, and no reason can override it', async () => {
     const { payments } = await load();
     const application = await newApplication();
 
@@ -405,19 +447,142 @@ describe('S-501: recording a payment', () => {
         },
         principalFor(officer)
       )
-    ).rejects.toThrow(/1000.00 less than the 8500.00 due/);
+    ).rejects.toThrow(/Shares cannot be less than the 5000.00 minimum/);
+
+    await expect(
+      payments.recordPayment(
+        {
+          applicationId: application.id,
+          method: 'cash',
+          amounts: { ...FULL, shares: '4000.00' },
+          varianceReason: 'Balance to follow next week.',
+        },
+        principalFor(officer)
+      )
+    ).rejects.toThrow(/Shares cannot be less than the 5000.00 minimum/);
+  });
+
+  // The other side of the same rule: paying more than the Shares minimum
+  // needs no reason at all — it is the payer's own money, going further
+  // into their own account.
+  it('accepts more than the Shares minimum, with no reason needed', async () => {
+    const { payments } = await load();
+    const application = await newApplication();
 
     const payment = await payments.recordPayment(
       {
         applicationId: application.id,
         method: 'cash',
-        amounts: { ...FULL, shares: '4000.00' },
-        varianceReason: 'Balance to follow next week.',
+        amounts: { ...FULL, shares: '6000.00' },
       },
       principalFor(officer)
     );
-    expect(payment.totalAmount).toBe('7500.00');
-    expect(payment.varianceReason).toBe('Balance to follow next week.');
+    expect(payment.totalAmount).toBe('9500.00');
+    expect(payment.varianceReason).toBe('');
+  });
+
+  // Entrance and Takaful are not a minimum at all — they are fixed, and any
+  // other amount is refused, over or under, with no reason able to change
+  // that.
+  it('refuses any amount for Entrance or Takaful other than the fee schedule', async () => {
+    const { payments } = await load();
+    const application = await newApplication();
+
+    await expect(
+      payments.recordPayment(
+        {
+          applicationId: application.id,
+          method: 'cash',
+          amounts: { ...FULL, entrance: '1600.00' },
+          varianceReason: 'Officer decided to charge more.',
+        },
+        principalFor(officer)
+      )
+    ).rejects.toThrow(/Entrance fee is fixed at 1500.00/);
+
+    await expect(
+      payments.recordPayment(
+        {
+          applicationId: application.id,
+          method: 'cash',
+          amounts: { ...FULL, takaful: '1900.00' },
+          varianceReason: 'Officer decided to charge less.',
+        },
+        principalFor(officer)
+      )
+    ).rejects.toThrow(/Takaful contribution is fixed at 2000.00/);
+  });
+
+  // Officer feedback: a large cash payment needs a source of fund on
+  // record — "large" being config's own payment.cash_source_of_fund_threshold
+  // (default 45,000, lowered here so FULL_TOTAL crosses it).
+  describe('a large cash payment needs a source of fund', () => {
+    afterEach(async () => {
+      const { config } = await load();
+      await config.setCashSourceOfFundThreshold('45000', officer);
+    });
+
+    it('refuses cash over the threshold without one, and points at the paper form too', async () => {
+      const { payments, config } = await load();
+      await config.setCashSourceOfFundThreshold('5000', officer);
+      const application = await newApplication();
+
+      await expect(
+        payments.recordPayment(
+          { applicationId: application.id, method: 'cash', amounts: FULL },
+          principalFor(officer)
+        )
+      ).rejects.toThrow(/source of fund note.*Source of Fund form/s);
+    });
+
+    it('accepts it once a source of fund note is given', async () => {
+      const { payments, config } = await load();
+      await config.setCashSourceOfFundThreshold('5000', officer);
+      const application = await newApplication();
+
+      const payment = await payments.recordPayment(
+        {
+          applicationId: application.id,
+          method: 'cash',
+          amounts: FULL,
+          sourceOfFund: 'Sale of livestock, per the applicant.',
+        },
+        principalFor(officer)
+      );
+      expect(payment.sourceOfFund).toBe(
+        'Sale of livestock, per the applicant.'
+      );
+    });
+
+    it('does not require one at or under the threshold', async () => {
+      const { payments, config } = await load();
+      await config.setCashSourceOfFundThreshold(FULL_TOTAL, officer);
+      const application = await newApplication();
+
+      const payment = await payments.recordPayment(
+        { applicationId: application.id, method: 'cash', amounts: FULL },
+        principalFor(officer)
+      );
+      expect(payment.totalAmount).toBe(FULL_TOTAL);
+      expect(payment.sourceOfFund).toBe('');
+    });
+
+    it('does not require one for a non-cash method, however large the threshold is set', async () => {
+      const { payments, config } = await load();
+      await config.setCashSourceOfFundThreshold('1000', officer);
+      const application = await newApplication();
+
+      const payment = await payments.recordPayment(
+        {
+          applicationId: application.id,
+          method: 'bank_transfer',
+          amounts: FULL,
+        },
+        principalFor(officer)
+      );
+      expect(payment.totalAmount).toBe(FULL_TOTAL);
+      expect(payment.sourceOfFund).toBe('');
+    });
   });
 
   it('will not take a second receipt for the same application', async () => {
@@ -1364,7 +1529,10 @@ describe('S-613: paying to open an account for an existing member', () => {
       ]);
     });
 
-    it('refuses less than the full opening amount, without a reason', async () => {
+    // Officer feedback: the opening amount IS the account type's own
+    // minimum — a shortfall is refused outright, and no reason (even one
+    // supplied) can override it.
+    it('refuses less than the minimum opening amount, and no reason can override it', async () => {
       const { payments } = await load();
       const application = await newAdditionalAccountApplication([hsaId]);
 
@@ -1374,10 +1542,29 @@ describe('S-613: paying to open an account for an existing member', () => {
             applicationId: application.id,
             method: 'cash',
             amounts: { [hsaId]: '500.00' },
+            varianceReason: 'Paying the rest later.',
           },
           principalFor(officer)
         )
-      ).rejects.toThrowError(/less than the 1,?000\.00 due|Say why/);
+      ).rejects.toThrowError(/cannot be less than the 1,?000\.00 minimum/);
+    });
+
+    // The other side of the same rule: more than the minimum needs no
+    // reason at all.
+    it('accepts more than the minimum opening amount, with no reason needed', async () => {
+      const { payments } = await load();
+      const application = await newAdditionalAccountApplication([hsaId]);
+
+      const payment = await payments.recordAccountOpeningPayment(
+        {
+          applicationId: application.id,
+          method: 'cash',
+          amounts: { [hsaId]: '1500.00' },
+        },
+        principalFor(officer)
+      );
+      expect(payment.totalAmount).toBe('1500.00');
+      expect(payment.varianceReason).toBe('');
     });
 
     it('is satisfied by the workflow’s own payment gate', async () => {
@@ -1399,6 +1586,47 @@ describe('S-613: paying to open an account for an existing member', () => {
       // payment already is — nothing about paymentsForApplication changed.
       const loaded = await capture.loadApplication(application.id);
       expect(loaded!.applicationKind).toBe('additional_account');
+    });
+  });
+
+  describe('a large cash payment needs a source of fund, here too', () => {
+    afterEach(async () => {
+      const { config } = await load();
+      await config.setCashSourceOfFundThreshold('45000', officer);
+    });
+
+    it('refuses cash over the threshold without one', async () => {
+      const { payments, config } = await load();
+      await config.setCashSourceOfFundThreshold('500', officer);
+      const application = await newAdditionalAccountApplication([hsaId]);
+
+      await expect(
+        payments.recordAccountOpeningPayment(
+          {
+            applicationId: application.id,
+            method: 'cash',
+            amounts: { [hsaId]: '1000.00' },
+          },
+          principalFor(officer)
+        )
+      ).rejects.toThrow(/source of fund note.*Source of Fund form/s);
+    });
+
+    it('accepts it once a source of fund note is given', async () => {
+      const { payments, config } = await load();
+      await config.setCashSourceOfFundThreshold('500', officer);
+      const application = await newAdditionalAccountApplication([hsaId]);
+
+      const payment = await payments.recordAccountOpeningPayment(
+        {
+          applicationId: application.id,
+          method: 'cash',
+          amounts: { [hsaId]: '1000.00' },
+          sourceOfFund: 'Savings, per the member.',
+        },
+        principalFor(officer)
+      );
+      expect(payment.sourceOfFund).toBe('Savings, per the member.');
     });
   });
 

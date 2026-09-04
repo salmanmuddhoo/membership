@@ -4,8 +4,10 @@ import ConfigNav from '@components/ConfigNav.astro';
 import {
   ConfigError,
   FEE_COMPONENTS,
+  cashSourceOfFundThreshold,
   listFeeSchedules,
   publishFeeVersion,
+  setCashSourceOfFundThreshold,
   type FeeComponentCode,
   type FeeRequirement,
 } from '@lib/config/reference';
@@ -24,24 +26,33 @@ if (Astro.request.method === 'POST') {
   } else {
     const form = await Astro.request.formData();
     const actor = { userId: principal.userId, email: principal.email };
+    const intent = String(form.get('intent') ?? 'publish-fee-version');
 
     try {
-      const components = FEE_COMPONENTS.map(code => ({
-        code: code as FeeComponentCode,
-        amount: String(form.get(`amount.${code}`) ?? '0').trim() || '0',
-        requirement: String(
-          form.get(`requirement.${code}`) ?? 'not_applicable'
-        ) as FeeRequirement,
-      }));
+      if (intent === 'set-cash-threshold') {
+        await setCashSourceOfFundThreshold(
+          String(form.get('cashThreshold') ?? '').trim(),
+          actor
+        );
+        notice = 'Cash source-of-fund threshold updated.';
+      } else {
+        const components = FEE_COMPONENTS.map(code => ({
+          code: code as FeeComponentCode,
+          amount: String(form.get(`amount.${code}`) ?? '0').trim() || '0',
+          requirement: String(
+            form.get(`requirement.${code}`) ?? 'not_applicable'
+          ) as FeeRequirement,
+        }));
 
-      await publishFeeVersion(
-        String(form.get('scheduleId')),
-        components,
-        actor
-      );
-      notice =
-        'New fee version published. Applications from now on use these ' +
-        'amounts; receipts already issued keep the amounts they charged.';
+        await publishFeeVersion(
+          String(form.get('scheduleId')),
+          components,
+          actor
+        );
+        notice =
+          'New fee version published. Applications from now on use these ' +
+          'amounts; receipts already issued keep the amounts they charged.';
+      }
     } catch (err) {
       if (err instanceof ConfigError) {
         error = err.message;
@@ -54,6 +65,7 @@ if (Astro.request.method === 'POST') {
 }
 
 const schedules = await listFeeSchedules();
+const cashThreshold = await cashSourceOfFundThreshold();
 
 const COMPONENT_LABELS: Record<string, string> = {
   entrance: 'Entrance Fee',
@@ -130,6 +142,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           </p>
 
           <form method="post" class="mt-4">
+            <input type="hidden" name="intent" value="publish-fee-version" />
             <input type="hidden" name="scheduleId" value={schedule.id} />
             <div class="overflow-x-auto">
               <table class="w-full text-sm">
@@ -226,5 +239,42 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         </section>
       ))
     }
+
+    <section
+      class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
+    >
+      <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+        Cash payments
+      </h2>
+      <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+        Above this, recording a cash receipt asks for a source of fund and
+        reminds the officer to complete the paper Source of Fund form.
+      </p>
+
+      <form method="post" class="mt-4 flex flex-wrap items-end gap-3">
+        <input type="hidden" name="intent" value="set-cash-threshold" />
+        <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          Threshold (Rs)
+          <input
+            type="text"
+            inputmode="decimal"
+            name="cashThreshold"
+            value={cashThreshold}
+            disabled={!canManage}
+            class="mt-1 block w-40 rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+          />
+        </label>
+        {
+          canManage && (
+            <button
+              type="submit"
+              class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+            >
+              Save
+            </button>
+          )
+        }
+      </form>
+    </section>
   </div>
 </DashboardLayout>

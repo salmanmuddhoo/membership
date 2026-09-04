@@ -1094,11 +1094,16 @@ describe('S-410: expiry', () => {
 // against any subject, and what is under test here is the view/remove
 // behaviour, not the checklist configuration.
 describe('S-403: viewing a filed document', () => {
-  it('returns a URL good for opening the current version, and its file name', async () => {
+  it('returns a URL good for opening the current version, named for what it is and whose it is', async () => {
     const { documents } = await load();
     const type = await run(
       appUrl,
       `select id from document_type where code = 'utility_bill'`
+    );
+    const application = await run(
+      appUrl,
+      `select reference from membership_application where id = $1`,
+      [applicationId]
     );
 
     const begun = await documents.beginUpload(
@@ -1106,7 +1111,7 @@ describe('S-403: viewing a filed document', () => {
         applicationId,
         documentTypeId: type.rows[0].id,
         subject: 'applicant',
-        fileName: 'bill.pdf',
+        fileName: 'IMG_20260101_random-phone-name.pdf',
         contentType: 'application/pdf',
         sizeBytes: 200,
       },
@@ -1116,7 +1121,11 @@ describe('S-403: viewing a filed document', () => {
     await documents.commitUpload(begun.versionId, officer);
 
     const result = await documents.getDocumentViewUrl(begun.documentId);
-    expect(result.fileName).toBe('bill.pdf');
+    // Named "Utility Bill - <reference>", not whatever the phone called it —
+    // only the original extension survives from the uploaded file's own name.
+    expect(result.fileName).toBe(
+      `Utility Bill - ${application.rows[0].reference}.pdf`
+    );
     expect(result.contentType).toBe('application/pdf');
     expect(result.url).toContain(encodeURIComponent(begun.ticket.itemPath));
   });
@@ -1240,9 +1249,11 @@ describe('undoing a mistaken upload, so it can be filed again', () => {
     const versions = await documents.versionsOf(documentId);
     const live = versions.find(v => v.supersededAt === null)!;
     expect(versions.filter(v => v.supersededAt === null)).toHaveLength(1);
-    // Carries a version prefix once it is not the first — the removed
-    // version still counts (S-409), so this is version 3, not 2.
-    expect(live.fileName).toContain('bill3.pdf');
+    // Carries a version suffix once it is not the first — the removed
+    // version above still counts (S-409), so this is version 2 — and the
+    // original file's own extension, not its name (bill3.pdf), which the
+    // stored name never carries at all.
+    expect(live.fileName).toMatch(/^Utility Bill - .+ v2\.pdf$/);
   });
 
   it('refuses when there is nothing filed to remove', async () => {

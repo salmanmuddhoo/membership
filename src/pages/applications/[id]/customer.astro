@@ -59,6 +59,7 @@ import {
   type PaymentMethod,
 } from '@lib/payments/payments';
 import { formatMoney, fromCents, sumCents } from '@lib/payments/money';
+import { cashSourceOfFundThreshold } from '@lib/config/reference';
 
 const principal = Astro.locals.principal!;
 const canCapture = principal.permissions.has('application.capture');
@@ -185,6 +186,7 @@ if (Astro.request.method === 'POST') {
           method: String(form.get('method') ?? '') as PaymentMethod,
           methodReference: String(form.get('methodReference') ?? ''),
           varianceReason: String(form.get('varianceReason') ?? ''),
+          sourceOfFund: String(form.get('sourceOfFund') ?? ''),
           amounts,
         },
         principal
@@ -502,6 +504,7 @@ const due: AccountAmountDue | null = livePayment
 const dueProblem: string | null = livePayment
   ? null
   : (dueRead?.problem ?? null);
+const cashThreshold = due ? await cashSourceOfFundThreshold() : null;
 const initialTotal = due
   ? fromCents(sumCents(due.components.map(c => c.amount)))
   : '0';
@@ -581,7 +584,11 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
   heading={`Application ${application!.reference}`}
 >
   <div class="mx-auto max-w-5xl space-y-6">
-    <ApplicationTimeline steps={timeline} applicationId={application!.id} />
+    <ApplicationTimeline
+      steps={timeline}
+      applicationId={application!.id}
+      basePath={`/applications/${application!.id}/customer`}
+    />
 
     <div
       id="application-nav"
@@ -1110,7 +1117,12 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             )}
 
             {due && (
-              <form method="post" class="mt-4 space-y-4" data-payment-form>
+              <form
+                method="post"
+                class="mt-4 space-y-4"
+                data-payment-form
+                data-cash-threshold={cashThreshold}
+              >
                 <table class="w-full text-sm">
                   <tbody>
                     {due.components.map(component => (
@@ -1119,6 +1131,12 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                           <label for={`amount-${component.accountTypeId}`}>
                             {component.label}
                           </label>
+                          {/* This IS the account type's own minimum opening
+                              amount — paying more is the payer's own choice
+                              and needs no reason; paying less is refused. */}
+                          <span class="ml-2 text-xs text-neutral-500 dark:text-neutral-400">
+                            at least {component.amount}
+                          </span>
                         </td>
                         <td class="w-40 py-2 text-right">
                           <input
@@ -1169,11 +1187,20 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                   </label>
                 </div>
 
+                <p
+                  data-cash-reminder
+                  hidden
+                  class="rounded-lg border border-amber-300 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200"
+                >
+                  Cash over {cashThreshold && formatMoney(cashThreshold)} needs
+                  a source of fund below — and the paper Source of Fund form,
+                  completed separately.
+                </p>
                 <label class="block text-sm text-neutral-600 dark:text-neutral-300">
-                  Reason, if the amount differs from what is due
+                  Source of fund
                   <input
                     type="text"
-                    name="varianceReason"
+                    name="sourceOfFund"
                     class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
                   />
                 </label>
@@ -1760,16 +1787,34 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       return `${sign}MUR ${rupees}.${String(absolute % 100).padStart(2, '0')}`;
     };
 
+    // A visual nudge only — the same rule is enforced server-side
+    // regardless of whether this script ever runs.
+    const methodSelect =
+      paymentForm.querySelector<HTMLSelectElement>('[name="method"]');
+    const cashReminder = paymentForm.querySelector<HTMLElement>(
+      '[data-cash-reminder]'
+    );
+    const cashThresholdCents = paymentForm.dataset.cashThreshold
+      ? parseCents(paymentForm.dataset.cashThreshold)
+      : null;
+
     const recomputeTotal = () => {
-      if (!totalCell) return;
       let total = 0;
       for (const input of amountInputs) total += parseCents(input.value);
-      totalCell.textContent = formatCents(total);
+      if (totalCell) totalCell.textContent = formatCents(total);
+
+      if (cashReminder && cashThresholdCents !== null) {
+        cashReminder.hidden = !(
+          methodSelect?.value === 'cash' && total > cashThresholdCents
+        );
+      }
     };
 
     for (const input of amountInputs) {
       input.addEventListener('input', recomputeTotal);
     }
+    methodSelect?.addEventListener('change', recomputeTotal);
+    recomputeTotal();
   }
 
   const form = document.getElementById(

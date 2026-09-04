@@ -12,7 +12,11 @@ import {
   type MembershipApplication,
   type PartyValues,
 } from '@lib/applications/capture';
-import { listMembershipTypes, type FieldSubject } from '@lib/config/reference';
+import {
+  cashSourceOfFundThreshold,
+  listMembershipTypes,
+  type FieldSubject,
+} from '@lib/config/reference';
 import { createMemberFromApplication } from '@lib/members/create';
 import {
   availableActions,
@@ -38,6 +42,8 @@ import {
   amountDueForApplication,
   paymentsForApplication,
   recordPayment,
+  FIXED_FEE_COMPONENTS,
+  FLOOR_FEE_COMPONENTS,
   METHOD_LABELS,
   PAYMENT_METHODS,
   PaymentError,
@@ -188,6 +194,7 @@ if (Astro.request.method === 'POST') {
           method: String(form.get('method') ?? '') as PaymentMethod,
           methodReference: String(form.get('methodReference') ?? ''),
           varianceReason: String(form.get('varianceReason') ?? ''),
+          sourceOfFund: String(form.get('sourceOfFund') ?? ''),
           amounts,
         },
         principal
@@ -554,6 +561,7 @@ const due: AmountDue | null = livePayment ? null : (dueRead?.due ?? null);
 const dueProblem: string | null = livePayment
   ? null
   : (dueRead?.problem ?? null);
+const cashThreshold = due ? await cashSourceOfFundThreshold() : null;
 
 // What Total reads on load — every component's default, required and
 // optional alike, not just the required ones due.expectedTotal sums (that
@@ -1219,44 +1227,64 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             )}
 
             {due && (
-              <form method="post" class="mt-4 space-y-4" data-payment-form>
+              <form
+                method="post"
+                class="mt-4 space-y-4"
+                data-payment-form
+                data-cash-threshold={cashThreshold}
+              >
                 <table class="w-full text-sm">
                   <tbody>
-                    {due.components.map(component => (
-                      <tr class="border-t border-neutral-200 dark:border-neutral-800">
-                        <td class="py-2 text-neutral-600 dark:text-neutral-300">
-                          <label for={`amount-${component.code}`}>
-                            {component.label}
-                          </label>
-                          {component.requirement === 'optional' ? (
-                            <span class="ml-2 text-xs text-neutral-500 dark:text-neutral-400">
-                              optional
-                            </span>
-                          ) : (
-                            <span class="ml-2 text-xs text-neutral-500 dark:text-neutral-400">
-                              set by Configuration
-                            </span>
-                          )}
-                        </td>
-                        <td class="w-40 py-2 text-right">
-                          <input
-                            id={`amount-${component.code}`}
-                            type="text"
-                            inputmode="decimal"
-                            name={`amount.${component.code}`}
-                            value={component.amount}
-                            readonly={component.requirement !== 'optional'}
-                            data-amount-input
-                            class:list={[
-                              'w-full rounded-lg border px-3 py-1.5 text-right text-sm tabular-nums',
-                              component.requirement === 'optional'
-                                ? 'border-neutral-300 bg-white dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100'
-                                : 'cursor-not-allowed border-neutral-200 bg-neutral-100 text-neutral-600 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300',
-                            ]}
-                          />
-                        </td>
-                      </tr>
-                    ))}
+                    {due.components.map(component => {
+                      // Officer feedback: Entrance and Takaful are the
+                      // Society's own charge, fixed by the fee schedule —
+                      // not a starting point to type over. Shares and the
+                      // MSA deposit are the payer's own money; the schedule
+                      // sets a floor, but they may put in more, so those
+                      // stay editable even though Shares is required.
+                      const fixed = FIXED_FEE_COMPONENTS.has(component.code);
+                      const isFloor = FLOOR_FEE_COMPONENTS.has(component.code);
+                      return (
+                        <tr class="border-t border-neutral-200 dark:border-neutral-800">
+                          <td class="py-2 text-neutral-600 dark:text-neutral-300">
+                            <label for={`amount-${component.code}`}>
+                              {component.label}
+                            </label>
+                            {component.requirement === 'optional' ? (
+                              <span class="ml-2 text-xs text-neutral-500 dark:text-neutral-400">
+                                optional
+                                {isFloor && `, at least ${component.amount}`}
+                              </span>
+                            ) : fixed ? (
+                              <span class="ml-2 text-xs text-neutral-500 dark:text-neutral-400">
+                                set by Configuration
+                              </span>
+                            ) : (
+                              <span class="ml-2 text-xs text-neutral-500 dark:text-neutral-400">
+                                at least {component.amount}
+                              </span>
+                            )}
+                          </td>
+                          <td class="w-40 py-2 text-right">
+                            <input
+                              id={`amount-${component.code}`}
+                              type="text"
+                              inputmode="decimal"
+                              name={`amount.${component.code}`}
+                              value={component.amount}
+                              readonly={fixed}
+                              data-amount-input
+                              class:list={[
+                                'w-full rounded-lg border px-3 py-1.5 text-right text-sm tabular-nums',
+                                fixed
+                                  ? 'cursor-not-allowed border-neutral-200 bg-neutral-100 text-neutral-600 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300'
+                                  : 'border-neutral-300 bg-white dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100',
+                              ]}
+                            />
+                          </td>
+                        </tr>
+                      );
+                    })}
                     <tr class="border-t-2 border-neutral-300 dark:border-neutral-700">
                       <td class="py-2 font-medium text-neutral-800 dark:text-neutral-100">
                         Total
@@ -1293,14 +1321,43 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                   </label>
                 </div>
 
+                <p
+                  data-cash-reminder
+                  hidden
+                  class="rounded-lg border border-amber-300 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200"
+                >
+                  Cash over {cashThreshold && formatMoney(cashThreshold)} needs
+                  a source of fund below — and the paper Source of Fund form,
+                  completed separately.
+                </p>
                 <label class="block text-sm text-neutral-600 dark:text-neutral-300">
-                  Reason, if the amount differs from the fee schedule
+                  Source of fund
                   <input
                     type="text"
-                    name="varianceReason"
+                    name="sourceOfFund"
                     class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
                   />
                 </label>
+
+                {/* Entrance, Takaful, Shares and the MSA deposit are each
+                    governed by their own rule above — this only still
+                    applies to some other required component the fee
+                    schedule might one day carry (none does today). */}
+                {due.components.some(
+                  c =>
+                    c.requirement === 'required' &&
+                    !FIXED_FEE_COMPONENTS.has(c.code) &&
+                    !FLOOR_FEE_COMPONENTS.has(c.code)
+                ) && (
+                  <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+                    Reason, if the amount differs from the fee schedule
+                    <input
+                      type="text"
+                      name="varianceReason"
+                      class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                    />
+                  </label>
+                )}
 
                 <button
                   type="submit"
@@ -1958,16 +2015,34 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       return `${sign}MUR ${rupees}.${String(absolute % 100).padStart(2, '0')}`;
     };
 
+    // A visual nudge only — the same rule is enforced server-side
+    // regardless of whether this script ever runs.
+    const methodSelect =
+      paymentForm.querySelector<HTMLSelectElement>('[name="method"]');
+    const cashReminder = paymentForm.querySelector<HTMLElement>(
+      '[data-cash-reminder]'
+    );
+    const cashThresholdCents = paymentForm.dataset.cashThreshold
+      ? parseCents(paymentForm.dataset.cashThreshold)
+      : null;
+
     const recomputeTotal = () => {
-      if (!totalCell) return;
       let total = 0;
       for (const input of amountInputs) total += parseCents(input.value);
-      totalCell.textContent = formatCents(total);
+      if (totalCell) totalCell.textContent = formatCents(total);
+
+      if (cashReminder && cashThresholdCents !== null) {
+        cashReminder.hidden = !(
+          methodSelect?.value === 'cash' && total > cashThresholdCents
+        );
+      }
     };
 
     for (const input of amountInputs) {
       if (!input.readOnly) input.addEventListener('input', recomputeTotal);
     }
+    methodSelect?.addEventListener('change', recomputeTotal);
+    recomputeTotal();
   }
 
   const form = document.getElementById(
