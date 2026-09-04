@@ -1936,6 +1936,82 @@ then failing.
 
 ---
 
+### Nine more items of officer feedback: fees, documents, receipts and one routing bug ✅
+
+**"Start an application" hidden without `application.capture`, and every
+account already a coloured button — both reported as still broken were
+already correct on `main`.** Verified rather than changed: `applications/
+index.astro`'s "Start an application" section was already `{canCapture &&
+...}`, and `members/index.astro`'s account column already rendered every
+account (not only HSA and Investment) as its own coloured button, one
+colour per account type's own code and name. Recorded here as confirmed,
+not left unexplained a second time.
+
+**A filed document's name was whatever a phone or a scanner called it,
+not what it was or whose it was.** `beginUpload` (documents.ts) now names
+it "<document type> - <reference>" — the application's own reference, or
+the member's number once one exists (S-308: the application's reference
+becomes that number on approval, so the two are never a mismatched pair)
+— keeping only the original file's extension. `sanitiseFileName` still
+does the cleaning; it is applied to the new name, not the old one.
+
+**Entrance Fee and Takaful Contribution were editable, and Shares and the
+MSA deposit could be paid under the fee schedule with just a reason.**
+Officer feedback narrows this to two rules: Entrance and Takaful are
+fixed — any other amount is refused outright, no reason can change that
+— and Shares, the MSA deposit, and every additional-account opening
+amount are a _minimum_ — less is refused outright, more needs no
+justification at all. `recordPayment` and `recordAccountOpeningPayment`
+(payments.ts) each replace their old single "variance from the total
+needs a reason" check with this per-component rule; `FIXED_FEE_COMPONENTS`
+and `FLOOR_FEE_COMPONENTS` name which components get which. The
+"Reason, if the amount differs" field is now shown only when some other
+required component (none exists today) could still need it, and is gone
+entirely from the account-opening forms, where every component is a
+floor.
+
+**A large cash payment carried no record of where the money came from.**
+`payment.cash_source_of_fund_threshold` (migration 0032, a `config_entry`
+row — Configuration → Fee schedules → Cash payments) sets a configurable
+amount, defaulting to Rs 45,000; a cash payment strictly above it now
+needs a "Source of fund" note before a receipt can be issued, and the
+form reminds the officer to also complete the paper Source of Fund form,
+which lives outside this application entirely. `payment.source_of_fund`
+(same migration) stores what was given.
+
+**Clicking a non-member on the Members page led with an explanation of
+what the button does, not just the button.** "Starts a membership
+application with their details already filled in." is gone from
+`members/[id].astro`; the button's own label already says what it does.
+
+**The application was reachable by anyone who found the link, including
+a search engine.** `<meta name="robots">` already said `noindex, nofollow`
+on every page; `public/robots.txt` (disallow everything) and an
+`X-Robots-Tag` response header (`vercel.json`) now say the same thing to
+a crawler that never renders the page at all, and to the `/api/v1/*`
+responses the meta tag was never on in the first place.
+
+**A printed receipt named who issued it, not what they were issuing it
+as.** `payment.recorded_by_role` (migration 0033) snapshots the issuing
+officer's role(s) at the moment a payment or refund is recorded — the
+same reason `fee_version_id` and `payment_line.scheduled_amount` are
+snapshotted rather than read live: a role held today should not silently
+rewrite what a receipt already printed. `receipts/[id].astro` shows it
+next to the name.
+
+**Clicking a timeline chevron on a non-member's account application did
+nothing — it looked like it does on every other kind of application, and
+was not.** `ApplicationTimeline`'s step links were all built from
+`/applications/<id>`, which is correct for a membership application but
+not for a `customer_account` one, which lives at `/applications/<id>/
+customer` — reaching it via the membership path 302s there (S-614) but
+drops the `?step=` query on the way, landing back on whatever step the
+redirect's target defaulted to instead of the one actually clicked. The
+component now takes an optional `basePath`; `customer.astro` passes its
+own, and every chevron reaches the step it names.
+
+---
+
 # M7 — Legacy migration
 
 **Goal:** the existing register becomes members in this system, phase-wise —
