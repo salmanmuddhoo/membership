@@ -103,14 +103,16 @@ export const FLOOR_FEE_COMPONENTS: ReadonlySet<FeeComponentCode> = new Set([
 ]);
 
 // Officer feedback: a cash payment above a configurable threshold needs a
-// source of fund on record, and the officer reminded to also complete the
-// paper Source of Fund form — a form outside this application, so all this
-// can do is say so. Shared between recordPayment and
-// recordAccountOpeningPayment rather than written twice.
+// source of fund on record, and the officer must affirmatively confirm they
+// have also completed the paper Source of Fund form — a form outside this
+// application, so all this can do is require the confirmation and say so.
+// Shared between recordPayment and recordAccountOpeningPayment rather than
+// written twice.
 async function requireSourceOfFundIfCash(
   method: PaymentMethod,
   totalCents: number,
-  sourceOfFund: string
+  sourceOfFund: string,
+  sourceOfFundFormConfirmed: boolean
 ): Promise<void> {
   if (method !== 'cash') return;
   const thresholdCents = toCents(await cashSourceOfFundThreshold());
@@ -120,6 +122,13 @@ async function requireSourceOfFundIfCash(
       `Cash payments over ${fromCents(thresholdCents)} need a source of ` +
         'fund note before a receipt can be issued. The officer must also ' +
         'complete the paper Source of Fund form.'
+    );
+  }
+  if (!sourceOfFundFormConfirmed) {
+    throw new PaymentError(
+      'Confirm that the paper Source of Fund form has been completed ' +
+        'before recording a cash payment over ' +
+        `${fromCents(thresholdCents)}.`
     );
   }
 }
@@ -164,6 +173,10 @@ export interface Payment {
   totalAmount: string;
   varianceReason: string;
   sourceOfFund: string;
+  // Whether the officer confirmed the paper Source of Fund form was
+  // completed — only ever asked, and only ever true, for a cash payment
+  // over the configured threshold (0034); false on every other payment.
+  sourceOfFundFormConfirmed: boolean;
   receivedAt: Date;
   recordedByName: string;
   recordedByEmail: string;
@@ -184,7 +197,8 @@ export interface Payment {
 const PAYMENT_SELECT = `
   select p.id, p.kind, p.refunds_id, p.application_id, p.member_id,
          p.fee_version_id, p.method, p.method_reference, p.currency,
-         p.total_amount, p.variance_reason, p.source_of_fund, p.received_at,
+         p.total_amount, p.variance_reason, p.source_of_fund,
+         p.source_of_fund_form_confirmed, p.received_at,
          p.voided_at, p.void_reason,
          r.receipt_no, r.serial_no,
          orig.receipt_no as refunds_receipt_no,
@@ -216,6 +230,7 @@ interface PaymentRow {
   total_amount: string;
   variance_reason: string;
   source_of_fund: string;
+  source_of_fund_form_confirmed: boolean;
   received_at: Date;
   voided_at: Date | null;
   void_reason: string | null;
@@ -294,6 +309,7 @@ function assemble(
     totalAmount: p.total_amount,
     varianceReason: p.variance_reason,
     sourceOfFund: p.source_of_fund,
+    sourceOfFundFormConfirmed: p.source_of_fund_form_confirmed,
     receivedAt: p.received_at,
     recordedByName: p.recorded_by_name,
     recordedByEmail: p.recorded_by_email,
@@ -729,6 +745,10 @@ export interface RecordPaymentInput {
   // Required only when method is 'cash' and the total is strictly above
   // config's payment.cash_source_of_fund_threshold.
   sourceOfFund?: string;
+  // Must be true under the same condition as sourceOfFund — the officer's
+  // affirmative confirmation that the paper Source of Fund form has been
+  // completed, not merely that a note was typed.
+  sourceOfFundFormConfirmed?: boolean;
 }
 
 export async function recordPayment(
@@ -873,7 +893,13 @@ export async function recordPayment(
   const variance = total - toCents(due.expectedTotal);
 
   const sourceOfFund = (input.sourceOfFund ?? '').trim();
-  await requireSourceOfFundIfCash(input.method, total, sourceOfFund);
+  const sourceOfFundFormConfirmed = input.sourceOfFundFormConfirmed ?? false;
+  await requireSourceOfFundIfCash(
+    input.method,
+    total,
+    sourceOfFund,
+    sourceOfFundFormConfirmed
+  );
 
   const existing = await query<{ receipt_no: string }>(
     `select r.receipt_no
@@ -925,8 +951,9 @@ export async function recordPayment(
         `insert into payment
            (receipt_number_id, kind, application_id, fee_version_id, method,
             method_reference, total_amount, variance_reason, source_of_fund,
-            received_at, recorded_by, recorded_by_role)
-         values ($1, 'payment', $2, $3, $4, $5, $6, $7, $8, coalesce($9, now()), $10, $11)
+            source_of_fund_form_confirmed, received_at, recorded_by,
+            recorded_by_role)
+         values ($1, 'payment', $2, $3, $4, $5, $6, $7, $8, $9, coalesce($10, now()), $11, $12)
          returning id`,
         [
           allocation.id,
@@ -937,6 +964,7 @@ export async function recordPayment(
           fromCents(total),
           varianceReason,
           sourceOfFund,
+          sourceOfFundFormConfirmed,
           input.receivedAt ?? null,
           principal.userId,
           principal.roleNames.join(', '),
@@ -1039,6 +1067,10 @@ export interface RecordAccountOpeningPaymentInput {
   // Required only when method is 'cash' and the total is strictly above
   // config's payment.cash_source_of_fund_threshold.
   sourceOfFund?: string;
+  // Must be true under the same condition as sourceOfFund — the officer's
+  // affirmative confirmation that the paper Source of Fund form has been
+  // completed, not merely that a note was typed.
+  sourceOfFundFormConfirmed?: boolean;
 }
 
 export async function recordAccountOpeningPayment(
@@ -1152,7 +1184,13 @@ export async function recordAccountOpeningPayment(
   const variance = total - toCents(due.expectedTotal);
 
   const sourceOfFund = (input.sourceOfFund ?? '').trim();
-  await requireSourceOfFundIfCash(input.method, total, sourceOfFund);
+  const sourceOfFundFormConfirmed = input.sourceOfFundFormConfirmed ?? false;
+  await requireSourceOfFundIfCash(
+    input.method,
+    total,
+    sourceOfFund,
+    sourceOfFundFormConfirmed
+  );
 
   const existing = await query<{ receipt_no: string }>(
     `select r.receipt_no
@@ -1202,8 +1240,9 @@ export async function recordAccountOpeningPayment(
         `insert into payment
            (receipt_number_id, kind, application_id, fee_version_id, method,
             method_reference, total_amount, variance_reason, source_of_fund,
-            received_at, recorded_by, recorded_by_role)
-         values ($1, 'payment', $2, null, $3, $4, $5, $6, $7, coalesce($8, now()), $9, $10)
+            source_of_fund_form_confirmed, received_at, recorded_by,
+            recorded_by_role)
+         values ($1, 'payment', $2, null, $3, $4, $5, $6, $7, $8, coalesce($9, now()), $10, $11)
          returning id`,
         [
           allocation.id,
@@ -1213,6 +1252,7 @@ export async function recordAccountOpeningPayment(
           fromCents(total),
           varianceReason,
           sourceOfFund,
+          sourceOfFundFormConfirmed,
           input.receivedAt ?? null,
           principal.userId,
           principal.roleNames.join(', '),

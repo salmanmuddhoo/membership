@@ -92,27 +92,47 @@ let createdAccounts: {
   memberNo: string;
   accounts: { id: string; typeCode: string; typeName: string }[];
 } | null = null;
+// Officer feedback: a payment-step error must not reset what was already
+// typed. Set only when record-payment fails; the form falls back to the fee
+// schedule's own defaults otherwise.
+let paymentFormValues: {
+  amounts: Record<string, string>;
+  method: string;
+  methodReference: string;
+  varianceReason: string;
+  sourceOfFund: string;
+  sourceOfFundFormConfirmed: boolean;
+} | null = null;
 
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
   const intent = String(form.get('intent') ?? '');
 
   if (intent === 'record-payment') {
-    try {
-      const amounts: Record<string, string> = {};
-      for (const [key, value] of form.entries()) {
-        if (key.startsWith('amount.')) {
-          amounts[key.slice('amount.'.length)] = String(value);
-        }
+    const amounts: Record<string, string> = {};
+    for (const [key, value] of form.entries()) {
+      if (key.startsWith('amount.')) {
+        amounts[key.slice('amount.'.length)] = String(value);
       }
+    }
+    const method = String(form.get('method') ?? '') as PaymentMethod;
+    const methodReference = String(form.get('methodReference') ?? '');
+    const varianceReason = String(form.get('varianceReason') ?? '');
+    const sourceOfFund = String(form.get('sourceOfFund') ?? '');
+    // Unchecked checkboxes are absent from the posted form entirely, not
+    // present with some falsy value.
+    const sourceOfFundFormConfirmed =
+      form.get('sourceOfFundFormConfirmed') === 'true';
 
+    try {
       const payment = await recordAccountOpeningPayment(
         {
           applicationId: application.id,
-          method: String(form.get('method') ?? '') as PaymentMethod,
-          methodReference: String(form.get('methodReference') ?? ''),
-          varianceReason: String(form.get('varianceReason') ?? ''),
-          sourceOfFund: String(form.get('sourceOfFund') ?? ''),
+          method,
+          methodReference,
+          varianceReason,
+          sourceOfFund,
+          sourceOfFundFormConfirmed,
           amounts,
         },
         principal
@@ -127,6 +147,14 @@ if (Astro.request.method === 'POST') {
           'The payment could not be recorded. Nothing has been taken — ' +
           'please try again.';
       }
+      paymentFormValues = {
+        amounts,
+        method,
+        methodReference,
+        varianceReason,
+        sourceOfFund,
+        sourceOfFundFormConfirmed,
+      };
     }
   } else if (intent === 'delete-document') {
     try {
@@ -739,7 +767,11 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                           type="text"
                           inputmode="decimal"
                           name={`amount.${component.accountTypeId}`}
-                          value={component.amount}
+                          value={
+                            paymentFormValues?.amounts[
+                              component.accountTypeId
+                            ] ?? component.amount
+                          }
                           data-amount-input
                           class="w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-right text-sm tabular-nums dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
                         />
@@ -768,7 +800,12 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                     class="mt-1 block rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
                   >
                     {PAYMENT_METHODS.map(method => (
-                      <option value={method}>{METHOD_LABELS[method]}</option>
+                      <option
+                        value={method}
+                        selected={paymentFormValues?.method === method}
+                      >
+                        {METHOD_LABELS[method]}
+                      </option>
                     ))}
                   </select>
                 </label>
@@ -777,25 +814,42 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                   <input
                     type="text"
                     name="methodReference"
+                    value={paymentFormValues?.methodReference ?? ''}
                     class="mt-1 block w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
                   />
                 </label>
               </div>
 
-              <p
+              <div
                 data-cash-reminder
                 hidden
-                class="rounded-lg border border-amber-300 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200"
+                class="space-y-2 rounded-lg border border-amber-300 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200"
               >
-                Cash over {cashThreshold && formatMoney(cashThreshold)} needs a
-                source of fund below — and the paper Source of Fund form,
-                completed separately.
-              </p>
+                <p>
+                  Cash over {cashThreshold && formatMoney(cashThreshold)} needs
+                  a source of fund below — and the paper Source of Fund form,
+                  completed separately.
+                </p>
+                <label class="flex items-start gap-2 font-medium">
+                  <input
+                    type="checkbox"
+                    name="sourceOfFundFormConfirmed"
+                    value="true"
+                    data-cash-form-confirm
+                    checked={
+                      paymentFormValues?.sourceOfFundFormConfirmed ?? false
+                    }
+                    class="mt-0.5"
+                  />
+                  I confirm the paper Source of Fund form has been completed.
+                </label>
+              </div>
               <label class="block text-sm text-neutral-600 dark:text-neutral-300">
                 Source of fund
                 <input
                   type="text"
                   name="sourceOfFund"
+                  value={paymentFormValues?.sourceOfFund ?? ''}
                   class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
                 />
               </label>
@@ -1270,6 +1324,12 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     const cashReminder = paymentForm.querySelector<HTMLElement>(
       '[data-cash-reminder]'
     );
+    // Required only while the reminder itself is showing — otherwise a
+    // payment nowhere near the threshold would be blocked by a checkbox for
+    // a form it was never asked to confirm.
+    const cashFormConfirm = paymentForm.querySelector<HTMLInputElement>(
+      '[data-cash-form-confirm]'
+    );
     const cashThresholdCents = paymentForm.dataset.cashThreshold
       ? parseCents(paymentForm.dataset.cashThreshold)
       : null;
@@ -1280,9 +1340,10 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       if (totalCell) totalCell.textContent = formatCents(total);
 
       if (cashReminder && cashThresholdCents !== null) {
-        cashReminder.hidden = !(
-          methodSelect?.value === 'cash' && total > cashThresholdCents
-        );
+        const needsSourceOfFund =
+          methodSelect?.value === 'cash' && total > cashThresholdCents;
+        cashReminder.hidden = !needsSourceOfFund;
+        if (cashFormConfirm) cashFormConfirm.required = needsSourceOfFund;
       }
     };
 

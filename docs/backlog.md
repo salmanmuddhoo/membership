@@ -2025,6 +2025,63 @@ own, and every chevron reaches the step it names.
 
 ---
 
+### Five more items of officer feedback: SharePoint cleanup, a payment error that lost data, and two configuration gaps ✅
+
+**Removing a filed document by mistake left the file sitting in SharePoint
+forever.** `removeFiledDocument`'s own guarantee — versions are never
+deleted — exists to keep a _superseded_ filing retrievable; a mistaken
+upload was never a real filing, so there is nothing there worth keeping.
+It now deletes the SharePoint item after the database row is safely marked
+Missing (that ordering, not the reverse, so a Graph outage never blocks the
+undo — it only leaves a file to clean up later, best-effort, logged rather
+than thrown). The other half of this item — filing a fresh document after
+a remove had no way to view it — turned out to already work correctly
+(the upload flow reloads the page, and the checklist's View button reads
+straight off what is actually filed); no separate bug was found there.
+
+**A payment-step error threw away every amount the officer had already
+typed.** The three payment forms (`[id].astro`, `account.astro`,
+`customer.astro`) always re-rendered from the fee schedule's own defaults
+on `record-payment`, error or not. Each now captures the submitted amounts,
+method, method reference, source of fund and variance reason before calling
+`recordPayment`/`recordAccountOpeningPayment`, and re-renders the form from
+those on failure — nothing is lost, and the officer only has to fix what
+was actually wrong.
+
+**A large cash payment's paper Source of Fund form could be typed about
+but never actually confirmed.** `payment.source_of_fund_form_confirmed`
+(migration 0034) is a new mandatory checkbox alongside the existing
+source-of-fund note, required — server-side, in `requireSourceOfFundIfCash`
+— under the same condition as the note itself: cash, strictly over the
+configured threshold. The checkbox's own `required` attribute follows the
+same client-side toggle the reminder text already used, so it is never in
+the way of an ordinary payment.
+
+**Configuration had no way back out of an account type or a checklist
+created by mistake — only deactivation, which keeps a choice nobody can
+actually offer forever.** `deleteAccountType` and `deleteChecklist`
+(config/reference.ts) add a genuine delete to each, refused by name
+wherever the row is still in use — an account already opened, an
+application that selected it, a payment line that charged it, a customer
+account-number counter, or (for a checklist) a membership type or account
+type still pointing at it — rather than surfacing the database's own
+foreign-key error. Neither Account types nor Document checklists
+(admin/configuration/) had a Delete control before this; both do now,
+behind a confirmation dialog that names what only works if nothing already
+uses it.
+
+**The Members page had no way to see what a member or a held account
+actually holds.** A new "Total funds" column sums Shares, the MSA deposit,
+and any HSA/Investment/other account a member or non-member customer
+holds — never Entrance, the processing fee or Takaful, which are the
+Society's own one-time charges with no account behind them and so never
+appear in `payment_line`/`payment_account_line` under those components.
+Netted against any refund the same way `transactionsForAccount` already
+treats one account's own history. Gated on `payment.view`, the same
+permission the account buttons and receipts already require.
+
+---
+
 # M7 — Legacy migration
 
 **Goal:** the existing register becomes members in this system, phase-wise —

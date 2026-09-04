@@ -930,10 +930,19 @@ export async function getDocumentViewUrl(
  *
  * This is Replace without the replacement: the live version is superseded
  * exactly as it would be if a new file had landed (S-409), only nothing takes
- * its place. The file itself is not removed from SharePoint — versions are
- * never deleted, which is the same guarantee that keeps a signed form
- * retrievable after it is superseded — so what this undoes is being on the
- * checklist, not the record that it was ever filed.
+ * its place — and, unlike a genuine replacement, the file was never wanted in
+ * the first place, so it is deleted from SharePoint too (officer feedback).
+ * That is a deliberate departure from Replace's "versions are never deleted"
+ * guarantee: that guarantee exists to keep a *superseded* filing retrievable,
+ * which presumes the earlier filing was real. A mistaken upload was never a
+ * record of anything, so there is nothing there worth keeping.
+ *
+ * The database row is updated first and the SharePoint delete happens after
+ * it commits: if the delete fails (or the process dies before running it),
+ * the checklist has still correctly gone back to Missing and can be filed
+ * afresh — a file orphaned in SharePoint is a cleanup problem, not a data
+ * problem, whereas the reverse ordering would risk deleting a file the
+ * database still calls "filed".
  *
  * Gated on document.upload rather than a separate permission: anyone who may
  * file a document may equally well decide the one they just filed was wrong.
@@ -942,7 +951,12 @@ export async function getDocumentViewUrl(
  */
 export async function removeFiledDocument(
   documentId: string,
-  principal: { userId: string; email: string; permissions: ReadonlySet<string> }
+  principal: {
+    userId: string;
+    email: string;
+    permissions: ReadonlySet<string>;
+  },
+  config?: GraphConfig
 ): Promise<{ state: 'missing' }> {
   if (!principal.permissions.has('document.upload')) {
     throw new DocumentError(
@@ -951,15 +965,16 @@ export async function removeFiledDocument(
     );
   }
 
-  await withTransaction(async client => {
+  const sharepointPath = await withTransaction(async client => {
     const row = await client.query<{
       version_id: string;
       file_name: string;
+      sharepoint_path: string;
       document_state: string;
       application_status: string | null;
     }>(
-      `select v.id as version_id, v.file_name, d.state as document_state,
-              a.status as application_status
+      `select v.id as version_id, v.file_name, v.sharepoint_path,
+              d.state as document_state, a.status as application_status
          from document_version v
          join document d on d.id = v.document_id
          left join membership_application a on a.id = d.application_id
@@ -977,6 +992,7 @@ export async function removeFiledDocument(
     const {
       version_id: versionId,
       file_name: fileName,
+      sharepoint_path: path,
       document_state,
       application_status: applicationStatus,
     } = row.rows[0];
@@ -1018,7 +1034,18 @@ export async function removeFiledDocument(
       },
       client
     );
+
+    return path;
   });
+
+  // Best-effort: the checklist has already gone back to Missing regardless of
+  // whether this succeeds, per the ordering note above. A 404 (already gone)
+  // is success as far as deleteItemByPath is concerned.
+  try {
+    await deleteItemByPath(sharepointPath, config);
+  } catch (err) {
+    console.error('[documents/remove] SharePoint delete failed', err);
+  }
 
   return { state: 'missing' };
 }

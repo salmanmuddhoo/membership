@@ -4,6 +4,7 @@ import ConfigNav from '@components/ConfigNav.astro';
 import {
   ConfigError,
   createAccountType,
+  deleteAccountType,
   listAccountTypes,
   listChecklists,
   setOpensOnApproval,
@@ -66,6 +67,9 @@ if (Astro.request.method === 'POST') {
         notice = opens
           ? 'Memberships approved from now on open this account.'
           : 'Memberships approved from now on do not open this account.';
+      } else if (intent === 'delete') {
+        await deleteAccountType(String(form.get('typeId')), actor);
+        notice = 'Account type deleted.';
       }
     } catch (err) {
       if (err instanceof ConfigError) {
@@ -270,6 +274,19 @@ const STATUSES = ['active', 'pending', 'inactive', 'dormant'];
                   </div>
                 )}
               </form>
+              {canManage && (
+                <form method="post" class="mt-2" data-confirm-delete-type>
+                  <input type="hidden" name="typeId" value={type.id} />
+                  <button
+                    type="submit"
+                    name="intent"
+                    value="delete"
+                    class="rounded-lg border border-red-300 px-3 py-1.5 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
+                  >
+                    Delete
+                  </button>
+                </form>
+              )}
             </details>
           ))
         }
@@ -345,3 +362,22 @@ const STATUSES = ['active', 'pending', 'inactive', 'dormant'];
     }
   </div>
 </DashboardLayout>
+
+<script>
+  // A courtesy, not the enforcement — deleteAccountType (reference.ts)
+  // refuses the ones actually in use regardless of whether this confirms.
+  for (const form of document.querySelectorAll<HTMLFormElement>(
+    'form[data-confirm-delete-type]'
+  )) {
+    form.addEventListener('submit', event => {
+      if (
+        !window.confirm(
+          'Delete this account type? This cannot be undone, and only ' +
+            'works if it has never been opened, applied for, or paid for.'
+        )
+      ) {
+        event.preventDefault();
+      }
+    });
+  }
+</script>

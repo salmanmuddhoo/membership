@@ -504,6 +504,63 @@ export async function updateAccountType(
   });
 }
 
+// Officer feedback: an account type created by mistake, or one no longer
+// wanted, had no way back out — only Active/inactive, which keeps it around
+// forever as a choice nobody can actually offer. A hard delete is refused,
+// by name, wherever the type is actually in use: any account already opened
+// under it, any in-flight or decided application that selected it, any
+// payment line that charged it, and the per-type customer account number
+// counter (all four hold a foreign key to account_type that would otherwise
+// fail this with a raw constraint error rather than a reason). Being the
+// membership's own default product is checked separately — "opens on
+// approval" (setOpensOnApproval) has to be turned off first, the same
+// as before deactivating it.
+export async function deleteAccountType(
+  accountTypeId: string,
+  actor: Actor
+): Promise<void> {
+  await withConfigurationActor(actorFor(actor), async client => {
+    const isDefault = await client.query(
+      'select 1 from account_type where id = $1 and is_membership_default',
+      [accountTypeId]
+    );
+    if (isDefault.rowCount) {
+      throw new ConfigError(
+        'A membership approval opens this account type. Turn that off ' +
+          'first, above.',
+        'conflict'
+      );
+    }
+
+    const inUse = await client.query(
+      `select 1 from account where account_type_id = $1
+       union all
+       select 1 from application_account_selection where account_type_id = $1
+       union all
+       select 1 from payment_account_line where account_type_id = $1
+       union all
+       select 1 from account_number_counter where account_type_id = $1
+       limit 1`,
+      [accountTypeId]
+    );
+    if (inUse.rowCount) {
+      throw new ConfigError(
+        'This account type has already been used — opened, applied for, ' +
+          'or paid for — and cannot be deleted. Set it to inactive instead.',
+        'conflict'
+      );
+    }
+
+    const result = await client.query(
+      'delete from account_type where id = $1',
+      [accountTypeId]
+    );
+    if (result.rowCount === 0) {
+      throw new ConfigError('That account type no longer exists.', 'not_found');
+    }
+  });
+}
+
 /**
  * Whether a membership approval opens this account type (S-206).
  *
@@ -1108,6 +1165,45 @@ export async function removeChecklistItem(
         'That checklist item no longer exists.',
         'not_found'
       );
+    }
+  });
+}
+
+// Officer feedback: a checklist created by mistake, or one no longer needed,
+// had no way back out. Its own items (document_checklist_item) cascade away
+// with it (migration 0010) — nothing to check there — but membership_type
+// and account_type both merely REFERENCE a checklist rather than owning it,
+// so those foreign keys would otherwise fail this with a raw constraint
+// error. Checked explicitly instead, so the refusal names what to do about
+// it — reassign it away first — rather than reading as this application
+// being broken.
+export async function deleteChecklist(
+  checklistId: string,
+  actor: Actor
+): Promise<void> {
+  await withConfigurationActor(actorFor(actor), async client => {
+    const inUse = await client.query<{ name: string }>(
+      `select name from membership_type
+        where checklist_id = $1 or non_member_checklist_id = $1
+       union
+       select name from account_type where checklist_id = $1
+       limit 1`,
+      [checklistId]
+    );
+    if (inUse.rowCount) {
+      throw new ConfigError(
+        `${inUse.rows[0].name} still uses this checklist. Reassign it to a ` +
+          'different checklist there first.',
+        'conflict'
+      );
+    }
+
+    const result = await client.query(
+      'delete from document_checklist where id = $1',
+      [checklistId]
+    );
+    if (result.rowCount === 0) {
+      throw new ConfigError('That checklist no longer exists.', 'not_found');
     }
   });
 }
