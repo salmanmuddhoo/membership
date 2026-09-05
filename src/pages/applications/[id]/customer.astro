@@ -569,7 +569,10 @@ const timeline = applicationTimeline({
 // but not yet signed, reopened from the Applications list (which links here
 // with no `?step=`), landed straight on Documents, having skipped print and
 // signing entirely — `signedFormFiled` (the same evidence the timeline above
-// reads) is what decides the default landing spot now instead.
+// reads) is what decides the default landing spot now instead (defaultStep,
+// below furthestStep — not furthestStep itself, which also caps what an
+// explicit `?step=` may reach, and the signed form only gets filed BY
+// reaching the documents step).
 const CAPTURE_STEP = 1;
 const PRINT_STEP = 2;
 const DOCUMENTS_STEP = 3;
@@ -580,18 +583,24 @@ const furthestStep = !isEditable
   ? SUBMIT_STEP
   : blocking.length > 0
     ? CAPTURE_STEP
-    : !signedFormFiled
-      ? PRINT_STEP
-      : requiredDocumentsMissing > 0
-        ? DOCUMENTS_STEP
-        : livePayment === null
-          ? PAYMENT_STEP
-          : SUBMIT_STEP;
+    : requiredDocumentsMissing > 0
+      ? DOCUMENTS_STEP
+      : livePayment === null
+        ? PAYMENT_STEP
+        : SUBMIT_STEP;
+
+// Where an officer lands with no `?step=` in the URL — see [id].astro's own
+// comment on the identical split. Kept separate from furthestStep: signed
+// form only becomes filed BY reaching the documents step, so folding it into
+// furthestStep would trap "Next: upload documents" bouncing back to print
+// forever, since print alone can never make it true.
+const defaultStep =
+  furthestStep > CAPTURE_STEP && !signedFormFiled ? PRINT_STEP : furthestStep;
 
 let currentStep = SUBMIT_STEP;
 if (isEditable) {
   const stepParam = Astro.url.searchParams.get('step');
-  const requested = stepParam ? Number(stepParam) : furthestStep;
+  const requested = stepParam ? Number(stepParam) : defaultStep;
   const clamped = Math.min(
     Math.max(
       Number.isFinite(requested) ? requested : CAPTURE_STEP,

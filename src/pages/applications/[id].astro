@@ -635,15 +635,18 @@ const timeline = applicationTimeline({
 // disagree about what is unlocked.
 //
 // Step 2 (print and sign) has no section of its own here — it already has a
-// page, `/applications/<id>/print` — but it still has a place in this order:
-// officer feedback, a draft with capture finished but not yet signed
+// page, `/applications/<id>/print` — but it still has a place in defaultStep
+// below: officer feedback, a draft with capture finished but not yet signed
 // (reopened from the Applications list, which links here with no `?step=`)
 // landed straight on Documents, having skipped print and signing entirely.
 // `signedFormFiled` is the same "has this actually been signed" evidence
 // the timeline above already reads, not a new gate of its own — using
 // anything less specific (e.g. any document at all) would send an officer
 // who filed an ID card first, before ever printing the form, straight past
-// print same as before.
+// print same as before. It is not part of furthestStep itself: that value
+// also caps what an explicit `?step=` may reach, and the signed form only
+// gets filed BY reaching the documents step, so it cannot gate the door to
+// that same step.
 const CAPTURE_STEP = 1;
 const PRINT_STEP = 2;
 const DOCUMENTS_STEP = 3;
@@ -654,13 +657,23 @@ const furthestStep = !isEditable
   ? SUBMIT_STEP
   : blocking.length > 0
     ? CAPTURE_STEP
-    : !signedFormFiled
-      ? PRINT_STEP
-      : requiredDocumentsMissing > 0
-        ? DOCUMENTS_STEP
-        : livePayment === null
-          ? PAYMENT_STEP
-          : SUBMIT_STEP;
+    : requiredDocumentsMissing > 0
+      ? DOCUMENTS_STEP
+      : livePayment === null
+        ? PAYMENT_STEP
+        : SUBMIT_STEP;
+
+// Where an officer lands when reopening a draft with no `?step=` in the
+// URL — "wherever I left off", which for capture already finished but not
+// yet signed is the print step, not documents (see furthestStep's own
+// comment above). This is deliberately separate from furthestStep: signed
+// form only becomes filed BY reaching the documents step and uploading it
+// there, so using it as a ceiling on furthestStep would trap the officer —
+// clicking "Next: upload documents" on the print page would bounce them
+// straight back to print, forever, since it can never become true from print
+// alone.
+const defaultStep =
+  furthestStep > CAPTURE_STEP && !signedFormFiled ? PRINT_STEP : furthestStep;
 
 // Once submitted this application is read entirely, not stepped through — the
 // Secretary and President need the whole picture, and only an editable
@@ -671,7 +684,7 @@ if (isEditable) {
   // No step in the URL means "wherever I left off", not "back to the start":
   // an officer re-opening a draft they already finished capturing should not
   // have to click through it again to reach where they actually are.
-  const requested = stepParam ? Number(stepParam) : furthestStep;
+  const requested = stepParam ? Number(stepParam) : defaultStep;
   const clamped = Math.min(
     Math.max(
       Number.isFinite(requested) ? requested : CAPTURE_STEP,

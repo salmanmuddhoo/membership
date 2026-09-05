@@ -27,8 +27,11 @@ function accountButtonClasses(account: MemberListAccount): string {
   if (key.includes('invest')) {
     return 'bg-rose-200 text-rose-900 dark:bg-rose-300 dark:text-rose-950';
   }
-  if (key.includes('shares') || key.includes('msa')) {
+  if (key.includes('shares')) {
     return 'bg-amber-400 text-neutral-900 dark:bg-amber-500 dark:text-neutral-900';
+  }
+  if (key.includes('msa')) {
+    return 'bg-indigo-500 text-white dark:bg-indigo-400 dark:text-neutral-950';
   }
   return 'bg-slate-500 text-white dark:bg-slate-600';
 }
