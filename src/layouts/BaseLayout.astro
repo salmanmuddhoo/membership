@@ -6,15 +6,21 @@ interface Props {
   title?: string;
   description?: string;
   bodyClass?: string;
+  viewport?: string;
 }
 
-const { title = 'Al Barakah MCSL', description, bodyClass = '' } = Astro.props;
+const {
+  title = 'Al Barakah MCSL',
+  description,
+  bodyClass = '',
+  viewport,
+} = Astro.props;
 ---
 
 <!doctype html>
 <html lang="en" class="scroll-pt-16">
   <head>
-    <Meta description={description} />
+    <Meta description={description} viewport={viewport} />
     <title>{title}</title>
     {
       /* Set the theme before paint to avoid a flash of the wrong colour scheme. */

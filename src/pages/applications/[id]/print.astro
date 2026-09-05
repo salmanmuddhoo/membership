@@ -76,9 +76,24 @@ const isEditable =
   application.status === 'draft' || application.status === 'returned';
 
 const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
+
+// The rest of the app allows pinch-zoom; this page turns it off. The
+// signature box below is `position: fixed` to the real viewport, and mobile
+// browsers keep a fixed element pinned to the LAYOUT viewport during a
+// pinch-zoom, not the zoomed-in visual one — so a page left pinched-in
+// showed only the left slice of the box, with "Use this signature" run off
+// the right edge and reachable only by dragging the whole page sideways.
+// There is nothing on this form worth zooming into that pinch-zoom would
+// help with, so the fix is to not allow the state that broke the box in the
+// first place.
+const fixedViewport =
+  'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no';
 ---
 
-<BaseLayout title={`${application.reference} · Application form`}>
+<BaseLayout
+  title={`${application.reference} · Application form`}
+  viewport={fixedViewport}
+>
   <div class="print-page">
     {isDraft && <div class="watermark">DRAFT</div>}
 
