@@ -377,25 +377,18 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                         </td>
                       )}
                       <td class="py-2 pr-4" data-sort-value={a.reference}>
-                        <div class="flex items-center gap-1.5">
-                          <a
-                            href={
-                              a.applicationKind === 'membership'
-                                ? `/applications/${a.id}`
-                                : a.applicationKind === 'additional_account'
-                                  ? `/applications/${a.id}/account`
-                                  : `/applications/${a.id}/customer`
-                            }
-                            class="text-mint-700 dark:text-mint-300 font-medium underline"
-                          >
-                            {a.reference}
-                          </a>
-                          {attentionIds.has(a.id) && (
-                            <span class="rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold text-red-700 dark:bg-red-950 dark:text-red-300">
-                              Needs attention
-                            </span>
-                          )}
-                        </div>
+                        <a
+                          href={
+                            a.applicationKind === 'membership'
+                              ? `/applications/${a.id}`
+                              : a.applicationKind === 'additional_account'
+                                ? `/applications/${a.id}/account`
+                                : `/applications/${a.id}/customer`
+                          }
+                          class="text-mint-700 dark:text-mint-300 font-medium underline"
+                        >
+                          {a.reference}
+                        </a>
                       </td>
                       <td
                         class="py-2 pr-4 text-neutral-700 dark:text-neutral-200"

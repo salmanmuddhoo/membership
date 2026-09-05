@@ -368,25 +368,32 @@ export async function startAdditionalAccountApplication(
 /**
  * S-614 · Start an application for someone not yet on the system at all.
  *
- * Reuses the Individual membership type's own field and checklist
+ * Reuses an existing membership type's own field and checklist
  * configuration to capture the applicant (business direction: no new form
  * to design for this) — every subject it configures gets an empty party
  * row the same way insertApplication gives a membership application one,
  * so there is something for the capture form to render into from the
- * first load. Account type validation mirrors
- * startAdditionalAccountApplication's own: active and not
- * membership-default, since Shares and the MSA open only through a
- * membership's own approval (S-308, S-309), never through this flow either.
+ * first load. Individual by default; officer feedback: a non-member can be
+ * a minor too (new-account.astro's own "Minor" checkbox), captured against
+ * Minor instead — guardian and successor-guardian details asked for from
+ * the start, the same as a minor membership application always has,
+ * because startMembershipApplicationFromCustomer later starts that
+ * membership application against this same type and carries them straight
+ * over. Account type validation mirrors startAdditionalAccountApplication's
+ * own: active and not membership-default, since Shares and the MSA open
+ * only through a membership's own approval (S-308, S-309), never through
+ * this flow either.
  */
 export async function startCustomerAccountApplication(
   accountTypeIds: string[],
-  actor: Actor
+  actor: Actor,
+  membershipTypeCode: string = 'individual'
 ): Promise<{ id: string; reference: string }> {
   if (accountTypeIds.length === 0) {
     throw new ApplicationError('Select at least one account type to open.');
   }
 
-  const type = await acceptingType('individual');
+  const type = await acceptingType(membershipTypeCode);
 
   return withTransaction(async client => {
     const types = await client.query<{ id: string }>(
@@ -465,41 +472,54 @@ export async function startCustomerAccountApplication(
  * captured — an officer reviewing it corrects or adds to what is there
  * rather than retyping a name and NIC the applicant already gave once.
  *
- * Always against Individual: the only membership type a customer_account
- * application is ever captured against (capture.ts's own business
- * decision — startCustomerAccountApplication, above), so the customer's own
- * field values line up with Individual's own field configuration exactly.
- * From here on this is an ordinary Individual application — the same
- * capture, review and approval chain, unrelated to the account(s) the
- * customer already holds. Approval creates a new Member; it does not touch
- * the existing customer record or reassign their account(s) to it, which
- * would be its own, separate decision this does not make.
+ * Against the SAME membership type the customer_account application was
+ * itself captured against — Individual for most, or Minor for one opened
+ * with new-account.astro's own "Minor" checkbox checked. A minor who opened
+ * an account as a non-member is treated exactly as a minor applying for
+ * membership always has been: guardian and successor-guardian details
+ * already given (captured under Minor from the start, not added
+ * afterwards) carry straight over, the same way an adult's name and NIC do,
+ * rather than being asked for twice under two different subjects. From here
+ * on this is an ordinary application against that type — the same capture,
+ * review and approval chain, unrelated to the account(s) the customer
+ * already holds. Approval creates a new Member; it does not touch the
+ * existing customer record or reassign their account(s) to it, which would
+ * be its own, separate decision this does not make.
  */
 export async function startMembershipApplicationFromCustomer(
   customerId: string,
   actor: Actor
 ): Promise<{ id: string; reference: string }> {
-  const type = await acceptingType('individual');
+  // Read and resolved before the transaction opens — acceptingType goes
+  // through listMembershipTypes' own cache (config/reference.ts), which
+  // checks out a connection of its own from the same pool; calling it from
+  // inside the transaction below would hold one connection while waiting on
+  // a second, which is a deadlock under a small pool rather than a
+  // guaranteed error, so it stayed unnoticed until concurrent load found it.
+  const found = await query<{
+    status: string;
+    application_id: string;
+    membership_type_code: string;
+  }>(
+    `select c.status, c.application_id, mt.code as membership_type_code
+       from customer c
+       join membership_application ca on ca.id = c.application_id
+       join membership_type mt on mt.id = ca.membership_type_id
+      where c.id = $1`,
+    [customerId]
+  );
+  if (found.rowCount === 0) {
+    throw new ApplicationError('That customer no longer exists.', 'not_found');
+  }
+  if (found.rows[0].status !== 'active') {
+    throw new ApplicationError(
+      'Only an active customer may apply to become a member.'
+    );
+  }
+  const type = await acceptingType(found.rows[0].membership_type_code);
+  const sourceApplicationId = found.rows[0].application_id;
 
   return withTransaction(async client => {
-    const customer = await client.query<{
-      status: string;
-      application_id: string;
-    }>(`select status, application_id from customer where id = $1`, [
-      customerId,
-    ]);
-    if (customer.rowCount === 0) {
-      throw new ApplicationError(
-        'That customer no longer exists.',
-        'not_found'
-      );
-    }
-    if (customer.rows[0].status !== 'active') {
-      throw new ApplicationError(
-        'Only an active customer may apply to become a member.'
-      );
-    }
-
     const priorParties = await client.query<{
       subject: FieldSubject;
       ordinal: number;
@@ -508,7 +528,7 @@ export async function startMembershipApplicationFromCustomer(
       `select subject, ordinal, values
          from application_party
         where application_id = $1`,
-      [customer.rows[0].application_id]
+      [sourceApplicationId]
     );
 
     const { id, reference } = await insertApplication(client, type, actor);
@@ -522,12 +542,12 @@ export async function startMembershipApplicationFromCustomer(
       [id, customerId]
     );
 
-    // insertApplication just seeded one empty party row per subject
-    // Individual currently configures — filled in here from what the
-    // customer already gave, not created again. A subject or nominee
-    // ordinal added to Individual's own configuration since the customer
-    // applied has no prior value to carry over and is simply left as
-    // insertApplication made it: empty, for the officer to fill in.
+    // insertApplication just seeded one empty party row per subject this
+    // type currently configures — filled in here from what the customer
+    // already gave, not created again. A subject or nominee ordinal added
+    // to the type's own configuration since the customer applied has no
+    // prior value to carry over and is simply left as insertApplication
+    // made it: empty, for the officer to fill in.
     for (const party of priorParties.rows) {
       await client.query(
         `update application_party set values = $4
