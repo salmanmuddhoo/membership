@@ -1187,6 +1187,40 @@ describe('the application list staff work from', () => {
     expect(listed.applicantName).toBe('Fatimah Joomun');
   });
 
+  // Officer feedback: finding one applicant among many by scrolling and
+  // sorting was the only way to do it.
+  it('searches by applicant name or reference', async () => {
+    const { capture } = await load();
+    const { id, reference } = await capture.startApplication(
+      'individual',
+      officer
+    );
+    await capture.saveDraft(
+      id,
+      [
+        {
+          subject: 'applicant',
+          ordinal: 1,
+          values: { name: 'Zahra', surname: 'Ramtoola' },
+        },
+      ],
+      officer
+    );
+
+    const byName = await capture.listApplications({ search: 'ramtoola' });
+    expect(byName.some(a => a.id === id)).toBe(true);
+
+    const byReference = await capture.listApplications({
+      search: reference,
+    });
+    expect(byReference.map(a => a.id)).toEqual([id]);
+
+    const noMatch = await capture.listApplications({
+      search: 'no such applicant',
+    });
+    expect(noMatch.some(a => a.id === id)).toBe(false);
+  });
+
   it('says so rather than showing a blank when nothing is typed yet', async () => {
     const { capture } = await load();
     const { reference } = await capture.startApplication('corporate', officer);

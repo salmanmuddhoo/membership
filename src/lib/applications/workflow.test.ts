@@ -1864,6 +1864,66 @@ describe('S-611: Regional oversight, enabled or not, gates the chain', () => {
     );
   });
 
+  it('flags the specific application pending review or approval', async () => {
+    await setRegionalReviewEnabled(true);
+    const { workflow } = await load();
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+
+    // Regional oversight is a gate, still 'new' from before it — the same
+    // chain pendingActionCount above walks, but naming this one row rather
+    // than counting how many.
+    expect(
+      (await workflow.pendingApplicationIds(regionalManager)).has(id)
+    ).toBe(true);
+    expect((await workflow.pendingApplicationIds(secretary)).has(id)).toBe(
+      false
+    );
+
+    await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Checked at the regional office.' },
+      regionalManager,
+      'regional_review'
+    );
+
+    expect(
+      (await workflow.pendingApplicationIds(regionalManager)).has(id)
+    ).toBe(false);
+    expect((await workflow.pendingApplicationIds(secretary)).has(id)).toBe(
+      true
+    );
+  });
+
+  it('flags a returned application for the officer who captured it, not for anyone else holding the same permission', async () => {
+    await setRegionalReviewEnabled(true);
+    const { capture, workflow } = await load();
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+    await workflow.reviewApplication(
+      id,
+      { outcome: 'return', comment: 'The NIC on file does not match.' },
+      regionalManager,
+      'regional_review'
+    );
+    expect((await capture.loadApplication(id))!.status).toBe('returned');
+
+    expect((await workflow.pendingApplicationIds(officer)).has(id)).toBe(true);
+
+    // Someone else who could equally well capture and submit an application
+    // — the flag is this specific application's own captor, not a role-wide
+    // queue the way review and approval are.
+    const anotherOfficer = principalFor(
+      '00000000-0000-0000-0000-000000000099',
+      'another.officer@albarakah.mu',
+      ['application.view', 'application.capture', 'application.submit'],
+      ['regional_officer']
+    );
+    expect((await workflow.pendingApplicationIds(anotherOfficer)).has(id)).toBe(
+      false
+    );
+  });
+
   it('says who actually holds it while status is still new', async () => {
     await setRegionalReviewEnabled(true);
     const { capture, workflow } = await load();
@@ -2528,6 +2588,104 @@ describe('S-614: the account a non-member already held transfers when they becom
       [customerId]
     );
     expect(customerRow.rows[0].status).toBe('converted');
+  });
+
+  // Officer feedback: the money never moved, but the transferred account's
+  // own balance and the member's total on the Members page both read Rs 0,
+  // and the converted customer kept showing up as a second, empty row
+  // beside the member they became. opened_by_application_id (migration
+  // 0037) is the fix — set once, at creation, on every account this test's
+  // own two paths ever open, and never touched by the transfer above.
+  it("keeps the transferred account's balance, folds it into the member total, and drops the converted customer from the list", async () => {
+    const { capture, workflow, members, documents, payments } = await load();
+    const actor = { userId: officer.userId, email: officer.email };
+
+    const accountType = await runAsActor(
+      `insert into account_type
+         (code, name, category, minimum_opening_amount, is_membership_default,
+          number_prefix)
+       values ('hsa_balance_test', 'Hajj Savings (balance test)', 'savings',
+               1000.00, false, 'HSB')
+       returning id, name`
+    );
+    const heldAmount = '1000.00';
+
+    const custApp = await capture.startCustomerAccountApplication(
+      [accountType.rows[0].id],
+      officer
+    );
+    await capture.saveDraft(custApp.id, COMPLETE_INDIVIDUAL, actor);
+    await fileRequiredDocuments(documents, custApp.id);
+    await verifyRequiredDocuments(documents, custApp.id);
+    await payments.recordAccountOpeningPayment(
+      {
+        applicationId: custApp.id,
+        method: 'cash',
+        amounts: { [accountType.rows[0].id]: heldAmount },
+      },
+      {
+        ...officer,
+        permissions: new Set([...officer.permissions, 'payment.record']),
+      }
+    );
+    await workflow.submitApplication(custApp.id, officer);
+    await workflow.reviewApplication(
+      custApp.id,
+      { outcome: 'forward', comment: 'ok' },
+      secretary
+    );
+    const custDecided = await workflow.decideApplication(
+      custApp.id,
+      { outcome: 'approve', comment: '' },
+      president,
+      members.openAccountsForCustomerApplication
+    );
+    const customerId = custDecided.member!.id;
+    const heldAccountId = custDecided.member!.accounts[0].id;
+
+    const memApp = await capture.startMembershipApplicationFromCustomer(
+      customerId,
+      officer
+    );
+    await fileRequiredDocuments(documents, memApp.id);
+    await verifyRequiredDocuments(documents, memApp.id);
+    const due = await payments.amountDueForApplication(memApp.id);
+    const membershipTotal = due.components
+      .filter(c => c.code === 'shares' || c.code === 'msa_deposit')
+      .reduce((sum, c) => sum + Number(c.amount), 0);
+    await recordFullPayment(payments, memApp.id);
+    await workflow.submitApplication(memApp.id, officer);
+    await workflow.reviewApplication(
+      memApp.id,
+      { outcome: 'forward', comment: 'ok' },
+      secretary
+    );
+    const memDecided = await workflow.decideApplication(
+      memApp.id,
+      { outcome: 'approve', comment: '' },
+      president,
+      members.createMemberFromApplication
+    );
+    const memberNo = memDecided.member!.memberNo;
+
+    // The opening deposit is still there — same account, same money, now
+    // read straight off opened_by_application_id instead of a derivation
+    // that had no path back to a customer_account application.
+    expect(await payments.transactionsForAccount(heldAccountId)).toEqual([
+      expect.objectContaining({ type: 'credit', amount: heldAmount }),
+    ]);
+
+    // One row for this person, not two: the converted customer does not
+    // linger beside the member they became.
+    const listed = await members.listMembers({ search: memberNo });
+    const rows = listed.members.filter(
+      m => m.memberNo === memberNo || m.id === customerId
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].kind).toBe('member');
+    expect(rows[0].totalFunds).toBe(
+      (membershipTotal + Number(heldAmount)).toFixed(2)
+    );
   });
 
   it('refuses to apply again once converted', async () => {

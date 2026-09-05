@@ -8,6 +8,7 @@ import {
 } from '@lib/applications/capture';
 import { activeChain, listMembershipTypes } from '@lib/config/reference';
 import {
+  pendingApplicationIds,
   regionalReviewPassedIds,
   WORKFLOW_CODE,
 } from '@lib/applications/workflow';
@@ -81,20 +82,33 @@ const deletedCount = Number(Astro.url.searchParams.get('deleted') ?? '');
 const created = Astro.url.searchParams.get('created');
 
 const filter = Astro.url.searchParams.get('status') ?? '';
-const [applications, types, chain, nonDraftCount] = await Promise.all([
-  listApplications({
-    ...(filter ? { statuses: [filter] } : {}),
-    viewerUserId: principal.userId,
-  }),
-  listMembershipTypes(),
-  activeChain(WORKFLOW_CODE),
-  // Meaningless filtered to Draft specifically — countApplications excludes
-  // every draft regardless, so that combination would always read 0 beside
-  // a table that is, in fact, showing rows.
-  filter === 'draft'
-    ? null
-    : countApplications(filter ? { statuses: [filter] } : {}),
-]);
+const search = Astro.url.searchParams.get('q') ?? '';
+const [unsortedApplications, types, chain, nonDraftCount, attentionIds] =
+  await Promise.all([
+    listApplications({
+      ...(filter ? { statuses: [filter] } : {}),
+      viewerUserId: principal.userId,
+      search,
+    }),
+    listMembershipTypes(),
+    activeChain(WORKFLOW_CODE),
+    // Meaningless filtered to Draft specifically — countApplications excludes
+    // every draft regardless, so that combination would always read 0 beside
+    // a table that is, in fact, showing rows.
+    filter === 'draft'
+      ? null
+      : countApplications(filter ? { statuses: [filter] } : {}),
+    pendingApplicationIds(principal),
+  ]);
+
+// Officer feedback: an application waiting on this person specifically —
+// theirs to review, approve, or correct — reads as a row to scroll past
+// like any other otherwise, easy to miss on a list sorted only by when it
+// last changed. Array.prototype.sort is stable, so this only moves those
+// rows ahead of everything else; within each group, still newest first.
+const applications = [...unsortedApplications].sort(
+  (a, b) => Number(attentionIds.has(b.id)) - Number(attentionIds.has(a.id))
+);
 
 // S-611 follow-up: 'new' means two different things once Regional oversight
 // is enabled — still waiting on the Regional Manager, or past them and
@@ -227,7 +241,17 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             )
           }
         </h2>
-        <form method="get" class="flex items-center gap-2">
+        <form method="get" class="flex flex-wrap items-center gap-2">
+          <label for="q" class="sr-only">Search by applicant or reference</label
+          >
+          <input
+            id="q"
+            type="search"
+            name="q"
+            value={search}
+            placeholder="Search applicant or reference"
+            class="rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+          />
           <label for="status" class="sr-only">Filter by status</label>
           <select
             id="status"
@@ -249,15 +273,27 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           >
             Filter
           </button>
+          {
+            (search || filter) && (
+              <a
+                href="/applications"
+                class="text-sm text-neutral-500 underline dark:text-neutral-400"
+              >
+                Clear
+              </a>
+            )
+          }
         </form>
       </div>
 
       {
         applications.length === 0 ? (
           <p class="mt-4 text-sm text-neutral-500 dark:text-neutral-400">
-            {filter
-              ? `No applications with status ${STATUS_LABELS[filter] ?? filter}.`
-              : 'No applications yet.'}
+            {search
+              ? `Nothing matches "${search}".`
+              : filter
+                ? `No applications with status ${STATUS_LABELS[filter] ?? filter}.`
+                : 'No applications yet.'}
           </p>
         ) : (
           <form method="post" id="applications-form" data-confirm-delete>
@@ -341,18 +377,25 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                         </td>
                       )}
                       <td class="py-2 pr-4" data-sort-value={a.reference}>
-                        <a
-                          href={
-                            a.applicationKind === 'membership'
-                              ? `/applications/${a.id}`
-                              : a.applicationKind === 'additional_account'
-                                ? `/applications/${a.id}/account`
-                                : `/applications/${a.id}/customer`
-                          }
-                          class="text-mint-700 dark:text-mint-300 font-medium underline"
-                        >
-                          {a.reference}
-                        </a>
+                        <div class="flex items-center gap-1.5">
+                          <a
+                            href={
+                              a.applicationKind === 'membership'
+                                ? `/applications/${a.id}`
+                                : a.applicationKind === 'additional_account'
+                                  ? `/applications/${a.id}/account`
+                                  : `/applications/${a.id}/customer`
+                            }
+                            class="text-mint-700 dark:text-mint-300 font-medium underline"
+                          >
+                            {a.reference}
+                          </a>
+                          {attentionIds.has(a.id) && (
+                            <span class="rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold text-red-700 dark:bg-red-950 dark:text-red-300">
+                              Needs attention
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td
                         class="py-2 pr-4 text-neutral-700 dark:text-neutral-200"

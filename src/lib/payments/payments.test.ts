@@ -1289,9 +1289,11 @@ describe('transactionsForAccount', () => {
     );
     const account = await run(
       appUrl,
-      `insert into account (member_id, account_type_id, is_membership_default)
-       values ($1, $2, true) returning id`,
-      [member.rows[0].id, sharesType.rows[0].id]
+      `insert into account
+         (member_id, account_type_id, is_membership_default,
+          opened_by_application_id)
+       values ($1, $2, true, $3) returning id`,
+      [member.rows[0].id, sharesType.rows[0].id, application.id]
     );
 
     const transactions = await payments.transactionsForAccount(
@@ -1333,9 +1335,11 @@ describe('transactionsForAccount', () => {
     );
     const account = await run(
       appUrl,
-      `insert into account (member_id, account_type_id, is_membership_default)
-       values ($1, $2, true) returning id`,
-      [member.rows[0].id, sharesType.rows[0].id]
+      `insert into account
+         (member_id, account_type_id, is_membership_default,
+          opened_by_application_id)
+       values ($1, $2, true, $3) returning id`,
+      [member.rows[0].id, sharesType.rows[0].id, application.id]
     );
     const refund = await payments.refundPayment(
       {
@@ -1382,9 +1386,11 @@ describe('transactionsForAccount', () => {
     );
     const account = await run(
       appUrl,
-      `insert into account (member_id, account_type_id, is_membership_default)
-       values ($1, $2, true) returning id`,
-      [member.rows[0].id, sharesType.rows[0].id]
+      `insert into account
+         (member_id, account_type_id, is_membership_default,
+          opened_by_application_id)
+       values ($1, $2, true, $3) returning id`,
+      [member.rows[0].id, sharesType.rows[0].id, application.id]
     );
 
     expect(await payments.transactionsForAccount(account.rows[0].id)).toEqual(
