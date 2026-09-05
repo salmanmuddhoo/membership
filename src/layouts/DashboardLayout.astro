@@ -2,7 +2,6 @@
 import BaseLayout from './BaseLayout.astro';
 import BrandLogo from '@components/BrandLogo.astro';
 import ThemeIcon from '@components/ThemeIcon.astro';
-import FullscreenToggle from '@components/FullscreenToggle.astro';
 import EnvBadge from '@components/EnvBadge.astro';
 import Icon from '@components/ui/icons/Icon.astro';
 import { pendingActionCount } from '@lib/applications/workflow';
@@ -225,7 +224,6 @@ const currentPath = Astro.url.pathname;
       <EnvBadge />
 
       <div class="ms-auto flex items-center gap-x-2">
-        <FullscreenToggle />
         <ThemeIcon />
 
         {/* User menu */}

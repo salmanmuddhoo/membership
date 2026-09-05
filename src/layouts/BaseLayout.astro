@@ -60,5 +60,15 @@ const {
         document.addEventListener('DOMContentLoaded', init);
       else init();
     </script>
+    <script>
+      // A manifest alone does not make a page installable — Chrome and
+      // Android also require a registered service worker before they will
+      // offer "Add to Home Screen". `navigator.serviceWorker` does not
+      // exist on a browser without support (or without HTTPS, which it
+      // also requires), hence the guard rather than letting the call throw.
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/sw.js');
+      }
+    </script>
   </body>
 </html>

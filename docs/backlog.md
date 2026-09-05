@@ -2237,7 +2237,53 @@ existing app-wide value everywhere else.
   (`FullscreenToggle.astro`, the ordinary Fullscreen API) — more screen for
   the application and less for the browser around it on a small device,
   which is most of them in the field. Removed entirely, not just hidden,
-  where the API does not exist.
+  where the API does not exist. **Superseded two entries down** — replaced
+  with an installable PWA before this reached anyone.
+
+---
+
+### The merged timeline card stopped being sticky past its own height ✅
+
+The previous entry's fix for the "two cards, not one" look — wrapping
+`ApplicationTimeline` and the nav bar in a shared `<div>` so a zero-gap,
+matching-colour seam could sit between them — broke the thing it was
+sitting on top of: `position: sticky` sticks only within its element's own
+**containing block**, and that wrapping div's height was nothing more than
+the timeline and the bar themselves. Once the page scrolled past that (a
+few hundred pixels), both ran out of room to stick within and scrolled
+away with the rest of the page — sticky for a moment, then gone, which is
+what "should be sticky ... always visible when scrolling" was reporting.
+
+The wrapper is gone. Timeline and nav bar are siblings again, directly
+inside the page's own full-height container, so they have the whole page
+to stick within like every other sticky element here. The zero-gap seam
+between them now comes from `mb-0` on the timeline section instead —
+Tailwind wraps its `space-y-*` utility's own margin in `:where()`
+specifically so an ordinary class can always override it, which is what
+lets one `mb-0` cancel the gap without a wrapper doing it structurally.
+Checked by rendering the actual compiled CSS in a browser and scrolling
+past ten screens of content — stuck at the top throughout, not just for
+the first few — rather than trusting the specificity argument alone.
+
+---
+
+### Full screen swapped for an installable app ✅
+
+Told the full-screen toggle (previous entries) was not wanted — a phone
+that can install the app onto its home screen gets the browser chrome out
+of the way permanently, which is what full screen was reaching for one tap
+at a time. `FullscreenToggle.astro` and its two icons are gone.
+
+In its place: a web app manifest (`public/manifest.webmanifest`, icons
+generated from the existing favicon at the sizes Android and iOS actually
+ask for, plus a padded maskable variant so a circular home-screen mask
+doesn't clip the wreath) and a minimal service worker
+(`public/sw.js`) — required by Chrome and Android before either will offer
+"Add to Home Screen" at all, even though nothing here works offline or
+caches anything; a stale cache of a form an officer is filling in is worse
+than no offline mode. `BaseLayout.astro` registers it; `Meta.astro` links
+the manifest and carries the two `*-mobile-web-app-capable` tags iOS and
+Android each read on their own.
 
 ---
 

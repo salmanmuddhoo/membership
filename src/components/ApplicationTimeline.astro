@@ -80,11 +80,18 @@ const STEP_HREF: Record<string, (base: string, id: string) => string> = {
      beneath it (officer feedback — the two used to read as separate cards,
      one white and one grey, rather than one). That bar supplies the matching
      bottom half — same background, a border where the two meet instead of a
-     gap — so together they read as a single card. */
+     gap — so together they read as a single card. `mb-0` cancels the parent
+     `space-y-6`'s own margin (Tailwind wraps that rule in `:where()`
+     specifically so an ordinary class here can always override it) — a
+     wrapping element that held just this pair once seemed the more obvious
+     way to close the gap, but that shrinks the containing block sticky
+     positioning sticks within to only these two elements' own combined
+     height, so both stopped sticking a moment after the page started
+     scrolling instead of for the whole page. */
 }
 <section
   id="application-timeline"
-  class="sticky z-30 -mx-4 rounded-t-2xl border border-neutral-200 bg-neutral-100 p-4 sm:mx-0 sm:p-6 dark:border-neutral-800 dark:bg-neutral-950"
+  class="sticky z-30 -mx-4 mb-0 rounded-t-2xl border border-neutral-200 bg-neutral-100 p-4 sm:mx-0 sm:p-6 dark:border-neutral-800 dark:bg-neutral-950"
   style="top: var(--app-header-height, 3.75rem)"
   aria-label="Application progress"
 >
