@@ -51,6 +51,12 @@ const delivery: CodeDelivery = {
 const origin = { ip: null, correlationId: 'test' };
 
 async function applicantSession(mobile: string) {
+  // The sign-up cooldown is per number and this suite signs the same
+  // numbers up repeatedly.
+  await run(
+    appUrl,
+    `update member_login_challenge set created_at = created_at - interval '1 minute'`
+  );
   const challenge = await identity.startSignUp({ mobile }, origin, {
     delivery,
   });

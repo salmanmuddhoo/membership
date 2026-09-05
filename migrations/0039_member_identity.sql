@@ -65,12 +65,20 @@ comment on column membership_application.applicant_mobile is
 -- ---------------------------------------------------------------------------
 -- One-time codes
 -- ---------------------------------------------------------------------------
+-- A link attempt that named nobody still gets a challenge row
+-- ('link_member_miss'): the response is the same shape and the same
+-- timing as a hit, no code is ever sent, and verifying against it fails
+-- and burns exactly as a wrong code does. That is what keeps the answer
+-- from saying whether a NIC + AB Number pair exists.
 create table member_login_challenge (
     id            uuid        primary key default gen_random_uuid(),
     purpose       text        not null
-                  check (purpose in ('link_member', 'sign_up')),
+                  check (purpose in ('link_member', 'link_member_miss', 'sign_up')),
+    -- What the request was keyed on, for the resend cooldown: the AB Number
+    -- for a link attempt (hit or miss), the number given for a sign-up.
+    request_key   text        not null,
     -- E.164. For link_member, the member's registered mobile — the person
-    -- never typed it. For sign_up, the number they gave.
+    -- never typed it. For sign_up, the number they gave. Empty for a miss.
     mobile        text        not null,
     -- Set for link_member only: the member NIC + AB Number identified.
     member_id     uuid        references member(id),
@@ -87,6 +95,8 @@ create table member_login_challenge (
 
 create index member_login_challenge_expiry_idx
     on member_login_challenge (expires_at);
+create index member_login_challenge_request_key_idx
+    on member_login_challenge (request_key, created_at desc);
 
 -- ---------------------------------------------------------------------------
 -- Sessions: the authenticated mobile identity

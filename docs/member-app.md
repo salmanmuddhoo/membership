@@ -26,10 +26,21 @@ app ends up letting a card number open an account:
 
 **NIC + AB Number alone open nothing.** They select whose registered
 mobile the code goes to. The person typing them does not choose that
-number, sees it only masked, and cannot change it from the app — a member
-whose number has changed goes to a branch with their ID. A lost card, a
-NIC read off a form, or both together get an attacker exactly as far as
-the SMS they will not receive.
+number, is never shown it (not even masked), and cannot change it from
+the app — a member whose number has changed goes to a branch with their
+ID. A lost card, a NIC read off a form, or both together get an attacker
+exactly as far as the SMS they will not receive.
+
+**The answer never says whether the pair exists.** A NIC + AB Number that
+names nobody — wrong NIC, wrong AB Number, right pair but not active —
+gets the same response as one that does: a challenge id, purpose
+`link_member`, `sentTo: null`, five minutes. Behind it is a
+`link_member_miss` challenge row with a random hash nothing can match and
+no SMS; verifying against it fails and burns exactly as a wrong code does.
+The difference is recorded in the audit trail (`member.link.refused`, with
+the AB Number as typed and a prefix of the NIC's hash), never in the
+response. The app tells the person a code has been sent _if_ the details
+matched, and what to do if nothing arrives.
 
 **AB Number** is `member.member_no` — `AB` and four digits, allocated by
 `next_member_number()` — which the business also calls the Shares Account
@@ -170,15 +181,20 @@ visible in the audit trail (`member.details.requested`) and the table, and
 | `MEMBER_ACCESS_TOKEN_SECONDS` | Default 3600.                                                                                                                                                                                                                                                                                                          |
 | `MEMBER_REFRESH_TOKEN_DAYS`   | Default 90, from last use.                                                                                                                                                                                                                                                                                             |
 
-## Rate limits
+## Codes: the controls, in one place
 
-- `link-member`: 5 per NIC and per AB Number per hour, 20 per address per
-  hour, counted whether or not the pair matched.
-- `sign-up` and `resend-otp`: 3 per number per 10 minutes, 20 per address
-  per hour. SMS costs money and the endpoint is public.
-- `verify-otp`: 5 attempts per challenge, then it is dead.
-- Every public endpoint: 30 per address per minute on top.
-- Every member endpoint: the staff API's default, keyed on the session.
+| Control             | Value                                                                                                                                                                                                                           |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Length and source   | Six digits from the CSPRNG (`randomInt`); `MEMBER_OTP_FIXED_CODE` only where non-production is asserted                                                                                                                         |
+| Storage             | SHA-256 salted on the challenge's own id; compared in constant time; the code appears nowhere else, the audit trail included                                                                                                    |
+| Expiry              | 5 minutes; one use (`consumed_at`)                                                                                                                                                                                              |
+| Attempts            | 5 per challenge, counted in one statement under the row lock, then burnt                                                                                                                                                        |
+| Resend cooldown     | 30 s per key (AB Number for a link, number for a sign-up), read from the challenge rows so it holds even with the limiter off                                                                                                   |
+| Rate limits         | `link-member`: 5/NIC/h, 5/AB Number/h, 20/address/h, counted hit or miss. `sign-up`, `resend-otp`: 3/number/10 min, 20/address/h. Every public endpoint: 30/address/min on top. Member endpoints: the staff default per session |
+| Delivery failure    | A code that could not be sent takes its challenge with it: nothing that never arrived can be guessed at                                                                                                                         |
+| Information leakage | A miss is answered, stored and verified exactly as a hit; the registered mobile is never shown for a link                                                                                                                       |
+| Audit               | `member.link.requested` / `refused` / `completed`, `member.signup.requested` / `verified`, `member.otp.resent` / `rejected` / `burnt`, `member.session.revoked` — with the correlation id and address, never the code           |
 
-All through `checkRateLimit` (`docs/api.md`), which now takes a ceiling
-and window per call for exactly this.
+All limits go through `checkRateLimit` (`docs/api.md`), which takes a
+ceiling and window per call for exactly this; the cooldown does not, on
+purpose.

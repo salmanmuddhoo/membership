@@ -53,7 +53,11 @@ export interface MemberPrincipal {
 export interface OtpChallenge {
   challengeId: string;
   purpose: 'link_member' | 'sign_up';
-  sentTo: string;
+  // Masked, for a sign-up: the number the person just typed. Null for a
+  // link: saying even a masked number would confirm the NIC + AB Number
+  // pair named someone, and the person is told it went to the mobile on
+  // their record.
+  sentTo: string | null;
   expiresInSeconds: number;
 }
 
@@ -125,22 +129,61 @@ async function enforce(
   }
 }
 
+// A second code for the same key within this window is refused, whoever
+// asks: the app shows a countdown of the same length before offering
+// Resend. Read from the challenge rows themselves rather than the rate
+// limiter, so it holds even where the limiter is switched off.
+export const RESEND_COOLDOWN_SECONDS = 30;
+
+async function assertCooldown(requestKey: string): Promise<void> {
+  const last = await query<{ wait: number }>(
+    `select ceil(extract(epoch from
+              (created_at + make_interval(secs => $2) - now())))::int as wait
+       from member_login_challenge
+      where request_key = $1
+      order by created_at desc
+      limit 1`,
+    [requestKey, RESEND_COOLDOWN_SECONDS]
+  );
+  const wait = last.rows[0]?.wait ?? 0;
+  if (wait > 0) {
+    throw new ApiError(
+      'rate_limited',
+      `Wait ${wait} second${wait === 1 ? '' : 's'} before requesting another code.`
+    );
+  }
+}
+
+interface ChallengeInput {
+  purpose: 'link_member' | 'link_member_miss' | 'sign_up';
+  requestKey: string;
+  // Empty for a miss: there is nobody to send to.
+  mobile: string;
+  memberId: string | null;
+}
+
+// A row, a code, and — unless this is a miss — an SMS. A miss gets the
+// same row with a random hash nothing can match, no message, and the same
+// answer, so the caller cannot tell the two apart.
 async function issueChallenge(
-  input: {
-    purpose: 'link_member' | 'sign_up';
-    mobile: string;
-    memberId: string | null;
-  },
+  input: ChallengeInput,
   delivery: CodeDelivery,
   config: MemberConfig
 ): Promise<OtpChallenge> {
-  const code = generateCode(config);
+  const miss = input.purpose === 'link_member_miss';
+  const code = miss ? randomBytes(8).toString('hex') : generateCode(config);
   const inserted = await query<{ id: string }>(
     `insert into member_login_challenge
-       (purpose, mobile, member_id, code_hash, expires_at)
-     values ($1, $2, $3, 'pending', now() + make_interval(secs => $4))
+       (purpose, request_key, mobile, member_id, code_hash, expires_at)
+     values ($1, $2, $3, $4, 'pending', now() + make_interval(secs => $5))
      returning id`,
-    [input.purpose, input.mobile, input.memberId, CODE_TTL_SECONDS]
+    [
+      input.purpose,
+      input.requestKey,
+      input.mobile,
+      input.memberId,
+      CODE_TTL_SECONDS,
+    ]
   );
   const challengeId = inserted.rows[0].id;
   // The hash salts on the row's own id, which did not exist until the insert.
@@ -152,20 +195,22 @@ async function issueChallenge(
   // Sent after the row exists, so a code that arrives always has a
   // challenge to verify against; a send that fails takes the challenge with
   // it, so a code that never arrived cannot be guessed at later.
-  try {
-    await delivery.send(input.mobile, codeMessage(code));
-  } catch (error) {
-    await query(
-      `update member_login_challenge set consumed_at = now() where id = $1`,
-      [challengeId]
-    );
-    throw error;
+  if (!miss) {
+    try {
+      await delivery.send(input.mobile, codeMessage(code));
+    } catch (error) {
+      await query(
+        `update member_login_challenge set consumed_at = now() where id = $1`,
+        [challengeId]
+      );
+      throw error;
+    }
   }
 
   return {
     challengeId,
-    purpose: input.purpose,
-    sentTo: maskMobile(input.mobile),
+    purpose: input.purpose === 'sign_up' ? 'sign_up' : 'link_member',
+    sentTo: input.purpose === 'sign_up' ? maskMobile(input.mobile) : null,
     expiresInSeconds: CODE_TTL_SECONDS,
   };
 }
@@ -174,10 +219,13 @@ async function issueChallenge(
  * Identify an existing member by NIC + AB Number and send a code to the
  * mobile on their record.
  *
- * One answer for "no such NIC", "no such AB Number", "not together" and "not
- * active": the response must not say which half was right. Rate-limited per
- * NIC, per AB Number and per address before the lookup, so a miss costs the
- * same as a hit.
+ * The answer is the same whether the pair named someone or not: a
+ * challenge id, no number. A miss gets a challenge nothing can verify
+ * against; a hit gets a code on the registered mobile. "No such NIC", "no
+ * such AB Number", "not together" and "not active" are indistinguishable
+ * from outside — the difference is in the audit trail. Rate-limited per
+ * NIC, per AB Number and per address before the lookup, and one code per
+ * AB Number per cooldown window, so a miss costs exactly what a hit does.
  */
 export async function linkMember(
   input: { nic: string; abNumber: string },
@@ -211,6 +259,8 @@ export async function linkMember(
       LINK_IP_LIMIT
     );
   }
+  // One code per AB Number per window, hit or miss alike.
+  await assertCooldown(`link:${abNumber}`);
 
   // Exact pair, active only. NIC is not a column on member: it lives on the
   // applicant party of the application that created them, joined the same
@@ -231,24 +281,39 @@ export async function linkMember(
 
   const member = found.rows[0];
   if (!member || !member.mobile) {
+    // Recorded in full here — the NIC hashed, the AB Number as typed — and
+    // nowhere the caller can see.
     await recordAuditQuietly({
       actorDescription: ACTOR,
       action: 'member.link.refused',
       entityType: 'member_login_challenge',
       entityId: abNumber,
-      newValue: { reason: member ? 'no_mobile_on_record' : 'no_match' },
+      newValue: {
+        reason: member ? 'no_mobile_on_record' : 'no_match',
+        nicHash: sha256(nic).slice(0, 16),
+      },
       requestId: origin.correlationId,
       ipAddress: origin.ip,
     });
-    throw new ApiError(
-      'not_found',
-      'No active member matches that NIC and AB Number. Check both, or ' +
-        'visit a branch with your ID.'
+    return issueChallenge(
+      {
+        purpose: 'link_member_miss',
+        requestKey: `link:${abNumber}`,
+        mobile: '',
+        memberId: null,
+      },
+      delivery,
+      config
     );
   }
 
   const challenge = await issueChallenge(
-    { purpose: 'link_member', mobile: member.mobile, memberId: member.id },
+    {
+      purpose: 'link_member',
+      requestKey: `link:${abNumber}`,
+      mobile: member.mobile,
+      memberId: member.id,
+    },
     delivery,
     config
   );
@@ -258,7 +323,10 @@ export async function linkMember(
     action: 'member.link.requested',
     entityType: 'member',
     entityId: member.id,
-    newValue: { challengeId: challenge.challengeId, sentTo: challenge.sentTo },
+    newValue: {
+      challengeId: challenge.challengeId,
+      sentTo: maskMobile(member.mobile),
+    },
     requestId: origin.correlationId,
     ipAddress: origin.ip,
   });
@@ -302,12 +370,28 @@ export async function startSignUp(
       SIGN_UP_IP_LIMIT
     );
   }
+  await assertCooldown(`signup:${mobile}`);
 
-  return issueChallenge(
-    { purpose: 'sign_up', mobile, memberId: null },
+  const challenge = await issueChallenge(
+    {
+      purpose: 'sign_up',
+      requestKey: `signup:${mobile}`,
+      mobile,
+      memberId: null,
+    },
     delivery,
     config
   );
+  await recordAuditQuietly({
+    actorDescription: ACTOR,
+    action: 'member.signup.requested',
+    entityType: 'member_login_challenge',
+    entityId: challenge.challengeId,
+    newValue: { mobile: maskMobile(mobile) },
+    requestId: origin.correlationId,
+    ipAddress: origin.ip,
+  });
+  return challenge;
 }
 
 /** A fresh code for a challenge already issued; the old one is dead. */
@@ -320,32 +404,58 @@ export async function resendOtp(
   const delivery = options.delivery ?? codeDelivery(config);
 
   const previous = await query<{
-    purpose: 'link_member' | 'sign_up';
+    id: string;
+    purpose: ChallengeInput['purpose'];
+    request_key: string;
     mobile: string;
     member_id: string | null;
-    created_at: Date;
   }>(
-    `update member_login_challenge
-        set consumed_at = coalesce(consumed_at, now())
+    `select id, purpose, request_key, mobile, member_id
+       from member_login_challenge
       where id = $1::uuid
-        and created_at > now() - interval '30 minutes'
-      returning purpose, mobile, member_id, created_at`,
+        and created_at > now() - interval '30 minutes'`,
     [isUuid(challengeId) ? challengeId : '00000000-0000-0000-0000-000000000000']
   );
   const row = previous.rows[0];
   if (!row) throw new ApiError('not_found', 'Start again.');
 
-  await enforce(
-    `member-resend:mobile:${row.mobile}`,
-    origin.correlationId,
-    SIGN_UP_LIMIT
+  // Before the old one is killed: a refused resend must leave the current
+  // code usable.
+  await assertCooldown(row.request_key);
+  if (row.mobile) {
+    await enforce(
+      `member-resend:mobile:${row.mobile}`,
+      origin.correlationId,
+      SIGN_UP_LIMIT
+    );
+  }
+  await query(
+    `update member_login_challenge
+        set consumed_at = coalesce(consumed_at, now())
+      where id = $1`,
+    [row.id]
   );
 
-  return issueChallenge(
-    { purpose: row.purpose, mobile: row.mobile, memberId: row.member_id },
+  const next = await issueChallenge(
+    {
+      purpose: row.purpose,
+      requestKey: row.request_key,
+      mobile: row.mobile,
+      memberId: row.member_id,
+    },
     delivery,
     config
   );
+  await recordAuditQuietly({
+    actorDescription: ACTOR,
+    action: 'member.otp.resent',
+    entityType: 'member_login_challenge',
+    entityId: next.challengeId,
+    newValue: { previousChallengeId: row.id, purpose: row.purpose },
+    requestId: origin.correlationId,
+    ipAddress: origin.ip,
+  });
+  return next;
 }
 
 // --- Verification, and the session it produces ---------------------------
@@ -470,7 +580,7 @@ export async function verifyOtp(
   const row = await withTransaction(async client => {
     const locked = await client.query<{
       id: string;
-      purpose: 'link_member' | 'sign_up';
+      purpose: ChallengeInput['purpose'];
       mobile: string;
       member_id: string | null;
       code_hash: string;
@@ -486,13 +596,13 @@ export async function verifyOtp(
     );
     const challenge = locked.rows[0];
     if (!challenge || !challenge.live) {
-      throw new ApiError(
-        'not_found',
-        'That code has expired. Request a new one.'
-      );
+      throw new ExpiredChallenge();
     }
 
-    if (!codeMatches(challenge.id, code, challenge.code_hash)) {
+    // A miss can never match — its hash is of a value nothing could have
+    // sent — but it is checked all the same, so the two take the same path.
+    const matches = codeMatches(challenge.id, code, challenge.code_hash);
+    if (challenge.purpose === 'link_member_miss' || !matches) {
       // Recorded outside this transaction (see the catch below): a throw
       // rolls everything back, and the count is the control.
       throw new WrongCode();
@@ -557,6 +667,21 @@ export async function verifyOtp(
 
     return created;
   }).catch(async error => {
+    if (error instanceof ExpiredChallenge) {
+      await recordAuditQuietly({
+        actorDescription: ACTOR,
+        action: 'member.otp.rejected',
+        entityType: 'member_login_challenge',
+        entityId: challengeId,
+        newValue: { reason: 'expired_or_unknown' },
+        requestId: origin.correlationId,
+        ipAddress: origin.ip,
+      });
+      throw new ApiError(
+        'not_found',
+        'That code has expired. Request a new one.'
+      );
+    }
     if (error instanceof WrongCode) {
       // One statement, so two guesses racing cannot both read four.
       const counted = await query<{ attempts: number }>(
@@ -568,7 +693,18 @@ export async function verifyOtp(
           returning attempts`,
         [challengeId, MAX_ATTEMPTS]
       );
-      if ((counted.rows[0]?.attempts ?? MAX_ATTEMPTS) >= MAX_ATTEMPTS) {
+      const attempts = counted.rows[0]?.attempts ?? MAX_ATTEMPTS;
+      const burnt = attempts >= MAX_ATTEMPTS;
+      await recordAuditQuietly({
+        actorDescription: ACTOR,
+        action: burnt ? 'member.otp.burnt' : 'member.otp.rejected',
+        entityType: 'member_login_challenge',
+        entityId: challengeId,
+        newValue: { attempts, maxAttempts: MAX_ATTEMPTS },
+        requestId: origin.correlationId,
+        ipAddress: origin.ip,
+      });
+      if (burnt) {
         throw new ApiError('not_found', 'Too many wrong codes. Start again.');
       }
       throw new ApiError('validation_failed', 'That code is not right.', {
@@ -584,6 +720,12 @@ export async function verifyOtp(
 class WrongCode extends Error {
   constructor() {
     super('wrong code');
+  }
+}
+
+class ExpiredChallenge extends Error {
+  constructor() {
+    super('expired challenge');
   }
 }
 

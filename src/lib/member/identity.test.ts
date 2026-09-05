@@ -115,35 +115,95 @@ afterAll(async () => {
   await run(ADMIN_URL, `drop database if exists ${dbName} with (force)`);
 });
 
+// The cooldown is per AB Number and this suite links the same member over
+// and over; each test that is not about the cooldown starts with it clear.
+async function clearCooldowns() {
+  await run(
+    appUrl,
+    `update member_login_challenge set created_at = created_at - interval '1 minute'`
+  );
+}
+
 async function link(nic = MEMBER.nic, abNumber = MEMBER.abNumber) {
   return identity.linkMember({ nic, abNumber }, origin, { delivery });
 }
 
+async function freshLink() {
+  await clearCooldowns();
+  return link();
+}
+
 describe('identification: NIC + AB Number', () => {
-  it('names the member and sends the code to the mobile on record, masked', async () => {
+  it('names the member and sends the code to the mobile on record, saying nothing about it', async () => {
     const challenge = await link();
     expect(challenge.purpose).toBe('link_member');
-    expect(challenge.sentTo).toBe('+2305xxx234');
+    expect(challenge.sentTo).toBeNull();
     expect(sent.at(-1)?.to).toBe(MEMBER.mobile);
     expect(sent.at(-1)?.code).toMatch(/^\d{6}$/);
   });
 
   it('accepts the NIC and AB Number however they are typed', async () => {
+    await clearCooldowns();
+    const before = sent.length;
     const challenge = await link(' b1234567890123 ', 'ab 0001');
-    expect(challenge.sentTo).toBe('+2305xxx234');
+    expect(challenge.purpose).toBe('link_member');
+    expect(sent.length).toBe(before + 1);
   });
 
-  it('gives one answer whichever half is wrong', async () => {
-    await expect(link(MEMBER.nic, 'AB0002')).rejects.toMatchObject({
-      code: 'not_found',
-      message: expect.stringMatching(/No active member matches/),
-    });
-    await expect(link('X0000000000000', MEMBER.abNumber)).rejects.toMatchObject(
-      {
-        code: 'not_found',
-        message: expect.stringMatching(/No active member matches/),
-      }
+  it('answers a miss exactly as a hit, whichever half is wrong, and sends nothing', async () => {
+    const before = sent.length;
+    const wrongAb = await link(MEMBER.nic, 'AB0002');
+    const wrongNic = await link('X0000000000000', 'AB0003');
+    for (const miss of [wrongAb, wrongNic]) {
+      expect(miss).toMatchObject({
+        purpose: 'link_member',
+        sentTo: null,
+        expiresInSeconds: 300,
+      });
+      expect(miss.challengeId).toMatch(/^[0-9a-f-]{36}$/);
+    }
+    expect(sent.length).toBe(before);
+
+    // Nothing verifies against it: every guess is wrong, and five burn it,
+    // exactly as they would on a real challenge.
+    for (let i = 0; i < 4; i++) {
+      await expect(
+        identity.verifyOtp(
+          { challengeId: wrongAb.challengeId, code: '123456' },
+          origin
+        )
+      ).rejects.toMatchObject({
+        code: 'validation_failed',
+        details: { code: expect.any(Array) },
+      });
+    }
+    await expect(
+      identity.verifyOtp(
+        { challengeId: wrongAb.challengeId, code: '123456' },
+        origin
+      )
+    ).rejects.toMatchObject({ code: 'not_found' });
+
+    // The difference lives in the audit trail, not the response.
+    const refused = await run(
+      appUrl,
+      `select count(*)::int as n from audit_event where action = 'member.link.refused'`
     );
+    expect(refused.rows[0].n).toBeGreaterThanOrEqual(2);
+  });
+
+  it('one code per AB Number per cooldown window, hit or miss', async () => {
+    await expect(link()).rejects.toMatchObject({
+      code: 'rate_limited',
+      message: expect.stringMatching(
+        /Wait \d+ seconds? before requesting another code/
+      ),
+    });
+    await expect(link(MEMBER.nic, 'AB0002')).rejects.toMatchObject({
+      code: 'rate_limited',
+    });
+    await clearCooldowns();
+    await expect(link()).resolves.toMatchObject({ purpose: 'link_member' });
   });
 
   it('refuses a malformed pair with both fields named', async () => {
@@ -153,12 +213,15 @@ describe('identification: NIC + AB Number', () => {
     });
   });
 
-  it('refuses a member who is no longer active', async () => {
+  it('treats a member who is no longer active as a miss', async () => {
+    await clearCooldowns();
     await run(appUrl, `update member set status = 'dormant' where id = $1`, [
       memberId,
     ]);
     try {
-      await expect(link()).rejects.toMatchObject({ code: 'not_found' });
+      const before = sent.length;
+      await expect(link()).resolves.toMatchObject({ sentTo: null });
+      expect(sent.length).toBe(before);
     } finally {
       await run(appUrl, `update member set status = 'active' where id = $1`, [
         memberId,
@@ -169,7 +232,7 @@ describe('identification: NIC + AB Number', () => {
 
 describe('verification: the code', () => {
   it('links the phone to the member and returns a member session', async () => {
-    const challenge = await link();
+    const challenge = await freshLink();
     const session = await identity.verifyOtp(
       { challengeId: challenge.challengeId, code: sent.at(-1)!.code },
       { ...origin, deviceLabel: 'Test phone' }
@@ -194,7 +257,7 @@ describe('verification: the code', () => {
   });
 
   it('a code works once', async () => {
-    const challenge = await link();
+    const challenge = await freshLink();
     const code = sent.at(-1)!.code;
     await identity.verifyOtp(
       { challengeId: challenge.challengeId, code },
@@ -206,7 +269,7 @@ describe('verification: the code', () => {
   });
 
   it('a wrong code is refused with a field message; five of them burn the challenge', async () => {
-    const challenge = await link();
+    const challenge = await freshLink();
     const right = sent.at(-1)!.code;
     const wrong = right === '000000' ? '111111' : '000000';
     for (let i = 0; i < 4; i++) {
@@ -233,11 +296,33 @@ describe('verification: the code', () => {
         origin
       )
     ).rejects.toMatchObject({ code: 'not_found' });
+
+    // Every failure is on the record; the code itself never is.
+    const trail = await run(
+      appUrl,
+      `select action, new_value from audit_event
+        where entity_id = $1 and action like 'member.otp.%' order by id`,
+      [challenge.challengeId]
+    );
+    expect(trail.rows.map(r => r.action)).toEqual([
+      'member.otp.rejected',
+      'member.otp.rejected',
+      'member.otp.rejected',
+      'member.otp.rejected',
+      'member.otp.burnt',
+      'member.otp.rejected',
+    ]);
+    expect(JSON.stringify(trail.rows)).not.toContain(right);
   });
 
   it('a resend kills the previous code', async () => {
-    const first = await link();
+    const first = await freshLink();
     const firstCode = sent.at(-1)!.code;
+    // Too soon: refused, and the current code stays usable.
+    await expect(
+      identity.resendOtp(first.challengeId, origin, { delivery })
+    ).rejects.toMatchObject({ code: 'rate_limited' });
+    await clearCooldowns();
     const second = await identity.resendOtp(first.challengeId, origin, {
       delivery,
     });
@@ -304,7 +389,7 @@ describe('sign-up: a verified mobile, never a member', () => {
 
 describe('authentication: the session', () => {
   it('a bearer token resolves to the linked member, and to nothing once revoked', async () => {
-    const challenge = await link();
+    const challenge = await freshLink();
     const session = await identity.verifyOtp(
       { challengeId: challenge.challengeId, code: sent.at(-1)!.code },
       origin
@@ -330,7 +415,7 @@ describe('authentication: the session', () => {
   });
 
   it('a refresh rotates the token; the old one is dead', async () => {
-    const challenge = await link();
+    const challenge = await freshLink();
     const first = await identity.verifyOtp(
       { challengeId: challenge.challengeId, code: sent.at(-1)!.code },
       origin
@@ -361,7 +446,7 @@ describe('authentication: the session', () => {
 
 describe('the record, for a linked member', () => {
   async function memberSession() {
-    const challenge = await link();
+    const challenge = await freshLink();
     const session = await identity.verifyOtp(
       { challengeId: challenge.challengeId, code: sent.at(-1)!.code },
       origin

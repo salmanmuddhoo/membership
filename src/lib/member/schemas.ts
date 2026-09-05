@@ -98,7 +98,12 @@ export const challengeSchema = {
   properties: {
     challengeId: { type: 'string', format: 'uuid' },
     purpose: { type: 'string', enum: ['link_member', 'sign_up'] },
-    sentTo: { type: 'string', description: 'Masked, e.g. +2305xxx234.' },
+    sentTo: {
+      type: 'string',
+      nullable: true,
+      description:
+        'Masked, e.g. +2305xxx234, for a sign-up. Always null for a link: the code went to the mobile on record, and saying which would confirm the pair named someone.',
+    },
     expiresInSeconds: { type: 'integer' },
   },
 };

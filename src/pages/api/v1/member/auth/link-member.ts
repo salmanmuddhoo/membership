@@ -14,10 +14,12 @@ const endpoint = defineMemberEndpoint(
     summary:
       'Identify an existing member by NIC + AB Number and send a code to their registered mobile',
     description:
-      'Exact pair, active members only. One answer whichever half was ' +
-      'wrong. The code goes to the mobile on record, masked in the response; ' +
-      'the caller never supplies or sees it. Rate-limited per NIC, per AB ' +
-      'Number and per address.',
+      'Exact pair, active members only. The answer is the same whether the ' +
+      'pair named someone or not — a challenge id and no number — so it ' +
+      'never says whether a NIC + AB Number combination exists; a miss ' +
+      'gets a challenge nothing can verify against. Rate-limited per NIC, ' +
+      'per AB Number and per address, and one code per AB Number per ' +
+      'cooldown window.',
     tag: 'Member app',
     caller: 'public',
     requestSchema: {
