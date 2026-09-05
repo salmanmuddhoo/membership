@@ -144,18 +144,20 @@ if (Astro.request.method === 'POST') {
   heading={`New ${type.name} application`}
 >
   <div class="mx-auto max-w-5xl space-y-6">
-    <ApplicationTimeline steps={timeline} />
+    <div>
+      <ApplicationTimeline steps={timeline} />
 
-    <div
-      id="application-nav"
-      class="sticky z-20 -mx-4 flex flex-wrap items-center gap-2 border-b border-neutral-200/80 bg-neutral-200/95 px-4 py-3 backdrop-blur-md sm:mx-0 sm:rounded-xl sm:border-b-0 sm:px-3 sm:py-1.5 dark:border-neutral-800/80 dark:bg-neutral-900/95"
-      style="top: calc(var(--app-header-height, 3.75rem) + var(--app-timeline-height, 0px) + 1.5rem)"
-    >
-      <a
-        href="/applications"
-        class="inline-block text-sm text-neutral-500 underline dark:text-neutral-400"
-        >← All applications</a
+      <div
+        id="application-nav"
+        class="sticky z-20 -mx-4 flex flex-wrap items-center gap-2 border-t border-neutral-200/80 bg-neutral-100/95 px-4 py-3 backdrop-blur-md sm:mx-0 sm:rounded-b-2xl sm:px-3 sm:py-1.5 dark:border-neutral-800/80 dark:bg-neutral-950/95"
+        style="top: calc(var(--app-header-height, 3.75rem) + var(--app-timeline-height, 0px) + 1.5rem)"
       >
+        <a
+          href="/applications"
+          class="inline-block text-sm text-neutral-500 underline dark:text-neutral-400"
+          >← All applications</a
+        >
+      </div>
     </div>
 
     {
