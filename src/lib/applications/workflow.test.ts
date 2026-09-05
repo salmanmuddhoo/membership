@@ -2535,6 +2535,7 @@ describe('S-614: the account a non-member already held transfers when they becom
     );
     const customerId = custDecided.member!.id;
     const heldAccountId = custDecided.member!.accounts[0].id;
+    const heldAccountNo = custDecided.member!.accounts[0].accountNo!;
 
     // Now they apply to become a member. Parties are already complete
     // (copied from the customer_account application), so this goes
@@ -2579,7 +2580,10 @@ describe('S-614: the account a non-member already held transfers when they becom
     );
     expect(transferred.rows[0].member_id).toBe(memDecided.member!.id);
     expect(transferred.rows[0].customer_id).toBeNull();
-    expect(transferred.rows[0].account_no).toBeNull();
+    // Officer feedback: HSA0001-style, carried over rather than cleared —
+    // reissuing it as the member's own AB number read as a new account,
+    // not the one already held.
+    expect(transferred.rows[0].account_no).toBe(heldAccountNo);
     expect(transferred.rows[0].is_membership_default).toBe(false);
 
     const customerRow = await run(
@@ -2642,6 +2646,7 @@ describe('S-614: the account a non-member already held transfers when they becom
     );
     const customerId = custDecided.member!.id;
     const heldAccountId = custDecided.member!.accounts[0].id;
+    const heldAccountNo = custDecided.member!.accounts[0].accountNo!;
 
     const memApp = await capture.startMembershipApplicationFromCustomer(
       customerId,
@@ -2686,6 +2691,23 @@ describe('S-614: the account a non-member already held transfers when they becom
     expect(rows[0].totalFunds).toBe(
       (membershipTotal + Number(heldAmount)).toFixed(2)
     );
+
+    // Officer feedback: HSA0001, not reissued as AB0002 the moment it
+    // became this member's — Shares and the MSA still show the member's
+    // own number, since neither ever had one of their own.
+    const heldBadge = rows[0].accountBadges.find(a => a.id === heldAccountId)!;
+    expect(heldBadge.no).toBe(heldAccountNo);
+    expect(heldBadge.no).not.toBe(memberNo);
+    const sharesBadge = rows[0].accountBadges.find(a => a.code === 'shares')!;
+    expect(sharesBadge.no).toBe(memberNo);
+
+    const detail = (await members.loadMember(memDecided.member!.id))!;
+    const heldDetail = detail.accounts.find(a => a.id === heldAccountId)!;
+    expect(heldDetail.accountNo).toBe(heldAccountNo);
+    const sharesDetail = detail.accounts.find(
+      a => a.accountTypeName === sharesBadge.name
+    )!;
+    expect(sharesDetail.accountNo).toBe(memberNo);
   });
 
   it('refuses to apply again once converted', async () => {
