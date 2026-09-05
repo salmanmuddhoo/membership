@@ -568,6 +568,10 @@ export interface MemberDetail extends MemberSummary {
   applicantValues: Record<string, string>;
   // Null for a legacy record imported in M7, which has no application here.
   applicationId: string | null;
+  // The officer — a Regional Officer, per the FRD's capture step — who
+  // captured the founding application. Null alongside applicationId for a
+  // legacy M7 record, which has no capturing officer to name.
+  capturedByName: string | null;
 }
 
 // The name is assembled from the application's applicant party, because what
@@ -751,18 +755,21 @@ export async function loadMember(id: string): Promise<MemberDetail | null> {
     application_reference: string | null;
     application_id: string | null;
     applicant_values: Record<string, string> | null;
+    captured_by_name: string | null;
   }>(
     `select m.id, m.member_no, t.name as membership_type_name, m.status,
             ${NAME_SQL} as name, m.joined_at,
             a.reference as application_reference,
             m.application_id,
-            p.values as applicant_values
+            p.values as applicant_values,
+            cu.display_name as captured_by_name
        from member m
        join membership_type t on t.id = m.membership_type_id
        left join membership_application a on a.id = m.application_id
        left join application_party p
          on p.application_id = m.application_id
         and p.subject = 'applicant' and p.ordinal = 1
+       left join app_user cu on cu.id = a.captured_by
       where m.id = $1`,
     [id]
   );
@@ -800,6 +807,7 @@ export async function loadMember(id: string): Promise<MemberDetail | null> {
     applicationReference: row.application_reference,
     applicationId: row.application_id,
     applicantValues: row.applicant_values ?? {},
+    capturedByName: row.captured_by_name,
     accounts: accounts.rows.map(a => ({
       id: a.id,
       accountNo: row.member_no,

@@ -63,8 +63,25 @@ const SUBJECT_LABELS: Record<string, string> = {
   beneficiary: 'Takaful beneficiary',
 };
 
-// An unsigned print of a draft must not be mistaken for the real thing.
-const isDraft = application.status === 'draft';
+const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
+
+// Officer feedback: the ruled line under "Applicant" and "Nominee" asked the
+// signatory to write in a name the system already captured on the page
+// above. Witness 1 and Witness 2 sign for the society, not for anyone this
+// form has a record of, so there is no name to fill in for them — the line
+// stays theirs to write on, same as always.
+const fullName = (subject: FieldSubject) => {
+  const values = valuesFor(subject);
+  return [values.name, values.surname]
+    .map(v => (v ?? '').trim())
+    .filter(Boolean)
+    .join(' ');
+};
+const signedOn = dateFormat.format(new Date());
+const SIGNATORY_DETAIL: Partial<Record<(typeof SIGNATURES)[number], string>> = {
+  Applicant: fullName('applicant'),
+  Nominee: fullName('nominee'),
+};
 
 // Step 2 of the capture wizard (docs/applications.md): this page IS that
 // step, not a separate one that mirrors it — the officer lands here on Next
@@ -74,8 +91,6 @@ const isDraft = application.status === 'draft';
 // itself carries no wizard chrome.
 const isEditable =
   application.status === 'draft' || application.status === 'returned';
-
-const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
 
 // The rest of the app allows pinch-zoom; this page turns it off. The
 // signature box below is `position: fixed` to the real viewport, and mobile
@@ -95,8 +110,6 @@ const fixedViewport =
   viewport={fixedViewport}
 >
   <div class="print-page">
-    {isDraft && <div class="watermark">DRAFT</div>}
-
     <header class="head">
       <div>
         <h1>Al Barakah MCSL</h1>
@@ -177,7 +190,11 @@ const fixedViewport =
                 </div>
               )}
               <p class="sig-name">{who}</p>
-              <p class="sig-date">Name and date</p>
+              <p class="sig-date">
+                {SIGNATORY_DETAIL[who]
+                  ? `${SIGNATORY_DETAIL[who]} · ${signedOn}`
+                  : 'Name and date'}
+              </p>
               <div class="sig-line short" />
             </div>
           ))
@@ -467,20 +484,6 @@ const fixedViewport =
     font-weight: bold;
   }
 
-  .watermark {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 90pt;
-    font-weight: bold;
-    color: rgba(0, 0, 0, 0.08);
-    transform: rotate(-30deg);
-    pointer-events: none;
-    letter-spacing: 0.1em;
-  }
-
   .actions {
     margin-top: 8mm;
     display: flex;
@@ -509,11 +512,6 @@ const fixedViewport =
     .print-page {
       max-width: none;
       padding: 0;
-    }
-    .watermark {
-      position: fixed;
-      /* Screen opacity disappears on paper, where a draft mark matters most. */
-      color: rgba(0, 0, 0, 0.13);
     }
     @page {
       size: A4;
@@ -635,6 +633,40 @@ const fixedViewport =
       ctx.lineJoin = 'round';
       ctx.strokeStyle = '#1a1a2e';
     };
+
+    // Rotating the device mid-signature used to leave the canvas stretched
+    // to whatever size it had at the last orientation — the flex layout
+    // reflows around it either way, but a canvas's own bitmap does not
+    // resize itself, so portrait dimensions stayed pinned inside a now-
+    // landscape box (or the reverse) until the modal was closed and
+    // reopened. Re-measuring on resize/orientationchange keeps the drawing
+    // surface matched to whichever orientation the officer is actually
+    // signing in; the stroke already on it is carried over rather than
+    // lost, since a resize otherwise clears the bitmap outright.
+    let orientationTimer: ReturnType<typeof setTimeout> | undefined;
+    const resizeForOrientation = () => {
+      if (modal.hidden || !ctx) return;
+      let priorDrawing: string | null = null;
+      try {
+        priorDrawing = modalCanvas.toDataURL('image/png');
+      } catch {
+        priorDrawing = null;
+      }
+      sizeCanvas();
+      if (!priorDrawing) return;
+      const rect = modalCanvas.getBoundingClientRect();
+      const restored = new Image();
+      restored.onload = () => {
+        ctx.drawImage(restored, 0, 0, rect.width, rect.height);
+      };
+      restored.src = priorDrawing;
+    };
+    const scheduleOrientationResize = () => {
+      clearTimeout(orientationTimer);
+      orientationTimer = setTimeout(resizeForOrientation, 150);
+    };
+    window.addEventListener('resize', scheduleOrientationResize);
+    window.addEventListener('orientationchange', scheduleOrientationResize);
 
     const clearCanvas = () => {
       if (!ctx) return;

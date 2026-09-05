@@ -621,6 +621,10 @@ describe('M3: the walking skeleton, end to end', () => {
       (await capture.loadApplication(id))!.reference
     );
 
+    // Officer feedback: the member page names who captured the founding
+    // application — the Regional Officer, per the FRD's capture step.
+    expect(member!.capturedByName).toBe('Officer');
+
     // From approval on there is one identifier, not two: the application
     // takes the member's own number rather than keeping the APP- reference
     // it was captured under.

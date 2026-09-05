@@ -2203,6 +2203,44 @@ existing app-wide value everywhere else.
 
 ---
 
+### Six more items: signatures, documents, the timeline bar, and full screen ✅
+
+- **The line under Applicant and Nominee now carries their actual name and
+  today's date**, not the instruction "Name and date" — the system already
+  has both, so there is nothing left for the signatory to write in by hand
+  there. Witness 1 and Witness 2 sign for the society, not for anyone this
+  form has a record of, so their lines are untouched.
+- **The signature canvas now survives a rotation.** Turning the device
+  mid-signature used to leave the drawing surface sized for whichever
+  orientation was current when the modal opened; `resize` and
+  `orientationchange` now re-measure it and redraw whatever was already on
+  it at the new size, in both directions.
+- **The DRAFT watermark is gone** from the printable form, on officer
+  request.
+- **A member's Documents section is now just a name and a View button** —
+  the status badge, filed-by, verified-by, version count, expiry and
+  rejection reason (the working detail that belongs to reviewing a document,
+  not to glancing at what is on file for someone) are gone from this
+  summary. It also now names **who captured the founding application** —
+  the Regional Officer, per the FRD's capture step — next to "joined" and
+  the application reference (`loadMember`, a join to `app_user` no
+  different from the one `loadApplication` already does for the same
+  field).
+- **The timeline and the Back / All applications / Printable form bar below
+  it now read as one card**, not two — a white one over a grey one, with a
+  gap between. The bar takes the timeline's own background and border
+  colour, docks flush against its bottom edge, and the two share a single
+  rounded corner radius. `ApplicationTimeline.astro` and all three pages
+  that render it changed together, since the coupling (this bar always
+  follows that component) is what the fix relies on.
+- **A full-screen toggle** sits next to the theme switch in the header
+  (`FullscreenToggle.astro`, the ordinary Fullscreen API) — more screen for
+  the application and less for the browser around it on a small device,
+  which is most of them in the field. Removed entirely, not just hidden,
+  where the API does not exist.
+
+---
+
 # M7 — Legacy migration
 
 **Goal:** the existing register becomes members in this system, phase-wise —
