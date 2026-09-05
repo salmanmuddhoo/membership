@@ -226,15 +226,22 @@ export async function createMemberFromApplication(
     }
 
     for (const row of held.rows) {
-      // opened_by_application_id is deliberately left out of this SET list —
-      // it already names the customer_account application that actually
-      // funded this account (openAccountsForCustomerApplication set it at
-      // creation), and that answer does not change just because who holds
-      // the account now does. transactionsForAccount and listMembers' own
-      // total_funds figure both read it straight through the transfer.
+      // opened_by_application_id and account_no are both deliberately left
+      // out of this SET list. opened_by_application_id already names the
+      // customer_account application that actually funded this account
+      // (openAccountsForCustomerApplication set it at creation), and that
+      // answer does not change just because who holds the account now does
+      // — transactionsForAccount and listMembers' own total_funds figure
+      // both read it straight through the transfer. account_no is the same
+      // story for the number itself: officer feedback — this used to be
+      // cleared here, so HSA0001 read as the member's own AB0002 once
+      // transferred, as if a new account had been issued rather than an
+      // existing one carried over. Keeping it is what "carried over" means
+      // (account_owner_shape, migration 0038, widened to allow a
+      // member-owned account to still carry one).
       await client.query(
         `update account
-            set member_id = $2, customer_id = null, account_no = null,
+            set member_id = $2, customer_id = null,
                 is_membership_default = false
           where id = $1`,
         [row.id, memberId]
@@ -628,7 +635,15 @@ export async function listMembers(
               coalesce(
                 (select json_agg(json_build_object(
                            'id', acc.id, 'code', act.code,
-                           'name', act.name, 'no', m.member_no
+                           'name', act.name,
+                           -- A Shares or MSA account carries no number of
+                           -- its own (migration 0018) and shows the
+                           -- member's — but one carried over from the
+                           -- non-member customer this member used to be
+                           -- (S-614) keeps its own HSA0001-style number,
+                           -- which this member never had reassigned to
+                           -- them (account_owner_shape, migration 0038).
+                           'no', coalesce(acc.account_no, m.member_no)
                          ) order by act.sort_order, act.name)
                    from account acc
                    join account_type act on act.id = acc.account_type_id
@@ -804,13 +819,14 @@ export async function loadMember(id: string): Promise<MemberDetail | null> {
 
   const accounts = await query<{
     id: string;
+    account_no: string | null;
     account_type_name: string;
     category: string;
     status: string;
     is_membership_default: boolean;
     opened_at: Date;
   }>(
-    `select a.id, t.name as account_type_name, t.category,
+    `select a.id, a.account_no, t.name as account_type_name, t.category,
             a.status, a.is_membership_default, a.opened_at
        from account a
        join account_type t on t.id = a.account_type_id
@@ -836,7 +852,11 @@ export async function loadMember(id: string): Promise<MemberDetail | null> {
     capturedByName: row.captured_by_name,
     accounts: accounts.rows.map(a => ({
       id: a.id,
-      accountNo: row.member_no,
+      // A Shares or MSA account has none of its own and shows the member's
+      // (migration 0018) — but one carried over from the non-member
+      // customer this member used to be (S-614) keeps its own HSA0001-style
+      // number (account_owner_shape, migration 0038).
+      accountNo: a.account_no ?? row.member_no,
       accountTypeName: a.account_type_name,
       category: a.category,
       status: a.status,
