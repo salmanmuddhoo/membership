@@ -11,6 +11,7 @@
 // review chain, the same generic engine (workflow.ts) the membership page
 // already drives with zero changes required for this kind (S-612, S-613
 // phase 7).
+import { isEditableStatus } from '@lib/applications/capture';
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import {
   ApplicationError,
@@ -271,8 +272,7 @@ const isDecided =
 // hands (status 'new' and beyond), a filed document is a record of what was
 // submitted, not something to delete — only 'draft' and 'returned' (sent
 // back for exactly this kind of correction) still allow it.
-const isEditable =
-  application!.status === 'draft' || application!.status === 'returned';
+const isEditable = isEditableStatus(application.status);
 
 // Everything here depends only on the application itself, so it is read in
 // one round of parallel queries rather than one after another — and the

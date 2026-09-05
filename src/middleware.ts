@@ -10,6 +10,12 @@ const LOGIN_PATH = '/login';
 const HOME_PATH = '/dashboard';
 const DENIED_PATH = '/denied';
 const API_PREFIX = '/api/';
+// The member app's surface. No staff cookie is ever presented here: a public
+// endpoint has no caller to resolve, and a member endpoint resolves its own
+// bearer token in defineMemberEndpoint (lib/member/endpoint.ts). Running the
+// staff checks would refuse every request as unauthenticated before the
+// endpoint saw it.
+const MEMBER_API_PREFIX = '/api/v1/member/';
 
 // An API caller is not a browser: redirecting it to a sign-in page produces a
 // 302 to some HTML, which a client parsing JSON cannot make sense of. API
@@ -83,6 +89,10 @@ export const onRequest = defineMiddleware(async (context, next) => {
   }
 
   if (isPublic(pathname)) {
+    return next();
+  }
+
+  if (pathname.startsWith(MEMBER_API_PREFIX)) {
     return next();
   }
 

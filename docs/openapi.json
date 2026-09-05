@@ -68,6 +68,11 @@
         "in": "cookie",
         "name": "ab_session",
         "description": "The application's own signed session cookie, set by the OIDC sign-in flow."
+      },
+      "memberToken": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "The member app's access token, from /api/v1/member/auth/verify-otp or /refresh. Resolves to a member_session server-side."
       }
     }
   },
@@ -2023,6 +2028,3464 @@
                         "checkedAt": {
                           "type": "string",
                           "format": "date-time"
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/member/applications": {
+      "get": {
+        "summary": "The caller's applications",
+        "tags": [
+          "Member app"
+        ],
+        "operationId": "getMemberApplications",
+        "x-required-permission": "(a member app session)",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "id",
+                          "reference",
+                          "status",
+                          "membershipTypeCode",
+                          "membershipTypeName",
+                          "parties",
+                          "documents",
+                          "submittedAt",
+                          "decidedAt",
+                          "updatedAt",
+                          "timeline",
+                          "returnComment"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "reference": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string",
+                            "description": "The application's workflow status. 'received' is submitted from the phone and with the branch."
+                          },
+                          "membershipTypeCode": {
+                            "type": "string"
+                          },
+                          "membershipTypeName": {
+                            "type": "string"
+                          },
+                          "parties": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "required": [
+                                "subject",
+                                "ordinal",
+                                "values"
+                              ],
+                              "properties": {
+                                "subject": {
+                                  "type": "string",
+                                  "enum": [
+                                    "applicant",
+                                    "nominee",
+                                    "guardian",
+                                    "beneficiary",
+                                    "employment"
+                                  ]
+                                },
+                                "ordinal": {
+                                  "type": "integer",
+                                  "minimum": 1
+                                },
+                                "values": {
+                                  "type": "object",
+                                  "additionalProperties": {
+                                    "type": "string"
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          "documents": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "required": [
+                                "checklistItemId",
+                                "documentCode",
+                                "documentName",
+                                "requirement",
+                                "status",
+                                "fileName",
+                                "rejectionReason"
+                              ],
+                              "properties": {
+                                "checklistItemId": {
+                                  "type": "string"
+                                },
+                                "documentCode": {
+                                  "type": "string"
+                                },
+                                "documentName": {
+                                  "type": "string"
+                                },
+                                "requirement": {
+                                  "type": "string",
+                                  "enum": [
+                                    "required",
+                                    "optional"
+                                  ]
+                                },
+                                "status": {
+                                  "type": "string",
+                                  "enum": [
+                                    "missing",
+                                    "pending",
+                                    "filed",
+                                    "verified",
+                                    "rejected"
+                                  ]
+                                },
+                                "fileName": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "rejectionReason": {
+                                  "type": "string",
+                                  "nullable": true
+                                }
+                              }
+                            }
+                          },
+                          "submittedAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "nullable": true
+                          },
+                          "decidedAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "nullable": true
+                          },
+                          "updatedAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "timeline": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "required": [
+                                "at",
+                                "label",
+                                "comment"
+                              ],
+                              "properties": {
+                                "at": {
+                                  "type": "string",
+                                  "format": "date-time"
+                                },
+                                "label": {
+                                  "type": "string"
+                                },
+                                "comment": {
+                                  "type": "string",
+                                  "nullable": true
+                                }
+                              }
+                            }
+                          },
+                          "returnComment": {
+                            "type": "string",
+                            "nullable": true
+                          }
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Start a membership application",
+        "description": "Captured by the member-app system user and tied to the verified mobile, which is pre-filled as the applicant's. One in progress at a time; a second is refused with the reference of the first.",
+        "tags": [
+          "Member app"
+        ],
+        "operationId": "postMemberApplications",
+        "x-required-permission": "(a member app session)",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "reference",
+                        "status",
+                        "membershipTypeCode",
+                        "membershipTypeName",
+                        "parties",
+                        "documents",
+                        "submittedAt",
+                        "decidedAt",
+                        "updatedAt",
+                        "timeline",
+                        "returnComment"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "reference": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string",
+                          "description": "The application's workflow status. 'received' is submitted from the phone and with the branch."
+                        },
+                        "membershipTypeCode": {
+                          "type": "string"
+                        },
+                        "membershipTypeName": {
+                          "type": "string"
+                        },
+                        "parties": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "subject",
+                              "ordinal",
+                              "values"
+                            ],
+                            "properties": {
+                              "subject": {
+                                "type": "string",
+                                "enum": [
+                                  "applicant",
+                                  "nominee",
+                                  "guardian",
+                                  "beneficiary",
+                                  "employment"
+                                ]
+                              },
+                              "ordinal": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "values": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "string"
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "documents": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "checklistItemId",
+                              "documentCode",
+                              "documentName",
+                              "requirement",
+                              "status",
+                              "fileName",
+                              "rejectionReason"
+                            ],
+                            "properties": {
+                              "checklistItemId": {
+                                "type": "string"
+                              },
+                              "documentCode": {
+                                "type": "string"
+                              },
+                              "documentName": {
+                                "type": "string"
+                              },
+                              "requirement": {
+                                "type": "string",
+                                "enum": [
+                                  "required",
+                                  "optional"
+                                ]
+                              },
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "missing",
+                                  "pending",
+                                  "filed",
+                                  "verified",
+                                  "rejected"
+                                ]
+                              },
+                              "fileName": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "rejectionReason": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            }
+                          }
+                        },
+                        "submittedAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "nullable": true
+                        },
+                        "decidedAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "nullable": true
+                        },
+                        "updatedAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "timeline": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "at",
+                              "label",
+                              "comment"
+                            ],
+                            "properties": {
+                              "at": {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              "label": {
+                                "type": "string"
+                              },
+                              "comment": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            }
+                          }
+                        },
+                        "returnComment": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "membershipTypeCode"
+                ],
+                "properties": {
+                  "membershipTypeCode": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/member/applications/{id}": {
+      "get": {
+        "summary": "Read one of the caller’s applications",
+        "tags": [
+          "Member app"
+        ],
+        "operationId": "getMemberApplicationsId",
+        "x-required-permission": "(a member app session)",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "reference",
+                        "status",
+                        "membershipTypeCode",
+                        "membershipTypeName",
+                        "parties",
+                        "documents",
+                        "submittedAt",
+                        "decidedAt",
+                        "updatedAt",
+                        "timeline",
+                        "returnComment"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "reference": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string",
+                          "description": "The application's workflow status. 'received' is submitted from the phone and with the branch."
+                        },
+                        "membershipTypeCode": {
+                          "type": "string"
+                        },
+                        "membershipTypeName": {
+                          "type": "string"
+                        },
+                        "parties": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "subject",
+                              "ordinal",
+                              "values"
+                            ],
+                            "properties": {
+                              "subject": {
+                                "type": "string",
+                                "enum": [
+                                  "applicant",
+                                  "nominee",
+                                  "guardian",
+                                  "beneficiary",
+                                  "employment"
+                                ]
+                              },
+                              "ordinal": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "values": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "string"
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "documents": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "checklistItemId",
+                              "documentCode",
+                              "documentName",
+                              "requirement",
+                              "status",
+                              "fileName",
+                              "rejectionReason"
+                            ],
+                            "properties": {
+                              "checklistItemId": {
+                                "type": "string"
+                              },
+                              "documentCode": {
+                                "type": "string"
+                              },
+                              "documentName": {
+                                "type": "string"
+                              },
+                              "requirement": {
+                                "type": "string",
+                                "enum": [
+                                  "required",
+                                  "optional"
+                                ]
+                              },
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "missing",
+                                  "pending",
+                                  "filed",
+                                  "verified",
+                                  "rejected"
+                                ]
+                              },
+                              "fileName": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "rejectionReason": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            }
+                          }
+                        },
+                        "submittedAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "nullable": true
+                        },
+                        "decidedAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "nullable": true
+                        },
+                        "updatedAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "timeline": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "at",
+                              "label",
+                              "comment"
+                            ],
+                            "properties": {
+                              "at": {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              "label": {
+                                "type": "string"
+                              },
+                              "comment": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            }
+                          }
+                        },
+                        "returnComment": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete a draft",
+        "description": "Draft only. Anything submitted has a history that is kept.",
+        "tags": [
+          "Member app"
+        ],
+        "operationId": "deleteMemberApplicationsId",
+        "x-required-permission": "(a member app session)",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "ok"
+                      ],
+                      "properties": {
+                        "ok": {
+                          "type": "boolean",
+                          "enum": [
+                            true
+                          ]
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/member/applications/{id}/documents/begin-upload": {
+      "post": {
+        "summary": "Start filing a document against the application",
+        "tags": [
+          "Member app"
+        ],
+        "operationId": "postMemberApplicationsIdDocumentsBeginUpload",
+        "x-required-permission": "(a member app session)",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "uploadId",
+                        "uploadUrl",
+                        "expiresAt",
+                        "maxBytes",
+                        "acceptedTypes"
+                      ],
+                      "properties": {
+                        "uploadId": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "uploadUrl": {
+                          "type": "string",
+                          "description": "PUT the bytes here, then commit."
+                        },
+                        "expiresAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "maxBytes": {
+                          "type": "integer"
+                        },
+                        "acceptedTypes": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "checklistItemId",
+                  "fileName",
+                  "sizeBytes",
+                  "contentType"
+                ],
+                "properties": {
+                  "checklistItemId": {
+                    "type": "string",
+                    "description": "From the application’s documents, or /reference."
+                  },
+                  "fileName": {
+                    "type": "string"
+                  },
+                  "sizeBytes": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "contentType": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/member/applications/{id}/documents/commit-upload": {
+      "post": {
+        "summary": "Confirm a filed document arrived",
+        "description": "SharePoint is asked whether the file is there and complete; only then is it on the checklist. Only an upload begun on this application can be committed against it.",
+        "tags": [
+          "Member app"
+        ],
+        "operationId": "postMemberApplicationsIdDocumentsCommitUpload",
+        "x-required-permission": "(a member app session)",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "reference",
+                        "status",
+                        "membershipTypeCode",
+                        "membershipTypeName",
+                        "parties",
+                        "documents",
+                        "submittedAt",
+                        "decidedAt",
+                        "updatedAt",
+                        "timeline",
+                        "returnComment"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "reference": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string",
+                          "description": "The application's workflow status. 'received' is submitted from the phone and with the branch."
+                        },
+                        "membershipTypeCode": {
+                          "type": "string"
+                        },
+                        "membershipTypeName": {
+                          "type": "string"
+                        },
+                        "parties": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "subject",
+                              "ordinal",
+                              "values"
+                            ],
+                            "properties": {
+                              "subject": {
+                                "type": "string",
+                                "enum": [
+                                  "applicant",
+                                  "nominee",
+                                  "guardian",
+                                  "beneficiary",
+                                  "employment"
+                                ]
+                              },
+                              "ordinal": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "values": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "string"
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "documents": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "checklistItemId",
+                              "documentCode",
+                              "documentName",
+                              "requirement",
+                              "status",
+                              "fileName",
+                              "rejectionReason"
+                            ],
+                            "properties": {
+                              "checklistItemId": {
+                                "type": "string"
+                              },
+                              "documentCode": {
+                                "type": "string"
+                              },
+                              "documentName": {
+                                "type": "string"
+                              },
+                              "requirement": {
+                                "type": "string",
+                                "enum": [
+                                  "required",
+                                  "optional"
+                                ]
+                              },
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "missing",
+                                  "pending",
+                                  "filed",
+                                  "verified",
+                                  "rejected"
+                                ]
+                              },
+                              "fileName": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "rejectionReason": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            }
+                          }
+                        },
+                        "submittedAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "nullable": true
+                        },
+                        "decidedAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "nullable": true
+                        },
+                        "updatedAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "timeline": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "at",
+                              "label",
+                              "comment"
+                            ],
+                            "properties": {
+                              "at": {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              "label": {
+                                "type": "string"
+                              },
+                              "comment": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            }
+                          }
+                        },
+                        "returnComment": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "uploadId"
+                ],
+                "properties": {
+                  "uploadId": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/member/applications/{id}/parties": {
+      "put": {
+        "summary": "Save the draft",
+        "description": "Never fails on content. Only parties the application has and fields the type configures are kept; the applicant's mobile is always the session's. Refused once submitted.",
+        "tags": [
+          "Member app"
+        ],
+        "operationId": "putMemberApplicationsIdParties",
+        "x-required-permission": "(a member app session)",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "reference",
+                        "status",
+                        "membershipTypeCode",
+                        "membershipTypeName",
+                        "parties",
+                        "documents",
+                        "submittedAt",
+                        "decidedAt",
+                        "updatedAt",
+                        "timeline",
+                        "returnComment"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "reference": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string",
+                          "description": "The application's workflow status. 'received' is submitted from the phone and with the branch."
+                        },
+                        "membershipTypeCode": {
+                          "type": "string"
+                        },
+                        "membershipTypeName": {
+                          "type": "string"
+                        },
+                        "parties": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "subject",
+                              "ordinal",
+                              "values"
+                            ],
+                            "properties": {
+                              "subject": {
+                                "type": "string",
+                                "enum": [
+                                  "applicant",
+                                  "nominee",
+                                  "guardian",
+                                  "beneficiary",
+                                  "employment"
+                                ]
+                              },
+                              "ordinal": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "values": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "string"
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "documents": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "checklistItemId",
+                              "documentCode",
+                              "documentName",
+                              "requirement",
+                              "status",
+                              "fileName",
+                              "rejectionReason"
+                            ],
+                            "properties": {
+                              "checklistItemId": {
+                                "type": "string"
+                              },
+                              "documentCode": {
+                                "type": "string"
+                              },
+                              "documentName": {
+                                "type": "string"
+                              },
+                              "requirement": {
+                                "type": "string",
+                                "enum": [
+                                  "required",
+                                  "optional"
+                                ]
+                              },
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "missing",
+                                  "pending",
+                                  "filed",
+                                  "verified",
+                                  "rejected"
+                                ]
+                              },
+                              "fileName": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "rejectionReason": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            }
+                          }
+                        },
+                        "submittedAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "nullable": true
+                        },
+                        "decidedAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "nullable": true
+                        },
+                        "updatedAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "timeline": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "at",
+                              "label",
+                              "comment"
+                            ],
+                            "properties": {
+                              "at": {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              "label": {
+                                "type": "string"
+                              },
+                              "comment": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            }
+                          }
+                        },
+                        "returnComment": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "parties"
+                ],
+                "properties": {
+                  "parties": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "subject",
+                        "ordinal",
+                        "values"
+                      ],
+                      "properties": {
+                        "subject": {
+                          "type": "string",
+                          "enum": [
+                            "applicant",
+                            "nominee",
+                            "guardian",
+                            "beneficiary",
+                            "employment"
+                          ]
+                        },
+                        "ordinal": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "values": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/member/applications/{id}/submit": {
+      "post": {
+        "summary": "Submit for the branch to take up",
+        "description": "Refused with every blank mandatory field, unplaceable phone and missing required document named at once (details keyed subject.ordinal.fieldKey or document.<code>). On success the status is 'received'.",
+        "tags": [
+          "Member app"
+        ],
+        "operationId": "postMemberApplicationsIdSubmit",
+        "x-required-permission": "(a member app session)",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "reference",
+                        "status",
+                        "membershipTypeCode",
+                        "membershipTypeName",
+                        "parties",
+                        "documents",
+                        "submittedAt",
+                        "decidedAt",
+                        "updatedAt",
+                        "timeline",
+                        "returnComment"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "reference": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string",
+                          "description": "The application's workflow status. 'received' is submitted from the phone and with the branch."
+                        },
+                        "membershipTypeCode": {
+                          "type": "string"
+                        },
+                        "membershipTypeName": {
+                          "type": "string"
+                        },
+                        "parties": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "subject",
+                              "ordinal",
+                              "values"
+                            ],
+                            "properties": {
+                              "subject": {
+                                "type": "string",
+                                "enum": [
+                                  "applicant",
+                                  "nominee",
+                                  "guardian",
+                                  "beneficiary",
+                                  "employment"
+                                ]
+                              },
+                              "ordinal": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "values": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "string"
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "documents": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "checklistItemId",
+                              "documentCode",
+                              "documentName",
+                              "requirement",
+                              "status",
+                              "fileName",
+                              "rejectionReason"
+                            ],
+                            "properties": {
+                              "checklistItemId": {
+                                "type": "string"
+                              },
+                              "documentCode": {
+                                "type": "string"
+                              },
+                              "documentName": {
+                                "type": "string"
+                              },
+                              "requirement": {
+                                "type": "string",
+                                "enum": [
+                                  "required",
+                                  "optional"
+                                ]
+                              },
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "missing",
+                                  "pending",
+                                  "filed",
+                                  "verified",
+                                  "rejected"
+                                ]
+                              },
+                              "fileName": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "rejectionReason": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            }
+                          }
+                        },
+                        "submittedAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "nullable": true
+                        },
+                        "decidedAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "nullable": true
+                        },
+                        "updatedAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "timeline": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "at",
+                              "label",
+                              "comment"
+                            ],
+                            "properties": {
+                              "at": {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              "label": {
+                                "type": "string"
+                              },
+                              "comment": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            }
+                          }
+                        },
+                        "returnComment": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/member/auth/link-member": {
+      "post": {
+        "summary": "Identify an existing member by NIC + AB Number and send a code to their registered mobile",
+        "description": "Exact pair, active members only. One answer whichever half was wrong. The code goes to the mobile on record, masked in the response; the caller never supplies or sees it. Rate-limited per NIC, per AB Number and per address.",
+        "tags": [
+          "Member app"
+        ],
+        "operationId": "postMemberAuthLinkMember",
+        "x-required-permission": "(none — public)",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "challengeId",
+                        "purpose",
+                        "sentTo",
+                        "expiresInSeconds"
+                      ],
+                      "properties": {
+                        "challengeId": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "purpose": {
+                          "type": "string",
+                          "enum": [
+                            "link_member",
+                            "sign_up"
+                          ]
+                        },
+                        "sentTo": {
+                          "type": "string",
+                          "description": "Masked, e.g. +2305xxx234."
+                        },
+                        "expiresInSeconds": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "nic",
+                  "abNumber"
+                ],
+                "properties": {
+                  "nic": {
+                    "type": "string",
+                    "description": "As on the identity card."
+                  },
+                  "abNumber": {
+                    "type": "string",
+                    "description": "The Member No. on the card, e.g. AB0001."
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/member/auth/logout": {
+      "post": {
+        "summary": "Revoke the session; the device must link again",
+        "tags": [
+          "Member app"
+        ],
+        "operationId": "postMemberAuthLogout",
+        "x-required-permission": "(a member app session)",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "ok"
+                      ],
+                      "properties": {
+                        "ok": {
+                          "type": "boolean",
+                          "enum": [
+                            true
+                          ]
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/member/auth/refresh": {
+      "post": {
+        "summary": "Rotate a refresh token",
+        "description": "A new access and refresh token; the one presented is dead the moment it is used. Refused once the session is revoked, expired, or belongs to a member who is no longer active.",
+        "tags": [
+          "Member app"
+        ],
+        "operationId": "postMemberAuthRefresh",
+        "x-required-permission": "(none — public)",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "accessToken",
+                        "refreshToken",
+                        "expiresInSeconds",
+                        "identity"
+                      ],
+                      "properties": {
+                        "accessToken": {
+                          "type": "string",
+                          "description": "Bearer token; short-lived."
+                        },
+                        "refreshToken": {
+                          "type": "string",
+                          "description": "Rotated on every use; revocable."
+                        },
+                        "expiresInSeconds": {
+                          "type": "integer"
+                        },
+                        "identity": {
+                          "type": "object",
+                          "required": [
+                            "kind",
+                            "memberNo",
+                            "displayName",
+                            "mobile",
+                            "linkedAt"
+                          ],
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "member",
+                                "customer",
+                                "applicant"
+                              ]
+                            },
+                            "memberNo": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "displayName": {
+                              "type": "string"
+                            },
+                            "mobile": {
+                              "type": "string",
+                              "description": "E.164"
+                            },
+                            "linkedAt": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "refreshToken"
+                ],
+                "properties": {
+                  "refreshToken": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/member/auth/resend-otp": {
+      "post": {
+        "summary": "Send a fresh code for a challenge already issued",
+        "description": "Same purpose, same number; the previous code is dead.",
+        "tags": [
+          "Member app"
+        ],
+        "operationId": "postMemberAuthResendOtp",
+        "x-required-permission": "(none — public)",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "challengeId",
+                        "purpose",
+                        "sentTo",
+                        "expiresInSeconds"
+                      ],
+                      "properties": {
+                        "challengeId": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "purpose": {
+                          "type": "string",
+                          "enum": [
+                            "link_member",
+                            "sign_up"
+                          ]
+                        },
+                        "sentTo": {
+                          "type": "string",
+                          "description": "Masked, e.g. +2305xxx234."
+                        },
+                        "expiresInSeconds": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "challengeId"
+                ],
+                "properties": {
+                  "challengeId": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/member/auth/sign-up": {
+      "post": {
+        "summary": "Verify a mobile number to start a membership application",
+        "description": "No AB Number needed. Always succeeds for a well-formed number, known or not; the session it leads to never resolves to a member record.",
+        "tags": [
+          "Member app"
+        ],
+        "operationId": "postMemberAuthSignUp",
+        "x-required-permission": "(none — public)",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "challengeId",
+                        "purpose",
+                        "sentTo",
+                        "expiresInSeconds"
+                      ],
+                      "properties": {
+                        "challengeId": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "purpose": {
+                          "type": "string",
+                          "enum": [
+                            "link_member",
+                            "sign_up"
+                          ]
+                        },
+                        "sentTo": {
+                          "type": "string",
+                          "description": "Masked, e.g. +2305xxx234."
+                        },
+                        "expiresInSeconds": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "mobile"
+                ],
+                "properties": {
+                  "mobile": {
+                    "type": "string",
+                    "description": "Any form the capture form accepts; stored as E.164."
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/member/auth/verify-otp": {
+      "post": {
+        "summary": "Verify the code and create the session",
+        "description": "Five wrong codes burn the challenge. The internal member id is linked to the session server-side and never returned.",
+        "tags": [
+          "Member app"
+        ],
+        "operationId": "postMemberAuthVerifyOtp",
+        "x-required-permission": "(none — public)",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "accessToken",
+                        "refreshToken",
+                        "expiresInSeconds",
+                        "identity"
+                      ],
+                      "properties": {
+                        "accessToken": {
+                          "type": "string",
+                          "description": "Bearer token; short-lived."
+                        },
+                        "refreshToken": {
+                          "type": "string",
+                          "description": "Rotated on every use; revocable."
+                        },
+                        "expiresInSeconds": {
+                          "type": "integer"
+                        },
+                        "identity": {
+                          "type": "object",
+                          "required": [
+                            "kind",
+                            "memberNo",
+                            "displayName",
+                            "mobile",
+                            "linkedAt"
+                          ],
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "member",
+                                "customer",
+                                "applicant"
+                              ]
+                            },
+                            "memberNo": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "displayName": {
+                              "type": "string"
+                            },
+                            "mobile": {
+                              "type": "string",
+                              "description": "E.164"
+                            },
+                            "linkedAt": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "challengeId",
+                  "code"
+                ],
+                "properties": {
+                  "challengeId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "code": {
+                    "type": "string",
+                    "pattern": "^[0-9]{6}$"
+                  },
+                  "deviceLabel": {
+                    "type": "string",
+                    "description": "What the phone calls itself. Display only."
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/member/me": {
+      "get": {
+        "summary": "The caller's own record",
+        "description": "Membership, the details captured on the founding application, and whether an update the member sent is waiting for staff. An applicant session gets kind applicant and no parties.",
+        "tags": [
+          "Member app"
+        ],
+        "operationId": "getMemberMe",
+        "x-required-permission": "(a member app session)",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "kind",
+                        "memberNo",
+                        "status",
+                        "joinedAt",
+                        "membershipType",
+                        "parties",
+                        "pendingUpdate"
+                      ],
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "member",
+                            "customer",
+                            "applicant"
+                          ]
+                        },
+                        "memberNo": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "status": {
+                          "type": "string"
+                        },
+                        "joinedAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "nullable": true
+                        },
+                        "membershipType": {
+                          "type": "object",
+                          "nullable": true,
+                          "required": [
+                            "code",
+                            "name"
+                          ],
+                          "properties": {
+                            "code": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "parties": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "subject",
+                              "ordinal",
+                              "values"
+                            ],
+                            "properties": {
+                              "subject": {
+                                "type": "string",
+                                "enum": [
+                                  "applicant",
+                                  "nominee",
+                                  "guardian",
+                                  "beneficiary",
+                                  "employment"
+                                ]
+                              },
+                              "ordinal": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "values": {
+                                "type": "object",
+                                "additionalProperties": {
+                                  "type": "string"
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "pendingUpdate": {
+                          "type": "object",
+                          "nullable": true,
+                          "required": [
+                            "id",
+                            "submittedAt"
+                          ],
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "submittedAt": {
+                              "type": "string",
+                              "format": "date-time"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/member/me/accounts": {
+      "get": {
+        "summary": "The caller's accounts",
+        "description": "Balance is what the payment that opened the account and any refund add up to — there is no ledger yet — and null where nothing has been recorded.",
+        "tags": [
+          "Member app"
+        ],
+        "operationId": "getMemberMeAccounts",
+        "x-required-permission": "(a member app session)",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "id",
+                          "accountNo",
+                          "typeCode",
+                          "typeName",
+                          "category",
+                          "status",
+                          "openedAt",
+                          "balance"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "accountNo": {
+                            "type": "string"
+                          },
+                          "typeCode": {
+                            "type": "string"
+                          },
+                          "typeName": {
+                            "type": "string"
+                          },
+                          "category": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "openedAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "balance": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "Decimal string."
+                          }
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/member/me/accounts/{id}/transactions": {
+      "get": {
+        "summary": "One of the caller's accounts: credits and debits, oldest first",
+        "tags": [
+          "Member app"
+        ],
+        "operationId": "getMemberMeAccountsIdTransactions",
+        "x-required-permission": "(a member app session)",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "id",
+                          "occurredAt",
+                          "direction",
+                          "amount",
+                          "description",
+                          "receiptNo"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "occurredAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "direction": {
+                            "type": "string",
+                            "enum": [
+                              "credit",
+                              "debit"
+                            ]
+                          },
+                          "amount": {
+                            "type": "string"
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "receiptNo": {
+                            "type": "string",
+                            "nullable": true
+                          }
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/member/me/details": {
+      "put": {
+        "summary": "Capture or correct own details, for staff to verify",
+        "description": "Every mandatory field must be present and every phone placeable; details are keyed subject.ordinal.fieldKey. The mobile the member signs in with cannot be changed here. One request may wait at a time.",
+        "tags": [
+          "Member app"
+        ],
+        "operationId": "putMemberMeDetails",
+        "x-required-permission": "(a member app session)",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "status",
+                        "submittedAt"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "pending",
+                            "applied",
+                            "declined"
+                          ]
+                        },
+                        "submittedAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "parties"
+                ],
+                "properties": {
+                  "parties": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "subject",
+                        "ordinal",
+                        "values"
+                      ],
+                      "properties": {
+                        "subject": {
+                          "type": "string",
+                          "enum": [
+                            "applicant",
+                            "nominee",
+                            "guardian",
+                            "beneficiary",
+                            "employment"
+                          ]
+                        },
+                        "ordinal": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "values": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/member/me/documents": {
+      "get": {
+        "summary": "Documents on file for the caller",
+        "description": "Name, state, filed date and expiry. No download: viewing stays a branch matter until a member-facing viewer is decided.",
+        "tags": [
+          "Member app"
+        ],
+        "operationId": "getMemberMeDocuments",
+        "x-required-permission": "(a member app session)",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "id",
+                          "documentCode",
+                          "documentName",
+                          "status",
+                          "filedAt",
+                          "expiresAt"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "documentCode": {
+                            "type": "string"
+                          },
+                          "documentName": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "pending",
+                              "filed",
+                              "verified",
+                              "rejected"
+                            ]
+                          },
+                          "filedAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "expiresAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "nullable": true
+                          }
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/member/reference": {
+      "get": {
+        "summary": "Read the membership types a person can apply for",
+        "description": "Active membership types with their field configuration, the documents an applicant files from the phone (the signed form is a branch step and is left out), and the fees in force. Public.",
+        "tags": [
+          "Member app"
+        ],
+        "operationId": "getMemberReference",
+        "x-required-permission": "(none — public)",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "membershipTypes"
+                      ],
+                      "properties": {
+                        "membershipTypes": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "id",
+                              "code",
+                              "name",
+                              "isActive",
+                              "fields",
+                              "nomineeCount",
+                              "checklist",
+                              "fees"
+                            ],
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "format": "uuid"
+                              },
+                              "code": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "description": {
+                                "type": "string"
+                              },
+                              "isActive": {
+                                "type": "boolean"
+                              },
+                              "nomineeCount": {
+                                "type": "integer"
+                              },
+                              "fields": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "required": [
+                                    "id",
+                                    "fieldKey",
+                                    "label",
+                                    "dataType",
+                                    "choices",
+                                    "subject",
+                                    "isVisible",
+                                    "isMandatory",
+                                    "sortOrder"
+                                  ],
+                                  "properties": {
+                                    "id": {
+                                      "type": "string",
+                                      "format": "uuid"
+                                    },
+                                    "fieldKey": {
+                                      "type": "string"
+                                    },
+                                    "label": {
+                                      "type": "string"
+                                    },
+                                    "dataType": {
+                                      "type": "string",
+                                      "enum": [
+                                        "text",
+                                        "number",
+                                        "date",
+                                        "email",
+                                        "phone",
+                                        "choice"
+                                      ]
+                                    },
+                                    "choices": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "subject": {
+                                      "type": "string",
+                                      "enum": [
+                                        "applicant",
+                                        "nominee",
+                                        "guardian",
+                                        "beneficiary",
+                                        "employment"
+                                      ]
+                                    },
+                                    "isVisible": {
+                                      "type": "boolean"
+                                    },
+                                    "isMandatory": {
+                                      "type": "boolean"
+                                    },
+                                    "sortOrder": {
+                                      "type": "integer"
+                                    }
+                                  }
+                                }
+                              },
+                              "checklist": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "required": [
+                                    "id",
+                                    "documentCode",
+                                    "documentName",
+                                    "subject",
+                                    "requirement",
+                                    "tracksExpiry",
+                                    "sortOrder"
+                                  ],
+                                  "properties": {
+                                    "id": {
+                                      "type": "string",
+                                      "description": "Opaque; what begin-upload takes as checklistItemId."
+                                    },
+                                    "documentCode": {
+                                      "type": "string"
+                                    },
+                                    "documentName": {
+                                      "type": "string"
+                                    },
+                                    "subject": {
+                                      "type": "string"
+                                    },
+                                    "requirement": {
+                                      "type": "string",
+                                      "enum": [
+                                        "required",
+                                        "optional"
+                                      ]
+                                    },
+                                    "tracksExpiry": {
+                                      "type": "boolean"
+                                    },
+                                    "sortOrder": {
+                                      "type": "integer"
+                                    }
+                                  }
+                                }
+                              },
+                              "fees": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "required": [
+                                    "code",
+                                    "name",
+                                    "amount",
+                                    "requirement"
+                                  ],
+                                  "properties": {
+                                    "code": {
+                                      "type": "string"
+                                    },
+                                    "name": {
+                                      "type": "string"
+                                    },
+                                    "amount": {
+                                      "type": "string",
+                                      "description": "Decimal string, never a number."
+                                    },
+                                    "requirement": {
+                                      "type": "string",
+                                      "enum": [
+                                        "required",
+                                        "optional",
+                                        "not_applicable"
+                                      ]
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
                         }
                       }
                     },
