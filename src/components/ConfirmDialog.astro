@@ -88,7 +88,8 @@
     return new Promise(resolve => {
       resolveOpen = resolve;
       messageEl.textContent = message;
-      okBtn.textContent = options.okLabel ?? (options.alertOnly ? 'OK' : 'Delete');
+      okBtn.textContent =
+        options.okLabel ?? (options.alertOnly ? 'OK' : 'Delete');
       cancelBtn.textContent = options.cancelLabel ?? 'Cancel';
       cancelBtn.hidden = Boolean(options.alertOnly);
       const danger = options.alertOnly ? false : (options.danger ?? true);

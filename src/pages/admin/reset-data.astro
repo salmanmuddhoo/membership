@@ -142,9 +142,8 @@ const counts = isTestEnvironment && !done ? await countsBeforeReset() : null;
     });
   }
 
-  const resetForm = document.querySelector<HTMLFormElement>(
-    '[data-reset-form]'
-  );
+  const resetForm =
+    document.querySelector<HTMLFormElement>('[data-reset-form]');
   if (resetForm) {
     window.confirmedSubmit(
       resetForm,
