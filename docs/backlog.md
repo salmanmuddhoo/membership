@@ -2181,6 +2181,28 @@ chaining into the page behind it, which read the same way — the form
 
 ---
 
+### Pinch-zoom was still breaking the signature box, and the print form itself ✅
+
+Fixing the box's own sizing (previous entry) was not the whole story: the
+page around it could still be pinched in or out, and a `position: fixed`
+element is pinned to the browser's LAYOUT viewport during a pinch-zoom, not
+the zoomed-in visual one. Left pinched-in from reading the form, the box
+rendered at its full size in that layout viewport but only a slice of it
+fell inside what pinch-zoom was actually showing on screen — reachable, if
+at all, by dragging the page sideways to bring "Use this signature" into
+view from off the right edge. The same zoom made the print form itself feel
+"resizable" rather than the fixed sheet it is meant to be.
+
+`print.astro` now serves its own `<meta name="viewport">`
+(`maximum-scale=1.0, user-scalable=no`) instead of the app-wide one every
+other page still gets — nothing on a form meant to be signed and printed
+benefits from zooming into it, and the box drawn on top of it needs the
+viewport to hold still to stay usable. `Meta.astro` and `BaseLayout.astro`
+both take an optional `viewport` override for this, defaulting to the
+existing app-wide value everywhere else.
+
+---
+
 # M7 — Legacy migration
 
 **Goal:** the existing register becomes members in this system, phase-wise —

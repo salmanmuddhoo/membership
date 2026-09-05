@@ -1,14 +1,17 @@
 ---
 interface Props {
   description?: string;
+  viewport?: string;
 }
 
-const { description = 'Al Barakah MCSL internal operations platform.' } =
-  Astro.props;
+const {
+  description = 'Al Barakah MCSL internal operations platform.',
+  viewport = 'width=device-width, initial-scale=1.0',
+} = Astro.props;
 ---
 
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="viewport" content={viewport} />
 <meta name="description" content={description} />
 {/* Internal application — keep out of search engines. */}
 <meta name="robots" content="noindex, nofollow" />
