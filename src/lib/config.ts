@@ -215,3 +215,70 @@ export function getDatabaseConfig(): DatabaseConfig {
     sslMode: allowInsecure ? 'disable' : 'verify',
   };
 }
+
+export interface MemberConfig {
+  // Signs the member app's access tokens. Its own secret, not
+  // AUTH_SESSION_SECRET: a staff cookie and a member token must never be
+  // interchangeable, and separate keys make that a property of the
+  // cryptography rather than of a claim check.
+  sessionSecret: string;
+  accessTokenSeconds: number;
+  refreshTokenDays: number;
+  // How one-time codes leave the system. 'http' posts { to, message } to
+  // MEMBER_OTP_WEBHOOK_URL, which is whatever SMS or WhatsApp gateway the
+  // Society uses; 'log' writes the code to the server log and exists for a
+  // developer's machine and the test environment only.
+  otpDelivery: 'http' | 'log' | 'unconfigured';
+  otpWebhookUrl?: string;
+  otpWebhookToken?: string;
+  // A code every challenge accepts, for exercising the app against the test
+  // environment without an SMS gateway. Refused outside non-production.
+  otpFixedCode?: string;
+}
+
+export class MemberConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'MemberConfigError';
+  }
+}
+
+export function getMemberConfig(): MemberConfig {
+  const sessionSecret = readEnv('MEMBER_SESSION_SECRET');
+  if (!sessionSecret || sessionSecret.length < 32) {
+    throw new MemberConfigError(
+      'MEMBER_SESSION_SECRET is not set (or is shorter than 32 characters). ' +
+        "It signs the member app's access tokens; see .env.example."
+    );
+  }
+
+  const production = isProductionEnvironment();
+  const delivery = readEnv('MEMBER_OTP_DELIVERY');
+  const otpWebhookUrl = readEnv('MEMBER_OTP_WEBHOOK_URL');
+  const otpFixedCode = readEnv('MEMBER_OTP_FIXED_CODE');
+
+  if (production && (delivery === 'log' || otpFixedCode)) {
+    throw new MemberConfigError(
+      'MEMBER_OTP_DELIVERY=log and MEMBER_OTP_FIXED_CODE are for ' +
+        'non-production environments only. Unset them, or set PUBLIC_APP_ENV ' +
+        'to a non-production value.'
+    );
+  }
+  if (otpFixedCode && !/^\d{6}$/.test(otpFixedCode)) {
+    throw new MemberConfigError('MEMBER_OTP_FIXED_CODE must be six digits.');
+  }
+
+  let otpDelivery: MemberConfig['otpDelivery'] = 'unconfigured';
+  if (delivery === 'http' && otpWebhookUrl) otpDelivery = 'http';
+  else if (delivery === 'log') otpDelivery = 'log';
+
+  return {
+    sessionSecret,
+    accessTokenSeconds: readIntEnv('MEMBER_ACCESS_TOKEN_SECONDS', 3600),
+    refreshTokenDays: readIntEnv('MEMBER_REFRESH_TOKEN_DAYS', 90),
+    otpDelivery,
+    otpWebhookUrl,
+    otpWebhookToken: readEnv('MEMBER_OTP_WEBHOOK_TOKEN'),
+    otpFixedCode,
+  };
+}

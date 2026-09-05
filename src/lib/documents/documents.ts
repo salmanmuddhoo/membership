@@ -10,6 +10,7 @@
 // (S-208), so what an Individual application requires is a matter of
 // configuration, and this module only reports what has and has not been filed
 // against it.
+import { isEditableStatus } from '../applications/capture';
 import type { PoolClient } from 'pg';
 import { recordAudit } from '../access/audit';
 import { checkSegregation } from '../admin/segregation';
@@ -506,11 +507,7 @@ export async function beginUpload(
   // version is how the signed form gets edited, so it needs the same guard
   // `removeFiledDocument` already has, applied earlier: before a folder is
   // touched or a ticket is issued, not just at commit.
-  if (
-    owner.application_status &&
-    owner.application_status !== 'draft' &&
-    owner.application_status !== 'returned'
-  ) {
+  if (owner.application_status && !isEditableStatus(owner.application_status)) {
     throw new DocumentError(
       'This application has been submitted. Its documents can only be ' +
         'replaced if it is returned for correction.',
@@ -707,11 +704,7 @@ export async function commitUpload(
   // have been submitted in the time between a tablet starting this upload and
   // finishing it. Without this, a slow upload would be the one way past the
   // guard above.
-  if (
-    row.application_status &&
-    row.application_status !== 'draft' &&
-    row.application_status !== 'returned'
-  ) {
+  if (row.application_status && !isEditableStatus(row.application_status)) {
     throw new DocumentError(
       'This application has been submitted. Its documents can only be ' +
         'replaced if it is returned for correction.',
@@ -1088,11 +1081,7 @@ export async function removeFiledDocument(
     // (application_status null — the application is long since decided)
     // is unaffected: this guard only narrows what an in-flight application
     // allows.
-    if (
-      applicationStatus &&
-      applicationStatus !== 'draft' &&
-      applicationStatus !== 'returned'
-    ) {
+    if (applicationStatus && !isEditableStatus(applicationStatus)) {
       throw new DocumentError(
         'This application has been submitted. Its documents can only be ' +
           'removed if it is returned for correction.',

@@ -34,6 +34,12 @@ export interface EndpointDescriptor {
   // has to be written deliberately — there is no way to omit the field and get
   // an unprotected endpoint by accident.
   permission: string | null;
+  // Who reaches this endpoint. Absent means staff, through the session
+  // cookie and defineEndpoint. 'member' is the member app's bearer token and
+  // 'public' is nobody at all — both are only ever produced by
+  // defineMemberEndpoint (lib/member/endpoint.ts), which is what enforces
+  // them; the field is here so the OpenAPI document can say so.
+  caller?: 'staff' | 'member' | 'public';
   // Shape of a successful `data` payload, as an OpenAPI schema object.
   responseSchema: Record<string, unknown>;
   requestSchema?: Record<string, unknown>;

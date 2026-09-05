@@ -142,7 +142,19 @@ function buildDocument(descriptors: EndpointDescriptor[]) {
         .replace(/[/{}-]/g, '')}`,
       // Stated per operation so a reader can see what each one needs without
       // cross-referencing prose.
-      'x-required-permission': d.permission ?? '(any signed-in account)',
+      'x-required-permission':
+        d.caller === 'member'
+          ? '(a member app session)'
+          : d.caller === 'public'
+            ? '(none — public)'
+            : (d.permission ?? '(any signed-in account)'),
+      // The staff cookie is the document-wide default; the member surface
+      // overrides it per operation (docs/member-app.md).
+      ...(d.caller === 'member'
+        ? { security: [{ memberToken: [] }] }
+        : d.caller === 'public'
+          ? { security: [] }
+          : {}),
       responses: {
         '200': {
           description: 'Success',
@@ -201,8 +213,9 @@ function buildDocument(descriptors: EndpointDescriptor[]) {
         '`pnpm openapi:generate`. Do not edit it by hand.',
     },
     servers: [{ url: '/', description: 'Same origin as the application' }],
-    // Every endpoint is behind the application's own session cookie; there is
-    // no separate API credential yet.
+    // Staff endpoints are behind the application's own session cookie. The
+    // member app's endpoints (/api/v1/member) carry a bearer token instead,
+    // and say so per operation.
     components: {
       schemas: { Error: ERROR_SCHEMA },
       securitySchemes: {
@@ -213,6 +226,13 @@ function buildDocument(descriptors: EndpointDescriptor[]) {
           description:
             "The application's own signed session cookie, set by the OIDC " +
             'sign-in flow.',
+        },
+        memberToken: {
+          type: 'http',
+          scheme: 'bearer',
+          description:
+            "The member app's access token, from /api/v1/member/auth/" +
+            'verify-otp or /refresh. Resolves to a member_session server-side.',
         },
       },
     },

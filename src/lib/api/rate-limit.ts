@@ -62,9 +62,19 @@ async function sweepExpiredWindows(windowSeconds: number): Promise<void> {
   }
 }
 
+// The member surface asks for tighter limits on a few public endpoints (a
+// one-time code costs an SMS; a NIC + AB Number lookup is what a stolen
+// card would be tried against), so a caller may name its own ceiling and
+// window. The default is the staff API's generous one.
+export interface RateLimitOptions {
+  max?: number;
+  windowSeconds?: number;
+}
+
 export async function checkRateLimit(
   subject: string,
-  correlationId: string
+  correlationId: string,
+  options: RateLimitOptions = {}
 ): Promise<RateLimitResult> {
   if (readEnv('RATE_LIMIT_DISABLED') === 'true') {
     return {
@@ -74,11 +84,11 @@ export async function checkRateLimit(
     };
   }
 
-  const max = positiveInt('RATE_LIMIT_MAX_REQUESTS', DEFAULT_MAX_REQUESTS);
-  const windowSeconds = positiveInt(
-    'RATE_LIMIT_WINDOW_SECONDS',
-    DEFAULT_WINDOW_SECONDS
-  );
+  const max =
+    options.max ?? positiveInt('RATE_LIMIT_MAX_REQUESTS', DEFAULT_MAX_REQUESTS);
+  const windowSeconds =
+    options.windowSeconds ??
+    positiveInt('RATE_LIMIT_WINDOW_SECONDS', DEFAULT_WINDOW_SECONDS);
 
   try {
     const result = await query<{
