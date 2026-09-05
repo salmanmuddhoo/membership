@@ -2500,6 +2500,82 @@ describe('S-614: a non-member applying to become one', () => {
     expect(application!.sourceCustomerId).toBe(customerId);
   });
 
+  // Officer feedback: a non-member can be a minor too — new-account.astro's
+  // own "Minor" checkbox captures the customer_account application against
+  // the Minor type instead of Individual, guardian and all, so applying to
+  // become a member later carries that straight over rather than asking
+  // for a guardian a second time under a type switched out from under it.
+  it('captures a minor customer against the Minor type, and carries guardian details into membership the same way', async () => {
+    const { capture } = await load();
+    const accountType = await run(
+      appUrl,
+      `select id from account_type where not is_membership_default limit 1`
+    );
+
+    const { id: customerAppId } = await capture.startCustomerAccountApplication(
+      [accountType.rows[0].id],
+      officer,
+      'minor'
+    );
+    await capture.saveDraft(
+      customerAppId,
+      [
+        {
+          subject: 'applicant',
+          ordinal: 1,
+          values: { surname: 'Nagalingum', name: 'Priya' },
+        },
+        {
+          subject: 'guardian',
+          ordinal: 1,
+          values: {
+            surname: 'Nagalingum',
+            name: 'Kavi',
+            nic: 'K1234567890123',
+            member_id: 'AB0001',
+            relationship: 'Father',
+            mobile: '5789 0000',
+          },
+        },
+      ],
+      officer
+    );
+    const customer = await run(
+      appUrl,
+      `insert into customer (application_id) values ($1) returning id`,
+      [customerAppId]
+    );
+    const customerId = customer.rows[0].id as string;
+
+    const customerApp = await capture.loadApplication(customerAppId);
+    expect(customerApp!.applicationKind).toBe('customer_account');
+    if (customerApp!.applicationKind !== 'customer_account') throw new Error();
+    expect(customerApp!.membershipTypeCode).toBe('minor');
+
+    const { id: memberAppId } =
+      await capture.startMembershipApplicationFromCustomer(customerId, officer);
+    const memberApp = await capture.loadApplication(memberAppId);
+    expect(memberApp!.applicationKind).toBe('membership');
+    if (memberApp!.applicationKind !== 'membership') throw new Error();
+    expect(memberApp!.membershipTypeCode).toBe('minor');
+
+    expect(
+      memberApp!.parties.find(
+        p => p.subject === 'applicant' && p.ordinal === 1
+      )!.values
+    ).toMatchObject({ surname: 'Nagalingum', name: 'Priya' });
+    expect(
+      memberApp!.parties.find(p => p.subject === 'guardian' && p.ordinal === 1)!
+        .values
+    ).toMatchObject({
+      surname: 'Nagalingum',
+      name: 'Kavi',
+      nic: 'K1234567890123',
+      member_id: 'AB0001',
+      relationship: 'Father',
+    });
+  });
+
   it('is an ordinary draft from here — editable, saveable, the same as any other', async () => {
     const { capture } = await load();
     const { customerId } = await seedCustomer({

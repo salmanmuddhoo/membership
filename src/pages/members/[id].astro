@@ -57,7 +57,13 @@ if (Astro.request.method === 'POST' && customer) {
           customer.id,
           { userId: principal.userId, email: principal.email }
         );
-        return Astro.redirect(`/applications/${created.id}`);
+        // Officer feedback: parties are prefilled, but the officer still
+        // needs to look them over — and, for a minor, add the guardian
+        // details a customer_account application never asked for — before
+        // print and signature are the right next step. Explicit rather
+        // than left to the id page's own default landing spot, which reads
+        // as already signed and ready to move on.
+        return Astro.redirect(`/applications/${created.id}?step=1`);
       } catch (err) {
         if (err instanceof ApplicationError) {
           error = err.message;

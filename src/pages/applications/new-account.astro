@@ -38,6 +38,7 @@ let isMember = true;
 let memberId = '';
 let memberLabel = '';
 let selected = new Set<string>();
+let isMinor = false;
 
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
@@ -45,6 +46,7 @@ if (Astro.request.method === 'POST') {
   memberId = String(form.get('memberId') ?? '');
   memberLabel = String(form.get('memberLabel') ?? '');
   selected = new Set(form.getAll('accountTypeId').map(String));
+  isMinor = form.get('isMinor') === 'on';
 
   if (isMember && !memberId) {
     error = 'Search for the member and pick one before continuing.';
@@ -70,10 +72,11 @@ if (Astro.request.method === 'POST') {
     }
   } else {
     try {
-      const created = await startCustomerAccountApplication([...selected], {
-        userId: principal.userId,
-        email: principal.email,
-      });
+      const created = await startCustomerAccountApplication(
+        [...selected],
+        { userId: principal.userId, email: principal.email },
+        isMinor ? 'minor' : 'individual'
+      );
       // Nothing about the applicant is captured yet — the officer fills that
       // in on the application itself, the same way a membership
       // application's capture form works.
@@ -181,12 +184,21 @@ if (Astro.request.method === 'POST') {
             />
           </div>
 
-          {!isMember && (
+          <div data-non-member-only hidden={isMember}>
             <p class="text-sm text-neutral-500 dark:text-neutral-400">
               Their own details are filled in on the next screen — the same
-              information an Individual membership application asks for.
+              information a membership application asks for.
             </p>
-          )}
+            <label class="mt-2 flex items-center gap-2 text-sm text-neutral-800 dark:text-neutral-100">
+              <input
+                type="checkbox"
+                name="isMinor"
+                checked={isMinor}
+                class="rounded border-neutral-300 dark:border-neutral-600"
+              />
+              Minor — a parent or guardian's details are asked for too
+            </label>
+          </div>
 
           <fieldset>
             <legend class="text-sm text-neutral-600 dark:text-neutral-300">
@@ -236,8 +248,21 @@ if (Astro.request.method === 'POST') {
     const checked = memberToggles.find(t => t.checked);
     memberSearchWrapper.hidden = checked?.value === 'no';
   };
+  // The inverse of the above: shown only once "No" is picked, same as the
+  // member search is hidden once it is.
+  const nonMemberOnly = document.querySelector<HTMLElement>(
+    '[data-non-member-only]'
+  );
+  const syncNonMemberOnlyVisibility = () => {
+    if (!nonMemberOnly) return;
+    const checked = memberToggles.find(t => t.checked);
+    nonMemberOnly.hidden = checked?.value !== 'no';
+  };
   for (const toggle of memberToggles) {
-    toggle.addEventListener('change', syncMemberSearchVisibility);
+    toggle.addEventListener('change', () => {
+      syncMemberSearchVisibility();
+      syncNonMemberOnlyVisibility();
+    });
   }
 
   // Mirrors the guardian search on the capture form (CaptureFields.astro,
