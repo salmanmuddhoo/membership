@@ -411,17 +411,26 @@ export async function paymentsForApplication(
 /**
  * Everything taken from one member, however it was filed.
  *
- * Two ways, and both are needed. A payment made after approval names the
+ * Three ways, and all are needed. A payment made after approval names the
  * member. The one that admitted them in the first place names the APPLICATION
  * — the member did not exist when it was taken — so a query on member_id alone
  * finds nothing at all for most members, which is exactly the receipt a
- * Treasurer looking one up wants to see.
+ * Treasurer looking one up wants to see. And an account opened by any OTHER
+ * application than the member's own founding one — an additional_account
+ * purchase (S-613), or an account carried over from the non-member customer
+ * this member used to be (S-614) — names that application instead, found via
+ * the account's own opened_by_application_id (migration 0037) rather than
+ * guessed at from existing_member_id.
  */
 export async function paymentsForMember(memberId: string): Promise<Payment[]> {
   const result = await query<PaymentRow>(
     `${PAYMENT_SELECT}
       where p.member_id = $1
          or p.application_id = (select application_id from member where id = $1)
+         or p.application_id in (
+              select opened_by_application_id from account
+               where member_id = $1 and opened_by_application_id is not null
+            )
       order by p.received_at`,
     [memberId]
   );
@@ -471,12 +480,11 @@ export async function transactionsForAccount(
   const found = await query<{
     account_type_id: string;
     type_code: string;
-    member_id: string | null;
-    customer_id: string | null;
     is_membership_default: boolean;
+    opened_by_application_id: string | null;
   }>(
-    `select a.account_type_id, t.code as type_code,
-            a.member_id, a.customer_id, a.is_membership_default
+    `select a.account_type_id, t.code as type_code, a.is_membership_default,
+            a.opened_by_application_id
        from account a
        join account_type t on t.id = a.account_type_id
       where a.id = $1`,
@@ -485,45 +493,14 @@ export async function transactionsForAccount(
   if (found.rows.length === 0) return [];
   const account = found.rows[0];
 
-  // Which application's payment funded this account — the only place a
-  // transaction is recorded, since the account row itself keeps no link
-  // back to it (S-612/S-614 opened neither account_no nor application_id
-  // onto account for this).
-  let applicationId: string | null = null;
-  if (account.is_membership_default) {
-    // Shares and the MSA open with the same founding application that made
-    // the member (migration 0018) — there is only ever one.
-    const member = await query<{ application_id: string | null }>(
-      `select application_id from member where id = $1`,
-      [account.member_id]
-    );
-    applicationId = member.rows[0]?.application_id ?? null;
-  } else if (account.member_id) {
-    // An existing member's HSA/Investment-style account (S-612): opened by
-    // whichever additional_account application selected this type and was
-    // approved. account_one_per_type_per_member_idx (migration 0018) means
-    // there is at most one to find.
-    const opened = await query<{ id: string }>(
-      `select ma.id
-         from membership_application ma
-         join application_account_selection s on s.application_id = ma.id
-        where ma.existing_member_id = $1
-          and ma.application_kind = 'additional_account'
-          and s.account_type_id = $2
-        order by ma.decided_at desc nulls last
-        limit 1`,
-      [account.member_id, account.account_type_id]
-    );
-    applicationId = opened.rows[0]?.id ?? null;
-  } else if (account.customer_id) {
-    // A non-member's account (S-614): one application opened it, and only
-    // it.
-    const customer = await query<{ application_id: string }>(
-      `select application_id from customer where id = $1`,
-      [account.customer_id]
-    );
-    applicationId = customer.rows[0]?.application_id ?? null;
-  }
+  // Which application's payment funded this account — set once, at
+  // creation, on the account row itself (opened_by_application_id,
+  // migration 0037), and never touched again: not by S-612's own
+  // additional_account flow, and not by S-614's customer-to-member transfer
+  // either, which is exactly why this column exists rather than re-deriving
+  // the answer from whatever the account's current owner shape happens to
+  // be.
+  const applicationId = account.opened_by_application_id;
   if (!applicationId) return [];
 
   // A refund inserts its own payment_line/payment_account_line row, on its

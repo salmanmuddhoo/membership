@@ -1377,6 +1377,11 @@ export async function listApplications(options: {
   // whoever captured them.
   viewerUserId?: string;
   statuses?: string[];
+  // Officer feedback: finding one applicant among many by scrolling and
+  // sorting was the only way to do it. Matches the reference or the
+  // applicant's name — an officer rarely has the other on hand when they are
+  // looking for a specific application.
+  search?: string;
   limit?: number;
 }): Promise<
   Array<{
@@ -1406,48 +1411,55 @@ export async function listApplications(options: {
     captured_by_name: string;
     updated_at: Date;
   }>(
-    `select a.id, a.reference, a.application_kind,
-            m.name as membership_type_name, accounts.names as account_type_names,
-            a.status,
-            trim(coalesce(p.values->>'name', ep.values->>'name', '') || ' '
-                 || coalesce(p.values->>'surname', ep.values->>'surname', ''))
-              as applicant_name,
-            u.display_name as captured_by_name,
-            a.updated_at
-       from membership_application a
-       left join membership_type m on m.id = a.membership_type_id
-       join app_user u        on u.id = a.captured_by
-       left join application_party p
-         on p.application_id = a.id and p.subject = 'applicant' and p.ordinal = 1
-       -- S-613: an additional_account application captures no applicant of
-       -- its own — the person is the existing member it names, whose own
-       -- name comes from the membership application that made them one.
-       left join member em on em.id = a.existing_member_id
-       left join application_party ep
-         on ep.application_id = em.application_id
-        and ep.subject = 'applicant' and ep.ordinal = 1
-       left join lateral (
-         select string_agg(t.name, ' + ' order by t.sort_order) as names
-           from application_account_selection s
-           join account_type t on t.id = s.account_type_id
-          where s.application_id = a.id
-       ) accounts on true
-      where ($1::uuid is null or a.captured_by = $1::uuid)
-        and ($2::text[] is null or a.status = any($2::text[]))
-        and (a.status != 'draft'
-             or $3::uuid is null
-             or a.captured_by = $3::uuid)
-        -- Officer feedback: once approved, an application is a member (or an
-        -- opened account) already, and lives on the Members page from then
-        -- on — carrying it here too is a stale duplicate of a record this
-        -- list is not the place to keep showing.
-        and a.status != 'approved'
-      order by a.updated_at desc
-      limit $4::int`,
+    `with rows as (
+       select a.id, a.reference, a.application_kind,
+              m.name as membership_type_name, accounts.names as account_type_names,
+              a.status,
+              trim(coalesce(p.values->>'name', ep.values->>'name', '') || ' '
+                   || coalesce(p.values->>'surname', ep.values->>'surname', ''))
+                as applicant_name,
+              u.display_name as captured_by_name,
+              a.updated_at
+         from membership_application a
+         left join membership_type m on m.id = a.membership_type_id
+         join app_user u        on u.id = a.captured_by
+         left join application_party p
+           on p.application_id = a.id and p.subject = 'applicant' and p.ordinal = 1
+         -- S-613: an additional_account application captures no applicant of
+         -- its own — the person is the existing member it names, whose own
+         -- name comes from the membership application that made them one.
+         left join member em on em.id = a.existing_member_id
+         left join application_party ep
+           on ep.application_id = em.application_id
+          and ep.subject = 'applicant' and ep.ordinal = 1
+         left join lateral (
+           select string_agg(t.name, ' + ' order by t.sort_order) as names
+             from application_account_selection s
+             join account_type t on t.id = s.account_type_id
+            where s.application_id = a.id
+         ) accounts on true
+        where ($1::uuid is null or a.captured_by = $1::uuid)
+          and ($2::text[] is null or a.status = any($2::text[]))
+          and (a.status != 'draft'
+               or $3::uuid is null
+               or a.captured_by = $3::uuid)
+          -- Officer feedback: once approved, an application is a member (or
+          -- an opened account) already, and lives on the Members page from
+          -- then on — carrying it here too is a stale duplicate of a record
+          -- this list is not the place to keep showing.
+          and a.status != 'approved'
+     )
+     select * from rows
+      where $4::text is null
+         or strpos(lower(reference), lower($4::text)) > 0
+         or strpos(lower(applicant_name), lower($4::text)) > 0
+      order by updated_at desc
+      limit $5::int`,
     [
       options.capturedBy ?? null,
       options.statuses ?? null,
       options.viewerUserId ?? null,
+      options.search?.trim() || null,
       options.limit ?? 100,
     ]
   );

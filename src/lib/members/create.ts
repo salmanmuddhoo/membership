@@ -121,10 +121,12 @@ export async function createMemberFromApplication(
   const accounts: CreatedMember['accounts'] = [];
   for (const type of openOnApproval.rows) {
     const account = await client.query<{ id: string }>(
-      `insert into account (member_id, account_type_id, is_membership_default, status)
-       values ($1, $2, true, $3)
+      `insert into account
+         (member_id, account_type_id, is_membership_default, status,
+          opened_by_application_id)
+       values ($1, $2, true, $3, $4)
        returning id`,
-      [memberId, type.id, type.default_status]
+      [memberId, type.id, type.default_status, application.id]
     );
     accounts.push({
       id: account.rows[0].id,
@@ -224,6 +226,12 @@ export async function createMemberFromApplication(
     }
 
     for (const row of held.rows) {
+      // opened_by_application_id is deliberately left out of this SET list —
+      // it already names the customer_account application that actually
+      // funded this account (openAccountsForCustomerApplication set it at
+      // creation), and that answer does not change just because who holds
+      // the account now does. transactionsForAccount and listMembers' own
+      // total_funds figure both read it straight through the transfer.
       await client.query(
         `update account
             set member_id = $2, customer_id = null, account_no = null,
@@ -355,10 +363,17 @@ export async function openAccountsForApplication(
   for (const selected of application.selectedAccountTypes) {
     const type = byId.get(selected.id)!;
     const account = await client.query<{ id: string }>(
-      `insert into account (member_id, account_type_id, is_membership_default, status)
-       values ($1, $2, false, $3)
+      `insert into account
+         (member_id, account_type_id, is_membership_default, status,
+          opened_by_application_id)
+       values ($1, $2, false, $3, $4)
        returning id`,
-      [application.existingMemberId, type.id, type.default_status]
+      [
+        application.existingMemberId,
+        type.id,
+        type.default_status,
+        application.id,
+      ]
     );
     accounts.push({
       id: account.rows[0].id,
@@ -468,10 +483,10 @@ export async function openAccountsForCustomerApplication(
     const account = await client.query<{ id: string }>(
       `insert into account
          (customer_id, account_type_id, account_no, is_membership_default,
-          status)
-       values ($1, $2, $3, false, $4)
+          status, opened_by_application_id)
+       values ($1, $2, $3, false, $4, $5)
        returning id`,
-      [customerId, type.id, accountNo, type.default_status]
+      [customerId, type.id, accountNo, type.default_status, application.id]
     );
     accounts.push({
       id: account.rows[0].id,
@@ -640,21 +655,26 @@ export async function listMembers(
                 0
               )
               +
+              -- Each of the member's own accounts (Shares/MSA excluded —
+              -- summed above) joined straight to whichever application
+              -- opened IT, via account.opened_by_application_id (migration
+              -- 0037) — rather than re-deriving which applications belong to
+              -- this member (existing_member_id, or the founding one). That
+              -- derivation had no path back to a customer_account
+              -- application, so an account transferred to this member from
+              -- the non-member customer they used to be (S-614) summed to
+              -- nothing despite the money never having moved.
               coalesce(
                 (select sum(case when p.kind = 'payment' then pal.amount
                                   else -pal.amount end)
-                   from payment_account_line pal
-                   join payment p on p.id = pal.payment_id
-                  where p.voided_at is null
-                    and (
-                      p.application_id = m.application_id
-                      or p.application_id in (
-                        select ma.id from membership_application ma
-                         where ma.existing_member_id = m.id
-                           and ma.application_kind = 'additional_account'
-                           and ma.status = 'approved'
-                      )
-                    )),
+                   from account acc
+                   join payment_account_line pal
+                     on pal.account_type_id = acc.account_type_id
+                   join payment p
+                     on p.id = pal.payment_id
+                    and p.application_id = acc.opened_by_application_id
+                  where acc.member_id = m.id
+                    and p.voided_at is null),
                 0
               ) as total_funds
          from member m
@@ -710,6 +730,12 @@ export async function listMembers(
          left join application_party p
            on p.application_id = c.application_id
           and p.subject = 'applicant' and p.ordinal = 1
+        -- A converted customer (S-614: approved to become a member) is not a
+        -- second record alongside the member they became — their account(s)
+        -- already moved (createMemberFromApplication), leaving nothing here
+        -- but an empty row with the same name that would otherwise sit
+        -- beside the real one.
+        where c.status = 'active'
      )
      select id, kind, identifier, type_label, status, name, joined_at,
             application_reference, accounts, total_funds::numeric(14,2)::text as total_funds,

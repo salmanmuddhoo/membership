@@ -895,6 +895,91 @@ export async function pendingActionCount(
 }
 
 /**
+ * Officer feedback: which applications, on the Applications list, are
+ * specifically waiting on THIS person right now — so the list can mark them
+ * and put them first, rather than leaving the officer to scan every row's
+ * status against their own job to find the ones that are actually theirs to
+ * act on.
+ *
+ * Two different things count as "theirs to act on", and they are not the
+ * same computation:
+ *
+ *   - Review or approval: the same role/permission/gate chain
+ *     `pendingActionCount` counts, read here as the actual rows rather than
+ *     how many. Deliberately excludes the 'capture' step (draft -> new) for
+ *     the same reason that count does — capture is the originating officer's
+ *     own work in progress, not a queue entry someone else is waiting to see
+ *     appear.
+ *   - Correction: an application sent back with 'returned' is nobody's
+ *     queue entry in the chain sense (no step names 'returned' as its
+ *     `fromStatus` — a review outcome sets it directly), but it is very much
+ *     the officer who captured it own work to pick back up, so it is
+ *     flagged for them specifically rather than for a role.
+ */
+export async function pendingApplicationIds(
+  principal: Principal
+): Promise<Set<string>> {
+  const ids = new Set<string>();
+
+  if (principal.permissions.has('application.submit')) {
+    const returned = await query<{ id: string }>(
+      `select id from membership_application
+        where status = 'returned' and captured_by = $1`,
+      [principal.userId]
+    );
+    for (const row of returned.rows) ids.add(row.id);
+  }
+
+  const chain = await activeChain(WORKFLOW_CODE);
+  const queries: Promise<void>[] = [];
+
+  for (const step of chain) {
+    if (step.code === 'capture') continue;
+    const meta = STEP_META[step.code];
+    if (!meta) continue;
+    if (!principal.permissions.has(meta.permission)) continue;
+    if (!principal.roles.includes(step.roleCode)) continue;
+
+    const earlierGates = chain.filter(
+      s =>
+        s.stepNo < step.stepNo &&
+        s.fromStatus === step.fromStatus &&
+        s.fromStatus === s.toStatus
+    );
+    const isGate = step.fromStatus === step.toStatus;
+
+    const conditions = ['a.status = $1'];
+    const params: unknown[] = [step.fromStatus];
+    for (const gate of earlierGates) {
+      params.push(gate.code);
+      conditions.push(
+        `exists (select 1 from application_transition t
+                  where t.application_id = a.id and t.step_code = $${params.length})`
+      );
+    }
+    if (isGate) {
+      params.push(step.code);
+      conditions.push(
+        `not exists (select 1 from application_transition t
+                       where t.application_id = a.id and t.step_code = $${params.length})`
+      );
+    }
+
+    queries.push(
+      query<{ id: string }>(
+        `select a.id from membership_application a where ${conditions.join(' and ')}`,
+        params
+      ).then(result => {
+        for (const row of result.rows) ids.add(row.id);
+      })
+    );
+  }
+
+  await Promise.all(queries);
+  return ids;
+}
+
+/**
  * S-611 follow-up: who actually holds this application right now, for as
  * long as its status stays 'new'.
  *
