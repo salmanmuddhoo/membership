@@ -371,31 +371,41 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
 
   /* Fixed to the real viewport (see the comment above the markup), not to
      this page's own layout — sized in ordinary CSS units, not the
-     millimetres the rest of this sheet uses for paper. Two heights: a
-     browser that does not know `dvh` keeps the first and ignores the
-     second, one that does gets the one that actually tracks a mobile
-     browser's own address bar showing or hiding, rather than assuming the
-     larger figure and running the bars below the visible screen. */
+     millimetres the rest of this sheet uses for paper.
+     Officer feedback: `height: 100vh`/`100dvh` here used to run the bottom
+     bar ("Use this signature") below the visible screen on a phone whose
+     browser chrome (address bar, home indicator) was showing — `100vh` on
+     mobile Safari means the viewport with the chrome HIDDEN, taller than
+     what is actually visible, and an embedded/older browser with no `dvh`
+     support fell back to exactly that oversized figure. The officer's own
+     workaround was to pinch-zoom the whole page out until the box shrank
+     enough to reveal the button underneath it.
+     `inset: 0` alone (top/right/bottom/left all 0) sizes a `position: fixed`
+     element to the real, current fixed-positioning viewport on every
+     browser without naming a height at all — no vh/dvh guess to get wrong,
+     and it already tracks the chrome showing or hiding on its own. */
   .sig-modal {
     position: fixed;
     inset: 0;
-    height: 100vh;
-    height: 100dvh;
     z-index: 1000;
     display: flex;
     flex-direction: column;
     background: #fff;
     color: #111;
     font-family: system-ui, sans-serif;
-    /* Scrollable, not clipped: belt and braces against the same thing the
-       two heights above already guard against — if a bar ever still ends
-       up outside the visible area, the officer can reach it by scrolling
-       the box itself rather than being unable to reach it at all. Only the
+    /* Scrollable, not clipped: belt and braces in case anything above still
+       runs long on some browser — the officer can reach it by scrolling the
+       box itself rather than being unable to reach it at all. Only the
        canvas below blocks touch, and only there, since a drag meant for
        the pen reaching past it and moving the page is what this guards
        against — the bars need every tap to reach the button underneath it,
        plainly, the first time. */
     overflow-y: auto;
+    /* A scroll that runs past the top or bottom of this box must not chain
+       into the page sitting behind it — that reads as the form showing
+       through the "full screen" popup, the opposite of what a full-screen
+       takeover is for. */
+    overscroll-behavior: contain;
   }
   .sig-modal[hidden] {
     display: none;
@@ -415,8 +425,16 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
     border-top: 1px solid #ddd;
   }
   .sig-modal-canvas {
-    flex: 1;
-    min-height: 40vh;
+    /* flex: 1 1 0, not the shorthand 1 (which defaults its flex-basis to
+       auto, not 0) — paired with min-height: 0 so the canvas is the one
+       thing that shrinks first if the two bars above and below it ever
+       need more room than a short viewport has to spare. A canvas that
+       cannot shrink is exactly how the bottom bar ran off-screen before:
+       a `min-height` on a flex child is a floor flex-shrink may not cross,
+       so 40vh on a short phone viewport pushed the bar after it out past
+       the bottom whether or not the modal itself was sized correctly. */
+    flex: 1 1 0;
+    min-height: 0;
     width: 100%;
     touch-action: none;
     cursor: crosshair;

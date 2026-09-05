@@ -2151,6 +2151,36 @@ answer was to leave both for now.
 
 ---
 
+### The signature popup really was broken on mobile — the wrong bug this time ✅
+
+**Two rounds ago this same modal was checked against a report and found
+already correct; it was not this time.** On a phone whose browser chrome
+(address bar, home indicator) was showing, `height: 100dvh` — sized to
+whatever is actually visible, the fix this modal already had — should have
+been enough, but an embedded or older mobile browser with no `dvh` support
+fell back to the line before it, `height: 100vh`, which on mobile Safari
+means the viewport with that chrome hidden: taller than what was actually
+on screen. The bottom bar carrying "Use this signature" ran off the bottom
+of a box the officer could not tell was oversized, and the only way to
+reach it was to pinch the whole page out until the box shrank enough to
+show it — which read, and was reported, as the popup sitting "above the
+form" rather than replacing it.
+
+`print.astro`'s `.sig-modal` now sizes itself with `position: fixed;
+inset: 0` alone — no height named at all, so there is no vh/dvh figure to
+get wrong on any browser; the browser stretches it to whatever is actually
+visible, chrome included, on its own. The canvas's own `min-height: 40vh`
+is gone too — a `min-height` is a floor `flex: 1` may not shrink below, so
+on a short viewport it was pushing the bar after it out past the bottom
+independently of how the modal itself was sized; `flex: 1 1 0` with
+`min-height: 0` lets the canvas give up space first if the two bars ever
+need more of it than a short screen has to spare. `overscroll-behavior:
+contain` stops a scroll that runs past the top or bottom of the modal from
+chaining into the page behind it, which read the same way — the form
+"showing through" what was meant to be a full-screen takeover.
+
+---
+
 # M7 — Legacy migration
 
 **Goal:** the existing register becomes members in this system, phase-wise —
