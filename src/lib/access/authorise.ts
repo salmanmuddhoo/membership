@@ -38,6 +38,7 @@ const ROUTE_PERMISSIONS: ReadonlyArray<readonly [string, string]> = [
   ['/admin/roles', 'role.view'],
   ['/admin/users', 'user.view'],
   ['/admin/reset-data', 'system.reset_data'],
+  ['/admin/audit-log', 'audit.view'],
 
   // Reference configuration (M2 Feature 2.2). A prefix rule: every page under
   // it needs config.view to read, and each page checks config.manage itself

@@ -61,6 +61,7 @@ const SUBJECT_LABELS: Record<string, string> = {
   nominee: 'Nominee',
   guardian: 'Parent / Guardian',
   beneficiary: 'Takaful beneficiary',
+  employment: 'Employment Details',
 };
 
 const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
@@ -190,11 +191,29 @@ const fixedViewport =
                 </div>
               )}
               <p class="sig-name">{who}</p>
-              <p class="sig-date">
-                {SIGNATORY_DETAIL[who]
-                  ? `${SIGNATORY_DETAIL[who]} · ${signedOn}`
-                  : 'Name and date'}
-              </p>
+              {SIGNATORY_DETAIL[who] ? (
+                <p class="sig-date">{`${SIGNATORY_DETAIL[who]} · ${signedOn}`}</p>
+              ) : (
+                // No record of who a witness is exists anywhere in this
+                // system — unlike Applicant and Nominee, there is nothing to
+                // fill this in from, so the officer types it here instead of
+                // on a hand-drawn line. Kept client-side only, exactly like
+                // the signature images above: it only has to survive long
+                // enough to reach Print (or Save as PDF), which is what
+                // actually carries it forward once uploaded.
+                <p class="sig-date witness-date">
+                  <input
+                    type="text"
+                    data-witness-name-input={who}
+                    placeholder="Name and date"
+                    disabled={!isEditable}
+                    class="witness-name-input"
+                  />
+                  <span data-witness-date-suffix hidden>
+                    {` · ${signedOn}`}
+                  </span>
+                </p>
+              )}
               <div class="sig-line short" />
             </div>
           ))
@@ -362,6 +381,27 @@ const fixedViewport =
     margin: 3mm 0 0;
     font-size: 9pt;
     color: #555;
+  }
+  /* Made to disappear into the plain text either side of it — the box a
+     name gets typed into on screen is not itself part of what a witness's
+     line is meant to show, on paper or in the PDF this becomes. */
+  .witness-name-input {
+    width: 45mm;
+    max-width: 60%;
+    border: none;
+    border-bottom: 1px solid #999;
+    padding: 0;
+    background: transparent;
+    font: inherit;
+    color: inherit;
+  }
+  .witness-name-input:disabled {
+    color: inherit;
+    opacity: 1;
+  }
+  .witness-name-input:focus {
+    outline: none;
+    border-bottom-color: #111;
   }
 
   .sig-help {
@@ -605,6 +645,41 @@ const fixedViewport =
       return null;
     }
   };
+
+  // A witness's name, same lifetime as their signature above and for the
+  // same reason: nothing in this system has a record of who a witness is,
+  // so there is nothing to reload this from beyond what this tab already
+  // typed — it only has to last until Print (or Save as PDF) carries it
+  // into the file the officer uploads.
+  const witnessNameKey = (who: string) => `sig-name:${applicationId}:${who}`;
+  for (const nameInput of document.querySelectorAll<HTMLInputElement>(
+    '[data-witness-name-input]'
+  )) {
+    const who = nameInput.dataset.witnessNameInput ?? '';
+    const suffix = nameInput.parentElement?.querySelector<HTMLElement>(
+      '[data-witness-date-suffix]'
+    );
+    const sync = () => {
+      if (suffix) suffix.hidden = nameInput.value.trim() === '';
+    };
+    let recalled: string | null = null;
+    try {
+      recalled = sessionStorage.getItem(witnessNameKey(who));
+    } catch {
+      // Private browsing or a full quota — typing still works for this
+      // visit, it just starts blank rather than where a prior visit left it.
+    }
+    if (recalled) nameInput.value = recalled;
+    sync();
+    nameInput.addEventListener('input', () => {
+      sync();
+      try {
+        sessionStorage.setItem(witnessNameKey(who), nameInput.value);
+      } catch {
+        // See above — not worth failing the typing over.
+      }
+    });
+  }
 
   if (
     modal &&

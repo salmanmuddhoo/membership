@@ -36,7 +36,8 @@ function actorFor(actor: Actor): ConfigurationActor {
 // ---------------------------------------------------------------------------
 // S-205 · Membership types and their field rules
 // ---------------------------------------------------------------------------
-export type FieldSubject = 'applicant' | 'nominee' | 'guardian' | 'beneficiary';
+export type FieldSubject =
+  'applicant' | 'nominee' | 'guardian' | 'beneficiary' | 'employment';
 
 export interface MembershipTypeField {
   id: string;

@@ -390,7 +390,6 @@ if (Astro.request.method === 'POST') {
 
 isEditable =
   application!.status === 'draft' || application!.status === 'returned';
-const isDeletableDraft = canCapture && application!.status === 'draft';
 
 const isDecided =
   application!.status === 'approved' || application!.status === 'rejected';
@@ -524,6 +523,17 @@ const livePayment: Payment | null =
   payments.find(p => p.kind === 'payment' && !p.voidedAt) ?? null;
 const refunds = payments.filter(p => p.kind === 'refund' && !p.voidedAt);
 
+// A returned application is editable in exactly the same way as a draft but
+// has been through the Secretary, and that history is not anyone's to
+// discard. deleteDraftApplication refuses one a receipt was ever issued
+// against (voided or not — the applicant is holding it either way)
+// regardless of this check, but offering Delete only for it to fail is its
+// own kind of broken control, so the option itself is withheld here too.
+const isDeletableDraft =
+  canCapture &&
+  application!.status === 'draft' &&
+  !payments.some(p => p.kind === 'payment');
+
 // Read above alongside everything else; only shown while nothing has been
 // taken yet — once a payment stands, the figure has been settled.
 const due: AccountAmountDue | null = livePayment
@@ -537,12 +547,15 @@ const initialTotal = due
   ? fromCents(sumCents(due.components.map(c => c.amount)))
   : '0';
 
+// The only evidence a signature exists is the signed form coming back.
+const signedFormFiled = checklist.some(
+  e => e.documentCode === 'signed_form' && e.state !== 'missing'
+);
+
 const timeline = applicationTimeline({
   status: application!.status,
   mandatoryFieldsOutstanding: blocking.length,
-  signedFormFiled: checklist.some(
-    e => e.documentCode === 'signed_form' && e.state !== 'missing'
-  ),
+  signedFormFiled,
   requiredDocumentsOutstanding: requiredDocumentsMissing,
   paymentRecorded: livePayment !== null,
   paymentReceiptNo: livePayment?.receiptNo ?? null,
@@ -552,8 +565,11 @@ const timeline = applicationTimeline({
 // Mirrors [id].astro's own step numbering exactly (S-614, phase 8): print
 // has no section of its own here, the same way it has none there — it has
 // its own page, `/applications/<id>/print`, widened to serve this kind
-// alongside membership's, and a step whose "done" signal is a document
-// filed in step 3 cannot also gate entry to step 3.
+// alongside membership's. Officer feedback: a draft with capture finished
+// but not yet signed, reopened from the Applications list (which links here
+// with no `?step=`), landed straight on Documents, having skipped print and
+// signing entirely — `signedFormFiled` (the same evidence the timeline above
+// reads) is what decides the default landing spot now instead.
 const CAPTURE_STEP = 1;
 const PRINT_STEP = 2;
 const DOCUMENTS_STEP = 3;
@@ -564,11 +580,13 @@ const furthestStep = !isEditable
   ? SUBMIT_STEP
   : blocking.length > 0
     ? CAPTURE_STEP
-    : requiredDocumentsMissing > 0
-      ? DOCUMENTS_STEP
-      : livePayment === null
-        ? PAYMENT_STEP
-        : SUBMIT_STEP;
+    : !signedFormFiled
+      ? PRINT_STEP
+      : requiredDocumentsMissing > 0
+        ? DOCUMENTS_STEP
+        : livePayment === null
+          ? PAYMENT_STEP
+          : SUBMIT_STEP;
 
 let currentStep = SUBMIT_STEP;
 if (isEditable) {
@@ -599,6 +617,7 @@ const SUBJECT_LABELS: Record<string, string> = {
   nominee: 'Nominee',
   guardian: 'Parent / Guardian',
   beneficiary: 'Takaful beneficiary',
+  employment: 'Employment Details',
 };
 
 const dateFormat = new Intl.DateTimeFormat('en-GB', {
@@ -1687,29 +1706,24 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     });
   }
 
-  document
-    .querySelector<HTMLFormElement>('form[data-confirm-delete]')
-    ?.addEventListener('submit', event => {
-      if (
-        !window.confirm(
-          'Delete this draft? Everything captured on it, and any documents ' +
-            'filed against it, will be removed. This cannot be undone.'
-        )
-      ) {
-        event.preventDefault();
-      }
-    });
+  const deleteDraftForm = document.querySelector<HTMLFormElement>(
+    'form[data-confirm-delete]'
+  );
+  if (deleteDraftForm) {
+    window.confirmedSubmit(
+      deleteDraftForm,
+      'Delete this draft? Everything captured on it, and any documents ' +
+        'filed against it, will be removed. This cannot be undone.'
+    );
+  }
 
   for (const deleteForm of document.querySelectorAll<HTMLFormElement>(
     'form[data-confirm-delete-document]'
   )) {
-    deleteForm.addEventListener('submit', event => {
-      if (
-        !window.confirm('Remove this document? You can file it again after.')
-      ) {
-        event.preventDefault();
-      }
-    });
+    window.confirmedSubmit(
+      deleteForm,
+      'Remove this document? You can file it again after.'
+    );
   }
 
   // Officer feedback: this used to be window.open(url), which handed the
@@ -1797,7 +1811,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           }
           viewerDialog.showModal();
         } catch (error) {
-          window.alert(
+          await window.appAlert(
             error instanceof Error
               ? error.message
               : 'The file could not be opened.'

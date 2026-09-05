@@ -142,16 +142,14 @@ const counts = isTestEnvironment && !done ? await countsBeforeReset() : null;
     });
   }
 
-  document
-    .querySelector<HTMLFormElement>('[data-reset-form]')
-    ?.addEventListener('submit', event => {
-      if (
-        !window.confirm(
-          'This permanently deletes every member, application, document, ' +
-            'payment and receipt. There is no undo. Continue?'
-        )
-      ) {
-        event.preventDefault();
-      }
-    });
+  const resetForm = document.querySelector<HTMLFormElement>(
+    '[data-reset-form]'
+  );
+  if (resetForm) {
+    window.confirmedSubmit(
+      resetForm,
+      'This permanently deletes every member, application, document, ' +
+        'payment and receipt. There is no undo. Continue?'
+    );
+  }
 </script>

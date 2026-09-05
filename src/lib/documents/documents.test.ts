@@ -546,9 +546,11 @@ describe('S-408: a document is filed only when SharePoint says so', () => {
     );
 
     // The browser claims success. Graph disagrees, and Graph is the authority
-    // because the bytes never came through us.
+    // because the bytes never came through us. No retry delay — the drive
+    // never gets the file, so this would only wait out the retry window for
+    // nothing.
     await expect(
-      documents.commitUpload(begun.versionId, officer)
+      documents.commitUpload(begun.versionId, officer, {}, undefined, [])
     ).rejects.toThrowError(/not in SharePoint/);
 
     const state = await run(
@@ -581,12 +583,65 @@ describe('S-408: a document is filed only when SharePoint says so', () => {
     );
 
     // Half the bytes arrived. A Verified tick over half a document is worse
-    // than no document.
+    // than no document. No retry delay here — this genuinely never
+    // resolves, so retrying it would only make the test slow for nothing.
     drive.files.set(begun.ticket.itemPath, { id: 'graph-1', size: 2048 });
 
     await expect(
-      documents.commitUpload(begun.versionId, officer)
+      documents.commitUpload(begun.versionId, officer, {}, undefined, [])
     ).rejects.toThrowError(/incomplete/);
+
+    drive.files.delete(begun.ticket.itemPath);
+  });
+
+  it('does not mistake a moment of SharePoint lag for a truncated file', async () => {
+    const { documents } = await load();
+
+    // Its own application — a commit that succeeds, unlike its neighbours
+    // in this block, would otherwise add an extra filed version to the
+    // shared applicant's id_card document and throw off version/audit
+    // counts other tests elsewhere in this file assume.
+    const type = await run(
+      appUrl,
+      `select id from membership_type where code = 'individual'`
+    );
+    const fresh = await run(
+      appUrl,
+      `insert into membership_application (membership_type_id, captured_by)
+       values ($1, $2) returning id`,
+      [type.rows[0].id, officer.userId]
+    );
+
+    const begun = await documents.beginUpload(
+      {
+        applicationId: fresh.rows[0].id,
+        documentTypeId: idCardTypeId,
+        subject: 'applicant',
+        fileName: 'id.jpg',
+        contentType: 'image/jpeg',
+        sizeBytes: 4096,
+        expiresAt: new Date('2030-01-01'),
+      },
+      officer
+    );
+
+    // The path lookup right after the upload session finished still reports
+    // the wrong size — SharePoint's own indexing catching up with bytes
+    // that already arrived — then reports the real, complete file a moment
+    // later, well within the retry window.
+    drive.files.set(begun.ticket.itemPath, { id: 'graph-lag', size: 2048 });
+    setTimeout(() => {
+      drive.files.set(begun.ticket.itemPath, { id: 'graph-lag', size: 4096 });
+    }, 10);
+
+    const result = await documents.commitUpload(
+      begun.versionId,
+      officer,
+      {},
+      undefined,
+      [20]
+    );
+    expect(result.state).toBe('committed');
 
     drive.files.delete(begun.ticket.itemPath);
   });
@@ -1093,7 +1148,7 @@ describe('S-409: replacing a document keeps the original', () => {
       officer
     );
     await expect(
-      documents.commitUpload(failed.versionId, officer)
+      documents.commitUpload(failed.versionId, officer, {}, undefined, [])
     ).rejects.toThrowError(/not in SharePoint/);
 
     // The verified document is untouched. Downgrading it here would discard a

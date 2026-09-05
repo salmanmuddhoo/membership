@@ -1,8 +1,11 @@
 ---
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 
-const user = Astro.locals.user;
-const email = user?.email ?? '';
+const displayName =
+  Astro.locals.principal?.displayName ||
+  Astro.locals.user?.name ||
+  Astro.locals.user?.email ||
+  '';
 ---
 
 <DashboardLayout title="Dashboard · Al Barakah MCSL" heading="Dashboard">
@@ -12,11 +15,8 @@ const email = user?.email ?? '';
       class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 sm:p-8 dark:border-neutral-800 dark:bg-neutral-950"
     >
       <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-        Welcome to Al Barakah MCSL
+        Assalamoualaikoum{displayName ? `, ${displayName}` : ''}
       </h2>
-      <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
-        {email ? `Signed in as ${email}.` : ''}
-      </p>
     </section>
 
     {/* Placeholder module tiles for future work (not yet implemented) */}

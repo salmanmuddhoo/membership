@@ -452,16 +452,28 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     // delete is not one draft an officer will remember choosing a moment
     // ago. Without JavaScript the button simply deletes: a confirmation is
     // a courtesy, and a control that only works with scripting would not
-    // be.
+    // be. The count is only known at submit time, so this can't use
+    // confirmedSubmit's fixed message — same bypass-and-resubmit shape,
+    // built fresh here instead.
+    let bypassBulkDeleteConfirm = false;
     form.addEventListener('submit', event => {
+      if (bypassBulkDeleteConfirm) {
+        bypassBulkDeleteConfirm = false;
+        return;
+      }
+      event.preventDefault();
       const count = selectedCount();
       const message =
         count === 1
           ? 'Delete 1 draft? This cannot be undone.'
           : `Delete ${count} drafts? This cannot be undone.`;
-      if (!window.confirm(message)) {
-        event.preventDefault();
-      }
+      const submitter =
+        event.submitter instanceof HTMLElement ? event.submitter : undefined;
+      window.appConfirm(message).then(ok => {
+        if (!ok) return;
+        bypassBulkDeleteConfirm = true;
+        form.requestSubmit(submitter);
+      });
     });
   }
 

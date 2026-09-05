@@ -600,14 +600,14 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     window.print();
   });
 
-  document.getElementById('void-form')?.addEventListener('submit', event => {
-    if (
-      !window.confirm(
-        'Void this receipt? The number is never reused and the void is on ' +
-          'the record.'
-      )
-    ) {
-      event.preventDefault();
-    }
-  });
+  const voidForm = document.getElementById(
+    'void-form'
+  ) as HTMLFormElement | null;
+  if (voidForm) {
+    window.confirmedSubmit(
+      voidForm,
+      'Void this receipt? The number is never reused and the void is on ' +
+        'the record.'
+    );
+  }
 </script>

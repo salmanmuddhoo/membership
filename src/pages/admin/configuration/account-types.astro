@@ -369,15 +369,10 @@ const STATUSES = ['active', 'pending', 'inactive', 'dormant'];
   for (const form of document.querySelectorAll<HTMLFormElement>(
     'form[data-confirm-delete-type]'
   )) {
-    form.addEventListener('submit', event => {
-      if (
-        !window.confirm(
-          'Delete this account type? This cannot be undone, and only ' +
-            'works if it has never been opened, applied for, or paid for.'
-        )
-      ) {
-        event.preventDefault();
-      }
-    });
+    window.confirmedSubmit(
+      form,
+      'Delete this account type? This cannot be undone, and only ' +
+        'works if it has never been opened, applied for, or paid for.'
+    );
   }
 </script>

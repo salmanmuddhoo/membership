@@ -120,6 +120,9 @@ const navGroups: NavGroup[] = [
             },
           ]
         : []),
+      ...(can('audit.view')
+        ? [{ label: 'Audit log', href: '/admin/audit-log', icon: 'reports' }]
+        : []),
     ],
   },
   // A group with nothing the person may see is dropped entirely, so the heading
@@ -138,7 +141,10 @@ const currentPath = Astro.url.pathname;
     aria-label="Sidebar"
   >
     <div class="flex h-full flex-col">
-      <div class="flex items-center gap-x-2.5 px-6 py-5">
+      <a
+        href="/dashboard"
+        class="flex items-center gap-x-2.5 rounded-lg px-6 py-5 transition hover:bg-neutral-200 dark:hover:bg-neutral-900"
+      >
         <BrandLogo class="size-9" alt="" />
         <div class="leading-tight">
           <span
@@ -150,7 +156,7 @@ const currentPath = Astro.url.pathname;
             MCSL
           </span>
         </div>
-      </div>
+      </a>
 
       <nav class="flex-1 space-y-4 px-3 py-2">
         {

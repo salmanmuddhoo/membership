@@ -1,0 +1,135 @@
+---
+// One dialog, shared by every page through BaseLayout, replacing the
+// browser's own confirm()/alert() — officer feedback: those read as the
+// browser interrupting, not the app asking. `window.appConfirm`,
+// `window.appAlert` and `window.confirmedSubmit` (declared in env.d.ts) are
+// what the rest of the app calls instead; this is the one dialog element
+// and script backing all three, so there is only ever one on screen.
+---
+
+<dialog
+  id="app-confirm-dialog"
+  class="fixed top-1/2 left-1/2 m-0 w-[90vw] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-neutral-200 bg-white p-6 text-neutral-800 backdrop:bg-neutral-900/50 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100"
+>
+  <p data-confirm-message class="text-sm whitespace-pre-line"></p>
+  <div class="mt-5 flex justify-end gap-2">
+    <button
+      type="button"
+      data-confirm-cancel
+      class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+    >
+      Cancel
+    </button>
+    <button
+      type="button"
+      data-confirm-ok
+      class="rounded-lg border px-3 py-1.5 text-sm font-medium transition"
+    >
+      OK
+    </button>
+  </div>
+</dialog>
+
+<script>
+  const dialog = document.getElementById(
+    'app-confirm-dialog'
+  ) as HTMLDialogElement | null;
+  const messageEl = dialog?.querySelector<HTMLElement>(
+    '[data-confirm-message]'
+  );
+  const cancelBtn = dialog?.querySelector<HTMLButtonElement>(
+    '[data-confirm-cancel]'
+  );
+  const okBtn = dialog?.querySelector<HTMLButtonElement>('[data-confirm-ok]');
+
+  // Every confirm() in this app guards a delete, a void, or a permanent
+  // reset — danger red is the sensible default so callers do not all have
+  // to ask for it. An alert() is only ever reporting something, never
+  // asking, so it gets the neutral treatment and no Cancel button at all.
+  const DANGER_CLASSES = [
+    'border-red-300',
+    'text-red-700',
+    'hover:bg-red-50',
+    'dark:border-red-900',
+    'dark:text-red-300',
+    'dark:hover:bg-red-950',
+  ];
+  const NEUTRAL_CLASSES = [
+    'border-neutral-300',
+    'text-neutral-700',
+    'hover:bg-neutral-100',
+    'dark:border-neutral-600',
+    'dark:text-neutral-200',
+    'dark:hover:bg-neutral-800',
+  ];
+
+  let resolveOpen: ((value: boolean) => void) | null = null;
+
+  function finish(value: boolean) {
+    dialog?.close();
+    const resolve = resolveOpen;
+    resolveOpen = null;
+    resolve?.(value);
+  }
+
+  function open(
+    message: string,
+    options: ConfirmOptions & { alertOnly?: boolean }
+  ): Promise<boolean> {
+    if (!dialog || !messageEl || !cancelBtn || !okBtn) {
+      // No <dialog> support (or the markup failed to render): fall back to
+      // the browser's own prompt rather than an action nobody can confirm.
+      if (options.alertOnly) {
+        window.alert(message);
+        return Promise.resolve(true);
+      }
+      return Promise.resolve(window.confirm(message));
+    }
+    return new Promise(resolve => {
+      resolveOpen = resolve;
+      messageEl.textContent = message;
+      okBtn.textContent = options.okLabel ?? (options.alertOnly ? 'OK' : 'Delete');
+      cancelBtn.textContent = options.cancelLabel ?? 'Cancel';
+      cancelBtn.hidden = Boolean(options.alertOnly);
+      const danger = options.alertOnly ? false : (options.danger ?? true);
+      okBtn.classList.remove(...DANGER_CLASSES, ...NEUTRAL_CLASSES);
+      okBtn.classList.add(...(danger ? DANGER_CLASSES : NEUTRAL_CLASSES));
+      dialog.showModal();
+    });
+  }
+
+  okBtn?.addEventListener('click', () => finish(true));
+  cancelBtn?.addEventListener('click', () => finish(false));
+  // Esc closes a <dialog> on its own, firing 'cancel' first — treated the
+  // same as clicking Cancel, not as though nothing happened.
+  dialog?.addEventListener('cancel', () => finish(false));
+
+  window.appConfirm = (message, options = {}) => open(message, options);
+  window.appAlert = (message, options = {}) =>
+    open(message, { ...options, alertOnly: true }).then(() => undefined);
+
+  // The one shape every confirm() in this app actually took: ask, then
+  // either let the form's own submit through or drop it entirely. A native
+  // confirm() could do that synchronously inside the submit handler; a
+  // dialog cannot, so the handler prevents the submit, asks, and on Yes
+  // re-fires it — through the same submitter (a named button's value, e.g.
+  // intent=delete, has to survive the retry) with a one-shot bypass flag so
+  // that resubmission does not just ask again.
+  window.confirmedSubmit = (form, message, options = {}) => {
+    let bypass = false;
+    form.addEventListener('submit', event => {
+      if (bypass) {
+        bypass = false;
+        return;
+      }
+      event.preventDefault();
+      const submitter =
+        event.submitter instanceof HTMLElement ? event.submitter : undefined;
+      window.appConfirm(message, options).then(ok => {
+        if (!ok) return;
+        bypass = true;
+        form.requestSubmit(submitter);
+      });
+    });
+  };
+</script>

@@ -660,11 +660,22 @@ export async function beginUpload(
  * and how big it is; only then does the version commit and the checklist item
  * stop reading Missing.
  */
+// Officer feedback: right after a chunked upload session finishes, a
+// path-based lookup against Graph occasionally still 404s or reports a size
+// short of the whole file for a moment — SharePoint's own indexing catching
+// up with bytes that are already durably written, not evidence the upload
+// actually failed. Retried a few times, briefly, before commitUpload
+// concludes it did. Overridable so a test exercising the genuine-failure
+// path is not stuck waiting through it for nothing.
+const COMMIT_UPLOAD_RETRY_DELAYS_MS = [250, 500, 1000];
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
 export async function commitUpload(
   versionId: string,
   actor: Actor,
   options: { checksumSha256?: string } = {},
-  config?: GraphConfig
+  config?: GraphConfig,
+  retryDelaysMs: number[] = COMMIT_UPLOAD_RETRY_DELAYS_MS
 ): Promise<{ state: 'committed' }> {
   const version = await query<{
     id: string;
@@ -722,7 +733,17 @@ export async function commitUpload(
     );
   }
 
-  const item = await getItemByPath(row.sharepoint_path, config);
+  let item = await getItemByPath(row.sharepoint_path, config);
+  for (
+    let attempt = 0;
+    (!item || Number(item.size) !== Number(row.size_bytes)) &&
+    attempt < retryDelaysMs.length;
+    attempt++
+  ) {
+    await sleep(retryDelaysMs[attempt]);
+    item = await getItemByPath(row.sharepoint_path, config);
+  }
+
   if (!item) {
     await markVersionFailed(versionId, 'SharePoint has no file at that path.');
     throw new DocumentError(
