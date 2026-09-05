@@ -235,6 +235,7 @@ describe('an application exists once a detail does, and not before', () => {
     // officer carries on typing into is the same form.
     expect(application!.parties.map(p => p.subject).sort()).toEqual([
       'applicant',
+      'employment',
       'nominee',
     ]);
   });

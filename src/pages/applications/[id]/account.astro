@@ -1175,13 +1175,10 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
   for (const deleteForm of document.querySelectorAll<HTMLFormElement>(
     'form[data-confirm-delete-document]'
   )) {
-    deleteForm.addEventListener('submit', event => {
-      if (
-        !window.confirm('Remove this document? You can file it again after.')
-      ) {
-        event.preventDefault();
-      }
-    });
+    window.confirmedSubmit(
+      deleteForm,
+      'Remove this document? You can file it again after.'
+    );
   }
 
   // Officer feedback: this used to be window.open(url), which handed the
@@ -1269,7 +1266,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           }
           viewerDialog.showModal();
         } catch (error) {
-          window.alert(
+          await window.appAlert(
             error instanceof Error
               ? error.message
               : 'The file could not be opened.'

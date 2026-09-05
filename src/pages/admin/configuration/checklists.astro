@@ -344,15 +344,10 @@ const SUBJECT_LABELS: Record<string, string> = {
   for (const form of document.querySelectorAll<HTMLFormElement>(
     'form[data-confirm-delete-checklist]'
   )) {
-    form.addEventListener('submit', event => {
-      if (
-        !window.confirm(
-          'Delete this checklist and everything on it? This cannot be ' +
-            'undone, and only works if nothing still uses it.'
-        )
-      ) {
-        event.preventDefault();
-      }
-    });
+    window.confirmedSubmit(
+      form,
+      'Delete this checklist and everything on it? This cannot be ' +
+        'undone, and only works if nothing still uses it.'
+    );
   }
 </script>

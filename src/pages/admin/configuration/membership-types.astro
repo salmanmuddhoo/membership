@@ -101,6 +101,7 @@ const SUBJECT_LABELS: Record<string, string> = {
   nominee: 'Nominee',
   guardian: 'Guardian',
   beneficiary: 'Takaful beneficiary',
+  employment: 'Employment Details',
 };
 ---
 
@@ -294,68 +295,72 @@ const SUBJECT_LABELS: Record<string, string> = {
 
             <form method="post" class="mt-4 space-y-4">
               <input type="hidden" name="typeId" value={type.id} />
-              {['applicant', 'nominee', 'guardian', 'beneficiary'].map(
-                subject => {
-                  const fields = type.fields.filter(f => f.subject === subject);
-                  if (fields.length === 0) return null;
-                  return (
-                    <fieldset>
-                      <legend class="mb-2 text-sm font-medium text-neutral-700 dark:text-neutral-200">
-                        {SUBJECT_LABELS[subject]}
-                      </legend>
-                      <div class="overflow-x-auto">
-                        <table class="w-full text-sm">
-                          <thead>
-                            <tr class="text-left text-xs text-neutral-500 dark:text-neutral-400">
-                              <th class="py-1 pr-4 font-medium">Field</th>
-                              <th class="py-1 pr-4 font-medium">Type</th>
-                              <th class="py-1 pr-4 font-medium">Shown</th>
-                              <th class="py-1 font-medium">Mandatory</th>
+              {[
+                'applicant',
+                'nominee',
+                'guardian',
+                'beneficiary',
+                'employment',
+              ].map(subject => {
+                const fields = type.fields.filter(f => f.subject === subject);
+                if (fields.length === 0) return null;
+                return (
+                  <fieldset>
+                    <legend class="mb-2 text-sm font-medium text-neutral-700 dark:text-neutral-200">
+                      {SUBJECT_LABELS[subject]}
+                    </legend>
+                    <div class="overflow-x-auto">
+                      <table class="w-full text-sm">
+                        <thead>
+                          <tr class="text-left text-xs text-neutral-500 dark:text-neutral-400">
+                            <th class="py-1 pr-4 font-medium">Field</th>
+                            <th class="py-1 pr-4 font-medium">Type</th>
+                            <th class="py-1 pr-4 font-medium">Shown</th>
+                            <th class="py-1 font-medium">Mandatory</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {fields.map(field => (
+                            <tr class="border-t border-neutral-200 dark:border-neutral-800">
+                              <td class="py-1.5 pr-4 text-neutral-700 dark:text-neutral-200">
+                                {field.label}
+                                <input
+                                  type="hidden"
+                                  name="fieldId"
+                                  value={field.id}
+                                />
+                              </td>
+                              <td class="py-1.5 pr-4 text-xs text-neutral-400 dark:text-neutral-500">
+                                {field.dataType}
+                              </td>
+                              <td class="py-1.5 pr-4">
+                                <input
+                                  type="checkbox"
+                                  name="visible"
+                                  value={field.id}
+                                  checked={field.isVisible}
+                                  disabled={!canManage}
+                                  class="text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600"
+                                />
+                              </td>
+                              <td class="py-1.5">
+                                <input
+                                  type="checkbox"
+                                  name="mandatory"
+                                  value={field.id}
+                                  checked={field.isMandatory}
+                                  disabled={!canManage}
+                                  class="text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600"
+                                />
+                              </td>
                             </tr>
-                          </thead>
-                          <tbody>
-                            {fields.map(field => (
-                              <tr class="border-t border-neutral-200 dark:border-neutral-800">
-                                <td class="py-1.5 pr-4 text-neutral-700 dark:text-neutral-200">
-                                  {field.label}
-                                  <input
-                                    type="hidden"
-                                    name="fieldId"
-                                    value={field.id}
-                                  />
-                                </td>
-                                <td class="py-1.5 pr-4 text-xs text-neutral-400 dark:text-neutral-500">
-                                  {field.dataType}
-                                </td>
-                                <td class="py-1.5 pr-4">
-                                  <input
-                                    type="checkbox"
-                                    name="visible"
-                                    value={field.id}
-                                    checked={field.isVisible}
-                                    disabled={!canManage}
-                                    class="text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600"
-                                  />
-                                </td>
-                                <td class="py-1.5">
-                                  <input
-                                    type="checkbox"
-                                    name="mandatory"
-                                    value={field.id}
-                                    checked={field.isMandatory}
-                                    disabled={!canManage}
-                                    class="text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600"
-                                  />
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </fieldset>
-                  );
-                }
-              )}
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </fieldset>
+                );
+              })}
 
               {canManage && (
                 <button

@@ -34,6 +34,30 @@ declare module 'preline/plugins/theme-switch-non-auto' {
   export { default } from 'preline/plugins/theme-switch';
 }
 
+// ConfirmDialog.astro's replacement for window.confirm()/alert() — one
+// dialog shared across the app instead of the browser's own popup.
+interface ConfirmOptions {
+  okLabel?: string;
+  cancelLabel?: string;
+  // Red OK button. Defaults to true for appConfirm/confirmedSubmit (every
+  // caller so far is guarding a delete, a void, or a permanent reset) and
+  // is ignored by appAlert, which never shows Cancel to begin with.
+  danger?: boolean;
+}
+
+interface Window {
+  appConfirm(message: string, options?: ConfirmOptions): Promise<boolean>;
+  appAlert(
+    message: string,
+    options?: Pick<ConfirmOptions, 'okLabel'>
+  ): Promise<void>;
+  confirmedSubmit(
+    form: HTMLFormElement,
+    message: string,
+    options?: ConfirmOptions
+  ): void;
+}
+
 declare namespace App {
   interface Locals {
     // Populated by the auth middleware from the session cookie.

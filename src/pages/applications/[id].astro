@@ -413,10 +413,6 @@ if (Astro.request.method === 'POST') {
 isEditable =
   application!.status === 'draft' || application!.status === 'returned';
 
-// A returned application is editable in exactly the same way as a draft but
-// has been through the Secretary, and that history is not anyone's to discard.
-const isDeletableDraft = canCapture && application!.status === 'draft';
-
 // Read for everyone who can reach this page, not only those who may see
 // scans: the progress timeline reports how many documents are outstanding
 // regardless of document.view, and that count is not itself sensitive. The
@@ -586,6 +582,17 @@ const livePayment: Payment | null =
   payments.find(p => p.kind === 'payment' && !p.voidedAt) ?? null;
 const refunds = payments.filter(p => p.kind === 'refund' && !p.voidedAt);
 
+// A returned application is editable in exactly the same way as a draft but
+// has been through the Secretary, and that history is not anyone's to
+// discard. deleteDraftApplication refuses one a receipt was ever issued
+// against (voided or not — the applicant is holding it either way)
+// regardless of this check, but offering Delete only for it to fail is its
+// own kind of broken control, so the option itself is withheld here too.
+const isDeletableDraft =
+  canCapture &&
+  application!.status === 'draft' &&
+  !payments.some(p => p.kind === 'payment');
+
 // Read above alongside everything else; only shown while nothing has been
 // taken yet — once a payment stands, the figure has been settled.
 const due: AmountDue | null = livePayment ? null : (dueRead?.due ?? null);
@@ -604,13 +611,15 @@ const initialTotal = due
   ? fromCents(sumCents(due.components.map(c => c.amount)))
   : '0';
 
+// The only evidence a signature exists is the signed form coming back.
+const signedFormFiled = checklist.some(
+  e => e.documentCode === 'signed_form' && e.state !== 'missing'
+);
+
 const timeline = applicationTimeline({
   status: application!.status,
   mandatoryFieldsOutstanding: blocking.length,
-  // The only evidence a signature exists is the signed form coming back.
-  signedFormFiled: checklist.some(
-    e => e.documentCode === 'signed_form' && e.state !== 'missing'
-  ),
+  signedFormFiled,
   requiredDocumentsOutstanding: requiredDocumentsMissing,
   paymentRecorded: livePayment !== null,
   paymentReceiptNo: livePayment?.receiptNo ?? null,
@@ -626,8 +635,15 @@ const timeline = applicationTimeline({
 // disagree about what is unlocked.
 //
 // Step 2 (print and sign) has no section of its own here — it already has a
-// page, `/applications/<id>/print`, and a step whose "done" signal is a
-// document filed in step 3 cannot also gate entry to step 3.
+// page, `/applications/<id>/print` — but it still has a place in this order:
+// officer feedback, a draft with capture finished but not yet signed
+// (reopened from the Applications list, which links here with no `?step=`)
+// landed straight on Documents, having skipped print and signing entirely.
+// `signedFormFiled` is the same "has this actually been signed" evidence
+// the timeline above already reads, not a new gate of its own — using
+// anything less specific (e.g. any document at all) would send an officer
+// who filed an ID card first, before ever printing the form, straight past
+// print same as before.
 const CAPTURE_STEP = 1;
 const PRINT_STEP = 2;
 const DOCUMENTS_STEP = 3;
@@ -638,11 +654,13 @@ const furthestStep = !isEditable
   ? SUBMIT_STEP
   : blocking.length > 0
     ? CAPTURE_STEP
-    : requiredDocumentsMissing > 0
-      ? DOCUMENTS_STEP
-      : livePayment === null
-        ? PAYMENT_STEP
-        : SUBMIT_STEP;
+    : !signedFormFiled
+      ? PRINT_STEP
+      : requiredDocumentsMissing > 0
+        ? DOCUMENTS_STEP
+        : livePayment === null
+          ? PAYMENT_STEP
+          : SUBMIT_STEP;
 
 // Once submitted this application is read entirely, not stepped through — the
 // Secretary and President need the whole picture, and only an editable
@@ -683,6 +701,7 @@ const SUBJECT_LABELS: Record<string, string> = {
   nominee: 'Nominee',
   guardian: 'Parent / Guardian',
   beneficiary: 'Takaful beneficiary',
+  employment: 'Employment Details',
 };
 
 const dateFormat = new Intl.DateTimeFormat('en-GB', {
@@ -1897,18 +1916,16 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
   // Deleting a draft cannot be undone, so ask. Without JavaScript the button
   // simply deletes: a confirmation is a courtesy, and a control that only
   // works with scripting would not be.
-  document
-    .querySelector<HTMLFormElement>('form[data-confirm-delete]')
-    ?.addEventListener('submit', event => {
-      if (
-        !window.confirm(
-          'Delete this draft? Everything captured on it, and any documents ' +
-            'filed against it, will be removed. This cannot be undone.'
-        )
-      ) {
-        event.preventDefault();
-      }
-    });
+  const deleteDraftForm = document.querySelector<HTMLFormElement>(
+    'form[data-confirm-delete]'
+  );
+  if (deleteDraftForm) {
+    window.confirmedSubmit(
+      deleteDraftForm,
+      'Delete this draft? Everything captured on it, and any documents ' +
+        'filed against it, will be removed. This cannot be undone.'
+    );
+  }
 
   // Removing a filed document is reversible in the sense that it can always
   // be filed again — but the officer does not know that mid-click, so this
@@ -1916,13 +1933,10 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
   for (const deleteForm of document.querySelectorAll<HTMLFormElement>(
     'form[data-confirm-delete-document]'
   )) {
-    deleteForm.addEventListener('submit', event => {
-      if (
-        !window.confirm('Remove this document? You can file it again after.')
-      ) {
-        event.preventDefault();
-      }
-    });
+    window.confirmedSubmit(
+      deleteForm,
+      'Remove this document? You can file it again after.'
+    );
   }
 
   // S-403 · Viewing a filed document, in the app itself rather than as a
@@ -2022,7 +2036,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           }
           viewerDialog.showModal();
         } catch (error) {
-          window.alert(
+          await window.appAlert(
             error instanceof Error
               ? error.message
               : 'The file could not be opened.'

@@ -169,6 +169,110 @@ describe('recordAudit', () => {
   });
 });
 
+describe('listAuditEvents: a filterable page over the trail, not a table dump', () => {
+  it('filters by actor, action, record type and ID, and resolves the actor name', async () => {
+    const { recordAudit, listAuditEvents } = await load();
+    const { query } = await import('../db/pool');
+
+    const user = await query<{ id: string }>(
+      `insert into app_user (entra_subject, email, display_name)
+       values ('sub-secretary', 'secretary@albarakah.mu', 'Secretary')
+       returning id`
+    );
+
+    await recordAudit({
+      actorUserId: user.rows[0].id,
+      actorDescription: 'secretary@albarakah.mu',
+      action: 'document.verified',
+      entityType: 'document',
+      entityId: 'doc-list-1',
+    });
+    await recordAudit({
+      actorDescription: 'scheduled-job:dormancy-sweep',
+      action: 'member.marked_dormant',
+      entityType: 'member',
+      entityId: 'member-list-1',
+    });
+
+    const byActor = await listAuditEvents({ actor: 'secretary' });
+    expect(byActor.events.map(e => e.entityId)).toContain('doc-list-1');
+    expect(byActor.events.map(e => e.entityId)).not.toContain('member-list-1');
+    expect(
+      byActor.events.find(e => e.entityId === 'doc-list-1')?.actorName
+    ).toBe('Secretary');
+
+    // No live account — actor_description carries the record instead.
+    const bySystemActor = await listAuditEvents({ actor: 'dormancy-sweep' });
+    expect(
+      bySystemActor.events.find(e => e.entityId === 'member-list-1')?.actorName
+    ).toBe('scheduled-job:dormancy-sweep');
+
+    const byAction = await listAuditEvents({ action: 'document.verified' });
+    expect(byAction.events.every(e => e.action === 'document.verified')).toBe(
+      true
+    );
+
+    const byEntity = await listAuditEvents({
+      entityType: 'member',
+      entityId: 'member-list-1',
+    });
+    expect(byEntity.events).toHaveLength(1);
+    expect(byEntity.events[0].action).toBe('member.marked_dormant');
+  });
+
+  it('filters by an occurred_at range, and reports a page against the whole match', async () => {
+    const { listAuditEvents } = await load();
+    const { query } = await import('../db/pool');
+
+    // Inserted directly rather than through recordAudit, which always
+    // stamps now() — a range filter needs dates it actually controls.
+    await query(
+      `insert into audit_event
+         (actor_description, action, entity_type, entity_id, occurred_at)
+       values
+         ('range-test', 'range.event', 'range', 'range-old', '2020-01-01T00:00:00Z'),
+         ('range-test', 'range.event', 'range', 'range-mid',  '2021-06-15T12:00:00Z'),
+         ('range-test', 'range.event', 'range', 'range-new', '2023-01-01T00:00:00Z')`
+    );
+
+    const inRange = await listAuditEvents({
+      entityType: 'range',
+      from: new Date('2021-01-01T00:00:00Z'),
+      to: new Date('2022-01-01T00:00:00Z'),
+    });
+    expect(inRange.events.map(e => e.entityId)).toEqual(['range-mid']);
+    expect(inRange.total).toBe(1);
+
+    const wholeMatch = await listAuditEvents({
+      entityType: 'range',
+      limit: 2,
+    });
+    // The page is capped at 2, but the total still counts every match —
+    // count(*) over () is evaluated before the LIMIT, not after it.
+    expect(wholeMatch.events).toHaveLength(2);
+    expect(wholeMatch.total).toBe(3);
+    // Newest first.
+    expect(wholeMatch.events[0].entityId).toBe('range-new');
+  });
+});
+
+describe('distinctAuditActions and distinctAuditEntityTypes', () => {
+  it('list what is actually on file, not a maintained list that can drift', async () => {
+    const { recordAudit, distinctAuditActions, distinctAuditEntityTypes } =
+      await load();
+
+    await recordAudit({
+      actorDescription: 'distinct-test',
+      action: 'distinct.marker_action',
+      entityType: 'distinct_marker_type',
+      entityId: '1',
+    });
+
+    expect(await distinctAuditActions()).toContain('distinct.marker_action');
+    expect(await distinctAuditEntityTypes()).toContain('distinct_marker_type');
+  });
+});
+
 describe('recordAuditQuietly', () => {
   it('does not throw when the write fails, but logs loudly', async () => {
     const logged = vi.spyOn(console, 'error').mockImplementation(() => {});

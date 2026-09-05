@@ -1,5 +1,6 @@
 ---
 import Meta from '@components/Meta.astro';
+import ConfirmDialog from '@components/ConfirmDialog.astro';
 import '@styles/global.css';
 
 interface Props {
@@ -41,6 +42,7 @@ const {
     class={`flex min-h-screen flex-col bg-neutral-200 text-neutral-800 selection:bg-mint-300 selection:text-neutral-700 dark:bg-neutral-900 dark:text-neutral-200 ${bodyClass}`}
   >
     <slot />
+    <ConfirmDialog />
     <script>
       // Only the three Preline components this layout actually uses — the
       // user-menu dropdown, the off-canvas sidebar and the theme toggle —

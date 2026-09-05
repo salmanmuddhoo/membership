@@ -129,6 +129,7 @@ const SUBJECT_LABELS: Record<string, string> = {
   nominee: 'Nominee',
   guardian: 'Parent / Guardian',
   beneficiary: 'Takaful beneficiary',
+  employment: 'Employment Details',
 };
 const applicationId = (member ?? customer)!.applicationId;
 const sourceApplication = applicationId
@@ -575,7 +576,7 @@ const pageTitle = member ? member.memberNo : name;
           }
           viewerDialog.showModal();
         } catch (error) {
-          window.alert(
+          await window.appAlert(
             error instanceof Error
               ? error.message
               : 'The file could not be opened.'
