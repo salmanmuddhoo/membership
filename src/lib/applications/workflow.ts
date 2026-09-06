@@ -31,6 +31,7 @@ import {
   type Actor,
   type Application,
   type MissingField,
+  RECEIVED_STATUS,
 } from './capture';
 
 export const WORKFLOW_CODE = 'membership_application_approval';
@@ -140,7 +141,12 @@ async function assertMayAct(
     );
   }
 
-  if (application.status !== step.fromStatus) {
+  // 'received' — submitted from the member app, with the branch (migration
+  // 0039) — is a draft as far as the capture step is concerned: the officer
+  // completes the signed form and payment and submits it exactly as one.
+  const actsOnReceived =
+    step.code === 'capture' && application.status === RECEIVED_STATUS;
+  if (application.status !== step.fromStatus && !actsOnReceived) {
     throw new ApplicationError(
       `This application is ${application.status}; that step acts on ` +
         `${step.fromStatus}.`,
@@ -922,10 +928,14 @@ export async function pendingApplicationIds(
   const ids = new Set<string>();
 
   if (principal.permissions.has('application.submit')) {
+    // A 'received' application (submitted from the member app) is nobody's
+    // draft: any officer who can submit may take it up, so it is flagged
+    // for all of them.
     const returned = await query<{ id: string }>(
       `select id from membership_application
-        where status = 'returned' and captured_by = $1`,
-      [principal.userId]
+        where (status = 'returned' and captured_by = $1)
+           or status = $2`,
+      [principal.userId, RECEIVED_STATUS]
     );
     for (const row of returned.rows) ids.add(row.id);
   }

@@ -370,6 +370,20 @@ anticipates.
 but no enabled step produces it: it is the state for a Secretary _claim_
 action, which the walking skeleton does not need.
 
+## Received online: an application submitted from the member app
+
+The member mobile application (`docs/member-app.md`) submits into
+`received`, not `new`: the officer's own submit requires the signed form
+filed and the payment recorded, and a phone can do neither. A `received`
+application is the branch's — editable exactly as a `returned` one is
+(`isEditableStatus` in `capture.ts`, which the capture pages, the document
+guards and the `capture` step in `assertMayAct` all read), flagged for
+everyone who may submit, and worked the usual way: documents checked, form
+printed and signed, payment taken, submit. From `new` on it is
+indistinguishable from one an officer captured, except that `captured_by`
+is the `Member app` system user and `applicant_mobile` carries the number
+the applicant verified.
+
 ## Regional oversight actually gates the chain, once enabled (S-611)
 
 A gate sitting in the chain was config an administrator could see since M2

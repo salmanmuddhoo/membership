@@ -45,9 +45,21 @@ have no account" from "you lack this permission" would tell an unknown caller
 whether an account exists; the distinction is recorded in the audit trail
 instead.
 
+## Two callers, two wrappers
+
+Staff reach `/api/v1` with the session cookie and every endpoint carries a
+staff permission. The member mobile application reaches `/api/v1/member`
+with a bearer token and has no permissions at all — every handler there is
+scoped to the caller's own record by construction. The second surface is
+built with `defineMemberEndpoint` (`lib/member/endpoint.ts`): same
+descriptor, same envelope, same rate limiter and log line, a different
+caller. See `docs/member-app.md`. The middleware never resolves a cookie
+under `/api/v1/member/`, and `defineEndpoint` never resolves a bearer
+token, so neither kind of credential reaches the other's endpoints.
+
 ## Defining an endpoint
 
-There is one way, and it is not optional:
+There is one way for a staff endpoint, and it is not optional:
 
 ```ts
 const endpoint = defineEndpoint(
@@ -109,7 +121,9 @@ cannot both read the same count and both decide they are under the limit.
 | `RATE_LIMIT_DISABLED`       | —       | `true` switches it off, for local work |
 
 The defaults are generous: this slows abuse, it does not shape normal use. An
-officer working quickly through a list should never meet it.
+officer working quickly through a list should never meet it. A caller may
+name a tighter ceiling and window for one subject — the member app's public
+endpoints do, per NIC, per number and per address (`docs/member-app.md`).
 
 **It fails open.** If the counter is unavailable the request proceeds and the
 failure is logged loudly. The limiter is not the access control — a request

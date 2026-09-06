@@ -36,8 +36,18 @@ export interface Actor {
 export const DRAFT_STATUS = 'draft';
 
 // Which statuses regional staff may still edit. Anything else has left their
-// hands (S-304).
-const EDITABLE_STATUSES = new Set([DRAFT_STATUS, 'returned']);
+// hands (S-304). 'received' is an application submitted from the member app
+// (migration 0039, docs/member-app.md): with the branch, not yet in the
+// chain, and worked exactly as a returned one is — documents checked, form
+// printed and signed, payment taken, then submitted.
+export const RECEIVED_STATUS = 'received';
+const EDITABLE_STATUSES = new Set([DRAFT_STATUS, 'returned', RECEIVED_STATUS]);
+
+// Whether an officer may still change an application — the one test the
+// capture pages, the document guards and the workflow all agree on.
+export function isEditableStatus(status: string): boolean {
+  return EDITABLE_STATUSES.has(status);
+}
 
 export interface PartyValues {
   subject: FieldSubject;

@@ -1,4 +1,5 @@
 ---
+import { isEditableStatus } from '@lib/applications/capture';
 import ApplicationTimeline from '@components/ApplicationTimeline.astro';
 import CaptureFields from '@components/CaptureFields.astro';
 import DashboardLayout from '@layouts/DashboardLayout.astro';
@@ -147,8 +148,7 @@ let paymentFormValues: {
   sourceOfFundFormConfirmed: boolean;
 } | null = null;
 
-let isEditable =
-  application.status === 'draft' || application.status === 'returned';
+let isEditable = isEditableStatus(application.status);
 
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
@@ -410,8 +410,7 @@ if (Astro.request.method === 'POST') {
 // Recomputed after the POST: a submit that just succeeded leaves an
 // application that is no longer editable, and the page below is describing it
 // as it is now, not as it was when the request arrived.
-isEditable =
-  application!.status === 'draft' || application!.status === 'returned';
+isEditable = isEditableStatus(application!.status);
 
 // Read for everyone who can reach this page, not only those who may see
 // scans: the progress timeline reports how many documents are outstanding

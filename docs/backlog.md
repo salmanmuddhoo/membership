@@ -2581,6 +2581,41 @@ Every user story named in FRD Section 22 is covered.
 | PAY-US-001    | S-502               |
 | DEVSEC-US-001 | M0 — delivered      |
 
+# Phase 4 — Member mobile app (AD-03) ✅ first slice
+
+**The member surface exists.** `/api/v1/member` (`docs/member-app.md`),
+built with `defineMemberEndpoint` on the same framework as the staff API
+— same envelope, rate limiter, log line and audit trail — and reached
+with a bearer token the middleware never confuses with the staff cookie.
+
+**Identity, in four parts kept apart.** NIC + AB Number _identify_ one
+active member (`link-member`: exact pair, active only, one answer whichever
+half was wrong, never the staff `existing-member-search`); a one-time code
+to the mobile on that member's record _verifies_ the person (hashed,
+five attempts, five minutes, one use); the session that results
+_authenticates_ every later request (JWT access token + rotated refresh
+token, `member_session`); and the _link_ to the member — `member_id` — is
+resolved server-side on every request and never sent to the phone. NIC +
+AB Number alone open nothing. A new applicant verifies a mobile instead
+(`sign-up`) and gets an applicant session that never resolves to a member,
+whoever the number belongs to. Migration 0039.
+
+**Applications from the phone.** Captured by the `Member app` system user
+(no role, unclaimable subject), tied to the applicant's verified mobile,
+saved as they go through `saveDraft`, documents through the same brokered
+upload, checked at submit by `problemsBlockingSubmission` plus the
+checklist — and landing on **`received`**, a new status: the branch's to
+complete (signed form, payment) and submit into the chain as a draft.
+`isEditableStatus` is now the one test the capture pages, document guards
+and workflow read.
+
+**A member's own capture of their details** arrives as a
+`member_details_request` for staff to verify. **Not built yet:** the staff
+side that applies or declines one — the Members page queue, and the write
+to an approved application's parties. Also still open: a balance beyond
+"opening payment less refund" (needs a ledger), a member-facing document
+viewer, and push or WhatsApp notification on a status change (M9).
+
 # Open values that later stories depend on
 
 Each is absorbed by configuration, so none blocks the start of development.

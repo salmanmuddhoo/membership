@@ -37,18 +37,20 @@ to the browser). The only browser-exposed one is `PUBLIC_APP_ENV` (a label).
 Provide the OIDC endpoints **either** as `ENTRA_METADATA_URL` **or** as
 `ENTRA_AUTHORITY` + `ENTRA_TENANT_ID`.
 
-| Variable                         | Description                                                                                                                |
-| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `ENTRA_METADATA_URL`             | Exact "OpenID Connect metadata document" URL (App reg → Endpoints)                                                         |
-| `ENTRA_AUTHORITY`                | `https://<subdomain>.ciamlogin.com/` — `<subdomain>` is the onmicrosoft prefix (a single label), **not** a business domain |
-| `ENTRA_TENANT_ID`                | Directory (tenant) ID                                                                                                      |
-| `ENTRA_CLIENT_ID`                | App registration (client) ID                                                                                               |
-| `ENTRA_CLIENT_SECRET`            | App registration client secret                                                                                             |
-| `ENTRA_REDIRECT_URI`             | `<app-url>/auth/callback`                                                                                                  |
-| `ENTRA_POST_LOGOUT_REDIRECT_URI` | `<app-url>/login`                                                                                                          |
-| `ENTRA_SCOPES`                   | `openid profile email offline_access` (default)                                                                            |
-| `AUTH_SESSION_SECRET`            | Random string used to sign the session cookie                                                                              |
-| `PUBLIC_APP_ENV`                 | Optional UI label; set `test` on the test env to show a "TEST" badge                                                       |
+| Variable                         | Description                                                                                                                  |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `ENTRA_METADATA_URL`             | Exact "OpenID Connect metadata document" URL (App reg → Endpoints)                                                           |
+| `ENTRA_AUTHORITY`                | `https://<subdomain>.ciamlogin.com/` — `<subdomain>` is the onmicrosoft prefix (a single label), **not** a business domain   |
+| `ENTRA_TENANT_ID`                | Directory (tenant) ID                                                                                                        |
+| `ENTRA_CLIENT_ID`                | App registration (client) ID                                                                                                 |
+| `ENTRA_CLIENT_SECRET`            | App registration client secret                                                                                               |
+| `ENTRA_REDIRECT_URI`             | `<app-url>/auth/callback`                                                                                                    |
+| `ENTRA_POST_LOGOUT_REDIRECT_URI` | `<app-url>/login`                                                                                                            |
+| `ENTRA_SCOPES`                   | `openid profile email offline_access` (default)                                                                              |
+| `AUTH_SESSION_SECRET`            | Random string used to sign the session cookie                                                                                |
+| `PUBLIC_APP_ENV`                 | Optional UI label; set `test` on the test env to show a "TEST" badge                                                         |
+| `MEMBER_SESSION_SECRET`          | Signs the member app's access tokens (`docs/member-app.md`); at least 32 characters, never the same as `AUTH_SESSION_SECRET` |
+| `MEMBER_OTP_DELIVERY`            | How one-time codes are sent: `http` to `MEMBER_OTP_WEBHOOK_URL`, or `log` on a non-production environment                    |
 
 ### Environments (test vs production)
 
@@ -153,6 +155,9 @@ read at runtime, they take effect on the next deploy.
   staff accounts.
 - [`docs/api.md`](docs/api.md) — the `/api/v1` contract, how an endpoint is
   defined, and how the OpenAPI document stays current.
+- [`docs/member-app.md`](docs/member-app.md) — the member mobile app's
+  surface: NIC + AB Number linking, one-time codes, sessions, applications
+  submitted from the phone.
 - [`docs/documents.md`](docs/documents.md) — SharePoint as the document
   repository, how a large upload is brokered, and the M365 tenant setup.
 - [`docs/jobs.md`](docs/jobs.md) — scheduled and long-running jobs on Azure

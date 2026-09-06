@@ -8,6 +8,7 @@
 // A field with no value prints as a ruled blank rather than being left out.
 // The applicant is sitting there with a pen: a form that silently omits what
 // was not captured gives them nothing to complete.
+import { isEditableStatus } from '@lib/applications/capture';
 import BaseLayout from '@layouts/BaseLayout.astro';
 import { loadApplication, visibleFields } from '@lib/applications/capture';
 import { listMembershipTypes, type FieldSubject } from '@lib/config/reference';
@@ -90,8 +91,7 @@ const SIGNATORY_DETAIL: Partial<Record<(typeof SIGNATURES)[number], string>> = {
 // while the application is still the officer's to work on; once submitted,
 // this is just the print view again; whoever opens it, the printed page
 // itself carries no wizard chrome.
-const isEditable =
-  application.status === 'draft' || application.status === 'returned';
+const isEditable = isEditableStatus(application.status);
 
 // The rest of the app allows pinch-zoom; this page turns it off. The
 // signature box below is `position: fixed` to the real viewport, and mobile

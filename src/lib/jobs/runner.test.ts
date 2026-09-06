@@ -67,6 +67,10 @@ async function load() {
   };
 }
 
+// Every app_user row the sweep will see: the 250 seeded below plus whatever
+// the migrations themselves create.
+let totalUsers = 250;
+
 const saved = { ...process.env };
 afterEach(() => {
   process.env = { ...saved };
@@ -87,6 +91,10 @@ beforeAll(async () => {
     appUrl,
     `insert into app_user (email, display_name) values ${values}`
   );
+  // The migrations seed users of their own (the member-app system user,
+  // migration 0039), and the sweep walks them too.
+  const counted = await run(appUrl, 'select count(*)::int as n from app_user');
+  totalUsers = counted.rows[0].n;
 }, 60_000);
 
 afterAll(async () => {
@@ -205,16 +213,16 @@ describe('runJob: resumes rather than restarts', () => {
 
     expect(second.status).toBe('succeeded');
     expect(second.attempt).toBe(2);
-    // 250 users total, 200 done before the stop.
-    expect(second.processedCount).toBe(250);
+    // Every user, 200 done before the stop.
+    expect(second.processedCount).toBe(totalUsers);
 
     // The point: the second attempt did NOT redo the first 200.
-    expect(seenSecond).toHaveLength(50);
+    expect(seenSecond).toHaveLength(totalUsers - 200);
     const overlap = seenSecond.filter(id => seenFirst.includes(id));
     expect(overlap).toHaveLength(0);
 
     // And no member was missed: the two attempts together cover everyone once.
-    expect(new Set([...seenFirst, ...seenSecond]).size).toBe(250);
+    expect(new Set([...seenFirst, ...seenSecond]).size).toBe(totalUsers);
   }, 30_000);
 });
 
@@ -274,10 +282,10 @@ describe('chunked sweep', () => {
         }),
     });
 
-    expect(result.processedCount).toBe(250);
-    expect(seen).toHaveLength(250);
+    expect(result.processedCount).toBe(totalUsers);
+    expect(seen).toHaveLength(totalUsers);
     // Keyset pagination, so no row is repeated even though the set is large.
-    expect(new Set(seen).size).toBe(250);
+    expect(new Set(seen).size).toBe(totalUsers);
   }, 30_000);
 
   it('is not disturbed by rows inserted while it runs', async () => {

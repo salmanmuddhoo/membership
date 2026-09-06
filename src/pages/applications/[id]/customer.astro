@@ -12,6 +12,7 @@
 // saveDraft/problemsBlockingSubmission already widened for this kind (S-614
 // phase 2), workflow.ts unchanged since S-612 — rather than duplicating
 // either.
+import { isEditableStatus } from '@lib/applications/capture';
 import ApplicationTimeline from '@components/ApplicationTimeline.astro';
 import CaptureFields from '@components/CaptureFields.astro';
 import DashboardLayout from '@layouts/DashboardLayout.astro';
@@ -146,8 +147,7 @@ let paymentFormValues: {
   sourceOfFundFormConfirmed: boolean;
 } | null = null;
 
-let isEditable =
-  application.status === 'draft' || application.status === 'returned';
+let isEditable = isEditableStatus(application.status);
 
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
@@ -388,8 +388,7 @@ if (Astro.request.method === 'POST') {
   }
 }
 
-isEditable =
-  application!.status === 'draft' || application!.status === 'returned';
+isEditable = isEditableStatus(application!.status);
 
 const isDecided =
   application!.status === 'approved' || application!.status === 'rejected';
