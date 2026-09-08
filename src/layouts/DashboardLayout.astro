@@ -120,6 +120,9 @@ const navGroups: NavGroup[] = [
             },
           ]
         : []),
+      ...(can('system.migrate_members')
+        ? [{ label: 'Migration', href: '/admin/migration', icon: 'members' }]
+        : []),
       ...(can('audit.view')
         ? [{ label: 'Audit log', href: '/admin/audit-log', icon: 'reports' }]
         : []),

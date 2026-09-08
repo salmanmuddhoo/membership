@@ -2296,6 +2296,22 @@ Android each read on their own.
 analysis records five blockers and the field gaps; none is this system's to
 fix, and the import cannot start until the source is agreed and frozen.
 
+**Shipped, first increment** (business direction: added directly, no review
+or approval, every row Approved): a System Administrator's own "Migration"
+menu (`system.migrate_members`) downloads an Excel template — one sheet per
+membership type that does not need a guardian already on file — and imports
+a filled-in one, creating each row as an approved member with the legacy
+code kept as a cross-reference (S-705) and the same accounts an ordinary
+approval opens. Covers the shape of S-702 (mapping is the live field
+configuration, not hardcoded), S-703 (validate before anything is written,
+the full outcome reported), S-704 (every rejected row named with why), S-705
+and S-706. **Still ahead**: S-701 (an agreed, frozen source extract — this
+tool works against whatever is uploaded, it does not itself settle what that
+should be), Minor's own path (needs a guardian already on file), S-707's
+formal sign-off step, S-708's dedicated audit event beyond the generic trail
+already written, and S-709/S-710 (balances) — a later pass once members
+exist, per this milestone's own goal.
+
 ### S-701 · Agree and freeze the cleansed source extract
 
 **As** the project, **I need** one agreed source file, **so that** an import
