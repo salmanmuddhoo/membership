@@ -19,6 +19,12 @@ import {
   documentsForMember,
   type MemberDocumentGroup,
 } from '@lib/documents/documents';
+import {
+  ContactUpdateError,
+  editableContactFields,
+  updateContactDetails,
+  PERMISSION_EDIT_CONTACT,
+} from '@lib/members/contact';
 
 const principal = Astro.locals.principal!;
 const canSeePayments = principal.permissions.has('payment.view');
@@ -28,6 +34,11 @@ const canSeeDocuments = principal.permissions.has('document.view');
 // generally — configurable on its own under Configuration -> Roles
 // (migration 0031), not tied to application.capture.
 const canConvertCustomer = principal.permissions.has('member.convert');
+// Officer feedback: a regional officer corrects a phone number or address on
+// the spot, no review or approval (migration 0045) — its own permission,
+// separate from member.details_verify, which gates a change the member sent
+// in unattended from the app.
+const canEditContact = principal.permissions.has(PERMISSION_EDIT_CONTACT);
 
 const { id } = Astro.params;
 // Two different tables (member, customer — migration 0027), and no way to
@@ -41,17 +52,26 @@ const customer = !member && id ? await loadCustomer(id) : null;
 if (!member && !customer) return new Response('Not found', { status: 404 });
 
 let error: string | null = null;
+let notice: string | null = null;
 
-// S-614: a non-member applying to become one. Handled here, on their own
-// page, rather than on /applications/new — that page starts an application
-// from nothing, and this one starts from what customer_account capture
-// already collected.
-if (Astro.request.method === 'POST' && customer) {
-  if (!canConvertCustomer) {
-    error = 'You do not have permission to do this.';
-  } else {
-    const form = await Astro.request.formData();
-    if (String(form.get('intent') ?? '') === 'apply-for-membership') {
+// The application that carries this person's applicant party — where a
+// phone number or address actually lives (member/customer rows carry
+// neither of their own). Null only for a legacy member imported with no
+// application on file.
+const contactApplicationId = (member ?? customer)!.applicationId;
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = String(form.get('intent') ?? '');
+
+  // S-614: a non-member applying to become one. Handled here, on their own
+  // page, rather than on /applications/new — that page starts an application
+  // from nothing, and this one starts from what customer_account capture
+  // already collected.
+  if (intent === 'apply-for-membership' && customer) {
+    if (!canConvertCustomer) {
+      error = 'You do not have permission to do this.';
+    } else {
       try {
         const created = await startMembershipApplicationFromCustomer(
           customer.id,
@@ -73,8 +93,46 @@ if (Astro.request.method === 'POST' && customer) {
         }
       }
     }
+  } else if (intent === 'update-contact') {
+    if (!canEditContact) {
+      error = 'You do not have permission to do this.';
+    } else if (!contactApplicationId) {
+      error = 'This record has no application to save these details to.';
+    } else {
+      try {
+        const changes: Record<string, string> = {};
+        for (const key of ['telephone', 'address']) {
+          const value = form.get(`field.${key}`);
+          if (typeof value === 'string') changes[key] = value;
+        }
+        const { updated } = await updateContactDetails(
+          contactApplicationId,
+          changes,
+          member
+            ? { entityType: 'member', entityId: member.id }
+            : { entityType: 'customer', entityId: customer!.id },
+          principal
+        );
+        notice =
+          updated.length > 0
+            ? 'Contact details saved.'
+            : 'Nothing had changed.';
+      } catch (err) {
+        if (err instanceof ContactUpdateError) {
+          error = err.message;
+        } else {
+          console.error('[members/update-contact]', err);
+          error = 'Something went wrong. Please try again.';
+        }
+      }
+    }
   }
 }
+
+const contactFields =
+  canEditContact && contactApplicationId
+    ? await editableContactFields(contactApplicationId)
+    : [];
 
 // What has been paid: for a member, including the receipt that admitted
 // them (paymentsForMember reads member_id and, falling back, the
@@ -211,6 +269,13 @@ const pageTitle = member ? member.memberNo : name;
         </div>
       )
     }
+    {
+      notice && (
+        <div class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-lg border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
+          {notice}
+        </div>
+      )
+    }
 
     <section
       class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
@@ -301,6 +366,42 @@ const pageTitle = member ? member.memberNo : name;
               ))}
             </dl>
           </div>
+        )
+      }
+
+      {
+        contactFields.length > 0 && (
+          <form
+            method="post"
+            class="mt-5 border-t border-neutral-200 pt-4 dark:border-neutral-800"
+          >
+            <input type="hidden" name="intent" value="update-contact" />
+            <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-200">
+              Edit contact details
+            </h3>
+            <div class="mt-3 grid gap-4 sm:grid-cols-2">
+              {contactFields.map(field => (
+                <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                  <span>{field.label}</span>
+                  <input
+                    type={field.dataType === 'phone' ? 'tel' : 'text'}
+                    name={`field.${field.fieldKey}`}
+                    value={field.value}
+                    placeholder={
+                      field.dataType === 'phone' ? '5789 1234' : undefined
+                    }
+                    class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                  />
+                </label>
+              ))}
+            </div>
+            <button
+              type="submit"
+              class="bg-mint-300 hover:bg-mint-400 mt-3 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+            >
+              Save
+            </button>
+          </form>
         )
       }
 
