@@ -264,7 +264,13 @@ if (Astro.request.method === 'POST') {
         {
           outcome,
           reason: String(form.get('reason') ?? ''),
-          confirmedSignatures: form.getAll('confirmedSignatures').map(String),
+          // Officer feedback: one checkbox, not four — the reviewer either
+          // confirms every signature block is present on the scan, or
+          // confirms none; there is no case where checking three of four
+          // means anything (reviewDocument refuses to Verify short of all
+          // four either way).
+          confirmedSignatures:
+            form.get('allSignaturesConfirmed') === 'yes' ? [...SIGNATURES] : [],
         },
         principal
       );
@@ -448,6 +454,16 @@ const [checklist, blocking, actions, history, stageLabel, payments, dueRead] =
       : Promise.resolve(null),
   ]);
 const documentsComplete = checklist.length > 0 && isDocumentComplete(checklist);
+
+// Officer feedback: this used to read "Next: submit for review" no matter
+// what the workflow was configured to do next — misleading once Regional
+// oversight and Secretary review are both disabled and capture leads
+// straight to the President. Named after whatever the capture step's own
+// button actually says (STEP_META, workflow.ts) rather than assuming a
+// review is coming.
+const nextStepLabel = (
+  actions.find(a => a.stepCode === 'capture')?.label ?? 'Submit for processing'
+).toLowerCase();
 
 // S-608: named up front, the same way a missing mandatory field is, rather
 // than only after the Secretary tries and is refused.
@@ -1103,27 +1119,20 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                               value={entry.documentId}
                             />
                             {entry.documentCode === 'signed_form' && (
-                              <fieldset class="rounded-lg border border-neutral-300 px-3 py-2 dark:border-neutral-600">
-                                <legend class="px-1 text-xs font-medium text-neutral-600 dark:text-neutral-300">
-                                  Signatures confirmed present on the scan
-                                </legend>
-                                <div class="grid grid-cols-2 gap-1.5">
-                                  {SIGNATURES.map(who => (
-                                    <label class="flex items-center gap-x-2 text-sm text-neutral-600 dark:text-neutral-300">
-                                      <input
-                                        type="checkbox"
-                                        name="confirmedSignatures"
-                                        value={who}
-                                        checked={entry.confirmedSignatures.includes(
-                                          who
-                                        )}
-                                        class="text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600"
-                                      />
-                                      {who}
-                                    </label>
-                                  ))}
-                                </div>
-                              </fieldset>
+                              <label class="flex items-center gap-x-2 rounded-lg border border-neutral-300 px-3 py-2 text-sm text-neutral-600 dark:border-neutral-600 dark:text-neutral-300">
+                                <input
+                                  type="checkbox"
+                                  name="allSignaturesConfirmed"
+                                  value="yes"
+                                  checked={
+                                    entry.confirmedSignatures.length ===
+                                    SIGNATURES.length
+                                  }
+                                  class="text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600"
+                                />
+                                All four signatures present on the scan (
+                                {SIGNATURES.join(', ')})
+                              </label>
                             )}
                             <input
                               type="text"
@@ -1480,7 +1489,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                       : 'bg-mint-300 hover:bg-mint-400 text-neutral-800',
                   ]}
                 >
-                  {livePayment === null ? 'Next' : 'Next: submit for review'}
+                  {livePayment === null ? 'Next' : `Next: ${nextStepLabel}`}
                 </a>
               </div>
             )}
