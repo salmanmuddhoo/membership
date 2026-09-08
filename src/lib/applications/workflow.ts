@@ -153,6 +153,22 @@ async function assertMayAct(
       'locked'
     );
   }
+  // Officer feedback: 'received' used to be nobody's draft and everybody's
+  // to pick up — the business wants it handled by specific staff instead
+  // (migration 0044). application.submit alone is no longer enough for this
+  // one status; a colleague who lacks the extra permission is refused here
+  // exactly the way one acting on someone else's step is, not silently
+  // hidden and then allowed through by direct URL.
+  if (
+    actsOnReceived &&
+    !principal.permissions.has('application.submit_online')
+  ) {
+    throw new ApplicationError(
+      'You do not have permission to handle an application submitted ' +
+        'through the mobile app.',
+      'invalid'
+    );
+  }
 
   // A gate's own status never moves once passed (S-209), so nothing above
   // catches someone acting on it a second time — the record still reads
@@ -847,7 +863,10 @@ export async function availableActions(
  * step: nobody was working on it, it arrived, and it sits with the branch
  * until someone picks it up. It is exactly a queue entry, and
  * pendingApplicationIds flags it as one — so the badge counts it, or the
- * list would mark work the badge said was not there.
+ * list would mark work the badge said was not there. Officer feedback: this
+ * queue is narrower than application.submit alone now — application.
+ * submit_online too (migration 0044), since the business wants online
+ * applications handled by specific staff, not every regional officer.
  */
 export async function pendingActionCount(
   principal: Principal
@@ -855,7 +874,10 @@ export async function pendingActionCount(
   const chain = await activeChain(WORKFLOW_CODE);
   const counts: Promise<number>[] = [];
 
-  if (principal.permissions.has('application.submit')) {
+  if (
+    principal.permissions.has('application.submit') &&
+    principal.permissions.has('application.submit_online')
+  ) {
     counts.push(
       query<{ n: string }>(
         `select count(*)::int as n from membership_application
@@ -944,14 +966,20 @@ export async function pendingApplicationIds(
   const ids = new Set<string>();
 
   if (principal.permissions.has('application.submit')) {
-    // A 'received' application (submitted from the member app) is nobody's
-    // draft: any officer who can submit may take it up, so it is flagged
-    // for all of them.
+    const conditions = ["(status = 'returned' and captured_by = $1)"];
+    const params: unknown[] = [principal.userId];
+    // Officer feedback: a 'received' application (submitted from the member
+    // app) used to be nobody's draft and everybody's to take up — the
+    // business wants it handled by specific staff instead, so this is
+    // flagged only for whoever also holds application.submit_online
+    // (migration 0044), not every officer who can submit.
+    if (principal.permissions.has('application.submit_online')) {
+      params.push(RECEIVED_STATUS);
+      conditions.push(`status = $${params.length}`);
+    }
     const returned = await query<{ id: string }>(
-      `select id from membership_application
-        where (status = 'returned' and captured_by = $1)
-           or status = $2`,
-      [principal.userId, RECEIVED_STATUS]
+      `select id from membership_application where ${conditions.join(' or ')}`,
+      params
     );
     for (const row of returned.rows) ids.add(row.id);
   }
