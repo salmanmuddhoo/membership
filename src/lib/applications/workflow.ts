@@ -1022,6 +1022,24 @@ export async function reviewStageLabel(
 }
 
 /**
+ * Which of these applications have a recorded transition for this step code
+ * — how a gate's own "have they passed it yet" is answered for a whole page
+ * of rows in one query, rather than once per row.
+ */
+async function passedIdsForStep(
+  stepCode: string,
+  applicationIds: string[]
+): Promise<Set<string>> {
+  if (applicationIds.length === 0) return new Set();
+  const result = await query<{ application_id: string }>(
+    `select distinct application_id from application_transition
+      where step_code = $2 and application_id = any($1::uuid[])`,
+    [applicationIds, stepCode]
+  );
+  return new Set(result.rows.map(r => r.application_id));
+}
+
+/**
  * Which of these applications (assumed already at 'new') have passed the
  * Regional oversight gate — one query for the whole applications list
  * rather than `reviewStageLabel` called once per row.
@@ -1029,11 +1047,57 @@ export async function reviewStageLabel(
 export async function regionalReviewPassedIds(
   applicationIds: string[]
 ): Promise<Set<string>> {
-  if (applicationIds.length === 0) return new Set();
-  const result = await query<{ application_id: string }>(
-    `select distinct application_id from application_transition
-      where step_code = 'regional_review' and application_id = any($1::uuid[])`,
-    [applicationIds]
-  );
-  return new Set(result.rows.map(r => r.application_id));
+  return passedIdsForStep('regional_review', applicationIds);
+}
+
+/**
+ * `reviewStageLabel`, batched: which role currently holds each of these
+ * applications, for the "With the X" line the Applications list shows under
+ * a 'new' row's status badge (S-611 follow-up). Every application passed in
+ * is assumed to be at 'new' already — the list only ever asks this for those.
+ *
+ * Reads the configured chain once and, per gate it contains, one query for
+ * the whole batch — not the fixed "Regional Manager or Secretary" the list
+ * page used to assume itself: whichever step the chain actually has waiting
+ * on 'new' (bridged past any disabled step ahead of it, `activeChain`'s own
+ * job) is what gets named here, so a Secretary-review step disabled in
+ * configuration stops being named without this needing to know that
+ * happened.
+ */
+export async function reviewStageLabelsFor(
+  applicationIds: string[]
+): Promise<Map<string, string>> {
+  const labels = new Map<string, string>();
+  if (applicationIds.length === 0) return labels;
+
+  const chain = await activeChain(WORKFLOW_CODE);
+  const waiting = chain.filter(s => s.fromStatus === 'new');
+  if (waiting.length === 0) return labels;
+
+  const gatePassed = new Map<string, Set<string>>();
+  for (const step of waiting) {
+    if (step.fromStatus !== step.toStatus) continue;
+    gatePassed.set(
+      step.code,
+      await passedIdsForStep(step.code, applicationIds)
+    );
+  }
+
+  for (const id of applicationIds) {
+    for (const step of waiting) {
+      const isGate = step.fromStatus === step.toStatus;
+      if (isGate && gatePassed.get(step.code)!.has(id)) continue;
+      const unmet = waiting.filter(
+        s =>
+          s.stepNo < step.stepNo &&
+          s.fromStatus === s.toStatus &&
+          !gatePassed.get(s.code)!.has(id)
+      );
+      if (unmet.length > 0) continue;
+      labels.set(id, `With the ${step.roleName}`);
+      break;
+    }
+  }
+
+  return labels;
 }

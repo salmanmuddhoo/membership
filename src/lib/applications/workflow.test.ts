@@ -1987,6 +1987,119 @@ describe('S-611: Regional oversight, enabled or not, gates the chain', () => {
   });
 });
 
+describe('Disabling Secretary review bridges straight to the President', () => {
+  async function setSecretaryReviewEnabled(enabled: boolean) {
+    const { config } = await load();
+    const definition = (await config.listWorkflows()).find(
+      d => d.code === 'membership_application_approval'
+    )!;
+    const step = definition.steps.find(s => s.code === 'secretary_review')!;
+    await config.setStepEnabled(step.id, enabled, {
+      userId: officer.userId,
+      email: officer.email,
+    });
+  }
+
+  afterEach(async () => {
+    await setSecretaryReviewEnabled(true);
+  });
+
+  it('offers the President the decision as soon as it is submitted, with no Secretary step in between', async () => {
+    await setSecretaryReviewEnabled(false);
+    const { capture, workflow } = await load();
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+    const application = (await capture.loadApplication(id))!;
+
+    // Still 'new' — nothing moved it, because nothing runs between capture
+    // and the President once Secretary review is off the chain.
+    expect(application.status).toBe('new');
+
+    expect(
+      (await workflow.availableActions(application, president)).map(
+        a => a.stepCode
+      )
+    ).toEqual(['president_decision']);
+    // Neither the Secretary nor the Regional Manager have anything to do
+    // with a step that is not part of the chain any more.
+    expect(await workflow.availableActions(application, secretary)).toEqual([]);
+    expect(await workflow.reviewStageLabel(application)).toBe(
+      'With the President / Chairperson'
+    );
+
+    const { members } = await load();
+    const result = await workflow.decideApplication(
+      id,
+      { outcome: 'approve', comment: '' },
+      president,
+      members.createMemberFromApplication
+    );
+    expect(result.status).toBe('approved');
+  });
+
+  it('still waits for the Regional Manager first when that gate is also enabled', async () => {
+    await setSecretaryReviewEnabled(false);
+    const { config } = await load();
+    const definition = (await config.listWorkflows()).find(
+      d => d.code === 'membership_application_approval'
+    )!;
+    const regional = definition.steps.find(s => s.code === 'regional_review')!;
+    await config.setStepEnabled(regional.id, true, {
+      userId: officer.userId,
+      email: officer.email,
+    });
+
+    try {
+      const { capture, workflow } = await load();
+      const id = await captureComplete();
+      await workflow.submitApplication(id, officer);
+      let application = (await capture.loadApplication(id))!;
+
+      expect(
+        (await workflow.availableActions(application, president)).map(
+          a => a.stepCode
+        )
+      ).toEqual([]);
+      expect(await workflow.reviewStageLabel(application)).toBe(
+        'With the Regional Manager'
+      );
+
+      await workflow.reviewApplication(
+        id,
+        { outcome: 'forward', comment: 'Checked.' },
+        regionalManager,
+        'regional_review'
+      );
+      application = (await capture.loadApplication(id))!;
+
+      expect(
+        (await workflow.availableActions(application, president)).map(
+          a => a.stepCode
+        )
+      ).toEqual(['president_decision']);
+      expect(await workflow.reviewStageLabel(application)).toBe(
+        'With the President / Chairperson'
+      );
+    } finally {
+      await config.setStepEnabled(regional.id, false, {
+        userId: officer.userId,
+        email: officer.email,
+      });
+    }
+  });
+
+  it('reviewStageLabelsFor batches the same answer the single-application version gives', async () => {
+    await setSecretaryReviewEnabled(false);
+    const { capture, workflow } = await load();
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+    const application = (await capture.loadApplication(id))!;
+
+    const labels = await workflow.reviewStageLabelsFor([id]);
+    expect(labels.get(id)).toBe(await workflow.reviewStageLabel(application));
+  });
+});
+
 // S-613, phase 7: an additional-account application shares the exact same
 // chain a membership application does (S-612) — proved here by driving one
 // through submit, review and decide with zero changes to the functions
