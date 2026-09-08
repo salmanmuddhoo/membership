@@ -196,12 +196,27 @@ async function resolveOwner(
   memberId: string | null
 ): Promise<OwnerRow> {
   if (applicationId) {
+    // Officer feedback: a new application for someone who already had one
+    // (an existing member opening another account, S-613; a non-member
+    // customer applying to become a member, S-614) used to get its own
+    // SharePoint folder, named after its own reference — several separate
+    // folders for the one person. folder_application_id (migration 0042)
+    // redirects those to whichever application's own folder they actually
+    // belong in, set once at capture and always the ultimate root, so this
+    // join is always one hop.
     const result = await query<{
       reference: string;
       status: string;
-    }>(`select reference, status from membership_application where id = $1`, [
-      applicationId,
-    ]);
+      folder_reference: string;
+    }>(
+      `select a.reference, a.status,
+              coalesce(root.reference, a.reference) as folder_reference
+         from membership_application a
+         left join membership_application root
+           on root.id = a.folder_application_id
+        where a.id = $1`,
+      [applicationId]
+    );
     if (result.rowCount === 0) {
       throw new DocumentError(
         'That application no longer exists.',
@@ -216,7 +231,7 @@ async function resolveOwner(
       application_status: row.status,
       checklist_application_id: applicationId,
       membership_type_code: null,
-      folder_path: applicationFolderPath(row.reference),
+      folder_path: applicationFolderPath(row.folder_reference),
       reference: row.reference,
     };
   }

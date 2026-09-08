@@ -387,10 +387,15 @@ export async function startAdditionalAccountApplication(
       status: string;
       membership_type_id: string;
       membership_type_name: string;
+      folder_application_id: string | null;
     }>(
-      `select m.status, m.membership_type_id, mt.name as membership_type_name
+      `select m.status, m.membership_type_id, mt.name as membership_type_name,
+              coalesce(founding.folder_application_id, m.application_id)
+                as folder_application_id
          from member m
          join membership_type mt on mt.id = m.membership_type_id
+         left join membership_application founding
+           on founding.id = m.application_id
         where m.id = $1`,
       [existingMemberId]
     );
@@ -427,12 +432,18 @@ export async function startAdditionalAccountApplication(
       member.rows[0].membership_type_name
     );
 
+    // Officer feedback: opening another account for an existing member used
+    // to get its own SharePoint folder, named after its own reference — one
+    // folder per application rather than one per person. Redirects to the
+    // member's own founding application's folder instead (already resolved
+    // to the ultimate root above), null only for a legacy M7 member with no
+    // founding application to redirect to.
     const created = await client.query<{ id: string; reference: string }>(
       `insert into membership_application
-         (application_kind, existing_member_id, captured_by)
-       values ('additional_account', $1, $2)
+         (application_kind, existing_member_id, captured_by, folder_application_id)
+       values ('additional_account', $1, $2, $3)
        returning id, reference`,
-      [existingMemberId, actor.userId]
+      [existingMemberId, actor.userId, member.rows[0].folder_application_id]
     );
     const { id, reference } = created.rows[0];
 
@@ -674,10 +685,17 @@ export async function startMembershipApplicationFromCustomer(
     // Named on the application itself — not only in the audit entry below —
     // so createMemberFromApplication (members/create.ts) knows at approval
     // time whose account(s) transfer to the new Member, without going back
-    // to the audit trail to find out (migration 0029).
+    // to the audit trail to find out (migration 0029). folder_application_id
+    // is the same idea for documents (officer feedback, migration 0042):
+    // resolved through the source application's own redirect, if it has one,
+    // so this always lands on the ultimate root rather than a two-hop chain.
     await client.query(
-      `update membership_application set source_customer_id = $2 where id = $1`,
-      [id, customerId]
+      `update membership_application a
+          set source_customer_id = $2,
+              folder_application_id = coalesce(source.folder_application_id, source.id)
+         from membership_application source
+        where a.id = $1 and source.id = $3`,
+      [id, customerId, sourceApplicationId]
     );
 
     // insertApplication just seeded one empty party row per subject this

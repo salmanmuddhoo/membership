@@ -532,6 +532,213 @@ describe('a document checklist change applies to new applications only', () => {
   });
 });
 
+// Officer feedback: a new application for someone who already had one — an
+// existing member opening another account (S-613), or a non-member customer
+// applying to become a member (S-614) — used to get its own SharePoint
+// folder, named after its own reference. folder_application_id (migration
+// 0042) redirects those to whichever application's own folder they actually
+// belong in, so a real person reads as one folder in the drive, not one per
+// application.
+describe('officer feedback: one SharePoint folder per person, not per application', () => {
+  it("files a member's additional-account application documents in their founding application's folder", async () => {
+    const { capture, documents } = await load();
+
+    const type = await run(
+      appUrl,
+      `select id from membership_type where code = 'individual'`
+    );
+    const founding = await run(
+      appUrl,
+      `insert into membership_application (membership_type_id, captured_by)
+       values ($1, $2) returning id, reference`,
+      [type.rows[0].id, officer.userId]
+    );
+    const member = await run(
+      appUrl,
+      `insert into member (membership_type_id, application_id, status)
+       values ($1, $2, 'active') returning id`,
+      [type.rows[0].id, founding.rows[0].id]
+    );
+
+    const checklist = await run(
+      appUrl,
+      `select id from document_checklist where code = 'msa_opening'`
+    );
+    const accountType = await runAsConfigurator(
+      appUrl,
+      `insert into account_type
+         (code, name, category, minimum_opening_amount, checklist_id,
+          is_membership_default)
+       values ('inv_folder_test', 'Investment (folder test)', 'investment',
+               1000, '${checklist.rows[0].id}', false)
+       returning id`
+    );
+
+    const { id: additionalId } =
+      await capture.startAdditionalAccountApplication(
+        member.rows[0].id,
+        [accountType.rows[0].id],
+        officer
+      );
+
+    const begun = await documents.beginUpload(
+      {
+        applicationId: additionalId,
+        documentTypeId: idCardTypeId,
+        subject: 'applicant',
+        fileName: 'id-folder-test.jpg',
+        contentType: 'image/jpeg',
+        sizeBytes: 100,
+      },
+      officer
+    );
+
+    expect(begun.ticket.itemPath).toContain(
+      documents.applicationFolderPath(founding.rows[0].reference)
+    );
+    expect(begun.ticket.itemPath).not.toContain(additionalId);
+  });
+
+  it("files a customer's new membership application documents in their original application's folder", async () => {
+    const { capture, documents } = await load();
+
+    const checklist = await run(
+      appUrl,
+      `select id from document_checklist where code = 'msa_opening'`
+    );
+    const accountType = await runAsConfigurator(
+      appUrl,
+      `insert into account_type
+         (code, name, category, minimum_opening_amount, checklist_id,
+          is_membership_default)
+       values ('inv_folder_test_2', 'Investment (folder test 2)', 'investment',
+               1000, '${checklist.rows[0].id}', false)
+       returning id`
+    );
+
+    const customerApp = await capture.startCustomerAccountApplication(
+      [accountType.rows[0].id],
+      officer
+    );
+    const customer = await run(
+      appUrl,
+      `insert into customer (application_id, status)
+       values ($1, 'active') returning id`,
+      [customerApp.id]
+    );
+
+    const { id: membershipId } =
+      await capture.startMembershipApplicationFromCustomer(
+        customer.rows[0].id,
+        officer
+      );
+
+    const begun = await documents.beginUpload(
+      {
+        applicationId: membershipId,
+        documentTypeId: idCardTypeId,
+        subject: 'applicant',
+        fileName: 'id-folder-test-2.jpg',
+        contentType: 'image/jpeg',
+        sizeBytes: 100,
+      },
+      officer
+    );
+
+    expect(begun.ticket.itemPath).toContain(
+      documents.applicationFolderPath(customerApp.reference)
+    );
+    expect(begun.ticket.itemPath).not.toContain(membershipId);
+  });
+
+  // The two paths above chained: a customer becomes a member (redirects to
+  // the customer's own application), then that member opens yet another
+  // account (S-613) — the redirect must resolve all the way to the
+  // ORIGINAL customer application, not stop one hop short at the
+  // membership application in between.
+  it('resolves a chain of applications to the one original folder', async () => {
+    const { capture, documents } = await load();
+
+    const checklist = await run(
+      appUrl,
+      `select id from document_checklist where code = 'msa_opening'`
+    );
+    const investment = await runAsConfigurator(
+      appUrl,
+      `insert into account_type
+         (code, name, category, minimum_opening_amount, checklist_id,
+          is_membership_default)
+       values ('inv_folder_test_3', 'Investment (folder test 3)', 'investment',
+               1000, '${checklist.rows[0].id}', false)
+       returning id`
+    );
+    const savings = await runAsConfigurator(
+      appUrl,
+      `insert into account_type
+         (code, name, category, minimum_opening_amount, checklist_id,
+          is_membership_default)
+       values ('hsa_folder_test_3', 'Hajj Savings (folder test 3)', 'savings',
+               1000, '${checklist.rows[0].id}', false)
+       returning id`
+    );
+
+    const customerApp = await capture.startCustomerAccountApplication(
+      [investment.rows[0].id],
+      officer
+    );
+    const customer = await run(
+      appUrl,
+      `insert into customer (application_id, status)
+       values ($1, 'active') returning id`,
+      [customerApp.id]
+    );
+    const { id: membershipId } =
+      await capture.startMembershipApplicationFromCustomer(
+        customer.rows[0].id,
+        officer
+      );
+
+    // Approved by hand, the same shortcut other tests take — what is under
+    // test here is the folder chain, not the approval workflow itself.
+    const membershipType = await run(
+      appUrl,
+      `select membership_type_id from membership_application where id = $1`,
+      [membershipId]
+    );
+    const member = await run(
+      appUrl,
+      `insert into member (application_id, membership_type_id, status)
+       values ($1, $2, 'active') returning id`,
+      [membershipId, membershipType.rows[0].membership_type_id]
+    );
+
+    const { id: additionalId } =
+      await capture.startAdditionalAccountApplication(
+        member.rows[0].id,
+        [savings.rows[0].id],
+        officer
+      );
+
+    const begun = await documents.beginUpload(
+      {
+        applicationId: additionalId,
+        documentTypeId: idCardTypeId,
+        subject: 'applicant',
+        fileName: 'id-folder-test-3.jpg',
+        contentType: 'image/jpeg',
+        sizeBytes: 100,
+      },
+      officer
+    );
+
+    expect(begun.ticket.itemPath).toContain(
+      documents.applicationFolderPath(customerApp.reference)
+    );
+    expect(begun.ticket.itemPath).not.toContain(membershipId);
+    expect(begun.ticket.itemPath).not.toContain(additionalId);
+  });
+});
+
 // S-612: an additional-account application has no membership_type_id — the
 // bug this closes is resolveOwner's old inner join to membership_type
 // silently returning zero rows for one of these, which checklistFor then

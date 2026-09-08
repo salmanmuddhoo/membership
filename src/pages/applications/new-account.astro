@@ -38,7 +38,14 @@ let isMember = true;
 let memberId = '';
 let memberLabel = '';
 let selected = new Set<string>();
-let isMinor = false;
+// Officer feedback: Corporate had no way in here at all — only Individual
+// (the default) or Minor, via what used to be a single "Minor" checkbox.
+// A select generalises that same choice to the three customer types a
+// non-member application already knows how to be captured against
+// (startCustomerAccountApplication takes any membership type code).
+const CUSTOMER_TYPES = ['individual', 'minor', 'corporate'] as const;
+type CustomerType = (typeof CUSTOMER_TYPES)[number];
+let customerType: CustomerType = 'individual';
 
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
@@ -46,7 +53,10 @@ if (Astro.request.method === 'POST') {
   memberId = String(form.get('memberId') ?? '');
   memberLabel = String(form.get('memberLabel') ?? '');
   selected = new Set(form.getAll('accountTypeId').map(String));
-  isMinor = form.get('isMinor') === 'on';
+  const postedType = String(form.get('customerType') ?? 'individual');
+  customerType = (CUSTOMER_TYPES as readonly string[]).includes(postedType)
+    ? (postedType as CustomerType)
+    : 'individual';
 
   if (isMember && !memberId) {
     error = 'Search for the member and pick one before continuing.';
@@ -75,7 +85,7 @@ if (Astro.request.method === 'POST') {
       const created = await startCustomerAccountApplication(
         [...selected],
         { userId: principal.userId, email: principal.email },
-        isMinor ? 'minor' : 'individual'
+        customerType
       );
       // Nothing about the applicant is captured yet — the officer fills that
       // in on the application itself, the same way a membership
@@ -189,15 +199,37 @@ if (Astro.request.method === 'POST') {
               Their own details are filled in on the next screen — the same
               information a membership application asks for.
             </p>
-            <label class="mt-2 flex items-center gap-2 text-sm text-neutral-800 dark:text-neutral-100">
-              <input
-                type="checkbox"
-                name="isMinor"
-                checked={isMinor}
-                class="rounded border-neutral-300 dark:border-neutral-600"
-              />
-              Minor — a parent or guardian's details are asked for too
+            <label class="mt-2 block text-sm text-neutral-600 dark:text-neutral-300">
+              Applicant type
+              <select
+                name="customerType"
+                data-customer-type
+                class="mt-1 block w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+              >
+                <option
+                  value="individual"
+                  selected={customerType === 'individual'}
+                >
+                  Individual
+                </option>
+                <option value="minor" selected={customerType === 'minor'}>
+                  Minor
+                </option>
+                <option
+                  value="corporate"
+                  selected={customerType === 'corporate'}
+                >
+                  Corporate
+                </option>
+              </select>
             </label>
+            <p
+              data-minor-note
+              hidden={customerType !== 'minor'}
+              class="mt-2 text-xs text-neutral-500 dark:text-neutral-400"
+            >
+              A parent or guardian's details are asked for too.
+            </p>
           </div>
 
           <fieldset>
@@ -264,6 +296,15 @@ if (Astro.request.method === 'POST') {
       syncNonMemberOnlyVisibility();
     });
   }
+
+  // The guardian note only means something once Minor is actually picked.
+  const customerTypeSelect = document.querySelector<HTMLSelectElement>(
+    '[data-customer-type]'
+  );
+  const minorNote = document.querySelector<HTMLElement>('[data-minor-note]');
+  customerTypeSelect?.addEventListener('change', () => {
+    if (minorNote) minorNote.hidden = customerTypeSelect.value !== 'minor';
+  });
 
   // Mirrors the guardian search on the capture form (CaptureFields.astro,
   // S-604) — same debounce, same picker — against a different endpoint and
