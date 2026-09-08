@@ -42,6 +42,16 @@ the AB Number as typed and a prefix of the NIC's hash), never in the
 response. The app tells the person a code has been sent _if_ the details
 matched, and what to do if nothing arrives.
 
+It is also written to the server log, as
+`{"kind":"member-link-refused","correlationId":…,"abNumber":…,"reason":…}`
+where `reason` is `no_match` or `no_mobile_on_record`. A server log is not
+the caller, so this costs nothing the response protects — and without it a
+refusal is invisible to whoever is setting an environment up: the request
+logs 200 like any other, no `member-otp` line appears because nothing was
+sent, and the only symptom is an OTP that will not verify five minutes
+later. Reading the audit trail instead needs database access, which the
+person holding the deployment log often does not have.
+
 **AB Number** is `member.member_no` — `AB` and four digits, allocated by
 `next_member_number()` — which the business also calls the Shares Account
 Number. Matching is on `member.member_no`, whole, case-insensitive.
