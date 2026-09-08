@@ -41,6 +41,7 @@ const applications = await import('./applications');
 const profile = await import('./profile');
 const pool = await import('../db/pool');
 const capture = await import('../applications/capture');
+const workflow = await import('../applications/workflow');
 
 const sent: string[] = [];
 const delivery: CodeDelivery = {

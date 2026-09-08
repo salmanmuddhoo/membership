@@ -842,12 +842,28 @@ export async function availableActions(
  * Only steps a person actually waits to act on count — capture is excluded,
  * since a draft is the originating officer's own work-in-progress (saved
  * automatically, S-302), not something sitting in anyone's queue.
+ *
+ * An application 'received' from the member app is the exception on that
+ * step: nobody was working on it, it arrived, and it sits with the branch
+ * until someone picks it up. It is exactly a queue entry, and
+ * pendingApplicationIds flags it as one — so the badge counts it, or the
+ * list would mark work the badge said was not there.
  */
 export async function pendingActionCount(
   principal: Principal
 ): Promise<number> {
   const chain = await activeChain(WORKFLOW_CODE);
   const counts: Promise<number>[] = [];
+
+  if (principal.permissions.has('application.submit')) {
+    counts.push(
+      query<{ n: string }>(
+        `select count(*)::int as n from membership_application
+          where status = $1`,
+        [RECEIVED_STATUS]
+      ).then(result => Number(result.rows[0]?.n ?? 0))
+    );
+  }
 
   for (const step of chain) {
     if (step.code === 'capture') continue;
