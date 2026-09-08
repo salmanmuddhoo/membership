@@ -1553,10 +1553,55 @@ async function readWorkflows(): Promise<WorkflowDefinition[]> {
   return value;
 }
 
+// A disabled GATE (from_status = to_status, S-209) contributes nothing to
+// bridge: it never moved the record, so removing it changes nothing about
+// what status anything else waits on. A disabled ORDINARY step is different —
+// it was the thing that moved the record from from_status to to_status, so
+// with it gone the record now never makes that move at all. Left alone, the
+// next enabled step still waits on the disabled step's to_status, which the
+// record can now never reach: not "skip straight to me", but stuck forever.
+//
+// This walks every disabled ordinary step's to_status back to its from_status
+// — and, transitively, further back through any other disabled step that fed
+// into that — so a step's *effective* from_status is wherever the record
+// will actually be sitting once every disabled step in front of it is
+// accounted for. Enabling Secretary review back on needs no matching
+// undo: it is simply back in the chain, and nothing downstream was ever
+// touched.
+function bridgeDisabledSteps(
+  steps: WorkflowStep[]
+): (status: string) => string {
+  const skipsTo = new Map<string, string>();
+  for (const step of steps) {
+    if (step.isEnabled) continue;
+    if (step.fromStatus === step.toStatus) continue; // a gate, not a move
+    skipsTo.set(step.toStatus, step.fromStatus);
+  }
+
+  return (status: string) => {
+    let effective = status;
+    const seen = new Set<string>();
+    while (skipsTo.has(effective) && !seen.has(effective)) {
+      seen.add(effective);
+      effective = skipsTo.get(effective)!;
+    }
+    return effective;
+  };
+}
+
 // The steps that actually run: disabled ones are configuration an administrator
 // can see, not stages the chain waits at. This is what a workflow engine should
 // consult, so that enabling the Regional Manager review (decision 2) changes
 // behaviour with no code change.
+//
+// Every enabled step's own `fromStatus` is resolved through
+// `bridgeDisabledSteps` before it reaches a caller, so a step disabled
+// upstream (Secretary review, say) is not just missing from the list — the
+// step after it in the chain (President decision) is rewired to wait on
+// whatever status the record is actually left at, and moves it on from
+// there. No caller needs to know that happened: `assertMayAct`,
+// `availableActions` and every other reader of this chain compare
+// `application.status` to `step.fromStatus` exactly as before.
 export async function activeChain(
   definitionCode: string
 ): Promise<WorkflowStep[]> {
@@ -1565,7 +1610,14 @@ export async function activeChain(
   if (!definition) {
     throw new ConfigError(`Unknown workflow ${definitionCode}.`, 'not_found');
   }
-  return definition.steps.filter(s => s.isEnabled);
+  const bridge = bridgeDisabledSteps(definition.steps);
+  return definition.steps
+    .filter(s => s.isEnabled)
+    .map(s =>
+      s.fromStatus === bridge(s.fromStatus)
+        ? s
+        : { ...s, fromStatus: bridge(s.fromStatus) }
+    );
 }
 
 export async function setStepEnabled(

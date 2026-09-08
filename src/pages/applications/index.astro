@@ -6,11 +6,10 @@ import {
   deleteDraftApplication,
   listApplications,
 } from '@lib/applications/capture';
-import { activeChain, listMembershipTypes } from '@lib/config/reference';
+import { listMembershipTypes } from '@lib/config/reference';
 import {
   pendingApplicationIds,
-  regionalReviewPassedIds,
-  WORKFLOW_CODE,
+  reviewStageLabelsFor,
 } from '@lib/applications/workflow';
 
 const principal = Astro.locals.principal!;
@@ -83,7 +82,7 @@ const created = Astro.url.searchParams.get('created');
 
 const filter = Astro.url.searchParams.get('status') ?? '';
 const search = Astro.url.searchParams.get('q') ?? '';
-const [unsortedApplications, types, chain, nonDraftCount, attentionIds] =
+const [unsortedApplications, types, nonDraftCount, attentionIds] =
   await Promise.all([
     listApplications({
       ...(filter ? { statuses: [filter] } : {}),
@@ -91,7 +90,6 @@ const [unsortedApplications, types, chain, nonDraftCount, attentionIds] =
       search,
     }),
     listMembershipTypes(),
-    activeChain(WORKFLOW_CODE),
     // Meaningless filtered to Draft specifically — countApplications excludes
     // every draft regardless, so that combination would always read 0 beside
     // a table that is, in fact, showing rows.
@@ -110,16 +108,16 @@ const applications = [...unsortedApplications].sort(
   (a, b) => Number(attentionIds.has(b.id)) - Number(attentionIds.has(a.id))
 );
 
-// S-611 follow-up: 'new' means two different things once Regional oversight
-// is enabled — still waiting on the Regional Manager, or past them and
-// waiting on the Secretary — and the status badge alone cannot say which.
-// One query for every 'new' row on the page rather than one per row.
-const regionalReviewEnabled = chain.some(s => s.code === 'regional_review');
-const regionalReviewPassed = regionalReviewEnabled
-  ? await regionalReviewPassedIds(
-      applications.filter(a => a.status === 'new').map(a => a.id)
-    )
-  : new Set<string>();
+// S-611 follow-up: 'new' means as many different things as the configured
+// chain has steps waiting on it — still with the Regional Manager, past them
+// and with the Secretary, or (Secretary review disabled) straight with the
+// President — and the status badge alone cannot say which. One batched read
+// for every 'new' row on the page, driven entirely by the configured chain
+// (`reviewStageLabelsFor`, workflow.ts) rather than assuming which two roles
+// those could be.
+const reviewStageLabels = await reviewStageLabelsFor(
+  applications.filter(a => a.status === 'new').map(a => a.id)
+);
 
 // No 'approved' entry: an approved application no longer appears in this
 // list at all (listApplications excludes it — it lives on the Members page
@@ -415,11 +413,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                         >
                           {STATUS_LABELS[a.status] ?? a.status}
                         </span>
-                        {a.status === 'new' && regionalReviewEnabled && (
+                        {a.status === 'new' && reviewStageLabels.has(a.id) && (
                           <span class="mt-1 block text-xs text-neutral-500 dark:text-neutral-400">
-                            {regionalReviewPassed.has(a.id)
-                              ? 'With the Secretary'
-                              : 'With the Regional Manager'}
+                            {reviewStageLabels.get(a.id)}
                           </span>
                         )}
                       </td>
