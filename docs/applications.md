@@ -384,6 +384,14 @@ indistinguishable from one an officer captured, except that `captured_by`
 is the `Member app` system user and `applicant_mobile` carries the number
 the applicant verified.
 
+It reads as **Received online** on the Applications list, in the same
+amber as Returned for Correction — both are work sitting with the branch —
+and it counts in the Applications badge for everyone who may submit.
+`pendingActionCount` excludes the capture step for everyone else, because
+a draft is its own officer's work in progress; one that arrived from a
+phone is nobody's work in progress, so it is the one thing on that step
+that IS a queue entry.
+
 ## Regional oversight actually gates the chain, once enabled (S-611)
 
 A gate sitting in the chain was config an administrator could see since M2
