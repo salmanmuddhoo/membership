@@ -174,7 +174,15 @@ export function defineMemberEndpoint<Caller extends 'member' | 'public'>(
             JSON.stringify({ kind: 'api-error', correlationId, path }),
             error
           );
-          return finish(apiError('internal_error', correlationId), actor);
+          // Named in the log line as well as answered, the same as the
+          // handler's own catch below: a line with no code reads like an
+          // ordinary request that happened to 500, and is the one line
+          // anybody grepping for a failure most needs to find.
+          return finish(
+            apiError('internal_error', correlationId),
+            actor,
+            'internal_error'
+          );
         }
         if (!member) {
           return finish(
