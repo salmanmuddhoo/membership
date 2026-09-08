@@ -1558,6 +1558,13 @@ export async function listApplications(options: {
   // applicant's name — an officer rarely has the other on hand when they are
   // looking for a specific application.
   search?: string;
+  // Officer feedback: 'received' (submitted from the mobile app, S-303) used
+  // to be visible to anyone who could submit at all — every regional_officer,
+  // by default. The business wants online applications handled by specific
+  // staff, so this narrows 'received' the same way viewerUserId narrows
+  // 'draft': false hides it, true (application.submit_online, the caller's
+  // job to check) shows it same as any other non-draft status.
+  canHandleReceived?: boolean;
   limit?: number;
 }): Promise<
   Array<{
@@ -1624,6 +1631,7 @@ export async function listApplications(options: {
           -- then on — carrying it here too is a stale duplicate of a record
           -- this list is not the place to keep showing.
           and a.status != 'approved'
+          and (a.status != 'received' or $6::boolean)
      )
      select * from rows
       where $4::text is null
@@ -1637,6 +1645,7 @@ export async function listApplications(options: {
       options.viewerUserId ?? null,
       options.search?.trim() || null,
       options.limit ?? 100,
+      options.canHandleReceived ?? false,
     ]
   );
 
@@ -1666,15 +1675,16 @@ export async function listApplications(options: {
 // every officer should read as "how many applications exist" — the same
 // reason 'approved' is excluded too: those already live on the Members page.
 export async function countApplications(
-  options: { statuses?: string[] } = {}
+  options: { statuses?: string[]; canHandleReceived?: boolean } = {}
 ): Promise<number> {
   const result = await query<{ n: string }>(
     `select count(*)::int as n
        from membership_application a
       where ($1::text[] is null or a.status = any($1::text[]))
         and a.status != 'draft'
-        and a.status != 'approved'`,
-    [options.statuses ?? null]
+        and a.status != 'approved'
+        and (a.status != 'received' or $2::boolean)`,
+    [options.statuses ?? null, options.canHandleReceived ?? false]
   );
   return Number(result.rows[0].n);
 }

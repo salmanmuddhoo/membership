@@ -82,12 +82,20 @@ const created = Astro.url.searchParams.get('created');
 
 const filter = Astro.url.searchParams.get('status') ?? '';
 const search = Astro.url.searchParams.get('q') ?? '';
+// Officer feedback: 'received' (submitted from the mobile app) used to be
+// visible to any officer who could submit at all — the business wants it
+// handled by specific staff instead (S-303, application.submit_online).
+const canHandleReceived = principal.permissions.has(
+  'application.submit_online'
+);
+
 const [unsortedApplications, types, nonDraftCount, attentionIds] =
   await Promise.all([
     listApplications({
       ...(filter ? { statuses: [filter] } : {}),
       viewerUserId: principal.userId,
       search,
+      canHandleReceived,
     }),
     listMembershipTypes(),
     // Meaningless filtered to Draft specifically — countApplications excludes
@@ -95,7 +103,10 @@ const [unsortedApplications, types, nonDraftCount, attentionIds] =
     // a table that is, in fact, showing rows.
     filter === 'draft'
       ? null
-      : countApplications(filter ? { statuses: [filter] } : {}),
+      : countApplications({
+          ...(filter ? { statuses: [filter] } : {}),
+          canHandleReceived,
+        }),
     pendingApplicationIds(principal),
   ]);
 

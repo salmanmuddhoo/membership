@@ -8,6 +8,7 @@ import {
   deleteDraftApplication,
   loadApplication,
   problemsBlockingSubmission,
+  RECEIVED_STATUS,
   saveDraft,
   visibleFields,
   type MembershipApplication,
@@ -92,6 +93,17 @@ if (!initial) return new Response('Not found', { status: 404 });
 // A draft is the capturing officer's own work in progress — not something a
 // colleague browsing by URL should be able to open before it is submitted.
 if (initial.status === 'draft' && initial.capturedBy !== principal.userId) {
+  return new Response('Not found', { status: 404 });
+}
+// Officer feedback: 'received' (submitted from the mobile app) is handled by
+// specific staff, not every officer who can submit (application.submit_
+// online, migration 0044) — the same reason a colleague's draft is hidden
+// by direct URL, applied here so the list-page gate cannot be worked around
+// by opening the link straight.
+if (
+  initial.status === RECEIVED_STATUS &&
+  !principal.permissions.has('application.submit_online')
+) {
   return new Response('Not found', { status: 404 });
 }
 if (initial.applicationKind === 'additional_account') {

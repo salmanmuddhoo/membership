@@ -2892,3 +2892,94 @@ describe('S-614: the account a non-member already held transfers when they becom
     ).rejects.toThrowError(/Only an active customer/);
   });
 });
+
+// Officer feedback: 'received' (submitted from the mobile app) used to be
+// visible to, and pickable by, any officer holding application.submit —
+// every regional_officer, by default. application.submit_online (migration
+// 0044) narrows that to specific staff instead.
+describe('officer feedback: a "received" application is not everyone\'s to pick up', () => {
+  async function seedReceivedApplication(): Promise<string> {
+    const type = await run(
+      appUrl,
+      `select id from membership_type where code = 'individual'`
+    );
+    const application = await run(
+      appUrl,
+      `insert into membership_application
+         (membership_type_id, captured_by, status)
+       values ($1, $2, 'received') returning id`,
+      [type.rows[0].id, officer.userId]
+    );
+    return application.rows[0].id;
+  }
+
+  function withOnlinePermission(): Principal {
+    return principalFor(
+      officer.userId,
+      officer.email,
+      [
+        'application.view',
+        'application.capture',
+        'application.submit',
+        'application.submit_online',
+      ],
+      ['regional_officer']
+    );
+  }
+
+  it('is hidden from pendingApplicationIds without application.submit_online', async () => {
+    const { workflow } = await load();
+    const id = await seedReceivedApplication();
+
+    expect((await workflow.pendingApplicationIds(officer)).has(id)).toBe(false);
+  });
+
+  it('is flagged in pendingApplicationIds for whoever also holds application.submit_online', async () => {
+    const { workflow } = await load();
+    const id = await seedReceivedApplication();
+
+    expect(
+      (await workflow.pendingApplicationIds(withOnlinePermission())).has(id)
+    ).toBe(true);
+  });
+
+  it('is not counted in pendingActionCount without application.submit_online', async () => {
+    const { workflow } = await load();
+    const before = await workflow.pendingActionCount(officer);
+    await seedReceivedApplication();
+
+    expect(await workflow.pendingActionCount(officer)).toBe(before);
+  });
+
+  it('is counted in pendingActionCount for whoever also holds application.submit_online', async () => {
+    const { workflow } = await load();
+    const onlineOfficer = withOnlinePermission();
+    const before = await workflow.pendingActionCount(onlineOfficer);
+    await seedReceivedApplication();
+
+    expect(await workflow.pendingActionCount(onlineOfficer)).toBe(before + 1);
+  });
+
+  it('refuses an officer without application.submit_online who tries to submit it', async () => {
+    const { workflow } = await load();
+    const id = await seedReceivedApplication();
+
+    await expect(workflow.submitApplication(id, officer)).rejects.toThrowError(
+      /permission to handle an application submitted through the mobile app/
+    );
+  });
+
+  it('lets an officer who holds application.submit_online act on it (past the new gate)', async () => {
+    const { capture, workflow } = await load();
+    const id = await seedReceivedApplication();
+
+    // Incomplete (no documents, no payment) — what is under test is that the
+    // new permission gate does not refuse first; submissionReadiness's own
+    // refusal is a different, expected failure past that gate.
+    const result = await workflow.submitApplication(id, withOnlinePermission());
+    expect('problems' in result).toBe(true);
+
+    const application = (await capture.loadApplication(id))!;
+    expect(application.status).toBe('received');
+  });
+});
