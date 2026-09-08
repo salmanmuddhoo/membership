@@ -59,6 +59,35 @@ async function runAsConfigurator(url: string, sql: string) {
   }
 }
 
+// A fixture that seeds an application by inserting into membership_application
+// directly, rather than through capture.ts's own startApplication/
+// startAdditionalAccountApplication/startCustomerAccountApplication, gets none
+// of the checklist snapshot those take at capture time (application_checklist_
+// item, migration 0041) — this gives it the same one, from whichever
+// checklist(s) are configured right now, so checklistFor reads what the test
+// expects instead of nothing. Mirrors the union-with-required-winning merge
+// insertApplication and its siblings each already do (capture.ts).
+async function snapshotChecklist(
+  applicationId: string,
+  checklistIds: string[]
+) {
+  const ids = checklistIds.filter((id): id is string => id !== null);
+  if (ids.length === 0) return;
+  await run(
+    appUrl,
+    `insert into application_checklist_item
+       (application_id, document_type_id, subject, requirement, sort_order)
+     select $1, u.document_type_id, u.subject,
+            case when bool_or(u.requirement = 'required')
+                 then 'required' else 'optional' end,
+            min(u.sort_order)
+       from document_checklist_item u
+      where u.checklist_id = any($2::uuid[])
+      group by u.document_type_id, u.subject`,
+    [applicationId, ids]
+  );
+}
+
 // A stand-in drive. Records what was created so the tests can assert on
 // folders, and lets a test make a file arrive truncated or not at all.
 interface FakeDrive {
@@ -186,7 +215,7 @@ beforeAll(async () => {
 
   const type = await run(
     appUrl,
-    `select id from membership_type where code = 'individual'`
+    `select id, checklist_id from membership_type where code = 'individual'`
   );
   const application = await run(
     appUrl,
@@ -195,6 +224,7 @@ beforeAll(async () => {
     [type.rows[0].id, officer.userId]
   );
   applicationId = application.rows[0].id;
+  await snapshotChecklist(applicationId, [type.rows[0].checklist_id]);
 
   const docType = await run(
     appUrl,
@@ -235,6 +265,270 @@ describe('S-407: the checklist comes from the configuration', () => {
     const { documents } = await load();
     const checklist = await documents.checklistFor({ applicationId });
     expect(documents.isDocumentComplete(checklist)).toBe(false);
+  });
+});
+
+// Officer feedback: a document checklist change reached backwards into
+// every application already in flight the moment it was saved. What an
+// application requires is frozen at capture (application_checklist_item,
+// migration 0041) — a later change to document_checklist_item must reach
+// only applications captured after it.
+describe('a document checklist change applies to new applications only', () => {
+  async function individualChecklistIds() {
+    const type = await run(
+      appUrl,
+      `select checklist_id from membership_type where code = 'individual'`
+    );
+    return type.rows[0].checklist_id as string;
+  }
+
+  it('does not add a newly required document to an application already captured', async () => {
+    const { capture, documents, config } = await load();
+    const { id: before } = await capture.startApplication(
+      'individual',
+      officer
+    );
+
+    const checklistId = await individualChecklistIds();
+    const birthCertificate = await run(
+      appUrl,
+      `select id from document_type where code = 'birth_certificate'`
+    );
+    await config.addChecklistItem(
+      checklistId,
+      {
+        documentTypeId: birthCertificate.rows[0].id,
+        subject: 'applicant',
+        requirement: 'required',
+      },
+      officer
+    );
+
+    try {
+      const { id: after } = await capture.startApplication(
+        'individual',
+        officer
+      );
+
+      const beforeCodes = (
+        await documents.checklistFor({ applicationId: before })
+      ).map(e => e.documentCode);
+      const afterCodes = (
+        await documents.checklistFor({ applicationId: after })
+      ).map(e => e.documentCode);
+
+      expect(beforeCodes).not.toContain('birth_certificate');
+      expect(afterCodes).toContain('birth_certificate');
+    } finally {
+      // Every other test in this file assumes individual_kyc's shipped
+      // default — undo the addition so a test order change elsewhere never
+      // inherits it.
+      const item = await run(
+        appUrl,
+        `select id from document_checklist_item
+          where checklist_id = $1 and document_type_id = $2
+            and subject = 'applicant'`,
+        [checklistId, birthCertificate.rows[0].id]
+      );
+      await config.removeChecklistItem(item.rows[0].id, officer);
+    }
+  });
+
+  it('does not drop a document an application already had once it is removed from the checklist', async () => {
+    const { capture, documents, config } = await load();
+    const { id: before } = await capture.startApplication(
+      'individual',
+      officer
+    );
+
+    const beforeItems = await documents.checklistFor({ applicationId: before });
+    expect(beforeItems.map(e => e.documentCode)).toContain(
+      'marriage_certificate'
+    );
+
+    const checklistId = await individualChecklistIds();
+    const marriageCertificate = await run(
+      appUrl,
+      `select id from document_checklist_item
+        where checklist_id = $1
+          and document_type_id = (
+            select id from document_type where code = 'marriage_certificate'
+          )
+          and subject = 'applicant'`,
+      [checklistId]
+    );
+    await config.removeChecklistItem(marriageCertificate.rows[0].id, officer);
+
+    try {
+      const { id: after } = await capture.startApplication(
+        'individual',
+        officer
+      );
+
+      const afterStillHas = (
+        await documents.checklistFor({ applicationId: before })
+      ).map(e => e.documentCode);
+      const newDoesNotHave = (
+        await documents.checklistFor({ applicationId: after })
+      ).map(e => e.documentCode);
+
+      expect(afterStillHas).toContain('marriage_certificate');
+      expect(newDoesNotHave).not.toContain('marriage_certificate');
+    } finally {
+      const docType = await run(
+        appUrl,
+        `select id from document_type where code = 'marriage_certificate'`
+      );
+      await config.addChecklistItem(
+        checklistId,
+        {
+          documentTypeId: docType.rows[0].id,
+          subject: 'applicant',
+          requirement: 'optional',
+        },
+        officer
+      );
+    }
+  });
+
+  it('does not change what an application already captured requires when a requirement is flipped', async () => {
+    const { capture, documents, config } = await load();
+    const { id: before } = await capture.startApplication(
+      'individual',
+      officer
+    );
+
+    const beforeEntry = (
+      await documents.checklistFor({ applicationId: before })
+    ).find(e => e.documentCode === 'marriage_certificate')!;
+    expect(beforeEntry.requirement).toBe('optional');
+
+    const checklistId = await individualChecklistIds();
+    const marriageCertificate = await run(
+      appUrl,
+      `select id from document_checklist_item
+        where checklist_id = $1
+          and document_type_id = (
+            select id from document_type where code = 'marriage_certificate'
+          )
+          and subject = 'applicant'`,
+      [checklistId]
+    );
+    await config.setChecklistItemRequirement(
+      marriageCertificate.rows[0].id,
+      'required',
+      officer
+    );
+
+    try {
+      const { id: after } = await capture.startApplication(
+        'individual',
+        officer
+      );
+
+      const stillOptional = (
+        await documents.checklistFor({ applicationId: before })
+      ).find(e => e.documentCode === 'marriage_certificate')!;
+      const nowRequired = (
+        await documents.checklistFor({ applicationId: after })
+      ).find(e => e.documentCode === 'marriage_certificate')!;
+
+      expect(stillOptional.requirement).toBe('optional');
+      expect(nowRequired.requirement).toBe('required');
+    } finally {
+      await config.setChecklistItemRequirement(
+        marriageCertificate.rows[0].id,
+        'optional',
+        officer
+      );
+    }
+  });
+
+  it('carries the same frozen checklist onto the member the application becomes', async () => {
+    const { capture, documents, config } = await load();
+    const { id: applicationId } = await capture.startApplication(
+      'individual',
+      officer
+    );
+    await capture.saveDraft(
+      applicationId,
+      [
+        {
+          subject: 'applicant',
+          ordinal: 1,
+          values: {
+            surname: 'Bissessur',
+            name: 'Kavita',
+            nic: 'B1234567890123',
+            gender: 'Female',
+            address: '1 Royal Road, Curepipe',
+            mobile: '5123 4567',
+          },
+        },
+        {
+          subject: 'nominee',
+          ordinal: 1,
+          values: {
+            surname: 'Bissessur',
+            name: 'Ravi',
+            nic: 'B9876543210987',
+            address: '1 Royal Road, Curepipe',
+          },
+        },
+      ],
+      officer
+    );
+
+    // The checklist changes after capture, while the application is still
+    // being worked — a member approved from it should read exactly what
+    // the application itself does, not whatever configuration says by then.
+    const checklistId = await individualChecklistIds();
+    const birthCertificate = await run(
+      appUrl,
+      `select id from document_type where code = 'birth_certificate'`
+    );
+    await config.addChecklistItem(
+      checklistId,
+      {
+        documentTypeId: birthCertificate.rows[0].id,
+        subject: 'applicant',
+        requirement: 'required',
+      },
+      officer
+    );
+
+    try {
+      const codesFor = async (opts: {
+        applicationId?: string;
+        memberId?: string;
+      }) => (await documents.checklistFor(opts)).map(e => e.documentCode);
+
+      const applicationCodes = await codesFor({ applicationId });
+      expect(applicationCodes).not.toContain('birth_certificate');
+      expect(applicationCodes).toContain('id_card');
+
+      const member = await run(
+        appUrl,
+        `insert into member (application_id, membership_type_id, status)
+         values ($1, (select id from membership_type where code = 'individual'),
+                 'active')
+         returning id`,
+        [applicationId]
+      );
+
+      const memberCodes = await codesFor({ memberId: member.rows[0].id });
+      expect(memberCodes).not.toContain('birth_certificate');
+      expect(memberCodes).toEqual(applicationCodes);
+    } finally {
+      const item = await run(
+        appUrl,
+        `select id from document_checklist_item
+          where checklist_id = $1 and document_type_id = $2
+            and subject = 'applicant'`,
+        [checklistId, birthCertificate.rows[0].id]
+      );
+      await config.removeChecklistItem(item.rows[0].id, officer);
+    }
   });
 });
 
@@ -292,6 +586,9 @@ describe('S-612: the checklist for an additional-account application comes from 
        values ($1, $2)`,
       [additionalAccountApplicationId, accountType.rows[0].id]
     );
+    await snapshotChecklist(additionalAccountApplicationId, [
+      checklist.rows[0].id,
+    ]);
   });
 
   it('lists what the selected account type requires, not "not found"', async () => {
@@ -319,7 +616,7 @@ describe('documentsForMember: everything filed for a member, grouped by applicat
 
     const type = await run(
       appUrl,
-      `select id from membership_type where code = 'individual'`
+      `select id, checklist_id from membership_type where code = 'individual'`
     );
     const founding = await run(
       appUrl,
@@ -328,6 +625,7 @@ describe('documentsForMember: everything filed for a member, grouped by applicat
       [type.rows[0].id, officer.userId]
     );
     const foundingId = founding.rows[0].id;
+    await snapshotChecklist(foundingId, [type.rows[0].checklist_id]);
     const member = await run(
       appUrl,
       `insert into member (membership_type_id, application_id, status)
@@ -398,6 +696,7 @@ describe('documentsForMember: everything filed for a member, grouped by applicat
        values ($1, $2)`,
       [additionalId, accountType.rows[0].id]
     );
+    await snapshotChecklist(additionalId, [checklist.rows[0].id]);
 
     const additionalUpload = await documents.beginUpload(
       {

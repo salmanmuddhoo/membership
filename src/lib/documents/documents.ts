@@ -15,9 +15,8 @@ import type { PoolClient } from 'pg';
 import { recordAudit } from '../access/audit';
 import { checkSegregation } from '../admin/segregation';
 import {
-  checklistForAccountTypes,
   checklistForMembershipType,
-  checklistForNonMemberAccount,
+  type ChecklistItem,
   type FieldSubject,
 } from '../config/reference';
 import { query, withTransaction } from '../db/pool';
@@ -167,26 +166,22 @@ export async function ensureFolderPath(
   );
 }
 
-// What decides the checklist for this owner: a membership type's own
-// checklist; for an S-612 additional-account application, which has no
-// membership type, the union of its selected account types' checklists; or
-// for an S-614 customer_account application — which has both, reusing a
-// membership type's field configuration to capture an applicant who selects
-// account types the same way additional_account does — the union of both.
-type ChecklistSource =
-  | { kind: 'membership_type'; code: string }
-  | { kind: 'account_types'; codes: string[] }
-  | {
-      kind: 'membership_type_and_account_types';
-      membershipCode: string;
-      accountCodes: string[];
-    };
-
 interface OwnerRow {
   application_id: string | null;
   member_id: string | null;
   application_status: string | null;
-  checklist_source: ChecklistSource;
+  // The application whose checklist was frozen at capture (officer
+  // feedback: a later change to document_checklist_item must not reach an
+  // application already in flight — see application_checklist_item,
+  // migration 0041). For an application this is its own id; for a member
+  // it is the application they came from, so a member's own documents
+  // still ask for exactly what their application asked for, not whatever
+  // configuration says today. Null only for a legacy member imported
+  // without an application (M7) — membership_type_code below is what
+  // checklistFor falls back to reading live for those, since there was
+  // never an application to have frozen one against.
+  checklist_application_id: string | null;
+  membership_type_code: string | null;
   folder_path: string;
   // The application's own reference, or the member's number once one
   // exists (S-308: the application's reference becomes that number on
@@ -203,18 +198,10 @@ async function resolveOwner(
   if (applicationId) {
     const result = await query<{
       reference: string;
-      application_kind:
-        'membership' | 'additional_account' | 'customer_account';
-      membership_type_code: string | null;
       status: string;
-    }>(
-      `select a.reference, a.application_kind, a.status,
-              m.code as membership_type_code
-         from membership_application a
-         left join membership_type m on m.id = a.membership_type_id
-        where a.id = $1`,
-      [applicationId]
-    );
+    }>(`select reference, status from membership_application where id = $1`, [
+      applicationId,
+    ]);
     if (result.rowCount === 0) {
       throw new DocumentError(
         'That application no longer exists.',
@@ -223,33 +210,12 @@ async function resolveOwner(
     }
     const row = result.rows[0];
 
-    const selectedAccountCodes = async (): Promise<string[]> =>
-      (
-        await query<{ code: string }>(
-          `select t.code
-             from application_account_selection s
-             join account_type t on t.id = s.account_type_id
-            where s.application_id = $1`,
-          [applicationId]
-        )
-      ).rows.map(r => r.code);
-
-    const checklistSource: ChecklistSource =
-      row.application_kind === 'membership'
-        ? { kind: 'membership_type', code: row.membership_type_code! }
-        : row.application_kind === 'customer_account'
-          ? {
-              kind: 'membership_type_and_account_types',
-              membershipCode: row.membership_type_code!,
-              accountCodes: await selectedAccountCodes(),
-            }
-          : { kind: 'account_types', codes: await selectedAccountCodes() };
-
     return {
       application_id: applicationId,
       member_id: null,
       application_status: row.status,
-      checklist_source: checklistSource,
+      checklist_application_id: applicationId,
+      membership_type_code: null,
       folder_path: applicationFolderPath(row.reference),
       reference: row.reference,
     };
@@ -263,10 +229,11 @@ async function resolveOwner(
 
   const result = await query<{
     member_no: string;
+    application_id: string | null;
     membership_type_code: string;
     name: string;
   }>(
-    `select m.member_no, t.code as membership_type_code,
+    `select m.member_no, m.application_id, t.code as membership_type_code,
             trim(coalesce(p.values->>'name', '') || ' '
                  || coalesce(p.values->>'surname', '')) as name
        from member m
@@ -285,10 +252,8 @@ async function resolveOwner(
     application_id: null,
     member_id: memberId,
     application_status: null,
-    checklist_source: {
-      kind: 'membership_type',
-      code: result.rows[0].membership_type_code,
-    },
+    checklist_application_id: result.rows[0].application_id,
+    membership_type_code: result.rows[0].membership_type_code,
     folder_path: memberFolderPath(
       result.rows[0].member_no,
       result.rows[0].name ?? ''
@@ -297,10 +262,61 @@ async function resolveOwner(
   };
 }
 
+// The checklist an application actually captured (application_checklist_item,
+// migration 0041) — a copy taken at the moment the application was created,
+// not a live read of document_checklist_item. Grouped by subject the same
+// way checklistForMembershipType and its siblings already are, so
+// checklistFor's own merge loop below reads either source identically.
+// `is_active` is deliberately not checked here the way the live readers
+// check it: a document type deactivated after this application captured its
+// checklist is not "no longer required" for THIS application — that
+// question was already answered at capture time, once, and stays answered.
+async function readFrozenChecklist(
+  applicationId: string
+): Promise<Map<FieldSubject, ChecklistItem[]>> {
+  const result = await query<{
+    id: string;
+    document_type_id: string;
+    document_code: string;
+    document_name: string;
+    tracks_expiry: boolean;
+    subject: FieldSubject;
+    requirement: 'required' | 'optional';
+    sort_order: number;
+  }>(
+    `select i.id, i.document_type_id, d.code as document_code,
+            d.name as document_name, d.tracks_expiry,
+            i.subject, i.requirement, i.sort_order
+       from application_checklist_item i
+       join document_type d on d.id = i.document_type_id
+      where i.application_id = $1
+      order by i.subject, i.sort_order`,
+    [applicationId]
+  );
+
+  const bySubject = new Map<FieldSubject, ChecklistItem[]>();
+  for (const r of result.rows) {
+    const list = bySubject.get(r.subject) ?? [];
+    list.push({
+      id: r.id,
+      documentTypeId: r.document_type_id,
+      documentCode: r.document_code,
+      documentName: r.document_name,
+      tracksExpiry: r.tracks_expiry,
+      subject: r.subject,
+      requirement: r.requirement,
+      sortOrder: r.sort_order,
+    });
+    bySubject.set(r.subject, list);
+  }
+  return bySubject;
+}
+
 /**
  * S-407 · The checklist, as the Secretary reads it.
  *
- * Every item the configuration requires, with what has been filed against it.
+ * Every item the configuration required when this application (or the one
+ * the member came from) was captured, with what has been filed against it.
  * An item with no committed document reads Missing — computed, so it cannot
  * drift from what is actually in the drive.
  */
@@ -314,18 +330,11 @@ export async function checklistFor(options: {
   );
 
   // Neither depends on the other's result, only on `owner` — one round trip
-  // rather than two in sequence. `configured` is usually free anyway: it is
-  // served from the reference cache (config/cache.ts) on everything but the
-  // first request for a given checklist in the last few seconds.
+  // rather than two in sequence.
   const [configured, filed] = await Promise.all([
-    owner.checklist_source.kind === 'membership_type'
-      ? checklistForMembershipType(owner.checklist_source.code)
-      : owner.checklist_source.kind === 'membership_type_and_account_types'
-        ? checklistForNonMemberAccount(
-            owner.checklist_source.membershipCode,
-            owner.checklist_source.accountCodes
-          )
-        : checklistForAccountTypes(owner.checklist_source.codes),
+    owner.checklist_application_id
+      ? readFrozenChecklist(owner.checklist_application_id)
+      : checklistForMembershipType(owner.membership_type_code!),
     query<{
       id: string;
       document_type_id: string;

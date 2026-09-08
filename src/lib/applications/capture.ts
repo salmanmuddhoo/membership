@@ -200,6 +200,22 @@ async function insertApplication(
     );
   }
 
+  // Officer feedback: what a document checklist requires is decided once,
+  // here, from whatever document_checklist_item currently says — copied
+  // rather than referenced, so a later configuration change cannot reach
+  // backwards into an application that already has its own answer
+  // (application_checklist_item, migration 0041). type.checklistId may be
+  // null (unconfigured); the join then matches nothing and this application
+  // simply gets no requirements, the same as the live read it replaces did.
+  await client.query(
+    `insert into application_checklist_item
+       (application_id, document_type_id, subject, requirement, sort_order)
+     select $1, i.document_type_id, i.subject, i.requirement, i.sort_order
+       from document_checklist_item i
+      where i.checklist_id = $2`,
+    [id, type.checklistId]
+  );
+
   await recordAudit(
     {
       actorUserId: actor.userId,
@@ -318,6 +334,33 @@ async function refuseIneligibleAccountTypes(
   }
 }
 
+// Officer feedback: the same freeze insertApplication gives a membership
+// application's own checklist (application_checklist_item, migration 0041),
+// for the union-of-selected-account-types shape S-613's own additional_account
+// application uses — mirrors readChecklistForAccountTypes' bool_or merge
+// (config/reference.ts): a document required by any selected account type is
+// required here, and one two selected types disagree on is required if
+// either says so.
+async function snapshotAccountTypesChecklist(
+  client: PoolClient,
+  applicationId: string,
+  accountTypeIds: string[]
+): Promise<void> {
+  await client.query(
+    `insert into application_checklist_item
+       (application_id, document_type_id, subject, requirement, sort_order)
+     select $1, u.document_type_id, u.subject,
+            case when bool_or(u.requirement = 'required')
+                 then 'required' else 'optional' end,
+            min(u.sort_order)
+       from account_type t
+       join document_checklist_item u on u.checklist_id = t.checklist_id
+      where t.id = any($2::uuid[])
+      group by u.document_type_id, u.subject`,
+    [applicationId, accountTypeIds]
+  );
+}
+
 /**
  * S-613 · Start an additional-account application for an existing member —
  * opening an account type their membership did not already open for them
@@ -402,6 +445,8 @@ export async function startAdditionalAccountApplication(
        select $1, t from unnest($2::uuid[]) as t`,
       [id, accountTypeIds]
     );
+
+    await snapshotAccountTypesChecklist(client, id, accountTypeIds);
 
     await recordAudit(
       {
@@ -509,6 +554,33 @@ export async function startCustomerAccountApplication(
          (application_id, account_type_id)
        select $1, t from unnest($2::uuid[]) as t`,
       [id, accountTypeIds]
+    );
+
+    // Officer feedback, the same freeze insertApplication's own membership
+    // checklist gets — the union of what the non-member applicant must
+    // provide (membership_type.non_member_checklist_id) and the selected
+    // account types' own checklists, required winning over optional where
+    // they disagree, mirroring readChecklistForNonMemberAccount's merge
+    // (config/reference.ts) exactly.
+    await client.query(
+      `insert into application_checklist_item
+         (application_id, document_type_id, subject, requirement, sort_order)
+       select $1, combined.document_type_id, combined.subject,
+              case when bool_or(combined.requirement = 'required')
+                   then 'required' else 'optional' end,
+              min(combined.sort_order)
+         from (
+           select i.document_type_id, i.subject, i.requirement, i.sort_order
+             from document_checklist_item i
+            where i.checklist_id = $2
+           union all
+           select u.document_type_id, u.subject, u.requirement, u.sort_order
+             from account_type t
+             join document_checklist_item u on u.checklist_id = t.checklist_id
+            where t.id = any($3::uuid[])
+         ) combined
+        group by combined.document_type_id, combined.subject`,
+      [id, type.nonMemberChecklistId, accountTypeIds]
     );
 
     await recordAudit(
