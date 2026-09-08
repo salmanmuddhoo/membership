@@ -129,28 +129,57 @@ const fixedViewport =
     </header>
 
     {
-      [...fields].map(([subject, subjectFields]) => {
-        const values = valuesFor(subject);
-        return (
-          <section class="block">
-            <h2>{SUBJECT_LABELS[subject] ?? subject}</h2>
-            <dl>
-              {subjectFields.map(field => {
-                const value = (values[field.fieldKey] ?? '').trim();
-                return (
-                  <div class="row">
-                    <dt>
-                      {field.label}
-                      {field.isMandatory && <span class="req">*</span>}
-                    </dt>
-                    <dd class={value ? '' : 'blank'}>{value}</dd>
-                  </div>
-                );
-              })}
-            </dl>
-          </section>
-        );
-      })
+      // Employment describes the applicant, not a separate person — its rows
+      // print inside the Applicant block, not as a section of their own.
+      [...fields]
+        .filter(([subject]) => subject !== 'employment')
+        .map(([subject, subjectFields]) => {
+          const values = valuesFor(subject);
+          const employmentFields =
+            subject === 'applicant' ? (fields.get('employment') ?? []) : [];
+          const employmentValues =
+            employmentFields.length > 0 ? valuesFor('employment') : {};
+          return (
+            <section class="block">
+              <h2>{SUBJECT_LABELS[subject] ?? subject}</h2>
+              <dl>
+                {subjectFields.map(field => {
+                  const value = (values[field.fieldKey] ?? '').trim();
+                  return (
+                    <div class="row">
+                      <dt>
+                        {field.label}
+                        {field.isMandatory && <span class="req">*</span>}
+                      </dt>
+                      <dd class={value ? '' : 'blank'}>{value}</dd>
+                    </div>
+                  );
+                })}
+              </dl>
+              {employmentFields.length > 0 && (
+                <>
+                  <h3>{SUBJECT_LABELS.employment}</h3>
+                  <dl>
+                    {employmentFields.map(field => {
+                      const value = (
+                        employmentValues[field.fieldKey] ?? ''
+                      ).trim();
+                      return (
+                        <div class="row">
+                          <dt>
+                            {field.label}
+                            {field.isMandatory && <span class="req">*</span>}
+                          </dt>
+                          <dd class={value ? '' : 'blank'}>{value}</dd>
+                        </div>
+                      );
+                    })}
+                  </dl>
+                </>
+              )}
+            </section>
+          );
+        })
     }
 
     <section class="declaration block">
@@ -321,6 +350,13 @@ const fixedViewport =
     letter-spacing: 0.08em;
     border-bottom: 1px solid #999;
     padding-bottom: 1mm;
+  }
+  h3 {
+    margin: 4mm 0 2mm;
+    font-size: 10pt;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #333;
   }
 
   dl {

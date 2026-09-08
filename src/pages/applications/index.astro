@@ -82,12 +82,20 @@ const created = Astro.url.searchParams.get('created');
 
 const filter = Astro.url.searchParams.get('status') ?? '';
 const search = Astro.url.searchParams.get('q') ?? '';
+// Officer feedback: 'received' (submitted from the mobile app) used to be
+// visible to any officer who could submit at all — the business wants it
+// handled by specific staff instead (S-303, application.submit_online).
+const canHandleReceived = principal.permissions.has(
+  'application.submit_online'
+);
+
 const [unsortedApplications, types, nonDraftCount, attentionIds] =
   await Promise.all([
     listApplications({
       ...(filter ? { statuses: [filter] } : {}),
       viewerUserId: principal.userId,
       search,
+      canHandleReceived,
     }),
     listMembershipTypes(),
     // Meaningless filtered to Draft specifically — countApplications excludes
@@ -95,7 +103,10 @@ const [unsortedApplications, types, nonDraftCount, attentionIds] =
     // a table that is, in fact, showing rows.
     filter === 'draft'
       ? null
-      : countApplications(filter ? { statuses: [filter] } : {}),
+      : countApplications({
+          ...(filter ? { statuses: [filter] } : {}),
+          canHandleReceived,
+        }),
     pendingApplicationIds(principal),
   ]);
 
@@ -125,6 +136,10 @@ const reviewStageLabels = await reviewStageLabelsFor(
 // applications match."
 const STATUS_LABELS: Record<string, string> = {
   draft: 'Draft',
+  // Submitted from the member app and with the branch — worked exactly as a
+  // draft (docs/member-app.md). Named for what an officer has to do with it
+  // rather than for where it came from.
+  received: 'Received online',
   new: 'New',
   submitted_for_review: 'Submit for Review',
   submitted_for_approval: 'Submit for Approval',
@@ -136,6 +151,8 @@ const STATUS_LABELS: Record<string, string> = {
 const STATUS_CLASSES: Record<string, string> = {
   draft:
     'bg-neutral-200 text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200',
+  // Amber like 'returned': both are work sitting with the branch.
+  received: 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200',
   new: 'bg-mint-200 text-neutral-800 dark:bg-mint-900 dark:text-neutral-100',
   submitted_for_approval:
     'bg-mint-200 text-neutral-800 dark:bg-mint-900 dark:text-neutral-100',

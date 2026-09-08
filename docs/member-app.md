@@ -42,6 +42,16 @@ the AB Number as typed and a prefix of the NIC's hash), never in the
 response. The app tells the person a code has been sent _if_ the details
 matched, and what to do if nothing arrives.
 
+It is also written to the server log, as
+`{"kind":"member-link-refused","correlationId":…,"abNumber":…,"reason":…}`
+where `reason` is `no_match` or `no_mobile_on_record`. A server log is not
+the caller, so this costs nothing the response protects — and without it a
+refusal is invisible to whoever is setting an environment up: the request
+logs 200 like any other, no `member-otp` line appears because nothing was
+sent, and the only symptom is an OTP that will not verify five minutes
+later. Reading the audit trail instead needs database access, which the
+person holding the deployment log often does not have.
+
 **AB Number** is `member.member_no` — `AB` and four digits, allocated by
 `next_member_number()` — which the business also calls the Shares Account
 Number. Matching is on `member.member_no`, whole, case-insensitive.
@@ -132,6 +142,20 @@ All under `/api/v1/member`; the generated document has the schemas.
 Where a rule says 422, `details` carries one entry per problem, keyed
 `subject.ordinal.fieldKey` for a party field and `document.<code>` for a
 missing document — the app folds those onto the fields by that key.
+
+**Every write must send `Content-Type: application/json`, whether or not it
+has a body.** Astro's `security.checkOrigin` is on by default: for any
+method outside GET/HEAD/OPTIONS, a request declaring no content-type at all
+is refused with `403 Cross-site POST form submissions are forbidden` unless
+its `Origin` header matches the site, while one that declares a type is
+refused only if that type is form-like (`x-www-form-urlencoded`,
+`multipart/form-data`, `text/plain`). A native client has no browsing
+context and sends no `Origin`, so the content-type decides it alone. The
+two calls that carry nothing of their own — submitting an application and
+deleting a draft, both of which take everything from the path — are the
+ones this catches, and it catches them before any handler runs, so the
+answer is a bare 403 with no envelope and no correlation id. Sending the
+header is the whole of what is needed; a body is not.
 
 | Method | Path                                         | Caller | What                                                                                                                                                                   |
 | ------ | -------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

@@ -1362,6 +1362,75 @@ describe('the application list staff work from', () => {
       );
     });
   });
+
+  // Officer feedback: a 'received' application (submitted through the
+  // mobile app) used to be visible to any officer who could list
+  // applications at all. canHandleReceived (migration 0044) hides it from
+  // both listApplications and countApplications unless the caller says
+  // they hold application.submit_online.
+  describe('a "received" application is left out unless canHandleReceived is set', () => {
+    async function seedReceivedApplication(
+      capture: Awaited<ReturnType<typeof load>>['capture']
+    ) {
+      const { id, reference } = await capture.startApplication(
+        'individual',
+        officer
+      );
+      await run(
+        appUrl,
+        `update membership_application set status = 'received' where id = $1`,
+        [id]
+      );
+      return { id, reference };
+    }
+
+    it('is excluded from listApplications by default', async () => {
+      const { capture } = await load();
+      const { id } = await seedReceivedApplication(capture);
+
+      expect(
+        (await capture.listApplications({})).find(a => a.id === id)
+      ).toBeUndefined();
+      expect(
+        (await capture.listApplications({ statuses: ['received'] })).find(
+          a => a.id === id
+        )
+      ).toBeUndefined();
+    });
+
+    it('is included in listApplications once canHandleReceived is true', async () => {
+      const { capture } = await load();
+      const { id } = await seedReceivedApplication(capture);
+
+      expect(
+        (await capture.listApplications({ canHandleReceived: true })).find(
+          a => a.id === id
+        )
+      ).toBeDefined();
+      expect(
+        (
+          await capture.listApplications({
+            statuses: ['received'],
+            canHandleReceived: true,
+          })
+        ).find(a => a.id === id)
+      ).toBeDefined();
+    });
+
+    it('is left out of countApplications by default, and counted once canHandleReceived is true', async () => {
+      const { capture } = await load();
+      const withoutBefore = await capture.countApplications({});
+      const withBefore = await capture.countApplications({
+        canHandleReceived: true,
+      });
+      await seedReceivedApplication(capture);
+
+      expect(await capture.countApplications({})).toBe(withoutBefore);
+      expect(await capture.countApplications({ canHandleReceived: true })).toBe(
+        withBefore + 1
+      );
+    });
+  });
 });
 
 describe('deleting a draft that is no longer needed', () => {

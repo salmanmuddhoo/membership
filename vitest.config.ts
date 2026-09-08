@@ -6,23 +6,31 @@ export default defineConfig({
     // Each file mutates process.env and the module registry, so they must not
     // share a worker.
     isolate: true,
-    // The application keeps an idle connection for a minute (docs/database.md),
-    // which suits an officer between clicks but not a suite that builds a
-    // fresh pool per load(): with the deployed default the suite peaked at 79
-    // connections against a 100-connection server, and a run that crossed the
-    // line failed in whichever test happened to be next. Ten seconds here
-    // keeps idle connections from stacking up between tests.
+    // The application keeps an idle connection for a minute
+    // (docs/database.md), which suits an officer between clicks but not a
+    // suite that builds a fresh pool per load(). Every load() calls
+    // vi.resetModules() and re-imports src/lib/db/pool, so the pool it
+    // replaces is abandoned rather than closed: nothing ends it, and its
+    // connection sits idle until the timeout reaps it. Against a
+    // 100-connection server those leftovers are what runs the budget out,
+    // and the run that crosses the line fails in whichever test happens to
+    // be next — typically nowhere near the change that pushed it over.
     //
-    // That alone stopped being enough once this suite grew past ~530 tests:
-    // the peak is a burst DURING a run, not idle leftovers between them, and
-    // idleTimeout does nothing for a burst. The deployed default pool (3 per
-    // instance) assumes several warm serverless instances sharing one
-    // database's connection budget; a test file's own pool is the only thing
-    // touching this one, so it does not need that many at once.
-    // DATABASE_POOL_MAX=1 forces every query in a test file through a single
-    // connection — slower under concurrency (pg queues rather than opening a
-    // second one), never wrong, and keeps this suite's own burst well under
-    // what a 100-connection server has left after Postgres reserves its own.
-    env: { DATABASE_IDLE_TIMEOUT_MS: '10000', DATABASE_POOL_MAX: '1' },
+    // DATABASE_POOL_MAX=1 caps what a live pool may hold at once. The
+    // deployed default (3 per instance) assumes several warm serverless
+    // instances sharing one database's budget; a test file's own pool is the
+    // only thing touching this one, so it does not need that many. Slower
+    // under concurrency — pg queues rather than opening a second connection
+    // — never wrong.
+    //
+    // The cap alone leaves too little room, because the count that matters
+    // is abandoned pools, not busy ones: measured over a full run, the suite
+    // peaked at 71 connections of which 68 were idle and 3 were doing work.
+    // Half a second is long enough that a live pool reuses its connection
+    // across a test rather than reconnecting per query (reconnecting to a
+    // local server costs a millisecond or two, and run time is unchanged at
+    // ~17s), and short enough that an abandoned pool gives its connection
+    // back almost at once: the same run peaks at 39.
+    env: { DATABASE_IDLE_TIMEOUT_MS: '500', DATABASE_POOL_MAX: '1' },
   },
 });
