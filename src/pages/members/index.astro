@@ -1,10 +1,18 @@
 ---
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import { listMembers, type MemberListAccount } from '@lib/members/create';
+import { countPendingDetailsRequests } from '@lib/members/details-requests';
 import { formatMoney } from '@lib/payments/money';
 
 const principal = Astro.locals.principal!;
 const canSeePayments = principal.permissions.has('payment.view');
+
+// Members correcting their own details from the app queue up for
+// verification (docs/member-app.md). Surfaced here rather than only on its
+// own page: nobody visits a page they have no reason to think has anything
+// on it, and a member waiting on a verification is waiting on someone
+// noticing.
+const pendingDetailsUpdates = await countPendingDetailsRequests();
 
 const search = Astro.url.searchParams.get('q') ?? '';
 const { members, total, truncated } = await listMembers({ search });
@@ -42,9 +50,24 @@ function accountButtonClasses(account: MemberListAccount): string {
     <section
       class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
     >
-      <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-        Members
-      </h2>
+      <div class="flex flex-wrap items-baseline justify-between gap-2">
+        <h2
+          class="text-lg font-semibold text-neutral-800 dark:text-neutral-100"
+        >
+          Members
+        </h2>
+        {
+          pendingDetailsUpdates > 0 && (
+            <a
+              href="/members/details-updates"
+              class="rounded-lg bg-amber-100 px-3 py-1.5 text-sm font-medium text-amber-900 transition hover:bg-amber-200 dark:bg-amber-950 dark:text-amber-200 dark:hover:bg-amber-900"
+            >
+              {pendingDetailsUpdates} details update
+              {pendingDetailsUpdates === 1 ? '' : 's'} to verify
+            </a>
+          )
+        }
+      </div>
 
       <form method="get" class="mt-5 flex flex-wrap items-center gap-2">
         <label for="q" class="sr-only">Search members</label>

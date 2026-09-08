@@ -2610,11 +2610,19 @@ complete (signed form, payment) and submit into the chain as a draft.
 and workflow read.
 
 **A member's own capture of their details** arrives as a
-`member_details_request` for staff to verify. **Not built yet:** the staff
-side that applies or declines one — the Members page queue, and the write
-to an approved application's parties. Also still open: a balance beyond
-"opening payment less refund" (needs a ledger), a member-facing document
-viewer, and push or WhatsApp notification on a status change (M9).
+`member_details_request`, and staff act on it at Members → Details updates
+(`member.details_verify`, migration 0042): what the record holds against
+what the member says, field by field, applied or declined with a reason
+the member is shown. A change is measured against what the member was
+SHOWN, never against the record as it stands — the app sends the whole
+form back, so diffing the other way would write their stale copy over
+anything an officer corrected at the branch while the request waited.
+
+Still open: a balance beyond "opening payment less refund" (needs a
+ledger), a member-facing document viewer, and push or WhatsApp
+notification when an application's status changes or a details update is
+decided (M9) — today the member sees either the next time they open the
+app.
 
 # Open values that later stories depend on
 
