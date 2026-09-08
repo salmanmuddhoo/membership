@@ -143,6 +143,20 @@ Where a rule says 422, `details` carries one entry per problem, keyed
 `subject.ordinal.fieldKey` for a party field and `document.<code>` for a
 missing document — the app folds those onto the fields by that key.
 
+**Every write must send `Content-Type: application/json`, whether or not it
+has a body.** Astro's `security.checkOrigin` is on by default: for any
+method outside GET/HEAD/OPTIONS, a request declaring no content-type at all
+is refused with `403 Cross-site POST form submissions are forbidden` unless
+its `Origin` header matches the site, while one that declares a type is
+refused only if that type is form-like (`x-www-form-urlencoded`,
+`multipart/form-data`, `text/plain`). A native client has no browsing
+context and sends no `Origin`, so the content-type decides it alone. The
+two calls that carry nothing of their own — submitting an application and
+deleting a draft, both of which take everything from the path — are the
+ones this catches, and it catches them before any handler runs, so the
+answer is a bare 403 with no envelope and no correlation id. Sending the
+header is the whole of what is needed; a body is not.
+
 | Method | Path                                         | Caller | What                                                                                                                                                                   |
 | ------ | -------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | GET    | `/reference`                                 | public | Active membership types with their fields, applicant-facing checklist (`signed_form` left out — a branch step) and fees in force.                                      |
