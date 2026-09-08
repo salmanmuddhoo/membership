@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { migrate } from '../../../scripts/migrate';
 import type { CodeDelivery } from './otp';
 
@@ -58,6 +58,11 @@ const MEMBER = {
   abNumber: 'AB0001',
   mobile: '+23057891234',
 };
+
+// A member who matches on both fields but has no mobile on the applicant
+// party. The link is refused for a different reason than a pair that names
+// nobody, and the caller cannot tell the two apart.
+const NO_MOBILE = { nic: 'C7654321098765', abNumber: 'AB0007' };
 
 let memberId: string;
 
@@ -227,6 +232,85 @@ describe('identification: NIC + AB Number', () => {
         memberId,
       ]);
     }
+  });
+  it('separates "no such pair" from "no mobile to send to", in the log as well as the trail', async () => {
+    // Both refusals look identical from the phone — that is the point — so
+    // the only way anyone finds out why a link failed is the audit trail or
+    // the server log. Reading the trail needs database access; whoever is
+    // setting an environment up often has the deployment log and nothing
+    // else, and a refusal is otherwise invisible there: 200, no code sent,
+    // and an OTP that will not verify five minutes later.
+    const type = await run(
+      appUrl,
+      `select id from membership_type where code = 'individual'`
+    );
+    const officer = await run(
+      appUrl,
+      `select id from app_user where entra_subject = 'test-officer'`
+    );
+    const application = await run(
+      appUrl,
+      `insert into membership_application (membership_type_id, captured_by, status)
+       values ($1, $2, 'approved') returning id`,
+      [type.rows[0].id, officer.rows[0].id]
+    );
+    await run(
+      appUrl,
+      `insert into application_party (application_id, subject, ordinal, values)
+       values ($1, 'applicant', 1, $2::jsonb)`,
+      [
+        application.rows[0].id,
+        JSON.stringify({ surname: 'Bhugaloo', nic: NO_MOBILE.nic }),
+      ]
+    );
+    await run(
+      appUrl,
+      `insert into member (member_no, application_id, membership_type_id)
+       values ($1, $2, $3)`,
+      [NO_MOBILE.abNumber, application.rows[0].id, type.rows[0].id]
+    );
+
+    const logged = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const before = sent.length;
+    try {
+      await clearCooldowns();
+      await expect(
+        link(NO_MOBILE.nic, NO_MOBILE.abNumber)
+      ).resolves.toMatchObject({ purpose: 'link_member', sentTo: null });
+      await clearCooldowns();
+      await expect(link('Z9999999999999', 'AB9999')).resolves.toMatchObject({
+        purpose: 'link_member',
+        sentTo: null,
+      });
+
+      const refusals = logged.mock.calls
+        .map(call => (typeof call[0] === 'string' ? call[0] : ''))
+        .filter(line => line.includes('member-link-refused'))
+        .map(line => JSON.parse(line));
+      expect(refusals.map(r => r.reason)).toEqual([
+        'no_mobile_on_record',
+        'no_match',
+      ]);
+      expect(refusals[0].abNumber).toBe(NO_MOBILE.abNumber);
+      expect(refusals[1].abNumber).toBe('AB9999');
+      // The NIC never reaches the log, in either line.
+      for (const line of refusals) {
+        expect(Object.keys(line)).not.toContain('nic');
+      }
+    } finally {
+      logged.mockRestore();
+    }
+    // Neither refusal sent anything.
+    expect(sent.length).toBe(before);
+
+    const trail = await run(
+      appUrl,
+      `select new_value->>'reason' as reason
+         from audit_event
+        where action = 'member.link.refused' and entity_id = $1`,
+      [NO_MOBILE.abNumber]
+    );
+    expect(trail.rows.map(r => r.reason)).toEqual(['no_mobile_on_record']);
   });
 });
 

@@ -281,6 +281,7 @@ export async function linkMember(
 
   const member = found.rows[0];
   if (!member || !member.mobile) {
+    const reason = member ? 'no_mobile_on_record' : 'no_match';
     // Recorded in full here — the NIC hashed, the AB Number as typed — and
     // nowhere the caller can see.
     await recordAuditQuietly({
@@ -288,13 +289,27 @@ export async function linkMember(
       action: 'member.link.refused',
       entityType: 'member_login_challenge',
       entityId: abNumber,
-      newValue: {
-        reason: member ? 'no_mobile_on_record' : 'no_match',
-        nicHash: sha256(nic).slice(0, 16),
-      },
+      newValue: { reason, nicHash: sha256(nic).slice(0, 16) },
       requestId: origin.correlationId,
       ipAddress: origin.ip,
     });
+    // Also to the server log. The audit trail is the record, but reading it
+    // needs database access, and the person configuring an environment is
+    // often the one person who has the deployment log and not a psql
+    // prompt. Without this a refusal is silent there — the request logs 200
+    // like any other, no code is sent, and the only visible symptom is an
+    // OTP that will not verify five minutes later. Safe to log because a
+    // server log is not the caller: the response is byte-identical to a
+    // hit either way, which is the property that matters. The NIC is
+    // hashed here exactly as it is in the audit row.
+    console.info(
+      JSON.stringify({
+        kind: 'member-link-refused',
+        correlationId: origin.correlationId,
+        abNumber,
+        reason,
+      })
+    );
     return issueChallenge(
       {
         purpose: 'link_member_miss',
