@@ -1,0 +1,253 @@
+---
+// Details a member sent from the app, waiting to be verified.
+//
+// The member says what has changed; someone here checks it against whatever
+// evidence the change needs — a utility bill for a new address, a marriage
+// certificate for a new surname — and applies or declines it. Nothing
+// changes on the member's record until they do (docs/member-app.md).
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import { forDisplay } from '@lib/applications/phone';
+import {
+  applyDetailsRequest,
+  declineDetailsRequest,
+  DetailsRequestError,
+  listDetailsRequests,
+} from '@lib/members/details-requests';
+
+const principal = Astro.locals.principal!;
+const canVerify = principal.permissions.has('member.details_verify');
+
+let error: string | null = null;
+let notice: string | null = null;
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const id = String(form.get('id') ?? '');
+  const intent = String(form.get('intent') ?? '');
+  try {
+    if (intent === 'apply') {
+      const result = await applyDetailsRequest(id, principal);
+      notice =
+        result.applied === 1
+          ? 'One detail updated on the member’s record.'
+          : `${result.applied} details updated on the member’s record.`;
+    } else if (intent === 'decline') {
+      await declineDetailsRequest(
+        id,
+        String(form.get('comment') ?? ''),
+        principal
+      );
+      notice = 'Declined. The member is shown the reason.';
+    }
+  } catch (err) {
+    if (err instanceof DetailsRequestError) {
+      error = err.message;
+    } else {
+      console.error('[members/details-updates]', err);
+      error = 'Something went wrong. Please try again.';
+    }
+  }
+}
+
+const requests = await listDetailsRequests();
+const pending = requests.filter(r => r.status === 'pending');
+const decided = requests.filter(r => r.status !== 'pending').slice(0, 20);
+
+const dateTimeFormat = new Intl.DateTimeFormat('en-GB', {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+});
+
+// A phone number reads as +230 5789 1234 on screen wherever it is stored
+// canonically; every other field is shown as it was typed.
+function display(value: string, dataType: string): string {
+  if (value === '') return '—';
+  return dataType === 'phone' ? forDisplay(value) : value;
+}
+---
+
+<DashboardLayout
+  title="Details updates · Al Barakah MCSL"
+  heading="Details updates"
+>
+  <div class="mx-auto max-w-4xl space-y-6">
+    {
+      error && (
+        <p class="rounded-lg border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950 dark:text-rose-200">
+          {error}
+        </p>
+      )
+    }
+    {
+      notice && (
+        <p class="rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-200">
+          {notice}
+        </p>
+      )
+    }
+
+    <section
+      class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
+    >
+      <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+        Waiting to be verified
+      </h2>
+      <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+        {
+          pending.length === 0
+            ? 'Nothing waiting. Updates members send from the app appear here.'
+            : `${pending.length} member${pending.length === 1 ? '' : 's'} sent an update. Check each change against the evidence it needs before applying it.`
+        }
+      </p>
+
+      <div class="mt-5 space-y-5">
+        {
+          pending.map(request => (
+            <article class="rounded-xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
+              <header class="flex flex-wrap items-baseline justify-between gap-2">
+                <div>
+                  <a
+                    href={`/members/${request.memberId}`}
+                    class="font-semibold text-neutral-800 underline dark:text-neutral-100"
+                  >
+                    {request.memberName}
+                  </a>
+                  <span class="ml-2 text-sm text-neutral-500 dark:text-neutral-400">
+                    {request.memberNo} · {request.membershipTypeName}
+                  </span>
+                </div>
+                <span class="text-xs text-neutral-500 dark:text-neutral-400">
+                  Sent {dateTimeFormat.format(request.submittedAt)} from{' '}
+                  {forDisplay(request.mobile)}
+                </span>
+              </header>
+
+              <table class="mt-4 w-full text-sm">
+                <thead>
+                  <tr class="text-left text-xs text-neutral-500 dark:text-neutral-400">
+                    <th class="py-1 pr-4 font-medium">Field</th>
+                    <th class="py-1 pr-4 font-medium">On record</th>
+                    <th class="py-1 font-medium">Member says</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {request.changes.map(change => (
+                    <tr class="border-t border-neutral-200 dark:border-neutral-800">
+                      <td class="py-2 pr-4 text-neutral-600 dark:text-neutral-300">
+                        {change.label}
+                      </td>
+                      <td class="py-2 pr-4 text-neutral-500 line-through dark:text-neutral-400">
+                        {display(change.before, change.dataType)}
+                      </td>
+                      <td class="py-2 font-medium text-neutral-800 dark:text-neutral-100">
+                        {display(change.after, change.dataType)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {canVerify ? (
+                <div class="mt-4 flex flex-wrap items-end gap-3">
+                  <form method="post">
+                    <input type="hidden" name="id" value={request.id} />
+                    <input type="hidden" name="intent" value="apply" />
+                    <button
+                      type="submit"
+                      class="bg-mint-600 hover:bg-mint-700 rounded-lg px-4 py-2 text-sm font-medium text-white transition"
+                    >
+                      Apply to the record
+                    </button>
+                  </form>
+                  <form method="post" class="flex flex-wrap items-end gap-2">
+                    <input type="hidden" name="id" value={request.id} />
+                    <input type="hidden" name="intent" value="decline" />
+                    <label class="text-xs text-neutral-500 dark:text-neutral-400">
+                      Reason for declining
+                      <input
+                        type="text"
+                        name="comment"
+                        required
+                        placeholder="What the member needs to do"
+                        class="focus:border-mint-400 focus:ring-mint-400 mt-1 block w-72 rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm text-neutral-800 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                      />
+                    </label>
+                    <button
+                      type="submit"
+                      class="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                    >
+                      Decline
+                    </button>
+                  </form>
+                </div>
+              ) : (
+                <p class="mt-4 text-sm text-neutral-500 dark:text-neutral-400">
+                  You can see this, but not act on it.
+                </p>
+              )}
+            </article>
+          ))
+        }
+      </div>
+    </section>
+
+    {
+      decided.length > 0 && (
+        <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+          <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+            Already decided
+          </h2>
+          <div class="mt-4 overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="text-left text-xs text-neutral-500 dark:text-neutral-400">
+                  <th class="py-2 pr-4 font-medium">Member</th>
+                  <th class="py-2 pr-4 font-medium">Outcome</th>
+                  <th class="py-2 pr-4 font-medium">Changes</th>
+                  <th class="py-2 pr-4 font-medium">Decided</th>
+                  <th class="py-2 font-medium">By</th>
+                </tr>
+              </thead>
+              <tbody>
+                {decided.map(request => (
+                  <tr class="border-t border-neutral-200 dark:border-neutral-800">
+                    <td class="py-2 pr-4 text-neutral-700 dark:text-neutral-200">
+                      <a
+                        href={`/members/${request.memberId}`}
+                        class="underline"
+                      >
+                        {request.memberName}
+                      </a>
+                      <span class="ml-2 text-xs text-neutral-500 dark:text-neutral-400">
+                        {request.memberNo}
+                      </span>
+                    </td>
+                    <td class="py-2 pr-4 text-neutral-600 dark:text-neutral-300">
+                      {request.status === 'applied' ? 'Applied' : 'Declined'}
+                      {request.comment && (
+                        <span class="block text-xs text-neutral-500 dark:text-neutral-400">
+                          {request.comment}
+                        </span>
+                      )}
+                    </td>
+                    <td class="py-2 pr-4 text-neutral-600 dark:text-neutral-300">
+                      {request.changeCount}
+                    </td>
+                    <td class="py-2 pr-4 text-xs text-neutral-500 dark:text-neutral-400">
+                      {request.decidedAt
+                        ? dateTimeFormat.format(request.decidedAt)
+                        : '—'}
+                    </td>
+                    <td class="py-2 text-xs text-neutral-500 dark:text-neutral-400">
+                      {request.decidedByName ?? '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )
+    }
+  </div>
+</DashboardLayout>

@@ -32,6 +32,17 @@ export interface MemberProfile {
   membershipType: { code: string; name: string } | null;
   parties: PartyValues[];
   pendingUpdate: { id: string; submittedAt: string } | null;
+  // The last details update this member sent, whatever became of it. How a
+  // member learns their change was applied, or why it was not — a decline
+  // carries the reason staff wrote, and the member can do nothing about it
+  // if they are never told.
+  lastUpdate: {
+    id: string;
+    status: 'pending' | 'applied' | 'declined';
+    submittedAt: string;
+    decidedAt: string | null;
+    comment: string | null;
+  } | null;
 }
 
 export async function memberProfile(
@@ -46,6 +57,7 @@ export async function memberProfile(
       membershipType: null,
       parties: [],
       pendingUpdate: null,
+      lastUpdate: null,
     };
   }
 
@@ -77,9 +89,18 @@ export async function memberProfile(
         order by p.subject, p.ordinal`,
       [principal.memberId]
     ),
-    query<{ id: string; submitted_at: Date }>(
-      `select id, submitted_at from member_details_request
-        where member_id = $1 and status = 'pending'`,
+    query<{
+      id: string;
+      status: 'pending' | 'applied' | 'declined';
+      submitted_at: Date;
+      decided_at: Date | null;
+      comment: string | null;
+    }>(
+      `select id, status, submitted_at, decided_at, comment
+         from member_details_request
+        where member_id = $1
+        order by submitted_at desc
+        limit 1`,
       [principal.memberId]
     ),
   ]);
@@ -98,10 +119,20 @@ export async function memberProfile(
       ordinal: p.ordinal,
       values: p.values,
     })),
-    pendingUpdate: pending.rows[0]
+    pendingUpdate:
+      pending.rows[0]?.status === 'pending'
+        ? {
+            id: pending.rows[0].id,
+            submittedAt: pending.rows[0].submitted_at.toISOString(),
+          }
+        : null,
+    lastUpdate: pending.rows[0]
       ? {
           id: pending.rows[0].id,
+          status: pending.rows[0].status,
           submittedAt: pending.rows[0].submitted_at.toISOString(),
+          decidedAt: pending.rows[0].decided_at?.toISOString() ?? null,
+          comment: pending.rows[0].comment,
         }
       : null,
   };
@@ -335,13 +366,30 @@ export async function submitDetails(
   if (!principal.memberId) {
     throw new ApiError('forbidden', 'Only a member can update member details.');
   }
-  const member = await query<{ type_id: string; status: string }>(
-    `select membership_type_id as type_id, status from member where id = $1`,
+  const member = await query<{
+    type_id: string;
+    status: string;
+    application_id: string | null;
+  }>(
+    `select membership_type_id as type_id, status, application_id
+       from member where id = $1`,
     [principal.memberId]
   );
   const row = member.rows[0];
   if (!row)
     throw new ApiError('not_found', 'That member record no longer exists.');
+  // A member's details live on their founding application's parties, and
+  // that is where an approved request is written. A legacy record imported
+  // without one (M7 — member.application_id is nullable for exactly that)
+  // has nowhere for this to land, so it is refused here rather than
+  // accepted and found unapplicable by whoever tries to verify it.
+  if (!row.application_id) {
+    throw new ApiError(
+      'conflict',
+      'Your details cannot be updated from the app yet. Please visit a ' +
+        'branch with your ID.'
+    );
+  }
   const type = (await listMembershipTypes()).find(t => t.id === row.type_id);
   if (!type) throw new ApiError('not_found', 'Unknown membership type.');
 
@@ -361,17 +409,47 @@ export async function submitDetails(
     );
   }
 
+  // What the record holds right now, kept on the request: applying writes
+  // over application_party in place, so without this the previous values
+  // would be gone the moment someone verified it (migration 0042). It is
+  // also how the review screen shows was/now.
+  const current = await query<{
+    subject: FieldSubject;
+    ordinal: number;
+    values: Record<string, string>;
+  }>(
+    `select p.subject, p.ordinal, p.values
+       from application_party p
+      where p.application_id = $1
+      order by p.subject, p.ordinal`,
+    [row.application_id]
+  );
+  const previous: PartyValues[] = current.rows.map(p => ({
+    subject: p.subject,
+    ordinal: p.ordinal,
+    values: p.values,
+  }));
+
+  // Nothing proposed is not a request. A member who opens the form and
+  // sends it back untouched should see nothing happen, not queue a
+  // verification that changes nothing.
+  if (!hasChanges(previous, checked.parties)) {
+    throw new ApiError('conflict', 'Nothing has changed.');
+  }
+
   return withTransaction(async client => {
     let inserted: { id: string; submitted_at: Date };
     try {
       const result = await client.query<{ id: string; submitted_at: Date }>(
-        `insert into member_details_request (member_id, session_id, parties)
-         values ($1, $2, $3::jsonb)
+        `insert into member_details_request
+           (member_id, session_id, parties, previous_parties)
+         values ($1, $2, $3::jsonb, $4::jsonb)
          returning id, submitted_at`,
         [
           principal.memberId,
           principal.sessionId,
           JSON.stringify(checked.parties),
+          JSON.stringify(previous),
         ]
       );
       inserted = result.rows[0];
@@ -405,6 +483,25 @@ export async function submitDetails(
       submittedAt: inserted.submitted_at.toISOString(),
     };
   });
+}
+
+// Whether a proposed set of parties differs from what is on record, field
+// by field. A field the request does not carry is not a change (the form
+// only ever sends what the type configures), and neither is one whose
+// value is the same.
+export function hasChanges(
+  previous: PartyValues[],
+  proposed: PartyValues[]
+): boolean {
+  for (const party of proposed) {
+    const before = previous.find(
+      p => p.subject === party.subject && p.ordinal === party.ordinal
+    );
+    for (const [key, value] of Object.entries(party.values)) {
+      if ((before?.values[key] ?? '') !== value) return true;
+    }
+  }
+  return false;
 }
 
 function isUuid(value: string): boolean {

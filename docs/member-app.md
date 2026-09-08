@@ -165,11 +165,38 @@ records a `member_details_request` — the values as the officer's form
 would have them, phones normalised, every mandatory field present, the
 sign-in mobile kept — and the member sees "pending" until staff act.
 
-**Not built yet:** the staff side. Applying a request means writing to
-`application_party` on an approved application, which nothing does today,
-and the Members page has no queue for it. Until it exists a request is
-visible in the audit trail (`member.details.requested`) and the table, and
-`/me` reports it pending. It is the next piece of work on this surface.
+**Staff act on it at Members → Details updates**
+(`/members/details-updates`, `member.details_verify`, migration 0042).
+The queue shows one card per waiting member: what the record holds, what
+they say it should be, field by field, and nothing else — a member who
+corrects one field sends the whole form back, and the reviewer should see
+the one field, not forty. Apply writes it; Decline needs a reason,
+because the member is shown it (`lastUpdate.comment` on `/me`).
+
+Three things about applying are worth knowing because they are not
+obvious from the endpoints:
+
+- **A change is measured against what the member was shown**, not against
+  the record as it stands. `previous_parties` on the request is
+  `application_party` as it was at the moment they submitted. Diffing
+  against the record instead would read every untouched field the app sent
+  back as a change, and applying would write the member's stale copy over
+  anything an officer corrected at the branch while the request waited.
+- **Only the changed fields are written**, merged into the party with
+  `values || patch`. A request never replaces a party wholesale.
+- **A member with no founding application cannot send one at all.** A
+  member's details live on their application's parties, so a legacy record
+  imported without one (M7) has nowhere for this to land; `PUT /me/details`
+  refuses with 409 rather than queueing something nobody can apply.
+
+The request is history once made: the application role has no `delete` on
+`member_details_request`, and applying records both halves — the parties
+as they were, and the field-by-field change — in the audit trail
+(`member.details.applied`, `member.details.declined`).
+
+**Not built yet:** nothing notifies the member that their update was
+decided; they see it the next time they open the app. That is the same
+push/WhatsApp piece an application status change wants (M9).
 
 ## Configuration
 

@@ -52,6 +52,11 @@ const ROUTE_PERMISSIONS: ReadonlyArray<readonly [string, string]> = [
   // is not being able to act on it.
   ['/applications/', 'application.view'],
   ['/members/', 'member.view'],
+  // Details a member sent from the app (docs/member-app.md). Seeing the
+  // queue is member.view like the rest of /members; acting on one needs
+  // member.details_verify, which the page checks itself — the same split
+  // as viewing an application against approving it.
+  ['/members/details-updates', 'member.view'],
 
   // Receipts (M5). Reading a receipt is payment.view; auditing the sequence is
   // the Treasurer's own permission. The longer prefix wins, so the exact rule

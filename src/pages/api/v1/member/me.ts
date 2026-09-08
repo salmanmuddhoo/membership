@@ -12,8 +12,9 @@ const endpoint = defineMemberEndpoint(
     summary: "The caller's own record",
     description:
       'Membership, the details captured on the founding application, and ' +
-      'whether an update the member sent is waiting for staff. An applicant ' +
-      'session gets kind applicant and no parties.',
+      'what became of the last update the member sent — waiting, applied, ' +
+      'or declined with the reason. An applicant session gets kind ' +
+      'applicant and no parties.',
     tag: 'Member app',
     caller: 'member',
     responseSchema: {
@@ -42,10 +43,30 @@ const endpoint = defineMemberEndpoint(
         pendingUpdate: {
           type: 'object',
           nullable: true,
+          description: 'An update waiting for staff to verify it.',
           required: ['id', 'submittedAt'],
           properties: {
             id: { type: 'string', format: 'uuid' },
             submittedAt: { type: 'string', format: 'date-time' },
+          },
+        },
+        lastUpdate: {
+          type: 'object',
+          nullable: true,
+          description:
+            'The most recent details update this member sent, whatever ' +
+            'became of it. A declined one carries the reason, which is ' +
+            'written for the member to read.',
+          required: ['id', 'status', 'submittedAt', 'decidedAt', 'comment'],
+          properties: {
+            id: { type: 'string', format: 'uuid' },
+            status: {
+              type: 'string',
+              enum: ['pending', 'applied', 'declined'],
+            },
+            submittedAt: { type: 'string', format: 'date-time' },
+            decidedAt: { type: 'string', format: 'date-time', nullable: true },
+            comment: { type: 'string', nullable: true },
           },
         },
       },

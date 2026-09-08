@@ -83,6 +83,18 @@ only a row that is active and still unbound, so an account can be claimed once
 and only once, a departed member of staff cannot reactivate themselves by
 signing in, and two concurrent sign-ins cannot both take the same account.
 
+## A member acting on their own record
+
+The member mobile application signs in with its own identity and reaches
+`/api/v1/member` rather than any page (`docs/member-app.md`). It holds no
+permission at all: every endpoint there is scoped to the caller's own
+record by construction, and the one thing a member can change about
+themselves — their captured details — is a request that a member of staff
+holding `member.details_verify` applies or declines. The middleware never
+resolves a staff cookie under `/api/v1/member/`, and `defineEndpoint`
+never resolves a member's bearer token, so neither credential reaches the
+other's endpoints.
+
 ## What is recorded
 
 Every refusal is written to the append-only audit trail before the redirect:
