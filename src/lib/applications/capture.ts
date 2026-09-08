@@ -283,6 +283,41 @@ export async function searchExistingMembers(
   }));
 }
 
+// Which membership types may open an account type is configuration
+// (account_type_membership_type, migration 0040), not something either
+// caller below decides for itself — an account type with no rows there is
+// open to every membership type (the shipped default), so this only refuses
+// when the type has opted INTO a restriction and the membership type given
+// is not among the ones it named. The same check, and the same wording,
+// whichever of the two flows below is asking.
+async function refuseIneligibleAccountTypes(
+  client: PoolClient,
+  accountTypeIds: string[],
+  membershipTypeId: string,
+  membershipTypeName: string
+): Promise<void> {
+  const ineligible = await client.query<{ name: string }>(
+    `select a.name from account_type a
+      where a.id = any($1::uuid[])
+        and exists (
+          select 1 from account_type_membership_type e
+           where e.account_type_id = a.id
+        )
+        and not exists (
+          select 1 from account_type_membership_type e
+           where e.account_type_id = a.id and e.membership_type_id = $2
+        )`,
+    [accountTypeIds, membershipTypeId]
+  );
+  if ((ineligible.rowCount ?? 0) > 0) {
+    const names = ineligible.rows.map(r => r.name).join(', ');
+    throw new ApplicationError(
+      `${names} ${ineligible.rowCount === 1 ? 'is' : 'are'} not available ` +
+        `to ${membershipTypeName}.`
+    );
+  }
+}
+
 /**
  * S-613 · Start an additional-account application for an existing member —
  * opening an account type their membership did not already open for them
@@ -305,8 +340,15 @@ export async function startAdditionalAccountApplication(
   }
 
   return withTransaction(async client => {
-    const member = await client.query<{ status: string }>(
-      `select status from member where id = $1`,
+    const member = await client.query<{
+      status: string;
+      membership_type_id: string;
+      membership_type_name: string;
+    }>(
+      `select m.status, m.membership_type_id, mt.name as membership_type_name
+         from member m
+         join membership_type mt on mt.id = m.membership_type_id
+        where m.id = $1`,
       [existingMemberId]
     );
     if (member.rowCount === 0) {
@@ -334,6 +376,13 @@ export async function startAdditionalAccountApplication(
           'this way.'
       );
     }
+
+    await refuseIneligibleAccountTypes(
+      client,
+      accountTypeIds,
+      member.rows[0].membership_type_id,
+      member.rows[0].membership_type_name
+    );
 
     const created = await client.query<{ id: string; reference: string }>(
       `insert into membership_application
@@ -417,6 +466,13 @@ export async function startCustomerAccountApplication(
           'this way.'
       );
     }
+
+    await refuseIneligibleAccountTypes(
+      client,
+      accountTypeIds,
+      type.id,
+      type.name
+    );
 
     const created = await client.query<{ id: string; reference: string }>(
       `insert into membership_application

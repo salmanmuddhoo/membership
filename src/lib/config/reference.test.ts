@@ -598,6 +598,74 @@ describe('S-206: the accounts a membership opens', () => {
     expect(type.numberPrefix).toBeNull();
   });
 
+  // Officer feedback: nothing stopped Corporate from being offered HSA — an
+  // account type had no notion of which membership types could open it at
+  // all (migration 0040).
+  describe('which membership types may open an account type', () => {
+    async function newType(config: Awaited<ReturnType<typeof load>>['config']) {
+      const code = `elig_test_${Math.random().toString(36).slice(2, 8)}`;
+      return config.createAccountType(
+        {
+          code,
+          name: 'Eligibility test',
+          category: 'savings',
+          minimumOpeningAmount: '0',
+          checklistId: null,
+          requiresApproval: false,
+          defaultStatus: 'active',
+        },
+        actor
+      );
+    }
+
+    it('defaults to open to every membership type', async () => {
+      const { config } = await load();
+      const id = await newType(config);
+
+      const type = (await config.listAccountTypes()).find(t => t.id === id)!;
+      expect(type.eligibleMembershipTypeIds).toEqual([]);
+    });
+
+    it('restricts to whichever types are set, and can be cleared again', async () => {
+      const { config } = await load();
+      const id = await newType(config);
+      const membershipTypes = await config.listMembershipTypes();
+      const individual = membershipTypes.find(t => t.code === 'individual')!;
+      const minor = membershipTypes.find(t => t.code === 'minor')!;
+
+      await config.setAccountTypeEligibility(
+        id,
+        [individual.id, minor.id],
+        actor
+      );
+      let type = (await config.listAccountTypes()).find(t => t.id === id)!;
+      expect(new Set(type.eligibleMembershipTypeIds)).toEqual(
+        new Set([individual.id, minor.id])
+      );
+
+      // Replaces the set wholesale, not adds to it.
+      await config.setAccountTypeEligibility(id, [individual.id], actor);
+      type = (await config.listAccountTypes()).find(t => t.id === id)!;
+      expect(type.eligibleMembershipTypeIds).toEqual([individual.id]);
+
+      // Clearing every box undoes the restriction entirely.
+      await config.setAccountTypeEligibility(id, [], actor);
+      type = (await config.listAccountTypes()).find(t => t.id === id)!;
+      expect(type.eligibleMembershipTypeIds).toEqual([]);
+    });
+
+    it('refuses a type that no longer exists', async () => {
+      const { config } = await load();
+      await expect(
+        config.setAccountTypeEligibility(
+          '00000000-0000-0000-0000-000000000000',
+          [],
+          actor
+        )
+      ).rejects.toThrowError(/no longer exists/);
+    });
+  });
+
   // Officer feedback: a mistaken or no-longer-needed account type had no way
   // back out, only deactivation — which keeps it forever as a choice nobody
   // can actually offer.

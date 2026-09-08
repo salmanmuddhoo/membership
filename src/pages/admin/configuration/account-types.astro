@@ -7,6 +7,8 @@ import {
   deleteAccountType,
   listAccountTypes,
   listChecklists,
+  listMembershipTypes,
+  setAccountTypeEligibility,
   setOpensOnApproval,
   updateAccountType,
 } from '@lib/config/reference';
@@ -67,6 +69,13 @@ if (Astro.request.method === 'POST') {
         notice = opens
           ? 'Memberships approved from now on open this account.'
           : 'Memberships approved from now on do not open this account.';
+      } else if (intent === 'eligibility') {
+        await setAccountTypeEligibility(
+          String(form.get('typeId')),
+          form.getAll('membershipTypeId').map(String),
+          actor
+        );
+        notice = 'Eligibility updated.';
       } else if (intent === 'delete') {
         await deleteAccountType(String(form.get('typeId')), actor);
         notice = 'Account type deleted.';
@@ -82,9 +91,10 @@ if (Astro.request.method === 'POST') {
   }
 }
 
-const [types, checklists] = await Promise.all([
+const [types, checklists, membershipTypes] = await Promise.all([
   listAccountTypes(),
   listChecklists(),
+  listMembershipTypes(),
 ]);
 
 const STATUSES = ['active', 'pending', 'inactive', 'dormant'];
@@ -242,6 +252,35 @@ const STATUSES = ['active', 'pending', 'inactive', 'dormant'];
                   Active
                 </label>
 
+                {!type.isMembershipDefault && (
+                  <fieldset class="sm:col-span-2">
+                    <legend class="text-sm text-neutral-600 dark:text-neutral-300">
+                      Who may open this
+                    </legend>
+                    <p class="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                      Nothing ticked means every membership type may. Tick one
+                      or more to restrict it to only those.
+                    </p>
+                    <div class="mt-2 flex flex-wrap gap-3">
+                      {membershipTypes.map(mt => (
+                        <label class="flex items-center gap-x-2 text-sm text-neutral-800 dark:text-neutral-100">
+                          <input
+                            type="checkbox"
+                            name="membershipTypeId"
+                            value={mt.id}
+                            checked={type.eligibleMembershipTypeIds.includes(
+                              mt.id
+                            )}
+                            disabled={!canManage}
+                            class="text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600"
+                          />
+                          {mt.name}
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
+                )}
+
                 {canManage && (
                   <div class="flex flex-wrap gap-2 pt-2 sm:col-span-2">
                     <button
@@ -252,6 +291,16 @@ const STATUSES = ['active', 'pending', 'inactive', 'dormant'];
                     >
                       Save
                     </button>
+                    {!type.isMembershipDefault && (
+                      <button
+                        type="submit"
+                        name="intent"
+                        value="eligibility"
+                        class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                      >
+                        Save eligibility
+                      </button>
+                    )}
                     {type.isActive && (
                       <>
                         <input

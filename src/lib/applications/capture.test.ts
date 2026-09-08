@@ -1998,6 +1998,56 @@ describe('S-614, phase 2: starting an application for someone not yet on the sys
     ).rejects.toThrowError(/no longer available to open this way/);
   });
 
+  // Migration 0040: an account type restricted to specific membership types
+  // (Corporate never being offered HSA, most concretely) refuses the ones
+  // not named, and allows the ones that are.
+  describe('an account type restricted to specific membership types', () => {
+    let restrictedTypeId: string;
+
+    beforeAll(async () => {
+      const type = await runAsConfigurator(
+        appUrl,
+        `insert into account_type (code, name, category, is_membership_default)
+         values ('hsa_eligibility_test', 'Hajj Savings (eligibility test)',
+                 'savings', false)
+         returning id`
+      );
+      restrictedTypeId = type.rows[0].id;
+      const minor = await run(
+        appUrl,
+        `select id from membership_type where code = 'minor'`
+      );
+      await runAsConfigurator(
+        appUrl,
+        `insert into account_type_membership_type
+           (account_type_id, membership_type_id)
+         values ('${restrictedTypeId}', '${minor.rows[0].id}')`
+      );
+    });
+
+    it('refuses it for a membership type not among the ones set', async () => {
+      const { capture } = await load();
+      await expect(
+        capture.startCustomerAccountApplication(
+          [restrictedTypeId],
+          officer,
+          'individual'
+        )
+      ).rejects.toThrowError(/not available to Individual/);
+    });
+
+    it('allows it for a membership type that is set', async () => {
+      const { capture } = await load();
+      const { id } = await capture.startCustomerAccountApplication(
+        [restrictedTypeId],
+        officer,
+        'minor'
+      );
+      const application = await capture.loadApplication(id);
+      expect(application!.applicationKind).toBe('customer_account');
+    });
+  });
+
   it('records the same audit action a membership application uses', async () => {
     const { capture } = await load();
     const { id } = await capture.startCustomerAccountApplication(
@@ -2269,6 +2319,55 @@ describe('S-613: starting an additional-account application for an existing memb
       );
       expect(audit.rows[0].action).toBe('membership.application.started');
       expect(audit.rows[0].actor_user_id).toBe(officer.userId);
+    });
+
+    // Migration 0040: a member opening an account restricted away from
+    // their own membership type (Corporate and HSA, most concretely) is
+    // refused the same way starting one as a non-member is.
+    it('refuses an account type restricted to a membership type the member does not hold', async () => {
+      const { capture } = await load();
+      const corporate = await run(
+        appUrl,
+        `select id from membership_type where code = 'corporate'`
+      );
+      const application = await run(
+        appUrl,
+        `insert into membership_application (membership_type_id, captured_by)
+         values ($1, $2) returning id`,
+        [corporate.rows[0].id, officer.userId]
+      );
+      const member = await run(
+        appUrl,
+        `insert into member (application_id, membership_type_id, status)
+         values ($1, $2, 'active') returning id`,
+        [application.rows[0].id, corporate.rows[0].id]
+      );
+
+      const restricted = await runAsConfigurator(
+        appUrl,
+        `insert into account_type (code, name, category, is_membership_default)
+         values ('hsa_member_eligibility_test', 'Hajj Savings (member eligibility test)',
+                 'savings', false)
+         returning id`
+      );
+      const minor = await run(
+        appUrl,
+        `select id from membership_type where code = 'minor'`
+      );
+      await runAsConfigurator(
+        appUrl,
+        `insert into account_type_membership_type
+           (account_type_id, membership_type_id)
+         values ('${restricted.rows[0].id}', '${minor.rows[0].id}')`
+      );
+
+      await expect(
+        capture.startAdditionalAccountApplication(
+          member.rows[0].id,
+          [restricted.rows[0].id],
+          officer
+        )
+      ).rejects.toThrowError(/not available to Corporate/);
     });
   });
 

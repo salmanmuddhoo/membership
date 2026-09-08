@@ -329,6 +329,12 @@ export interface AccountType {
   // customer_account application needs one (next_customer_account_number,
   // migration 0027, refuses to open an account of a type with none set).
   numberPrefix: string | null;
+  // Which membership types may open this account type (migration 0040) —
+  // empty means every membership type may, the default every account type
+  // had before this existed. Corporate never being offered HSA is exactly
+  // this: HSA's own rows naming only Individual and Minor, not a special
+  // case anywhere in code.
+  eligibleMembershipTypeIds: string[];
 }
 
 // numeric comes back from node-postgres as a string, and it stays one all the
@@ -359,6 +365,22 @@ async function readAccountTypes(): Promise<AccountType[]> {
       order by a.sort_order, a.name`
   );
 
+  // One query for every type's eligibility rows rather than one per type —
+  // the same reason readMembershipTypes reads every type's fields in a
+  // single query below.
+  const eligibility = await query<{
+    account_type_id: string;
+    membership_type_id: string;
+  }>(
+    `select account_type_id, membership_type_id from account_type_membership_type`
+  );
+  const eligibleByType = new Map<string, string[]>();
+  for (const row of eligibility.rows) {
+    const list = eligibleByType.get(row.account_type_id) ?? [];
+    list.push(row.membership_type_id);
+    eligibleByType.set(row.account_type_id, list);
+  }
+
   return result.rows.map(r => ({
     id: r.id,
     code: r.code,
@@ -372,6 +394,7 @@ async function readAccountTypes(): Promise<AccountType[]> {
     isMembershipDefault: r.is_membership_default,
     isActive: r.is_active,
     sortOrder: r.sort_order,
+    eligibleMembershipTypeIds: eligibleByType.get(r.id) ?? [],
     numberPrefix: r.number_prefix,
   }));
 }
@@ -615,6 +638,45 @@ export async function setOpensOnApproval(
       'update account_type set is_membership_default = $2 where id = $1',
       [accountTypeId, opens]
     );
+  });
+}
+
+/**
+ * Which membership types may open this account type (migration 0040) —
+ * replaces the whole set at once, the same shape the checkbox list an
+ * administrator ticks on the account-types screen naturally produces.
+ *
+ * An empty list means unrestricted, not "restricted to nobody": that is what
+ * lets an administrator clear every box to undo a restriction entirely,
+ * rather than leaving an account type nobody can open.
+ */
+export async function setAccountTypeEligibility(
+  accountTypeId: string,
+  membershipTypeIds: string[],
+  actor: Actor
+): Promise<void> {
+  await withConfigurationActor(actorFor(actor), async client => {
+    const target = await client.query(
+      'select 1 from account_type where id = $1',
+      [accountTypeId]
+    );
+    if (target.rowCount === 0) {
+      throw new ConfigError('That account type no longer exists.', 'not_found');
+    }
+
+    await client.query(
+      'delete from account_type_membership_type where account_type_id = $1',
+      [accountTypeId]
+    );
+    if (membershipTypeIds.length > 0) {
+      await client.query(
+        `insert into account_type_membership_type
+           (account_type_id, membership_type_id)
+         select $1, t from unnest($2::uuid[]) as t
+         on conflict do nothing`,
+        [accountTypeId, membershipTypeIds]
+      );
+    }
   });
 }
 
