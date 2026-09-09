@@ -24,6 +24,7 @@ import {
   editableContactFields,
   updateContactDetails,
   PERMISSION_EDIT_CONTACT,
+  type ContactFieldChange,
 } from '@lib/members/contact';
 
 const principal = Astro.locals.principal!;
@@ -53,12 +54,28 @@ if (!member && !customer) return new Response('Not found', { status: 404 });
 
 let error: string | null = null;
 let notice: string | null = null;
+// So the contact-edit form starts open rather than collapsed behind the
+// pencil icon when it is the reason there is an error on screen — an
+// officer correcting a rejected value should not have to find the icon
+// again to see what they typed.
+let contactEditFailed = false;
 
 // The application that carries this person's applicant party — where a
 // phone number or address actually lives (member/customer rows carry
 // neither of their own). Null only for a legacy member imported with no
 // application on file.
 const contactApplicationId = (member ?? customer)!.applicationId;
+
+// Computed before the POST handling below, not after: it doubles as the
+// list of (subject, fieldKey) pairs a save is allowed to touch — the same
+// role EDITABLE_APPLICANT_FIELD_KEYS plays for the applicant party, but for
+// Employment Details too, which has no such fixed allowlist of its own.
+// Re-read once more after a successful save (below) so the page renders
+// what was actually written, not what was on screen before it.
+let contactFields =
+  canEditContact && contactApplicationId
+    ? await editableContactFields(contactApplicationId)
+    : [];
 
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
@@ -100,11 +117,16 @@ if (Astro.request.method === 'POST') {
       error = 'This record has no application to save these details to.';
     } else {
       try {
-        const changes: Record<string, string> = {};
-        for (const key of ['telephone', 'address']) {
-          const value = form.get(`field.${key}`);
-          if (typeof value === 'string') changes[key] = value;
-        }
+        // Only the (subject, fieldKey) pairs this application's type
+        // actually configures — contactFields, computed above, is that
+        // allowlist as well as the render model.
+        const changes: ContactFieldChange[] = contactFields
+          .map(f => ({
+            subject: f.subject,
+            fieldKey: f.fieldKey,
+            value: form.get(`field.${f.subject}.${f.fieldKey}`),
+          }))
+          .filter((c): c is ContactFieldChange => typeof c.value === 'string');
         const { updated } = await updateContactDetails(
           contactApplicationId,
           changes,
@@ -117,7 +139,10 @@ if (Astro.request.method === 'POST') {
           updated.length > 0
             ? 'Contact details saved.'
             : 'Nothing had changed.';
+        // Re-read so the page renders what was actually saved.
+        contactFields = await editableContactFields(contactApplicationId);
       } catch (err) {
+        contactEditFailed = true;
         if (err instanceof ContactUpdateError) {
           error = err.message;
         } else {
@@ -128,11 +153,6 @@ if (Astro.request.method === 'POST') {
     }
   }
 }
-
-const contactFields =
-  canEditContact && contactApplicationId
-    ? await editableContactFields(contactApplicationId)
-    : [];
 
 // What has been paid: for a member, including the receipt that admitted
 // them (paymentsForMember reads member_id and, falling back, the
@@ -371,37 +391,103 @@ const pageTitle = member ? member.memberNo : name;
 
       {
         contactFields.length > 0 && (
-          <form
-            method="post"
+          <div
             class="mt-5 border-t border-neutral-200 pt-4 dark:border-neutral-800"
+            data-contact-edit
           >
-            <input type="hidden" name="intent" value="update-contact" />
-            <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-200">
-              Edit contact details
-            </h3>
-            <div class="mt-3 grid gap-4 sm:grid-cols-2">
-              {contactFields.map(field => (
-                <label class="text-sm text-neutral-600 dark:text-neutral-300">
-                  <span>{field.label}</span>
-                  <input
-                    type={field.dataType === 'phone' ? 'tel' : 'text'}
-                    name={`field.${field.fieldKey}`}
-                    value={field.value}
-                    placeholder={
-                      field.dataType === 'phone' ? '5789 1234' : undefined
-                    }
-                    class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-                  />
-                </label>
-              ))}
+            <div class="flex items-center justify-between gap-2">
+              <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-200">
+                Contact details
+              </h3>
+              <button
+                type="button"
+                data-contact-edit-toggle
+                aria-label="Edit contact details"
+                class="rounded-lg border border-neutral-300 p-1.5 text-neutral-600 transition hover:bg-neutral-200 dark:border-neutral-600 dark:text-neutral-300 dark:hover:bg-neutral-800"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 20 20"
+                  fill="currentColor"
+                  class="h-4 w-4"
+                >
+                  <path d="M13.586 3.586a2 2 0 1 1 2.828 2.828l-8.5 8.5a2 2 0 0 1-.878.507l-3 .857a.5.5 0 0 1-.618-.618l.857-3a2 2 0 0 1 .507-.878l8.5-8.5Z" />
+                  <path d="M11.379 5.793 14.207 8.621 6.5 16.328a1 1 0 0 1-.439.254l-2.121.606.606-2.12a1 1 0 0 1 .254-.44l6.579-6.835Z" />
+                </svg>
+              </button>
             </div>
-            <button
-              type="submit"
-              class="bg-mint-300 hover:bg-mint-400 mt-3 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+
+            <form
+              method="post"
+              class="mt-3"
+              data-contact-edit-form
+              hidden={!contactEditFailed}
             >
-              Save
-            </button>
-          </form>
+              <input type="hidden" name="intent" value="update-contact" />
+              <div class="grid gap-4 sm:grid-cols-2">
+                {contactFields
+                  .filter(f => f.subject === 'applicant')
+                  .map(field => (
+                    <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                      <span>{field.label}</span>
+                      <input
+                        type={field.dataType === 'phone' ? 'tel' : 'text'}
+                        name={`field.${field.subject}.${field.fieldKey}`}
+                        value={field.value}
+                        placeholder={
+                          field.dataType === 'phone' ? '5789 1234' : undefined
+                        }
+                        class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                      />
+                    </label>
+                  ))}
+              </div>
+
+              {contactFields.some(f => f.subject === 'employment') && (
+                <>
+                  <h4 class="mt-4 text-sm font-semibold text-neutral-700 dark:text-neutral-200">
+                    Employment Details
+                  </h4>
+                  <div class="mt-3 grid gap-4 sm:grid-cols-2">
+                    {contactFields
+                      .filter(f => f.subject === 'employment')
+                      .map(field => (
+                        <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                          <span>{field.label}</span>
+                          <input
+                            type={field.dataType === 'phone' ? 'tel' : 'text'}
+                            name={`field.${field.subject}.${field.fieldKey}`}
+                            value={field.value}
+                            placeholder={
+                              field.dataType === 'phone'
+                                ? '5789 1234'
+                                : undefined
+                            }
+                            class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                          />
+                        </label>
+                      ))}
+                  </div>
+                </>
+              )}
+
+              <div class="mt-3 flex items-center gap-3">
+                <button
+                  type="submit"
+                  class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+                >
+                  Save
+                </button>
+                <button
+                  type="button"
+                  data-contact-edit-cancel
+                  class="text-sm text-neutral-500 underline dark:text-neutral-400"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
         )
       }
 
@@ -483,11 +569,14 @@ const pageTitle = member ? member.memberNo : name;
                   {'isMembershipDefault' in account &&
                     account.isMembershipDefault && (
                       <span class="bg-mint-200 dark:bg-mint-900 rounded px-1.5 py-0.5 text-xs text-neutral-800 dark:text-neutral-100">
-                        opened on approval
+                        {account.openedViaMigration
+                          ? 'migrated'
+                          : 'opened on approval'}
                       </span>
                     )}
                   <span class="text-xs text-neutral-500 dark:text-neutral-400">
-                    {account.category} · {account.status} · opened{' '}
+                    {account.category} · {account.status} ·{' '}
+                    {account.openedViaMigration ? 'migrated' : 'opened'}{' '}
                     {dateFormat.format(account.openedAt)}
                   </span>
                 </div>
@@ -729,5 +818,38 @@ const pageTitle = member ? member.memberNo : name;
         }
       });
     }
+  }
+</script>
+
+<script>
+  // Officer feedback: the contact/employment form used to sit open on the
+  // page at all times — a pencil icon reveals it (and the Save button with
+  // it) only once there is actually something to save; Cancel puts it away
+  // again without submitting.
+  const editSection = document.querySelector<HTMLElement>(
+    '[data-contact-edit]'
+  );
+  const editForm = editSection?.querySelector<HTMLFormElement>(
+    '[data-contact-edit-form]'
+  );
+  const editToggle = editSection?.querySelector<HTMLButtonElement>(
+    '[data-contact-edit-toggle]'
+  );
+  const editCancel = editSection?.querySelector<HTMLButtonElement>(
+    '[data-contact-edit-cancel]'
+  );
+  if (editForm && editToggle) {
+    editToggle.addEventListener('click', () => {
+      editForm.hidden = false;
+      editToggle.hidden = true;
+    });
+    editCancel?.addEventListener('click', () => {
+      editForm.hidden = true;
+      editToggle.hidden = false;
+    });
+    // Started open because the last save failed (contactEditFailed) — the
+    // icon should read as already "used" rather than inviting a second
+    // click that does nothing.
+    if (!editForm.hidden) editToggle.hidden = true;
   }
 </script>

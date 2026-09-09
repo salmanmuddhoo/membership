@@ -2334,12 +2334,29 @@ member's, and its balance is mandatory wherever its number is given: naming
 an account without knowing what is in it is not the same "not yet known" a
 wholly unmentioned one is.
 
+**Shipped, fourth increment** (officer feedback): Legacy Member Code is now
+optional for a member row — an AB Number is already the system's own
+unambiguous reference, so it is used as the legacy code when the column
+itself is left blank, and stays mandatory only where there is no AB Number
+to fall back to (a non-member row). Nominee 1 and Nominee 2 columns appear
+on any sheet whose type configures a `nominee` subject, mirroring the live
+capture form's own S-602 relaxation exactly: the first nominee is mandatory,
+a second never is, and a re-import that leaves Nominee 2 blank leaves
+whatever is already on file for it alone rather than clearing it. Minor is
+eligible now — its guardian resolves the same way problemsBlockingSubmission
+already does (an existing member, or an Individual application still on its
+way to becoming one), so a guardian has to already be on file before their
+minor is imported, and its own Takaful beneficiary is left for the member's
+record to fill in later, the same way Employment Details already is. NIC,
+mobile and account number are each checked unique to one member or
+non-member — against the rest of the batch and against everyone already on
+file, migrated or not.
+
 **Still ahead**: S-701 (an agreed, frozen source extract — this tool works
 against whatever is uploaded, it does not itself settle what that should
-be), Minor's own path (needs a guardian already on file), S-707's formal
-sign-off step, S-708's dedicated audit event beyond the generic trail already
-written, and S-710 (reconciling an imported batch's balances against an
-agreed control total).
+be), S-707's formal sign-off step, S-708's dedicated audit event beyond the
+generic trail already written, and S-710 (reconciling an imported batch's
+balances against an agreed control total).
 
 ### S-701 · Agree and freeze the cleansed source extract
 

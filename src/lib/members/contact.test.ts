@@ -1,15 +1,16 @@
-// Officer feedback: a regional officer corrects a phone number or address
-// directly, no review or approval — a much narrower write than
-// member_details_request's own apply/decline (details-requests.test.ts),
-// so its own suite against a real database: the row lock and the jsonb
-// merge that leaves untouched fields alone are the database's own
-// behaviour.
+// Officer feedback: a regional officer corrects a phone number, address or
+// Employment Details directly, no review or approval — a much narrower
+// write than member_details_request's own apply/decline
+// (details-requests.test.ts), so its own suite against a real database: the
+// row lock and the jsonb merge that leaves untouched fields alone are the
+// database's own behaviour.
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { migrate } from '../../../scripts/migrate';
 import type { Principal } from '../access/principal';
+import type { ContactFieldChange } from './contact';
 
 const ADMIN_URL = 'postgresql://postgres@127.0.0.1:5433/postgres';
 const MIGRATIONS_DIR = path.resolve(
@@ -50,6 +51,18 @@ const ORIGINAL = {
   telephone: '+2302341234',
 };
 
+// applicant-subject changes, the shape every pre-existing test here uses —
+// a small helper rather than repeating `subject: 'applicant'` on every one.
+function applicantChanges(
+  values: Record<string, string>
+): ContactFieldChange[] {
+  return Object.entries(values).map(([fieldKey, value]) => ({
+    subject: 'applicant',
+    fieldKey,
+    value,
+  }));
+}
+
 let applicationId: string;
 let memberId: string;
 let customerApplicationId: string;
@@ -73,14 +86,17 @@ function principalFor(
   };
 }
 
-async function currentValues(id: string): Promise<Record<string, string>> {
+async function currentValues(
+  id: string,
+  subject: 'applicant' | 'employment' = 'applicant'
+): Promise<Record<string, string>> {
   const result = await run(
     appUrl,
     `select values from application_party
-      where application_id = $1 and subject = 'applicant' and ordinal = 1`,
-    [id]
+      where application_id = $1 and subject = $2 and ordinal = 1`,
+    [id, subject]
   );
-  return result.rows[0].values;
+  return result.rows[0]?.values ?? {};
 }
 
 beforeAll(async () => {
@@ -168,17 +184,36 @@ beforeEach(async () => {
       where application_id = $1 and subject = 'applicant' and ordinal = 1`,
     [applicationId, JSON.stringify(ORIGINAL)]
   );
+  await run(
+    appUrl,
+    `delete from application_party
+      where application_id = $1 and subject = 'employment'`,
+    [applicationId]
+  );
 });
 
 describe('editableContactFields: what a type actually configures', () => {
-  it('returns telephone and address, with their current values', async () => {
+  it('returns telephone, mobile and address, with their current values', async () => {
     const fields = await contact.editableContactFields(applicationId);
-    const byKey = new Map(fields.map(f => [f.fieldKey, f]));
+    const byKey = new Map(
+      fields.filter(f => f.subject === 'applicant').map(f => [f.fieldKey, f])
+    );
     expect(byKey.get('telephone')?.value).toBe(ORIGINAL.telephone);
+    expect(byKey.get('mobile')?.value).toBe(ORIGINAL.mobile);
     expect(byKey.get('address')?.value).toBe(ORIGINAL.address);
-    // mobile is configured too, but officer feedback named only telephone
-    // and address — nothing else is offered to edit here.
-    expect(byKey.has('mobile')).toBe(false);
+  });
+
+  it("returns the type's own Employment Details fields, empty until set", async () => {
+    const fields = await contact.editableContactFields(applicationId);
+    const employment = fields.filter(f => f.subject === 'employment');
+    const keys = employment.map(f => f.fieldKey).sort();
+    expect(keys).toEqual([
+      'employer_name',
+      'employment_status',
+      'monthly_income',
+      'occupation',
+    ]);
+    expect(employment.every(f => f.value === '')).toBe(true);
   });
 
   it('is empty for an application that does not exist', async () => {
@@ -194,31 +229,36 @@ describe('updateContactDetails: saved straight through, no approval', () => {
     await expect(
       contact.updateContactDetails(
         applicationId,
-        { address: '99 New Street' },
+        applicantChanges({ address: '99 New Street' }),
         { entityType: 'member', entityId: memberId },
         colleague
       )
     ).rejects.toThrowError(/permission/i);
   });
 
-  it('normalises a telephone number to E.164 and saves the address as typed', async () => {
+  it('normalises telephone and mobile to E.164 and saves the address as typed', async () => {
     const result = await contact.updateContactDetails(
       applicationId,
-      { telephone: '5799 4321', address: '99 New Street, Curepipe' },
+      applicantChanges({
+        telephone: '5799 4321',
+        mobile: '5799 4322',
+        address: '99 New Street, Curepipe',
+      }),
       { entityType: 'member', entityId: memberId },
       officer
     );
-    expect(result.updated.sort()).toEqual(['address', 'telephone']);
+    expect(result.updated.sort()).toEqual(['address', 'mobile', 'telephone']);
 
     const values = await currentValues(applicationId);
     expect(values.telephone).toBe('+23057994321');
+    expect(values.mobile).toBe('+23057994322');
     expect(values.address).toBe('99 New Street, Curepipe');
   });
 
   it('leaves every other field untouched — a merge, never a replace', async () => {
     await contact.updateContactDetails(
       applicationId,
-      { address: '5 Pope Hennessy Street' },
+      applicantChanges({ address: '5 Pope Hennessy Street' }),
       { entityType: 'member', entityId: memberId },
       officer
     );
@@ -234,7 +274,7 @@ describe('updateContactDetails: saved straight through, no approval', () => {
     await expect(
       contact.updateContactDetails(
         applicationId,
-        { telephone: 'not a number' },
+        applicantChanges({ telephone: 'not a number' }),
         { entityType: 'member', entityId: memberId },
         officer
       )
@@ -244,10 +284,23 @@ describe('updateContactDetails: saved straight through, no approval', () => {
     expect(values.telephone).toBe(ORIGINAL.telephone);
   });
 
+  it('rejects a mobile number that cannot be placed', async () => {
+    await expect(
+      contact.updateContactDetails(
+        applicationId,
+        applicantChanges({ mobile: 'not a number' }),
+        { entityType: 'member', entityId: memberId },
+        officer
+      )
+    ).rejects.toThrowError(/Mobile:/);
+    const values = await currentValues(applicationId);
+    expect(values.mobile).toBe(ORIGINAL.mobile);
+  });
+
   it('clears the telephone number when saved blank', async () => {
     const result = await contact.updateContactDetails(
       applicationId,
-      { telephone: '' },
+      applicantChanges({ telephone: '' }),
       { entityType: 'member', entityId: memberId },
       officer
     );
@@ -259,17 +312,23 @@ describe('updateContactDetails: saved straight through, no approval', () => {
   it('reports nothing updated, and writes nothing, when nothing actually changed', async () => {
     const result = await contact.updateContactDetails(
       applicationId,
-      { telephone: ORIGINAL.telephone, address: ORIGINAL.address },
+      applicantChanges({
+        telephone: ORIGINAL.telephone,
+        address: ORIGINAL.address,
+      }),
       { entityType: 'member', entityId: memberId },
       officer
     );
     expect(result.updated).toEqual([]);
   });
 
-  it('ignores a field outside telephone/address even if sent', async () => {
+  it('ignores an applicant field outside telephone/mobile/address even if sent', async () => {
     await contact.updateContactDetails(
       applicationId,
-      { name: 'Someone Else', address: '7 Sir William Newton Street' },
+      applicantChanges({
+        name: 'Someone Else',
+        address: '7 Sir William Newton Street',
+      }),
       { entityType: 'member', entityId: memberId },
       officer
     );
@@ -281,7 +340,7 @@ describe('updateContactDetails: saved straight through, no approval', () => {
   it('saves the same way for a non-member customer', async () => {
     const result = await contact.updateContactDetails(
       customerApplicationId,
-      { address: '1 Chaussee Street' },
+      applicantChanges({ address: '1 Chaussee Street' }),
       { entityType: 'customer', entityId: customerId },
       officer
     );
@@ -293,7 +352,7 @@ describe('updateContactDetails: saved straight through, no approval', () => {
   it('records an audit entry naming the officer, the entity and what changed', async () => {
     await contact.updateContactDetails(
       applicationId,
-      { address: '10 La Chaussee' },
+      applicantChanges({ address: '10 La Chaussee' }),
       { entityType: 'member', entityId: memberId },
       officer
     );
@@ -327,10 +386,78 @@ describe('updateContactDetails: saved straight through, no approval', () => {
     await expect(
       contact.updateContactDetails(
         bare.rows[0].id,
-        { address: 'Somewhere' },
+        applicantChanges({ address: 'Somewhere' }),
         { entityType: 'member', entityId: memberId },
         officer
       )
     ).rejects.toThrowError(/no applicant details/);
+  });
+
+  it('saves Employment Details onto their own party row, creating it on first edit', async () => {
+    const result = await contact.updateContactDetails(
+      applicationId,
+      [
+        {
+          subject: 'employment',
+          fieldKey: 'employer_name',
+          value: 'Al Barakah Bakery',
+        },
+        { subject: 'employment', fieldKey: 'occupation', value: 'Baker' },
+      ],
+      { entityType: 'member', entityId: memberId },
+      officer
+    );
+    expect(result.updated.sort()).toEqual(['employer_name', 'occupation']);
+
+    const values = await currentValues(applicationId, 'employment');
+    expect(values.employer_name).toBe('Al Barakah Bakery');
+    expect(values.occupation).toBe('Baker');
+  });
+
+  it('merges a second Employment Details edit into the row the first one created', async () => {
+    await contact.updateContactDetails(
+      applicationId,
+      [
+        {
+          subject: 'employment',
+          fieldKey: 'employer_name',
+          value: 'Al Barakah Bakery',
+        },
+      ],
+      { entityType: 'member', entityId: memberId },
+      officer
+    );
+    await contact.updateContactDetails(
+      applicationId,
+      [{ subject: 'employment', fieldKey: 'occupation', value: 'Baker' }],
+      { entityType: 'member', entityId: memberId },
+      officer
+    );
+    const values = await currentValues(applicationId, 'employment');
+    expect(values.employer_name).toBe('Al Barakah Bakery');
+    expect(values.occupation).toBe('Baker');
+  });
+
+  it('saves an applicant field and an Employment Details field in the same request', async () => {
+    const result = await contact.updateContactDetails(
+      applicationId,
+      [
+        {
+          subject: 'applicant',
+          fieldKey: 'address',
+          value: '20 Pope Hennessy',
+        },
+        { subject: 'employment', fieldKey: 'occupation', value: 'Teacher' },
+      ],
+      { entityType: 'member', entityId: memberId },
+      officer
+    );
+    expect(result.updated.sort()).toEqual(['address', 'occupation']);
+    expect((await currentValues(applicationId)).address).toBe(
+      '20 Pope Hennessy'
+    );
+    expect((await currentValues(applicationId, 'employment')).occupation).toBe(
+      'Teacher'
+    );
   });
 });

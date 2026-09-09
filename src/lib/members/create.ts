@@ -50,8 +50,11 @@ export async function createMemberFromApplication(
   // M7 migration only: the AB number this member already carries in the
   // legacy register, rather than the next one off member_number_seq — an
   // ordinary approval never passes this, so it keeps assigning the next
-  // number exactly as before.
-  options?: { memberNo?: string }
+  // number exactly as before. viaMigration marks the Shares/MSA accounts
+  // opened below as migrated rather than opened (opened_via_migration,
+  // migration 0050) — the member/customer page's own "migrated on" vs.
+  // "opened" wording.
+  options?: { memberNo?: string; viaMigration?: boolean }
 ): Promise<CreatedMember> {
   // S-613: an additional-account application already has its member —
   // opening one is exactly what it is not allowed to do (S-612's own
@@ -135,10 +138,16 @@ export async function createMemberFromApplication(
     const account = await client.query<{ id: string }>(
       `insert into account
          (member_id, account_type_id, is_membership_default, status,
-          opened_by_application_id)
-       values ($1, $2, true, $3, $4)
+          opened_by_application_id, opened_via_migration)
+       values ($1, $2, true, $3, $4, $5)
        returning id`,
-      [memberId, type.id, type.default_status, application.id]
+      [
+        memberId,
+        type.id,
+        type.default_status,
+        application.id,
+        options?.viaMigration ?? false,
+      ]
     );
     accounts.push({
       id: account.rows[0].id,
@@ -330,8 +339,9 @@ export async function openMigrationAccount(
   const account = await client.query<{ id: string }>(
     `insert into account
        (member_id, customer_id, account_type_id, account_no,
-        is_membership_default, status, opened_by_application_id)
-     values ($1, $2, $3, $4, false, $5, $6)
+        is_membership_default, status, opened_by_application_id,
+        opened_via_migration)
+     values ($1, $2, $3, $4, false, $5, $6, true)
      returning id`,
     [
       'memberId' in owner ? owner.memberId : null,
@@ -679,6 +689,11 @@ export interface MemberAccount {
   status: string;
   isMembershipDefault: boolean;
   openedAt: Date;
+  // Officer feedback: "migrated on", not "opened", for one the legacy
+  // import created (opened_via_migration, migration 0050) — a further
+  // account this member goes on to open live afterwards still reads
+  // "opened".
+  openedViaMigration: boolean;
 }
 
 export interface MemberDetail extends MemberSummary {
@@ -921,9 +936,11 @@ export async function loadMember(id: string): Promise<MemberDetail | null> {
     status: string;
     is_membership_default: boolean;
     opened_at: Date;
+    opened_via_migration: boolean;
   }>(
     `select a.id, a.account_no, t.name as account_type_name, t.category,
-            a.status, a.is_membership_default, a.opened_at
+            a.status, a.is_membership_default, a.opened_at,
+            a.opened_via_migration
        from account a
        join account_type t on t.id = a.account_type_id
       where a.member_id = $1
@@ -958,6 +975,7 @@ export async function loadMember(id: string): Promise<MemberDetail | null> {
       status: a.status,
       isMembershipDefault: a.is_membership_default,
       openedAt: a.opened_at,
+      openedViaMigration: a.opened_via_migration,
     })),
   };
 }
@@ -971,6 +989,9 @@ export interface CustomerAccount {
   category: string;
   status: string;
   openedAt: Date;
+  // See MemberAccount's own field — "migrated on", not "opened", for one
+  // the legacy import created.
+  openedViaMigration: boolean;
 }
 
 export interface CustomerDetail {
@@ -1022,9 +1043,10 @@ export async function loadCustomer(id: string): Promise<CustomerDetail | null> {
     category: string;
     status: string;
     opened_at: Date;
+    opened_via_migration: boolean;
   }>(
     `select a.id, a.account_no, t.name as account_type_name, t.category,
-            a.status, a.opened_at
+            a.status, a.opened_at, a.opened_via_migration
        from account a
        join account_type t on t.id = a.account_type_id
       where a.customer_id = $1
@@ -1048,6 +1070,7 @@ export async function loadCustomer(id: string): Promise<CustomerDetail | null> {
       category: a.category,
       status: a.status,
       openedAt: a.opened_at,
+      openedViaMigration: a.opened_via_migration,
     })),
   };
 }

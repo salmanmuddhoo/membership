@@ -137,14 +137,25 @@ async function fillSheet(
   return Buffer.from(out);
 }
 
+// Individual's own Nominee 1 fields (surname, name, NIC, address) are all
+// mandatory (migration 0010) — every member-row fixture below that expects
+// to validate cleanly has to supply them, the same as it already supplies
+// the applicant's own mandatory fields.
+const NOMINEE_1 = {
+  'Nominee 1 Surname': 'Nominee Surname',
+  'Nominee 1 Name': 'Nominee Name',
+  'Nominee 1 NIC': 'Nominee NIC',
+  'Nominee 1 Address': 'Nominee Address',
+};
+
 describe('eligibleMembershipTypesForMigration', () => {
-  it('includes Individual and Corporate, excludes Minor (needs a guardian)', async () => {
+  it('includes Individual, Corporate and Minor', async () => {
     const { eligibleMembershipTypesForMigration } = await load();
     const types = await eligibleMembershipTypesForMigration();
     const codes = types.map(t => t.code);
     expect(codes).toContain('individual');
     expect(codes).toContain('corporate');
-    expect(codes).not.toContain('minor');
+    expect(codes).toContain('minor');
   });
 });
 
@@ -194,6 +205,7 @@ describe('validateRows', () => {
       Gender: 'Female',
       Address: '1 Church Street',
       Mobile: '57891234',
+      ...NOMINEE_1,
     });
     const { valid, errors } = await validateRows(await parseImportFile(filled));
     expect(errors).toEqual([]);
@@ -318,6 +330,7 @@ describe('importMembers', () => {
       Gender: 'Male',
       Address: '5 Sir William Newton Street',
       Mobile: '57891236',
+      ...NOMINEE_1,
     });
     const { valid, errors } = await validateRows(await parseImportFile(filled));
     expect(errors).toEqual([]);
@@ -361,6 +374,40 @@ describe('importMembers', () => {
     expect(audited.rows).toHaveLength(1);
   });
 
+  it('falls back to the AB Number as the legacy code when Legacy Member Code is left blank', async () => {
+    const {
+      buildImportTemplate,
+      parseImportFile,
+      validateRows,
+      importMembers,
+    } = await load();
+    const filled = await fillSheet(await buildImportTemplate(), 'Individual', {
+      // No Legacy Member Code — the AB Number already is the system's own
+      // unambiguous reference for a member.
+      'AB Number': 'AB1250',
+      Surname: 'Sooben',
+      Name: 'Farah',
+      NIC: 'B7777777777779',
+      Gender: 'Female',
+      Address: 'Addr',
+      Mobile: '57891249',
+      ...NOMINEE_1,
+    });
+    const { valid, errors } = await validateRows(await parseImportFile(filled));
+    expect(errors).toEqual([]);
+    expect(valid[0].legacyCode).toBe('AB1250');
+
+    const outcome = await importMembers(valid, actor, MIGRATE_PERMISSIONS);
+    expect(outcome.failed).toEqual([]);
+
+    const member = await run(
+      appUrl,
+      `select member_no, legacy_code from member where member_no = 'AB1250'`
+    );
+    expect(member.rows).toHaveLength(1);
+    expect(member.rows[0].legacy_code).toBe('AB1250');
+  });
+
   it('re-importing an already-migrated legacy code updates the member instead of duplicating it', async () => {
     const {
       buildImportTemplate,
@@ -379,6 +426,7 @@ describe('importMembers', () => {
       Gender: 'Male',
       Address: 'Old Address',
       Mobile: '57891240',
+      ...NOMINEE_1,
     });
     const firstValid = (await validateRows(await parseImportFile(first))).valid;
     const firstOutcome = await importMembers(
@@ -398,6 +446,7 @@ describe('importMembers', () => {
       Gender: 'Male',
       Address: 'Corrected Address',
       Mobile: '57891240',
+      ...NOMINEE_1,
     });
     const secondParsed = await validateRows(await parseImportFile(second));
     expect(secondParsed.errors).toEqual([]);
@@ -421,7 +470,8 @@ describe('importMembers', () => {
       `select p.values ->> 'address' as address
          from application_party p
          join member m on m.application_id = p.application_id
-        where m.legacy_code = 'LEG-300'`
+        where m.legacy_code = 'LEG-300'
+          and p.subject = 'applicant' and p.ordinal = 1`
     );
     expect(party.rows[0].address).toBe('Corrected Address');
 
@@ -452,6 +502,7 @@ describe('importMembers', () => {
       Gender: 'Male',
       Address: 'Addr',
       Mobile: '57891241',
+      ...NOMINEE_1,
     });
     const firstValid = (await validateRows(await parseImportFile(first))).valid;
     await importMembers(firstValid, actor, MIGRATE_PERMISSIONS);
@@ -495,10 +546,11 @@ describe('importMembers', () => {
       Gender: 'Female',
       Address: 'Addr',
       Mobile: '57891242',
-      'Shares Balance (optional)': '6000',
-      'MSA Deposit Balance (optional)': '2500',
+      'Shares Balance': '6000',
+      'MSA Deposit Balance': '2500',
       'Hajj Savings (test) Number': 'HSA-1400',
       'Hajj Savings (test) Balance': '1200',
+      ...NOMINEE_1,
     });
     const { valid, errors } = await validateRows(await parseImportFile(filled));
     expect(errors).toEqual([]);
@@ -857,6 +909,8 @@ describe('importMembers', () => {
         address: 'Addr',
         mobile: '+23057891238',
       },
+      guardian: {},
+      nominees: [],
       sharesBalance: '',
       msaBalance: '',
       accountEntries: [],
@@ -878,5 +932,337 @@ describe('importMembers', () => {
     expect(outcome.imported[0].legacyCode).toBe('LEG-DUP-DB');
     expect(outcome.failed).toHaveLength(1);
     expect(outcome.failed[0].legacyCode).toBe('LEG-DUP-DB');
+  });
+});
+
+describe('fourth increment: Nominee, Minor, and NIC/mobile uniqueness', () => {
+  it('captures Nominee 1 (mandatory) and Nominee 2 (optional), each its own application_party row', async () => {
+    await runAsConfigurator(
+      appUrl,
+      `update membership_type set nominee_count = 2 where code = 'individual'`
+    );
+    const {
+      buildImportTemplate,
+      parseImportFile,
+      validateRows,
+      importMembers,
+    } = await load();
+
+    const filled = await fillSheet(await buildImportTemplate(), 'Individual', {
+      'Legacy Member Code': 'LEG-600',
+      'AB Number': 'AB1600',
+      Surname: 'Peerbux',
+      Name: 'Sameera',
+      NIC: 'B6000000000001',
+      Gender: 'Female',
+      Address: 'Addr',
+      Mobile: '57891260',
+      ...NOMINEE_1,
+      'Nominee 2 Surname': 'Second',
+      'Nominee 2 Name': 'Nominee',
+    });
+    const { valid, errors } = await validateRows(await parseImportFile(filled));
+    expect(errors).toEqual([]);
+
+    const outcome = await importMembers(valid, actor, MIGRATE_PERMISSIONS);
+    expect(outcome.failed).toEqual([]);
+
+    const nominees = await run(
+      appUrl,
+      `select p.ordinal, p.values ->> 'surname' as surname
+         from application_party p
+         join member m on m.application_id = p.application_id
+        where m.legacy_code = 'LEG-600' and p.subject = 'nominee'
+        order by p.ordinal`
+    );
+    expect(nominees.rows).toEqual([
+      { ordinal: 1, surname: 'Nominee Surname' },
+      { ordinal: 2, surname: 'Second' },
+    ]);
+  });
+
+  it('rejects a member row missing Nominee 1, but never demands Nominee 2', async () => {
+    const { buildImportTemplate, parseImportFile, validateRows } = await load();
+    const filled = await fillSheet(await buildImportTemplate(), 'Individual', {
+      'Legacy Member Code': 'LEG-601',
+      'AB Number': 'AB1601',
+      Surname: 'Rajah',
+      Name: 'Kevin',
+      NIC: 'B6000000000002',
+      Gender: 'Male',
+      Address: 'Addr',
+      Mobile: '57891261',
+      // No Nominee 1 fields at all.
+    });
+    const { errors } = await validateRows(await parseImportFile(filled));
+    expect(errors).toHaveLength(1);
+    expect(errors[0].message).toMatch(/Nominee surname is required/);
+  });
+
+  it('leaves an existing Nominee 2 untouched on a re-import that leaves it blank', async () => {
+    await runAsConfigurator(
+      appUrl,
+      `update membership_type set nominee_count = 2 where code = 'individual'`
+    );
+    const {
+      buildImportTemplate,
+      parseImportFile,
+      validateRows,
+      importMembers,
+    } = await load();
+    const template = await buildImportTemplate();
+
+    const first = await fillSheet(template, 'Individual', {
+      'Legacy Member Code': 'LEG-602',
+      'AB Number': 'AB1602',
+      Surname: 'Beeharry',
+      Name: 'Nadia',
+      NIC: 'B6000000000003',
+      Gender: 'Female',
+      Address: 'Addr',
+      Mobile: '57891262',
+      ...NOMINEE_1,
+      'Nominee 2 Surname': 'Original',
+      'Nominee 2 Name': 'Second',
+    });
+    const firstValid = (await validateRows(await parseImportFile(first))).valid;
+    await importMembers(firstValid, actor, MIGRATE_PERMISSIONS);
+
+    // Re-import to correct the address only — Nominee 2 columns left blank,
+    // same as an officer who has no reason to retype them this time.
+    const second = await fillSheet(template, 'Individual', {
+      'Legacy Member Code': 'LEG-602',
+      'AB Number': 'AB1602',
+      Surname: 'Beeharry',
+      Name: 'Nadia',
+      NIC: 'B6000000000003',
+      Gender: 'Female',
+      Address: 'Corrected Addr',
+      Mobile: '57891262',
+      ...NOMINEE_1,
+    });
+    const secondParsed = await validateRows(await parseImportFile(second));
+    expect(secondParsed.errors).toEqual([]);
+    await importMembers(secondParsed.valid, actor, MIGRATE_PERMISSIONS);
+
+    const nominee2 = await run(
+      appUrl,
+      `select p.values ->> 'surname' as surname
+         from application_party p
+         join member m on m.application_id = p.application_id
+        where m.legacy_code = 'LEG-602' and p.subject = 'nominee' and p.ordinal = 2`
+    );
+    expect(nominee2.rows[0].surname).toBe('Original');
+  });
+
+  it('migrates a Minor once their guardian is already on file, resolved by Member ID', async () => {
+    const {
+      buildImportTemplate,
+      parseImportFile,
+      validateRows,
+      importMembers,
+    } = await load();
+    const template = await buildImportTemplate();
+
+    // The guardian has to already be a member — imported first, same as a
+    // legacy register would have to be worked in that order.
+    const guardianRow = await fillSheet(template, 'Individual', {
+      'Legacy Member Code': 'LEG-610-G',
+      'AB Number': 'AB1610',
+      Surname: 'Fakim',
+      Name: 'Rehana',
+      NIC: 'B6100000000001',
+      Gender: 'Female',
+      Address: 'Addr',
+      Mobile: '57891270',
+      ...NOMINEE_1,
+    });
+    const guardianValid = (
+      await validateRows(await parseImportFile(guardianRow))
+    ).valid;
+    const guardianOutcome = await importMembers(
+      guardianValid,
+      actor,
+      MIGRATE_PERMISSIONS
+    );
+    expect(guardianOutcome.failed).toEqual([]);
+
+    const minorRow = await fillSheet(template, 'Minor', {
+      'Legacy Member Code': 'LEG-611-M',
+      'AB Number': 'AB1611',
+      Surname: 'Fakim',
+      Name: 'Ayaan',
+      'Date of birth': '2015-06-01',
+      Gender: 'Male',
+      Address: 'Addr',
+      'Guardian surname': 'Fakim',
+      'Guardian name': 'Rehana',
+      'Guardian NIC': 'B6100000000001',
+      'Guardian Member ID': 'AB1610',
+      'Relationship to minor': 'Mother',
+      'Guardian mobile': '57891270',
+      'Nominee 1 Successor guardian surname': 'Fakim',
+      'Nominee 1 Successor guardian name': 'Imran',
+      'Nominee 1 Successor guardian NIC': 'B6100000000002',
+    });
+    const { valid, errors } = await validateRows(
+      await parseImportFile(minorRow)
+    );
+    expect(errors).toEqual([]);
+
+    const outcome = await importMembers(valid, actor, MIGRATE_PERMISSIONS);
+    expect(outcome.failed).toEqual([]);
+
+    const guardianParty = await run(
+      appUrl,
+      `select p.values ->> 'member_id' as member_id
+         from application_party p
+         join member m on m.application_id = p.application_id
+        where m.legacy_code = 'LEG-611-M' and p.subject = 'guardian'`
+    );
+    expect(guardianParty.rows[0].member_id).toBe('AB1610');
+  });
+
+  it('rejects a Minor whose guardian cannot be found on file', async () => {
+    const { buildImportTemplate, parseImportFile, validateRows } = await load();
+    const minorRow = await fillSheet(await buildImportTemplate(), 'Minor', {
+      'Legacy Member Code': 'LEG-612-M',
+      'AB Number': 'AB1612',
+      Surname: 'Unknown',
+      Name: 'Guardianless',
+      'Date of birth': '2016-01-01',
+      Gender: 'Male',
+      Address: 'Addr',
+      'Guardian surname': 'Nobody',
+      'Guardian name': 'Nowhere',
+      'Guardian NIC': 'B9999999999900',
+      'Guardian Member ID': 'AB9999999',
+      'Relationship to minor': 'Father',
+      'Guardian mobile': '57891271',
+      'Nominee 1 Successor guardian surname': 'X',
+      'Nominee 1 Successor guardian name': 'Y',
+      'Nominee 1 Successor guardian NIC': 'B0',
+    });
+    const { errors } = await validateRows(await parseImportFile(minorRow));
+    expect(errors).toHaveLength(1);
+    expect(errors[0].message).toMatch(/must already be on file/);
+  });
+
+  it('rejects two rows in the same batch sharing a NIC', async () => {
+    const { buildImportTemplate, parseImportFile, validateRows } = await load();
+    const template = await buildImportTemplate();
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(template as any);
+    const sheet = workbook.getWorksheet('Individual')!;
+    const columnFor = new Map<string, number>();
+    sheet.getRow(1).eachCell((cell, col) =>
+      columnFor.set(
+        String(cell.value ?? '')
+          .trim()
+          .replace(/\s*\*\s*$/, ''),
+        col
+      )
+    );
+    let nextRow = 2;
+    const putRow = (data: Record<string, string>) => {
+      const row = sheet.getRow(nextRow++);
+      for (const [header, value] of Object.entries(data)) {
+        const col = columnFor.get(header);
+        if (col) row.getCell(col).value = value;
+      }
+      row.commit();
+    };
+    putRow({
+      'Legacy Member Code': 'LEG-620',
+      'AB Number': 'AB1620',
+      Surname: 'One',
+      Name: 'First',
+      NIC: 'B6200000000000',
+      Gender: 'Male',
+      Address: 'Addr',
+      Mobile: '57891280',
+      ...NOMINEE_1,
+    });
+    putRow({
+      'Legacy Member Code': 'LEG-621',
+      'AB Number': 'AB1621',
+      Surname: 'Two',
+      Name: 'Second',
+      NIC: 'B6200000000000',
+      Gender: 'Female',
+      Address: 'Addr',
+      Mobile: '57891281',
+      ...NOMINEE_1,
+    });
+    const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
+
+    const { errors } = await validateRows(await parseImportFile(buffer));
+    expect(errors).toHaveLength(2);
+    expect(
+      errors.every(e =>
+        /NIC "B6200000000000" appears more than once/.test(e.message)
+      )
+    ).toBe(true);
+  });
+
+  it('rejects a NIC already on file for a different member, but not a re-import of the same one', async () => {
+    const {
+      buildImportTemplate,
+      parseImportFile,
+      validateRows,
+      importMembers,
+    } = await load();
+    const template = await buildImportTemplate();
+
+    const first = await fillSheet(template, 'Individual', {
+      'Legacy Member Code': 'LEG-630',
+      'AB Number': 'AB1630',
+      Surname: 'Nazeer',
+      Name: 'Farhan',
+      NIC: 'B6300000000000',
+      Gender: 'Male',
+      Address: 'Addr',
+      Mobile: '57891290',
+      ...NOMINEE_1,
+    });
+    const firstValid = (await validateRows(await parseImportFile(first))).valid;
+    await importMembers(firstValid, actor, MIGRATE_PERMISSIONS);
+
+    // A different legacy code claiming the same NIC — refused.
+    const clash = await fillSheet(template, 'Individual', {
+      'Legacy Member Code': 'LEG-631',
+      'AB Number': 'AB1631',
+      Surname: 'Nazeer',
+      Name: 'Impersonator',
+      NIC: 'B6300000000000',
+      Gender: 'Male',
+      Address: 'Addr',
+      Mobile: '57891291',
+      ...NOMINEE_1,
+    });
+    const { errors: clashErrors } = await validateRows(
+      await parseImportFile(clash)
+    );
+    expect(clashErrors).toHaveLength(1);
+    expect(clashErrors[0].message).toMatch(
+      /NIC "B6300000000000" is already on file for a different/
+    );
+
+    // Re-importing LEG-630 itself with the same NIC is not a clash.
+    const resubmit = await fillSheet(template, 'Individual', {
+      'Legacy Member Code': 'LEG-630',
+      'AB Number': 'AB1630',
+      Surname: 'Nazeer',
+      Name: 'Farhan',
+      NIC: 'B6300000000000',
+      Gender: 'Male',
+      Address: 'Updated Addr',
+      Mobile: '57891290',
+      ...NOMINEE_1,
+    });
+    const { errors: resubmitErrors } = await validateRows(
+      await parseImportFile(resubmit)
+    );
+    expect(resubmitErrors).toEqual([]);
   });
 });
