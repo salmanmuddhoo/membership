@@ -19,12 +19,14 @@ const endpoint = defineEndpoint(
   {
     method: 'PATCH',
     path: '/api/v1/members/{id}/contact',
-    summary: 'Save contact/guardian details for a member or non-member',
+    summary: 'Save applicant/Employment Details for a member or non-member',
     description:
       'Straight through, no draft, no approval — the same write the ' +
       'member/customer page itself makes. Only the fields that actually ' +
-      'changed are written. Returns the field list refreshed with what ' +
-      'was actually saved, so the page can update in place.',
+      'changed are written; a locked applicant field or any guardian field ' +
+      'sent anyway is silently dropped, never saved. Returns the field ' +
+      'list refreshed with what was actually saved, so the page can update ' +
+      'in place.',
     tag: 'Members',
     permission: PERMISSION_EDIT_CONTACT,
     requestSchema: {

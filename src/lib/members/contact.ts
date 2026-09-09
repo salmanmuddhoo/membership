@@ -8,17 +8,23 @@
 // (migration 0045, widened for Mobile and Employment Details on officer
 // feedback).
 //
-// Officer feedback, second round: every applicant field is now editable
+// Officer feedback, second round: every applicant field was made editable
 // here, not a fixed Telephone/Mobile/Address subset — the same edit
 // affordance is how a field migration left blank (an optional one the
-// legacy register never carried) gets filled in later, so narrowing it
-// would leave those permanently stuck. member.details_verify's own review
-// workflow is for what a member submits unattended from the app; it was
-// never actually reopened by widening what an officer standing at the
-// counter can correct on the spot.
+// legacy register never carried) gets filled in later.
+//
+// Officer feedback, third round: that went too far — Name, NIC and the
+// like should not stay open to correction once they carry a value; a
+// typo gets fixed by whoever is responsible for the record, not edited
+// at the counter indefinitely. So only ALWAYS_EDITABLE_APPLICANT_FIELD_KEYS
+// (Telephone, Mobile, Address, Email — the fields a letter or a phone
+// call can go stale) stay editable regardless of value; every other
+// applicant field is editable only while still blank, the one case the
+// second round was actually meant to cover, and locks the moment it is
+// filled in. Employment Details is unaffected — still fully editable,
+// same as it always was.
 import { recordAudit } from '../access/audit';
 import type { Principal } from '../access/principal';
-import { findGuardian } from '../applications/capture';
 import { toInternational, PhoneFormatError } from '../applications/phone';
 import { listMembershipTypes } from '../config/reference';
 import { query, withTransaction } from '../db/pool';
@@ -28,19 +34,22 @@ const ACTION_UPDATED = 'member.contact.updated';
 
 const PHONE_FIELD_KEYS = new Set(['telephone', 'mobile']);
 
-// A Minor's guardian (Minor only — every other type configures no
-// 'guardian' subject). Only the Member ID and the relationship are
-// editable here: surname, name, NIC and mobile always mirror the
-// guardian's own record (the same auto-fill migration/members.ts's own
-// import gives it) and are recomputed whenever the Member ID changes, not
-// independently correctable — a stale copy next to the guardian's own
-// record editable elsewhere would just be a second place for the same
-// fact to go wrong. Relationship has no such source and is exactly the
-// field a migrated Minor is most likely to still be missing.
-const EDITABLE_GUARDIAN_FIELD_KEYS = new Set(['member_id', 'relationship']);
-// The guardian fields that mirror the guardian's own applicant record —
-// recomputed, never taken from what was typed, whenever member_id changes.
-const GUARDIAN_MIRRORED_FIELD_KEYS = ['surname', 'name', 'nic', 'mobile'];
+// The applicant fields that stay editable no matter what they already
+// hold — everything else locks once it has a value (see the comment
+// above the imports).
+const ALWAYS_EDITABLE_APPLICANT_FIELD_KEYS = new Set([
+  'telephone',
+  'mobile',
+  'address',
+  'email',
+]);
+
+// Officer feedback: editing a Minor's guardian details from the member
+// page was never asked for — a guardian is only ever set by migration's
+// own import or (once built) an application's own capture flow. Guardian
+// fields are still read and shown here (the member page's read-only
+// card, with the Member ID linking to the guardian's own page), just
+// never accepted as a change.
 
 export class ContactUpdateError extends Error {
   constructor(
@@ -72,13 +81,12 @@ export interface EditableContactField {
   label: string;
   dataType: string;
   value: string;
-  // Whether this specific field accepts an edit — true for every applicant
-  // and Employment Details field, but only Member ID and relationship on a
-  // guardian (see EDITABLE_GUARDIAN_FIELD_KEYS). Every OTHER guardian field
-  // (surname, name, NIC, mobile) is still returned, read-only, so the page
-  // can show — and, after a save elsewhere on the same request, refresh —
-  // what the resolved guardian's own record says, without a second round
-  // trip: it is not independently correctable here, only a mirror of it.
+  // Whether this specific field accepts an edit right now. Telephone,
+  // Mobile, Address and Email are always editable; every other applicant
+  // field only while still blank (see ALWAYS_EDITABLE_APPLICANT_FIELD_KEYS);
+  // Employment Details is always editable; a guardian field never is (see
+  // the note above updateContactDetails) — still returned so the page can
+  // show it, just always read-only.
   editable: boolean;
 }
 
@@ -130,14 +138,18 @@ export async function editableContactFields(
   const valuesBySubject = new Map(parties.rows.map(p => [p.subject, p.values]));
 
   return [
-    ...applicantFields.map(f => ({
-      subject: 'applicant' as const,
-      fieldKey: f.fieldKey,
-      editable: true,
-      label: f.label,
-      dataType: f.dataType,
-      value: valuesBySubject.get('applicant')?.[f.fieldKey] ?? '',
-    })),
+    ...applicantFields.map(f => {
+      const value = valuesBySubject.get('applicant')?.[f.fieldKey] ?? '';
+      return {
+        subject: 'applicant' as const,
+        fieldKey: f.fieldKey,
+        editable:
+          ALWAYS_EDITABLE_APPLICANT_FIELD_KEYS.has(f.fieldKey) || value === '',
+        label: f.label,
+        dataType: f.dataType,
+        value,
+      };
+    }),
     ...employmentFields.map(f => ({
       subject: 'employment' as const,
       fieldKey: f.fieldKey,
@@ -149,7 +161,7 @@ export async function editableContactFields(
     ...guardianFields.map(f => ({
       subject: 'guardian' as const,
       fieldKey: f.fieldKey,
-      editable: EDITABLE_GUARDIAN_FIELD_KEYS.has(f.fieldKey),
+      editable: false,
       label: f.label,
       dataType: f.dataType,
       value: valuesBySubject.get('guardian')?.[f.fieldKey] ?? '',
@@ -173,12 +185,10 @@ export interface ContactFieldChange {
  * until its first edit here, which this creates rather than requiring
  * pre-created.
  *
- * A guardian's Member ID has to resolve the same way migration's own
- * import and problemsBlockingSubmission's own S-604 relaxation both do
- * (findGuardian) before it is accepted; once it does, surname, name, NIC
- * and mobile are recomputed from the guardian's own record in the same
- * write, never left to whatever was typed for them (they are not
- * independently editable — see EDITABLE_GUARDIAN_FIELD_KEYS).
+ * A guardian field is never accepted here — editableContactFields already
+ * marks every one of them read-only, and any change of subject 'guardian'
+ * that reaches this function anyway (a direct API call, not the page) is
+ * silently dropped rather than saved.
  */
 export async function updateContactDetails(
   applicationId: string,
@@ -188,46 +198,10 @@ export async function updateContactDetails(
 ): Promise<{ updated: string[] }> {
   assertMayEdit(principal);
 
-  // Resolved before the transaction opens, not from inside it: findGuardian
-  // runs against the pool (query(), not a client passed through), and a
-  // second pool checkout while withTransaction's own is still held is
-  // exactly the deadlock a small pool hits — the same reason
-  // migration/members.ts's own allocateReceiptNumber/migrationFeeVersionId
-  // are read fresh before its transaction opens. Whether this change is
-  // even a real one (not identical to what is already on file) is not yet
-  // known here, so an unnecessary resolve is the cost of avoiding the
-  // deadlock, not a correctness issue — the write below still checks.
-  const guardianMemberIdChange = changes.find(
-    c => c.subject === 'guardian' && c.fieldKey === 'member_id'
-  );
-  let resolvedGuardian: Awaited<ReturnType<typeof findGuardian>> = null;
-  if (guardianMemberIdChange) {
-    const candidate = guardianMemberIdChange.value.trim();
-    if (candidate === '') {
-      throw new ContactUpdateError(
-        'Guardian Member ID is required.',
-        'invalid'
-      );
-    }
-    resolvedGuardian = await findGuardian(candidate, '');
-    if (!resolvedGuardian) {
-      throw new ContactUpdateError(
-        `Guardian Member ID "${candidate}" does not match any member or ` +
-          'in-progress application on file.',
-        'invalid'
-      );
-    }
-    if (resolvedGuardian.isMember && resolvedGuardian.status !== 'active') {
-      throw new ContactUpdateError(
-        `The guardian (${resolvedGuardian.memberNo}) is not an active member.`,
-        'invalid'
-      );
-    }
-  }
-
   return withTransaction(async client => {
     const bySubject = new Map<EditableSubject, ContactFieldChange[]>();
     for (const change of changes) {
+      if (change.subject === 'guardian') continue;
       const list = bySubject.get(change.subject) ?? [];
       list.push(change);
       bySubject.set(change.subject, list);
@@ -238,9 +212,6 @@ export async function updateContactDetails(
     const newValue: Record<string, string> = {};
 
     for (const [subject, subjectChanges] of bySubject) {
-      const allowedKeys =
-        subject === 'guardian' ? EDITABLE_GUARDIAN_FIELD_KEYS : null;
-
       const current = await client.query<{ values: Record<string, string> }>(
         `select values from application_party
           where application_id = $1 and subject = $2 and ordinal = 1
@@ -257,7 +228,17 @@ export async function updateContactDetails(
 
       const patch: Record<string, string> = {};
       for (const { fieldKey, value: raw } of subjectChanges) {
-        if (allowedKeys && !allowedKeys.has(fieldKey)) continue;
+        // Mirrors editableContactFields's own editable rule: once an
+        // applicant field outside the always-editable set carries a
+        // value, it is locked — this is the server-side half of that,
+        // not just the page hiding the input.
+        if (
+          subject === 'applicant' &&
+          !ALWAYS_EDITABLE_APPLICANT_FIELD_KEYS.has(fieldKey) &&
+          (before ?? {})[fieldKey]
+        ) {
+          continue;
+        }
         let value = raw.trim();
         if (PHONE_FIELD_KEYS.has(fieldKey) && value !== '') {
           try {
@@ -276,17 +257,6 @@ export async function updateContactDetails(
         patch[fieldKey] = value;
       }
 
-      if (subject === 'guardian' && 'member_id' in patch && resolvedGuardian) {
-        // The canonical casing (AB1610, not ab1610), and every mirrored
-        // field recomputed from the newly-resolved guardian's own record —
-        // whatever the previous guardian's values were, they do not carry
-        // over to a different person.
-        patch.member_id = resolvedGuardian.memberNo;
-        for (const key of GUARDIAN_MIRRORED_FIELD_KEYS) {
-          patch[key] = resolvedGuardian.applicantValues[key] ?? '';
-        }
-      }
-
       if (Object.keys(patch).length === 0) continue;
 
       await client.query(
@@ -298,16 +268,6 @@ export async function updateContactDetails(
       );
 
       for (const key of Object.keys(patch)) {
-        // A mirrored field's own before-value is folded into the same
-        // "member_id changed" story rather than reported as its own —
-        // otherwise every Member ID correction would also claim to have
-        // changed the guardian's surname, name, NIC and mobile even when
-        // the officer only touched one field.
-        if (
-          subject === 'guardian' &&
-          GUARDIAN_MIRRORED_FIELD_KEYS.includes(key)
-        )
-          continue;
         updated.push(key);
         previousValue[key] = (before ?? {})[key] ?? '';
         newValue[key] = patch[key];

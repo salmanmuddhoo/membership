@@ -678,6 +678,9 @@ describe('importMembers', () => {
       Mobile: '57891250',
       'Hajj Savings (customer test) Number': 'HSA-500',
       'Hajj Savings (customer test) Balance': '3000',
+      // Officer feedback: Nominee 1 is mandatory for a non-member row the
+      // same as a member row.
+      ...NOMINEE_1,
     });
     const { valid, errors } = await validateRows(await parseImportFile(filled));
     expect(errors).toEqual([]);
@@ -720,6 +723,19 @@ describe('importMembers', () => {
           and new_value->>'legacyCode' = 'LEG-500'`
     );
     expect(audited.rows).toHaveLength(1);
+
+    // Officer feedback: Nominee 1 is written for a non-member the same as
+    // a member.
+    const nominee = await run(
+      appUrl,
+      `select p.values ->> 'surname' as surname
+         from application_party p
+         join customer c on c.application_id = p.application_id
+        where c.legacy_code = 'LEG-500'
+          and p.subject = 'nominee' and p.ordinal = 1`
+    );
+    expect(nominee.rows).toHaveLength(1);
+    expect(nominee.rows[0].surname).toBe(NOMINEE_1['Nominee 1 Surname']);
   });
 
   it('re-importing a non-member adds a new account without touching one already held', async () => {
@@ -744,6 +760,7 @@ describe('importMembers', () => {
       Mobile: '57891251',
       'Investment (customer test) Number': 'INV-501',
       'Investment (customer test) Balance': '1000',
+      ...NOMINEE_1,
     });
     const firstValid = (await validateRows(await parseImportFile(first))).valid;
     const firstOutcome = await importMembers(
@@ -781,6 +798,7 @@ describe('importMembers', () => {
       'Investment (customer test) Balance': '1000',
       'Hajj Savings (added later) Number': 'HSA-501',
       'Hajj Savings (added later) Balance': '750',
+      ...NOMINEE_1,
     });
     const secondParsed = await validateRows(await parseImportFile(second));
     expect(secondParsed.errors).toEqual([]);
@@ -815,7 +833,8 @@ describe('importMembers', () => {
       `select p.values ->> 'address' as address
          from application_party p
          join customer c on c.application_id = p.application_id
-        where c.legacy_code = 'LEG-501'`
+        where c.legacy_code = 'LEG-501'
+          and p.subject = 'applicant'`
     );
     expect(party.rows[0].address).toBe('Corrected Address');
   });
@@ -865,6 +884,7 @@ describe('importMembers', () => {
       Mobile: '57891253',
       'Hajj Savings (kind conflict test) Number': 'HSA-503',
       'Hajj Savings (kind conflict test) Balance': '400',
+      ...NOMINEE_1,
     });
     const firstValid = (await validateRows(await parseImportFile(first))).valid;
     await importMembers(firstValid, actor, MIGRATE_PERMISSIONS);
@@ -993,6 +1013,34 @@ describe('fourth increment: Nominee, Minor, and NIC/mobile uniqueness', () => {
       Gender: 'Male',
       Address: 'Addr',
       Mobile: '57891261',
+      // No Nominee 1 fields at all.
+    });
+    const { errors } = await validateRows(await parseImportFile(filled));
+    expect(errors).toHaveLength(1);
+    expect(errors[0].message).toMatch(/Nominee surname is required/);
+  });
+
+  it('rejects a non-member row missing Nominee 1 too — officer feedback: mandatory for both', async () => {
+    await runAsConfigurator(
+      appUrl,
+      `insert into account_type
+         (code, name, category, minimum_opening_amount, is_membership_default)
+       values ('hsa_nominee_required_test', 'Hajj Savings (nominee required test)',
+               'savings', 0, false)
+       on conflict (code) do nothing`
+    );
+    const { buildImportTemplate, parseImportFile, validateRows } = await load();
+    const filled = await fillSheet(await buildImportTemplate(), 'Individual', {
+      'Legacy Member Code': 'LEG-601B',
+      // No AB Number — a non-member row.
+      Surname: 'Bhurtun',
+      Name: 'Marie',
+      NIC: 'B6000000000009',
+      Gender: 'Female',
+      Address: 'Addr',
+      Mobile: '57891269',
+      'Hajj Savings (nominee required test) Number': 'HSA-601B',
+      'Hajj Savings (nominee required test) Balance': '200',
       // No Nominee 1 fields at all.
     });
     const { errors } = await validateRows(await parseImportFile(filled));

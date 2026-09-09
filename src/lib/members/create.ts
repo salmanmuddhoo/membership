@@ -895,26 +895,6 @@ export async function listMembers(
   };
 }
 
-// Officer feedback: the system-wide split, not the search-filtered
-// listMembers total above — a converted customer (S-614: approved to
-// become a member) is excluded the same way listMembers' own customer
-// branch excludes them, since they are not a second record alongside the
-// member they became.
-export async function countMembersAndCustomers(): Promise<{
-  members: number;
-  customers: number;
-}> {
-  const result = await query<{ members: string; customers: string }>(
-    `select
-       (select count(*) from member) as members,
-       (select count(*) from customer where status = 'active') as customers`
-  );
-  return {
-    members: Number(result.rows[0].members),
-    customers: Number(result.rows[0].customers),
-  };
-}
-
 // S-310 · A member and their accounts, so the created record can be confirmed.
 export async function loadMember(id: string): Promise<MemberDetail | null> {
   const result = await query<{

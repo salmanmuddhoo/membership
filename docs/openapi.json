@@ -5585,8 +5585,8 @@
     },
     "/api/v1/members/{id}/contact": {
       "patch": {
-        "summary": "Save contact/guardian details for a member or non-member",
-        "description": "Straight through, no draft, no approval — the same write the member/customer page itself makes. Only the fields that actually changed are written. Returns the field list refreshed with what was actually saved, so the page can update in place.",
+        "summary": "Save applicant/Employment Details for a member or non-member",
+        "description": "Straight through, no draft, no approval — the same write the member/customer page itself makes. Only the fields that actually changed are written; a locked applicant field or any guardian field sent anyway is silently dropped, never saved. Returns the field list refreshed with what was actually saved, so the page can update in place.",
         "tags": [
           "Members"
         ],
