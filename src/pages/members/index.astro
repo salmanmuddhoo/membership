@@ -38,6 +38,20 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium' });
 // type, are actually defined — migrations 0025/0027) so a type added later
 // still gets a button, just the same neutral one an unrecognised name
 // falls back to.
+// Officer feedback: the hover highlight had square corners and the row's
+// own text overflowed it. A <tr>'s background does not respect
+// border-radius (table row backgrounds paint as one rectangle behind every
+// cell, corners included), so the highlight lives on each <td> instead,
+// tied to the row via Tailwind's group/group-hover rather than :hover on
+// the <tr> directly. `first:`/`last:` rounds whichever cell actually ends
+// up first or last — the first is always Name, but the last is either an
+// Accounts cell or Total funds depending on canSeePayments and how many
+// account types are active, never hardcoded here — and adds the padding
+// that keeps the row's own text clear of that curve instead of running
+// into it.
+const ROW_HOVER =
+  'group-hover:bg-neutral-200/60 dark:group-hover:bg-neutral-900 first:rounded-l-lg first:pl-4 last:rounded-r-lg last:pr-4';
+
 function accountButtonClasses(account: MemberListAccount): string {
   const key = `${account.code} ${account.name}`.toLowerCase();
   if (key.includes('hsa')) {
@@ -126,7 +140,7 @@ function accountButtonClasses(account: MemberListAccount): string {
             <table class="w-full text-sm">
               <thead>
                 <tr class="text-left text-xs text-neutral-500 dark:text-neutral-400">
-                  <th class="py-2 pr-4 font-medium">Name</th>
+                  <th class="py-2 pr-4 pl-4 font-medium">Name</th>
                   <th class="py-2 pr-4 font-medium">Status</th>
                   <th class="py-2 pr-4 font-medium">Joined</th>
                   <th
@@ -136,7 +150,9 @@ function accountButtonClasses(account: MemberListAccount): string {
                     Accounts
                   </th>
                   {canSeePayments && (
-                    <th class="py-2 text-right font-medium">Total funds</th>
+                    <th class="py-2 pr-4 text-right font-medium">
+                      Total funds
+                    </th>
                   )}
                 </tr>
               </thead>
@@ -144,9 +160,11 @@ function accountButtonClasses(account: MemberListAccount): string {
                 {members.map(m => (
                   <tr
                     data-href={`/members/${m.id}`}
-                    class="cursor-pointer border-t border-neutral-200 hover:bg-neutral-200/60 dark:border-neutral-800 dark:hover:bg-neutral-900"
+                    class="group cursor-pointer border-t border-neutral-200 dark:border-neutral-800"
                   >
-                    <td class="py-2 pr-4 text-neutral-700 dark:text-neutral-200">
+                    <td
+                      class={`py-2 pr-4 text-neutral-700 dark:text-neutral-200 ${ROW_HOVER}`}
+                    >
                       <span class="flex flex-wrap items-center gap-x-2">
                         {m.name}
                         {m.kind === 'customer' && (
@@ -156,14 +174,18 @@ function accountButtonClasses(account: MemberListAccount): string {
                         )}
                       </span>
                     </td>
-                    <td class="py-2 pr-4 text-neutral-600 dark:text-neutral-300">
+                    <td
+                      class={`py-2 pr-4 text-neutral-600 dark:text-neutral-300 ${ROW_HOVER}`}
+                    >
                       {m.status}
                     </td>
-                    <td class="py-2 pr-4 text-xs text-neutral-500 dark:text-neutral-400">
+                    <td
+                      class={`py-2 pr-4 text-xs text-neutral-500 dark:text-neutral-400 ${ROW_HOVER}`}
+                    >
                       {dateFormat.format(m.joinedAt)}
                     </td>
                     {activeAccountTypeColumns.length === 0 ? (
-                      <td class="py-2 pr-4">
+                      <td class={`py-2 pr-4 ${ROW_HOVER}`}>
                         {m.accountBadges.length === 0 && (
                           <span class="text-xs text-neutral-400 dark:text-neutral-500">
                             —
@@ -176,7 +198,7 @@ function accountButtonClasses(account: MemberListAccount): string {
                           a => a.code === type.code
                         );
                         return (
-                          <td class="py-2 pr-4">
+                          <td class={`py-2 pr-4 ${ROW_HOVER}`}>
                             {account &&
                               (canSeePayments ? (
                                 <button
@@ -208,7 +230,9 @@ function accountButtonClasses(account: MemberListAccount): string {
                       })
                     )}
                     {canSeePayments && (
-                      <td class="py-2 text-right font-medium text-neutral-800 tabular-nums dark:text-neutral-100">
+                      <td
+                        class={`py-2 text-right font-medium text-neutral-800 tabular-nums dark:text-neutral-100 ${ROW_HOVER}`}
+                      >
                         {formatMoney(m.totalFunds)}
                       </td>
                     )}

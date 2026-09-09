@@ -922,6 +922,23 @@ early). The "Applications" nav badge (`pendingActionCount`) is the same
 config-driven counting, live rather than stored, for whichever step a
 person's role covers. See `docs/applications.md` and `docs/configuration.md`.
 
+**Follow-up, officer feedback:** a Regional Manager is already higher in the
+hierarchy than the oversight step exists to provide — when they captured the
+application themselves, there is no subordinate's work left to look over, so
+`submitApplication` now writes the `regional_review` transition itself
+(attributed to the capturing Regional Manager, with a comment saying why) in
+the same transaction as the capture step's own, whenever Regional oversight
+is enabled and the CAPTURING user (not necessarily whoever clicks Submit —
+FRD 7.4.2 lets a Clerk submit on their behalf) holds the step's configured
+role. Read fresh from `activeChain` and that user's own `user_role` rows, not
+a hardcoded role name, so this only ever engages once an administrator has
+actually enabled Regional oversight and stays correct if the role assigned
+to that step is ever reconfigured. Every other reader of the chain
+(`availableActions`, `pendingApplicationIds`, `reviewStageLabel`) already
+answers "has Regional oversight happened yet" from the same
+`application_transition` evidence, so the application simply appears in the
+Secretary's queue immediately, with nothing further to change.
+
 ---
 
 # M11 — Opening an account without a fresh membership

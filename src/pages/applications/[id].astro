@@ -699,8 +699,20 @@ const furthestStep = !isEditable
 // clicking "Next: upload documents" on the print page would bounce them
 // straight back to print, forever, since it can never become true from print
 // alone.
+//
+// Officer feedback: a 'received' application arrives with every mandatory
+// applicant field already filled in by the member themselves — blocking is
+// empty from the start, so furthestStep skips capture entirely and this
+// would otherwise land the officer straight on the signature form, never
+// having actually looked at what the member typed. Until it is signed,
+// capture is where a 'received' application opens instead — the same
+// print-step carve-out above, one step earlier.
 const defaultStep =
-  furthestStep > CAPTURE_STEP && !signedFormFiled ? PRINT_STEP : furthestStep;
+  application!.status === RECEIVED_STATUS && !signedFormFiled
+    ? CAPTURE_STEP
+    : furthestStep > CAPTURE_STEP && !signedFormFiled
+      ? PRINT_STEP
+      : furthestStep;
 
 // Once submitted this application is read entirely, not stepped through — the
 // Secretary and President need the whole picture, and only an editable

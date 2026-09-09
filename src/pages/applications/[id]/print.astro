@@ -402,7 +402,10 @@ const fixedViewport =
     break-inside: avoid;
   }
   .sig-line {
-    height: 14mm;
+    /* Officer feedback: a captured signature read too small on the printed
+       form — doubled from 14mm so the drawn stroke actually fills the box
+       instead of sitting thin inside it. */
+    height: 28mm;
     border-bottom: 1px solid #444;
   }
   .sig-line.short {
@@ -451,7 +454,9 @@ const fixedViewport =
      Print (and Save as PDF) actually sees. */
   .sig-pad {
     position: relative;
-    height: 14mm;
+    /* Matches .sig-line's own doubled height — this is what the absolutely
+       positioned .sig-image actually sizes against. */
+    height: 28mm;
   }
   .sig-image {
     position: absolute;
