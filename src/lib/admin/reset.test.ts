@@ -256,6 +256,39 @@ describe('resetAllTestData', () => {
     }
   });
 
+  // Officer feedback: numbering used to survive a reset untouched, so a
+  // fresh test member still came out AB0047, not AB0001. Test-only — the
+  // production caution (a number is on a member's card) does not apply to
+  // a database this refuses to run against outside PUBLIC_APP_ENV != production.
+  it('restarts every reference-number sequence and counter', async () => {
+    const { resetAllTestData } = await load();
+    await seedOneOfEverything();
+    // A customer account number counter, advanced past its start — the
+    // thing this reset must also put back to zero.
+    await run(
+      appUrl,
+      `insert into account_number_counter (account_type_id, next_serial)
+       values ($1, 5)`,
+      [accountTypeId]
+    );
+
+    await resetAllTestData(actor);
+
+    const nextvals = await run(
+      appUrl,
+      `select nextval('application_reference_seq') as app,
+              nextval('member_number_seq') as member,
+              nextval('receipt_number_seq') as receipt`
+    );
+    expect(nextvals.rows[0]).toEqual({ app: '1', member: '1', receipt: '1' });
+
+    const counters = await run(
+      appUrl,
+      `select count(*)::int as n from account_number_counter`
+    );
+    expect(counters.rows[0].n).toBe(0);
+  });
+
   it('leaves exactly one audit row: the reset itself', async () => {
     const { resetAllTestData } = await load();
     await seedOneOfEverything();

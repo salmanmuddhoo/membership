@@ -966,7 +966,7 @@ export function visibleFields(
  * stored value is the one M9 will send to. A number that cannot be placed
  * fails the save — see phone.ts for why guessing is worse.
  */
-function normalise(
+export function normalise(
   values: Record<string, string>,
   fields: MembershipTypeField[]
 ): { values: Record<string, string>; errors: MissingField[] } {

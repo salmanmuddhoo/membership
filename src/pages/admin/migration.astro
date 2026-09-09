@@ -1,0 +1,232 @@
+---
+// M7 · Legacy migration (docs/backlog.md), first increment: a System
+// Administrator imports members straight from the legacy register. Direct,
+// no review or approval — the whole batch lands as status 'approved' in
+// one step, per business direction.
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import {
+  MigrationError,
+  buildImportTemplate,
+  eligibleMembershipTypesForMigration,
+  importMembers,
+  parseImportFile,
+  validateRows,
+  type ImportOutcome,
+  type RowError,
+} from '@lib/migration/members';
+
+const principal = Astro.locals.principal!;
+const canMigrate = principal.permissions.has('system.migrate_members');
+
+// The template download — its own GET, not a POST, so it is a plain link
+// rather than a button that resubmits the whole page.
+if (canMigrate && Astro.url.searchParams.has('template')) {
+  const buffer = await buildImportTemplate();
+  return new Response(buffer, {
+    headers: {
+      'content-type':
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'content-disposition':
+        'attachment; filename="member-migration-template.xlsx"',
+    },
+  });
+}
+
+let error: string | null = null;
+let rowErrors: RowError[] = [];
+let outcome: ImportOutcome | null = null;
+
+if (Astro.request.method === 'POST') {
+  if (!canMigrate) {
+    error = 'You do not have permission to import members.';
+  } else {
+    const form = await Astro.request.formData();
+    const file = form.get('file');
+    if (!(file instanceof File) || file.size === 0) {
+      error = 'Choose a filled-in template to upload.';
+    } else {
+      try {
+        const buffer = Buffer.from(await file.arrayBuffer());
+        const rows = await parseImportFile(buffer);
+        if (rows.length === 0) {
+          error = 'No rows were found in that file.';
+        } else {
+          const { valid, errors } = await validateRows(rows);
+          if (errors.length > 0) {
+            rowErrors = errors;
+            error =
+              `${errors.length} row${errors.length === 1 ? '' : 's'} ` +
+              'need fixing before anything is imported. Nothing was written.';
+          } else {
+            outcome = await importMembers(
+              valid,
+              { userId: principal.userId, email: principal.email },
+              principal.permissions
+            );
+          }
+        }
+      } catch (err) {
+        if (err instanceof MigrationError) {
+          error = err.message;
+        } else {
+          console.error('[admin/migration]', err);
+          error = 'That file could not be read. Please try again.';
+        }
+      }
+    }
+  }
+}
+
+const types = canMigrate ? await eligibleMembershipTypesForMigration() : [];
+---
+
+<DashboardLayout title="Migration · Al Barakah MCSL" heading="Migration">
+  <div class="mx-auto max-w-3xl space-y-6">
+    {
+      !canMigrate && (
+        <div class="rounded-lg border border-neutral-300 bg-neutral-100 px-4 py-3 text-sm text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200">
+          You do not have permission to import members.
+        </div>
+      )
+    }
+
+    {
+      canMigrate && (
+        <>
+          <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+            <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+              Import members from the legacy register
+            </h2>
+            <p class="mt-2 text-sm text-neutral-600 dark:text-neutral-300">
+              Every row in the template becomes a member, approved immediately —
+              no review, no approval step. Run it as many times as needed; each
+              upload is its own batch.
+            </p>
+            <p class="mt-2 text-sm text-neutral-600 dark:text-neutral-300">
+              Covers {types.map(t => t.name).join(', ')}. A type with a guardian
+              requirement (Minor) is not part of this yet.
+            </p>
+            <a
+              href="/admin/migration?template=1"
+              class="bg-mint-300 hover:bg-mint-400 mt-4 inline-block rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
+            >
+              Download the template
+            </a>
+          </section>
+
+          {error && (
+            <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+              {error}
+            </div>
+          )}
+
+          {rowErrors.length > 0 && (
+            <section class="rounded-2xl border border-red-300 bg-red-50 p-6 dark:border-red-900 dark:bg-red-950">
+              <h2 class="text-lg font-semibold text-red-900 dark:text-red-200">
+                Rows to fix
+              </h2>
+              <ul class="mt-3 space-y-2 text-sm text-red-800 dark:text-red-200">
+                {rowErrors.map(e => (
+                  <li>
+                    <span class="font-medium">
+                      {e.sheet}, row {e.rowNumber}
+                      {e.legacyCode && ` (${e.legacyCode})`}:
+                    </span>{' '}
+                    {e.message}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
+          {outcome && (
+            <section class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-2xl border p-6">
+              <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+                {outcome.imported.length} member
+                {outcome.imported.length === 1 ? '' : 's'} imported
+              </h2>
+              {outcome.imported.length > 0 && (
+                <ul class="mt-3 space-y-1 text-sm text-neutral-700 dark:text-neutral-200">
+                  {outcome.imported.map(m => (
+                    <li>
+                      {m.legacyCode} → {m.memberNo}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {outcome.failed.length > 0 && (
+                <>
+                  <h3 class="mt-4 text-sm font-semibold text-red-800 dark:text-red-200">
+                    {outcome.failed.length} could not be imported
+                  </h3>
+                  <ul class="mt-2 space-y-1 text-sm text-red-800 dark:text-red-200">
+                    {outcome.failed.map(f => (
+                      <li>
+                        {f.legacyCode}: {f.message}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </section>
+          )}
+
+          <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+            <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+              Upload a filled-in template
+            </h2>
+            <form
+              method="post"
+              enctype="multipart/form-data"
+              class="mt-4 space-y-3"
+              data-migration-form
+            >
+              <div class="flex items-center gap-3">
+                <label class="cursor-pointer rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-200 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800">
+                  Choose file
+                  <input
+                    type="file"
+                    name="file"
+                    accept=".xlsx"
+                    required
+                    data-migration-file
+                    class="sr-only"
+                  />
+                </label>
+                <span
+                  data-migration-filename
+                  class="text-sm text-neutral-500 dark:text-neutral-400"
+                >
+                  No file selected
+                </span>
+              </div>
+              <button
+                type="submit"
+                class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
+              >
+                Import
+              </button>
+            </form>
+          </section>
+        </>
+      )
+    }
+  </div>
+</DashboardLayout>
+
+<script>
+  // The native file input writes its own "no file chosen" text in the
+  // browser's language — hidden here, and this says it in English instead
+  // (CLAUDE.md: English only).
+  const input = document.querySelector<HTMLInputElement>(
+    '[data-migration-file]'
+  );
+  const filename = document.querySelector<HTMLElement>(
+    '[data-migration-filename]'
+  );
+  if (input && filename) {
+    input.addEventListener('change', () => {
+      filename.textContent = input.files?.[0]?.name ?? 'No file selected';
+    });
+  }
+</script>

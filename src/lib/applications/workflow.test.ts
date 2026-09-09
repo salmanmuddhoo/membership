@@ -1647,6 +1647,45 @@ describe('the actions offered come from the configured chain', () => {
     expect(await workflow.availableActions(application, secretary)).toEqual([]);
   });
 
+  // Officer feedback bug: 'received' applications had no way to be
+  // submitted from the application page at all — the capture step's
+  // configured fromStatus is 'draft', never 'received', so an officer who
+  // opened one found the wizard but never a Submit button.
+  it("offers submission on a 'received' application to an officer who holds application.submit_online", async () => {
+    const { capture, workflow } = await load();
+    const seeded = await run(
+      appUrl,
+      `select id from membership_type where code = 'individual'`
+    );
+    const application = await run(
+      appUrl,
+      `insert into membership_application
+         (membership_type_id, captured_by, status)
+       values ($1, $2, 'received') returning id`,
+      [seeded.rows[0].id, officer.userId]
+    );
+    const id = application.rows[0].id;
+
+    // Not offered at all without the extra permission — mirrors
+    // assertMayAct's own refusal, not a dead end the officer only discovers
+    // after clicking Submit.
+    const loaded = (await capture.loadApplication(id))!;
+    expect(
+      (await workflow.availableActions(loaded, officer)).map(a => a.stepCode)
+    ).toEqual([]);
+
+    const withOnline = {
+      ...officer,
+      permissions: new Set([
+        ...officer.permissions,
+        'application.submit_online',
+      ]),
+    };
+    expect(
+      (await workflow.availableActions(loaded, withOnline)).map(a => a.stepCode)
+    ).toEqual(['capture']);
+  });
+
   it('refuses a step an administrator has disabled', async () => {
     const { workflow, config } = await load();
     const admin = { userId: officer.userId, email: officer.email };

@@ -827,8 +827,25 @@ export async function availableActions(
   for (const step of chain) {
     const meta = STEP_META[step.code];
     if (!meta) continue;
-    if (step.fromStatus !== application.status) continue;
+    // 'received' (submitted from the mobile app) is a draft as far as the
+    // capture step is concerned — assertMayAct's own actsOnReceived, mirrored
+    // here. Missing this left 'received' with nowhere to click Submit: the
+    // capture step's configured fromStatus is 'draft', never 'received', so
+    // an officer who opened one found every other control but this button.
+    const actsOnReceived =
+      step.code === 'capture' && application.status === RECEIVED_STATUS;
+    if (step.fromStatus !== application.status && !actsOnReceived) continue;
     if (!principal.permissions.has(meta.permission)) continue;
+    // Officer feedback: 'received' is handled by specific staff, not every
+    // officer who can submit (application.submit_online, migration 0044) —
+    // the button offers itself only to someone the submit itself would let
+    // through.
+    if (
+      actsOnReceived &&
+      !principal.permissions.has('application.submit_online')
+    ) {
+      continue;
+    }
     // S-611: the step's configured role, not just the permission — see
     // assertMayAct's own comment for why this matters once a permission is
     // shared between two steps (Regional oversight and Secretary review).
