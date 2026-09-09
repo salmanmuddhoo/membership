@@ -910,6 +910,7 @@ describe('importMembers', () => {
         mobile: '+23057891238',
       },
       guardian: {},
+      beneficiary: {},
       nominees: [],
       sharesBalance: '',
       msaBalance: '',
@@ -1095,12 +1096,12 @@ describe('fourth increment: Nominee, Minor, and NIC/mobile uniqueness', () => {
       'Date of birth': '2015-06-01',
       Gender: 'Male',
       Address: 'Addr',
-      'Guardian surname': 'Fakim',
-      'Guardian name': 'Rehana',
-      'Guardian NIC': 'B6100000000001',
+      // Only the Member ID — surname, name, NIC and mobile are pulled from
+      // the guardian's own record, not retyped.
       'Guardian Member ID': 'AB1610',
-      'Relationship to minor': 'Mother',
-      'Guardian mobile': '57891270',
+      'Beneficiary surname': 'Fakim',
+      'Beneficiary name': 'Zahra',
+      'Beneficiary NIC': 'B6100000000003',
       'Nominee 1 Successor guardian surname': 'Fakim',
       'Nominee 1 Successor guardian name': 'Imran',
       'Nominee 1 Successor guardian NIC': 'B6100000000002',
@@ -1115,12 +1116,71 @@ describe('fourth increment: Nominee, Minor, and NIC/mobile uniqueness', () => {
 
     const guardianParty = await run(
       appUrl,
-      `select p.values ->> 'member_id' as member_id
+      `select p.values as values
          from application_party p
          join member m on m.application_id = p.application_id
         where m.legacy_code = 'LEG-611-M' and p.subject = 'guardian'`
     );
-    expect(guardianParty.rows[0].member_id).toBe('AB1610');
+    expect(guardianParty.rows[0].values).toEqual({
+      member_id: 'AB1610',
+      surname: 'Fakim',
+      name: 'Rehana',
+      nic: 'B6100000000001',
+      mobile: '+23057891270',
+    });
+
+    const beneficiaryParty = await run(
+      appUrl,
+      `select p.values ->> 'surname' as surname
+         from application_party p
+         join member m on m.application_id = p.application_id
+        where m.legacy_code = 'LEG-611-M' and p.subject = 'beneficiary'`
+    );
+    expect(beneficiaryParty.rows[0].surname).toBe('Fakim');
+  });
+
+  it('rejects a Minor missing the Takaful beneficiary', async () => {
+    const {
+      buildImportTemplate,
+      parseImportFile,
+      validateRows,
+      importMembers,
+    } = await load();
+    const template = await buildImportTemplate();
+
+    const guardianRow = await fillSheet(template, 'Individual', {
+      'Legacy Member Code': 'LEG-613-G',
+      'AB Number': 'AB1613',
+      Surname: 'Peerbhoy',
+      Name: 'Karim',
+      NIC: 'B6100000000004',
+      Gender: 'Male',
+      Address: 'Addr',
+      Mobile: '57891272',
+      ...NOMINEE_1,
+    });
+    const guardianValid = (
+      await validateRows(await parseImportFile(guardianRow))
+    ).valid;
+    await importMembers(guardianValid, actor, MIGRATE_PERMISSIONS);
+
+    const minorRow = await fillSheet(template, 'Minor', {
+      'Legacy Member Code': 'LEG-614-M',
+      'AB Number': 'AB1614',
+      Surname: 'Peerbhoy',
+      Name: 'Yasmin',
+      'Date of birth': '2017-01-01',
+      Gender: 'Female',
+      Address: 'Addr',
+      'Guardian Member ID': 'AB1613',
+      'Nominee 1 Successor guardian surname': 'Peerbhoy',
+      'Nominee 1 Successor guardian name': 'Imran',
+      'Nominee 1 Successor guardian NIC': 'B6100000000005',
+      // No beneficiary columns at all.
+    });
+    const { errors } = await validateRows(await parseImportFile(minorRow));
+    expect(errors).toHaveLength(1);
+    expect(errors[0].message).toMatch(/Beneficiary surname is required/);
   });
 
   it('rejects a Minor whose guardian cannot be found on file', async () => {

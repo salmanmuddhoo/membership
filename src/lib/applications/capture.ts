@@ -1120,15 +1120,31 @@ export async function saveDraft(
 // Exported for migration/members.ts's own Minor row validation, which
 // resolves a guardian the exact same way — a legacy register's Minor is
 // never migrated ahead of their guardian, so the guardian is always
-// findable here by the time the minor's own row is imported.
+// findable here by the time the minor's own row is imported. Also for the
+// member page's own guardian display and the migration's own auto-fill: a
+// resolved guardian carries their own applicant values (surname, name, nic,
+// mobile) so a form asking for "who is the guardian" never has to ask the
+// officer to retype what the guardian's own record already says, and a
+// resolved member's own `id` so the member page can link straight to them.
 export async function findGuardian(
   memberNoCandidate: string,
   nicCandidate: string
-): Promise<{ memberNo: string; status: string; isMember: boolean } | null> {
+): Promise<{
+  id: string | null;
+  memberNo: string;
+  status: string;
+  isMember: boolean;
+  applicantValues: Record<string, string>;
+} | null> {
   if (!memberNoCandidate && !nicCandidate) return null;
 
-  const member = await query<{ member_no: string; status: string }>(
-    `select m.member_no, m.status
+  const member = await query<{
+    id: string;
+    member_no: string;
+    status: string;
+    values: Record<string, string> | null;
+  }>(
+    `select m.id, m.member_no, m.status, p.values
        from member m
        left join application_party p
          on p.application_id = m.application_id
@@ -1140,14 +1156,20 @@ export async function findGuardian(
   );
   if (member.rowCount! > 0) {
     return {
+      id: member.rows[0].id,
       memberNo: member.rows[0].member_no,
       status: member.rows[0].status,
       isMember: true,
+      applicantValues: member.rows[0].values ?? {},
     };
   }
 
-  const application = await query<{ reference: string; status: string }>(
-    `select a.reference, a.status
+  const application = await query<{
+    reference: string;
+    status: string;
+    values: Record<string, string> | null;
+  }>(
+    `select a.reference, a.status, p.values
        from membership_application a
        join membership_type t on t.id = a.membership_type_id
        left join application_party p
@@ -1161,9 +1183,11 @@ export async function findGuardian(
   );
   if (application.rowCount! > 0) {
     return {
+      id: null,
       memberNo: application.rows[0].reference,
       status: application.rows[0].status,
       isMember: false,
+      applicantValues: application.rows[0].values ?? {},
     };
   }
 

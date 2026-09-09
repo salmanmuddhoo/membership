@@ -44,6 +44,14 @@
 //   - NIC, mobile and account number are each unique to one member or
 //     non-member, checked against the rest of the batch and against
 //     everyone already on file (migrated or not).
+//   - Officer feedback, fifth increment: the sheet asks only for the
+//     Guardian Member ID now — surname, name, NIC and mobile are pulled
+//     straight from the guardian's own record on import rather than
+//     retyped (a second place for the same fact to go stale is not
+//     something an Excel column should invite). Relationship to the minor
+//     has no such source and is left for the member page's own edit
+//     affordance. The Takaful beneficiary (subject `beneficiary`) is
+//     captured in full, no longer deferred.
 //
 // Second increment (migration 0048): the member's own AB Number, carried
 // unchanged from the legacy register rather than reassigned from the
@@ -56,12 +64,6 @@
 //     later — nothing here requires it, the same as a member page already
 //     tolerates an empty Employment Details section (and, since PR #123,
 //     lets a regional officer add it directly from that page).
-//   - Minor's own Takaful beneficiary (subject `beneficiary`) is left for
-//     later the same way — problemsBlockingSubmission would demand it of a
-//     live capture, but a migrated row skips submission entirely (the whole
-//     point of this tool), so nothing here requires it either. The
-//     applicant, guardian and (successor-guardian) nominee fields this row
-//     does capture are the ones the register actually carried.
 //   - Synchronous, not the queued job S-703 describes: an Excel sheet of
 //     people is small enough (hundreds of rows, not millions) that a
 //     request/response round trip is the simpler, sufficient tool. Re-runs
@@ -165,11 +167,29 @@ function applicantFields(type: MembershipType): MembershipTypeField[] {
     .sort((a, b) => a.sortOrder - b.sortOrder);
 }
 
-// The one guardian party a Minor's own row carries (ordinal 1 — a minor has
-// exactly one guardian, never a slot per capture.ts's own template).
+// The migration file's own guardian column — Guardian Member ID, and
+// nothing else. Officer feedback: every other guardian detail (surname,
+// name, NIC, mobile) is pulled straight from the guardian's own record on
+// import (validateRows, via findGuardian) rather than retyped — a second
+// place for the same fact to go stale is not something an Excel column
+// should invite. Relationship to the minor has no such source (it is not
+// on the guardian's own record) and is left for the member page's edit
+// affordance to fill in later. A minor has exactly one guardian, ordinal 1.
 function guardianFields(type: MembershipType): MembershipTypeField[] {
   return type.fields
-    .filter(f => f.subject === 'guardian' && f.isVisible)
+    .filter(
+      f => f.subject === 'guardian' && f.isVisible && f.fieldKey === 'member_id'
+    )
+    .sort((a, b) => a.sortOrder - b.sortOrder);
+}
+
+// The Takaful beneficiary a Minor's own row carries — every field it
+// configures, always ordinal 1 (a minor has exactly one), unlike guardian:
+// there is no existing record to pull a beneficiary's own details from, so
+// this is typed in full the same as an applicant field is.
+function beneficiaryFields(type: MembershipType): MembershipTypeField[] {
+  return type.fields
+    .filter(f => f.subject === 'beneficiary' && f.isVisible)
     .sort((a, b) => a.sortOrder - b.sortOrder);
 }
 
@@ -259,6 +279,7 @@ export async function buildImportTemplate(): Promise<Buffer> {
   for (const type of types) {
     const fields = applicantFields(type);
     const guardian = guardianFields(type);
+    const beneficiary = beneficiaryFields(type);
     const nominees = nomineeFields(type);
     const nomineeOrdinals = migratedNomineeOrdinals(type);
     const extras = additionalAccountTypes(type, accountTypes);
@@ -287,6 +308,7 @@ export async function buildImportTemplate(): Promise<Buffer> {
       JOINED_COLUMN,
       ...fields.map(f => f.label + (f.isMandatory ? ' *' : '')),
       ...guardian.map(f => f.label + (f.isMandatory ? ' *' : '')),
+      ...beneficiary.map(f => f.label + (f.isMandatory ? ' *' : '')),
       ...nomineeHeaders,
       SHARES_BALANCE_COLUMN,
       MSA_BALANCE_COLUMN,
@@ -326,8 +348,12 @@ export interface ParsedRow {
   joinedAt: string;
   values: Record<string, string>;
   // Empty object when this type configures no guardian subject (every type
-  // but Minor). Always ordinal 1 — a minor has exactly one guardian.
+  // but Minor). Always ordinal 1 — a minor has exactly one guardian. Only
+  // ever carries 'member_id' — see guardianFields' own comment.
   guardian: Record<string, string>;
+  // Same shape as guardian, for the Takaful beneficiary — empty when this
+  // type configures no beneficiary subject.
+  beneficiary: Record<string, string>;
   // One entry per Nominee ordinal this type's sheet offered (0, 1 or 2 —
   // migratedNomineeOrdinals), in order. Not sparse: ordinal 2 is present
   // (possibly all-blank) whenever the type configures 2+ nominees, matching
@@ -374,6 +400,10 @@ export async function parseImportFile(buffer: Buffer): Promise<ParsedRow[]> {
     const guardianByLabel = new Map(
       guardian.map(f => [stripMandatoryMarker(f.label), f.fieldKey])
     );
+    const beneficiary = beneficiaryFields(type);
+    const beneficiaryByLabel = new Map(
+      beneficiary.map(f => [stripMandatoryMarker(f.label), f.fieldKey])
+    );
     const nominees = nomineeFields(type);
     const nomineeOrdinals = migratedNomineeOrdinals(type);
     const nomineeByHeader = new Map<
@@ -399,6 +429,7 @@ export async function parseImportFile(buffer: Buffer): Promise<ParsedRow[]> {
     const headerRow = sheet.getRow(1);
     const columnFieldKeys = new Map<number, string>();
     const guardianColumns = new Map<number, string>();
+    const beneficiaryColumns = new Map<number, string>();
     const nomineeColumns = new Map<
       number,
       { ordinal: number; fieldKey: string }
@@ -429,6 +460,8 @@ export async function parseImportFile(buffer: Buffer): Promise<ParsedRow[]> {
         extraBalanceColumns.set(colNumber, extraBalanceByLabel.get(header)!);
       } else if (guardianByLabel.has(bareHeader)) {
         guardianColumns.set(colNumber, guardianByLabel.get(bareHeader)!);
+      } else if (beneficiaryByLabel.has(bareHeader)) {
+        beneficiaryColumns.set(colNumber, beneficiaryByLabel.get(bareHeader)!);
       } else if (nomineeByHeader.has(bareHeader)) {
         nomineeColumns.set(colNumber, nomineeByHeader.get(bareHeader)!);
       } else {
@@ -460,6 +493,10 @@ export async function parseImportFile(buffer: Buffer): Promise<ParsedRow[]> {
       for (const [colNumber, fieldKey] of guardianColumns) {
         guardianValues[fieldKey] = cellText(colNumber);
       }
+      const beneficiaryValues: Record<string, string> = {};
+      for (const [colNumber, fieldKey] of beneficiaryColumns) {
+        beneficiaryValues[fieldKey] = cellText(colNumber);
+      }
       const nomineeValues: Record<string, string>[] = Array.from(
         { length: nomineeOrdinals },
         () => ({})
@@ -487,6 +524,7 @@ export async function parseImportFile(buffer: Buffer): Promise<ParsedRow[]> {
         abNumber !== '' ||
         Object.values(values).some(v => v !== '') ||
         Object.values(guardianValues).some(v => v !== '') ||
+        Object.values(beneficiaryValues).some(v => v !== '') ||
         nomineeValues.some(n => Object.values(n).some(v => v !== '')) ||
         sharesBalance !== '' ||
         msaBalance !== '' ||
@@ -502,6 +540,7 @@ export async function parseImportFile(buffer: Buffer): Promise<ParsedRow[]> {
         joinedAt: cellText(joinedColumn),
         values,
         guardian: guardianValues,
+        beneficiary: beneficiaryValues,
         nominees: nomineeValues,
         sharesBalance,
         msaBalance,
@@ -962,46 +1001,76 @@ export async function validateRows(
     }
 
     // Guardian (Minor only — every other type configures no 'guardian'
-    // subject, so this is a no-op for them). The guardian's own fields are
-    // captured directly, the same as any applicant field; only the claim
-    // that the named guardian is real is checked specially, the same
-    // resolution problemsBlockingSubmission's own S-604 relaxation uses.
-    const guardian = guardianFields(type);
+    // subject, so this is a no-op for them). Officer feedback: the sheet
+    // asks only for the Guardian Member ID — surname, name, NIC and mobile
+    // are pulled straight from the guardian's own record once it resolves
+    // (the same S-604 resolution problemsBlockingSubmission itself uses),
+    // never retyped. Relationship to the minor has no such source and is
+    // left blank, for the member page's own edit affordance to fill in
+    // later (it is not on the guardian's own record to pull from).
+    const guardianField = guardianFields(type)[0];
     let guardianValues: Record<string, string> = {};
-    if (guardian.length > 0) {
-      const { values: normalisedGuardian, errors: guardianFormatErrors } =
-        normalise(row.guardian, guardian);
-      guardianValues = normalisedGuardian;
-      for (const error of guardianFormatErrors) problems.push(error.label);
-      for (const field of guardian) {
-        if (!field.isMandatory) continue;
-        if ((guardianValues[field.fieldKey] ?? '').trim() === '') {
-          problems.push(`${field.label} is required.`);
-        }
-      }
+    if (guardianField) {
+      const guardianMemberNo = (
+        row.guardian[guardianField.fieldKey] ?? ''
+      ).trim();
       if (!abGiven) {
-        if (Object.values(guardianValues).some(v => v !== '')) {
+        if (guardianMemberNo !== '') {
           problems.push(
             'Guardian details need an AB Number — only a member has a ' +
               'guardian recorded.'
           );
         }
+      } else if (guardianMemberNo === '') {
+        problems.push(`${guardianField.label} is required.`);
       } else {
-        const guardianMemberNo = (guardianValues.member_id ?? '').trim();
-        const guardianNic = (guardianValues.nic ?? '').trim();
-        if (guardianMemberNo || guardianNic) {
-          const found = await findGuardian(guardianMemberNo, guardianNic);
-          if (!found) {
-            problems.push(
-              `Guardian Member ID "${guardianMemberNo || guardianNic}" does ` +
-                'not match any member or in-progress application on file — ' +
-                'the guardian must already be on file before their minor ' +
-                'can be imported.'
-            );
-          } else if (found.isMember && found.status !== 'active') {
-            problems.push(
-              `The guardian (${found.memberNo}) is not an active member.`
-            );
+        const found = await findGuardian(guardianMemberNo, '');
+        if (!found) {
+          problems.push(
+            `${guardianField.label} "${guardianMemberNo}" does not match ` +
+              'any member or in-progress application on file — the ' +
+              'guardian must already be on file before their minor can ' +
+              'be imported.'
+          );
+        } else if (found.isMember && found.status !== 'active') {
+          problems.push(
+            `The guardian (${found.memberNo}) is not an active member.`
+          );
+        } else {
+          guardianValues = {
+            [guardianField.fieldKey]: found.memberNo,
+            surname: found.applicantValues.surname ?? '',
+            name: found.applicantValues.name ?? '',
+            nic: found.applicantValues.nic ?? '',
+            mobile: found.applicantValues.mobile ?? '',
+          };
+        }
+      }
+    }
+
+    // Takaful beneficiary (Minor only). Its own person, not on file
+    // anywhere else — typed in full, the same as an applicant field, and
+    // always mandatory where configured (no ordinal exemption; a minor has
+    // exactly one).
+    const beneficiaryTypeFields = beneficiaryFields(type);
+    let beneficiaryValues: Record<string, string> = {};
+    if (beneficiaryTypeFields.length > 0) {
+      const { values: normalisedBeneficiary, errors: beneficiaryFormatErrors } =
+        normalise(row.beneficiary, beneficiaryTypeFields);
+      beneficiaryValues = normalisedBeneficiary;
+      for (const error of beneficiaryFormatErrors) problems.push(error.label);
+      if (!abGiven) {
+        if (Object.values(beneficiaryValues).some(v => v !== '')) {
+          problems.push(
+            'Takaful beneficiary details need an AB Number — only a ' +
+              'member has one recorded.'
+          );
+        }
+      } else {
+        for (const field of beneficiaryTypeFields) {
+          if (!field.isMandatory) continue;
+          if ((beneficiaryValues[field.fieldKey] ?? '').trim() === '') {
+            problems.push(`${field.label} is required.`);
           }
         }
       }
@@ -1146,6 +1215,7 @@ export async function validateRows(
       legacyCode,
       values,
       guardian: guardianValues,
+      beneficiary: beneficiaryValues,
       nominees,
       abNumber,
       sharesBalance,
@@ -1181,7 +1251,11 @@ async function advanceMemberNumberSeq(
 }
 
 export interface ImportOutcome {
-  imported: { legacyCode: string; memberNo: string }[];
+  imported: {
+    legacyCode: string;
+    memberNo: string;
+    kind: 'member' | 'customer';
+  }[];
   failed: { legacyCode: string; message: string }[];
 }
 
@@ -1196,20 +1270,23 @@ function toBalanceLines(
   }));
 }
 
-// Guardian (Minor only) and Nominee 1/2 (whatever this type's own
+// Guardian and Takaful beneficiary (Minor only, always fully required when
+// configured — see validateRows) and Nominee 1/2 (whatever this type's own
 // nomineeCount offers, capped at the sheet's own 2) — member rows only,
-// validateRows already having refused either on a non-member row.
+// validateRows already having refused any of these on a non-member row.
 //
 // On a fresh import (skipBlankOrdinals: false) every ordinal the type
 // configures is written even blank, matching the pre-created-empty-row
 // shape the live capture form itself gives each one, so a member's record
 // looks no different whichever route created it. On a re-import
-// (skipBlankOrdinals: true) an ordinal left blank in the sheet is left
-// alone instead — nominees are optional past the first, so a re-import
-// that only means to correct a phone number must not wipe out a Nominee 2
-// (or, in principle, a fully mandatory Nominee 1) that a previous run or
-// the member's own record already carries. Full replace (excluded.values,
-// not merged) for whichever ordinal IS written, the same as the applicant
+// (skipBlankOrdinals: true) a NOMINEE ordinal left blank in the sheet is
+// left alone instead — nominees are optional past the first, so a
+// re-import that only means to correct a phone number must not wipe out a
+// Nominee 2 that a previous run or the member's own record already
+// carries. Guardian and beneficiary are never blank on a valid row (both
+// fully mandatory whenever configured, the same as an applicant field), so
+// skipBlankOrdinals does not apply to them. Full replace (excluded.values,
+// not merged) for whichever party IS written, the same as the applicant
 // party's own update — what this row says now is authoritative, not a
 // patch on top of what a previous run wrote.
 async function writeGuardianAndNomineeParties(
@@ -1225,6 +1302,15 @@ async function writeGuardianAndNomineeParties(
        on conflict (application_id, subject, ordinal)
        do update set values = excluded.values`,
       [applicationId, JSON.stringify(row.guardian)]
+    );
+  }
+  if (Object.keys(row.beneficiary).length > 0) {
+    await client.query(
+      `insert into application_party (application_id, subject, ordinal, values)
+       values ($1, 'beneficiary', 1, $2::jsonb)
+       on conflict (application_id, subject, ordinal)
+       do update set values = excluded.values`,
+      [applicationId, JSON.stringify(row.beneficiary)]
     );
   }
   for (let ordinal = 1; ordinal <= row.nominees.length; ordinal++) {
@@ -1356,7 +1442,11 @@ export async function importMembers(
             return updated.rows[0].member_no;
           });
 
-          imported.push({ legacyCode: row.legacyCode, memberNo });
+          imported.push({
+            legacyCode: row.legacyCode,
+            memberNo,
+            kind: 'member',
+          });
         } else {
           const application = await query<{ id: string }>(
             `insert into membership_application
@@ -1377,6 +1467,13 @@ export async function importMembers(
               `insert into application_party (application_id, subject, ordinal, values)
                values ($1, 'guardian', 1, $2::jsonb)`,
               [applicationId, JSON.stringify(row.guardian)]
+            );
+          }
+          if (Object.keys(row.beneficiary).length > 0) {
+            await query(
+              `insert into application_party (application_id, subject, ordinal, values)
+               values ($1, 'beneficiary', 1, $2::jsonb)`,
+              [applicationId, JSON.stringify(row.beneficiary)]
             );
           }
           for (let ordinal = 1; ordinal <= row.nominees.length; ordinal++) {
@@ -1474,7 +1571,11 @@ export async function importMembers(
             return created.memberNo;
           });
 
-          imported.push({ legacyCode: row.legacyCode, memberNo });
+          imported.push({
+            legacyCode: row.legacyCode,
+            memberNo,
+            kind: 'member',
+          });
         }
       } else {
         // ---- Non-member (customer): identified by their account(s) only ----
@@ -1552,7 +1653,11 @@ export async function importMembers(
             );
           });
 
-          imported.push({ legacyCode: row.legacyCode, memberNo: '' });
+          imported.push({
+            legacyCode: row.legacyCode,
+            memberNo: '',
+            kind: 'customer',
+          });
         } else {
           const application = await query<{ id: string }>(
             `insert into membership_application
@@ -1635,7 +1740,11 @@ export async function importMembers(
             );
           });
 
-          imported.push({ legacyCode: row.legacyCode, memberNo: '' });
+          imported.push({
+            legacyCode: row.legacyCode,
+            memberNo: '',
+            kind: 'customer',
+          });
         }
       }
     } catch (error) {

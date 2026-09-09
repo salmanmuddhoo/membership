@@ -4,6 +4,7 @@ import { loadMember, loadCustomer } from '@lib/members/create';
 import {
   ApplicationError,
   loadApplication,
+  findGuardian,
   startMembershipApplicationFromCustomer,
 } from '@lib/applications/capture';
 import { forDisplay } from '@lib/applications/phone';
@@ -20,11 +21,9 @@ import {
   type MemberDocumentGroup,
 } from '@lib/documents/documents';
 import {
-  ContactUpdateError,
   editableContactFields,
-  updateContactDetails,
   PERMISSION_EDIT_CONTACT,
-  type ContactFieldChange,
+  type EditableContactField,
 } from '@lib/members/contact';
 
 const principal = Astro.locals.principal!;
@@ -51,14 +50,9 @@ const { id } = Astro.params;
 const member = id ? await loadMember(id) : null;
 const customer = !member && id ? await loadCustomer(id) : null;
 if (!member && !customer) return new Response('Not found', { status: 404 });
+const recordId = (member ?? customer)!.id;
 
 let error: string | null = null;
-let notice: string | null = null;
-// So the contact-edit form starts open rather than collapsed behind the
-// pencil icon when it is the reason there is an error on screen — an
-// officer correcting a rejected value should not have to find the icon
-// again to see what they typed.
-let contactEditFailed = false;
 
 // The application that carries this person's applicant party — where a
 // phone number or address actually lives (member/customer rows carry
@@ -66,16 +60,65 @@ let contactEditFailed = false;
 // application on file.
 const contactApplicationId = (member ?? customer)!.applicationId;
 
-// Computed before the POST handling below, not after: it doubles as the
-// list of (subject, fieldKey) pairs a save is allowed to touch — the same
-// role EDITABLE_APPLICANT_FIELD_KEYS plays for the applicant party, but for
-// Employment Details too, which has no such fixed allowlist of its own.
-// Re-read once more after a successful save (below) so the page renders
-// what was actually written, not what was on screen before it.
-let contactFields =
-  canEditContact && contactApplicationId
-    ? await editableContactFields(contactApplicationId)
-    : [];
+// The read model for the top block and the guardian card alike — every
+// applicant and Employment Details field, plus (Minor only) the guardian's,
+// each already saying whether it is one this page may turn into an input
+// (editableContactFields' own `editable` flag). Read regardless of
+// canEditContact: a viewer without the permission still sees the same
+// values, just no pencil icon or inputs — see contact.ts.
+const contactFields: EditableContactField[] = contactApplicationId
+  ? await editableContactFields(contactApplicationId)
+  : [];
+
+// Officer feedback: Name, Surname, Address, Gender, Marital status, NIC,
+// Mobile, Telephone, Email address, in that order — every other applicant
+// field a type configures (Corporate's Registration No., say) follows in
+// its own configured order, unlisted fields never reordered against each
+// other. A fixed field-key list rather than a per-type setting: it is a
+// screen-reading preference, not something each membership type needs its
+// own opinion on.
+const APPLICANT_FIELD_PRIORITY = [
+  'name',
+  'surname',
+  'address',
+  'gender',
+  'marital_status',
+  'nic',
+  'mobile',
+  'telephone',
+  'email',
+];
+function byPriority(fields: EditableContactField[]): EditableContactField[] {
+  const rank = (f: EditableContactField) => {
+    const i = APPLICANT_FIELD_PRIORITY.indexOf(f.fieldKey);
+    return i === -1 ? APPLICANT_FIELD_PRIORITY.length : i;
+  };
+  return [...fields].sort((a, b) => rank(a) - rank(b));
+}
+const applicantContactFields = byPriority(
+  contactFields.filter(f => f.subject === 'applicant')
+);
+const employmentContactFields = contactFields.filter(
+  f => f.subject === 'employment'
+);
+const guardianContactFields = contactFields.filter(
+  f => f.subject === 'guardian'
+);
+function fieldDisplay(field: EditableContactField): string {
+  return field.dataType === 'phone' ? forDisplay(field.value) : field.value;
+}
+
+// So the guardian's own Member ID reads as a link to their own page
+// (officer feedback) — resolved the same way a migration import or a live
+// capture's own S-604 check would (findGuardian). Null when it does not
+// resolve to an actual member row (an in-progress application has none yet
+// to link to), which just leaves it as plain text below.
+const guardianMemberIdField = guardianContactFields.find(
+  f => f.fieldKey === 'member_id'
+);
+const guardianLinkId = guardianMemberIdField?.value
+  ? ((await findGuardian(guardianMemberIdField.value, ''))?.id ?? null)
+  : null;
 
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
@@ -106,47 +149,6 @@ if (Astro.request.method === 'POST') {
           error = err.message;
         } else {
           console.error('[members/apply-for-membership]', err);
-          error = 'Something went wrong. Please try again.';
-        }
-      }
-    }
-  } else if (intent === 'update-contact') {
-    if (!canEditContact) {
-      error = 'You do not have permission to do this.';
-    } else if (!contactApplicationId) {
-      error = 'This record has no application to save these details to.';
-    } else {
-      try {
-        // Only the (subject, fieldKey) pairs this application's type
-        // actually configures — contactFields, computed above, is that
-        // allowlist as well as the render model.
-        const changes: ContactFieldChange[] = contactFields
-          .map(f => ({
-            subject: f.subject,
-            fieldKey: f.fieldKey,
-            value: form.get(`field.${f.subject}.${f.fieldKey}`),
-          }))
-          .filter((c): c is ContactFieldChange => typeof c.value === 'string');
-        const { updated } = await updateContactDetails(
-          contactApplicationId,
-          changes,
-          member
-            ? { entityType: 'member', entityId: member.id }
-            : { entityType: 'customer', entityId: customer!.id },
-          principal
-        );
-        notice =
-          updated.length > 0
-            ? 'Contact details saved.'
-            : 'Nothing had changed.';
-        // Re-read so the page renders what was actually saved.
-        contactFields = await editableContactFields(contactApplicationId);
-      } catch (err) {
-        contactEditFailed = true;
-        if (err instanceof ContactUpdateError) {
-          error = err.message;
-        } else {
-          console.error('[members/update-contact]', err);
           error = 'Something went wrong. Please try again.';
         }
       }
@@ -194,26 +196,21 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 });
 
 // Phone values are stored in E.164; +23057891234 is not what anyone wants to
-// read off a screen.
+// read off a screen. Still needed here for Nominee/Takaful beneficiary
+// below — the applicant's own and Employment Details' own phone fields are
+// already formatted by fieldDisplay above, driven by each field's own
+// dataType instead of a key-name guess.
 const PHONE_KEYS = new Set(['mobile', 'telephone', 'contact_telephone']);
-const applicantValues = (member ?? customer)!.applicantValues;
-const details = Object.entries(applicantValues).map(([key, value]) => ({
-  key,
-  label: key.replace(/_/g, ' '),
-  value: PHONE_KEYS.has(key) ? forDisplay(value) : value,
-}));
 
-// Officer feedback: the applicant's own details are the person; a nominee
-// (or, for a minor, the successor guardian and Takaful beneficiary) is who
-// this record concerns beyond them, and both belong on the same page. Read
-// from the application itself — the member/customer record only ever kept
-// the applicant's own values (loadMember/loadCustomer above) — via the
-// applicationId both already carry.
+// Officer feedback: the applicant's own details (and Employment Details,
+// and — Minor only — the guardian's) are read from contactFields above; a
+// nominee or Takaful beneficiary is who this record concerns beyond the
+// applicant, and belongs on its own card. Read from the application itself
+// — the member/customer record only ever kept the applicant's own values
+// (loadMember/loadCustomer) — via the applicationId both already carry.
 const SUBJECT_LABELS: Record<string, string> = {
   nominee: 'Nominee',
-  guardian: 'Parent / Guardian',
   beneficiary: 'Takaful beneficiary',
-  employment: 'Employment Details',
 };
 const applicationId = (member ?? customer)!.applicationId;
 const sourceApplication = applicationId
@@ -226,22 +223,15 @@ const sourceApplication = applicationId
 // Filtered out by whether anything was actually entered, not by presence of
 // the row — and before subjectOccurrences below, so a member with only
 // Nominee 1 filled in reads "Nominee", not "Nominee 1" for the one that
-// remains.
-// Employment describes the applicant, not a separate person — it belongs in
-// the same card as their other details, not grouped in with Nominee below.
-const employmentParty = sourceApplication?.parties.find(
-  p => p.subject === 'employment' && p.ordinal === 1
-);
-const employmentDetails = Object.entries(employmentParty?.values ?? {})
-  .filter(([, value]) => value.trim() !== '')
-  .map(([key, value]) => ({
-    key,
-    label: key.replace(/_/g, ' '),
-    value: PHONE_KEYS.has(key) ? forDisplay(value) : value,
-  }));
-
+// remains. Applicant, Employment Details and guardian all have their own
+// card already, driven by contactFields, not this generic one.
 const otherParties = (sourceApplication?.parties ?? [])
-  .filter(p => p.subject !== 'applicant' && p.subject !== 'employment')
+  .filter(
+    p =>
+      p.subject !== 'applicant' &&
+      p.subject !== 'employment' &&
+      p.subject !== 'guardian'
+  )
   .filter(p => Object.values(p.values).some(value => value.trim() !== ''));
 const subjectOccurrences = otherParties.reduce<Record<string, number>>(
   (counts, p) => {
@@ -289,121 +279,45 @@ const pageTitle = member ? member.memberNo : name;
         </div>
       )
     }
-    {
-      notice && (
-        <div class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-lg border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
-          {notice}
-        </div>
-      )
-    }
 
     <section
       class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
     >
-      <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <h2
-          class="text-lg font-semibold text-neutral-800 dark:text-neutral-100"
-        >
-          {name}
-        </h2>
-        {
-          member && (
-            <code class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
-              {member.memberNo}
-            </code>
-          )
-        }
-        {
-          customer && (
-            <span class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
-              Non-member
+      <div data-edit-block data-record-id={recordId}>
+        <div class="flex flex-wrap items-start justify-between gap-2">
+          <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <h2
+              class="text-lg font-semibold text-neutral-800 dark:text-neutral-100"
+            >
+              {name}
+            </h2>
+            {
+              member && (
+                <code class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
+                  {member.memberNo}
+                </code>
+              )
+            }
+            {
+              customer && (
+                <span class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
+                  Non-member
+                </span>
+              )
+            }
+            <span
+              class="bg-mint-200 dark:bg-mint-900 rounded px-1.5 py-0.5 text-xs text-neutral-800 dark:text-neutral-100"
+            >
+              {status}
             </span>
-          )
-        }
-        <span
-          class="bg-mint-200 dark:bg-mint-900 rounded px-1.5 py-0.5 text-xs text-neutral-800 dark:text-neutral-100"
-        >
-          {status}
-        </span>
-      </div>
-      <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
-        {member && `${member.membershipTypeName} · `}joined {
-          dateFormat.format(joinedAt)
-        }
-        {
-          applicationReference && (
-            <>
-              {' '}
-              · from application{' '}
-              <span class="font-medium">{applicationReference}</span>
-            </>
-          )
-        }
-        {
-          member?.capturedByName && (
-            <>
-              {' '}
-              · captured by{' '}
-              <span class="font-medium">{member.capturedByName}</span>
-            </>
-          )
-        }
-      </p>
-
-      {
-        details.length > 0 && (
-          <dl class="mt-5 grid gap-x-6 gap-y-2 sm:grid-cols-2">
-            {details.map(d => (
-              <div class="flex gap-2 text-sm">
-                <dt class="min-w-32 text-neutral-500 capitalize dark:text-neutral-400">
-                  {d.label}
-                </dt>
-                <dd class="text-neutral-800 dark:text-neutral-100">
-                  {d.value}
-                </dd>
-              </div>
-            ))}
-          </dl>
-        )
-      }
-
-      {
-        employmentDetails.length > 0 && (
-          <div class="mt-5 border-t border-neutral-200 pt-4 dark:border-neutral-800">
-            <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-200">
-              Employment Details
-            </h3>
-            <dl class="mt-2 grid gap-x-6 gap-y-2 sm:grid-cols-2">
-              {employmentDetails.map(d => (
-                <div class="flex gap-2 text-sm">
-                  <dt class="min-w-32 text-neutral-500 capitalize dark:text-neutral-400">
-                    {d.label}
-                  </dt>
-                  <dd class="text-neutral-800 dark:text-neutral-100">
-                    {d.value}
-                  </dd>
-                </div>
-              ))}
-            </dl>
           </div>
-        )
-      }
-
-      {
-        contactFields.length > 0 && (
-          <div
-            class="mt-5 border-t border-neutral-200 pt-4 dark:border-neutral-800"
-            data-contact-edit
-          >
-            <div class="flex items-center justify-between gap-2">
-              <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-200">
-                Contact details
-              </h3>
+          {
+            canEditContact && applicantContactFields.length > 0 && (
               <button
                 type="button"
-                data-contact-edit-toggle
-                aria-label="Edit contact details"
-                class="rounded-lg border border-neutral-300 p-1.5 text-neutral-600 transition hover:bg-neutral-200 dark:border-neutral-600 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                data-edit-toggle
+                aria-label="Edit details"
+                class="shrink-0 rounded-lg border border-neutral-300 p-1.5 text-neutral-600 transition hover:bg-neutral-200 dark:border-neutral-600 dark:text-neutral-300 dark:hover:bg-neutral-800"
               >
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
@@ -415,81 +329,134 @@ const pageTitle = member ? member.memberNo : name;
                   <path d="M11.379 5.793 14.207 8.621 6.5 16.328a1 1 0 0 1-.439.254l-2.121.606.606-2.12a1 1 0 0 1 .254-.44l6.579-6.835Z" />
                 </svg>
               </button>
-            </div>
+            )
+          }
+        </div>
+        <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+          {member && `${member.membershipTypeName} · `}joined {
+            dateFormat.format(joinedAt)
+          }
+          {
+            applicationReference && (
+              <>
+                {' '}
+                · from application{' '}
+                <span class="font-medium">{applicationReference}</span>
+              </>
+            )
+          }
+          {
+            member?.capturedByName && (
+              <>
+                {' '}
+                · captured by{' '}
+                <span class="font-medium">{member.capturedByName}</span>
+              </>
+            )
+          }
+        </p>
 
-            <form
-              method="post"
-              class="mt-3"
-              data-contact-edit-form
-              hidden={!contactEditFailed}
-            >
-              <input type="hidden" name="intent" value="update-contact" />
-              <div class="grid gap-4 sm:grid-cols-2">
-                {contactFields
-                  .filter(f => f.subject === 'applicant')
-                  .map(field => (
-                    <label class="text-sm text-neutral-600 dark:text-neutral-300">
-                      <span>{field.label}</span>
+        {
+          applicantContactFields.length > 0 && (
+            <dl class="mt-5 grid gap-x-6 gap-y-2 sm:grid-cols-2">
+              {applicantContactFields.map(field => (
+                <div
+                  class="flex gap-2 text-sm"
+                  data-field
+                  data-subject={field.subject}
+                  data-field-key={field.fieldKey}
+                >
+                  <dt class="min-w-32 text-neutral-500 capitalize dark:text-neutral-400">
+                    {field.label}
+                  </dt>
+                  <dd class="w-full text-neutral-800 dark:text-neutral-100">
+                    <span data-view>{fieldDisplay(field)}</span>
+                    {canEditContact && field.editable && (
                       <input
                         type={field.dataType === 'phone' ? 'tel' : 'text'}
-                        name={`field.${field.subject}.${field.fieldKey}`}
+                        data-edit
                         value={field.value}
                         placeholder={
                           field.dataType === 'phone' ? '5789 1234' : undefined
                         }
-                        class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                        hidden
+                        class="w-full rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
                       />
-                    </label>
-                  ))}
-              </div>
+                    )}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          )
+        }
 
-              {contactFields.some(f => f.subject === 'employment') && (
-                <>
-                  <h4 class="mt-4 text-sm font-semibold text-neutral-700 dark:text-neutral-200">
-                    Employment Details
-                  </h4>
-                  <div class="mt-3 grid gap-4 sm:grid-cols-2">
-                    {contactFields
-                      .filter(f => f.subject === 'employment')
-                      .map(field => (
-                        <label class="text-sm text-neutral-600 dark:text-neutral-300">
-                          <span>{field.label}</span>
-                          <input
-                            type={field.dataType === 'phone' ? 'tel' : 'text'}
-                            name={`field.${field.subject}.${field.fieldKey}`}
-                            value={field.value}
-                            placeholder={
-                              field.dataType === 'phone'
-                                ? '5789 1234'
-                                : undefined
-                            }
-                            class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-                          />
-                        </label>
-                      ))}
+        {
+          employmentContactFields.length > 0 && (
+            <div class="mt-5 border-t border-neutral-200 pt-4 dark:border-neutral-800">
+              <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-200">
+                Employment Details
+              </h3>
+              <dl class="mt-2 grid gap-x-6 gap-y-2 sm:grid-cols-2">
+                {employmentContactFields.map(field => (
+                  <div
+                    class="flex gap-2 text-sm"
+                    data-field
+                    data-subject={field.subject}
+                    data-field-key={field.fieldKey}
+                  >
+                    <dt class="min-w-32 text-neutral-500 capitalize dark:text-neutral-400">
+                      {field.label}
+                    </dt>
+                    <dd class="w-full text-neutral-800 dark:text-neutral-100">
+                      <span data-view>{fieldDisplay(field)}</span>
+                      {canEditContact && field.editable && (
+                        <input
+                          type={field.dataType === 'phone' ? 'tel' : 'text'}
+                          data-edit
+                          value={field.value}
+                          placeholder={
+                            field.dataType === 'phone' ? '5789 1234' : undefined
+                          }
+                          hidden
+                          class="w-full rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                        />
+                      )}
+                    </dd>
                   </div>
-                </>
-              )}
+                ))}
+              </dl>
+            </div>
+          )
+        }
 
-              <div class="mt-3 flex items-center gap-3">
+        {
+          canEditContact && applicantContactFields.length > 0 && (
+            <div class="mt-4">
+              <p
+                data-edit-error
+                hidden
+                class="mb-2 text-sm text-red-700 dark:text-red-300"
+              />
+              <div data-edit-actions hidden class="flex items-center gap-3">
                 <button
-                  type="submit"
+                  type="button"
+                  data-edit-save
                   class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
                 >
                   Save
                 </button>
                 <button
                   type="button"
-                  data-contact-edit-cancel
+                  data-edit-cancel
                   class="text-sm text-neutral-500 underline dark:text-neutral-400"
                 >
                   Cancel
                 </button>
               </div>
-            </form>
-          </div>
-        )
-      }
+            </div>
+          )
+        }
+      </div>
 
       {
         customer && customer.status === 'active' && canConvertCustomer && (
@@ -508,6 +475,100 @@ const pageTitle = member ? member.memberNo : name;
         )
       }
     </section>
+
+    {
+      guardianContactFields.length > 0 && (
+        <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+          <div data-edit-block data-record-id={recordId}>
+            <div class="flex items-center justify-between gap-2">
+              <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+                Parent / Guardian
+              </h2>
+              {canEditContact && (
+                <button
+                  type="button"
+                  data-edit-toggle
+                  aria-label="Edit guardian details"
+                  class="shrink-0 rounded-lg border border-neutral-300 p-1.5 text-neutral-600 transition hover:bg-neutral-200 dark:border-neutral-600 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                    class="h-4 w-4"
+                  >
+                    <path d="M13.586 3.586a2 2 0 1 1 2.828 2.828l-8.5 8.5a2 2 0 0 1-.878.507l-3 .857a.5.5 0 0 1-.618-.618l.857-3a2 2 0 0 1 .507-.878l8.5-8.5Z" />
+                    <path d="M11.379 5.793 14.207 8.621 6.5 16.328a1 1 0 0 1-.439.254l-2.121.606.606-2.12a1 1 0 0 1 .254-.44l6.579-6.835Z" />
+                  </svg>
+                </button>
+              )}
+            </div>
+            <dl class="mt-4 grid gap-x-6 gap-y-2 sm:grid-cols-2">
+              {guardianContactFields.map(field => (
+                <div
+                  class="flex gap-2 text-sm"
+                  data-field
+                  data-subject="guardian"
+                  data-field-key={field.fieldKey}
+                >
+                  <dt class="min-w-32 text-neutral-500 capitalize dark:text-neutral-400">
+                    {field.label}
+                  </dt>
+                  <dd class="w-full text-neutral-800 dark:text-neutral-100">
+                    <span data-view>
+                      {field.fieldKey === 'member_id' && guardianLinkId ? (
+                        <a
+                          href={`/members/${guardianLinkId}`}
+                          class="underline"
+                        >
+                          {field.value}
+                        </a>
+                      ) : (
+                        fieldDisplay(field)
+                      )}
+                    </span>
+                    {canEditContact && field.editable && (
+                      <input
+                        type={field.dataType === 'phone' ? 'tel' : 'text'}
+                        data-edit
+                        value={field.value}
+                        hidden
+                        class="w-full rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                      />
+                    )}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+            {canEditContact && (
+              <div class="mt-4">
+                <p
+                  data-edit-error
+                  hidden
+                  class="mb-2 text-sm text-red-700 dark:text-red-300"
+                />
+                <div data-edit-actions hidden class="flex items-center gap-3">
+                  <button
+                    type="button"
+                    data-edit-save
+                    class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+                  >
+                    Save
+                  </button>
+                  <button
+                    type="button"
+                    data-edit-cancel
+                    class="text-sm text-neutral-500 underline dark:text-neutral-400"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
+      )
+    }
 
     {
       otherPartyGroups.length > 0 && (
@@ -822,34 +883,146 @@ const pageTitle = member ? member.memberNo : name;
 </script>
 
 <script>
-  // Officer feedback: the contact/employment form used to sit open on the
-  // page at all times — a pencil icon reveals it (and the Save button with
-  // it) only once there is actually something to save; Cancel puts it away
-  // again without submitting.
-  const editSection = document.querySelector<HTMLElement>(
-    '[data-contact-edit]'
-  );
-  const editForm = editSection?.querySelector<HTMLFormElement>(
-    '[data-contact-edit-form]'
-  );
-  const editToggle = editSection?.querySelector<HTMLButtonElement>(
-    '[data-contact-edit-toggle]'
-  );
-  const editCancel = editSection?.querySelector<HTMLButtonElement>(
-    '[data-contact-edit-cancel]'
-  );
-  if (editForm && editToggle) {
-    editToggle.addEventListener('click', () => {
-      editForm.hidden = false;
-      editToggle.hidden = true;
+  // Officer feedback: edit in place, in the block the values already live
+  // in — no separate "Contact details" section duplicating the same
+  // fields, and no page reload on save. One edit icon per block
+  // ([data-edit-block]: the applicant/Employment Details block, and, for a
+  // Minor, the guardian card), each independent — editing one never
+  // disturbs the other's own view/edit state. The Save button only
+  // appears once there is a block open to edit; Cancel reverts every
+  // input to what it held when editing started, without submitting.
+  //
+  // phone.ts's own forDisplay, duplicated here in the shape a client
+  // script can run without importing server code: +230XXXXXXXX (12 chars)
+  // becomes "+230 XXXX XXXX", anything else is shown as stored.
+  function forDisplayClient(e164: string): string {
+    if (e164.startsWith('+230') && e164.length === 12) {
+      const local = e164.slice(4);
+      return `+230 ${local.slice(0, 4)} ${local.slice(4)}`;
+    }
+    return e164;
+  }
+
+  interface SavedField {
+    subject: string;
+    fieldKey: string;
+    value: string;
+    dataType: string;
+  }
+
+  function setEditing(block: HTMLElement, editing: boolean): void {
+    for (const fieldEl of block.querySelectorAll<HTMLElement>('[data-field]')) {
+      const input = fieldEl.querySelector<HTMLInputElement>('[data-edit]');
+      if (!input) continue; // Read-only field — mirrored from elsewhere, nothing to toggle.
+      const view = fieldEl.querySelector<HTMLElement>('[data-view]');
+      if (view) view.hidden = editing;
+      input.hidden = !editing;
+    }
+    const toggle = block.querySelector<HTMLButtonElement>('[data-edit-toggle]');
+    const actions = block.querySelector<HTMLElement>('[data-edit-actions]');
+    const errorEl = block.querySelector<HTMLElement>('[data-edit-error]');
+    if (toggle) toggle.hidden = editing;
+    if (actions) actions.hidden = !editing;
+    if (errorEl) errorEl.hidden = true;
+  }
+
+  for (const block of document.querySelectorAll<HTMLElement>(
+    '[data-edit-block]'
+  )) {
+    const toggle = block.querySelector<HTMLButtonElement>('[data-edit-toggle]');
+    const saveButton =
+      block.querySelector<HTMLButtonElement>('[data-edit-save]');
+    const cancelButton =
+      block.querySelector<HTMLButtonElement>('[data-edit-cancel]');
+    const errorEl = block.querySelector<HTMLElement>('[data-edit-error]');
+    const recordId = block.dataset.recordId;
+
+    toggle?.addEventListener('click', () => setEditing(block, true));
+
+    cancelButton?.addEventListener('click', () => {
+      for (const input of block.querySelectorAll<HTMLInputElement>(
+        '[data-edit]'
+      )) {
+        input.value = input.defaultValue;
+      }
+      setEditing(block, false);
     });
-    editCancel?.addEventListener('click', () => {
-      editForm.hidden = true;
-      editToggle.hidden = false;
+
+    saveButton?.addEventListener('click', async () => {
+      if (!recordId) return;
+
+      const changes = [...block.querySelectorAll<HTMLElement>('[data-field]')]
+        .map(fieldEl => {
+          const input = fieldEl.querySelector<HTMLInputElement>('[data-edit]');
+          if (!input) return null;
+          return {
+            subject: fieldEl.dataset.subject,
+            fieldKey: fieldEl.dataset.fieldKey,
+            value: input.value,
+          };
+        })
+        .filter((c): c is NonNullable<typeof c> => c !== null);
+
+      const original = saveButton.textContent;
+      saveButton.disabled = true;
+      saveButton.textContent = 'Saving…';
+      if (errorEl) errorEl.hidden = true;
+
+      try {
+        const response = await fetch(`/api/v1/members/${recordId}/contact`, {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ changes }),
+        });
+        const body = await response.json();
+        if (!response.ok) {
+          throw new Error(
+            body?.error?.message ?? 'Something went wrong. Please try again.'
+          );
+        }
+
+        const fields: SavedField[] = body.data?.fields ?? [];
+        for (const fieldEl of block.querySelectorAll<HTMLElement>(
+          '[data-field]'
+        )) {
+          const fresh = fields.find(
+            f =>
+              f.subject === fieldEl.dataset.subject &&
+              f.fieldKey === fieldEl.dataset.fieldKey
+          );
+          if (!fresh) continue;
+          const view = fieldEl.querySelector<HTMLElement>('[data-view]');
+          const input = fieldEl.querySelector<HTMLInputElement>('[data-edit]');
+          const display =
+            fresh.dataType === 'phone'
+              ? forDisplayClient(fresh.value)
+              : fresh.value;
+          // A guardian's own Member ID may render as a link to their page
+          // (server-rendered only) — plain text after a save here is the
+          // known trade-off for updating in place; the link comes back on
+          // the next real page load.
+          if (view) view.textContent = display;
+          if (input) {
+            input.value = fresh.value;
+            input.defaultValue = fresh.value;
+          }
+        }
+        setEditing(block, false);
+      } catch (err) {
+        const message =
+          err instanceof Error
+            ? err.message
+            : 'Something went wrong. Please try again.';
+        if (errorEl) {
+          errorEl.textContent = message;
+          errorEl.hidden = false;
+        } else {
+          await window.appAlert(message);
+        }
+      } finally {
+        saveButton.disabled = false;
+        saveButton.textContent = original;
+      }
     });
-    // Started open because the last save failed (contactEditFailed) — the
-    // icon should read as already "used" rather than inviting a second
-    // click that does nothing.
-    if (!editForm.hidden) editToggle.hidden = true;
   }
 </script>

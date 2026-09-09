@@ -79,6 +79,10 @@ if (Astro.request.method === 'POST') {
 }
 
 const types = canMigrate ? await eligibleMembershipTypesForMigration() : [];
+const memberCount =
+  outcome?.imported.filter(m => m.kind === 'member').length ?? 0;
+const customerCount =
+  outcome?.imported.filter(m => m.kind === 'customer').length ?? 0;
 ---
 
 <DashboardLayout title="Migration · Al Barakah MCSL" heading="Migration">
@@ -115,7 +119,8 @@ const types = canMigrate ? await eligibleMembershipTypesForMigration() : [];
             <p class="mt-2 text-sm text-neutral-600 dark:text-neutral-300">
               Covers {types.map(t => t.name).join(', ')}. A Minor's guardian
               must already be on file — import the guardian first, then the
-              minor.
+              minor with just their Member ID; the rest of the guardian's
+              details are filled in automatically.
             </p>
             <p class="mt-2 text-sm text-neutral-600 dark:text-neutral-300">
               NIC, mobile and account numbers must each be unique to one member
@@ -158,14 +163,25 @@ const types = canMigrate ? await eligibleMembershipTypesForMigration() : [];
           {outcome && (
             <section class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-2xl border p-6">
               <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-                {outcome.imported.length} member
+                {outcome.imported.length} row
                 {outcome.imported.length === 1 ? '' : 's'} processed
               </h2>
+              {outcome.imported.length > 0 && (
+                <p class="mt-1 text-sm text-neutral-600 dark:text-neutral-300">
+                  {memberCount} member{memberCount === 1 ? '' : 's'},{' '}
+                  {customerCount} non-member{customerCount === 1 ? '' : 's'}
+                </p>
+              )}
               {outcome.imported.length > 0 && (
                 <ul class="mt-3 space-y-1 text-sm text-neutral-700 dark:text-neutral-200">
                   {outcome.imported.map(m => (
                     <li>
-                      {m.legacyCode} → {m.memberNo}
+                      {m.legacyCode}
+                      {m.kind === 'member' ? (
+                        <> → {m.memberNo}</>
+                      ) : (
+                        ' (non-member)'
+                      )}
                     </li>
                   ))}
                 </ul>

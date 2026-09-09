@@ -2352,6 +2352,17 @@ mobile and account number are each checked unique to one member or
 non-member — against the rest of the batch and against everyone already on
 file, migrated or not.
 
+**Shipped, fifth increment** (officer feedback): the Minor sheet asks only
+for the Guardian Member ID now — surname, name, NIC and mobile are pulled
+straight from the guardian's own record on import instead of retyped, the
+same S-604 resolution as before, just no longer asking the officer to
+repeat what the guardian's own record already says. Relationship to the
+minor has no such source and is left for the member page's own edit
+affordance. The Takaful beneficiary, left for later in the fourth
+increment, is now captured in full alongside the guardian — every
+beneficiary field a type configures, always mandatory where the row is a
+member's.
+
 **Still ahead**: S-701 (an agreed, frozen source extract — this tool works
 against whatever is uploaded, it does not itself settle what that should
 be), S-707's formal sign-off step, S-708's dedicated audit event beyond the
