@@ -29,6 +29,7 @@ import {
   abandonReceiptNumber,
   allocateReceiptNumber,
   markReceiptIssued,
+  type ReceiptAllocation,
 } from './receipts';
 
 export class PaymentError extends Error {
@@ -52,7 +53,12 @@ export const PAYMENT_METHODS = [
   'card',
   'mobile',
 ] as const;
-export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
+// Every method a payment can actually carry, including 'migration' — never
+// offered on an officer's own form (PAYMENT_METHODS above is what populates
+// those), written only by the legacy import (migration/members.ts) to mark
+// an opening balance as what it is rather than a counter transaction nobody
+// took (S-708: distinguishable from ordinary data entry).
+export type PaymentMethod = (typeof PAYMENT_METHODS)[number] | 'migration';
 
 export const METHOD_LABELS: Record<PaymentMethod, string> = {
   cash: 'Cash',
@@ -60,6 +66,7 @@ export const METHOD_LABELS: Record<PaymentMethod, string> = {
   bank_transfer: 'Bank transfer',
   card: 'Card',
   mobile: 'Mobile money',
+  migration: 'Legacy migration',
 };
 
 export const COMPONENT_LABELS: Record<FeeComponentCode, string> = {
@@ -769,7 +776,7 @@ export async function recordPayment(
     );
   }
 
-  if (!PAYMENT_METHODS.includes(input.method)) {
+  if (!(PAYMENT_METHODS as readonly string[]).includes(input.method)) {
     throw new PaymentError('Choose how the payment was made.');
   }
 
@@ -1091,7 +1098,7 @@ export async function recordAccountOpeningPayment(
     );
   }
 
-  if (!PAYMENT_METHODS.includes(input.method)) {
+  if (!(PAYMENT_METHODS as readonly string[]).includes(input.method)) {
     throw new PaymentError('Choose how the payment was made.');
   }
 
@@ -1338,6 +1345,189 @@ export async function recordAccountOpeningPayment(
     );
     throw error;
   }
+}
+
+// The fee schedule version to record against a migration's opening-balance
+// payment, so a receipt prints against the schedule in force the same way
+// any other payment's does — best-effort, not required: a migrated row is
+// never blocked on fee-schedule configuration the way an ordinary capture
+// is, so a type with none set simply records with no version (the same
+// shape recordAccountOpeningPayment above already leaves for an
+// additional_account application, S-613).
+//
+// Exported and always called BEFORE recordMigrationOpeningBalances' own
+// transaction, never from inside it — the same reason recordPayment above
+// reads amountDueForApplication before opening its own withTransaction: a
+// pool-level query() from inside a client's own transaction asks the pool
+// for a second connection while the first is still checked out, and can
+// starve a small pool rather than simply taking a moment longer.
+export async function migrationFeeVersionId(
+  membershipTypeId: string
+): Promise<string | null> {
+  const type = (await listMembershipTypes()).find(
+    t => t.id === membershipTypeId
+  );
+  if (!type?.feeScheduleId) return null;
+  const version = await currentFeeVersion(type.feeScheduleId);
+  return version?.versionId ?? null;
+}
+
+// S-709 · Balances imported once a migrated member exists (docs/backlog.md
+// M7). Recorded as ONE payment against the member's own founding
+// application — the same application_id every other read here (total_funds
+// in members/create.ts, paymentsForMember, paymentsForApplication) already
+// keys on — itemised the same two ways an ordinary payment ever is: Shares
+// and the MSA deposit as payment_line (S-501's own component codes), any
+// other account type as payment_account_line, exactly as
+// recordAccountOpeningPayment above writes it for a live application.
+//
+// Deliberately not recordPayment/recordAccountOpeningPayment reused as-is:
+// both refuse an approved application outright (S-501: "record the payment
+// against the member instead"), enforce the live fee-schedule floors and
+// variance rules a legacy balance was never subject to, and neither can
+// write both kinds of line to one payment — a legacy row's Shares, MSA and
+// any HSA/Investment balance are one opening position, not several
+// transactions that happened to land on the same day.
+export interface MigrationBalanceLine {
+  accountTypeId: string;
+  accountTypeCode: string;
+  accountTypeName: string;
+  amount: string;
+}
+
+export interface RecordMigrationOpeningBalancesInput {
+  applicationId: string;
+  // Read by the caller via migrationFeeVersionId, before this function's
+  // own transaction opens — see that function's own comment.
+  feeVersionId: string | null;
+  shares: string | null;
+  msaDeposit: string | null;
+  // One entry per additional account type the row named a balance for —
+  // already opened by the caller (members/create.ts's openMigrationAccount)
+  // before this is called, the same order createMemberFromApplication opens
+  // its own accounts and then audits them in.
+  accountLines: MigrationBalanceLine[];
+  allocation: ReceiptAllocation;
+  actorUserId: string;
+  actorEmail: string;
+}
+
+// Whether a row's balance data amounts to anything worth a receipt — most
+// rows in this first pass name none at all ("members first, finance
+// later"), and a payment record without money behind it is not a payment;
+// callers use this before spending a receipt number rather than after.
+export function hasMigrationBalance(
+  input: Pick<
+    RecordMigrationOpeningBalancesInput,
+    'shares' | 'msaDeposit' | 'accountLines'
+  >
+): boolean {
+  return (
+    input.shares !== null ||
+    input.msaDeposit !== null ||
+    input.accountLines.length > 0
+  );
+}
+
+export async function recordMigrationOpeningBalances(
+  input: RecordMigrationOpeningBalancesInput,
+  client: PoolClient
+): Promise<void> {
+  const paymentLines: { code: FeeComponentCode; amount: string }[] = [];
+  if (input.shares !== null) {
+    paymentLines.push({ code: 'shares', amount: input.shares });
+  }
+  if (input.msaDeposit !== null) {
+    paymentLines.push({ code: 'msa_deposit', amount: input.msaDeposit });
+  }
+
+  const total =
+    paymentLines.reduce((sum, l) => sum + toCents(l.amount), 0) +
+    input.accountLines.reduce((sum, l) => sum + toCents(l.amount), 0);
+
+  const inserted = await client.query<{ id: string }>(
+    `insert into payment
+       (receipt_number_id, kind, application_id, fee_version_id, method,
+        method_reference, total_amount, variance_reason, source_of_fund,
+        source_of_fund_form_confirmed, received_at, recorded_by,
+        recorded_by_role)
+     values ($1, 'payment', $2, $3, 'migration', '', $4, '', '', false,
+             now(), $5, $6)
+     returning id`,
+    [
+      input.allocation.id,
+      input.applicationId,
+      input.feeVersionId,
+      fromCents(total),
+      input.actorUserId,
+      'System Administrator',
+    ]
+  );
+  const paymentId = inserted.rows[0].id;
+
+  for (const [index, line] of paymentLines.entries()) {
+    await client.query(
+      `insert into payment_line
+         (payment_id, component_code, scheduled_amount, amount, sort_order)
+       values ($1, $2, null, $3, $4)`,
+      [paymentId, line.code, line.amount, index]
+    );
+  }
+
+  for (const [index, line] of input.accountLines.entries()) {
+    await client.query(
+      `insert into payment_account_line
+         (payment_id, account_type_id, account_type_code, account_type_name,
+          amount, sort_order)
+       values ($1, $2, $3, $4, $5, $6)`,
+      [
+        paymentId,
+        line.accountTypeId,
+        line.accountTypeCode,
+        line.accountTypeName,
+        line.amount,
+        index,
+      ]
+    );
+  }
+
+  await markReceiptIssued(input.allocation.id, client);
+
+  await emitFinancialEvent(client, {
+    eventType: 'payment.recorded',
+    paymentId,
+    receiptNo: input.allocation.receiptNo,
+    payload: {
+      kind: 'payment',
+      applicationId: input.applicationId,
+      currency: 'MUR',
+      totalAmount: fromCents(total),
+      method: 'migration',
+      components: paymentLines,
+      accountTypes: input.accountLines.map(l => ({
+        accountTypeId: l.accountTypeId,
+        code: l.accountTypeCode,
+        amount: l.amount,
+      })),
+      recordedBy: input.actorEmail,
+    },
+  });
+
+  await recordAudit(
+    {
+      actorUserId: input.actorUserId,
+      actorDescription: input.actorEmail,
+      action: ACTION_RECORDED,
+      entityType: ENTITY_TYPE,
+      entityId: paymentId,
+      newValue: {
+        receiptNo: input.allocation.receiptNo,
+        totalAmount: fromCents(total),
+        method: 'migration',
+      },
+    },
+    client
+  );
 }
 
 // ---------------------------------------------------------------------------

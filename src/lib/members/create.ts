@@ -46,7 +46,12 @@ export interface CreatedMember {
 export async function createMemberFromApplication(
   client: PoolClient,
   application: Application,
-  actor: Actor
+  actor: Actor,
+  // M7 migration only: the AB number this member already carries in the
+  // legacy register, rather than the next one off member_number_seq — an
+  // ordinary approval never passes this, so it keeps assigning the next
+  // number exactly as before.
+  options?: { memberNo?: string }
 ): Promise<CreatedMember> {
   // S-613: an additional-account application already has its member —
   // opening one is exactly what it is not allowed to do (S-612's own
@@ -87,12 +92,19 @@ export async function createMemberFromApplication(
     );
   }
 
-  const member = await client.query<{ id: string; member_no: string }>(
-    `insert into member (application_id, membership_type_id)
-     values ($1, $2)
-     returning id, member_no`,
-    [application.id, application.membershipTypeId]
-  );
+  const member = options?.memberNo
+    ? await client.query<{ id: string; member_no: string }>(
+        `insert into member (application_id, membership_type_id, member_no)
+         values ($1, $2, $3)
+         returning id, member_no`,
+        [application.id, application.membershipTypeId, options.memberNo]
+      )
+    : await client.query<{ id: string; member_no: string }>(
+        `insert into member (application_id, membership_type_id)
+         values ($1, $2)
+         returning id, member_no`,
+        [application.id, application.membershipTypeId]
+      );
   const { id: memberId, member_no: memberNo } = member.rows[0];
 
   // The application's own reference — APP-2026-000003, allocated at capture,
@@ -283,6 +295,49 @@ export async function createMemberFromApplication(
   }
 
   return { id: memberId, memberNo, accounts };
+}
+
+/**
+ * M7 migration only: open one additional account type (HSA, Investment, …)
+ * directly for a member the same row's own import just created or already
+ * found on file — the same shape openAccountsForApplication (S-613) opens
+ * one in, no account_no of its own (the member's own AB number identifies
+ * it, migration 0018), opened_by_application_id naming the migration's own
+ * application since there is no separate additional_account application
+ * here to point at.
+ */
+export async function openMigrationAccount(
+  client: PoolClient,
+  memberId: string,
+  applicationId: string,
+  type: { id: string; code: string; name: string; defaultStatus: string },
+  actor: Actor
+): Promise<{ id: string; typeCode: string; typeName: string }> {
+  const account = await client.query<{ id: string }>(
+    `insert into account
+       (member_id, account_type_id, is_membership_default, status,
+        opened_by_application_id)
+     values ($1, $2, false, $3, $4)
+     returning id`,
+    [memberId, type.id, type.defaultStatus, applicationId]
+  );
+
+  await recordAudit(
+    {
+      actorUserId: actor.userId,
+      actorDescription: actor.email,
+      action: 'account.opened',
+      entityType: 'account',
+      entityId: account.rows[0].id,
+      newValue: {
+        accountType: type.code,
+        openedBecause: 'legacy migration',
+      },
+    },
+    client
+  );
+
+  return { id: account.rows[0].id, typeCode: type.code, typeName: type.name };
 }
 
 /**

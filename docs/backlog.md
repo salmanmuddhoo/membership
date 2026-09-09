@@ -2305,12 +2305,29 @@ code kept as a cross-reference (S-705) and the same accounts an ordinary
 approval opens. Covers the shape of S-702 (mapping is the live field
 configuration, not hardcoded), S-703 (validate before anything is written,
 the full outcome reported), S-704 (every rejected row named with why), S-705
-and S-706. **Still ahead**: S-701 (an agreed, frozen source extract — this
-tool works against whatever is uploaded, it does not itself settle what that
-should be), Minor's own path (needs a guardian already on file), S-707's
-formal sign-off step, S-708's dedicated audit event beyond the generic trail
-already written, and S-709/S-710 (balances) — a later pass once members
-exist, per this milestone's own goal.
+and S-706.
+
+**Shipped, second increment** (officer feedback): the template's AB Number
+column carries the member's own number from the legacy register into
+`member.member_no` directly, rather than reassigning the next one off the
+sequence — the sequence is advanced past it so an ordinary approval never
+collides with a number the register already used (S-705's own acceptance
+criterion). Importing a legacy code already on file updates that member's
+applicant details and joined date instead of being refused as a duplicate,
+so a detail typo'd the first time can be corrected on a later upload. S-709's
+opening balances — Shares, the MSA deposit, and any other account type a row
+names one for — are recorded as one payment against the member's founding
+application, method `migration` so it reads as what it is (S-708) rather
+than a counter transaction nobody took; a balance not yet known is simply
+left blank and added on a later upload, per this milestone's own "members
+first, finance later" order.
+
+**Still ahead**: S-701 (an agreed, frozen source extract — this tool works
+against whatever is uploaded, it does not itself settle what that should
+be), Minor's own path (needs a guardian already on file), S-707's formal
+sign-off step, S-708's dedicated audit event beyond the generic trail already
+written, and S-710 (reconciling an imported batch's balances against an
+agreed control total).
 
 ### S-701 · Agree and freeze the cleansed source extract
 

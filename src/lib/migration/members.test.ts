@@ -33,6 +33,30 @@ async function run(url: string, sql: string, params: unknown[] = []) {
   }
 }
 
+// account_type is a configuration table (CLAUDE.md) — its own history
+// trigger needs albarakah.actor_description set, the same as the
+// application does through withConfigurationActor. A fixture that inserts
+// one has to say who it is too.
+async function runAsConfigurator(
+  url: string,
+  sql: string,
+  params: unknown[] = []
+) {
+  const client = new pg.Client({ connectionString: url, ssl: false });
+  await client.connect();
+  try {
+    await client.query('begin');
+    await client.query(
+      `select set_config('albarakah.actor_description', 'test fixture', true)`
+    );
+    const result = await client.query(sql, params);
+    await client.query('commit');
+    return result;
+  } finally {
+    await client.end();
+  }
+}
+
 let openPool: { closePool: () => Promise<void> } | undefined;
 async function closeOpenPool() {
   const previous = openPool;
@@ -131,6 +155,7 @@ describe('buildImportTemplate + parseImportFile: the round trip', () => {
 
     const filled = await fillSheet(template, 'Individual', {
       'Legacy Member Code': 'LEG-001',
+      'AB Number': 'AB1001',
       Surname: 'Peerally',
       Name: 'Fatimah',
       NIC: 'B1234567890123',
@@ -143,6 +168,7 @@ describe('buildImportTemplate + parseImportFile: the round trip', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].sheet).toBe('Individual');
     expect(rows[0].legacyCode).toBe('LEG-001');
+    expect(rows[0].abNumber).toBe('AB1001');
     expect(rows[0].values.surname).toBe('Peerally');
     expect(rows[0].values.name).toBe('Fatimah');
     expect(rows[0].values.mobile).toBe('57891234'); // normalised at validate, not parse
@@ -161,6 +187,7 @@ describe('validateRows', () => {
     const { buildImportTemplate, parseImportFile, validateRows } = await load();
     const filled = await fillSheet(await buildImportTemplate(), 'Individual', {
       'Legacy Member Code': 'LEG-100',
+      'AB Number': 'AB1100',
       Surname: 'Ramtoola',
       Name: 'Zahra',
       NIC: 'B9999999999999',
@@ -178,6 +205,7 @@ describe('validateRows', () => {
     const { buildImportTemplate, parseImportFile, validateRows } = await load();
     const filled = await fillSheet(await buildImportTemplate(), 'Individual', {
       'Legacy Member Code': 'LEG-101',
+      'AB Number': 'AB1101',
       Surname: 'Ramtoola',
       // Name left out — mandatory.
       NIC: 'B9999999999998',
@@ -195,6 +223,7 @@ describe('validateRows', () => {
     const { buildImportTemplate, parseImportFile, validateRows } = await load();
     const filled = await fillSheet(await buildImportTemplate(), 'Individual', {
       'Legacy Member Code': 'LEG-102',
+      'AB Number': 'AB1102',
       Surname: 'Ramtoola',
       Name: 'Yusuf',
       NIC: 'B9999999999997',
@@ -236,6 +265,7 @@ describe('validateRows', () => {
     };
     putRow({
       'Legacy Member Code': 'LEG-DUP',
+      'AB Number': 'AB1201',
       Surname: 'A',
       Name: 'One',
       NIC: 'B1',
@@ -245,6 +275,7 @@ describe('validateRows', () => {
     });
     putRow({
       'Legacy Member Code': 'LEG-DUP',
+      'AB Number': 'AB1202',
       Surname: 'B',
       Name: 'Two',
       NIC: 'B2',
@@ -279,6 +310,7 @@ describe('importMembers', () => {
     } = await load();
     const filled = await fillSheet(await buildImportTemplate(), 'Individual', {
       'Legacy Member Code': 'LEG-200',
+      'AB Number': 'AB1200',
       'Joined Date (optional)': '2019-03-15',
       Surname: 'Joomun',
       Name: 'Ismail',
@@ -306,6 +338,7 @@ describe('importMembers', () => {
     expect(member.rows[0].status).toBe('active');
     expect(member.rows[0].application_status).toBe('approved');
     expect(member.rows[0].member_no).toBe(outcome.imported[0].memberNo);
+    expect(member.rows[0].member_no).toBe('AB1200');
     expect(new Date(member.rows[0].joined_at).toISOString().slice(0, 10)).toBe(
       '2019-03-15'
     );
@@ -328,6 +361,195 @@ describe('importMembers', () => {
     expect(audited.rows).toHaveLength(1);
   });
 
+  it('re-importing an already-migrated legacy code updates the member instead of duplicating it', async () => {
+    const {
+      buildImportTemplate,
+      parseImportFile,
+      validateRows,
+      importMembers,
+    } = await load();
+    const template = await buildImportTemplate();
+
+    const first = await fillSheet(template, 'Individual', {
+      'Legacy Member Code': 'LEG-300',
+      'AB Number': 'AB1300',
+      Surname: 'Auladin',
+      Name: 'Rashid',
+      NIC: 'B7777777777771',
+      Gender: 'Male',
+      Address: 'Old Address',
+      Mobile: '57891240',
+    });
+    const firstValid = (await validateRows(await parseImportFile(first))).valid;
+    const firstOutcome = await importMembers(
+      firstValid,
+      actor,
+      MIGRATE_PERMISSIONS
+    );
+    expect(firstOutcome.failed).toEqual([]);
+
+    // Re-run with the same legacy code and AB Number, a corrected address.
+    const second = await fillSheet(template, 'Individual', {
+      'Legacy Member Code': 'LEG-300',
+      'AB Number': 'AB1300',
+      Surname: 'Auladin',
+      Name: 'Rashid',
+      NIC: 'B7777777777771',
+      Gender: 'Male',
+      Address: 'Corrected Address',
+      Mobile: '57891240',
+    });
+    const secondParsed = await validateRows(await parseImportFile(second));
+    expect(secondParsed.errors).toEqual([]);
+    const secondOutcome = await importMembers(
+      secondParsed.valid,
+      actor,
+      MIGRATE_PERMISSIONS
+    );
+    expect(secondOutcome.failed).toEqual([]);
+    expect(secondOutcome.imported[0].memberNo).toBe('AB1300');
+
+    const members = await run(
+      appUrl,
+      `select member_no from member where legacy_code = 'LEG-300'`
+    );
+    expect(members.rows).toHaveLength(1);
+    expect(members.rows[0].member_no).toBe('AB1300');
+
+    const party = await run(
+      appUrl,
+      `select p.values ->> 'address' as address
+         from application_party p
+         join member m on m.application_id = p.application_id
+        where m.legacy_code = 'LEG-300'`
+    );
+    expect(party.rows[0].address).toBe('Corrected Address');
+
+    const updated = await run(
+      appUrl,
+      `select 1 from audit_event
+        where action = 'member.migration.updated'
+          and new_value->>'legacyCode' = 'LEG-300'`
+    );
+    expect(updated.rows).toHaveLength(1);
+  });
+
+  it('rejects a re-import whose AB Number disagrees with the one on file', async () => {
+    const {
+      buildImportTemplate,
+      parseImportFile,
+      validateRows,
+      importMembers,
+    } = await load();
+    const template = await buildImportTemplate();
+
+    const first = await fillSheet(template, 'Individual', {
+      'Legacy Member Code': 'LEG-301',
+      'AB Number': 'AB1301',
+      Surname: 'Bhurtun',
+      Name: 'Aslam',
+      NIC: 'B7777777777772',
+      Gender: 'Male',
+      Address: 'Addr',
+      Mobile: '57891241',
+    });
+    const firstValid = (await validateRows(await parseImportFile(first))).valid;
+    await importMembers(firstValid, actor, MIGRATE_PERMISSIONS);
+
+    const second = await fillSheet(template, 'Individual', {
+      'Legacy Member Code': 'LEG-301',
+      'AB Number': 'AB9999',
+      Surname: 'Bhurtun',
+      Name: 'Aslam',
+      NIC: 'B7777777777772',
+      Gender: 'Male',
+      Address: 'Addr',
+      Mobile: '57891241',
+    });
+    const { errors } = await validateRows(await parseImportFile(second));
+    expect(errors).toHaveLength(1);
+    expect(errors[0].message).toMatch(/does not match AB1301/);
+  });
+
+  it("records Shares, MSA and an additional account type's opening balance as one migration payment", async () => {
+    await runAsConfigurator(
+      appUrl,
+      `insert into account_type
+         (code, name, category, minimum_opening_amount, is_membership_default)
+       values ('hsa_migration_test', 'Hajj Savings (test)', 'savings', 0, false)`
+    );
+
+    const {
+      buildImportTemplate,
+      parseImportFile,
+      validateRows,
+      importMembers,
+    } = await load();
+    const template = await buildImportTemplate();
+    const filled = await fillSheet(template, 'Individual', {
+      'Legacy Member Code': 'LEG-400',
+      'AB Number': 'AB1400',
+      Surname: 'Callychurn',
+      Name: 'Yasmin',
+      NIC: 'B7777777777773',
+      Gender: 'Female',
+      Address: 'Addr',
+      Mobile: '57891242',
+      'Shares Balance (optional)': '6000',
+      'MSA Deposit Balance (optional)': '2500',
+      'Hajj Savings (test) Balance (optional)': '1200',
+    });
+    const { valid, errors } = await validateRows(await parseImportFile(filled));
+    expect(errors).toEqual([]);
+
+    const outcome = await importMembers(valid, actor, MIGRATE_PERMISSIONS);
+    expect(outcome.failed).toEqual([]);
+
+    const payment = await run(
+      appUrl,
+      `select p.id, p.method, p.total_amount
+         from payment p
+         join member m on m.application_id = p.application_id
+        where m.legacy_code = 'LEG-400'`
+    );
+    expect(payment.rows).toHaveLength(1);
+    expect(payment.rows[0].method).toBe('migration');
+    expect(payment.rows[0].total_amount).toBe('9700.00');
+
+    const lines = await run(
+      appUrl,
+      `select component_code, amount from payment_line
+        where payment_id = $1 order by component_code`,
+      [payment.rows[0].id]
+    );
+    expect(lines.rows).toEqual([
+      { component_code: 'msa_deposit', amount: '2500.00' },
+      { component_code: 'shares', amount: '6000.00' },
+    ]);
+
+    const accountLines = await run(
+      appUrl,
+      `select account_type_code, amount from payment_account_line
+        where payment_id = $1`,
+      [payment.rows[0].id]
+    );
+    expect(accountLines.rows).toEqual([
+      { account_type_code: 'hsa_migration_test', amount: '1200.00' },
+    ]);
+
+    const hsaAccount = await run(
+      appUrl,
+      `select a.account_no from account a
+         join account_type t on t.id = a.account_type_id
+         join member m on m.id = a.member_id
+        where m.legacy_code = 'LEG-400' and t.code = 'hsa_migration_test'`
+    );
+    expect(hsaAccount.rows).toHaveLength(1);
+    // No account_no of its own — the member's own AB Number identifies it,
+    // the same as Shares and the MSA (migration 0018).
+    expect(hsaAccount.rows[0].account_no).toBeNull();
+  });
+
   it('reports a duplicate legacy code as failed, without losing the rest of the batch', async () => {
     const { eligibleMembershipTypesForMigration, importMembers } = await load();
     const individual = (await eligibleMembershipTypesForMigration()).find(
@@ -338,10 +560,11 @@ describe('importMembers', () => {
     // above) — this is the database's own unique constraint as the
     // backstop, for two rows racing past that check in the same batch.
     // Both rows are otherwise valid; only the second collides.
-    const rowFor = (legacyCode: string, nic: string) => ({
+    const rowFor = (legacyCode: string, nic: string, abNumber: string) => ({
       sheet: 'Individual',
       rowNumber: 2,
       legacyCode,
+      abNumber,
       joinedAt: null,
       membershipTypeId: individual.id,
       values: {
@@ -352,12 +575,17 @@ describe('importMembers', () => {
         address: 'Addr',
         mobile: '+23057891238',
       },
+      sharesBalance: '',
+      msaBalance: '',
+      accountBalances: {},
+      existingMemberId: null,
+      existingApplicationId: null,
     });
 
     const outcome = await importMembers(
       [
-        rowFor('LEG-DUP-DB', 'B6666666666661'),
-        rowFor('LEG-DUP-DB', 'B6666666666662'),
+        rowFor('LEG-DUP-DB', 'B6666666666661', 'AB6666661'),
+        rowFor('LEG-DUP-DB', 'B6666666666662', 'AB6666662'),
       ],
       actor,
       MIGRATE_PERMISSIONS
