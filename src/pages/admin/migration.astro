@@ -98,9 +98,16 @@ const types = canMigrate ? await eligibleMembershipTypesForMigration() : [];
               Import members from the legacy register
             </h2>
             <p class="mt-2 text-sm text-neutral-600 dark:text-neutral-300">
-              Every row in the template becomes a member, approved immediately —
-              no review, no approval step. Run it as many times as needed; each
-              upload is its own batch.
+              Every row becomes a member, approved immediately — no review, no
+              approval step. Run it as many times as needed; each upload is its
+              own batch. A Legacy Member Code already on file updates that
+              member instead of creating a second one.
+            </p>
+            <p class="mt-2 text-sm text-neutral-600 dark:text-neutral-300">
+              The AB Number carries over as the member's own — it is not
+              reassigned. Shares, MSA, and any other account balance are
+              optional; leave them blank and add them on a later upload once
+              they are known.
             </p>
             <p class="mt-2 text-sm text-neutral-600 dark:text-neutral-300">
               Covers {types.map(t => t.name).join(', ')}. A type with a guardian
@@ -143,7 +150,7 @@ const types = canMigrate ? await eligibleMembershipTypesForMigration() : [];
             <section class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-2xl border p-6">
               <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
                 {outcome.imported.length} member
-                {outcome.imported.length === 1 ? '' : 's'} imported
+                {outcome.imported.length === 1 ? '' : 's'} processed
               </h2>
               {outcome.imported.length > 0 && (
                 <ul class="mt-3 space-y-1 text-sm text-neutral-700 dark:text-neutral-200">
@@ -157,7 +164,7 @@ const types = canMigrate ? await eligibleMembershipTypesForMigration() : [];
               {outcome.failed.length > 0 && (
                 <>
                   <h3 class="mt-4 text-sm font-semibold text-red-800 dark:text-red-200">
-                    {outcome.failed.length} could not be imported
+                    {outcome.failed.length} could not be processed
                   </h3>
                   <ul class="mt-2 space-y-1 text-sm text-red-800 dark:text-red-200">
                     {outcome.failed.map(f => (
