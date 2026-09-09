@@ -113,8 +113,14 @@ const types = canMigrate ? await eligibleMembershipTypesForMigration() : [];
               add it on a later upload.
             </p>
             <p class="mt-2 text-sm text-neutral-600 dark:text-neutral-300">
-              Covers {types.map(t => t.name).join(', ')}. A type with a guardian
-              requirement (Minor) is not part of this yet.
+              Covers {types.map(t => t.name).join(', ')}. A Minor's guardian
+              must already be on file — import the guardian first, then the
+              minor.
+            </p>
+            <p class="mt-2 text-sm text-neutral-600 dark:text-neutral-300">
+              NIC, mobile and account numbers must each be unique to one member
+              or non-member. Legacy Member Code can be left blank for a member
+              row — the AB Number is used instead.
             </p>
             <a
               href="/admin/migration?template=1"

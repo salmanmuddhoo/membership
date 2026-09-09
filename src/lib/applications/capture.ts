@@ -1116,7 +1116,12 @@ export async function saveDraft(
 // A rejected application is the one dead end: it will never produce a
 // member, so it resolves to nobody — the same reasoning that keeps it out
 // of the search results a Member No. field like this was filled in from.
-async function findGuardian(
+//
+// Exported for migration/members.ts's own Minor row validation, which
+// resolves a guardian the exact same way — a legacy register's Minor is
+// never migrated ahead of their guardian, so the guardian is always
+// findable here by the time the minor's own row is imported.
+export async function findGuardian(
   memberNoCandidate: string,
   nicCandidate: string
 ): Promise<{ memberNo: string; status: string; isMember: boolean } | null> {
