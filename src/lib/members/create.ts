@@ -299,27 +299,48 @@ export async function createMemberFromApplication(
 
 /**
  * M7 migration only: open one additional account type (HSA, Investment, …)
- * directly for a member the same row's own import just created or already
- * found on file — the same shape openAccountsForApplication (S-613) opens
- * one in, no account_no of its own (the member's own AB number identifies
- * it, migration 0018), opened_by_application_id naming the migration's own
- * application since there is no separate additional_account application
+ * directly for a member or a customer the same row's own import just
+ * created or already found on file — exactly one of owner.memberId /
+ * owner.customerId, the same shape account_owner_shape has always required.
+ *
+ * Unlike openAccountsForApplication (S-613), which never gives a member's
+ * own additional account a number of its own, this one carries the legacy
+ * register's own number for the account — an officer feedback correction:
+ * the legacy register numbered HSA/Investment accounts independently of the
+ * member's own AB number, member or not, and that number is what staff
+ * still know the account by. The same shape account_owner_shape already
+ * allows a member-owned account to carry (migration 0038, for an account
+ * carried over from the customer a member used to be) — this is that same
+ * shape, reused for one carried over from the legacy register instead.
+ * Required (never null) for a customer-owned account, same as
+ * account_owner_shape enforces for every other customer account.
+ *
+ * opened_by_application_id names the migration's own application, since
+ * there is no separate additional_account/customer_account application
  * here to point at.
  */
 export async function openMigrationAccount(
   client: PoolClient,
-  memberId: string,
+  owner: { memberId: string } | { customerId: string },
   applicationId: string,
+  accountNo: string | null,
   type: { id: string; code: string; name: string; defaultStatus: string },
   actor: Actor
 ): Promise<{ id: string; typeCode: string; typeName: string }> {
   const account = await client.query<{ id: string }>(
     `insert into account
-       (member_id, account_type_id, is_membership_default, status,
-        opened_by_application_id)
-     values ($1, $2, false, $3, $4)
+       (member_id, customer_id, account_type_id, account_no,
+        is_membership_default, status, opened_by_application_id)
+     values ($1, $2, $3, $4, false, $5, $6)
      returning id`,
-    [memberId, type.id, type.defaultStatus, applicationId]
+    [
+      'memberId' in owner ? owner.memberId : null,
+      'customerId' in owner ? owner.customerId : null,
+      type.id,
+      accountNo,
+      type.defaultStatus,
+      applicationId,
+    ]
   );
 
   await recordAudit(
@@ -331,6 +352,7 @@ export async function openMigrationAccount(
       entityId: account.rows[0].id,
       newValue: {
         accountType: type.code,
+        accountNo,
         openedBecause: 'legacy migration',
       },
     },
@@ -338,6 +360,25 @@ export async function openMigrationAccount(
   );
 
   return { id: account.rows[0].id, typeCode: type.code, typeName: type.name };
+}
+
+/**
+ * M7 migration only: the customer_account counterpart to
+ * createMemberFromApplication above. Someone whose only legacy accounts are
+ * HSA/Investment — never Shares, never the MSA — was never a Member
+ * (S-614's own member/customer distinction), and gets a bare `customer` row
+ * instead, tied to the same migration application their captured details
+ * (application_party) already live against.
+ */
+export async function createMigratedCustomer(
+  client: PoolClient,
+  applicationId: string
+): Promise<{ id: string }> {
+  const customer = await client.query<{ id: string }>(
+    `insert into customer (application_id) values ($1) returning id`,
+    [applicationId]
+  );
+  return { id: customer.rows[0].id };
 }
 
 /**

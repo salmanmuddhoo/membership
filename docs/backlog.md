@@ -2322,6 +2322,18 @@ than a counter transaction nobody took; a balance not yet known is simply
 left blank and added on a later upload, per this milestone's own "members
 first, finance later" order.
 
+**Shipped, third increment** (officer feedback): not everyone in the legacy
+register is a Member. A row naming an AB Number is one — Shares and the MSA
+always come as a pair (S-309), so the AB Number alone says so; a row naming
+none, only an account of its own (HSA, Investment, …), is a non-member and
+imports as a customer instead (S-614's own distinction), `customer.legacy_code`
+(migration 0049) its own cross-reference the same way a member's already
+is. Every such account — a member's own included, correcting the second
+increment's own gap — carries its own legacy number rather than reading the
+member's, and its balance is mandatory wherever its number is given: naming
+an account without knowing what is in it is not the same "not yet known" a
+wholly unmentioned one is.
+
 **Still ahead**: S-701 (an agreed, frozen source extract — this tool works
 against whatever is uploaded, it does not itself settle what that should
 be), Minor's own path (needs a guardian already on file), S-707's formal
