@@ -246,6 +246,27 @@ beforeAll(async () => {
     ['application.view', 'application.approve'],
     ['president']
   );
+
+  // principalFor above builds each Principal in memory only — every access
+  // check elsewhere in this suite works off that in-memory `.roles`, never
+  // the database. submitApplication's own Regional-Manager-captured bypass
+  // is different: it has only the CAPTURING user's id to go on (they are
+  // not necessarily the one calling it — FRD 7.4.2), so it reads that
+  // user's roles fresh from user_role, the same way resolvePrincipal itself
+  // does for a real sign-in. These rows are what that read actually finds.
+  for (const [principal, roleCode] of [
+    [officer, 'regional_officer'],
+    [regionalManager, 'regional_manager'],
+    [secretary, 'secretary'],
+    [president, 'president'],
+  ] as const) {
+    await run(
+      appUrl,
+      `insert into user_role (user_id, role_id)
+       select $1, r.id from role r where r.code = $2`,
+      [principal.userId, roleCode]
+    );
+  }
 }, 60_000);
 
 afterAll(async () => {
@@ -339,7 +360,7 @@ async function recordFullPayment(
   );
 }
 
-async function captureComplete() {
+async function captureComplete(capturedBy: Principal = officer) {
   // Plain dynamic imports, not another load(): every caller has already
   // called load() once for its own {capture, workflow, ...}, and load()
   // closes the file's last-tracked pool on entry. A second call here would
@@ -353,7 +374,7 @@ async function captureComplete() {
   const capture = await import('./capture');
   const documents = await import('../documents/documents');
   const payments = await import('../payments/payments');
-  const actor = { userId: officer.userId, email: officer.email };
+  const actor = { userId: capturedBy.userId, email: capturedBy.email };
   const { id } = await capture.startApplication('individual', actor);
   await capture.saveDraft(id, COMPLETE_INDIVIDUAL, actor);
   await fileRequiredDocuments(documents, id);
@@ -1792,6 +1813,64 @@ describe('S-611: Regional oversight, enabled or not, gates the chain', () => {
       secretary
     );
     expect(forwarded.status).toBe('submitted_for_approval');
+  });
+
+  it('skips straight to the Secretary when the Regional Manager captured it themselves', async () => {
+    await setRegionalReviewEnabled(true);
+    const { capture, workflow } = await load();
+    // Captured by the Regional Manager, submitted by someone else who holds
+    // application.submit (FRD 7.4.2) — the bypass reads who CAPTURED it,
+    // not who happened to click Submit.
+    const id = await captureComplete(regionalManager);
+    await workflow.submitApplication(id, officer);
+    const application = (await capture.loadApplication(id))!;
+
+    // Regional oversight has nothing queued — it is already satisfied.
+    expect(
+      await workflow.availableActions(application, regionalManager)
+    ).toEqual([]);
+    // The Secretary sees it immediately, with no separate regional_review
+    // action ever having been taken.
+    expect(
+      (await workflow.availableActions(application, secretary)).map(
+        a => a.stepCode
+      )
+    ).toEqual(['secretary_review']);
+
+    const forwarded = await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Complete.' },
+      secretary
+    );
+    expect(forwarded.status).toBe('submitted_for_approval');
+  });
+
+  it('still routes through the Regional Manager when captured by an ordinary officer', async () => {
+    await setRegionalReviewEnabled(true);
+    const { capture, workflow } = await load();
+    const id = await captureComplete(officer);
+    await workflow.submitApplication(id, officer);
+    const application = (await capture.loadApplication(id))!;
+
+    expect(
+      (await workflow.availableActions(application, regionalManager)).map(
+        a => a.stepCode
+      )
+    ).toEqual(['regional_review']);
+    expect(await workflow.availableActions(application, secretary)).toEqual([]);
+  });
+
+  it('does not bypass Regional oversight while it is disabled — nothing to skip', async () => {
+    const { capture, workflow } = await load();
+    const id = await captureComplete(regionalManager);
+    await workflow.submitApplication(id, officer);
+    const application = (await capture.loadApplication(id))!;
+
+    expect(
+      (await workflow.availableActions(application, secretary)).map(
+        a => a.stepCode
+      )
+    ).toEqual(['secretary_review']);
   });
 
   it('refuses the Secretary who tries to act before Regional oversight has', async () => {

@@ -79,6 +79,23 @@ async function passedSteps(applicationId: string): Promise<Set<string>> {
   return new Set(result.rows.map(r => r.step_code));
 }
 
+// Officer feedback: a Regional Manager is already higher in the hierarchy
+// than the oversight step exists to provide, so an application they
+// themselves captured needs no second Regional Manager to look at it —
+// see the note on submitApplication's own auto-pass below. Read fresh
+// rather than off `principal.roles` (that is the SUBMITTING officer's own
+// roles; FRD 7.4.2 lets a Clerk submit on the capturing officer's behalf,
+// so the two can differ).
+async function roleCodesForUser(userId: string): Promise<Set<string>> {
+  const result = await query<{ code: string }>(
+    `select r.code from user_role ur
+       join role r on r.id = ur.role_id
+      where ur.user_id = $1`,
+    [userId]
+  );
+  return new Set(result.rows.map(r => r.code));
+}
+
 // Every enabled gate earlier in the chain, sitting on the same status this
 // step waits at, that this application has not yet passed — read from
 // configuration rather than a hardcoded 'regional_review', so a gate added
@@ -311,6 +328,24 @@ export async function submitApplication(
     );
   }
 
+  // Officer feedback: Regional oversight (S-611, disabled by default) exists
+  // so a Regional Manager looks over a subordinate's capture before it
+  // reaches the Secretary — but when the Regional Manager captured the
+  // application themselves, that oversight has nothing left to add, and
+  // the record should go straight to Secretary review. Read from the
+  // active chain (not hardcoded) so this only ever engages when an
+  // administrator has actually enabled Regional oversight, exactly the
+  // same "configuration, not code" gate every other step here already
+  // reads; resolved before withTransaction opens, the same read-first
+  // pattern the pool-level reads elsewhere in this module already follow.
+  const chain = await activeChain(WORKFLOW_CODE);
+  const regionalStep = chain.find(s => s.code === 'regional_review');
+  const capturerRoles = regionalStep
+    ? await roleCodesForUser(application.capturedBy)
+    : null;
+  const bypassRegionalReview =
+    !!regionalStep && !!capturerRoles?.has(regionalStep.roleCode);
+
   await withTransaction(async client => {
     await client.query(
       `update membership_application
@@ -328,6 +363,37 @@ export async function submitApplication(
       step.roleName,
       null
     );
+
+    if (bypassRegionalReview && regionalStep) {
+      // The gate's own from/to status (S-209) is capture's toStatus, not
+      // application's own pre-transition status above — recordTransition
+      // reads `.status` off whatever it is handed, so a shallow copy
+      // reflecting the record's status the instant after capture is what
+      // makes this row read correctly against the same evidence
+      // unmetGates (Secretary review's own gate check) reads.
+      const afterCapture = { ...application, status: step.toStatus };
+      await recordTransition(
+        client,
+        afterCapture,
+        regionalStep,
+        regionalStep.toStatus,
+        { userId: application.capturedBy, email: application.capturedByEmail },
+        regionalStep.roleName,
+        'Regional oversight not required — captured by a Regional Manager.'
+      );
+      await recordAudit(
+        {
+          actorUserId: application.capturedBy,
+          actorDescription: application.capturedByEmail,
+          action: ACTION_REGIONAL_REVIEWED,
+          entityType: ENTITY_TYPE,
+          entityId: application.id,
+          previousValue: { status: step.toStatus },
+          newValue: { status: step.toStatus, outcome: 'forward' },
+        },
+        client
+      );
+    }
 
     // The segregation rules key on this action. It is recorded once per person
     // who worked on the capture — the officer whose draft it is, and the
