@@ -939,6 +939,21 @@ answers "has Regional oversight happened yet" from the same
 `application_transition` evidence, so the application simply appears in the
 Secretary's queue immediately, with nothing further to change.
 
+**Regression fix:** that bypass was unreachable for a Regional Manager who
+holds only that role, not Regional Officer too — `assertMayAct`'s own role
+check on the capture step ("that step acts on Regional Officer") refused
+them before ever reaching it, leaving the application stuck at 'draft' with
+nothing recorded — reported as "he can't send it to the next in chain."
+`assertMayAct` now also lets a principal act on the capture step when they
+hold the role configured for `regional_review` (`mayActAsCapturer`), on the
+same "already higher in the hierarchy" reasoning — read from the
+workflow's own step list, not the active/enabled chain, since a Regional
+Manager's standing to capture and submit does not depend on whether
+Regional oversight happens to be switched on. Scoped to the capture step
+only, and to the specific role configured above it, so a Secretary or
+President holding `application.capture`/`application.submit` still cannot
+act on someone else's capture.
+
 ---
 
 # M11 — Opening an account without a fresh membership

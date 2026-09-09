@@ -19,7 +19,11 @@
 import type { PoolClient } from 'pg';
 import { recordAudit } from '../access/audit';
 import { checkSegregation } from '../admin/segregation';
-import { activeChain, type WorkflowStep } from '../config/reference';
+import {
+  activeChain,
+  listWorkflows,
+  type WorkflowStep,
+} from '../config/reference';
 import { query, withTransaction } from '../db/pool';
 import { checklistFor, type ChecklistEntry } from '../documents/documents';
 import { paymentsForApplication, type Payment } from '../payments/payments';
@@ -96,6 +100,29 @@ async function roleCodesForUser(userId: string): Promise<Set<string>> {
   return new Set(result.rows.map(r => r.code));
 }
 
+// Same reasoning as the bypass above, the other direction: a Regional
+// Manager outranks a Regional Officer, so they may personally capture and
+// submit an application too, not only review one someone else captured —
+// otherwise the bypass above is unreachable for anyone who holds only the
+// Regional Manager role, stuck refused at the capture step itself before
+// ever reaching it (officer feedback: this is what "stuck in draft" was).
+// Read from the workflow's own step list, not the active/enabled chain —
+// this does not depend on Regional oversight being switched on, only on
+// which role the workflow assigns above capture — so a workflow
+// reconfigured to put a different role there picks this up with no code
+// change.
+async function mayActAsCapturer(principal: Principal): Promise<boolean> {
+  const definitions = await listWorkflows();
+  const definition = definitions.find(d => d.code === WORKFLOW_CODE);
+  const regionalReviewStep = definition?.steps.find(
+    s => s.code === 'regional_review'
+  );
+  return (
+    !!regionalReviewStep &&
+    principal.roles.includes(regionalReviewStep.roleCode)
+  );
+}
+
 // Every enabled gate earlier in the chain, sitting on the same status this
 // step waits at, that this application has not yet passed — read from
 // configuration rather than a hardcoded 'regional_review', so a gate added
@@ -151,7 +178,16 @@ async function assertMayAct(
   // review, deliberately, since both are a review in the everyday sense. The
   // step's own configured role is what says whether THIS review is theirs;
   // without it, either role could act on the other's step.
-  if (!principal.roles.includes(step.roleCode)) {
+  //
+  // Officer feedback: capture is the one exception — a Regional Manager
+  // outranks the Regional Officer this step is configured for, so they may
+  // act on it too (mayActAsCapturer), the same "already higher in the
+  // hierarchy" reasoning submitApplication's own Regional oversight bypass
+  // below already applies to reviewing their own capture.
+  if (
+    !principal.roles.includes(step.roleCode) &&
+    !(step.code === 'capture' && (await mayActAsCapturer(principal)))
+  ) {
     throw new ApplicationError(
       `${step.name} is the ${step.roleName}'s step, not yours.`,
       'invalid'

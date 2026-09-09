@@ -1860,6 +1860,80 @@ describe('S-611: Regional oversight, enabled or not, gates the chain', () => {
     expect(await workflow.availableActions(application, secretary)).toEqual([]);
   });
 
+  // Officer feedback bug: submitApplication's own "captured by a Regional
+  // Manager, skip oversight" bypass (tests above) is unreachable for a
+  // Regional Manager who holds only that role, not Regional Officer too —
+  // the capture step's own role check ("that step acts on Regional
+  // Officer") refused them before ever reaching the bypass, leaving the
+  // application stuck at 'draft' with nothing recorded. A Regional Manager
+  // outranks a Regional Officer, so they may act on the capture step too.
+  it('lets a Regional Manager who holds no Regional Officer role capture and submit their own application', async () => {
+    await setRegionalReviewEnabled(true);
+    const { capture, workflow } = await load();
+
+    // Mirrors an admin granting application.capture/application.submit to
+    // the Regional Manager role via Configuration -> Roles, WITHOUT also
+    // giving them the Regional Officer role — the same 'regional_manager'
+    // user the rest of this describe block uses, just with the wider
+    // permission set this scenario needs.
+    const managerOnly = principalFor(
+      regionalManager.userId,
+      regionalManager.email,
+      [
+        'application.view',
+        'application.capture',
+        'application.submit',
+        'application.review',
+      ],
+      ['regional_manager']
+    );
+
+    const id = await captureComplete(managerOnly);
+    const result = await workflow.submitApplication(id, managerOnly);
+    expect(result).toEqual({ status: 'new' });
+
+    // The oversight bypass (captured by a Regional Manager) applies too —
+    // straight to the Secretary, nothing left for Regional oversight.
+    const application = (await capture.loadApplication(id))!;
+    expect(
+      await workflow.availableActions(application, regionalManager)
+    ).toEqual([]);
+    expect(
+      (await workflow.availableActions(application, secretary)).map(
+        a => a.stepCode
+      )
+    ).toEqual(['secretary_review']);
+  });
+
+  it('lets a Regional Manager capture and submit their own application when Regional oversight is disabled too', async () => {
+    const { capture, workflow } = await load();
+    const managerOnly = principalFor(
+      regionalManager.userId,
+      regionalManager.email,
+      ['application.view', 'application.capture', 'application.submit'],
+      ['regional_manager']
+    );
+
+    const id = await captureComplete(managerOnly);
+    const result = await workflow.submitApplication(id, managerOnly);
+    expect(result).toEqual({ status: 'new' });
+    expect((await capture.loadApplication(id))!.status).toBe('new');
+  });
+
+  it('does not let the Secretary act as a capturer — only the role above capture in the chain does', async () => {
+    const { workflow } = await load();
+    const secretaryWithCapturePermission = principalFor(
+      secretary.userId,
+      secretary.email,
+      ['application.view', 'application.capture', 'application.submit'],
+      ['secretary']
+    );
+    const id = await captureComplete(secretaryWithCapturePermission);
+    await expect(
+      workflow.submitApplication(id, secretaryWithCapturePermission)
+    ).rejects.toThrowError(/not yours/);
+  });
+
   it('does not bypass Regional oversight while it is disabled — nothing to skip', async () => {
     const { capture, workflow } = await load();
     const id = await captureComplete(regionalManager);
