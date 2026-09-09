@@ -1920,6 +1920,90 @@ describe('S-611: Regional oversight, enabled or not, gates the chain', () => {
     expect((await capture.loadApplication(id))!.status).toBe('new');
   });
 
+  // Officer feedback bug (round two): the previous fix let a Regional
+  // Manager who holds no Regional Officer role SUBMIT (assertMayAct), but
+  // the Submit button is rendered from availableActions, which had its own
+  // copy of the same role check on the capture step — so the button never
+  // appeared and the application still could not leave 'draft'.
+  it('offers the Submit action to a Regional Manager on their own captured draft', async () => {
+    await setRegionalReviewEnabled(true);
+    const { capture, workflow } = await load();
+    const managerOnly = principalFor(
+      regionalManager.userId,
+      regionalManager.email,
+      ['application.view', 'application.capture', 'application.submit'],
+      ['regional_manager']
+    );
+
+    // Still a draft — captured but not submitted.
+    const id = await captureComplete(managerOnly);
+    const application = (await capture.loadApplication(id))!;
+    expect(application.status).toBe('draft');
+
+    expect(
+      (await workflow.availableActions(application, managerOnly)).map(
+        a => a.stepCode
+      )
+    ).toEqual(['capture']);
+  });
+
+  // The user's explicit dynamic-routing example: Regional oversight on, but
+  // Secretary review OFF — a Regional Manager's own captured application
+  // must skip oversight AND route straight to the President, not stall.
+  it('routes a Regional-Manager-captured application straight to the President when Secretary review is disabled', async () => {
+    await setRegionalReviewEnabled(true);
+    let { config } = await load();
+    let definition = (await config.listWorkflows()).find(
+      d => d.code === 'membership_application_approval'
+    )!;
+    const secretaryStep = definition.steps.find(
+      s => s.code === 'secretary_review'
+    )!;
+    await config.setStepEnabled(secretaryStep.id, false, {
+      userId: officer.userId,
+      email: officer.email,
+    });
+
+    try {
+      const { capture, workflow } = await load();
+      const managerOnly = principalFor(
+        regionalManager.userId,
+        regionalManager.email,
+        ['application.view', 'application.capture', 'application.submit'],
+        ['regional_manager']
+      );
+
+      const id = await captureComplete(managerOnly);
+      const result = await workflow.submitApplication(id, managerOnly);
+      expect(result).toEqual({ status: 'new' });
+      const application = (await capture.loadApplication(id))!;
+
+      // Neither Regional oversight nor a (disabled) Secretary is in the way —
+      // it is the President's to decide, straight away.
+      expect(
+        await workflow.availableActions(application, regionalManager)
+      ).toEqual([]);
+      expect(await workflow.availableActions(application, secretary)).toEqual(
+        []
+      );
+      expect(
+        (await workflow.availableActions(application, president)).map(
+          a => a.stepCode
+        )
+      ).toEqual(['president_decision']);
+    } finally {
+      ({ config } = await load());
+      definition = (await config.listWorkflows()).find(
+        d => d.code === 'membership_application_approval'
+      )!;
+      await config.setStepEnabled(
+        definition.steps.find(s => s.code === 'secretary_review')!.id,
+        true,
+        { userId: officer.userId, email: officer.email }
+      );
+    }
+  });
+
   it('does not let the Secretary act as a capturer — only the role above capture in the chain does', async () => {
     const { workflow } = await load();
     const secretaryWithCapturePermission = principalFor(

@@ -929,6 +929,7 @@ describe('importMembers', () => {
         address: 'Addr',
         mobile: '+23057891238',
       },
+      employment: {},
       guardian: {},
       beneficiary: {},
       nominees: [],
@@ -1372,5 +1373,141 @@ describe('fourth increment: Nominee, Minor, and NIC/mobile uniqueness', () => {
       await parseImportFile(resubmit)
     );
     expect(resubmitErrors).toEqual([]);
+  });
+});
+
+describe('sixth increment: Employment Details columns and trimmed Nominee columns', () => {
+  async function individualHeaders(): Promise<string[]> {
+    const { buildImportTemplate } = await load();
+    const template = await buildImportTemplate();
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(template as any);
+    const sheet = workbook.getWorksheet('Individual')!;
+    const headers: string[] = [];
+    sheet.getRow(1).eachCell(cell => {
+      headers.push(String(cell.value ?? '').trim());
+    });
+    return headers;
+  }
+
+  it('offers Occupation and Employment status on the Individual sheet', async () => {
+    const headers = await individualHeaders();
+    expect(headers).toContain('Occupation');
+    expect(headers).toContain('Employment status');
+    // Employer name and monthly income are not migrated.
+    expect(headers).not.toContain('Employer name');
+    expect(headers).not.toContain('Monthly income');
+  });
+
+  it('no longer offers Nominee Telephone or Email columns, but keeps Nominee Mobile', async () => {
+    await runAsConfigurator(
+      appUrl,
+      `update membership_type set nominee_count = 2 where code = 'individual'`
+    );
+    try {
+      const headers = await individualHeaders();
+      expect(headers).not.toContain('Nominee 1 Telephone');
+      expect(headers).not.toContain('Nominee 1 Email');
+      expect(headers).not.toContain('Nominee 2 Telephone');
+      expect(headers).not.toContain('Nominee 2 Email');
+      // Mobile is not removed — only Telephone and Email are.
+      expect(headers).toContain('Nominee 1 Mobile');
+    } finally {
+      await runAsConfigurator(
+        appUrl,
+        `update membership_type set nominee_count = 1 where code = 'individual'`
+      );
+    }
+  });
+
+  it('imports Occupation and Employment status onto the employment party', async () => {
+    const {
+      buildImportTemplate,
+      parseImportFile,
+      validateRows,
+      importMembers,
+    } = await load();
+    const filled = await fillSheet(await buildImportTemplate(), 'Individual', {
+      'Legacy Member Code': 'LEG-EMP-1',
+      'AB Number': 'AB1701',
+      Surname: 'Ramdin',
+      Name: 'Anil',
+      NIC: 'B7000000000001',
+      Gender: 'Male',
+      Address: 'Addr',
+      Mobile: '57302270',
+      Occupation: 'Teacher',
+      'Employment status': 'Employed',
+      ...NOMINEE_1,
+    });
+    const { valid, errors } = await validateRows(await parseImportFile(filled));
+    expect(errors).toEqual([]);
+
+    const outcome = await importMembers(valid, actor, MIGRATE_PERMISSIONS);
+    expect(outcome.failed).toEqual([]);
+
+    const employment = await run(
+      appUrl,
+      `select p.values ->> 'occupation' as occupation,
+              p.values ->> 'employment_status' as status
+         from application_party p
+         join member m on m.application_id = p.application_id
+        where m.legacy_code = 'LEG-EMP-1'
+          and p.subject = 'employment' and p.ordinal = 1`
+    );
+    expect(employment.rows).toHaveLength(1);
+    expect(employment.rows[0].occupation).toBe('Teacher');
+    expect(employment.rows[0].status).toBe('Employed');
+  });
+
+  it('rejects an Employment status outside the configured choices', async () => {
+    const { buildImportTemplate, parseImportFile, validateRows } = await load();
+    const filled = await fillSheet(await buildImportTemplate(), 'Individual', {
+      'Legacy Member Code': 'LEG-EMP-2',
+      'AB Number': 'AB1702',
+      Surname: 'Bholah',
+      Name: 'Rita',
+      NIC: 'B7000000000002',
+      Gender: 'Female',
+      Address: 'Addr',
+      Mobile: '57302271',
+      'Employment status': 'Freelancing on the side',
+      ...NOMINEE_1,
+    });
+    const { errors } = await validateRows(await parseImportFile(filled));
+    expect(errors).toHaveLength(1);
+    expect(errors[0].message).toMatch(/Employment status must be one of/);
+  });
+
+  it('leaves employment unset when the columns are blank — nothing written', async () => {
+    const {
+      buildImportTemplate,
+      parseImportFile,
+      validateRows,
+      importMembers,
+    } = await load();
+    const filled = await fillSheet(await buildImportTemplate(), 'Individual', {
+      'Legacy Member Code': 'LEG-EMP-3',
+      'AB Number': 'AB1703',
+      Surname: 'Coowar',
+      Name: 'Sunil',
+      NIC: 'B7000000000003',
+      Gender: 'Male',
+      Address: 'Addr',
+      Mobile: '57302272',
+      ...NOMINEE_1,
+    });
+    const { valid, errors } = await validateRows(await parseImportFile(filled));
+    expect(errors).toEqual([]);
+    const outcome = await importMembers(valid, actor, MIGRATE_PERMISSIONS);
+    expect(outcome.failed).toEqual([]);
+
+    const employment = await run(
+      appUrl,
+      `select 1 from application_party p
+         join member m on m.application_id = p.application_id
+        where m.legacy_code = 'LEG-EMP-3' and p.subject = 'employment'`
+    );
+    expect(employment.rows).toHaveLength(0);
   });
 });

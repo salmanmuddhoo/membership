@@ -170,6 +170,31 @@ function applicantFields(type: MembershipType): MembershipTypeField[] {
     .sort((a, b) => a.sortOrder - b.sortOrder);
 }
 
+// Officer feedback: the migration file carries the applicant's Occupation and
+// Employment status — the two Employment Details fields the legacy register
+// actually holds — as optional columns, so they need not be filled in one by
+// one from the member page afterwards. Employer name and monthly income are
+// not migrated: they are not in the register, and there is nothing to import
+// into them. Narrowed by field key the same way guardianFields narrows to
+// Member ID; label, choices and order still come from configuration, so the
+// Employment status dropdown offers exactly what the capture form's own
+// <select> does.
+const MIGRATED_EMPLOYMENT_FIELD_KEYS = new Set([
+  'occupation',
+  'employment_status',
+]);
+
+function employmentFields(type: MembershipType): MembershipTypeField[] {
+  return type.fields
+    .filter(
+      f =>
+        f.subject === 'employment' &&
+        f.isVisible &&
+        MIGRATED_EMPLOYMENT_FIELD_KEYS.has(f.fieldKey)
+    )
+    .sort((a, b) => a.sortOrder - b.sortOrder);
+}
+
 // The migration file's own guardian column — Guardian Member ID, and
 // nothing else. Officer feedback: every other guardian detail (surname,
 // name, NIC, mobile) is pulled straight from the guardian's own record on
@@ -203,9 +228,22 @@ function beneficiaryFields(type: MembershipType): MembershipTypeField[] {
 // other applicant-form field left for later).
 const MAX_MIGRATED_NOMINEES = 2;
 
+// Officer feedback: a nominee's Telephone and Email are not carried in the
+// legacy register, so they are left off the migration file — every other
+// nominee field a type configures still appears. Excluded by field key
+// (both are 'phone'/'email' typed, but the field KEY is what a type's own
+// configuration is stable on) rather than by data type, so a future
+// text-typed contact field is unaffected.
+const MIGRATED_NOMINEE_EXCLUDED_FIELD_KEYS = new Set(['telephone', 'email']);
+
 function nomineeFields(type: MembershipType): MembershipTypeField[] {
   return type.fields
-    .filter(f => f.subject === 'nominee' && f.isVisible)
+    .filter(
+      f =>
+        f.subject === 'nominee' &&
+        f.isVisible &&
+        !MIGRATED_NOMINEE_EXCLUDED_FIELD_KEYS.has(f.fieldKey)
+    )
     .sort((a, b) => a.sortOrder - b.sortOrder);
 }
 
@@ -279,8 +317,31 @@ export async function buildImportTemplate(): Promise<Buffer> {
   workbook.creator = 'Al Barakah MCSL';
   workbook.created = new Date();
 
+  // A choice field gets a dropdown restricted to its configured choices, so a
+  // typo cannot even be typed in — the same guarantee the capture form's own
+  // <select> already gives. Applied to whichever column block a field list
+  // occupies, by its 1-based starting column.
+  const applyChoiceDropdowns = (
+    sheet: ExcelJS.Worksheet,
+    fieldList: MembershipTypeField[],
+    startColumn: number
+  ) => {
+    fieldList.forEach((field, index) => {
+      if (field.dataType !== 'choice' || field.choices.length === 0) return;
+      const column = startColumn + index;
+      for (let row = 2; row <= 500; row++) {
+        sheet.getCell(row, column).dataValidation = {
+          type: 'list',
+          allowBlank: !field.isMandatory,
+          formulae: [`"${field.choices.join(',')}"`],
+        };
+      }
+    });
+  };
+
   for (const type of types) {
     const fields = applicantFields(type);
+    const employment = employmentFields(type);
     const guardian = guardianFields(type);
     const beneficiary = beneficiaryFields(type);
     const nominees = nomineeFields(type);
@@ -305,11 +366,14 @@ export async function buildImportTemplate(): Promise<Buffer> {
       }
     }
 
+    // Employment Details sit right after the applicant's own fields — the
+    // same grouping the member page gives them — and before Nominee.
     const headers = [
       LEGACY_CODE_COLUMN,
       AB_NUMBER_COLUMN,
       JOINED_COLUMN,
       ...fields.map(f => f.label + (f.isMandatory ? ' *' : '')),
+      ...employment.map(f => f.label + (f.isMandatory ? ' *' : '')),
       ...guardian.map(f => f.label + (f.isMandatory ? ' *' : '')),
       ...beneficiary.map(f => f.label + (f.isMandatory ? ' *' : '')),
       ...nomineeHeaders,
@@ -323,20 +387,10 @@ export async function buildImportTemplate(): Promise<Buffer> {
       col.width = 24;
     });
 
-    // A choice field gets a dropdown restricted to its configured choices,
-    // so a typo cannot even be typed in — the same guarantee the capture
-    // form's own <select> already gives.
-    fields.forEach((field, index) => {
-      if (field.dataType !== 'choice' || field.choices.length === 0) return;
-      const column = index + 4; // 1: legacy code, 2: AB number, 3: joined date
-      for (let row = 2; row <= 500; row++) {
-        sheet.getCell(row, column).dataValidation = {
-          type: 'list',
-          allowBlank: !field.isMandatory,
-          formulae: [`"${field.choices.join(',')}"`],
-        };
-      }
-    });
+    // Column 1: legacy code, 2: AB number, 3: joined date, then the
+    // applicant fields, then the employment fields.
+    applyChoiceDropdowns(sheet, fields, 4);
+    applyChoiceDropdowns(sheet, employment, 4 + fields.length);
   }
 
   const buffer = await workbook.xlsx.writeBuffer();
@@ -350,6 +404,12 @@ export interface ParsedRow {
   abNumber: string;
   joinedAt: string;
   values: Record<string, string>;
+  // The applicant's own Employment Details — Occupation and Employment
+  // status only (see employmentFields). Empty object when the type
+  // configures neither, and every entry optional. Written to its own
+  // 'employment' application_party, the same row the member page's own
+  // Employment Details section reads and edits.
+  employment: Record<string, string>;
   // Empty object when this type configures no guardian subject (every type
   // but Minor). Always ordinal 1 — a minor has exactly one guardian. Only
   // ever carries 'member_id' — see guardianFields' own comment.
@@ -399,6 +459,10 @@ export async function parseImportFile(buffer: Buffer): Promise<ParsedRow[]> {
     const byLabel = new Map(
       fields.map(f => [stripMandatoryMarker(f.label), f.fieldKey])
     );
+    const employment = employmentFields(type);
+    const employmentByLabel = new Map(
+      employment.map(f => [stripMandatoryMarker(f.label), f.fieldKey])
+    );
     const guardian = guardianFields(type);
     const guardianByLabel = new Map(
       guardian.map(f => [stripMandatoryMarker(f.label), f.fieldKey])
@@ -431,6 +495,7 @@ export async function parseImportFile(buffer: Buffer): Promise<ParsedRow[]> {
 
     const headerRow = sheet.getRow(1);
     const columnFieldKeys = new Map<number, string>();
+    const employmentColumns = new Map<number, string>();
     const guardianColumns = new Map<number, string>();
     const beneficiaryColumns = new Map<number, string>();
     const nomineeColumns = new Map<
@@ -461,6 +526,8 @@ export async function parseImportFile(buffer: Buffer): Promise<ParsedRow[]> {
         extraNumberColumns.set(colNumber, extraNumberByLabel.get(header)!);
       } else if (extraBalanceByLabel.has(header)) {
         extraBalanceColumns.set(colNumber, extraBalanceByLabel.get(header)!);
+      } else if (employmentByLabel.has(bareHeader)) {
+        employmentColumns.set(colNumber, employmentByLabel.get(bareHeader)!);
       } else if (guardianByLabel.has(bareHeader)) {
         guardianColumns.set(colNumber, guardianByLabel.get(bareHeader)!);
       } else if (beneficiaryByLabel.has(bareHeader)) {
@@ -491,6 +558,10 @@ export async function parseImportFile(buffer: Buffer): Promise<ParsedRow[]> {
       const values: Record<string, string> = {};
       for (const [colNumber, fieldKey] of columnFieldKeys) {
         values[fieldKey] = cellText(colNumber);
+      }
+      const employmentValues: Record<string, string> = {};
+      for (const [colNumber, fieldKey] of employmentColumns) {
+        employmentValues[fieldKey] = cellText(colNumber);
       }
       const guardianValues: Record<string, string> = {};
       for (const [colNumber, fieldKey] of guardianColumns) {
@@ -526,6 +597,7 @@ export async function parseImportFile(buffer: Buffer): Promise<ParsedRow[]> {
         legacyCode !== '' ||
         abNumber !== '' ||
         Object.values(values).some(v => v !== '') ||
+        Object.values(employmentValues).some(v => v !== '') ||
         Object.values(guardianValues).some(v => v !== '') ||
         Object.values(beneficiaryValues).some(v => v !== '') ||
         nomineeValues.some(n => Object.values(n).some(v => v !== '')) ||
@@ -542,6 +614,7 @@ export async function parseImportFile(buffer: Buffer): Promise<ParsedRow[]> {
         abNumber,
         joinedAt: cellText(joinedColumn),
         values,
+        employment: employmentValues,
         guardian: guardianValues,
         beneficiary: beneficiaryValues,
         nominees: nomineeValues,
@@ -1003,6 +1076,16 @@ export async function validateRows(
       }
     }
 
+    // Employment Details (Occupation, Employment status) — the applicant's
+    // own, every entry optional, so nothing is ever required and the only
+    // check is the format one normalise does: Employment status must be one
+    // of its configured choices, the same as the capture form's <select>.
+    // A no-op for a type that configures none (Corporate, Minor).
+    const employmentTypeFields = employmentFields(type);
+    const { values: employmentValues, errors: employmentFormatErrors } =
+      normalise(row.employment, employmentTypeFields);
+    for (const error of employmentFormatErrors) problems.push(error.label);
+
     // Guardian (Minor only — every other type configures no 'guardian'
     // subject, so this is a no-op for them). Officer feedback: the sheet
     // asks only for the Guardian Member ID — surname, name, NIC and mobile
@@ -1206,6 +1289,7 @@ export async function validateRows(
       // left blank on a member row — not necessarily what was typed.
       legacyCode,
       values,
+      employment: employmentValues,
       guardian: guardianValues,
       beneficiary: beneficiaryValues,
       nominees,
@@ -1290,6 +1374,21 @@ async function writeGuardianAndNomineeParties(
   row: ValidatedRow,
   { skipBlankOrdinals }: { skipBlankOrdinals: boolean }
 ): Promise<void> {
+  // Employment Details (Occupation, Employment status) — the applicant's
+  // own, on the 'employment' party the member page reads. Written only when
+  // the sheet actually carries some, so a re-import that leaves the columns
+  // blank never wipes out what a previous run (or the member page) set —
+  // the same guard guardian and beneficiary use just below. Member and
+  // non-member alike, unlike those two.
+  if (Object.keys(row.employment).length > 0) {
+    await client.query(
+      `insert into application_party (application_id, subject, ordinal, values)
+       values ($1, 'employment', 1, $2::jsonb)
+       on conflict (application_id, subject, ordinal)
+       do update set values = application_party.values || excluded.values`,
+      [applicationId, JSON.stringify(row.employment)]
+    );
+  }
   if (Object.keys(row.guardian).length > 0) {
     await client.query(
       `insert into application_party (application_id, subject, ordinal, values)
@@ -1457,6 +1556,13 @@ export async function importMembers(
              values ($1, 'applicant', 1, $2::jsonb)`,
             [applicationId, JSON.stringify(row.values)]
           );
+          if (Object.keys(row.employment).length > 0) {
+            await query(
+              `insert into application_party (application_id, subject, ordinal, values)
+               values ($1, 'employment', 1, $2::jsonb)`,
+              [applicationId, JSON.stringify(row.employment)]
+            );
+          }
           if (Object.keys(row.guardian).length > 0) {
             await query(
               `insert into application_party (application_id, subject, ordinal, values)
@@ -1675,6 +1781,13 @@ export async function importMembers(
              values ($1, 'applicant', 1, $2::jsonb)`,
             [applicationId, JSON.stringify(row.values)]
           );
+          if (Object.keys(row.employment).length > 0) {
+            await query(
+              `insert into application_party (application_id, subject, ordinal, values)
+               values ($1, 'employment', 1, $2::jsonb)`,
+              [applicationId, JSON.stringify(row.employment)]
+            );
+          }
           // Nominee 1/2 same as a member row (officer feedback) — no
           // guardian or beneficiary to write here, both stay member-only.
           for (let ordinal = 1; ordinal <= row.nominees.length; ordinal++) {
