@@ -1,8 +1,9 @@
 ---
-// M7 · Legacy migration (docs/backlog.md), first increment: a System
-// Administrator imports members straight from the legacy register. Direct,
-// no review or approval — the whole batch lands as status 'approved' in
-// one step, per business direction.
+// M7 · Legacy migration (docs/backlog.md): a System Administrator imports
+// people straight from the legacy register. Direct, no review or approval —
+// the whole batch lands approved in one step, per business direction.
+// importMembers itself decides member vs. non-member per row (an AB Number
+// makes one a member; migration/members.ts's own comment explains why).
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import {
   MigrationError,
@@ -95,19 +96,21 @@ const types = canMigrate ? await eligibleMembershipTypesForMigration() : [];
         <>
           <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
             <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-              Import members from the legacy register
+              Import from the legacy register
             </h2>
             <p class="mt-2 text-sm text-neutral-600 dark:text-neutral-300">
-              Every row becomes a member, approved immediately — no review, no
-              approval step. Run it as many times as needed; each upload is its
-              own batch. A Legacy Member Code already on file updates that
-              member instead of creating a second one.
+              Every row is approved immediately — no review, no approval step.
+              Run it as many times as needed; each upload is its own batch. A
+              Legacy Member Code already on file updates that record instead of
+              creating a second one.
             </p>
             <p class="mt-2 text-sm text-neutral-600 dark:text-neutral-300">
-              The AB Number carries over as the member's own — it is not
-              reassigned. Shares, MSA, and any other account balance are
-              optional; leave them blank and add them on a later upload once
-              they are known.
+              A row with an AB Number is a member — Shares and the MSA always
+              come together, and the number carries over unchanged, never
+              reassigned. A row with none, only an account of its own (HSA,
+              Investment, …), is a non-member. Give that account its own number
+              and balance together; leave both blank if it is not yet known, and
+              add it on a later upload.
             </p>
             <p class="mt-2 text-sm text-neutral-600 dark:text-neutral-300">
               Covers {types.map(t => t.name).join(', ')}. A type with a guardian

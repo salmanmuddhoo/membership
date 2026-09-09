@@ -497,7 +497,8 @@ describe('importMembers', () => {
       Mobile: '57891242',
       'Shares Balance (optional)': '6000',
       'MSA Deposit Balance (optional)': '2500',
-      'Hajj Savings (test) Balance (optional)': '1200',
+      'Hajj Savings (test) Number': 'HSA-1400',
+      'Hajj Savings (test) Balance': '1200',
     });
     const { valid, errors } = await validateRows(await parseImportFile(filled));
     expect(errors).toEqual([]);
@@ -545,9 +546,290 @@ describe('importMembers', () => {
         where m.legacy_code = 'LEG-400' and t.code = 'hsa_migration_test'`
     );
     expect(hsaAccount.rows).toHaveLength(1);
-    // No account_no of its own — the member's own AB Number identifies it,
-    // the same as Shares and the MSA (migration 0018).
-    expect(hsaAccount.rows[0].account_no).toBeNull();
+    // Its own legacy number, not the member's AB Number — officer
+    // feedback: the legacy register numbered these independently.
+    expect(hsaAccount.rows[0].account_no).toBe('HSA-1400');
+  });
+
+  it('requires a balance wherever an account number is given, and vice versa', async () => {
+    await runAsConfigurator(
+      appUrl,
+      `insert into account_type
+         (code, name, category, minimum_opening_amount, is_membership_default)
+       values ('inv_pairing_test', 'Investment (pairing test)', 'savings', 0, false)
+       on conflict (code) do nothing`
+    );
+    const { buildImportTemplate, parseImportFile, validateRows } = await load();
+    const template = await buildImportTemplate();
+
+    const numberOnly = await fillSheet(template, 'Individual', {
+      'Legacy Member Code': 'LEG-410',
+      'AB Number': 'AB1410',
+      Surname: 'Gopaul',
+      Name: 'Devi',
+      NIC: 'B7777777777774',
+      Gender: 'Female',
+      Address: 'Addr',
+      Mobile: '57891243',
+      'Investment (pairing test) Number': 'INV-1410',
+    });
+    const { errors: numberOnlyErrors } = await validateRows(
+      await parseImportFile(numberOnly)
+    );
+    expect(numberOnlyErrors).toHaveLength(1);
+    expect(numberOnlyErrors[0].message).toMatch(
+      /Investment \(pairing test\) Balance is required/
+    );
+
+    const balanceOnly = await fillSheet(template, 'Individual', {
+      'Legacy Member Code': 'LEG-411',
+      'AB Number': 'AB1411',
+      Surname: 'Gopaul',
+      Name: 'Ravi',
+      NIC: 'B7777777777775',
+      Gender: 'Male',
+      Address: 'Addr',
+      Mobile: '57891244',
+      'Investment (pairing test) Balance': '500',
+    });
+    const { errors: balanceOnlyErrors } = await validateRows(
+      await parseImportFile(balanceOnly)
+    );
+    expect(balanceOnlyErrors).toHaveLength(1);
+    expect(balanceOnlyErrors[0].message).toMatch(
+      /Investment \(pairing test\) Number is required/
+    );
+  });
+
+  it('creates a non-member (customer) from a row with no AB Number, its account carrying its own number', async () => {
+    await runAsConfigurator(
+      appUrl,
+      `insert into account_type
+         (code, name, category, minimum_opening_amount, is_membership_default)
+       values ('hsa_customer_test', 'Hajj Savings (customer test)', 'savings', 0, false)
+       on conflict (code) do nothing`
+    );
+    const {
+      buildImportTemplate,
+      parseImportFile,
+      validateRows,
+      importMembers,
+    } = await load();
+    const filled = await fillSheet(await buildImportTemplate(), 'Individual', {
+      'Legacy Member Code': 'LEG-500',
+      // No AB Number — a customer, not a member.
+      Surname: 'Peerthum',
+      Name: 'Nazir',
+      NIC: 'B6666666666671',
+      Gender: 'Male',
+      Address: 'Addr',
+      Mobile: '57891250',
+      'Hajj Savings (customer test) Number': 'HSA-500',
+      'Hajj Savings (customer test) Balance': '3000',
+    });
+    const { valid, errors } = await validateRows(await parseImportFile(filled));
+    expect(errors).toEqual([]);
+    expect(valid[0].kind).toBe('customer');
+
+    const outcome = await importMembers(valid, actor, MIGRATE_PERMISSIONS);
+    expect(outcome.failed).toEqual([]);
+
+    const asMember = await run(
+      appUrl,
+      `select 1 from member where legacy_code = 'LEG-500'`
+    );
+    expect(asMember.rows).toHaveLength(0);
+
+    const customer = await run(
+      appUrl,
+      `select c.id, c.status,
+              (select status from membership_application
+                where id = c.application_id) as application_status
+         from customer c where legacy_code = 'LEG-500'`
+    );
+    expect(customer.rows).toHaveLength(1);
+    expect(customer.rows[0].status).toBe('active');
+    expect(customer.rows[0].application_status).toBe('approved');
+
+    const account = await run(
+      appUrl,
+      `select a.account_no from account a
+         join account_type t on t.id = a.account_type_id
+        where a.customer_id = $1 and t.code = 'hsa_customer_test'`,
+      [customer.rows[0].id]
+    );
+    expect(account.rows).toHaveLength(1);
+    expect(account.rows[0].account_no).toBe('HSA-500');
+
+    const audited = await run(
+      appUrl,
+      `select 1 from audit_event
+        where action = 'customer.migration.imported'
+          and new_value->>'legacyCode' = 'LEG-500'`
+    );
+    expect(audited.rows).toHaveLength(1);
+  });
+
+  it('re-importing a non-member adds a new account without touching one already held', async () => {
+    await runAsConfigurator(
+      appUrl,
+      `insert into account_type
+         (code, name, category, minimum_opening_amount, is_membership_default)
+       values ('inv_customer_test', 'Investment (customer test)', 'savings', 0, false)
+       on conflict (code) do nothing`
+    );
+    let { buildImportTemplate, parseImportFile, validateRows, importMembers } =
+      await load();
+    const template = await buildImportTemplate();
+
+    const first = await fillSheet(template, 'Individual', {
+      'Legacy Member Code': 'LEG-501',
+      Surname: 'Ah-Kong',
+      Name: 'Li',
+      NIC: 'B6666666666672',
+      Gender: 'Male',
+      Address: 'Old Address',
+      Mobile: '57891251',
+      'Investment (customer test) Number': 'INV-501',
+      'Investment (customer test) Balance': '1000',
+    });
+    const firstValid = (await validateRows(await parseImportFile(first))).valid;
+    const firstOutcome = await importMembers(
+      firstValid,
+      actor,
+      MIGRATE_PERMISSIONS
+    );
+    expect(firstOutcome.failed).toEqual([]);
+
+    // Re-run: a corrected address, the same Investment account (no-op for
+    // it), and a newly-known Hajj Savings account added. A fresh load()
+    // (like an officer's next request would get) so the newly-configured
+    // account type is not hidden behind the reference cache's own few
+    // seconds (config/cache.ts) — runAsConfigurator writes directly, not
+    // through withConfigurationActor, so nothing in-process clears it.
+    await runAsConfigurator(
+      appUrl,
+      `insert into account_type
+         (code, name, category, minimum_opening_amount, is_membership_default)
+       values ('hsa_added_later_test', 'Hajj Savings (added later)', 'savings', 0, false)
+       on conflict (code) do nothing`
+    );
+    ({ buildImportTemplate, parseImportFile, validateRows, importMembers } =
+      await load());
+    const secondTemplate = await buildImportTemplate();
+    const second = await fillSheet(secondTemplate, 'Individual', {
+      'Legacy Member Code': 'LEG-501',
+      Surname: 'Ah-Kong',
+      Name: 'Li',
+      NIC: 'B6666666666672',
+      Gender: 'Male',
+      Address: 'Corrected Address',
+      Mobile: '57891251',
+      'Investment (customer test) Number': 'INV-501',
+      'Investment (customer test) Balance': '1000',
+      'Hajj Savings (added later) Number': 'HSA-501',
+      'Hajj Savings (added later) Balance': '750',
+    });
+    const secondParsed = await validateRows(await parseImportFile(second));
+    expect(secondParsed.errors).toEqual([]);
+    const secondOutcome = await importMembers(
+      secondParsed.valid,
+      actor,
+      MIGRATE_PERMISSIONS
+    );
+    expect(secondOutcome.failed).toEqual([]);
+
+    const customer = await run(
+      appUrl,
+      `select id from customer where legacy_code = 'LEG-501'`
+    );
+    expect(customer.rows).toHaveLength(1);
+
+    const accounts = await run(
+      appUrl,
+      `select t.code, a.account_no from account a
+         join account_type t on t.id = a.account_type_id
+        where a.customer_id = $1
+        order by t.code`,
+      [customer.rows[0].id]
+    );
+    expect(accounts.rows).toEqual([
+      { code: 'hsa_added_later_test', account_no: 'HSA-501' },
+      { code: 'inv_customer_test', account_no: 'INV-501' },
+    ]);
+
+    const party = await run(
+      appUrl,
+      `select p.values ->> 'address' as address
+         from application_party p
+         join customer c on c.application_id = p.application_id
+        where c.legacy_code = 'LEG-501'`
+    );
+    expect(party.rows[0].address).toBe('Corrected Address');
+  });
+
+  it('rejects a row with neither an AB Number nor any account number', async () => {
+    const { buildImportTemplate, parseImportFile, validateRows } = await load();
+    const filled = await fillSheet(await buildImportTemplate(), 'Individual', {
+      'Legacy Member Code': 'LEG-502',
+      Surname: 'Ramsamy',
+      Name: 'Kevin',
+      NIC: 'B6666666666673',
+      Gender: 'Male',
+      Address: 'Addr',
+      Mobile: '57891252',
+    });
+    const { errors } = await validateRows(await parseImportFile(filled));
+    expect(errors).toHaveLength(1);
+    expect(errors[0].message).toMatch(
+      /Provide an AB Number, or at least one account number/
+    );
+  });
+
+  it('rejects an AB Number on a legacy code already on file as a non-member', async () => {
+    await runAsConfigurator(
+      appUrl,
+      `insert into account_type
+         (code, name, category, minimum_opening_amount, is_membership_default)
+       values ('hsa_kind_conflict_test', 'Hajj Savings (kind conflict test)',
+               'savings', 0, false)
+       on conflict (code) do nothing`
+    );
+    const {
+      buildImportTemplate,
+      parseImportFile,
+      validateRows,
+      importMembers,
+    } = await load();
+    const template = await buildImportTemplate();
+
+    const first = await fillSheet(template, 'Individual', {
+      'Legacy Member Code': 'LEG-503',
+      Surname: 'Bundhoo',
+      Name: 'Priya',
+      NIC: 'B6666666666674',
+      Gender: 'Female',
+      Address: 'Addr',
+      Mobile: '57891253',
+      'Hajj Savings (kind conflict test) Number': 'HSA-503',
+      'Hajj Savings (kind conflict test) Balance': '400',
+    });
+    const firstValid = (await validateRows(await parseImportFile(first))).valid;
+    await importMembers(firstValid, actor, MIGRATE_PERMISSIONS);
+
+    const second = await fillSheet(template, 'Individual', {
+      'Legacy Member Code': 'LEG-503',
+      'AB Number': 'AB1503',
+      Surname: 'Bundhoo',
+      Name: 'Priya',
+      NIC: 'B6666666666674',
+      Gender: 'Female',
+      Address: 'Addr',
+      Mobile: '57891253',
+    });
+    const { errors } = await validateRows(await parseImportFile(second));
+    expect(errors).toHaveLength(1);
+    expect(errors[0].message).toMatch(/is on file as a non-member/);
   });
 
   it('reports a duplicate legacy code as failed, without losing the rest of the batch', async () => {
@@ -577,8 +859,9 @@ describe('importMembers', () => {
       },
       sharesBalance: '',
       msaBalance: '',
-      accountBalances: {},
-      existingMemberId: null,
+      accountEntries: [],
+      kind: 'member' as const,
+      existingId: null,
       existingApplicationId: null,
     });
 
