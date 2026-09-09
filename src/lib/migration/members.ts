@@ -31,9 +31,12 @@
 //   - Nominee 1 and Nominee 2 columns, on whatever type configures a
 //     `nominee` subject — the same S-602 relaxation the live capture form
 //     already gives problemsBlockingSubmission: only the first nominee is
-//     ever mandatory, a second is never demanded. Capped at 2 regardless of
-//     a type's own configured nomineeCount; a family naming more can still
-//     add them from the member's own record afterwards.
+//     ever mandatory, a second is never demanded. Officer feedback: Nominee
+//     1 is mandatory for a non-member row exactly the same as a member row
+//     — nobody migrated is left with no nominee on file just because they
+//     hold no AB Number. Capped at 2 regardless of a type's own configured
+//     nomineeCount; a family naming more can still add them from the
+//     member's own record afterwards.
 //   - Minor is eligible now. A `guardian` subject resolves the same way
 //     problemsBlockingSubmission's own S-604 relaxation does (findGuardian,
 //     exported from capture.ts) — an existing member, or an Individual
@@ -1077,8 +1080,9 @@ export async function validateRows(
     }
 
     // Nominees — up to Nominee 1 (mandatory where the type's own nominee
-    // fields are) and Nominee 2 (never mandatory, S-602 relaxed the same
-    // way problemsBlockingSubmission's own capture-form check already is).
+    // fields are — member and non-member alike, officer feedback) and
+    // Nominee 2 (never mandatory, S-602 relaxed the same way
+    // problemsBlockingSubmission's own capture-form check already is).
     const nomineeTypeFields = nomineeFields(type);
     const nomineeOrdinalCount = migratedNomineeOrdinals(type);
     const nominees: Record<string, string>[] = [];
@@ -1088,10 +1092,7 @@ export async function validateRows(
         const { values: normalisedNominee, errors: nomineeFormatErrors } =
           normalise(raw, nomineeTypeFields);
         for (const error of nomineeFormatErrors) problems.push(error.label);
-        // Only a member has nominees at all — the AB-Number-needed error
-        // just below already says so; enforcing "required" on top of that
-        // for a non-member row would just be noise on the same complaint.
-        if (ordinal === 1 && abGiven) {
+        if (ordinal === 1) {
           for (const field of nomineeTypeFields) {
             if (!field.isMandatory) continue;
             if ((normalisedNominee[field.fieldKey] ?? '').trim() === '') {
@@ -1100,15 +1101,6 @@ export async function validateRows(
           }
         }
         nominees.push(normalisedNominee);
-      }
-      if (
-        !abGiven &&
-        nominees.some(n => Object.values(n).some(v => v !== ''))
-      ) {
-        problems.push(
-          'Nominee details need an AB Number — only a member has nominees ' +
-            'recorded.'
-        );
       }
     }
 
@@ -1271,9 +1263,12 @@ function toBalanceLines(
 }
 
 // Guardian and Takaful beneficiary (Minor only, always fully required when
-// configured — see validateRows) and Nominee 1/2 (whatever this type's own
-// nomineeCount offers, capped at the sheet's own 2) — member rows only,
-// validateRows already having refused any of these on a non-member row.
+// configured — see validateRows) — member rows only, validateRows already
+// having refused either on a non-member row. Nominee 1/2 (whatever this
+// type's own nomineeCount offers, capped at the sheet's own 2) is written
+// for a member and non-member row alike (officer feedback) — this function
+// is called from both, and simply writes nothing for the guardian/
+// beneficiary objects a non-member row always leaves empty.
 //
 // On a fresh import (skipBlankOrdinals: false) every ordinal the type
 // configures is written even blank, matching the pre-created-empty-row
@@ -1598,6 +1593,13 @@ export async function importMembers(
                    and subject = 'applicant' and ordinal = 1`,
               [applicationId, JSON.stringify(row.values)]
             );
+            // A non-member row carries no guardian or beneficiary (both stay
+            // member-only, validateRows' own !abGiven checks above) but
+            // Nominee 1/2 same as a member row — writeGuardianAndNomineeParties
+            // is a no-op for the empty guardian/beneficiary objects here.
+            await writeGuardianAndNomineeParties(client, applicationId, row, {
+              skipBlankOrdinals: true,
+            });
             await client.query(
               `update customer
                   set joined_at = coalesce($2::timestamptz, joined_at)
@@ -1673,6 +1675,19 @@ export async function importMembers(
              values ($1, 'applicant', 1, $2::jsonb)`,
             [applicationId, JSON.stringify(row.values)]
           );
+          // Nominee 1/2 same as a member row (officer feedback) — no
+          // guardian or beneficiary to write here, both stay member-only.
+          for (let ordinal = 1; ordinal <= row.nominees.length; ordinal++) {
+            await query(
+              `insert into application_party (application_id, subject, ordinal, values)
+               values ($1, 'nominee', $2, $3::jsonb)`,
+              [
+                applicationId,
+                ordinal,
+                JSON.stringify(row.nominees[ordinal - 1]),
+              ]
+            );
+          }
 
           const accountLines = toBalanceLines(row.accountEntries);
           let feeVersionId: string | null = null;

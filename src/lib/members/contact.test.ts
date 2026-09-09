@@ -173,9 +173,9 @@ beforeAll(async () => {
   customerId = customer.rows[0].id;
 
   // A Minor, with a guardian party pointing at the member above (AB0001) —
-  // for the guardian-editing tests below. Relationship left blank, the
-  // same as a migrated Minor's own record (item 2 of the officer feedback:
-  // fillable later from here).
+  // for the guardian read-display and guardian-is-never-editable tests
+  // below. Relationship left blank, the same as a migrated Minor's own
+  // record — never independently fillable from here (see contact.ts).
   const minorType = await run(
     appUrl,
     `select id from membership_type where code = 'minor'`
@@ -280,9 +280,10 @@ describe('editableContactFields: what a type actually configures', () => {
     const byKey = new Map(
       fields.filter(f => f.subject === 'applicant').map(f => [f.fieldKey, f])
     );
-    // Not just Telephone/Mobile/Address — every applicant field, so a
-    // migrated record missing an optional one (Email, say) has somewhere
-    // to fill it in from the same edit affordance.
+    // Every applicant field the type configures, so a migrated record
+    // missing an optional one (Email, say) has somewhere to fill it in —
+    // but only Telephone/Mobile/Address/Email stay editable once filled;
+    // everything else locks the moment it carries a value.
     expect([...byKey.keys()].sort()).toEqual([
       'address',
       'email',
@@ -298,6 +299,18 @@ describe('editableContactFields: what a type actually configures', () => {
     expect(byKey.get('mobile')?.value).toBe(ORIGINAL.mobile);
     expect(byKey.get('address')?.value).toBe(ORIGINAL.address);
     expect(byKey.get('name')?.value).toBe(ORIGINAL.name);
+    // Always editable, filled or not.
+    expect(byKey.get('telephone')?.editable).toBe(true);
+    expect(byKey.get('mobile')?.editable).toBe(true);
+    expect(byKey.get('address')?.editable).toBe(true);
+    // Already filled by ORIGINAL, outside the always-editable set — locked.
+    expect(byKey.get('name')?.editable).toBe(false);
+    expect(byKey.get('surname')?.editable).toBe(false);
+    expect(byKey.get('nic')?.editable).toBe(false);
+    // Still blank — editable until first filled in.
+    expect(byKey.get('email')?.value).toBe('');
+    expect(byKey.get('email')?.editable).toBe(true);
+    expect(byKey.get('gender')?.editable).toBe(true);
   });
 
   it("returns the type's own Employment Details fields, empty until set", async () => {
@@ -320,7 +333,7 @@ describe('editableContactFields: what a type actually configures', () => {
     expect(fields).toEqual([]);
   });
 
-  it('returns every guardian field for a Minor, but marks only Member ID and relationship editable', async () => {
+  it('returns every guardian field for a Minor, all read-only', async () => {
     const fields = await contact.editableContactFields(minorApplicationId);
     const guardian = fields.filter(f => f.subject === 'guardian');
     const byKey = new Map(guardian.map(f => [f.fieldKey, f]));
@@ -333,13 +346,13 @@ describe('editableContactFields: what a type actually configures', () => {
       'surname',
     ]);
     expect(byKey.get('member_id')?.value).toBe('AB0001');
-    expect(byKey.get('member_id')?.editable).toBe(true);
-    expect(byKey.get('relationship')?.value).toBe('');
-    expect(byKey.get('relationship')?.editable).toBe(true);
-    // Mirrored from the guardian's own record — shown, not editable here.
     expect(byKey.get('surname')?.value).toBe(ORIGINAL.surname);
-    expect(byKey.get('surname')?.editable).toBe(false);
-    expect(byKey.get('mobile')?.editable).toBe(false);
+    expect(byKey.get('relationship')?.value).toBe('');
+    // Editing a Minor's guardian from the member page was never asked for
+    // — every guardian field is shown, none of them accepts an edit.
+    for (const field of guardian) {
+      expect(field.editable).toBe(false);
+    }
   });
 
   it('returns no guardian fields for a type that configures none', async () => {
@@ -446,7 +459,27 @@ describe('updateContactDetails: saved straight through, no approval', () => {
     expect(result.updated).toEqual([]);
   });
 
-  it('saves an applicant field beyond telephone/mobile/address, filling in what migration left blank', async () => {
+  it('saves an applicant field beyond telephone/mobile/address/email, filling in what migration left blank', async () => {
+    const result = await contact.updateContactDetails(
+      applicationId,
+      applicantChanges({
+        gender: 'Female',
+        address: '7 Sir William Newton Street',
+      }),
+      { entityType: 'member', entityId: memberId },
+      officer
+    );
+    expect(result.updated.sort()).toEqual(['address', 'gender']);
+    const values = await currentValues(applicationId);
+    expect(values.gender).toBe('Female');
+    expect(values.address).toBe('7 Sir William Newton Street');
+  });
+
+  it('ignores an applicant field outside telephone/mobile/address/email once it already carries a value', async () => {
+    // ORIGINAL.name is not blank — Name locks the moment it is filled in,
+    // same rule editableContactFields' own `editable` flag already tells
+    // the page; this is the server-side half of it, not just a hidden
+    // input.
     const result = await contact.updateContactDetails(
       applicationId,
       applicantChanges({
@@ -456,9 +489,9 @@ describe('updateContactDetails: saved straight through, no approval', () => {
       { entityType: 'member', entityId: memberId },
       officer
     );
-    expect(result.updated.sort()).toEqual(['address', 'name']);
+    expect(result.updated).toEqual(['address']);
     const values = await currentValues(applicationId);
-    expect(values.name).toBe('Someone Else');
+    expect(values.name).toBe(ORIGINAL.name);
     expect(values.address).toBe('7 Sir William Newton Street');
   });
 
@@ -587,55 +620,37 @@ describe('updateContactDetails: saved straight through, no approval', () => {
   });
 });
 
-describe("updateContactDetails: a Minor's guardian", () => {
-  it('saves relationship on its own, without touching the mirrored fields', async () => {
+describe("updateContactDetails: a Minor's guardian is never editable here", () => {
+  // Officer feedback: editing a Minor's guardian from the member page was
+  // never asked for. editableContactFields already marks every guardian
+  // field read-only (see above); this is the server-side half — a
+  // guardian change reaching this function anyway (a direct API call, not
+  // the page) is silently dropped, not saved, no error raised.
+  it('ignores a relationship change', async () => {
     const result = await contact.updateContactDetails(
       minorApplicationId,
       [{ subject: 'guardian', fieldKey: 'relationship', value: 'Mother' }],
       { entityType: 'member', entityId: memberId },
       officer
     );
-    expect(result.updated).toEqual(['relationship']);
+    expect(result.updated).toEqual([]);
     const values = await currentValues(minorApplicationId, 'guardian');
-    expect(values.relationship).toBe('Mother');
-    expect(values.member_id).toBe('AB0001');
-    expect(values.surname).toBe(ORIGINAL.surname);
+    expect(values.relationship ?? '').toBe('');
   });
 
-  it('resolves a corrected Member ID and recomputes surname, name, NIC and mobile from the new guardian', async () => {
+  it('ignores a Member ID change — no resolution attempted, nothing written', async () => {
     const result = await contact.updateContactDetails(
       minorApplicationId,
-      [{ subject: 'guardian', fieldKey: 'member_id', value: 'ab0002' }],
+      [{ subject: 'guardian', fieldKey: 'member_id', value: 'AB0002' }],
       { entityType: 'member', entityId: memberId },
       officer
     );
-    // Only member_id is reported as changed — the mirrored fields are not
-    // independently editable, so recomputing them is not itself "a change"
-    // the officer made.
-    expect(result.updated).toEqual(['member_id']);
-    const values = await currentValues(minorApplicationId, 'guardian');
-    expect(values.member_id).toBe('AB0002');
-    expect(values.surname).toBe('Auladin');
-    expect(values.name).toBe('Rashid');
-    expect(values.nic).toBe('B9999999999999');
-    expect(values.mobile).toBe('+23057891299');
-  });
-
-  it('rejects a Member ID that matches nobody on file', async () => {
-    await expect(
-      contact.updateContactDetails(
-        minorApplicationId,
-        [{ subject: 'guardian', fieldKey: 'member_id', value: 'AB9999999' }],
-        { entityType: 'member', entityId: memberId },
-        officer
-      )
-    ).rejects.toThrowError(/does not match/);
-    // Refused, not partially written.
+    expect(result.updated).toEqual([]);
     const values = await currentValues(minorApplicationId, 'guardian');
     expect(values.member_id).toBe('AB0001');
   });
 
-  it('ignores a guardian field outside Member ID/relationship even if sent', async () => {
+  it('ignores any other guardian field the same way', async () => {
     const result = await contact.updateContactDetails(
       minorApplicationId,
       [{ subject: 'guardian', fieldKey: 'surname', value: 'Someone Else' }],

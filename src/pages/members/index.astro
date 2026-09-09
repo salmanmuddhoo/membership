@@ -1,11 +1,8 @@
 ---
 import DashboardLayout from '@layouts/DashboardLayout.astro';
-import {
-  listMembers,
-  countMembersAndCustomers,
-  type MemberListAccount,
-} from '@lib/members/create';
+import { listMembers, type MemberListAccount } from '@lib/members/create';
 import { countPendingDetailsRequests } from '@lib/members/details-requests';
+import { listAccountTypes } from '@lib/config/reference';
 import { formatMoney } from '@lib/payments/money';
 
 const principal = Astro.locals.principal!;
@@ -19,10 +16,17 @@ const canSeePayments = principal.permissions.has('payment.view');
 const pendingDetailsUpdates = await countPendingDetailsRequests();
 
 const search = Astro.url.searchParams.get('q') ?? '';
-const [{ members, total, truncated }, counts] = await Promise.all([
+// Officer feedback: every account button lines up under the others of its
+// own type across every row — Investment never under Shares — rather than
+// packing left to right per row. A fixed table column per active account
+// type, in the same sort_order/name order listMembers' own query returns
+// them in, gets that alignment from the browser's own table layout, no
+// per-row logic needed.
+const [{ members, total, truncated }, accountTypeColumns] = await Promise.all([
   listMembers({ search }),
-  countMembersAndCustomers(),
+  listAccountTypes(),
 ]);
+const activeAccountTypeColumns = accountTypeColumns.filter(t => t.isActive);
 
 const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium' });
 
@@ -63,10 +67,6 @@ function accountButtonClasses(account: MemberListAccount): string {
         >
           Members
         </h2>
-        <span class="text-sm text-neutral-500 dark:text-neutral-400">
-          {counts.members} member{counts.members === 1 ? '' : 's'} ·{' '}
-          {counts.customers} non-member{counts.customers === 1 ? '' : 's'}
-        </span>
         {
           pendingDetailsUpdates > 0 && (
             <a
@@ -129,7 +129,12 @@ function accountButtonClasses(account: MemberListAccount): string {
                   <th class="py-2 pr-4 font-medium">Name</th>
                   <th class="py-2 pr-4 font-medium">Status</th>
                   <th class="py-2 pr-4 font-medium">Joined</th>
-                  <th class="py-2 pr-4 font-medium">Accounts</th>
+                  <th
+                    class="py-2 pr-4 font-medium"
+                    colspan={Math.max(1, activeAccountTypeColumns.length)}
+                  >
+                    Accounts
+                  </th>
                   {canSeePayments && (
                     <th class="py-2 text-right font-medium">Total funds</th>
                   )}
@@ -157,43 +162,51 @@ function accountButtonClasses(account: MemberListAccount): string {
                     <td class="py-2 pr-4 text-xs text-neutral-500 dark:text-neutral-400">
                       {dateFormat.format(m.joinedAt)}
                     </td>
-                    <td class="py-2 pr-4">
-                      {m.accountBadges.length === 0 ? (
-                        <span class="text-xs text-neutral-400 dark:text-neutral-500">
-                          —
-                        </span>
-                      ) : (
-                        <div class="flex flex-wrap gap-1.5">
-                          {m.accountBadges.map(account =>
-                            canSeePayments ? (
-                              <button
-                                type="button"
-                                data-account-id={account.id}
-                                data-account-name={account.name}
-                                data-account-no={account.no}
-                                class:list={[
-                                  'cursor-pointer rounded-md px-2 py-1 text-xs font-semibold whitespace-nowrap',
-                                  accountButtonClasses(account),
-                                ]}
-                                title={account.name}
-                              >
-                                {account.no}
-                              </button>
-                            ) : (
-                              <span
-                                class:list={[
-                                  'rounded-md px-2 py-1 text-xs font-semibold whitespace-nowrap',
-                                  accountButtonClasses(account),
-                                ]}
-                                title={account.name}
-                              >
-                                {account.no}
-                              </span>
-                            )
-                          )}
-                        </div>
-                      )}
-                    </td>
+                    {activeAccountTypeColumns.length === 0 ? (
+                      <td class="py-2 pr-4">
+                        {m.accountBadges.length === 0 && (
+                          <span class="text-xs text-neutral-400 dark:text-neutral-500">
+                            —
+                          </span>
+                        )}
+                      </td>
+                    ) : (
+                      activeAccountTypeColumns.map(type => {
+                        const account = m.accountBadges.find(
+                          a => a.code === type.code
+                        );
+                        return (
+                          <td class="py-2 pr-4">
+                            {account &&
+                              (canSeePayments ? (
+                                <button
+                                  type="button"
+                                  data-account-id={account.id}
+                                  data-account-name={account.name}
+                                  data-account-no={account.no}
+                                  class:list={[
+                                    'cursor-pointer rounded-md px-2 py-1 text-xs font-semibold whitespace-nowrap',
+                                    accountButtonClasses(account),
+                                  ]}
+                                  title={account.name}
+                                >
+                                  {account.no}
+                                </button>
+                              ) : (
+                                <span
+                                  class:list={[
+                                    'rounded-md px-2 py-1 text-xs font-semibold whitespace-nowrap',
+                                    accountButtonClasses(account),
+                                  ]}
+                                  title={account.name}
+                                >
+                                  {account.no}
+                                </span>
+                              ))}
+                          </td>
+                        );
+                      })
+                    )}
                     {canSeePayments && (
                       <td class="py-2 text-right font-medium text-neutral-800 tabular-nums dark:text-neutral-100">
                         {formatMoney(m.totalFunds)}

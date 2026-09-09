@@ -2363,6 +2363,14 @@ increment, is now captured in full alongside the guardian — every
 beneficiary field a type configures, always mandatory where the row is a
 member's.
 
+**Shipped, sixth increment** (officer feedback): Nominee 1 is now mandatory
+for a non-member row exactly the same as a member row — the fourth
+increment's own "at least one Nominee" relaxation was member-only by
+accident of the AB-Number-needed check sitting next to it, not by actual
+business direction; a customer (non-member) row on a sheet whose type
+configures a `nominee` subject now writes its Nominee 1/2 the same way a
+member row does.
+
 **Still ahead**: S-701 (an agreed, frozen source extract — this tool works
 against whatever is uploaded, it does not itself settle what that should
 be), S-707's formal sign-off step, S-708's dedicated audit event beyond the
