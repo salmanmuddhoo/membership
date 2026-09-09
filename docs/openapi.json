@@ -5582,6 +5582,174 @@
           }
         }
       }
+    },
+    "/api/v1/members/{id}/contact": {
+      "patch": {
+        "summary": "Save contact/guardian details for a member or non-member",
+        "description": "Straight through, no draft, no approval — the same write the member/customer page itself makes. Only the fields that actually changed are written. Returns the field list refreshed with what was actually saved, so the page can update in place.",
+        "tags": [
+          "Members"
+        ],
+        "operationId": "patchMembersIdContact",
+        "x-required-permission": "member.edit_contact",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "updated",
+                        "fields"
+                      ],
+                      "properties": {
+                        "updated": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "fields": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "subject",
+                              "fieldKey",
+                              "label",
+                              "dataType",
+                              "value",
+                              "editable"
+                            ],
+                            "properties": {
+                              "subject": {
+                                "type": "string",
+                                "enum": [
+                                  "applicant",
+                                  "employment",
+                                  "guardian"
+                                ]
+                              },
+                              "fieldKey": {
+                                "type": "string"
+                              },
+                              "label": {
+                                "type": "string"
+                              },
+                              "dataType": {
+                                "type": "string"
+                              },
+                              "value": {
+                                "type": "string"
+                              },
+                              "editable": {
+                                "type": "boolean"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "changes"
+                ],
+                "properties": {
+                  "changes": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "subject",
+                        "fieldKey",
+                        "value"
+                      ],
+                      "properties": {
+                        "subject": {
+                          "type": "string",
+                          "enum": [
+                            "applicant",
+                            "employment",
+                            "guardian"
+                          ]
+                        },
+                        "fieldKey": {
+                          "type": "string"
+                        },
+                        "value": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

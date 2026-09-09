@@ -67,6 +67,7 @@ let applicationId: string;
 let memberId: string;
 let customerApplicationId: string;
 let customerId: string;
+let minorApplicationId: string;
 let officer: Principal;
 let colleague: Principal;
 
@@ -88,7 +89,7 @@ function principalFor(
 
 async function currentValues(
   id: string,
-  subject: 'applicant' | 'employment' = 'applicant'
+  subject: 'applicant' | 'employment' | 'guardian' = 'applicant'
 ): Promise<Record<string, string>> {
   const result = await run(
     appUrl,
@@ -170,6 +171,72 @@ beforeAll(async () => {
     [customerApplicationId]
   );
   customerId = customer.rows[0].id;
+
+  // A Minor, with a guardian party pointing at the member above (AB0001) —
+  // for the guardian-editing tests below. Relationship left blank, the
+  // same as a migrated Minor's own record (item 2 of the officer feedback:
+  // fillable later from here).
+  const minorType = await run(
+    appUrl,
+    `select id from membership_type where code = 'minor'`
+  );
+  const minorApplication = await run(
+    appUrl,
+    `insert into membership_application (membership_type_id, captured_by, status)
+     values ($1, $2, 'approved') returning id`,
+    [minorType.rows[0].id, officer.userId]
+  );
+  minorApplicationId = minorApplication.rows[0].id;
+  await run(
+    appUrl,
+    `insert into application_party (application_id, subject, ordinal, values)
+     values ($1, 'applicant', 1, $2::jsonb)`,
+    [minorApplicationId, JSON.stringify({ surname: 'Ayaan', name: 'Fakim' })]
+  );
+  await run(
+    appUrl,
+    `insert into application_party (application_id, subject, ordinal, values)
+     values ($1, 'guardian', 1, $2::jsonb)`,
+    [
+      minorApplicationId,
+      JSON.stringify({
+        member_id: 'AB0001',
+        surname: ORIGINAL.surname,
+        name: ORIGINAL.name,
+        nic: ORIGINAL.nic,
+        mobile: ORIGINAL.mobile,
+      }),
+    ]
+  );
+
+  // A second member, to resolve a guardian correction to a different
+  // person.
+  const secondApplication = await run(
+    appUrl,
+    `insert into membership_application (membership_type_id, captured_by, status)
+     values ($1, $2, 'approved') returning id`,
+    [type.rows[0].id, officer.userId]
+  );
+  await run(
+    appUrl,
+    `insert into application_party (application_id, subject, ordinal, values)
+     values ($1, 'applicant', 1, $2::jsonb)`,
+    [
+      secondApplication.rows[0].id,
+      JSON.stringify({
+        surname: 'Auladin',
+        name: 'Rashid',
+        nic: 'B9999999999999',
+        mobile: '+23057891299',
+      }),
+    ]
+  );
+  await run(
+    appUrl,
+    `insert into member (member_no, application_id, membership_type_id)
+     values ('AB0002', $1, $2)`,
+    [secondApplication.rows[0].id, type.rows[0].id]
+  );
 }, 60_000);
 
 afterAll(async () => {
@@ -190,17 +257,47 @@ beforeEach(async () => {
       where application_id = $1 and subject = 'employment'`,
     [applicationId]
   );
+  await run(
+    appUrl,
+    `update application_party set values = $2::jsonb
+      where application_id = $1 and subject = 'guardian' and ordinal = 1`,
+    [
+      minorApplicationId,
+      JSON.stringify({
+        member_id: 'AB0001',
+        surname: ORIGINAL.surname,
+        name: ORIGINAL.name,
+        nic: ORIGINAL.nic,
+        mobile: ORIGINAL.mobile,
+      }),
+    ]
+  );
 });
 
 describe('editableContactFields: what a type actually configures', () => {
-  it('returns telephone, mobile and address, with their current values', async () => {
+  it('returns every applicant field the type configures, with their current values', async () => {
     const fields = await contact.editableContactFields(applicationId);
     const byKey = new Map(
       fields.filter(f => f.subject === 'applicant').map(f => [f.fieldKey, f])
     );
+    // Not just Telephone/Mobile/Address — every applicant field, so a
+    // migrated record missing an optional one (Email, say) has somewhere
+    // to fill it in from the same edit affordance.
+    expect([...byKey.keys()].sort()).toEqual([
+      'address',
+      'email',
+      'gender',
+      'marital_status',
+      'mobile',
+      'name',
+      'nic',
+      'surname',
+      'telephone',
+    ]);
     expect(byKey.get('telephone')?.value).toBe(ORIGINAL.telephone);
     expect(byKey.get('mobile')?.value).toBe(ORIGINAL.mobile);
     expect(byKey.get('address')?.value).toBe(ORIGINAL.address);
+    expect(byKey.get('name')?.value).toBe(ORIGINAL.name);
   });
 
   it("returns the type's own Employment Details fields, empty until set", async () => {
@@ -221,6 +318,33 @@ describe('editableContactFields: what a type actually configures', () => {
       '00000000-0000-0000-0000-000000000000'
     );
     expect(fields).toEqual([]);
+  });
+
+  it('returns every guardian field for a Minor, but marks only Member ID and relationship editable', async () => {
+    const fields = await contact.editableContactFields(minorApplicationId);
+    const guardian = fields.filter(f => f.subject === 'guardian');
+    const byKey = new Map(guardian.map(f => [f.fieldKey, f]));
+    expect([...byKey.keys()].sort()).toEqual([
+      'member_id',
+      'mobile',
+      'name',
+      'nic',
+      'relationship',
+      'surname',
+    ]);
+    expect(byKey.get('member_id')?.value).toBe('AB0001');
+    expect(byKey.get('member_id')?.editable).toBe(true);
+    expect(byKey.get('relationship')?.value).toBe('');
+    expect(byKey.get('relationship')?.editable).toBe(true);
+    // Mirrored from the guardian's own record — shown, not editable here.
+    expect(byKey.get('surname')?.value).toBe(ORIGINAL.surname);
+    expect(byKey.get('surname')?.editable).toBe(false);
+    expect(byKey.get('mobile')?.editable).toBe(false);
+  });
+
+  it('returns no guardian fields for a type that configures none', async () => {
+    const fields = await contact.editableContactFields(applicationId);
+    expect(fields.some(f => f.subject === 'guardian')).toBe(false);
   });
 });
 
@@ -322,8 +446,8 @@ describe('updateContactDetails: saved straight through, no approval', () => {
     expect(result.updated).toEqual([]);
   });
 
-  it('ignores an applicant field outside telephone/mobile/address even if sent', async () => {
-    await contact.updateContactDetails(
+  it('saves an applicant field beyond telephone/mobile/address, filling in what migration left blank', async () => {
+    const result = await contact.updateContactDetails(
       applicationId,
       applicantChanges({
         name: 'Someone Else',
@@ -332,8 +456,9 @@ describe('updateContactDetails: saved straight through, no approval', () => {
       { entityType: 'member', entityId: memberId },
       officer
     );
+    expect(result.updated.sort()).toEqual(['address', 'name']);
     const values = await currentValues(applicationId);
-    expect(values.name).toBe(ORIGINAL.name);
+    expect(values.name).toBe('Someone Else');
     expect(values.address).toBe('7 Sir William Newton Street');
   });
 
@@ -459,5 +584,66 @@ describe('updateContactDetails: saved straight through, no approval', () => {
     expect((await currentValues(applicationId, 'employment')).occupation).toBe(
       'Teacher'
     );
+  });
+});
+
+describe("updateContactDetails: a Minor's guardian", () => {
+  it('saves relationship on its own, without touching the mirrored fields', async () => {
+    const result = await contact.updateContactDetails(
+      minorApplicationId,
+      [{ subject: 'guardian', fieldKey: 'relationship', value: 'Mother' }],
+      { entityType: 'member', entityId: memberId },
+      officer
+    );
+    expect(result.updated).toEqual(['relationship']);
+    const values = await currentValues(minorApplicationId, 'guardian');
+    expect(values.relationship).toBe('Mother');
+    expect(values.member_id).toBe('AB0001');
+    expect(values.surname).toBe(ORIGINAL.surname);
+  });
+
+  it('resolves a corrected Member ID and recomputes surname, name, NIC and mobile from the new guardian', async () => {
+    const result = await contact.updateContactDetails(
+      minorApplicationId,
+      [{ subject: 'guardian', fieldKey: 'member_id', value: 'ab0002' }],
+      { entityType: 'member', entityId: memberId },
+      officer
+    );
+    // Only member_id is reported as changed — the mirrored fields are not
+    // independently editable, so recomputing them is not itself "a change"
+    // the officer made.
+    expect(result.updated).toEqual(['member_id']);
+    const values = await currentValues(minorApplicationId, 'guardian');
+    expect(values.member_id).toBe('AB0002');
+    expect(values.surname).toBe('Auladin');
+    expect(values.name).toBe('Rashid');
+    expect(values.nic).toBe('B9999999999999');
+    expect(values.mobile).toBe('+23057891299');
+  });
+
+  it('rejects a Member ID that matches nobody on file', async () => {
+    await expect(
+      contact.updateContactDetails(
+        minorApplicationId,
+        [{ subject: 'guardian', fieldKey: 'member_id', value: 'AB9999999' }],
+        { entityType: 'member', entityId: memberId },
+        officer
+      )
+    ).rejects.toThrowError(/does not match/);
+    // Refused, not partially written.
+    const values = await currentValues(minorApplicationId, 'guardian');
+    expect(values.member_id).toBe('AB0001');
+  });
+
+  it('ignores a guardian field outside Member ID/relationship even if sent', async () => {
+    const result = await contact.updateContactDetails(
+      minorApplicationId,
+      [{ subject: 'guardian', fieldKey: 'surname', value: 'Someone Else' }],
+      { entityType: 'member', entityId: memberId },
+      officer
+    );
+    expect(result.updated).toEqual([]);
+    const values = await currentValues(minorApplicationId, 'guardian');
+    expect(values.surname).toBe(ORIGINAL.surname);
   });
 });

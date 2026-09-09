@@ -1,6 +1,10 @@
 ---
 import DashboardLayout from '@layouts/DashboardLayout.astro';
-import { listMembers, type MemberListAccount } from '@lib/members/create';
+import {
+  listMembers,
+  countMembersAndCustomers,
+  type MemberListAccount,
+} from '@lib/members/create';
 import { countPendingDetailsRequests } from '@lib/members/details-requests';
 import { formatMoney } from '@lib/payments/money';
 
@@ -15,7 +19,10 @@ const canSeePayments = principal.permissions.has('payment.view');
 const pendingDetailsUpdates = await countPendingDetailsRequests();
 
 const search = Astro.url.searchParams.get('q') ?? '';
-const { members, total, truncated } = await listMembers({ search });
+const [{ members, total, truncated }, counts] = await Promise.all([
+  listMembers({ search }),
+  countMembersAndCustomers(),
+]);
 
 const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium' });
 
@@ -56,6 +63,10 @@ function accountButtonClasses(account: MemberListAccount): string {
         >
           Members
         </h2>
+        <span class="text-sm text-neutral-500 dark:text-neutral-400">
+          {counts.members} member{counts.members === 1 ? '' : 's'} ·{' '}
+          {counts.customers} non-member{counts.customers === 1 ? '' : 's'}
+        </span>
         {
           pendingDetailsUpdates > 0 && (
             <a
