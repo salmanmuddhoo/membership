@@ -920,9 +920,10 @@ export async function availableActions(
   application: Application,
   principal: Principal
 ): Promise<AvailableAction[]> {
-  const [chain, passed] = await Promise.all([
+  const [chain, passed, actsAsCapturer] = await Promise.all([
     activeChain(WORKFLOW_CODE),
     passedSteps(application.id),
+    mayActAsCapturer(principal),
   ]);
   const actions: AvailableAction[] = [];
 
@@ -951,7 +952,18 @@ export async function availableActions(
     // S-611: the step's configured role, not just the permission — see
     // assertMayAct's own comment for why this matters once a permission is
     // shared between two steps (Regional oversight and Secretary review).
-    if (!principal.roles.includes(step.roleCode)) continue;
+    // Officer feedback: capture is the exception — a Regional Manager
+    // outranks the Regional Officer this step is configured for and may
+    // act on it too (mayActAsCapturer, the same rule assertMayAct applies
+    // when the submit is actually POSTed). Without this the Submit button
+    // never rendered for a Regional Manager who holds no Regional Officer
+    // role, so their own captured application had no way to leave 'draft'.
+    if (
+      !principal.roles.includes(step.roleCode) &&
+      !(step.code === 'capture' && actsAsCapturer)
+    ) {
+      continue;
+    }
     // A gate's own status never moves once passed, so it would otherwise
     // keep offering itself back to whoever just completed it.
     if (step.fromStatus === step.toStatus && passed.has(step.code)) continue;

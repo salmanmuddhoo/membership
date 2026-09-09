@@ -2403,6 +2403,19 @@ business direction; a customer (non-member) row on a sheet whose type
 configures a `nominee` subject now writes its Nominee 1/2 the same way a
 member row does.
 
+**Shipped, seventh increment** (officer feedback): the Individual sheet now
+carries the applicant's own Occupation and Employment status as optional
+columns — the two Employment Details fields the legacy register actually
+holds — imported onto the same `employment` party the member page reads and
+edits (Employment status a dropdown restricted to the configured choices,
+the same guarantee the capture form's own `<select>` gives; Employer name
+and Monthly income are not migrated, there being nothing in the register to
+fill them from). At the same time a Nominee's Telephone and Email columns
+are dropped from every sheet — not carried in the register either — while
+Nominee Mobile and every other nominee field stay. Both changes are keyed
+by field key in `migration/members.ts`, so a relabel in configuration does
+not shake them loose.
+
 **Still ahead**: S-701 (an agreed, frozen source extract — this tool works
 against whatever is uploaded, it does not itself settle what that should
 be), S-707's formal sign-off step, S-708's dedicated audit event beyond the
