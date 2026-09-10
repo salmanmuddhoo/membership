@@ -25,6 +25,7 @@ import {
   boardReadiness,
   boardReadinessReasons,
   decideApplication,
+  reopenRejectedApplication,
   reviewApplication,
   reviewStageLabel,
   signoffsFor,
@@ -37,6 +38,7 @@ import {
   removeFiledDocument,
   reviewDocument,
   DocumentError,
+  SIGNATURES,
 } from '@lib/documents/documents';
 import {
   amountDueForAdditionalAccount,
@@ -66,6 +68,7 @@ const canVerify = principal.permissions.has('document.verify');
 const canSeePayments = principal.permissions.has('payment.view');
 const canRecordPayment = principal.permissions.has('payment.record');
 const canEditContact = principal.permissions.has(PERMISSION_EDIT_CONTACT);
+const canCapture = principal.permissions.has('application.capture');
 const { id } = Astro.params;
 
 // Mirrors [id].astro's own loadMembershipApplication: the application this
@@ -186,7 +189,16 @@ if (Astro.request.method === 'POST') {
       const outcome = intent === 'verify-document' ? 'verify' : 'reject';
       const result = await reviewDocument(
         String(form.get('documentId') ?? ''),
-        { outcome, reason: String(form.get('reason') ?? '') },
+        {
+          outcome,
+          reason: String(form.get('reason') ?? ''),
+          // The signed application form needs every signature block confirmed
+          // present on the scan before it can be Verified (S-603). One
+          // checkbox, not four — the reviewer confirms all present or none
+          // (reviewDocument refuses to Verify short of all four either way).
+          confirmedSignatures:
+            form.get('allSignaturesConfirmed') === 'yes' ? [...SIGNATURES] : [],
+        },
         principal
       );
       notice =
@@ -199,6 +211,21 @@ if (Astro.request.method === 'POST') {
       } else {
         console.error('[applications/account/documents]', err);
         error = 'The document could not be reviewed. Please try again.';
+      }
+    }
+  } else if (intent === 'reopen') {
+    try {
+      await reopenRejectedApplication(application.id, principal);
+      notice =
+        'Reopened for correction. Fix what the rejection noted and submit ' +
+        'again — the payment already recorded still stands.';
+      application = await loadAccountApplication(application.id);
+    } catch (err) {
+      if (err instanceof ApplicationError || err instanceof Error) {
+        error = err.message;
+      }
+      if (!(err instanceof ApplicationError)) {
+        console.error('[applications/account/reopen]', err);
       }
     }
   } else if (
@@ -630,6 +657,26 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           </p>
         )
       }
+
+      {
+        application.status === 'rejected' && canCapture && (
+          <form method="post" class="mt-4">
+            <p class="mb-3 text-sm text-neutral-600 dark:text-neutral-300">
+              This application was rejected. Reopen it to correct what the
+              decision noted and submit again — the payment already recorded
+              still stands, so there is nothing to take again.
+            </p>
+            <button
+              type="submit"
+              name="intent"
+              value="reopen"
+              class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
+            >
+              Reopen for correction
+            </button>
+          </form>
+        )
+      }
     </section>
 
     {
@@ -938,6 +985,22 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                           name="documentId"
                           value={entry.documentId}
                         />
+                        {entry.documentCode === 'signed_form' && (
+                          <label class="flex items-center gap-x-2 rounded-lg border border-neutral-300 px-3 py-2 text-sm text-neutral-600 dark:border-neutral-600 dark:text-neutral-300">
+                            <input
+                              type="checkbox"
+                              name="allSignaturesConfirmed"
+                              value="yes"
+                              checked={
+                                entry.confirmedSignatures.length ===
+                                SIGNATURES.length
+                              }
+                              class="text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600"
+                            />
+                            All four signatures present on the scan (
+                            {SIGNATURES.join(', ')})
+                          </label>
+                        )}
                         <input
                           type="text"
                           name="reason"
