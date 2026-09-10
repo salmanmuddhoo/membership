@@ -2461,8 +2461,10 @@ describe('S-613: an additional-account application, end to end', () => {
   beforeAll(async () => {
     const type = await runAsActor(
       `insert into account_type
-         (code, name, category, minimum_opening_amount, is_membership_default)
-       values ('hsa_workflow_test', 'Hajj Savings (test)', 'savings', 1000.00, false)
+         (code, name, category, minimum_opening_amount, is_membership_default,
+          number_prefix)
+       values ('hsa_workflow_test', 'Hajj Savings (test)', 'savings', 1000.00,
+               false, 'HSW')
        returning id, name`
     );
     accountTypeId = type.rows[0].id;
@@ -2552,11 +2554,12 @@ describe('S-613: an additional-account application, end to end', () => {
     expect(loaded!.accounts.map(a => a.accountTypeName)).toContain(
       accountTypeName
     );
-    // Opened under the member's own number, the same as any other account.
+    // An additional account carries its own number (HSW0001-style), not the
+    // member's — only Shares and the MSA share the member's number.
     expect(
       loaded!.accounts.find(a => a.accountTypeName === accountTypeName)!
         .accountNo
-    ).toBe(member.memberNo);
+    ).toMatch(/^HSW\d{4}$/);
 
     // Members page feedback: clicking this account's button gives every
     // credit and debit recorded against it — traced back through the

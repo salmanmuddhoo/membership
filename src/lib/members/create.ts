@@ -447,8 +447,9 @@ export async function openAccountsForApplication(
     name: string;
     default_status: string;
     is_active: boolean;
+    number_prefix: string | null;
   }>(
-    `select id, code, name, default_status, is_active
+    `select id, code, name, default_status, is_active, number_prefix
        from account_type where id = any($1::uuid[])`,
     [typeIds]
   );
@@ -459,6 +460,18 @@ export async function openAccountsForApplication(
       throw new MemberCreationError(
         `${selected.name} is no longer available to open. Ask an ` +
           'administrator before approving this application.'
+      );
+    }
+    // An additional account carries its own number (HSA0001, INV0001-style),
+    // not the member's — the same as a non-member's, and the same numbering
+    // (openAccountsUnderCustomer). Only Shares and the MSA, opened on a
+    // membership's own approval, share the member's number; those never come
+    // through here. So a type with no prefix set cannot be numbered and must
+    // not be opened, exactly as for a customer.
+    if (!type.number_prefix?.trim()) {
+      throw new MemberCreationError(
+        `${selected.name} has no account numbering set. Set one in ` +
+          'Configuration → Account types before approving.'
       );
     }
   }
@@ -483,15 +496,27 @@ export async function openAccountsForApplication(
   const accounts: CreatedMember['accounts'] = [];
   for (const selected of application.selectedAccountTypes) {
     const type = byId.get(selected.id)!;
+    // Its own number, from the same per-type counter a non-member's account
+    // draws from (next_customer_account_number) — a member's HSA and a
+    // customer's HSA are numbered from one sequence, and account_no_unique_idx
+    // keeps them from colliding. account_owner_shape (migration 0038) allows a
+    // member-owned account to carry a number of its own.
+    const numbered = await client.query<{ account_no: string }>(
+      `select next_customer_account_number($1) as account_no`,
+      [type.id]
+    );
+    const accountNo = numbered.rows[0].account_no;
+
     const account = await client.query<{ id: string }>(
       `insert into account
-         (member_id, account_type_id, is_membership_default, status,
-          opened_by_application_id)
-       values ($1, $2, false, $3, $4)
+         (member_id, account_type_id, account_no, is_membership_default,
+          status, opened_by_application_id)
+       values ($1, $2, $3, false, $4, $5)
        returning id`,
       [
         application.existingMemberId,
         type.id,
+        accountNo,
         type.default_status,
         application.id,
       ]
@@ -500,6 +525,7 @@ export async function openAccountsForApplication(
       id: account.rows[0].id,
       typeCode: type.code,
       typeName: type.name,
+      accountNo,
     });
   }
 
@@ -516,6 +542,7 @@ export async function openAccountsForApplication(
         entityId: account.id,
         newValue: {
           memberNo,
+          accountNo: account.accountNo,
           accountType: account.typeCode,
           openedBecause: 'additional-account application approved',
         },
