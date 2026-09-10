@@ -10,7 +10,12 @@
 // was not captured gives them nothing to complete.
 import { isEditableStatus } from '@lib/applications/capture';
 import BaseLayout from '@layouts/BaseLayout.astro';
-import { loadApplication, visibleFields } from '@lib/applications/capture';
+import {
+  loadApplication,
+  visibleFields,
+  type Application,
+} from '@lib/applications/capture';
+import { loadMember } from '@lib/members/create';
 import { listMembershipTypes, type FieldSubject } from '@lib/config/reference';
 import { SIGNATURES } from '@lib/documents/documents';
 
@@ -26,35 +31,65 @@ if (
 ) {
   return new Response('Not found', { status: 404 });
 }
-// S-613: printed forms exist for a flow that actually captures applicant
-// fields — an additional-account application (opening an extra account for
-// an existing member) has none, so there is nothing here to print. A
-// customer_account application (S-614: a non-member opening an account of
-// their own) captures exactly the same way a membership application does,
-// against the same field configuration, so it prints the same way too
-// (S-614, phase 8 — this page used to refuse it, on the reasoning that the
-// flow had no print step; it does now).
+// A membership application and a customer_account application (S-614: a
+// non-member opening an account of their own) each capture their own
+// applicant against a membership type's field configuration, so each prints
+// straight from itself. An additional-account application (S-613: an existing
+// member opening a further account) captures no applicant of its own — but it
+// must still be signed, so it prints the member's founding application
+// details (the same person) with the same signature blocks. This page used to
+// refuse both account kinds; it serves all three now.
+const isAdditionalAccount =
+  application.applicationKind === 'additional_account';
 if (
   application.applicationKind !== 'membership' &&
-  application.applicationKind !== 'customer_account'
+  application.applicationKind !== 'customer_account' &&
+  !isAdditionalAccount
 ) {
   return new Response('Not found', { status: 404 });
 }
-const isAccountApplication = application.applicationKind === 'customer_account';
-// Where Back and Next lead: customer.astro mirrors this page's own step
-// numbering exactly (capture=1, print=2, documents=3) for this reason, so
-// only the base path differs between the two kinds.
-const basePath = isAccountApplication
-  ? `/applications/${application.id}/customer`
-  : `/applications/${application.id}`;
+
+// The application this form's applicant/nominee values and field configuration
+// are read from. For an additional account that is the member's founding
+// application (this kind carries no parties or membership type of its own);
+// for the other two kinds it is the application itself.
+let formSource: Application = application;
+if (isAdditionalAccount) {
+  const member = await loadMember(application.existingMemberId);
+  const founding = member?.applicationId
+    ? await loadApplication(member.applicationId)
+    : null;
+  // A legacy member imported without an application (M7) has no founding
+  // application to print from — nothing this page can render for them.
+  if (!founding) {
+    return new Response('Not found', { status: 404 });
+  }
+  formSource = founding;
+}
+// The founding application is always a membership application; narrowed here
+// so its membership type and parties can be read below.
+if (formSource.applicationKind === 'additional_account') {
+  return new Response('Not found', { status: 404 });
+}
+
+// Every kind but a plain membership application is an account opening.
+const isAccountApplication = application.applicationKind !== 'membership';
+// Where Back and Next lead: each kind's own wizard mirrors this page's step
+// numbering exactly (capture=1, print=2, documents=3), so only the base path
+// differs between them.
+const basePath = isAdditionalAccount
+  ? `/applications/${application.id}/account`
+  : isAccountApplication
+    ? `/applications/${application.id}/customer`
+    : `/applications/${application.id}`;
 
 const type = (await listMembershipTypes()).find(
-  t => t.id === application.membershipTypeId
+  t => t.id === formSource.membershipTypeId
 )!;
 const fields = visibleFields(type);
 
 const valuesFor = (subject: FieldSubject) =>
-  application.parties.find(p => p.subject === subject && p.ordinal === 1)
+  formSource.parties.find(p => p.subject === subject && p.ordinal === 1)
     ?.values ?? {};
 
 const SUBJECT_LABELS: Record<string, string> = {
