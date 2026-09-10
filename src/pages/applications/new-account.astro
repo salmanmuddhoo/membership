@@ -16,12 +16,26 @@ import {
   ApplicationError,
   startAdditionalAccountApplication,
   startCustomerAccountApplication,
+  startCustomerAdditionalAccountApplication,
 } from '@lib/applications/capture';
+import { loadCustomer } from '@lib/members/create';
 import { listAccountTypes } from '@lib/config/reference';
 
 const principal = Astro.locals.principal!;
 if (!principal.permissions.has('application.capture')) {
   return Astro.redirect('/denied');
+}
+
+// Officer feedback: an existing customer (a non-member who already holds an
+// account) opening a further one of their own comes in here from a button on
+// their own detail page, which names them with ?customer=<id>. That is a
+// third mode alongside the member/non-member choice below: the person is
+// already known, so there is nothing to search or capture — only the account
+// type(s) to pick. Read once here; the POST re-reads it from a hidden field.
+const customerParam = Astro.url.searchParams.get('customer');
+const customerHolder = customerParam ? await loadCustomer(customerParam) : null;
+if (customerParam && !customerHolder) {
+  return new Response('Not found', { status: 404 });
 }
 
 // Any active, non-membership-default account type is a valid selection
@@ -58,7 +72,32 @@ if (Astro.request.method === 'POST') {
     ? (postedType as CustomerType)
     : 'individual';
 
-  if (isMember && !memberId) {
+  if (customerHolder) {
+    // Customer mode: the holder is already known from ?customer=, so there is
+    // no member/non-member choice — only the account type(s) to open.
+    if (selected.size === 0) {
+      error = 'Select at least one account type to open.';
+    } else {
+      try {
+        const created = await startCustomerAdditionalAccountApplication(
+          customerHolder.id,
+          [...selected],
+          { userId: principal.userId, email: principal.email }
+        );
+        // Straight into the new application's own workflow — its applicant
+        // details (the customer's own), the signed form, documents, payment
+        // and the review chain, the same as the member flow.
+        return Astro.redirect(`/applications/${created.id}/account`);
+      } catch (err) {
+        if (err instanceof ApplicationError) {
+          error = err.message;
+        } else {
+          console.error('[applications/new-account/customer]', err);
+          error = 'Something went wrong. Please try again.';
+        }
+      }
+    }
+  } else if (isMember && !memberId) {
     error = 'Search for the member and pick one before continuing.';
   } else if (selected.size === 0) {
     error = 'Select at least one account type to open.';
@@ -143,7 +182,20 @@ if (Astro.request.method === 'POST') {
           method="post"
           class="space-y-6 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
         >
-          <fieldset>
+          {customerHolder && (
+            <div class="rounded-lg border border-neutral-200 bg-white px-4 py-3 text-sm dark:border-neutral-800 dark:bg-neutral-900">
+              <p class="text-neutral-800 dark:text-neutral-100">
+                Opening another account for{' '}
+                <span class="font-medium">{customerHolder.name}</span>
+              </p>
+              <p class="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                Their own details carry over from their record — pick the
+                account type(s) to open. They stay a non-member.
+              </p>
+            </div>
+          )}
+
+          <fieldset hidden={!!customerHolder}>
             <legend class="text-sm text-neutral-600 dark:text-neutral-300">
               Is this for an existing member?
             </legend>
@@ -173,7 +225,11 @@ if (Astro.request.method === 'POST') {
             </div>
           </fieldset>
 
-          <div class="relative" data-member-search hidden={!isMember}>
+          <div
+            class="relative"
+            data-member-search
+            hidden={!!customerHolder || !isMember}
+          >
             <label class="block text-sm text-neutral-600 dark:text-neutral-300">
               Member
               <input
@@ -198,7 +254,7 @@ if (Astro.request.method === 'POST') {
             />
           </div>
 
-          <div data-non-member-only hidden={isMember}>
+          <div data-non-member-only hidden={!!customerHolder || isMember}>
             <p class="text-sm text-neutral-500 dark:text-neutral-400">
               Their own details are filled in on the next screen — the same
               information a membership application asks for.

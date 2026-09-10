@@ -89,15 +89,29 @@ export interface MembershipApplication extends ApplicationCommon {
   sourceCustomerId: string | null;
 }
 
-// S-613's application, opening an account type an existing member's
-// membership did not already open for them. No applicant to capture —
-// `parties` is always empty — and nothing to approve into existence:
-// approval opens `selectedAccountTypes` under `existingMemberId` instead of
-// creating a member (S-612).
+// S-613's application, opening an account type an existing holder does not
+// already have. No applicant to capture — `parties` is always empty — and
+// nothing to approve into existence: approval opens `selectedAccountTypes`
+// under the existing holder instead of creating one (S-612).
+//
+// The holder is either a member (S-612) or a customer (S-614 follow-up: a
+// non-member who already holds an account and wants another). Exactly one of
+// `existingMemberId` / `existingCustomerId` is set; the `existingHolder*`
+// fields are the two read together, so a page or the approval need not care
+// which kind of owner it is.
 export interface AdditionalAccountApplication extends ApplicationCommon {
   applicationKind: 'additional_account';
-  existingMemberId: string;
-  existingMemberNo: string;
+  existingMemberId: string | null;
+  existingCustomerId: string | null;
+  // The member or customer id — whichever owns this, for loading their record.
+  existingHolderId: string;
+  // How the holder is named on screen: a member's AB number, or a customer's
+  // own name (a customer has no single number of their own).
+  existingHolderLabel: string;
+  // The application their applicant details and documents live on — a member's
+  // founding membership application, a customer's originating customer_account
+  // application. Null only for a legacy M7 member imported without one.
+  existingHolderApplicationId: string | null;
   selectedAccountTypes: {
     id: string;
     code: string;
@@ -487,7 +501,11 @@ export async function startAdditionalAccountApplication(
     await carryForwardMemberDocuments(client, {
       applicationId: id,
       memberId: existingMemberId,
-      foundingApplicationId: member.rows[0].founding_application_id,
+      sourceApplicationIds: await holderSourceApplicationIds(client, id, {
+        column: 'existing_member_id',
+        ownerId: existingMemberId,
+        foundingApplicationId: member.rows[0].founding_application_id,
+      }),
       actor,
     });
 
@@ -502,6 +520,153 @@ export async function startAdditionalAccountApplication(
           reference,
           applicationKind: 'additional_account',
           existingMemberId,
+          accountTypeIds,
+        },
+      },
+      client
+    );
+
+    return { id, reference };
+  });
+}
+
+// Every application already tied to a holder — the founding/originating one
+// plus any earlier additional account — for carrying documents forward.
+// Never this new application itself.
+async function holderSourceApplicationIds(
+  client: PoolClient,
+  newApplicationId: string,
+  holder: {
+    column: 'existing_member_id' | 'existing_customer_id';
+    ownerId: string;
+    foundingApplicationId: string | null;
+  }
+): Promise<string[]> {
+  const result = await client.query<{ id: string }>(
+    `select id from membership_application
+      where (id = $1::uuid or ${holder.column} = $2::uuid)
+        and id <> $3::uuid`,
+    [holder.foundingApplicationId, holder.ownerId, newApplicationId]
+  );
+  return result.rows.map(r => r.id);
+}
+
+/**
+ * S-614 follow-up · Start an additional-account application for an existing
+ * customer — a non-member who already holds an account (an HSA, say) and wants
+ * another (an Investment account). The same flow as the member version above,
+ * only opening the account under a `customer` rather than a `member`; the
+ * customer stays a non-member.
+ */
+export async function startCustomerAdditionalAccountApplication(
+  existingCustomerId: string,
+  accountTypeIds: string[],
+  actor: Actor
+): Promise<{ id: string; reference: string }> {
+  if (accountTypeIds.length === 0) {
+    throw new ApplicationError('Select at least one account type to open.');
+  }
+
+  return withTransaction(async client => {
+    // The customer's originating application carries their applicant details
+    // and the membership type its eligibility is read against (customers are
+    // captured against a membership type's configuration, migration 0027), and
+    // is the folder every document of theirs already lives in (migration 0042).
+    const customer = await client.query<{
+      status: string;
+      membership_type_id: string;
+      membership_type_name: string;
+      originating_application_id: string;
+      folder_application_id: string;
+    }>(
+      `select c.status, oa.membership_type_id, mt.name as membership_type_name,
+              c.application_id as originating_application_id,
+              coalesce(oa.folder_application_id, c.application_id)
+                as folder_application_id
+         from customer c
+         join membership_application oa on oa.id = c.application_id
+         join membership_type mt on mt.id = oa.membership_type_id
+        where c.id = $1`,
+      [existingCustomerId]
+    );
+    if (customer.rowCount === 0) {
+      throw new ApplicationError(
+        'That customer no longer exists.',
+        'not_found'
+      );
+    }
+    if (customer.rows[0].status !== 'active') {
+      throw new ApplicationError(
+        'Only an active customer may open a new account.'
+      );
+    }
+
+    // Same two rules as the member version: active, and never a
+    // membership-default type (Shares and the MSA open only on a membership's
+    // own approval, and a customer never becomes a member here at all).
+    const types = await client.query<{ id: string }>(
+      `select id from account_type
+        where id = any($1::uuid[]) and is_active and not is_membership_default`,
+      [accountTypeIds]
+    );
+    if (types.rowCount !== accountTypeIds.length) {
+      throw new ApplicationError(
+        'One of the selected account types is no longer available to open ' +
+          'this way.'
+      );
+    }
+
+    await refuseIneligibleAccountTypes(
+      client,
+      accountTypeIds,
+      customer.rows[0].membership_type_id,
+      customer.rows[0].membership_type_name
+    );
+
+    const created = await client.query<{ id: string; reference: string }>(
+      `insert into membership_application
+         (application_kind, existing_customer_id, captured_by,
+          folder_application_id)
+       values ('additional_account', $1, $2, $3)
+       returning id, reference`,
+      [existingCustomerId, actor.userId, customer.rows[0].folder_application_id]
+    );
+    const { id, reference } = created.rows[0];
+
+    await client.query(
+      `insert into application_account_selection
+         (application_id, account_type_id)
+       select $1, t from unnest($2::uuid[]) as t`,
+      [id, accountTypeIds]
+    );
+
+    await snapshotAccountTypesChecklist(client, id, accountTypeIds);
+
+    // The customer already gave their identity documents when they opened
+    // their first account — carry them forward the same way the member flow
+    // does, from their originating application and any earlier additional one.
+    await carryForwardMemberDocuments(client, {
+      applicationId: id,
+      memberId: null,
+      sourceApplicationIds: await holderSourceApplicationIds(client, id, {
+        column: 'existing_customer_id',
+        ownerId: existingCustomerId,
+        foundingApplicationId: customer.rows[0].originating_application_id,
+      }),
+      actor,
+    });
+
+    await recordAudit(
+      {
+        actorUserId: actor.userId,
+        actorDescription: actor.email,
+        action: 'membership.application.started',
+        entityType: 'membership_application',
+        entityId: id,
+        newValue: {
+          reference,
+          applicationKind: 'additional_account',
+          existingCustomerId,
           accountTypeIds,
         },
       },
@@ -851,6 +1016,10 @@ export async function loadApplication(id: string): Promise<Application | null> {
       membership_type_name: string | null;
       existing_member_id: string | null;
       existing_member_no: string | null;
+      existing_member_application_id: string | null;
+      existing_customer_id: string | null;
+      existing_customer_name: string | null;
+      existing_customer_application_id: string | null;
       source_customer_id: string | null;
       status: string;
       captured_by: string;
@@ -866,6 +1035,11 @@ export async function loadApplication(id: string): Promise<Application | null> {
       `select a.id, a.reference, a.application_kind, a.membership_type_id,
             mt.code as membership_type_code, mt.name as membership_type_name,
             a.existing_member_id, mb.member_no as existing_member_no,
+            mb.application_id as existing_member_application_id,
+            a.existing_customer_id,
+            trim(coalesce(cp.values->>'name', '') || ' '
+                 || coalesce(cp.values->>'surname', '')) as existing_customer_name,
+            cust.application_id as existing_customer_application_id,
             a.source_customer_id,
             a.status, a.captured_by,
             u.display_name as captured_by_name,
@@ -874,6 +1048,10 @@ export async function loadApplication(id: string): Promise<Application | null> {
        from membership_application a
        left join membership_type mt on mt.id = a.membership_type_id
        left join member mb          on mb.id = a.existing_member_id
+       left join customer cust       on cust.id = a.existing_customer_id
+       left join application_party cp
+         on cp.application_id = cust.application_id
+        and cp.subject = 'applicant' and cp.ordinal = 1
        join app_user u               on u.id = a.captured_by
       where a.id = $1`,
       [id]
@@ -911,11 +1089,19 @@ export async function loadApplication(id: string): Promise<Application | null> {
   };
 
   if (row.application_kind === 'additional_account') {
+    const forMember = row.existing_member_id !== null;
     return {
       ...common,
       applicationKind: 'additional_account',
-      existingMemberId: row.existing_member_id!,
-      existingMemberNo: row.existing_member_no!,
+      existingMemberId: row.existing_member_id,
+      existingCustomerId: row.existing_customer_id,
+      existingHolderId: (row.existing_member_id ?? row.existing_customer_id)!,
+      existingHolderLabel: forMember
+        ? row.existing_member_no!
+        : row.existing_customer_name?.trim() || 'Non-member',
+      existingHolderApplicationId: forMember
+        ? row.existing_member_application_id
+        : row.existing_customer_application_id,
       selectedAccountTypes: await selectedAccountTypesFor(id),
     };
   }
@@ -1659,8 +1845,10 @@ export async function listApplications(options: {
        select a.id, a.reference, a.application_kind,
               m.name as membership_type_name, accounts.names as account_type_names,
               a.status,
-              trim(coalesce(p.values->>'name', ep.values->>'name', '') || ' '
-                   || coalesce(p.values->>'surname', ep.values->>'surname', ''))
+              trim(coalesce(p.values->>'name', ep.values->>'name',
+                            ecp.values->>'name', '') || ' '
+                   || coalesce(p.values->>'surname', ep.values->>'surname',
+                               ecp.values->>'surname', ''))
                 as applicant_name,
               u.display_name as captured_by_name,
               a.updated_at
@@ -1670,12 +1858,16 @@ export async function listApplications(options: {
          left join application_party p
            on p.application_id = a.id and p.subject = 'applicant' and p.ordinal = 1
          -- S-613: an additional_account application captures no applicant of
-         -- its own — the person is the existing member it names, whose own
-         -- name comes from the membership application that made them one.
+         -- its own — the person is the existing member or customer it names,
+         -- whose own name comes from the application that first recorded them.
          left join member em on em.id = a.existing_member_id
          left join application_party ep
            on ep.application_id = em.application_id
           and ep.subject = 'applicant' and ep.ordinal = 1
+         left join customer ec on ec.id = a.existing_customer_id
+         left join application_party ecp
+           on ecp.application_id = ec.application_id
+          and ecp.subject = 'applicant' and ecp.ordinal = 1
          left join lateral (
            select string_agg(t.name, ' + ' order by t.sort_order) as names
              from application_account_selection s
