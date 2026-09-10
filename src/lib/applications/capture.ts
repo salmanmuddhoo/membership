@@ -352,14 +352,29 @@ async function snapshotAccountTypesChecklist(
   await client.query(
     `insert into application_checklist_item
        (application_id, document_type_id, subject, requirement, sort_order)
-     select $1, u.document_type_id, u.subject,
-            case when bool_or(u.requirement = 'required')
+     select $1, combined.document_type_id, combined.subject,
+            case when bool_or(combined.requirement = 'required')
                  then 'required' else 'optional' end,
-            min(u.sort_order)
-       from account_type t
-       join document_checklist_item u on u.checklist_id = t.checklist_id
-      where t.id = any($2::uuid[])
-      group by u.document_type_id, u.subject`,
+            min(combined.sort_order)
+       from (
+         select u.document_type_id, u.subject, u.requirement, u.sort_order
+           from account_type t
+           join document_checklist_item u on u.checklist_id = t.checklist_id
+          where t.id = any($2::uuid[])
+         union all
+         -- Officer feedback: opening a further account must be signed by the
+         -- member, the same as every membership and non-member application
+         -- (the printed form carries the four signature blocks). The signed
+         -- form is not part of any account type's own KYC checklist, so it is
+         -- added here explicitly — required, and first (sort_order 0). It is
+         -- deliberately never carried forward from an earlier application
+         -- (carryForwardMemberDocuments), so the member signs a fresh one for
+         -- this opening.
+         select d.id, 'applicant'::text, 'required'::text, 0
+           from document_type d
+          where d.code = 'signed_form' and d.is_active
+       ) combined
+      group by combined.document_type_id, combined.subject`,
     [applicationId, accountTypeIds]
   );
 }

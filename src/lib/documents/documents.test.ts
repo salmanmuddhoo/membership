@@ -810,6 +810,45 @@ describe('S-612: the checklist for an additional-account application comes from 
       expect.arrayContaining(['id_card'])
     );
   });
+
+  it('requires the signed application form even when the account type has no checklist', async () => {
+    const { capture, documents } = await load();
+
+    const memberType = await run(
+      appUrl,
+      `select id from membership_type where code = 'individual'`
+    );
+    const holder = await run(
+      appUrl,
+      `insert into member (membership_type_id, status) values ($1, 'active')
+       returning id`,
+      [memberType.rows[0].id]
+    );
+    // An account type with no checklist of its own — the only required item
+    // on the additional-account checklist should be the signed form, added by
+    // startAdditionalAccountApplication so the member is always asked to sign.
+    const accountType = await runAsConfigurator(
+      appUrl,
+      `insert into account_type
+         (code, name, category, minimum_opening_amount, is_membership_default)
+       values ('signed_form_only', 'No-checklist account', 'investment', 1000,
+               false)
+       returning id`
+    );
+
+    const { id } = await capture.startAdditionalAccountApplication(
+      holder.rows[0].id,
+      [accountType.rows[0].id],
+      officer
+    );
+
+    const checklist = await documents.checklistFor({ applicationId: id });
+    const signedForm = checklist.find(e => e.documentCode === 'signed_form');
+    expect(signedForm).toBeDefined();
+    expect(signedForm!.requirement).toBe('required');
+    expect(signedForm!.subject).toBe('applicant');
+    expect(signedForm!.state).toBe('missing');
+  });
 });
 
 // Officer feedback: the Members page's own member detail page had nowhere

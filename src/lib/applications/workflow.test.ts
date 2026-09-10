@@ -2421,7 +2421,7 @@ describe('S-613: an additional-account application, end to end', () => {
   }
 
   it('takes an application from capture to an opened account, under the existing member', async () => {
-    const { capture, workflow, members, payments } = await load();
+    const { capture, workflow, members, payments, documents } = await load();
     const member = await activeMember();
 
     const application = await capture.startAdditionalAccountApplication(
@@ -2430,9 +2430,13 @@ describe('S-613: an additional-account application, end to end', () => {
       officer
     );
 
-    // The document checklist is complete with nothing filed: this test
-    // account type has no checklist_id, so checklistForAccountTypes
-    // (reference.ts, S-613 phase 4) has nothing required to offer.
+    // This test account type has no checklist_id of its own, but opening a
+    // further account must still be signed by the member — the signed form is
+    // always on an additional account's checklist (snapshotAccountTypesChecklist),
+    // so it is filed and verified here before submission.
+    await fileRequiredDocuments(documents, application.id);
+    await verifyRequiredDocuments(documents, application.id);
+
     const paymentClerk: Principal = {
       ...officer,
       permissions: new Set([...officer.permissions, 'payment.record']),
@@ -2507,7 +2511,7 @@ describe('S-613: an additional-account application, end to end', () => {
   // itself carries no link back to what opened it (same reason
   // transactionsForAccount, above, has to trace it the same way).
   it('counts an opened additional account towards the Members page total', async () => {
-    const { capture, workflow, members, payments } = await load();
+    const { capture, workflow, members, payments, documents } = await load();
     const member = await activeMember();
 
     const application = await capture.startAdditionalAccountApplication(
@@ -2515,6 +2519,8 @@ describe('S-613: an additional-account application, end to end', () => {
       [accountTypeId],
       officer
     );
+    await fileRequiredDocuments(documents, application.id);
+    await verifyRequiredDocuments(documents, application.id);
     await payments.recordAccountOpeningPayment(
       {
         applicationId: application.id,
@@ -2545,7 +2551,7 @@ describe('S-613: an additional-account application, end to end', () => {
   });
 
   it('refuses a second application for an account type already open', async () => {
-    const { capture, members, payments, workflow } = await load();
+    const { capture, members, payments, workflow, documents } = await load();
     const member = await activeMember();
 
     // First one goes all the way through and opens it.
@@ -2554,6 +2560,8 @@ describe('S-613: an additional-account application, end to end', () => {
       [accountTypeId],
       officer
     );
+    await fileRequiredDocuments(documents, first.id);
+    await verifyRequiredDocuments(documents, first.id);
     await payments.recordAccountOpeningPayment(
       {
         applicationId: first.id,
@@ -2586,6 +2594,8 @@ describe('S-613: an additional-account application, end to end', () => {
       [accountTypeId],
       officer
     );
+    await fileRequiredDocuments(documents, second.id);
+    await verifyRequiredDocuments(documents, second.id);
     await payments.recordAccountOpeningPayment(
       {
         applicationId: second.id,
