@@ -414,6 +414,14 @@ export async function openAccountsForApplication(
     );
   }
 
+  // An additional account names either a member or a customer as its holder
+  // (migration 0051). A customer's account is opened under the customer, with
+  // its own number, exactly as their first one was — never turning them into
+  // a member.
+  if (application.existingCustomerId) {
+    return openAccountsUnderCustomer(client, application, actor);
+  }
+
   const member = await client.query<{ member_no: string; status: string }>(
     `select member_no, status from member where id = $1 for no key update`,
     [application.existingMemberId]
@@ -516,7 +524,148 @@ export async function openAccountsForApplication(
     );
   }
 
-  return { id: application.existingMemberId, memberNo, accounts };
+  // Narrowed above: the customer branch returned early, so a member owns this.
+  return { id: application.existingMemberId!, memberNo, accounts };
+}
+
+/**
+ * Open an additional account under an EXISTING customer (migration 0051).
+ *
+ * The customer counterpart of the member path above, and it mirrors
+ * openAccountsForCustomerApplication's numbering (HSA0002, INV0001-style, from
+ * account_type.number_prefix) — the one difference being that the customer
+ * already exists, so no `customer` row is created here; the account is opened
+ * under the one this application names.
+ */
+async function openAccountsUnderCustomer(
+  client: PoolClient,
+  application: Application,
+  actor: Actor
+): Promise<CreatedMember> {
+  if (
+    application.applicationKind !== 'additional_account' ||
+    !application.existingCustomerId
+  ) {
+    throw new MemberCreationError(
+      'This application does not open an account for an existing customer.'
+    );
+  }
+  const customerId = application.existingCustomerId;
+
+  const customer = await client.query<{
+    status: string;
+    name: string;
+  }>(
+    `select c.status,
+            trim(coalesce(p.values->>'name', '') || ' '
+                 || coalesce(p.values->>'surname', '')) as name
+       from customer c
+       left join application_party p
+         on p.application_id = c.application_id
+        and p.subject = 'applicant' and p.ordinal = 1
+      where c.id = $1 for no key update of c`,
+    [customerId]
+  );
+  if (customer.rowCount === 0) {
+    throw new MemberCreationError('That customer no longer exists.');
+  }
+  if (customer.rows[0].status !== 'active') {
+    throw new MemberCreationError(
+      'This customer is no longer active, so no account can be opened for them.'
+    );
+  }
+  const label = customer.rows[0].name?.trim() || 'the customer';
+
+  const typeIds = application.selectedAccountTypes.map(t => t.id);
+  const types = await client.query<{
+    id: string;
+    code: string;
+    name: string;
+    default_status: string;
+    is_active: boolean;
+    number_prefix: string | null;
+  }>(
+    `select id, code, name, default_status, is_active, number_prefix
+       from account_type where id = any($1::uuid[])`,
+    [typeIds]
+  );
+  const byId = new Map(types.rows.map(t => [t.id, t]));
+  for (const selected of application.selectedAccountTypes) {
+    const type = byId.get(selected.id);
+    if (!type || !type.is_active) {
+      throw new MemberCreationError(
+        `${selected.name} is no longer available to open. Ask an ` +
+          'administrator before approving this application.'
+      );
+    }
+    if (!type.number_prefix?.trim()) {
+      throw new MemberCreationError(
+        `${selected.name} has no account numbering set. Set one in ` +
+          'Configuration → Account types before approving.'
+      );
+    }
+  }
+
+  // Named here, one at a time, rather than left to
+  // account_one_per_type_per_customer_idx (migration 0027) to turn a second
+  // account of the same type into an opaque constraint violation.
+  const already = await client.query<{ name: string }>(
+    `select t.name
+       from account a
+       join account_type t on t.id = a.account_type_id
+      where a.customer_id = $1 and a.account_type_id = any($2::uuid[])`,
+    [customerId, typeIds]
+  );
+  if ((already.rowCount ?? 0) > 0) {
+    throw new MemberCreationError(
+      `${label} already holds ${already.rows.map(r => r.name).join(', ')}.`
+    );
+  }
+
+  const accounts: CreatedMember['accounts'] = [];
+  for (const selected of application.selectedAccountTypes) {
+    const type = byId.get(selected.id)!;
+    const numbered = await client.query<{ account_no: string }>(
+      `select next_customer_account_number($1) as account_no`,
+      [type.id]
+    );
+    const accountNo = numbered.rows[0].account_no;
+
+    const account = await client.query<{ id: string }>(
+      `insert into account
+         (customer_id, account_type_id, account_no, is_membership_default,
+          status, opened_by_application_id)
+       values ($1, $2, $3, false, $4, $5)
+       returning id`,
+      [customerId, type.id, accountNo, type.default_status, application.id]
+    );
+    accounts.push({
+      id: account.rows[0].id,
+      typeCode: type.code,
+      typeName: type.name,
+      accountNo,
+    });
+  }
+
+  for (const account of accounts) {
+    await recordAudit(
+      {
+        actorUserId: actor.userId,
+        actorDescription: actor.email,
+        action: 'account.opened',
+        entityType: 'account',
+        entityId: account.id,
+        newValue: {
+          customerAccountNo: account.accountNo,
+          accountType: account.typeCode,
+          openedBecause: 'additional-account application approved (customer)',
+        },
+      },
+      client
+    );
+  }
+
+  return { id: customerId, memberNo: label, accounts };
 }
 
 /**

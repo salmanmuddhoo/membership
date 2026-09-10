@@ -530,8 +530,14 @@ export async function carryForwardMemberDocuments(
   client: PoolClient,
   input: {
     applicationId: string;
-    memberId: string;
-    foundingApplicationId: string | null;
+    // The member's own document store, if the holder is a member; null for a
+    // customer, who has no member-owned documents.
+    memberId: string | null;
+    // Every other application belonging to the holder — a member's founding
+    // application plus any earlier additional account, or a customer's
+    // originating application plus the same. The applications this new one
+    // carries files from.
+    sourceApplicationIds: string[];
     actor: Actor;
   }
 ): Promise<{ carried: number }> {
@@ -546,13 +552,11 @@ export async function carryForwardMemberDocuments(
     sharepoint_item_id: string | null;
     checksum_sha256: string | null;
   }>(
-    // One row per checklist item this application asks for that the member
+    // One row per checklist item this application asks for that the holder
     // already has a live file for, newest filing winning (distinct on +
     // committed_at desc). signed_form is excluded here, not carried and
-    // filed fresh. The source is the member's own store plus every
-    // application tied to them — the founding one (which carries their id,
-    // not existing_member_id) and any earlier additional account — but never
-    // this new application itself.
+    // filed fresh. The source is the member's own store (members only) plus
+    // every application already tied to the holder — never this new one.
     `select distinct on (ci.document_type_id, ci.subject)
             ci.document_type_id, ci.subject, d.expires_at,
             v.file_name, v.content_type, v.size_bytes,
@@ -564,12 +568,8 @@ export async function carryForwardMemberDocuments(
         and d.subject = ci.subject
         and d.id is not null
         and (
-              d.member_id = $2::uuid
-              or d.application_id in (
-                   select id from membership_application
-                    where (id = $3::uuid or existing_member_id = $2::uuid)
-                      and id <> $1::uuid
-                 )
+              ($2::uuid is not null and d.member_id = $2::uuid)
+              or d.application_id = any($3::uuid[])
             )
        join document_version v
          on v.document_id = d.id
@@ -577,7 +577,7 @@ export async function carryForwardMemberDocuments(
       where ci.application_id = $1::uuid
         and dt.code <> 'signed_form'
       order by ci.document_type_id, ci.subject, v.committed_at desc`,
-    [input.applicationId, input.memberId, input.foundingApplicationId]
+    [input.applicationId, input.memberId, input.sourceApplicationIds]
   );
 
   for (const source of sources.rows) {

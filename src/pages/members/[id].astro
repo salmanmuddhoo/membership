@@ -34,6 +34,9 @@ const canSeeDocuments = principal.permissions.has('document.view');
 // generally — configurable on its own under Configuration -> Roles
 // (migration 0031), not tied to application.capture.
 const canConvertCustomer = principal.permissions.has('member.convert');
+// Officer feedback: a customer can open a further account of their own without
+// becoming a member — the same permission that gates starting any application.
+const canCapture = principal.permissions.has('application.capture');
 // Officer feedback: a regional officer corrects a phone number or address on
 // the spot, no review or approval (migration 0045) — its own permission,
 // separate from member.details_verify, which gates a change the member sent
@@ -459,20 +462,35 @@ const pageTitle = member ? member.memberNo : name;
       </div>
 
       {
-        customer && customer.status === 'active' && canConvertCustomer && (
-          <form
-            method="post"
-            class="mt-5 border-t border-neutral-200 pt-4 dark:border-neutral-800"
-          >
-            <input type="hidden" name="intent" value="apply-for-membership" />
-            <button
-              type="submit"
-              class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
-            >
-              Apply to become a member
-            </button>
-          </form>
-        )
+        customer &&
+          customer.status === 'active' &&
+          (canConvertCustomer || canCapture) && (
+            <div class="mt-5 flex flex-wrap gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800">
+              {canConvertCustomer && (
+                <form method="post">
+                  <input
+                    type="hidden"
+                    name="intent"
+                    value="apply-for-membership"
+                  />
+                  <button
+                    type="submit"
+                    class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+                  >
+                    Apply to become a member
+                  </button>
+                </form>
+              )}
+              {canCapture && (
+                <a
+                  href={`/applications/new-account?customer=${customer.id}`}
+                  class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-200 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                >
+                  Open other account
+                </a>
+              )}
+            </div>
+          )
       }
     </section>
 

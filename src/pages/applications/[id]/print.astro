@@ -15,7 +15,6 @@ import {
   visibleFields,
   type Application,
 } from '@lib/applications/capture';
-import { loadMember } from '@lib/members/create';
 import { listMembershipTypes, type FieldSubject } from '@lib/config/reference';
 import { SIGNATURES } from '@lib/documents/documents';
 
@@ -50,21 +49,21 @@ if (
 }
 
 // The application this form's applicant/nominee values and field configuration
-// are read from. For an additional account that is the member's founding
-// application (this kind carries no parties or membership type of its own);
-// for the other two kinds it is the application itself.
+// are read from. For an additional account that is the holder's own
+// application — a member's founding membership application, or a customer's
+// originating customer_account one (this kind carries no parties or membership
+// type of its own); for the other two kinds it is the application itself.
 let formSource: Application = application;
 if (isAdditionalAccount) {
-  const member = await loadMember(application.existingMemberId);
-  const founding = member?.applicationId
-    ? await loadApplication(member.applicationId)
+  const holderApplication = application.existingHolderApplicationId
+    ? await loadApplication(application.existingHolderApplicationId)
     : null;
-  // A legacy member imported without an application (M7) has no founding
-  // application to print from — nothing this page can render for them.
-  if (!founding) {
+  // A legacy member imported without an application (M7) has none to print
+  // from — nothing this page can render for them.
+  if (!holderApplication) {
     return new Response('Not found', { status: 404 });
   }
-  formSource = founding;
+  formSource = holderApplication;
 }
 // The founding application is always a membership application; narrowed here
 // so its membership type and parties can be read below.

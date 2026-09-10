@@ -52,7 +52,7 @@ import {
   type PaymentMethod,
 } from '@lib/payments/payments';
 import { formatMoney, fromCents, sumCents } from '@lib/payments/money';
-import { openAccountsForApplication, loadMember } from '@lib/members/create';
+import { openAccountsForApplication } from '@lib/members/create';
 import {
   editableContactFields,
   PERMISSION_EDIT_CONTACT,
@@ -324,18 +324,19 @@ const isEditable = isEditableStatus(application.status);
 // be filled in without leaving this workflow. Read from the member's founding
 // application, which is where those values live; a legacy record with no
 // founding application (applicationId null) has nothing editable to show.
-async function loadMemberContactFields(memberId: string): Promise<{
+async function loadHolderContactFields(
+  recordId: string,
+  holderApplicationId: string | null
+): Promise<{
   recordId: string;
-  foundingApplicationId: string | null;
+  holderApplicationId: string | null;
   fields: EditableContactField[];
 }> {
-  const member = await loadMember(memberId);
-  const foundingApplicationId = member?.applicationId ?? null;
   return {
-    recordId: memberId,
-    foundingApplicationId,
-    fields: foundingApplicationId
-      ? await editableContactFields(foundingApplicationId)
+    recordId,
+    holderApplicationId,
+    fields: holderApplicationId
+      ? await editableContactFields(holderApplicationId)
       : [],
   };
 }
@@ -359,7 +360,10 @@ const [checklist, actions, history, stageLabel, payments, dueRead, contact] =
           })
         )
       : Promise.resolve(null),
-    loadMemberContactFields(application!.existingMemberId),
+    loadHolderContactFields(
+      application!.existingHolderId,
+      application!.existingHolderApplicationId
+    ),
   ]);
 const applicantContactFields = contact.fields.filter(
   f => f.subject === 'applicant'
@@ -480,7 +484,7 @@ const requiredDocumentsMissing = checklist.filter(
 // application (print.astro). A legacy member imported without one (M7) has no
 // form to print — they can still file a signed form obtained another way at
 // the documents step, but the print step and its links do not apply to them.
-const canSign = contact.foundingApplicationId !== null;
+const canSign = contact.holderApplicationId !== null;
 
 const timeline = applicationTimeline({
   status: application!.status,
@@ -639,7 +643,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         <h2
           class="text-lg font-semibold text-neutral-800 dark:text-neutral-100"
         >
-          Opening an account for {application.existingMemberNo}
+          Opening an account for {application.existingHolderLabel}
         </h2>
         <span
           class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"

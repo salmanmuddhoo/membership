@@ -3341,3 +3341,220 @@ describe('officer feedback: a "received" application is not everyone\'s to pick 
     expect(application.status).toBe('received');
   });
 });
+
+// Officer feedback (S-614 follow-up): a customer who already holds an account
+// can open a further one of their own — the same additional_account flow the
+// member version uses (startCustomerAdditionalAccountApplication), opening the
+// account under the customer, with its own number, never making them a member.
+describe('a customer opens a further account, end to end', () => {
+  let hsaTypeId: string;
+  let invTypeId: string;
+  let invTypeName: string;
+
+  beforeAll(async () => {
+    const hsa = await runAsActor(
+      `insert into account_type
+         (code, name, category, minimum_opening_amount, is_membership_default,
+          number_prefix)
+       values ('hsa_cust_add_test', 'Hajj Savings (cust add test)', 'savings',
+               1000.00, false, 'HSX')
+       returning id`
+    );
+    hsaTypeId = hsa.rows[0].id;
+    const inv = await runAsActor(
+      `insert into account_type
+         (code, name, category, minimum_opening_amount, is_membership_default,
+          number_prefix)
+       values ('inv_cust_add_test', 'Investment (cust add test)', 'investment',
+               1000.00, false, 'IVX')
+       returning id, name`
+    );
+    invTypeId = inv.rows[0].id;
+    invTypeName = inv.rows[0].name;
+  });
+
+  it('opens the account under the customer, with its own number, no member created', async () => {
+    const { capture, workflow, members, documents, payments } = await load();
+    const actor = { userId: officer.userId, email: officer.email };
+    const paymentClerk: Principal = {
+      ...officer,
+      permissions: new Set([...officer.permissions, 'payment.record']),
+    };
+
+    // First: the customer and their HSA, through the customer_account flow.
+    const first = await capture.startCustomerAccountApplication(
+      [hsaTypeId],
+      officer
+    );
+    await capture.saveDraft(first.id, COMPLETE_INDIVIDUAL, actor);
+    await fileRequiredDocuments(documents, first.id);
+    await verifyRequiredDocuments(documents, first.id);
+    await payments.recordAccountOpeningPayment(
+      {
+        applicationId: first.id,
+        method: 'cash',
+        amounts: { [hsaTypeId]: '1000.00' },
+      },
+      paymentClerk
+    );
+    await workflow.submitApplication(first.id, officer);
+    await workflow.reviewApplication(
+      first.id,
+      { outcome: 'forward', comment: 'ok' },
+      secretary
+    );
+    const firstDecided = await workflow.decideApplication(
+      first.id,
+      { outcome: 'approve', comment: '' },
+      president,
+      members.openAccountsForCustomerApplication
+    );
+    const customerId = firstDecided.member!.id;
+
+    const membersBefore = await run(
+      appUrl,
+      'select count(*)::int as n from member'
+    );
+
+    // Now: the customer opens a further account of their own.
+    const second = await capture.startCustomerAdditionalAccountApplication(
+      customerId,
+      [invTypeId],
+      actor
+    );
+
+    const loaded = await capture.loadApplication(second.id);
+    if (!loaded || loaded.applicationKind !== 'additional_account') {
+      throw new Error('expected an additional_account application');
+    }
+    expect(loaded.existingCustomerId).toBe(customerId);
+    expect(loaded.existingMemberId).toBeNull();
+    expect(loaded.existingHolderId).toBe(customerId);
+    expect(loaded.existingHolderApplicationId).toBe(first.id);
+
+    await fileRequiredDocuments(documents, second.id);
+    await verifyRequiredDocuments(documents, second.id);
+    await payments.recordAccountOpeningPayment(
+      {
+        applicationId: second.id,
+        method: 'cash',
+        amounts: { [invTypeId]: '1000.00' },
+      },
+      paymentClerk
+    );
+    await workflow.submitApplication(second.id, officer);
+    await workflow.reviewApplication(
+      second.id,
+      { outcome: 'forward', comment: 'ok' },
+      secretary
+    );
+    const decided = await workflow.decideApplication(
+      second.id,
+      { outcome: 'approve', comment: '' },
+      president,
+      members.openAccountsForApplication
+    );
+
+    expect(decided.status).toBe('approved');
+    // Opened under the SAME customer — not a member, not a new customer.
+    expect(decided.member!.id).toBe(customerId);
+    expect(decided.member!.accounts).toEqual([
+      expect.objectContaining({
+        typeName: invTypeName,
+        accountNo: expect.stringMatching(/^IVX\d{4}$/),
+      }),
+    ]);
+
+    const account = await run(
+      appUrl,
+      `select member_id, customer_id, account_no
+         from account where id = $1`,
+      [decided.member!.accounts[0].id]
+    );
+    expect(account.rows[0].member_id).toBeNull();
+    expect(account.rows[0].customer_id).toBe(customerId);
+
+    // No member was created anywhere in this — the customer stays a non-member.
+    const membersAfter = await run(
+      appUrl,
+      'select count(*)::int as n from member'
+    );
+    expect(membersAfter.rows[0].n).toBe(membersBefore.rows[0].n);
+    const stillCustomer = await run(
+      appUrl,
+      `select status from customer where id = $1`,
+      [customerId]
+    );
+    expect(stillCustomer.rows[0].status).toBe('active');
+  });
+
+  it('refuses a second account of a type the customer already holds', async () => {
+    const { capture, workflow, members, documents, payments } = await load();
+    const actor = { userId: officer.userId, email: officer.email };
+    const paymentClerk: Principal = {
+      ...officer,
+      permissions: new Set([...officer.permissions, 'payment.record']),
+    };
+
+    const first = await capture.startCustomerAccountApplication(
+      [hsaTypeId],
+      officer
+    );
+    await capture.saveDraft(first.id, COMPLETE_INDIVIDUAL, actor);
+    await fileRequiredDocuments(documents, first.id);
+    await verifyRequiredDocuments(documents, first.id);
+    await payments.recordAccountOpeningPayment(
+      {
+        applicationId: first.id,
+        method: 'cash',
+        amounts: { [hsaTypeId]: '1000.00' },
+      },
+      paymentClerk
+    );
+    await workflow.submitApplication(first.id, officer);
+    await workflow.reviewApplication(
+      first.id,
+      { outcome: 'forward', comment: 'ok' },
+      secretary
+    );
+    const firstDecided = await workflow.decideApplication(
+      first.id,
+      { outcome: 'approve', comment: '' },
+      president,
+      members.openAccountsForCustomerApplication
+    );
+    const customerId = firstDecided.member!.id;
+
+    // A second application for the HSA they already hold, taken to approval.
+    const second = await capture.startCustomerAdditionalAccountApplication(
+      customerId,
+      [hsaTypeId],
+      actor
+    );
+    await fileRequiredDocuments(documents, second.id);
+    await verifyRequiredDocuments(documents, second.id);
+    await payments.recordAccountOpeningPayment(
+      {
+        applicationId: second.id,
+        method: 'cash',
+        amounts: { [hsaTypeId]: '1000.00' },
+      },
+      paymentClerk
+    );
+    await workflow.submitApplication(second.id, officer);
+    await workflow.reviewApplication(
+      second.id,
+      { outcome: 'forward', comment: 'ok' },
+      secretary
+    );
+
+    await expect(
+      workflow.decideApplication(
+        second.id,
+        { outcome: 'approve', comment: '' },
+        president,
+        members.openAccountsForApplication
+      )
+    ).rejects.toThrowError(/already holds/);
+  });
+});
