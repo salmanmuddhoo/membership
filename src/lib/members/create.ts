@@ -847,6 +847,10 @@ export interface MemberAccount {
 
 export interface MemberDetail extends MemberSummary {
   accounts: MemberAccount[];
+  // The membership type's own code (individual, corporate, minor) — the
+  // detail page tags a minor from this, where the name alone would not
+  // survive an administrator renaming the type.
+  membershipTypeCode: string;
   applicantValues: Record<string, string>;
   // Null for a legacy record imported in M7, which has no application here.
   applicationId: string | null;
@@ -886,6 +890,8 @@ export async function listMembers(
     accounts: MemberListAccount[];
     total_funds: string;
     total_count: string;
+    member_count: string;
+    non_member_count: string;
   }>(
     `with rows as (
        select m.id, 'member'::text as kind, m.member_no as identifier,
@@ -1014,7 +1020,13 @@ export async function listMembers(
      )
      select id, kind, identifier, type_label, status, name, joined_at,
             application_reference, accounts, total_funds::numeric(14,2)::text as total_funds,
-            count(*) over () as total_count
+            count(*) over () as total_count,
+            -- Officer feedback: the header splits the total into members
+            -- (Shares/MSA holders) and non-members (only an additional
+            -- account). Counted here, after the search filter, so the two
+            -- always add up to the same total the list is showing.
+            count(*) filter (where kind = 'member') over () as member_count,
+            count(*) filter (where kind = 'customer') over () as non_member_count
        from rows
       where $1::text is null
          or strpos(lower(identifier), lower($1::text)) > 0
@@ -1025,6 +1037,10 @@ export async function listMembers(
   );
 
   const total = result.rows.length > 0 ? Number(result.rows[0].total_count) : 0;
+  const memberCount =
+    result.rows.length > 0 ? Number(result.rows[0].member_count) : 0;
+  const nonMemberCount =
+    result.rows.length > 0 ? Number(result.rows[0].non_member_count) : 0;
 
   return {
     members: result.rows.map(r => ({
@@ -1040,6 +1056,8 @@ export async function listMembers(
       totalFunds: r.total_funds,
     })),
     total,
+    memberCount,
+    nonMemberCount,
     truncated: result.rows.length < total,
   };
 }
@@ -1050,6 +1068,7 @@ export async function loadMember(id: string): Promise<MemberDetail | null> {
     id: string;
     member_no: string;
     membership_type_name: string;
+    membership_type_code: string;
     status: string;
     name: string;
     joined_at: Date;
@@ -1058,7 +1077,8 @@ export async function loadMember(id: string): Promise<MemberDetail | null> {
     applicant_values: Record<string, string> | null;
     captured_by_name: string | null;
   }>(
-    `select m.id, m.member_no, t.name as membership_type_name, m.status,
+    `select m.id, m.member_no, t.name as membership_type_name,
+            t.code as membership_type_code, m.status,
             ${NAME_SQL} as name, m.joined_at,
             a.reference as application_reference,
             m.application_id,
@@ -1105,6 +1125,7 @@ export async function loadMember(id: string): Promise<MemberDetail | null> {
     kind: 'member',
     memberNo: row.member_no,
     membershipTypeName: row.membership_type_name,
+    membershipTypeCode: row.membership_type_code,
     status: row.status,
     name: row.name || '(unnamed)',
     joinedAt: row.joined_at,
@@ -1134,6 +1155,7 @@ export interface CustomerAccount {
   // Unlike a member's, a customer's own — each carries its own number
   // (migration 0027), since there is no shared number to lean on.
   accountNo: string;
+  accountTypeId: string;
   accountTypeName: string;
   category: string;
   status: string;
@@ -1151,6 +1173,10 @@ export interface CustomerDetail {
   joinedAt: Date;
   applicationReference: string | null;
   applicationId: string;
+  // The type the originating customer_account application was captured
+  // against (individual, corporate, minor) — a non-member can be a minor
+  // too (S-614), and the detail page tags one from this.
+  membershipTypeCode: string;
   applicantValues: Record<string, string>;
   accounts: CustomerAccount[];
 }
@@ -1169,13 +1195,16 @@ export async function loadCustomer(id: string): Promise<CustomerDetail | null> {
     joined_at: Date;
     application_reference: string;
     application_id: string;
+    membership_type_code: string;
     applicant_values: Record<string, string> | null;
   }>(
     `select c.id, c.status, ${NAME_SQL} as name, c.joined_at,
             capp.reference as application_reference, c.application_id,
+            mt.code as membership_type_code,
             p.values as applicant_values
        from customer c
        join membership_application capp on capp.id = c.application_id
+       join membership_type mt on mt.id = capp.membership_type_id
        left join application_party p
          on p.application_id = c.application_id
         and p.subject = 'applicant' and p.ordinal = 1
@@ -1188,13 +1217,15 @@ export async function loadCustomer(id: string): Promise<CustomerDetail | null> {
   const accounts = await query<{
     id: string;
     account_no: string;
+    account_type_id: string;
     account_type_name: string;
     category: string;
     status: string;
     opened_at: Date;
     opened_via_migration: boolean;
   }>(
-    `select a.id, a.account_no, t.name as account_type_name, t.category,
+    `select a.id, a.account_no, a.account_type_id,
+            t.name as account_type_name, t.category,
             a.status, a.opened_at, a.opened_via_migration
        from account a
        join account_type t on t.id = a.account_type_id
@@ -1211,10 +1242,12 @@ export async function loadCustomer(id: string): Promise<CustomerDetail | null> {
     joinedAt: row.joined_at,
     applicationReference: row.application_reference,
     applicationId: row.application_id,
+    membershipTypeCode: row.membership_type_code,
     applicantValues: row.applicant_values ?? {},
     accounts: accounts.rows.map(a => ({
       id: a.id,
       accountNo: a.account_no,
+      accountTypeId: a.account_type_id,
       accountTypeName: a.account_type_name,
       category: a.category,
       status: a.status,

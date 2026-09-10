@@ -2934,6 +2934,10 @@ describe('S-614: a customer_account application, end to end', () => {
         totalFunds: '1000.00',
       }),
     ]);
+    // The Members page header splits its count the same way — the only row
+    // matching this name is the non-member just created.
+    expect(byName.memberCount).toBe(0);
+    expect(byName.nonMemberCount).toBe(1);
 
     const byAccountNo = await members.listMembers({ search: accountNo });
     expect(byAccountNo.members.map(m => m.id)).toEqual([decided.member!.id]);
@@ -2941,8 +2945,13 @@ describe('S-614: a customer_account application, end to end', () => {
     const loaded = await members.loadCustomer(decided.member!.id);
     expect(loaded!.kind).toBe('customer');
     expect(loaded!.applicationReference).toBe(application.reference);
+    // Captured as an Individual — the detail page reads the type's code to
+    // decide whether to tag them a Minor (it does not here).
+    expect(loaded!.membershipTypeCode).toBe('individual');
     expect(loaded!.accounts).toEqual([
-      expect.objectContaining({ accountNo, accountTypeName }),
+      // accountTypeId drives the "Open other account" page dropping a type
+      // the customer already holds.
+      expect.objectContaining({ accountNo, accountTypeName, accountTypeId }),
     ]);
 
     // A member's own id is not found through loadCustomer, the same way a
