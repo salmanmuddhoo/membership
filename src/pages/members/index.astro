@@ -133,8 +133,7 @@ function accountButtonClasses(account: MemberListAccount): string {
                 // Shares/MSA) and non-members (only an additional account).
                 const breakdown =
                   `${memberCount} member${memberCount === 1 ? '' : 's'}, ` +
-                  `${nonMemberCount} non-member${nonMemberCount === 1 ? '' : 's'} ` +
-                  `(don’t hold Shares/MSA)`;
+                  `${nonMemberCount} non-member${nonMemberCount === 1 ? '' : 's'}`;
                 return truncated
                   ? `Showing the first ${members.length} of ${total} — ${breakdown}. Search to narrow the list.`
                   : `${breakdown}.`;

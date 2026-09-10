@@ -1672,3 +1672,91 @@ describe('the cash source-of-fund threshold (a system setting, not reference dat
     await pool.closePool();
   });
 });
+
+// The "Open other account" button on a member/non-member detail page, and
+// the account page's own checkboxes, are both driven by openableAccountTypes
+// — a pure filter, tested here without a database.
+describe('openableAccountTypes', () => {
+  const base = {
+    code: '',
+    category: 'savings',
+    minimumOpeningAmount: '0',
+    checklistId: null,
+    checklistName: null,
+    requiresApproval: false,
+    defaultStatus: 'active',
+    isActive: true,
+    sortOrder: 0,
+    numberPrefix: null,
+  };
+  const shares = {
+    ...base,
+    id: 'shares',
+    name: 'Shares',
+    isMembershipDefault: true,
+    eligibleMembershipTypeIds: [],
+  };
+  const hsa = {
+    ...base,
+    id: 'hsa',
+    name: 'Hajj Savings',
+    isMembershipDefault: false,
+    eligibleMembershipTypeIds: [],
+  };
+  const inv = {
+    ...base,
+    id: 'inv',
+    name: 'Investment',
+    isMembershipDefault: false,
+    eligibleMembershipTypeIds: [],
+  };
+  // Investment restricted to Corporate only (migration 0040 eligibility).
+  const corpOnly = {
+    ...base,
+    id: 'corp-only',
+    name: 'Corporate Investment',
+    isMembershipDefault: false,
+    eligibleMembershipTypeIds: ['corporate'],
+  };
+  const inactive = {
+    ...base,
+    id: 'inactive',
+    name: 'Retired type',
+    isMembershipDefault: false,
+    isActive: false,
+    eligibleMembershipTypeIds: [],
+  };
+
+  it('offers active, non-default, eligible types the holder does not hold', async () => {
+    const { config } = await load();
+    const openable = config.openableAccountTypes(
+      [shares, hsa, inv, corpOnly, inactive],
+      'individual',
+      new Set(['hsa'])
+    );
+    // Shares (a membership default), HSA (already held), the Corporate-only
+    // type (not eligible for an Individual) and the inactive type all drop —
+    // leaving Investment.
+    expect(openable.map(t => t.id)).toEqual(['inv']);
+  });
+
+  it('is empty once every openable type is already held', async () => {
+    const { config } = await load();
+    const openable = config.openableAccountTypes(
+      [shares, hsa, inv],
+      'individual',
+      new Set(['hsa', 'inv'])
+    );
+    expect(openable).toEqual([]);
+  });
+
+  it('honours a type restricted to the holder’s own membership type', async () => {
+    const { config } = await load();
+    const openable = config.openableAccountTypes(
+      [corpOnly],
+      'corporate',
+      new Set()
+    );
+    expect(openable.map(t => t.id)).toEqual(['corp-only']);
+  });
+});
