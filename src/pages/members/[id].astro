@@ -258,6 +258,10 @@ const otherPartyGroups = otherParties.map(p => ({
 }));
 
 const name = (member ?? customer)!.name;
+// Officer feedback: a minor — member or non-member alike — carries a tag so
+// they are recognised at a glance. Read from the membership type's own code,
+// which an administrator renaming the type would not change.
+const isMinor = (member ?? customer)!.membershipTypeCode === 'minor';
 const status = (member ?? customer)!.status;
 const joinedAt = (member ?? customer)!.joinedAt;
 const applicationReference = (member ?? customer)!.applicationReference;
@@ -313,6 +317,13 @@ const pageTitle = member ? member.memberNo : name;
             >
               {status}
             </span>
+            {
+              isMinor && (
+                <span class="rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+                  Minor
+                </span>
+              )
+            }
           </div>
           {
             canEditContact && applicantContactFields.length > 0 && (

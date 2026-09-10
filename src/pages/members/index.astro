@@ -22,10 +22,10 @@ const search = Astro.url.searchParams.get('q') ?? '';
 // type, in the same sort_order/name order listMembers' own query returns
 // them in, gets that alignment from the browser's own table layout, no
 // per-row logic needed.
-const [{ members, total, truncated }, accountTypeColumns] = await Promise.all([
-  listMembers({ search }),
-  listAccountTypes(),
-]);
+const [
+  { members, total, memberCount, nonMemberCount, truncated },
+  accountTypeColumns,
+] = await Promise.all([listMembers({ search }), listAccountTypes()]);
 const activeAccountTypeColumns = accountTypeColumns.filter(t => t.isActive);
 
 const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium' });
@@ -128,9 +128,17 @@ function accountButtonClasses(account: MemberListAccount): string {
             ? search
               ? `No members match “${search}”.`
               : 'No members yet. One is created when an application is approved.'
-            : truncated
-              ? `Showing the first ${members.length} of ${total} members — search to narrow the list.`
-              : `${total} member${total === 1 ? '' : 's'}.`
+            : (() => {
+                // Officer feedback: split the count into members (they hold
+                // Shares/MSA) and non-members (only an additional account).
+                const breakdown =
+                  `${memberCount} member${memberCount === 1 ? '' : 's'}, ` +
+                  `${nonMemberCount} non-member${nonMemberCount === 1 ? '' : 's'} ` +
+                  `(don’t hold Shares/MSA)`;
+                return truncated
+                  ? `Showing the first ${members.length} of ${total} — ${breakdown}. Search to narrow the list.`
+                  : `${breakdown}.`;
+              })()
         }
       </p>
 

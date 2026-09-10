@@ -41,8 +41,17 @@ if (customerParam && !customerHolder) {
 // Any active, non-membership-default account type is a valid selection
 // (S-612) — nothing here names HSA or Investment specifically. Shares and
 // the MSA open only on a membership's own approval and never appear here.
+//
+// Officer feedback: for a customer opening a further account, drop the
+// type(s) they already hold — a customer holds at most one of each
+// (account_one_per_type_per_customer_idx), so offering one they already
+// have could only ever be refused on approval. Nothing to drop for the
+// member/non-member search modes, where the holder is not yet known here.
+const alreadyHeldTypeIds = new Set(
+  customerHolder?.accounts.map(a => a.accountTypeId) ?? []
+);
 const accountTypes = (await listAccountTypes()).filter(
-  t => t.isActive && !t.isMembershipDefault
+  t => t.isActive && !t.isMembershipDefault && !alreadyHeldTypeIds.has(t.id)
 );
 
 let error: string | null = null;
@@ -174,8 +183,9 @@ if (Astro.request.method === 'POST') {
     {
       accountTypes.length === 0 ? (
         <p class="text-sm text-neutral-500 dark:text-neutral-400">
-          No account type is configured for this yet. Add one under
-          Configuration → Account types.
+          {customerHolder
+            ? `${customerHolder.name} already holds every account type available to open.`
+            : 'No account type is configured for this yet. Add one under Configuration → Account types.'}
         </p>
       ) : (
         <form
