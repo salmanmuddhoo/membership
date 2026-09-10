@@ -69,9 +69,13 @@ if (Astro.request.method === 'POST') {
         [...selected],
         { userId: principal.userId, email: principal.email }
       );
-      return Astro.redirect(
-        `/applications?created=${encodeURIComponent(created.reference)}`
-      );
+      // Officer feedback: land straight on the new application's own
+      // workflow page, not back on the Applications list — the same as the
+      // non-member path below goes to its own page. An additional-account
+      // application for an existing member has no applicant to capture (the
+      // member already exists), so this opens on the first step it does
+      // have, documents, rather than an applicant-details step.
+      return Astro.redirect(`/applications/${created.id}/account`);
     } catch (err) {
       if (err instanceof ApplicationError) {
         error = err.message;
