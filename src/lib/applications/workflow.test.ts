@@ -1003,6 +1003,78 @@ describe('S-305 and S-306: a return or a rejection must say why', () => {
   });
 });
 
+describe('officer feedback: a rejected application can be reopened and resubmitted', () => {
+  it('goes back to returned, keeps the payment, and resubmits without re-paying', async () => {
+    const { capture, workflow, members, payments } = await load();
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+    await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Complete.' },
+      secretary
+    );
+    const decided = await workflow.decideApplication(
+      id,
+      { outcome: 'reject', comment: 'Shares not paid.' },
+      president,
+      members.createMemberFromApplication
+    );
+    expect(decided.status).toBe('rejected');
+
+    // The payment taken before the rejection is still live.
+    const before = await payments.paymentsForApplication(id);
+    expect(before.some(p => p.kind === 'payment' && !p.voidedAt)).toBe(true);
+
+    const reopened = await workflow.reopenRejectedApplication(id, officer);
+    expect(reopened.status).toBe('returned');
+
+    const app = await capture.loadApplication(id);
+    expect(app!.status).toBe('returned');
+    expect(app!.decidedAt).toBeNull();
+    expect(capture.isEditableStatus(app!.status)).toBe(true);
+
+    // Resubmitting needs no new payment — the original still stands, so
+    // submission is not blocked on it and no second receipt is taken.
+    const resubmitted = await workflow.submitApplication(id, officer);
+    expect(resubmitted).toEqual({ status: 'new' });
+
+    const after = await payments.paymentsForApplication(id);
+    expect(after.filter(p => p.kind === 'payment' && !p.voidedAt)).toHaveLength(
+      1
+    );
+  });
+
+  it('refuses to reopen anything but a rejected application', async () => {
+    const { workflow } = await load();
+    const id = await captureComplete();
+    await expect(
+      workflow.reopenRejectedApplication(id, officer)
+    ).rejects.toThrowError(/Only a rejected application/);
+  });
+
+  it('refuses an officer without the capture permission', async () => {
+    const { workflow, members } = await load();
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+    await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Complete.' },
+      secretary
+    );
+    await workflow.decideApplication(
+      id,
+      { outcome: 'reject', comment: 'No.' },
+      president,
+      members.createMemberFromApplication
+    );
+
+    const noCapture = { ...officer, permissions: new Set<string>() };
+    await expect(
+      workflow.reopenRejectedApplication(id, noCapture)
+    ).rejects.toThrowError(/permission/);
+  });
+});
+
 describe('S-608: nothing incomplete reaches the Board', () => {
   it('refuses to forward while a required document is filed but not Verified', async () => {
     const { capture, workflow, documents, payments } = await load();

@@ -25,6 +25,7 @@ import {
   boardReadiness,
   boardReadinessReasons,
   decideApplication,
+  reopenRejectedApplication,
   reviewApplication,
   reviewStageLabel,
   signoffsFor,
@@ -296,6 +297,21 @@ if (Astro.request.method === 'POST') {
       } else {
         console.error('[documents/review]', err);
         error = 'The document could not be reviewed. Please try again.';
+      }
+    }
+  } else if (intent === 'reopen') {
+    try {
+      await reopenRejectedApplication(application.id, principal);
+      notice =
+        'Reopened for correction. Fix what the rejection noted and submit ' +
+        'again — the payment already recorded still stands.';
+      application = await loadMembershipApplication(application.id);
+    } catch (err) {
+      if (err instanceof ApplicationError || err instanceof Error) {
+        error = err.message;
+      }
+      if (!(err instanceof ApplicationError)) {
+        console.error('[applications/reopen]', err);
       }
     }
   } else if (
@@ -856,6 +872,26 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               need{blocking.length === 1 ? 's' : ''} attention.
             </p>
           </div>
+        )
+      }
+
+      {
+        application!.status === 'rejected' && canCapture && (
+          <form method="post" class="mt-4">
+            <p class="mb-3 text-sm text-neutral-600 dark:text-neutral-300">
+              This application was rejected. Reopen it to correct what the
+              decision noted and submit again — the payment already recorded
+              still stands, so there is nothing to take again.
+            </p>
+            <button
+              type="submit"
+              name="intent"
+              value="reopen"
+              class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
+            >
+              Reopen for correction
+            </button>
+          </form>
         )
       }
     </section>

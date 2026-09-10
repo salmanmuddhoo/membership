@@ -30,6 +30,7 @@ import { paymentsForApplication, type Payment } from '../payments/payments';
 import type { Principal } from '../access/principal';
 import {
   ApplicationError,
+  isEditableStatus,
   loadApplication,
   problemsBlockingSubmission,
   type Actor,
@@ -55,6 +56,11 @@ export const ACTION_REGIONAL_REVIEWED =
   'membership.application.regional_reviewed';
 export const ACTION_REVIEWED = 'membership.application.reviewed';
 export const ACTION_APPROVED = 'membership.application.approved';
+// Officer feedback: a rejected application is not a dead end — the officer can
+// reopen it, correct what the rejection named, and send it back through the
+// chain. Audited under its own action so the reopen is traceable and distinct
+// from the original capture.
+export const ACTION_REOPENED = 'membership.application.reopened';
 
 export interface Transition {
   fromStatus: string | null;
@@ -194,12 +200,17 @@ async function assertMayAct(
     );
   }
 
-  // 'received' — submitted from the member app, with the branch (migration
-  // 0039) — is a draft as far as the capture step is concerned: the officer
-  // completes the signed form and payment and submits it exactly as one.
-  const actsOnReceived =
-    step.code === 'capture' && application.status === RECEIVED_STATUS;
-  if (application.status !== step.fromStatus && !actsOnReceived) {
+  // The capture step's own from_status is 'draft', but a 'returned'
+  // application (sent back for correction) and a 'received' one (submitted
+  // from the member app, migration 0039) are both back in the officer's hands
+  // to complete and submit exactly as a draft is — they check the documents,
+  // sign, take the payment and submit into the chain. So the capture step acts
+  // on any editable status, not draft alone; without this a returned
+  // application, the whole point of which is to be corrected and sent again,
+  // had no way back into the chain.
+  const actsAsCapture =
+    step.code === 'capture' && isEditableStatus(application.status);
+  if (application.status !== step.fromStatus && !actsAsCapture) {
     throw new ApplicationError(
       `This application is ${application.status}; that step acts on ` +
         `${step.fromStatus}.`,
@@ -213,7 +224,8 @@ async function assertMayAct(
   // exactly the way one acting on someone else's step is, not silently
   // hidden and then allowed through by direct URL.
   if (
-    actsOnReceived &&
+    step.code === 'capture' &&
+    application.status === RECEIVED_STATUS &&
     !principal.permissions.has('application.submit_online')
   ) {
     throw new ApplicationError(
@@ -802,6 +814,84 @@ export async function decideApplication(
   });
 }
 
+/**
+ * Reopen a rejected application so it can be corrected and resubmitted.
+ *
+ * A President rejection used to be terminal. Officer feedback: a rejection
+ * often names something fixable — a wrong figure, a missing page — and
+ * starting a whole new application loses the documents and the payment already
+ * taken. So an officer may reopen it instead: the status goes back to
+ * `returned`, exactly where the Secretary's own "return for correction" lands
+ * it, so everything that already works for a returned application (editing,
+ * the signed form and documents, resubmission) applies unchanged. `decided_at`
+ * is cleared because the application is no longer decided.
+ *
+ * Nothing about the money changes here: the payment already recorded is not
+ * voided, so submissionReadiness still sees it and the officer is never asked
+ * to take it again.
+ *
+ * Gated on `application.capture` — the officer's own permission, the same one
+ * that lets them start, edit and resubmit an application (not a reviewer's).
+ */
+export async function reopenRejectedApplication(
+  applicationId: string,
+  principal: Principal
+): Promise<{ status: string }> {
+  if (!principal.permissions.has('application.capture')) {
+    throw new ApplicationError(
+      'You do not have permission to reopen applications.',
+      'forbidden'
+    );
+  }
+
+  const application = await loadApplication(applicationId);
+  if (!application) {
+    throw new ApplicationError(
+      'That application no longer exists.',
+      'not_found'
+    );
+  }
+  if (application.status !== 'rejected') {
+    throw new ApplicationError(
+      'Only a rejected application can be reopened.',
+      'locked'
+    );
+  }
+
+  const actor: Actor = { userId: principal.userId, email: principal.email };
+  await withTransaction(async client => {
+    await client.query(
+      `update membership_application
+          set status = 'returned', decided_at = null
+        where id = $1`,
+      [application.id]
+    );
+    await recordTransition(
+      client,
+      application,
+      null,
+      'returned',
+      actor,
+      null,
+      null
+    );
+    await recordAudit(
+      {
+        actorUserId: actor.userId,
+        actorDescription: actor.email,
+        action: ACTION_REOPENED,
+        entityType: ENTITY_TYPE,
+        entityId: application.id,
+        previousValue: { status: 'rejected' },
+        newValue: { status: 'returned' },
+      },
+      client
+    );
+  });
+
+  return { status: 'returned' };
+}
+
 export interface StepSignoff {
   actorName: string;
   actorEmail: string;
@@ -930,21 +1020,22 @@ export async function availableActions(
   for (const step of chain) {
     const meta = STEP_META[step.code];
     if (!meta) continue;
-    // 'received' (submitted from the mobile app) is a draft as far as the
-    // capture step is concerned — assertMayAct's own actsOnReceived, mirrored
-    // here. Missing this left 'received' with nowhere to click Submit: the
-    // capture step's configured fromStatus is 'draft', never 'received', so
-    // an officer who opened one found every other control but this button.
-    const actsOnReceived =
-      step.code === 'capture' && application.status === RECEIVED_STATUS;
-    if (step.fromStatus !== application.status && !actsOnReceived) continue;
+    // The capture step acts on any editable status, not its configured
+    // fromStatus ('draft') alone — assertMayAct's own actsAsCapture, mirrored
+    // here. A 'returned' application (to correct and send again) and a
+    // 'received' one (from the mobile app) are both back in the officer's
+    // hands to submit; missing this left each with nowhere to click Submit.
+    const actsAsCapture =
+      step.code === 'capture' && isEditableStatus(application.status);
+    if (step.fromStatus !== application.status && !actsAsCapture) continue;
     if (!principal.permissions.has(meta.permission)) continue;
     // Officer feedback: 'received' is handled by specific staff, not every
     // officer who can submit (application.submit_online, migration 0044) —
     // the button offers itself only to someone the submit itself would let
-    // through.
+    // through. This narrower gate stays 'received'-only.
     if (
-      actsOnReceived &&
+      step.code === 'capture' &&
+      application.status === RECEIVED_STATUS &&
       !principal.permissions.has('application.submit_online')
     ) {
       continue;
