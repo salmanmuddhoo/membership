@@ -25,6 +25,7 @@ import {
   PERMISSION_EDIT_CONTACT,
   type EditableContactField,
 } from '@lib/members/contact';
+import { listAccountTypes, openableAccountTypes } from '@lib/config/reference';
 
 const principal = Astro.locals.principal!;
 const canSeePayments = principal.permissions.has('payment.view');
@@ -263,6 +264,23 @@ const name = (member ?? customer)!.name;
 // which an administrator renaming the type would not change.
 const isMinor = (member ?? customer)!.membershipTypeCode === 'minor';
 const status = (member ?? customer)!.status;
+
+// Officer feedback: a member opens a further account from their own page now
+// (not by searching for themselves on the Applications page). The button —
+// for a member or a non-member customer alike — appears only when there is
+// a type they can still open: active, eligible for their type, and not one
+// they already hold. Once they hold every openable type, there is nothing to
+// offer and the button is gone. Gated on application.capture, like starting
+// any application. Skipped entirely for a converted/inactive record.
+const person = (member ?? customer)!;
+const canOpenAnotherAccount =
+  canCapture &&
+  person.status === 'active' &&
+  openableAccountTypes(
+    await listAccountTypes(),
+    person.membershipTypeId,
+    new Set(person.accounts.map(a => a.accountTypeId))
+  ).length > 0;
 const joinedAt = (member ?? customer)!.joinedAt;
 const applicationReference = (member ?? customer)!.applicationReference;
 const pageTitle = member ? member.memberNo : name;
@@ -473,35 +491,41 @@ const pageTitle = member ? member.memberNo : name;
       </div>
 
       {
-        customer &&
-          customer.status === 'active' &&
-          (canConvertCustomer || canCapture) && (
-            <div class="mt-5 flex flex-wrap gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800">
-              {canConvertCustomer && (
-                <form method="post">
-                  <input
-                    type="hidden"
-                    name="intent"
-                    value="apply-for-membership"
-                  />
-                  <button
-                    type="submit"
-                    class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
-                  >
-                    Apply to become a member
-                  </button>
-                </form>
-              )}
-              {canCapture && (
-                <a
-                  href={`/applications/new-account?customer=${customer.id}`}
-                  class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-200 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+        // "Apply to become a member" is a customer-only action; "Open other
+        // account" is offered to a member and a non-member alike, whenever
+        // there is still a type they can open (canOpenAnotherAccount).
+        ((customer && customer.status === 'active' && canConvertCustomer) ||
+          canOpenAnotherAccount) && (
+          <div class="mt-5 flex flex-wrap gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800">
+            {customer && customer.status === 'active' && canConvertCustomer && (
+              <form method="post">
+                <input
+                  type="hidden"
+                  name="intent"
+                  value="apply-for-membership"
+                />
+                <button
+                  type="submit"
+                  class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
                 >
-                  Open other account
-                </a>
-              )}
-            </div>
-          )
+                  Apply to become a member
+                </button>
+              </form>
+            )}
+            {canOpenAnotherAccount && (
+              <a
+                href={
+                  member
+                    ? `/applications/new-account?member=${member.id}`
+                    : `/applications/new-account?customer=${customer!.id}`
+                }
+                class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-200 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+              >
+                Open other account
+              </a>
+            )}
+          </div>
+        )
       }
     </section>
 

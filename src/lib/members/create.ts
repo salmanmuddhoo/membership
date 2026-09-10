@@ -833,6 +833,7 @@ export interface MemberAccount {
   // The member's number. Both of a member's accounts carry it, which is why it
   // is read from the member rather than stored on the account.
   accountNo: string;
+  accountTypeId: string;
   accountTypeName: string;
   category: string;
   status: string;
@@ -851,6 +852,10 @@ export interface MemberDetail extends MemberSummary {
   // detail page tags a minor from this, where the name alone would not
   // survive an administrator renaming the type.
   membershipTypeCode: string;
+  // The membership type's id — the detail page uses it to work out which
+  // further account types this member may still open (account-type
+  // eligibility, migration 0040).
+  membershipTypeId: string;
   applicantValues: Record<string, string>;
   // Null for a legacy record imported in M7, which has no application here.
   applicationId: string | null;
@@ -1069,6 +1074,7 @@ export async function loadMember(id: string): Promise<MemberDetail | null> {
     member_no: string;
     membership_type_name: string;
     membership_type_code: string;
+    membership_type_id: string;
     status: string;
     name: string;
     joined_at: Date;
@@ -1078,7 +1084,7 @@ export async function loadMember(id: string): Promise<MemberDetail | null> {
     captured_by_name: string | null;
   }>(
     `select m.id, m.member_no, t.name as membership_type_name,
-            t.code as membership_type_code, m.status,
+            t.code as membership_type_code, m.membership_type_id, m.status,
             ${NAME_SQL} as name, m.joined_at,
             a.reference as application_reference,
             m.application_id,
@@ -1100,6 +1106,7 @@ export async function loadMember(id: string): Promise<MemberDetail | null> {
   const accounts = await query<{
     id: string;
     account_no: string | null;
+    account_type_id: string;
     account_type_name: string;
     category: string;
     status: string;
@@ -1107,7 +1114,8 @@ export async function loadMember(id: string): Promise<MemberDetail | null> {
     opened_at: Date;
     opened_via_migration: boolean;
   }>(
-    `select a.id, a.account_no, t.name as account_type_name, t.category,
+    `select a.id, a.account_no, a.account_type_id,
+            t.name as account_type_name, t.category,
             a.status, a.is_membership_default, a.opened_at,
             a.opened_via_migration
        from account a
@@ -1126,6 +1134,7 @@ export async function loadMember(id: string): Promise<MemberDetail | null> {
     memberNo: row.member_no,
     membershipTypeName: row.membership_type_name,
     membershipTypeCode: row.membership_type_code,
+    membershipTypeId: row.membership_type_id,
     status: row.status,
     name: row.name || '(unnamed)',
     joinedAt: row.joined_at,
@@ -1140,6 +1149,7 @@ export async function loadMember(id: string): Promise<MemberDetail | null> {
       // customer this member used to be (S-614) keeps its own HSA0001-style
       // number (account_owner_shape, migration 0038).
       accountNo: a.account_no ?? row.member_no,
+      accountTypeId: a.account_type_id,
       accountTypeName: a.account_type_name,
       category: a.category,
       status: a.status,
@@ -1177,6 +1187,9 @@ export interface CustomerDetail {
   // against (individual, corporate, minor) — a non-member can be a minor
   // too (S-614), and the detail page tags one from this.
   membershipTypeCode: string;
+  // That type's id — used the same way a member's is, to work out which
+  // further account types this non-member may still open.
+  membershipTypeId: string;
   applicantValues: Record<string, string>;
   accounts: CustomerAccount[];
 }
@@ -1196,11 +1209,12 @@ export async function loadCustomer(id: string): Promise<CustomerDetail | null> {
     application_reference: string;
     application_id: string;
     membership_type_code: string;
+    membership_type_id: string;
     applicant_values: Record<string, string> | null;
   }>(
     `select c.id, c.status, ${NAME_SQL} as name, c.joined_at,
             capp.reference as application_reference, c.application_id,
-            mt.code as membership_type_code,
+            mt.code as membership_type_code, mt.id as membership_type_id,
             p.values as applicant_values
        from customer c
        join membership_application capp on capp.id = c.application_id
@@ -1243,6 +1257,7 @@ export async function loadCustomer(id: string): Promise<CustomerDetail | null> {
     applicationReference: row.application_reference,
     applicationId: row.application_id,
     membershipTypeCode: row.membership_type_code,
+    membershipTypeId: row.membership_type_id,
     applicantValues: row.applicant_values ?? {},
     accounts: accounts.rows.map(a => ({
       id: a.id,

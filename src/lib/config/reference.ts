@@ -1809,6 +1809,28 @@ export function listAccountTypes(): Promise<AccountType[]> {
   return cached('account-types', readAccountTypes);
 }
 
+// The further account types a member or non-member of a given membership
+// type may still open: active, not a membership default (Shares and the MSA
+// open only on a membership's own approval), eligible for that type
+// (migration 0040 — empty eligibility means every type may), and not one
+// they already hold (a holder keeps at most one of each). The same set the
+// "Open other account" button is shown for and the account page's checkboxes
+// are filtered to — computed in one place so the two never disagree.
+export function openableAccountTypes(
+  all: AccountType[],
+  membershipTypeId: string,
+  heldAccountTypeIds: Set<string>
+): AccountType[] {
+  return all.filter(
+    t =>
+      t.isActive &&
+      !t.isMembershipDefault &&
+      (t.eligibleMembershipTypeIds.length === 0 ||
+        t.eligibleMembershipTypeIds.includes(membershipTypeId)) &&
+      !heldAccountTypeIds.has(t.id)
+  );
+}
+
 export function currentFeeVersion(
   scheduleId: string
 ): Promise<CurrentFeeVersion | null> {
