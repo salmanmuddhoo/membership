@@ -2223,3 +2223,129 @@ describe('filing a document is restricted to draft and returned applications, th
     ).rejects.toThrowError(/submitted/);
   });
 });
+
+describe("officer feedback: a member's documents carry onto a new account opening", () => {
+  it('carries other documents forward under review, leaves the signed form fresh, and shares the file', async () => {
+    const { capture, documents } = await load();
+
+    const type = await run(
+      appUrl,
+      `select id from membership_type where code = 'individual'`
+    );
+    const founding = await run(
+      appUrl,
+      `insert into membership_application (membership_type_id, captured_by)
+       values ($1, $2) returning id, reference`,
+      [type.rows[0].id, officer.userId]
+    );
+    const member = await run(
+      appUrl,
+      `insert into member (membership_type_id, application_id, status)
+       values ($1, $2, 'active') returning id`,
+      [type.rows[0].id, founding.rows[0].id]
+    );
+    const signedForm = await run(
+      appUrl,
+      `select id from document_type where code = 'signed_form'`
+    );
+
+    // An account type whose checklist asks for both an id card and the
+    // signed form — the first should carry, the second never should.
+    const checklist = await runAsConfigurator(
+      appUrl,
+      `insert into document_checklist (code, name)
+       values ('carry_fwd_test', 'Carry-forward test') returning id`
+    );
+    const clId = checklist.rows[0].id;
+    await runAsConfigurator(
+      appUrl,
+      `insert into document_checklist_item
+         (checklist_id, document_type_id, subject, requirement, sort_order)
+       values ('${clId}', '${idCardTypeId}', 'applicant', 'required', 1),
+              ('${clId}', '${signedForm.rows[0].id}', 'applicant', 'required', 2)`
+    );
+    const accountType = await runAsConfigurator(
+      appUrl,
+      `insert into account_type
+         (code, name, category, minimum_opening_amount, checklist_id,
+          is_membership_default)
+       values ('carry_fwd_acct', 'Carry-forward account', 'investment', 1000,
+               '${clId}', false)
+       returning id`
+    );
+
+    // The member already filed both on their founding application.
+    const idBegun = await documents.beginUpload(
+      {
+        applicationId: founding.rows[0].id,
+        documentTypeId: idCardTypeId,
+        subject: 'applicant',
+        fileName: 'id-existing.jpg',
+        contentType: 'image/jpeg',
+        sizeBytes: 120,
+      },
+      officer
+    );
+    drive.files.set(idBegun.ticket.itemPath, {
+      id: 'graph-id-existing',
+      size: 120,
+    });
+    await documents.commitUpload(idBegun.versionId, officer);
+
+    const formBegun = await documents.beginUpload(
+      {
+        applicationId: founding.rows[0].id,
+        documentTypeId: signedForm.rows[0].id,
+        subject: 'applicant',
+        fileName: 'form-existing.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 120,
+      },
+      officer
+    );
+    drive.files.set(formBegun.ticket.itemPath, {
+      id: 'graph-form-existing',
+      size: 120,
+    });
+    await documents.commitUpload(formBegun.versionId, officer);
+
+    const { id: additionalId } =
+      await capture.startAdditionalAccountApplication(
+        member.rows[0].id,
+        [accountType.rows[0].id],
+        officer
+      );
+
+    const entries = await documents.checklistFor({
+      applicationId: additionalId,
+    });
+    const idEntry = entries.find(e => e.documentCode === 'id_card');
+    const formEntry = entries.find(e => e.documentCode === 'signed_form');
+
+    // The id card carried — filed, but under review so this opening's
+    // reviewer checks it again — reusing the very same file.
+    expect(idEntry?.state).toBe('under_review');
+    expect(idEntry?.documentId).not.toBeNull();
+    const carriedVersions = await documents.versionsOf(idEntry!.documentId!);
+    expect(carriedVersions[0].sharepointPath).toBe(idBegun.ticket.itemPath);
+
+    // The signed form did not — it is specific to this account opening and
+    // must be filed fresh.
+    expect(formEntry?.state).toBe('missing');
+    expect(formEntry?.documentId).toBeNull();
+
+    // Removing the carried document must not delete the shared file out from
+    // under the founding application that still holds it.
+    await documents.removeFiledDocument(idEntry!.documentId!, {
+      ...officer,
+      permissions: new Set(['document.upload']),
+    });
+    expect(drive.files.has(idBegun.ticket.itemPath)).toBe(true);
+
+    const foundingEntries = await documents.checklistFor({
+      applicationId: founding.rows[0].id,
+    });
+    const foundingId = foundingEntries.find(e => e.documentCode === 'id_card');
+    expect(foundingId?.state).not.toBe('missing');
+  });
+});

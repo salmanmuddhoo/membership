@@ -48,7 +48,13 @@ import {
   type PaymentMethod,
 } from '@lib/payments/payments';
 import { formatMoney, fromCents, sumCents } from '@lib/payments/money';
-import { openAccountsForApplication } from '@lib/members/create';
+import { openAccountsForApplication, loadMember } from '@lib/members/create';
+import {
+  editableContactFields,
+  PERMISSION_EDIT_CONTACT,
+  type EditableContactField,
+} from '@lib/members/contact';
+import { forDisplay } from '@lib/applications/phone';
 import { cashSourceOfFundThreshold } from '@lib/config/reference';
 
 const principal = Astro.locals.principal!;
@@ -57,6 +63,7 @@ const canUpload = principal.permissions.has('document.upload');
 const canVerify = principal.permissions.has('document.verify');
 const canSeePayments = principal.permissions.has('payment.view');
 const canRecordPayment = principal.permissions.has('payment.record');
+const canEditContact = principal.permissions.has(PERMISSION_EDIT_CONTACT);
 const { id } = Astro.params;
 
 // Mirrors [id].astro's own loadMembershipApplication: the application this
@@ -278,7 +285,30 @@ const isEditable = isEditableStatus(application.status);
 // one round of parallel queries rather than one after another — and the
 // Board-readiness check below reuses two of these reads instead of
 // repeating them.
-const [checklist, actions, history, stageLabel, payments, dueRead] =
+// Officer feedback: an existing member opening another account may still be
+// missing a mandatory applicant detail — a migrated record never carried it,
+// or it was optional when they joined. There is no applicant to capture for
+// this kind (the member already exists), so instead the member's own
+// applicant details are shown here, editable exactly as they are on the
+// member page (editableContactFields / the members contact endpoint): the
+// always-editable contact fields, plus any still-blank field, so the gap can
+// be filled in without leaving this workflow. Read from the member's founding
+// application, which is where those values live; a legacy record with no
+// founding application (applicationId null) has nothing editable to show.
+async function loadMemberContactFields(
+  memberId: string
+): Promise<{ recordId: string; fields: EditableContactField[] }> {
+  const member = await loadMember(memberId);
+  const foundingApplicationId = member?.applicationId ?? null;
+  return {
+    recordId: memberId,
+    fields: foundingApplicationId
+      ? await editableContactFields(foundingApplicationId)
+      : [],
+  };
+}
+
+const [checklist, actions, history, stageLabel, payments, dueRead, contact] =
   await Promise.all([
     checklistFor({ applicationId: application.id }),
     availableActions(application!, principal),
@@ -297,7 +327,16 @@ const [checklist, actions, history, stageLabel, payments, dueRead] =
           })
         )
       : Promise.resolve(null),
+    loadMemberContactFields(application!.existingMemberId),
   ]);
+const applicantContactFields = contact.fields.filter(
+  f => f.subject === 'applicant'
+);
+const employmentContactFields = contact.fields.filter(
+  f => f.subject === 'employment'
+);
+const fieldDisplay = (field: EditableContactField): string =>
+  field.dataType === 'phone' ? forDisplay(field.value) : field.value;
 const documentsComplete = checklist.length > 0 && isDocumentComplete(checklist);
 const requiredOutstanding = checklist.filter(
   e => e.requirement === 'required' && e.state !== 'verified'
@@ -481,6 +520,137 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         )
       }
     </section>
+
+    {
+      applicantContactFields.length > 0 && (
+        <section
+          class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
+          id="applicant"
+        >
+          <div data-edit-block data-record-id={contact.recordId}>
+            <div class="flex flex-wrap items-start justify-between gap-2">
+              <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+                Applicant details
+              </h2>
+              {canEditContact &&
+                applicantContactFields.some(f => f.editable) && (
+                  <button
+                    type="button"
+                    data-edit-toggle
+                    aria-label="Edit applicant details"
+                    class="shrink-0 rounded-lg border border-neutral-300 p-1.5 text-neutral-600 transition hover:bg-neutral-200 dark:border-neutral-600 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                      class="h-4 w-4"
+                    >
+                      <path d="M13.586 3.586a2 2 0 1 1 2.828 2.828l-8.5 8.5a2 2 0 0 1-.878.507l-3 .857a.5.5 0 0 1-.618-.618l.857-3a2 2 0 0 1 .507-.878l8.5-8.5Z" />
+                      <path d="M11.379 5.793 14.207 8.621 6.5 16.328a1 1 0 0 1-.439.254l-2.121.606.606-2.12a1 1 0 0 1 .254-.44l6.579-6.835Z" />
+                    </svg>
+                  </button>
+                )}
+            </div>
+
+            <dl class="mt-4 grid gap-x-6 gap-y-2 sm:grid-cols-2">
+              {applicantContactFields.map(field => (
+                <div
+                  class="flex gap-2 text-sm"
+                  data-field
+                  data-subject={field.subject}
+                  data-field-key={field.fieldKey}
+                >
+                  <dt class="min-w-32 text-neutral-500 capitalize dark:text-neutral-400">
+                    {field.label}
+                  </dt>
+                  <dd class="w-full text-neutral-800 dark:text-neutral-100">
+                    <span data-view>{fieldDisplay(field) || '—'}</span>
+                    {canEditContact && field.editable && (
+                      <input
+                        type={field.dataType === 'phone' ? 'tel' : 'text'}
+                        data-edit
+                        value={field.value}
+                        placeholder={
+                          field.dataType === 'phone' ? '5789 1234' : undefined
+                        }
+                        hidden
+                        class="w-full rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                      />
+                    )}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+
+            {employmentContactFields.length > 0 && (
+              <div class="mt-5 border-t border-neutral-200 pt-4 dark:border-neutral-800">
+                <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-200">
+                  Employment Details
+                </h3>
+                <dl class="mt-2 grid gap-x-6 gap-y-2 sm:grid-cols-2">
+                  {employmentContactFields.map(field => (
+                    <div
+                      class="flex gap-2 text-sm"
+                      data-field
+                      data-subject={field.subject}
+                      data-field-key={field.fieldKey}
+                    >
+                      <dt class="min-w-32 text-neutral-500 capitalize dark:text-neutral-400">
+                        {field.label}
+                      </dt>
+                      <dd class="w-full text-neutral-800 dark:text-neutral-100">
+                        <span data-view>{fieldDisplay(field) || '—'}</span>
+                        {canEditContact && field.editable && (
+                          <input
+                            type={field.dataType === 'phone' ? 'tel' : 'text'}
+                            data-edit
+                            value={field.value}
+                            placeholder={
+                              field.dataType === 'phone'
+                                ? '5789 1234'
+                                : undefined
+                            }
+                            hidden
+                            class="w-full rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                          />
+                        )}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
+            )}
+
+            {canEditContact && applicantContactFields.some(f => f.editable) && (
+              <div class="mt-4">
+                <p
+                  data-edit-error
+                  hidden
+                  class="mb-2 text-sm text-red-700 dark:text-red-300"
+                />
+                <div data-edit-actions hidden class="flex items-center gap-3">
+                  <button
+                    type="button"
+                    data-edit-save
+                    class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+                  >
+                    Save
+                  </button>
+                  <button
+                    type="button"
+                    data-edit-cancel
+                    class="text-sm text-neutral-500 underline dark:text-neutral-400"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
+      )
+    }
 
     {
       canSeeDocuments && checklist.length > 0 && (
@@ -1350,5 +1520,144 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     }
     methodSelect?.addEventListener('change', recomputeTotal);
     recomputeTotal();
+  }
+
+  // Applicant details — filling a gap the member's record still has, saved
+  // without a page reload. The same edit block the member/customer page uses
+  // (members/[id].astro), driving the same members contact endpoint; kept in
+  // step with it rather than shared because each page's surrounding markup
+  // differs.
+  interface SavedContactField {
+    subject: string;
+    fieldKey: string;
+    value: string;
+    dataType: string;
+  }
+
+  // phone.ts's own forDisplay, in the shape a client script can run without
+  // importing server code: +230XXXXXXXX becomes "+230 XXXX XXXX".
+  function forContactDisplay(e164: string): string {
+    if (e164.startsWith('+230') && e164.length === 12) {
+      const local = e164.slice(4);
+      return `+230 ${local.slice(0, 4)} ${local.slice(4)}`;
+    }
+    return e164;
+  }
+
+  function setContactEditing(block: HTMLElement, editing: boolean): void {
+    for (const fieldEl of block.querySelectorAll<HTMLElement>('[data-field]')) {
+      const input = fieldEl.querySelector<HTMLInputElement>('[data-edit]');
+      if (!input) continue; // Read-only (locked or no permission) — nothing to toggle.
+      const view = fieldEl.querySelector<HTMLElement>('[data-view]');
+      if (view) view.hidden = editing;
+      input.hidden = !editing;
+    }
+    const toggle = block.querySelector<HTMLButtonElement>('[data-edit-toggle]');
+    const actions = block.querySelector<HTMLElement>('[data-edit-actions]');
+    const errorEl = block.querySelector<HTMLElement>('[data-edit-error]');
+    if (toggle) toggle.hidden = editing;
+    if (actions) actions.hidden = !editing;
+    if (errorEl) errorEl.hidden = true;
+  }
+
+  const contactBlock = document.querySelector<HTMLElement>('[data-edit-block]');
+  if (contactBlock) {
+    const toggle =
+      contactBlock.querySelector<HTMLButtonElement>('[data-edit-toggle]');
+    const saveButton =
+      contactBlock.querySelector<HTMLButtonElement>('[data-edit-save]');
+    const cancelButton =
+      contactBlock.querySelector<HTMLButtonElement>('[data-edit-cancel]');
+    const errorEl =
+      contactBlock.querySelector<HTMLElement>('[data-edit-error]');
+    const recordId = contactBlock.dataset.recordId;
+
+    toggle?.addEventListener('click', () =>
+      setContactEditing(contactBlock, true)
+    );
+
+    cancelButton?.addEventListener('click', () => {
+      for (const input of contactBlock.querySelectorAll<HTMLInputElement>(
+        '[data-edit]'
+      )) {
+        input.value = input.defaultValue;
+      }
+      setContactEditing(contactBlock, false);
+    });
+
+    saveButton?.addEventListener('click', async () => {
+      if (!recordId) return;
+
+      const changes = [
+        ...contactBlock.querySelectorAll<HTMLElement>('[data-field]'),
+      ]
+        .map(fieldEl => {
+          const input = fieldEl.querySelector<HTMLInputElement>('[data-edit]');
+          if (!input) return null;
+          return {
+            subject: fieldEl.dataset.subject,
+            fieldKey: fieldEl.dataset.fieldKey,
+            value: input.value,
+          };
+        })
+        .filter((c): c is NonNullable<typeof c> => c !== null);
+
+      const original = saveButton.textContent;
+      saveButton.disabled = true;
+      saveButton.textContent = 'Saving…';
+      if (errorEl) errorEl.hidden = true;
+
+      try {
+        const response = await fetch(`/api/v1/members/${recordId}/contact`, {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ changes }),
+        });
+        const body = await response.json();
+        if (!response.ok) {
+          throw new Error(
+            body?.error?.message ?? 'Something went wrong. Please try again.'
+          );
+        }
+
+        const fields: SavedContactField[] = body.data?.fields ?? [];
+        for (const fieldEl of contactBlock.querySelectorAll<HTMLElement>(
+          '[data-field]'
+        )) {
+          const fresh = fields.find(
+            f =>
+              f.subject === fieldEl.dataset.subject &&
+              f.fieldKey === fieldEl.dataset.fieldKey
+          );
+          if (!fresh) continue;
+          const view = fieldEl.querySelector<HTMLElement>('[data-view]');
+          const input = fieldEl.querySelector<HTMLInputElement>('[data-edit]');
+          const display =
+            fresh.dataType === 'phone'
+              ? forContactDisplay(fresh.value)
+              : fresh.value;
+          if (view) view.textContent = display || '—';
+          if (input) {
+            input.value = fresh.value;
+            input.defaultValue = fresh.value;
+          }
+        }
+        setContactEditing(contactBlock, false);
+      } catch (err) {
+        const message =
+          err instanceof Error
+            ? err.message
+            : 'Something went wrong. Please try again.';
+        if (errorEl) {
+          errorEl.textContent = message;
+          errorEl.hidden = false;
+        } else {
+          await window.appAlert(message);
+        }
+      } finally {
+        saveButton.disabled = false;
+        saveButton.textContent = original;
+      }
+    });
   }
 </script>

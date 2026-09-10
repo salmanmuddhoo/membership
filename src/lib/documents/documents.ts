@@ -493,6 +493,153 @@ export function isDocumentComplete(entries: ChecklistEntry[]): boolean {
     .every(e => e.state === 'verified');
 }
 
+/**
+ * Carry an existing member's documents onto a new additional-account
+ * application (officer feedback).
+ *
+ * A member opening a further account has already given their identity card,
+ * proof of address and the like when they joined — asking for them again is
+ * the double filing officers complained about. So for every item this new
+ * application's checklist requires that the member already has on file, the
+ * file itself is reused in place: a new `document` row is created against the
+ * new application that points at the very same SharePoint file its source
+ * version holds (no re-upload, no second copy in the drive). The person's
+ * documents behave as one store shared across their applications.
+ *
+ * Two deliberate departures from a plain copy, matching what was asked for:
+ *
+ *  - The signed application form is NOT carried. It is specific to the
+ *    account opening it was signed for, so a fresh one is filed for this
+ *    application exactly as for any other (by document_type.code).
+ *  - A carried document lands `under_review`, never `verified`, whatever its
+ *    source's verdict was — this account opening's reviewer checks it again
+ *    here. The officer can replace it (a renewed card) or remove it the same
+ *    way as any freshly filed document.
+ *
+ * Because the file is shared rather than duplicated, removing a carried
+ * document must not delete the underlying file out from under the source
+ * application — see removeFiledDocument's reference check.
+ *
+ * Runs inside the caller's capture transaction, so the application and its
+ * documents are created as one unit. Sourced from the member's store and
+ * every application already tied to them (founding and any earlier
+ * additional account), taking the most recently filed file per item so a
+ * card renewed on a later application is the one that carries.
+ */
+export async function carryForwardMemberDocuments(
+  client: PoolClient,
+  input: {
+    applicationId: string;
+    memberId: string;
+    foundingApplicationId: string | null;
+    actor: Actor;
+  }
+): Promise<{ carried: number }> {
+  const sources = await client.query<{
+    document_type_id: string;
+    subject: FieldSubject;
+    expires_at: Date | null;
+    file_name: string;
+    content_type: string;
+    size_bytes: string;
+    sharepoint_path: string;
+    sharepoint_item_id: string | null;
+    checksum_sha256: string | null;
+  }>(
+    // One row per checklist item this application asks for that the member
+    // already has a live file for, newest filing winning (distinct on +
+    // committed_at desc). signed_form is excluded here, not carried and
+    // filed fresh. The source is the member's own store plus every
+    // application tied to them — the founding one (which carries their id,
+    // not existing_member_id) and any earlier additional account — but never
+    // this new application itself.
+    `select distinct on (ci.document_type_id, ci.subject)
+            ci.document_type_id, ci.subject, d.expires_at,
+            v.file_name, v.content_type, v.size_bytes,
+            v.sharepoint_path, v.sharepoint_item_id, v.checksum_sha256
+       from application_checklist_item ci
+       join document_type dt on dt.id = ci.document_type_id
+       join document d
+         on d.document_type_id = ci.document_type_id
+        and d.subject = ci.subject
+        and d.id is not null
+        and (
+              d.member_id = $2::uuid
+              or d.application_id in (
+                   select id from membership_application
+                    where (id = $3::uuid or existing_member_id = $2::uuid)
+                      and id <> $1::uuid
+                 )
+            )
+       join document_version v
+         on v.document_id = d.id
+        and v.state = 'committed' and v.superseded_at is null
+      where ci.application_id = $1::uuid
+        and dt.code <> 'signed_form'
+      order by ci.document_type_id, ci.subject, v.committed_at desc`,
+    [input.applicationId, input.memberId, input.foundingApplicationId]
+  );
+
+  for (const source of sources.rows) {
+    const document = await client.query<{ id: string }>(
+      `insert into document
+         (document_type_id, subject, application_id, member_id, state, expires_at)
+       values ($1, $2, $3, null, 'under_review', $4) returning id`,
+      [
+        source.document_type_id,
+        source.subject,
+        input.applicationId,
+        source.expires_at,
+      ]
+    );
+    const documentId = document.rows[0].id;
+
+    // version_no 1, committed straight away: the bytes are already in
+    // SharePoint at this path — they were committed once, for the source
+    // application — so there is nothing to confirm and nothing to re-upload.
+    await client.query(
+      `insert into document_version
+         (document_id, version_no, state, file_name, content_type, size_bytes,
+          sharepoint_item_id, sharepoint_path, checksum_sha256, uploaded_by,
+          committed_at)
+       values ($1, 1, 'committed', $2, $3, $4, $5, $6, $7, $8, now())`,
+      [
+        documentId,
+        source.file_name,
+        source.content_type,
+        source.size_bytes,
+        source.sharepoint_item_id,
+        source.sharepoint_path,
+        source.checksum_sha256,
+        input.actor.userId,
+      ]
+    );
+
+    // Written as `document.filed` by the capturing officer so segregation of
+    // duties still bars them from verifying it here (S-203) — carrying a
+    // document onto this application is the act of filing it here, even
+    // though no new bytes were sent.
+    await recordAudit(
+      {
+        actorUserId: input.actor.userId,
+        actorDescription: input.actor.email,
+        action: ACTION_FILED,
+        entityType: ENTITY_TYPE,
+        entityId: documentId,
+        newValue: {
+          fileName: source.file_name,
+          sharePointItemId: source.sharepoint_item_id,
+          sizeBytes: Number(source.size_bytes),
+          carriedForward: true,
+        },
+      },
+      client
+    );
+  }
+
+  return { carried: sources.rows.length };
+}
+
 export interface BeginUploadResult {
   documentId: string;
   versionId: string;
@@ -1065,15 +1212,18 @@ export async function removeFiledDocument(
     );
   }
 
-  const sharepointPath = await withTransaction(async client => {
-    const row = await client.query<{
-      version_id: string;
-      file_name: string;
-      sharepoint_path: string;
-      document_state: string;
-      application_status: string | null;
-    }>(
-      `select v.id as version_id, v.file_name, v.sharepoint_path,
+  const { path: sharepointPath, shared } = await withTransaction(
+    async client => {
+      const row = await client.query<{
+        version_id: string;
+        file_name: string;
+        sharepoint_path: string;
+        sharepoint_item_id: string | null;
+        document_state: string;
+        application_status: string | null;
+      }>(
+        `select v.id as version_id, v.file_name, v.sharepoint_path,
+              v.sharepoint_item_id,
               d.state as document_state, a.status as application_status
          from document_version v
          join document d on d.id = v.document_id
@@ -1081,66 +1231,91 @@ export async function removeFiledDocument(
         where v.document_id = $1 and v.state = 'committed'
           and v.superseded_at is null
         for update of v`,
-      [documentId]
-    );
-    if (row.rowCount === 0) {
-      throw new DocumentError(
-        'There is no filed version of that document to remove.',
-        'not_found'
+        [documentId]
       );
-    }
-    const {
-      version_id: versionId,
-      file_name: fileName,
-      sharepoint_path: path,
-      document_state,
-      application_status: applicationStatus,
-    } = row.rows[0];
+      if (row.rowCount === 0) {
+        throw new DocumentError(
+          'There is no filed version of that document to remove.',
+          'not_found'
+        );
+      }
+      const {
+        version_id: versionId,
+        file_name: fileName,
+        sharepoint_path: path,
+        sharepoint_item_id: itemId,
+        document_state,
+        application_status: applicationStatus,
+      } = row.rows[0];
 
-    // Officer feedback: once an application has left the originating
-    // officer's hands (status 'new' and beyond), a filed document is a
-    // record of what was submitted — removable again only if the
-    // application comes back as 'returned', the same reason it was
-    // removable while still a 'draft'. A document filed against a member
-    // (application_status null — the application is long since decided)
-    // is unaffected: this guard only narrows what an in-flight application
-    // allows.
-    if (applicationStatus && !isEditableStatus(applicationStatus)) {
-      throw new DocumentError(
-        'This application has been submitted. Its documents can only be ' +
-          'removed if it is returned for correction.',
-        'refused'
+      // Officer feedback: once an application has left the originating
+      // officer's hands (status 'new' and beyond), a filed document is a
+      // record of what was submitted — removable again only if the
+      // application comes back as 'returned', the same reason it was
+      // removable while still a 'draft'. A document filed against a member
+      // (application_status null — the application is long since decided)
+      // is unaffected: this guard only narrows what an in-flight application
+      // allows.
+      if (applicationStatus && !isEditableStatus(applicationStatus)) {
+        throw new DocumentError(
+          'This application has been submitted. Its documents can only be ' +
+            'removed if it is returned for correction.',
+          'refused'
+        );
+      }
+
+      await client.query(
+        `update document_version set superseded_at = now() where id = $1`,
+        [versionId]
       );
+
+      // Another live version at the same SharePoint file means this file is
+      // shared — a document carried onto a later application reuses the
+      // source's file in place (carryForwardMemberDocuments), copying its
+      // Graph item id, rather than copying the file. Removing this filing must
+      // not delete a file the source application still holds, so the SharePoint
+      // delete below is skipped while any such version remains. Matched on the
+      // Graph item id, not the path: two documents of one type for different
+      // subjects share a filename (and so a path) without sharing a file, but a
+      // genuine carry-forward shares the exact item. A version with no item id
+      // recorded (nothing to match) is treated as not shared.
+      const shared = itemId
+        ? await client.query(
+            `select 1 from document_version
+            where sharepoint_item_id = $1 and state = 'committed'
+              and superseded_at is null and document_id <> $2
+            limit 1`,
+            [itemId, documentId]
+          )
+        : { rowCount: 0 };
+
+      await recordAudit(
+        {
+          actorUserId: principal.userId,
+          actorDescription: principal.email,
+          action: 'document.removed',
+          entityType: ENTITY_TYPE,
+          entityId: documentId,
+          previousValue: { state: document_state, fileName },
+          newValue: { state: 'missing' },
+        },
+        client
+      );
+
+      return { path, shared: (shared.rowCount ?? 0) > 0 };
     }
-
-    await client.query(
-      `update document_version set superseded_at = now() where id = $1`,
-      [versionId]
-    );
-
-    await recordAudit(
-      {
-        actorUserId: principal.userId,
-        actorDescription: principal.email,
-        action: 'document.removed',
-        entityType: ENTITY_TYPE,
-        entityId: documentId,
-        previousValue: { state: document_state, fileName },
-        newValue: { state: 'missing' },
-      },
-      client
-    );
-
-    return path;
-  });
+  );
 
   // Best-effort: the checklist has already gone back to Missing regardless of
   // whether this succeeds, per the ordering note above. A 404 (already gone)
-  // is success as far as deleteItemByPath is concerned.
-  try {
-    await deleteItemByPath(sharepointPath, config);
-  } catch (err) {
-    console.error('[documents/remove] SharePoint delete failed', err);
+  // is success as far as deleteItemByPath is concerned. Skipped entirely when
+  // the file is still referenced by another application's filing.
+  if (!shared) {
+    try {
+      await deleteItemByPath(sharepointPath, config);
+    } catch (err) {
+      console.error('[documents/remove] SharePoint delete failed', err);
+    }
   }
 
   return { state: 'missing' };

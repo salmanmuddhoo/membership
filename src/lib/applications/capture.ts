@@ -13,7 +13,10 @@ import {
   type MembershipType,
   type MembershipTypeField,
 } from '../config/reference';
-import { discardApplicationFiles } from '../documents/documents';
+import {
+  carryForwardMemberDocuments,
+  discardApplicationFiles,
+} from '../documents/documents';
 import type { Principal } from '../access/principal';
 import { toInternational, PhoneFormatError } from './phone';
 
@@ -388,10 +391,12 @@ export async function startAdditionalAccountApplication(
       membership_type_id: string;
       membership_type_name: string;
       folder_application_id: string | null;
+      founding_application_id: string | null;
     }>(
       `select m.status, m.membership_type_id, mt.name as membership_type_name,
               coalesce(founding.folder_application_id, m.application_id)
-                as folder_application_id
+                as folder_application_id,
+              m.application_id as founding_application_id
          from member m
          join membership_type mt on mt.id = m.membership_type_id
          left join membership_application founding
@@ -458,6 +463,18 @@ export async function startAdditionalAccountApplication(
     );
 
     await snapshotAccountTypesChecklist(client, id, accountTypeIds);
+
+    // Officer feedback: the member gave their identity card and the like when
+    // they joined — carry whatever this application's checklist asks for and
+    // they already have on file onto it, reusing the same files, so nothing
+    // is filed twice (carryForwardMemberDocuments). The signed form is the
+    // one exception, filed fresh for this account opening.
+    await carryForwardMemberDocuments(client, {
+      applicationId: id,
+      memberId: existingMemberId,
+      foundingApplicationId: member.rows[0].founding_application_id,
+      actor,
+    });
 
     await recordAudit(
       {
