@@ -233,6 +233,30 @@ if (Astro.request.method === 'POST') {
         principal
       );
       notice = `Receipt ${payment.receiptNo} recorded.`;
+
+      // Officer feedback: recording the payment is the last thing standing
+      // between an application and the next person in the chain — no
+      // separate "Submit for Processing" click needed once it succeeds. The
+      // wizard already gated reaching this step on every other requirement
+      // (fields, documents), so this is exactly the submission the officer
+      // would otherwise make by hand next; submitApplication's own routing
+      // (straight to the Secretary, or via Regional oversight) is what
+      // "dynamic as per configuration" already means here. Only attempted
+      // when this principal actually holds application.submit — a payment
+      // clerk without it records the receipt exactly as before and leaves
+      // the Submit button for whoever does. Anything else that goes wrong
+      // (an unmet readiness this page did not already catch) is left for
+      // that same button rather than surfaced as if the payment had failed.
+      if (principal.permissions.has('application.submit')) {
+        try {
+          const submitted = await submitApplication(application.id, principal);
+          if (!('problems' in submitted)) {
+            notice = `Receipt ${payment.receiptNo} recorded and submitted for central processing.`;
+          }
+        } catch {
+          // Left for the Submit button below.
+        }
+      }
     } catch (err) {
       if (err instanceof PaymentError) {
         error = err.message;
@@ -506,6 +530,13 @@ const boardReasons = forwardAction
     )
   : [];
 
+// Officer feedback: a document either reviewer has rejected must stop right
+// there — Regional oversight and Secretary review alike, not only the
+// Board-readiness check above, which is secretary_review's own and never
+// runs for Regional oversight. Named up front the same way boardReasons is,
+// so Forward reads disabled instead of failing only once tried.
+const rejectedDocuments = checklist.filter(e => e.state === 'rejected');
+
 // S-611: what a review-type step's own buttons say and post — the "forward"
 // verb, the "return"/"reject" verb, and the comment's placeholder — kept as
 // one small table instead of a chain of stepCode comparisons repeated in the
@@ -611,10 +642,20 @@ const requiredOutstanding = checklist.filter(
 ).length;
 
 // The officer's job is to FILE the documents; verifying them is the
-// Secretary's. So the timeline counts what has nothing against it at all,
-// which is a different number from the one the Documents heading shows.
+// Secretary's. So the timeline counts what has nothing against it at all —
+// but that includes a document a reviewer rejected, not only one never
+// filed: a rejected document is exactly as outstanding as a missing one,
+// since the officer has to file a replacement either way. Without this, a
+// rejected document did not count as "outstanding" (it is not literally
+// Missing), so furthestStep/defaultStep below routed a returned application
+// straight past the Documents step — an officer landed on Submit with no
+// way to see the rejection or replace the file short of hand-editing the
+// URL's ?step= — and the Next button on this same step let them move on to
+// Payment with a rejected document still on the record.
 const requiredDocumentsMissing = checklist.filter(
-  e => e.requirement === 'required' && e.state === 'missing'
+  e =>
+    e.requirement === 'required' &&
+    (e.state === 'missing' || e.state === 'rejected')
 ).length;
 
 // What has been taken against this application (M5). Read for everyone who
@@ -1594,6 +1635,23 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                     </div>
                   )}
 
+                {/* Secretary review already reads this off boardReasons above
+                   (documentsUnverified covers a rejection too, worded as "not
+                   yet Verified"); Regional oversight has no readiness check of
+                   its own, so this is the only place it hears about it. */}
+                {action.stepCode === 'regional_review' &&
+                  rejectedDocuments.length > 0 && (
+                    <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+                      <p class="font-medium">
+                        {rejectedDocuments.length} document
+                        {rejectedDocuments.length === 1 ? '' : 's'} rejected —
+                        return this application for correction. It cannot be
+                        forwarded until the officer replaces{' '}
+                        {rejectedDocuments.length === 1 ? 'it' : 'them'}.
+                      </p>
+                    </div>
+                  )}
+
                 {action.stepCode === 'president_decision' &&
                   signoffs.length > 0 && (
                     <div class="rounded-lg border border-neutral-300 bg-white px-4 py-3 text-sm dark:border-neutral-700 dark:bg-neutral-900">
@@ -1630,8 +1688,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                         name="outcome"
                         value={reviewMeta.forwardOutcome}
                         disabled={
-                          action.stepCode === 'secretary_review' &&
-                          boardReasons.length > 0
+                          (action.stepCode === 'secretary_review' &&
+                            boardReasons.length > 0) ||
+                          rejectedDocuments.length > 0
                         }
                         class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50"
                       >

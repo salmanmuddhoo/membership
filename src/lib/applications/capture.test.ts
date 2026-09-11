@@ -617,6 +617,236 @@ describe('S-604/S-605: a minor’s guardian must be a real, findable person', ()
   });
 });
 
+// Officer feedback: an NIC identifies one person — an applicant already on
+// file under that NIC, member or non-member, is not a new person to
+// register here, whatever else a fresh application says about them.
+describe('an applicant’s NIC must not already belong to a member or non-member', () => {
+  async function seedCustomer(
+    nic: string,
+    applicant: { surname?: string; name?: string } = {}
+  ): Promise<{ customerId: string }> {
+    const type = await run(
+      appUrl,
+      `select id from membership_type where code = 'individual'`
+    );
+    const application = await run(
+      appUrl,
+      `insert into membership_application
+         (application_kind, membership_type_id, captured_by)
+       values ('customer_account', $1, $2)
+       returning id`,
+      [type.rows[0].id, officer.userId]
+    );
+    const applicationId = application.rows[0].id;
+    await run(
+      appUrl,
+      `insert into application_party (application_id, subject, ordinal, values)
+       values ($1, 'applicant', 1, $2::jsonb)`,
+      [
+        applicationId,
+        JSON.stringify({
+          nic,
+          surname: applicant.surname ?? 'Peerthum',
+          name: applicant.name ?? 'Ismail',
+        }),
+      ]
+    );
+    const customer = await run(
+      appUrl,
+      `insert into customer (application_id) values ($1) returning id`,
+      [applicationId]
+    );
+    return { customerId: customer.rows[0].id };
+  }
+
+  it('refuses an NIC already on file for a member', async () => {
+    const { capture } = await load();
+    const { memberNo } = await seedMember('N0111111111111', 'active', {
+      surname: 'Aumeer',
+      name: 'Kavish',
+    });
+
+    const { id } = await capture.startApplication('individual', officer);
+    await capture.saveDraft(
+      id,
+      [
+        {
+          subject: 'applicant',
+          ordinal: 1,
+          values: { surname: 'Boodhun', name: 'Priya', nic: 'N0111111111111' },
+        },
+      ],
+      officer
+    );
+
+    const application = await capture.loadApplication(id);
+    const problems = await capture.problemsBlockingSubmission(application!);
+    const nicProblem = problems.find(
+      p => p.subject === 'applicant' && p.fieldKey === 'nic'
+    );
+    expect(nicProblem?.label).toMatch(
+      new RegExp(`already on file for member ${memberNo}`)
+    );
+  });
+
+  it('refuses an NIC already on file for a non-member customer', async () => {
+    const { capture } = await load();
+    await seedCustomer('N0222222222222', {
+      surname: 'Peerthum',
+      name: 'Ismail',
+    });
+
+    const { id } = await capture.startApplication('individual', officer);
+    await capture.saveDraft(
+      id,
+      [
+        {
+          subject: 'applicant',
+          ordinal: 1,
+          values: { surname: 'Boodhun', name: 'Priya', nic: 'N0222222222222' },
+        },
+      ],
+      officer
+    );
+
+    const application = await capture.loadApplication(id);
+    const problems = await capture.problemsBlockingSubmission(application!);
+    const nicProblem = problems.find(
+      p => p.subject === 'applicant' && p.fieldKey === 'nic'
+    );
+    expect(nicProblem?.label).toMatch(
+      /already on file for non-member Ismail Peerthum/
+    );
+  });
+
+  // Officer feedback: "opening an additional-account" for someone not yet on
+  // the system at all is exactly the customer_account kind — it captures an
+  // applicant the same way a membership application does, and reuses the
+  // same field configuration, so it is checked the same way too.
+  it('applies the same check to a brand-new non-member opening an account (customer_account)', async () => {
+    const { capture } = await load();
+    const { memberNo } = await seedMember('N0333333333333', 'active');
+
+    const type = await run(
+      appUrl,
+      `select id from membership_type where code = 'individual'`
+    );
+    const application = await run(
+      appUrl,
+      `insert into membership_application
+         (application_kind, membership_type_id, captured_by)
+       values ('customer_account', $1, $2)
+       returning id`,
+      [type.rows[0].id, officer.userId]
+    );
+    const applicationId = application.rows[0].id;
+    await capture.saveDraft(
+      applicationId,
+      [
+        {
+          subject: 'applicant',
+          ordinal: 1,
+          values: { surname: 'Boodhun', name: 'Priya', nic: 'N0333333333333' },
+        },
+      ],
+      officer
+    );
+
+    const loaded = await capture.loadApplication(applicationId);
+    const problems = await capture.problemsBlockingSubmission(loaded!);
+    const nicProblem = problems.find(
+      p => p.subject === 'applicant' && p.fieldKey === 'nic'
+    );
+    expect(nicProblem?.label).toMatch(
+      new RegExp(`already on file for member ${memberNo}`)
+    );
+  });
+
+  it('is silent for an NIC nobody already holds', async () => {
+    const { capture } = await load();
+    const { id } = await capture.startApplication('individual', officer);
+    await capture.saveDraft(
+      id,
+      [
+        {
+          subject: 'applicant',
+          ordinal: 1,
+          values: { surname: 'Boodhun', name: 'Priya', nic: 'N0444444444444' },
+        },
+      ],
+      officer
+    );
+
+    const application = await capture.loadApplication(id);
+    const problems = await capture.problemsBlockingSubmission(application!);
+    expect(
+      problems.some(p => p.subject === 'applicant' && p.fieldKey === 'nic')
+    ).toBe(false);
+  });
+
+  it('never checks Corporate, which has no NIC field at all', async () => {
+    const { capture } = await load();
+    const { id } = await capture.startApplication('corporate', officer);
+    await capture.saveDraft(
+      id,
+      [{ subject: 'applicant', ordinal: 1, values: { name: 'Test Ltd' } }],
+      officer
+    );
+
+    const application = await capture.loadApplication(id);
+    const problems = await capture.problemsBlockingSubmission(application!);
+    expect(
+      problems.some(p => p.subject === 'applicant' && p.fieldKey === 'nic')
+    ).toBe(false);
+  });
+
+  // S-614: startMembershipApplicationFromCustomer carries the customer's own
+  // NIC into the new membership application deliberately — this is the
+  // non-member becoming a member, not a second person applying under the
+  // first one's identity. Without excluding the source customer, this check
+  // would refuse every "Apply to become a member" application on the spot.
+  it('is silent for the customer’s own NIC when they apply to become a member', async () => {
+    const { capture } = await load();
+    const accountType = await runAsConfigurator(
+      appUrl,
+      `insert into account_type
+         (code, name, category, number_prefix, is_membership_default)
+       values ('hsa_nic_test', 'HSA (NIC test)', 'savings', 'HSA', false)
+       returning id`
+    );
+    const { id: customerAppId } = await capture.startCustomerAccountApplication(
+      [accountType.rows[0].id],
+      officer
+    );
+    await capture.saveDraft(
+      customerAppId,
+      [
+        {
+          subject: 'applicant',
+          ordinal: 1,
+          values: { surname: 'Peerthum', name: 'Devi', nic: 'D0555555555555' },
+        },
+      ],
+      officer
+    );
+    const customer = await run(
+      appUrl,
+      `insert into customer (application_id) values ($1) returning id`,
+      [customerAppId]
+    );
+
+    const { id } = await capture.startMembershipApplicationFromCustomer(
+      customer.rows[0].id,
+      officer
+    );
+    const application = await capture.loadApplication(id);
+    const problems = await capture.problemsBlockingSubmission(application!);
+    expect(
+      problems.some(p => p.subject === 'applicant' && p.fieldKey === 'nic')
+    ).toBe(false);
+  });
+});
+
 describe('finding a parent to link, before or after they are a member', () => {
   it('finds an active member by name, NIC or Member No.', async () => {
     const { capture } = await load();

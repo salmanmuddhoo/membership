@@ -1412,6 +1412,57 @@ export async function findGuardian(
   return null;
 }
 
+// Officer feedback: an NIC identifies one person, so an applicant already on
+// file under it — member or non-member — is not a new person to register,
+// whatever else a fresh application says about them. Checked against `member`
+// and `customer` only (the same scope the M7 migration's own NIC check uses,
+// migration/members.ts) — an application still in progress elsewhere is not
+// "on file" in this sense yet, only an approved identity is.
+//
+// `excludeCustomerId`: S-614's own "apply to become a member" is the one
+// legitimate exception — startMembershipApplicationFromCustomer prefills the
+// new application from the SAME non-member customer's own values, NIC
+// included, because it is the same person converting, not a new one. Naming
+// that customer here is what tells this apart from an unrelated application
+// that happens to have typed the same NIC.
+async function findNicHolder(
+  nic: string,
+  excludeCustomerId: string | null = null
+): Promise<{ label: string } | null> {
+  const member = await query<{ member_no: string }>(
+    `select m.member_no
+       from member m
+       join application_party p
+         on p.application_id = m.application_id
+        and p.subject = 'applicant' and p.ordinal = 1
+      where lower(p.values->>'nic') = lower($1)
+      limit 1`,
+    [nic]
+  );
+  if (member.rowCount! > 0) {
+    return { label: `member ${member.rows[0].member_no}` };
+  }
+
+  const customer = await query<{ name: string | null }>(
+    `select trim(coalesce(p.values->>'name', '') || ' '
+                 || coalesce(p.values->>'surname', '')) as name
+       from customer c
+       join application_party p
+         on p.application_id = c.application_id
+        and p.subject = 'applicant' and p.ordinal = 1
+      where lower(p.values->>'nic') = lower($1)
+        and ($2::uuid is null or c.id <> $2::uuid)
+      limit 1`,
+    [nic, excludeCustomerId]
+  );
+  if (customer.rowCount! > 0) {
+    const name = (customer.rows[0].name ?? '').trim();
+    return { label: name ? `non-member ${name}` : 'an existing non-member' };
+  }
+
+  return null;
+}
+
 export interface GuardianCandidate {
   // A not-yet-a-member parent has no Member No. yet — reference is theirs
   // to have anyway: the application's own reference, human-recognisable on
@@ -1598,6 +1649,39 @@ export async function problemsBlockingSubmission(
           ordinal: party.ordinal,
           fieldKey: 'member_id',
           label: `The guardian (${guardian.memberNo}) is not an active member.`,
+        });
+      }
+    }
+  }
+
+  // Officer feedback: an NIC identifies one person — an applicant already on
+  // file under that NIC, member or non-member, is not a new person to
+  // register here. Checked the same way the guardian's own NIC/Member No. is
+  // above: only once the field actually has a value (empty is already
+  // reported as missing, if mandatory), and never for a type with no 'nic'
+  // field at all (Corporate).
+  const applicantFields = fields.get('applicant');
+  if (applicantFields?.some(f => f.fieldKey === 'nic')) {
+    const applicant = application.parties.find(
+      p => p.subject === 'applicant' && p.ordinal === 1
+    );
+    const nic = (applicant?.values.nic ?? '').trim();
+    if (nic !== '') {
+      // S-614: an application started from an existing non-member customer
+      // (startMembershipApplicationFromCustomer) carries that customer's own
+      // NIC forward deliberately — they are becoming a member, not a new
+      // person applying alongside themselves.
+      const excludeCustomerId =
+        application.applicationKind === 'membership'
+          ? application.sourceCustomerId
+          : null;
+      const holder = await findNicHolder(nic, excludeCustomerId);
+      if (holder) {
+        problems.push({
+          subject: 'applicant',
+          ordinal: 1,
+          fieldKey: 'nic',
+          label: `This NIC is already on file for ${holder.label}.`,
         });
       }
     }
