@@ -78,12 +78,26 @@ export interface Transition {
 // which is exactly why the record's status alone cannot say whether it has
 // already happened. A recorded transition is the only signal there is:
 // `recordTransition` writes one every time a step completes, gate or not.
-// Every step this application has ever been through — one read, consulted
-// for every gate question below, rather than one query per step asked.
+//
+// Officer feedback: scoped to the CURRENT pass through the chain, not the
+// application's full history — a Regional Manager's forward from before a
+// correction must not excuse them from looking at the correction too. Every
+// (re)submission writes its own 'capture' transition (submitApplication), so
+// the most recent one marks where the current pass began; a gate passed
+// before that boundary reads as unpassed again, and the officer's correction
+// goes through Regional oversight → Secretary review → President exactly as
+// a first submission would, per whatever the workflow has configured. Only
+// the capture step itself is ever excluded from being "reset" this way — it
+// is the boundary, not a gate that needs re-passing.
 async function passedSteps(applicationId: string): Promise<Set<string>> {
   const result = await query<{ step_code: string }>(
     `select distinct step_code from application_transition
-      where application_id = $1`,
+      where application_id = $1
+        and occurred_at >= coalesce(
+          (select max(occurred_at) from application_transition
+            where application_id = $1 and step_code = 'capture'),
+          '-infinity'::timestamptz
+        )`,
     [applicationId]
   );
   return new Set(result.rows.map(r => r.step_code));
@@ -582,6 +596,26 @@ export async function reviewApplication(
     stepCode,
     action,
   });
+
+  // Officer feedback: a document a reviewer has rejected must not travel any
+  // further forward than the reviewer who rejected it — Regional oversight
+  // and Secretary review alike. Return is the only way on from here; forward
+  // is refused until the officer files a replacement, which clears the
+  // rejection (commitUpload resets the document to 'under_review'). Ahead of
+  // S-608's own fuller readiness check below, which only ever runs at
+  // secretary_review and would catch this same case there — this applies at
+  // every review step, including Regional oversight, which that check does
+  // not reach.
+  if (decision.outcome === 'forward') {
+    const checklist = await checklistFor({ applicationId: application.id });
+    const rejected = checklist.filter(e => e.state === 'rejected');
+    if (rejected.length > 0) {
+      throw new ApplicationError(
+        `${rejected.length} document(s) are still rejected — return this ` +
+          'application for correction instead of forwarding it.'
+      );
+    }
+  }
 
   // S-608: nothing forwarded to the Board is incomplete — the reasons are
   // named so the Secretary knows exactly what to chase, not just that
@@ -1297,9 +1331,23 @@ async function passedIdsForStep(
   applicationIds: string[]
 ): Promise<Set<string>> {
   if (applicationIds.length === 0) return new Set();
+  // Scoped to each application's own current pass through the chain — the
+  // same boundary passedSteps applies for a single application (see its own
+  // comment): a gate passed before the most recent 'capture' transition (a
+  // fresh submission, or a resubmission after correction) does not count,
+  // so a Regional Manager's forward from before a correction never excuses
+  // them from the correction itself.
   const result = await query<{ application_id: string }>(
-    `select distinct application_id from application_transition
-      where step_code = $2 and application_id = any($1::uuid[])`,
+    `select distinct t.application_id
+       from application_transition t
+      where t.step_code = $2
+        and t.application_id = any($1::uuid[])
+        and t.occurred_at >= coalesce(
+          (select max(c.occurred_at) from application_transition c
+            where c.application_id = t.application_id
+              and c.step_code = 'capture'),
+          '-infinity'::timestamptz
+        )`,
     [applicationIds, stepCode]
   );
   return new Set(result.rows.map(r => r.application_id));

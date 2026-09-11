@@ -213,6 +213,20 @@ if (Astro.request.method === 'POST') {
         principal
       );
       notice = `Receipt ${payment.receiptNo} recorded.`;
+
+      // Officer feedback: no separate "Submit for Processing" click needed
+      // once the payment succeeds — see the identical note on
+      // /applications/[id].astro's own copy of this.
+      if (principal.permissions.has('application.submit')) {
+        try {
+          const submitted = await submitApplication(application.id, principal);
+          if (!('problems' in submitted)) {
+            notice = `Receipt ${payment.receiptNo} recorded and submitted for central processing.`;
+          }
+        } catch {
+          // Left for the Submit button below.
+        }
+      }
     } catch (err) {
       if (err instanceof PaymentError) {
         error = err.message;
@@ -463,6 +477,12 @@ const boardReasons = forwardAction
     )
   : [];
 
+// Officer feedback: a document either reviewer has rejected must stop right
+// there — Regional oversight and Secretary review alike, not only the
+// Board-readiness check above, which is secretary_review's own and never
+// runs for Regional oversight.
+const rejectedDocuments = checklist.filter(e => e.state === 'rejected');
+
 const REVIEW_STEP_META: Record<
   string,
   {
@@ -546,8 +566,16 @@ for (const entry of checklist) {
 const requiredOutstanding = checklist.filter(
   e => e.requirement === 'required' && e.state !== 'verified'
 ).length;
+// A rejected document is exactly as outstanding as a missing one — the
+// officer has to file a replacement either way — so it counts here too
+// (see the identical note on /applications/[id].astro's own copy of this).
+// Without it, a returned application routed straight past the Documents
+// step, and Next let the officer through to Payment with a rejected
+// document still on the record.
 const requiredDocumentsMissing = checklist.filter(
-  e => e.requirement === 'required' && e.state === 'missing'
+  e =>
+    e.requirement === 'required' &&
+    (e.state === 'missing' || e.state === 'rejected')
 ).length;
 
 const livePayment: Payment | null =
@@ -1409,6 +1437,23 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                     </div>
                   )}
 
+                {/* Secretary review already reads this off boardReasons above
+                   (documentsUnverified covers a rejection too, worded as "not
+                   yet Verified"); Regional oversight has no readiness check of
+                   its own, so this is the only place it hears about it. */}
+                {action.stepCode === 'regional_review' &&
+                  rejectedDocuments.length > 0 && (
+                    <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+                      <p class="font-medium">
+                        {rejectedDocuments.length} document
+                        {rejectedDocuments.length === 1 ? '' : 's'} rejected —
+                        return this application for correction. It cannot be
+                        forwarded until the officer replaces{' '}
+                        {rejectedDocuments.length === 1 ? 'it' : 'them'}.
+                      </p>
+                    </div>
+                  )}
+
                 {action.stepCode === 'president_decision' &&
                   signoffs.length > 0 && (
                     <div class="rounded-lg border border-neutral-300 bg-white px-4 py-3 text-sm dark:border-neutral-700 dark:bg-neutral-900">
@@ -1445,8 +1490,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                         name="outcome"
                         value={reviewMeta.forwardOutcome}
                         disabled={
-                          action.stepCode === 'secretary_review' &&
-                          boardReasons.length > 0
+                          (action.stepCode === 'secretary_review' &&
+                            boardReasons.length > 0) ||
+                          rejectedDocuments.length > 0
                         }
                         class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50"
                       >

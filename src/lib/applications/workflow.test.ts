@@ -175,34 +175,46 @@ let regionalManager: Principal;
 let secretary: Principal;
 let president: Principal;
 
-const COMPLETE_INDIVIDUAL: Array<{
+// Officer feedback: an applicant's NIC now has to be genuinely unique across
+// the whole system (member or non-member) — problemsBlockingSubmission
+// refuses a second application under one already on file. This suite reuses
+// this same fixture dozens of times, many of them going all the way to an
+// approved member, so a fixed NIC would collide with itself by the second
+// use. A function rather than a constant hands back a fresh NIC — same
+// shape, a fresh serial — every time it is called, the same way a real
+// applicant's own NIC is never the one the last person walked in with.
+let completeIndividualSerial = 0;
+function COMPLETE_INDIVIDUAL(): Array<{
   subject: 'applicant' | 'nominee' | 'guardian' | 'beneficiary';
   ordinal: number;
   values: Record<string, string>;
-}> = [
-  {
-    subject: 'applicant',
-    ordinal: 1,
-    values: {
-      surname: 'Beebeejaun',
-      name: 'Aisha',
-      nic: 'B1234567890123',
-      gender: 'Female',
-      address: '12 Royal Road, Curepipe',
-      mobile: '5789 1234',
+}> {
+  completeIndividualSerial += 1;
+  return [
+    {
+      subject: 'applicant',
+      ordinal: 1,
+      values: {
+        surname: 'Beebeejaun',
+        name: 'Aisha',
+        nic: `B${String(completeIndividualSerial).padStart(13, '0')}`,
+        gender: 'Female',
+        address: '12 Royal Road, Curepipe',
+        mobile: '5789 1234',
+      },
     },
-  },
-  {
-    subject: 'nominee',
-    ordinal: 1,
-    values: {
-      surname: 'Beebeejaun',
-      name: 'Yusuf',
-      nic: 'B9876543210987',
-      address: '12 Royal Road, Curepipe',
+    {
+      subject: 'nominee',
+      ordinal: 1,
+      values: {
+        surname: 'Beebeejaun',
+        name: 'Yusuf',
+        nic: 'B9876543210987',
+        address: '12 Royal Road, Curepipe',
+      },
     },
-  },
-];
+  ];
+}
 
 beforeAll(async () => {
   await run(ADMIN_URL, `create database ${dbName}`);
@@ -376,7 +388,7 @@ async function captureComplete(capturedBy: Principal = officer) {
   const payments = await import('../payments/payments');
   const actor = { userId: capturedBy.userId, email: capturedBy.email };
   const { id } = await capture.startApplication('individual', actor);
-  await capture.saveDraft(id, COMPLETE_INDIVIDUAL, actor);
+  await capture.saveDraft(id, COMPLETE_INDIVIDUAL(), actor);
   await fileRequiredDocuments(documents, id);
   await verifyRequiredDocuments(documents, id);
   await recordFullPayment(payments, id);
@@ -752,7 +764,7 @@ describe('S-304: submission', () => {
     const { capture, workflow, payments } = await load();
     const actor = { userId: officer.userId, email: officer.email };
     const { id } = await capture.startApplication('individual', actor);
-    await capture.saveDraft(id, COMPLETE_INDIVIDUAL, actor);
+    await capture.saveDraft(id, COMPLETE_INDIVIDUAL(), actor);
     // Fields are complete, money is taken — only the KYC pack is missing.
     await recordFullPayment(payments, id);
 
@@ -766,7 +778,7 @@ describe('S-304: submission', () => {
     const { capture, workflow, documents } = await load();
     const actor = { userId: officer.userId, email: officer.email };
     const { id } = await capture.startApplication('individual', actor);
-    await capture.saveDraft(id, COMPLETE_INDIVIDUAL, actor);
+    await capture.saveDraft(id, COMPLETE_INDIVIDUAL(), actor);
     // Fields and the KYC pack are complete — only the money is missing.
     await fileRequiredDocuments(documents, id);
 
@@ -875,7 +887,7 @@ describe('S-203: segregation of duties, on this record', () => {
       userId: officer.userId,
       email: officer.email,
     });
-    await capture.saveDraft(id, COMPLETE_INDIVIDUAL, {
+    await capture.saveDraft(id, COMPLETE_INDIVIDUAL(), {
       userId: officer.userId,
       email: officer.email,
     });
@@ -938,7 +950,10 @@ describe('S-305 and S-306: a return or a rejection must say why', () => {
           {
             subject: 'applicant',
             ordinal: 1,
-            values: { ...COMPLETE_INDIVIDUAL[0].values, nic: 'B1111111111111' },
+            values: {
+              ...COMPLETE_INDIVIDUAL()[0].values,
+              nic: 'B1111111111111',
+            },
           },
         ],
         { userId: officer.userId, email: officer.email }
@@ -1080,7 +1095,7 @@ describe('S-608: nothing incomplete reaches the Board', () => {
     const { capture, workflow, documents, payments } = await load();
     const actor = { userId: officer.userId, email: officer.email };
     const { id } = await capture.startApplication('individual', actor);
-    await capture.saveDraft(id, COMPLETE_INDIVIDUAL, actor);
+    await capture.saveDraft(id, COMPLETE_INDIVIDUAL(), actor);
     await fileRequiredDocuments(documents, id);
     await recordFullPayment(payments, id);
     await workflow.submitApplication(id, officer);
@@ -1092,6 +1107,41 @@ describe('S-608: nothing incomplete reaches the Board', () => {
         secretary
       )
     ).rejects.toThrowError(/not ready for the Board.*Verified/);
+  });
+
+  // Officer feedback: a rejected document is its own, more specific reason to
+  // refuse forwarding — named as "rejected", not folded into the generic
+  // "not yet Verified" wording above, so the Secretary sees exactly what
+  // happened rather than reading it as simply unreviewed.
+  it('refuses to forward while a required document was rejected, worded distinctly from merely unverified', async () => {
+    const { capture, workflow, documents, payments } = await load();
+    const actor = { userId: officer.userId, email: officer.email };
+    const { id } = await capture.startApplication('individual', actor);
+    await capture.saveDraft(id, COMPLETE_INDIVIDUAL(), actor);
+    await fileRequiredDocuments(documents, id);
+    await recordFullPayment(payments, id);
+    await workflow.submitApplication(id, officer);
+
+    const entry = (await documents.checklistFor({ applicationId: id })).find(
+      e => e.subject === 'applicant' && e.documentCode === 'id_card'
+    )!;
+    const verifier = {
+      ...secretary,
+      permissions: new Set([...secretary.permissions, 'document.verify']),
+    };
+    await documents.reviewDocument(
+      entry.documentId!,
+      { outcome: 'reject', reason: 'Blurry scan.' },
+      verifier
+    );
+
+    await expect(
+      workflow.reviewApplication(
+        id,
+        { outcome: 'forward', comment: 'Looks fine.' },
+        secretary
+      )
+    ).rejects.toThrowError(/1 document\(s\) are still rejected/);
   });
 
   it('re-checks payment at review time, not just at submission', async () => {
@@ -1188,7 +1238,7 @@ describe('S-608: nothing incomplete reaches the Board', () => {
     const { capture, workflow, documents, payments } = await load();
     const actor = { userId: officer.userId, email: officer.email };
     const { id } = await capture.startApplication('individual', actor);
-    await capture.saveDraft(id, COMPLETE_INDIVIDUAL, actor);
+    await capture.saveDraft(id, COMPLETE_INDIVIDUAL(), actor);
     await fileRequiredDocuments(documents, id);
     await recordFullPayment(payments, id);
     await workflow.submitApplication(id, officer);
@@ -1549,7 +1599,7 @@ describe('S-308 and S-309: what approval creates', () => {
     const documents = await import('../documents/documents');
 
     const { id } = await capture.startApplication('individual', actor);
-    await capture.saveDraft(id, COMPLETE_INDIVIDUAL, actor);
+    await capture.saveDraft(id, COMPLETE_INDIVIDUAL(), actor);
     await fileRequiredDocuments(documents, id);
     await verifyRequiredDocuments(documents, id);
 
@@ -2118,6 +2168,49 @@ describe('S-611: Regional oversight, enabled or not, gates the chain', () => {
     ).rejects.toThrowError(/must happen first/);
   });
 
+  // Officer feedback: this is the gate secretary_review's own board-readiness
+  // check does not reach — Regional oversight has no readiness check of its
+  // own, so without this a document the Regional Manager rejected could
+  // still be forwarded on to the Secretary ("central processing") unfixed.
+  it('refuses the Regional Manager forwarding while a document they rejected is still rejected', async () => {
+    await setRegionalReviewEnabled(true);
+    const { capture, workflow, documents, payments } = await load();
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+
+    const entry = (await documents.checklistFor({ applicationId: id })).find(
+      e => e.subject === 'applicant' && e.documentCode === 'id_card'
+    )!;
+    const verifier = {
+      ...regionalManager,
+      permissions: new Set([...regionalManager.permissions, 'document.verify']),
+    };
+    await documents.reviewDocument(
+      entry.documentId!,
+      { outcome: 'reject', reason: 'Expired ID.' },
+      verifier
+    );
+
+    await expect(
+      workflow.reviewApplication(
+        id,
+        { outcome: 'forward', comment: 'Send it on.' },
+        regionalManager,
+        'regional_review'
+      )
+    ).rejects.toThrowError(/1 document\(s\) are still rejected/);
+
+    // Return still works — that is the officer's only way on from here.
+    const returned = await workflow.reviewApplication(
+      id,
+      { outcome: 'return', comment: 'ID card has expired — refile it.' },
+      regionalManager,
+      'regional_review'
+    );
+    expect(returned.status).toBe('returned');
+    expect((await capture.loadApplication(id))!.status).toBe('returned');
+  });
+
   it('refuses a Secretary who tries to act on the Regional oversight step, even holding the same permission', async () => {
     await setRegionalReviewEnabled(true);
     const { workflow } = await load();
@@ -2332,6 +2425,79 @@ describe('S-611: Regional oversight, enabled or not, gates the chain', () => {
     const passedIds = await workflow.regionalReviewPassedIds([pending, passed]);
     expect(passedIds.has(pending)).toBe(false);
     expect(passedIds.has(passed)).toBe(true);
+  });
+
+  // Officer feedback: a correction is not a shortcut back to wherever it was
+  // returned from — it goes through the whole chain again, Regional
+  // oversight included, the same as a first submission would.
+  it('makes a returned-and-resubmitted application go through Regional oversight again, not skip straight to the Secretary', async () => {
+    await setRegionalReviewEnabled(true);
+    const { capture, workflow } = await load();
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+    await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Checked at the regional office.' },
+      regionalManager,
+      'regional_review'
+    );
+
+    // Secretary returns it for correction — the officer's only way back in.
+    await workflow.reviewApplication(
+      id,
+      { outcome: 'return', comment: 'The NIC on file does not match.' },
+      secretary
+    );
+    let application = (await capture.loadApplication(id))!;
+    expect(application.status).toBe('returned');
+
+    // Resubmitted, exactly as any returned application is.
+    await workflow.submitApplication(id, officer);
+    application = (await capture.loadApplication(id))!;
+    expect(application.status).toBe('new');
+
+    // The Regional Manager's earlier forward does not carry over — it holds
+    // with them again, not the Secretary.
+    expect(await workflow.reviewStageLabel(application)).toBe(
+      'With the Regional Manager'
+    );
+    expect(
+      (await workflow.availableActions(application, regionalManager)).map(
+        a => a.stepCode
+      )
+    ).toEqual(['regional_review']);
+    expect(
+      (await workflow.availableActions(application, secretary)).map(
+        a => a.stepCode
+      )
+    ).toEqual([]);
+    await expect(
+      workflow.reviewApplication(
+        id,
+        { outcome: 'forward', comment: 'Jumping the queue again.' },
+        secretary
+      )
+    ).rejects.toThrowError(/must happen first/);
+
+    // The batched form the Applications list reads agrees with the single-
+    // application one above — not still reading the earlier pass as live.
+    expect((await workflow.regionalReviewPassedIds([id])).has(id)).toBe(false);
+
+    // Once Regional oversight has acted on the correction, the chain moves
+    // on exactly as before.
+    await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Corrected NIC checked.' },
+      regionalManager,
+      'regional_review'
+    );
+    expect((await workflow.regionalReviewPassedIds([id])).has(id)).toBe(true);
+    const forwarded = await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Complete.' },
+      secretary
+    );
+    expect(forwarded.status).toBe('submitted_for_approval');
   });
 });
 
@@ -2751,7 +2917,7 @@ describe('S-614: a customer_account application, end to end', () => {
     // Nothing was captured at start — the applicant's own details are filled
     // in the same way a membership application's are, against the same
     // fields (S-614 phase 2).
-    await capture.saveDraft(application.id, COMPLETE_INDIVIDUAL, actor);
+    await capture.saveDraft(application.id, COMPLETE_INDIVIDUAL(), actor);
     await fileRequiredDocuments(documents, application.id);
     await verifyRequiredDocuments(documents, application.id);
 
@@ -2832,7 +2998,7 @@ describe('S-614: a customer_account application, end to end', () => {
       [unprefixed.rows[0].id],
       officer
     );
-    await capture.saveDraft(application.id, COMPLETE_INDIVIDUAL, actor);
+    await capture.saveDraft(application.id, COMPLETE_INDIVIDUAL(), actor);
     await fileRequiredDocuments(documents, application.id);
     await verifyRequiredDocuments(documents, application.id);
     await payments.recordAccountOpeningPayment(
@@ -2891,7 +3057,7 @@ describe('S-614: a customer_account application, end to end', () => {
       [accountTypeId],
       officer
     );
-    const values = COMPLETE_INDIVIDUAL.map(p =>
+    const values = COMPLETE_INDIVIDUAL().map(p =>
       p.subject === 'applicant'
         ? { ...p, values: { ...p.values, surname: 'Ramtoola' } }
         : p
@@ -2990,7 +3156,7 @@ describe('S-614: the account a non-member already held transfers when they becom
       [accountType.rows[0].id],
       officer
     );
-    await capture.saveDraft(custApp.id, COMPLETE_INDIVIDUAL, actor);
+    await capture.saveDraft(custApp.id, COMPLETE_INDIVIDUAL(), actor);
     await fileRequiredDocuments(documents, custApp.id);
     await verifyRequiredDocuments(documents, custApp.id);
     await payments.recordAccountOpeningPayment(
@@ -3101,7 +3267,7 @@ describe('S-614: the account a non-member already held transfers when they becom
       [accountType.rows[0].id],
       officer
     );
-    await capture.saveDraft(custApp.id, COMPLETE_INDIVIDUAL, actor);
+    await capture.saveDraft(custApp.id, COMPLETE_INDIVIDUAL(), actor);
     await fileRequiredDocuments(documents, custApp.id);
     await verifyRequiredDocuments(documents, custApp.id);
     await payments.recordAccountOpeningPayment(
@@ -3209,7 +3375,7 @@ describe('S-614: the account a non-member already held transfers when they becom
       [accountType.rows[0].id],
       officer
     );
-    await capture.saveDraft(custApp.id, COMPLETE_INDIVIDUAL, actor);
+    await capture.saveDraft(custApp.id, COMPLETE_INDIVIDUAL(), actor);
     await fileRequiredDocuments(documents, custApp.id);
     await verifyRequiredDocuments(documents, custApp.id);
     await payments.recordAccountOpeningPayment(
@@ -3398,7 +3564,7 @@ describe('a customer opens a further account, end to end', () => {
       [hsaTypeId],
       officer
     );
-    await capture.saveDraft(first.id, COMPLETE_INDIVIDUAL, actor);
+    await capture.saveDraft(first.id, COMPLETE_INDIVIDUAL(), actor);
     await fileRequiredDocuments(documents, first.id);
     await verifyRequiredDocuments(documents, first.id);
     await payments.recordAccountOpeningPayment(
@@ -3512,7 +3678,7 @@ describe('a customer opens a further account, end to end', () => {
       [hsaTypeId],
       officer
     );
-    await capture.saveDraft(first.id, COMPLETE_INDIVIDUAL, actor);
+    await capture.saveDraft(first.id, COMPLETE_INDIVIDUAL(), actor);
     await fileRequiredDocuments(documents, first.id);
     await verifyRequiredDocuments(documents, first.id);
     await payments.recordAccountOpeningPayment(
