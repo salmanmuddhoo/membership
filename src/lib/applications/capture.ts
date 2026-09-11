@@ -1741,7 +1741,11 @@ export async function problemsBlockingSubmission(
 export async function deleteDraftApplication(
   applicationId: string,
   principal: Principal,
-  discardFiles: (reference: string) => Promise<void> = discardApplicationFiles
+  discardFiles: (
+    reference: string,
+    surname?: string,
+    firstName?: string
+  ) => Promise<void> = discardApplicationFiles
 ): Promise<{ reference: string }> {
   if (!principal.permissions.has('application.capture')) {
     throw new ApplicationError(
@@ -1760,14 +1764,26 @@ export async function deleteDraftApplication(
       captured_by: string;
       created_at: Date;
       membership_type_code: string | null;
+      applicant_surname: string | null;
+      applicant_first_name: string | null;
     }>(
       // Left joined: an additional_account draft (S-613) has no membership
       // type to name, and an inner join here would read as "no such
       // application" for an abandoned one an officer is trying to delete.
+      // The applicant party is its own left join for the same reason — an
+      // additional_account draft has no applicant party of its own either —
+      // and is read fresh here rather than trusted from the caller, so the
+      // folder discardFiles targets below is the one this draft's own
+      // documents (if any) were actually filed under.
       `select a.reference, a.status, a.captured_by, a.created_at,
-              m.code as membership_type_code
+              m.code as membership_type_code,
+              p.values->>'surname' as applicant_surname,
+              p.values->>'name' as applicant_first_name
          from membership_application a
          left join membership_type m on m.id = a.membership_type_id
+         left join application_party p
+           on p.application_id = a.id
+          and p.subject = 'applicant' and p.ordinal = 1
         where a.id = $1
           for no key update of a`,
       [applicationId]
@@ -1868,7 +1884,11 @@ export async function deleteDraftApplication(
     // nothing was ever uploaded, which is the usual case for an abandoned
     // draft — and means deleting one does not depend on Graph being reachable.
     if (filed.rows[0].n > 0) {
-      await discardFiles(row.reference);
+      await discardFiles(
+        row.reference,
+        row.applicant_surname ?? '',
+        row.applicant_first_name ?? ''
+      );
     }
 
     return { reference: row.reference };

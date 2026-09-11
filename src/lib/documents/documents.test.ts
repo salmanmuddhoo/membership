@@ -737,6 +737,78 @@ describe('officer feedback: one SharePoint folder per person, not per applicatio
     expect(begun.ticket.itemPath).not.toContain(membershipId);
     expect(begun.ticket.itemPath).not.toContain(additionalId);
   });
+
+  // Officer feedback: the shared folder itself is named after the founding
+  // applicant, not whichever application happens to be filing into it —
+  // resolveOwner has to read the name from the root of the chain even when
+  // the application actually filing is a later one with no applicant of its
+  // own (an additional account).
+  it('names the shared folder after the founding applicant, not the additional account filing into it', async () => {
+    const { capture, documents } = await load();
+
+    const type = await run(
+      appUrl,
+      `select id from membership_type where code = 'individual'`
+    );
+    const founding = await run(
+      appUrl,
+      `insert into membership_application (membership_type_id, captured_by)
+       values ($1, $2) returning id, reference`,
+      [type.rows[0].id, officer.userId]
+    );
+    await run(
+      appUrl,
+      `insert into application_party (application_id, subject, ordinal, values)
+       values ($1, 'applicant', 1, '{"name": "Yusuf", "surname": "Ramtoola"}')`,
+      [founding.rows[0].id]
+    );
+    const member = await run(
+      appUrl,
+      `insert into member (membership_type_id, application_id, status)
+       values ($1, $2, 'active') returning id`,
+      [type.rows[0].id, founding.rows[0].id]
+    );
+
+    const checklist = await run(
+      appUrl,
+      `select id from document_checklist where code = 'msa_opening'`
+    );
+    const accountType = await runAsConfigurator(
+      appUrl,
+      `insert into account_type
+         (code, name, category, minimum_opening_amount, checklist_id,
+          is_membership_default)
+       values ('inv_folder_test_named', 'Investment (named folder test)',
+               'investment', 1000, '${checklist.rows[0].id}', false)
+       returning id`
+    );
+    const { id: additionalId } =
+      await capture.startAdditionalAccountApplication(
+        member.rows[0].id,
+        [accountType.rows[0].id],
+        officer
+      );
+
+    const begun = await documents.beginUpload(
+      {
+        applicationId: additionalId,
+        documentTypeId: idCardTypeId,
+        subject: 'applicant',
+        fileName: 'id-named-folder-test.jpg',
+        contentType: 'image/jpeg',
+        sizeBytes: 100,
+      },
+      officer
+    );
+
+    expect(begun.ticket.itemPath).toContain(
+      documents.applicationFolderPath(
+        founding.rows[0].reference,
+        'Ramtoola',
+        'Yusuf'
+      )
+    );
+  });
 });
 
 // S-612: an additional-account application has no membership_type_id — the
@@ -1378,6 +1450,49 @@ describe('S-405: folders are created once', () => {
     );
     // And a member with no name yet still gets a folder.
     expect(documents.memberFolderName('ABM-000127', '   ')).toBe('ABM-000127');
+  });
+
+  // Officer feedback: an application folder named only by its reference gave
+  // no way to recognise whose documents were inside without opening it.
+  it('names an application folder by surname and first name, reference trailing', async () => {
+    const { documents } = await load();
+    expect(
+      documents.applicationFolderPath('AB-000042', 'Ramtoola', 'Yusuf')
+    ).toBe(`${documents.ROOT_FOLDER}/Applications/Ramtoola Yusuf – AB-000042`);
+    // Characters SharePoint refuses must not produce a broken path.
+    expect(documents.applicationFolderPath('AB-000043', 'A/B:C*D', 'X')).toBe(
+      `${documents.ROOT_FOLDER}/Applications/ABCD X – AB-000043`
+    );
+    // No name captured yet still gets a folder, named by reference alone —
+    // the same fallback discardApplicationFiles relies on to match a draft
+    // deleted before its applicant details were ever saved.
+    expect(documents.applicationFolderPath('AB-000044')).toBe(
+      `${documents.ROOT_FOLDER}/Applications/AB-000044`
+    );
+  });
+
+  // Officer feedback: the test deployment and production were writing into
+  // the exact same SharePoint tree, with nothing to tell a preview upload
+  // apart from a real member's identity documents.
+  it('keeps the test and production document trees apart', async () => {
+    const { documents } = await load();
+    expect(documents.ROOT_FOLDER).toBe(
+      'Test/Al Barakah MCSL – Member Documents'
+    );
+
+    // A second, independent module instance standing in for what the
+    // production deployment computes — the same low-level steps load()
+    // itself takes to isolate one environment's config from the next test's.
+    await closeOpenPool();
+    vi.resetModules();
+    process.env.DATABASE_URL = appUrl;
+    process.env.DATABASE_ALLOW_INSECURE = 'true';
+    process.env.PUBLIC_APP_ENV = 'production';
+    openPool = await import('../db/pool');
+    const production = await import('./documents');
+    expect(production.ROOT_FOLDER).toBe(
+      'Production/Al Barakah MCSL – Member Documents'
+    );
   });
 });
 

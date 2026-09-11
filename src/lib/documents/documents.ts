@@ -14,6 +14,7 @@ import { isEditableStatus } from '../applications/capture';
 import type { PoolClient } from 'pg';
 import { recordAudit } from '../access/audit';
 import { checkSegregation } from '../admin/segregation';
+import { isProductionEnvironment } from '../config';
 import {
   checklistForMembershipType,
   type ChecklistItem,
@@ -101,8 +102,19 @@ export interface ChecklistEntry {
  * The name carries the Member ID first so the folder sorts and searches by the
  * identifier that never changes, with the name after it for a human scanning
  * the library.
+ *
+ * Officer feedback: the test deployment and the production one were writing
+ * into this exact same tree — a preview upload sat right next to a real
+ * member's identity documents, with nothing to tell them apart. Led by the
+ * same PUBLIC_APP_ENV signal the TEST badge already reads (isProductionEnvironment,
+ * unset treated as production the same way it is everywhere else that
+ * signal gates something), so the two never share a root, and each side
+ * creates its own on the next document filed there — nothing to provision
+ * by hand.
  */
-export const ROOT_FOLDER = 'Al Barakah MCSL – Member Documents';
+export const ROOT_FOLDER = isProductionEnvironment()
+  ? 'Production/Al Barakah MCSL – Member Documents'
+  : 'Test/Al Barakah MCSL – Member Documents';
 
 export const MEMBER_SUBFOLDERS = [
   '01 – Membership',
@@ -111,12 +123,42 @@ export const MEMBER_SUBFOLDERS = [
   '04 – Other',
 ] as const;
 
-export function memberFolderName(memberNo: string, name: string): string {
-  const cleaned = name
+// Strips the characters SharePoint refuses in a folder name, so a name that
+// contains one never produces a broken path. Shared by every folder name
+// built from something a person typed, rather than from a code the system
+// assigned.
+function sanitiseFolderName(name: string): string {
+  return name
     .trim()
     .replace(/[\\/:*?"<>|]/g, '')
     .trim();
+}
+
+export function memberFolderName(memberNo: string, name: string): string {
+  const cleaned = sanitiseFolderName(name);
   return cleaned ? `${memberNo} – ${cleaned}` : memberNo;
+}
+
+/**
+ * The folder segment naming whoever an application's own folder belongs to.
+ *
+ * Officer feedback: a flat Applications/<reference> folder gave no way to
+ * recognise whose documents were inside without opening it. Surname leads,
+ * first name after — the order asked for, and the reverse of
+ * memberFolderName's own (identifier, then name) on purpose: there is no
+ * member number yet at this stage to lead with, so the reference plays that
+ * role instead, trailing rather than leading, the way a name is actually
+ * said. Two applicants can share a name; a reference cannot collide, so it
+ * always carries the folder even when the name does not — the same
+ * reasoning as memberFolderName, applied in the other order.
+ */
+function applicationFolderName(
+  reference: string,
+  surname: string,
+  firstName: string
+): string {
+  const cleaned = sanitiseFolderName(`${surname} ${firstName}`);
+  return cleaned ? `${cleaned} – ${reference}` : reference;
 }
 
 /**
@@ -126,9 +168,21 @@ export function memberFolderName(memberNo: string, name: string): string {
  * them are not members yet and some never will be. On approval the documents
  * are already filed; M4 does not move them, and the metadata points at the
  * path either way.
+ *
+ * Officer feedback: this reorganised from a flat Applications/<reference> to
+ * Applications/<name> — going forward only. A document already filed under
+ * the old path is not moved or renamed; only what gets filed from here on
+ * uses the new one. An application whose documents straddle the change (one
+ * filed before, another filed after) ends up with its documents split across
+ * both folders until it is closed out — the accepted cost of not touching
+ * what is already in the drive.
  */
-export function applicationFolderPath(reference: string): string {
-  return `${ROOT_FOLDER}/Applications/${reference}`;
+export function applicationFolderPath(
+  reference: string,
+  surname = '',
+  firstName = ''
+): string {
+  return `${ROOT_FOLDER}/Applications/${applicationFolderName(reference, surname, firstName)}`;
 }
 
 export function memberFolderPath(memberNo: string, name: string): string {
@@ -208,12 +262,19 @@ async function resolveOwner(
       reference: string;
       status: string;
       folder_reference: string;
+      folder_surname: string | null;
+      folder_first_name: string | null;
     }>(
       `select a.reference, a.status,
-              coalesce(root.reference, a.reference) as folder_reference
+              coalesce(root.reference, a.reference) as folder_reference,
+              p.values->>'surname' as folder_surname,
+              p.values->>'name' as folder_first_name
          from membership_application a
          left join membership_application root
            on root.id = a.folder_application_id
+         left join application_party p
+           on p.application_id = coalesce(root.id, a.id)
+          and p.subject = 'applicant' and p.ordinal = 1
         where a.id = $1`,
       [applicationId]
     );
@@ -231,7 +292,11 @@ async function resolveOwner(
       application_status: row.status,
       checklist_application_id: applicationId,
       membership_type_code: null,
-      folder_path: applicationFolderPath(row.folder_reference),
+      folder_path: applicationFolderPath(
+        row.folder_reference,
+        row.folder_surname ?? '',
+        row.folder_first_name ?? ''
+      ),
       reference: row.reference,
     };
   }
@@ -1432,12 +1497,21 @@ export async function expireDocuments(
  * application's folder goes too, and the record that it was created with it —
  * otherwise ensureFolderPath would later believe a folder exists that does
  * not.
+ *
+ * surname/firstName must match whatever the draft's own applicant party held
+ * at the time its documents were filed (deleteDraftApplication reads them
+ * fresh, under the same lock) — applicationFolderPath has to be given the
+ * same name it was given when the folder was created, or this targets a
+ * folder that was never the real one and leaves the actual files behind,
+ * uncounted for.
  */
 export async function discardApplicationFiles(
   reference: string,
+  surname = '',
+  firstName = '',
   config?: GraphConfig
 ): Promise<void> {
-  const folder = applicationFolderPath(reference);
+  const folder = applicationFolderPath(reference, surname, firstName);
   await deleteItemByPath(folder, config);
   await query(
     `delete from sharepoint_folder

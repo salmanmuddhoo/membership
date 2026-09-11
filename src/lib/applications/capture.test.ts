@@ -1878,6 +1878,36 @@ describe('deleting a draft that is no longer needed', () => {
       expect(await capture.loadApplication(id)).toBeNull();
     });
 
+    // Officer feedback: applicationFolderPath now names a draft's folder
+    // after its applicant, not only its reference — the deletion has to be
+    // told the same name that filing used, or it targets a folder that was
+    // never the real one and the actual files are left behind, uncounted for.
+    it('are removed from the same named folder they were filed under', async () => {
+      const { capture, id, reference } = await draftWithADocument();
+      await capture.saveDraft(
+        id,
+        [
+          {
+            subject: 'applicant',
+            ordinal: 1,
+            values: { surname: 'Ramtoola', name: 'Yusuf' },
+          },
+        ],
+        principalFor(officer)
+      );
+
+      const discarded: [string, string?, string?][] = [];
+      await capture.deleteDraftApplication(
+        id,
+        principalFor(officer),
+        async (r, surname, firstName) => {
+          discarded.push([r, surname, firstName]);
+        }
+      );
+
+      expect(discarded).toEqual([[reference, 'Ramtoola', 'Yusuf']]);
+    });
+
     it('keep the application alive if they cannot be removed', async () => {
       const { capture, id } = await draftWithADocument();
 
