@@ -15,7 +15,11 @@ import {
   visibleFields,
   type Application,
 } from '@lib/applications/capture';
-import { listMembershipTypes, type FieldSubject } from '@lib/config/reference';
+import {
+  listAccountTypes,
+  listMembershipTypes,
+  type FieldSubject,
+} from '@lib/config/reference';
 import { SIGNATURES } from '@lib/documents/documents';
 
 const principal = Astro.locals.principal!;
@@ -87,6 +91,23 @@ const type = (await listMembershipTypes()).find(
 )!;
 const fields = visibleFields(type);
 
+// Officer feedback: the form gave no clue which account it was for — every
+// membership type prints as one generic-sounding heading, and an account
+// opening read no differently from a membership application. Named after
+// what is actually being opened rather than the applicant's classification:
+// a plain membership application always opens both of the configured
+// membership-default accounts (S-206, S-308 — Shares and the MSA today, but
+// this reads whichever accounts are marked as the default, not those two by
+// name); an account application already carries the specific type(s) chosen
+// when it was started.
+const accountsLabel = (
+  application.applicationKind === 'membership'
+    ? (await listAccountTypes())
+        .filter(t => t.isMembershipDefault)
+        .map(t => t.name)
+    : application.selectedAccountTypes.map(t => t.name)
+).join(' and ');
+
 const valuesFor = (subject: FieldSubject) =>
   formSource.parties.find(p => p.subject === subject && p.ordinal === 1)
     ?.values ?? {};
@@ -151,8 +172,8 @@ const fixedViewport =
         <p class="sub">
           {
             isAccountApplication
-              ? `Account application — ${type.name}`
-              : `Application for Membership — ${type.name}`
+              ? `Application form — ${accountsLabel}`
+              : `Application for Membership — ${accountsLabel}`
           }
         </p>
       </div>

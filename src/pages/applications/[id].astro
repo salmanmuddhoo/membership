@@ -2041,9 +2041,22 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         // with the record. Held back until every other upload started
         // alongside this one has also finished, so none of them gets cut off
         // mid-transfer by a reload that was never theirs.
+        //
+        // Officer feedback: deleting a rejected document, then uploading its
+        // replacement, left the page showing the delete as if it had just
+        // happened again — no Upload widget, "outstanding" still counting
+        // it, Next still disabled. The delete button above is a plain form
+        // POST with no redirect after it (the page re-renders in the same
+        // response), so the browser's current entry is that POST. reload()
+        // replays the entry it is called on verbatim, method and body
+        // included — so it silently resubmitted the delete, taking the file
+        // straight back out. Navigating to the same URL instead of replaying
+        // the last request always issues a fresh GET, whatever the previous
+        // request was.
         say('Filed.');
         uploadsInFlight--;
-        if (uploadsInFlight === 0) window.location.reload();
+        if (uploadsInFlight === 0)
+          window.location.replace(window.location.href);
       } catch (error) {
         uploadsInFlight--;
         say(error instanceof Error ? error.message : 'The upload failed.');
