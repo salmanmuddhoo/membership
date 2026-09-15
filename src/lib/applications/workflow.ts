@@ -26,6 +26,12 @@ import {
 } from '../config/reference';
 import { query, withTransaction } from '../db/pool';
 import { checklistFor, type ChecklistEntry } from '../documents/documents';
+import {
+  notifyApproved,
+  notifyRejected,
+  notifyReturned,
+  notifySubmitted,
+} from '../notifications/events';
 import { paymentsForApplication, type Payment } from '../payments/payments';
 import type { Principal } from '../access/principal';
 import {
@@ -483,6 +489,12 @@ export async function submitApplication(
     }
   });
 
+  // S-902. After the commit, never inside it: a member told their application
+  // had arrived by a transaction that then rolled back would have been told
+  // something untrue. notifySubmitted never throws, so a relay that is down
+  // cannot turn a submission that succeeded into an error on screen.
+  await notifySubmitted(application);
+
   return { status: step.toStatus };
 }
 
@@ -662,6 +674,14 @@ export async function reviewApplication(
     );
   });
 
+  // S-902. Only a return is news to the applicant: forwarding an application
+  // from one desk to the next is the Society's own business, and a member
+  // written to at every internal step learns to ignore the messages that
+  // matter. A return is what asks them for something.
+  if (decision.outcome === 'return') {
+    await notifyReturned(application, comment);
+  }
+
   return { status: toStatus };
 }
 
@@ -745,7 +765,10 @@ export async function decideApplication(
     action: ACTION_APPROVED,
   });
 
-  return withTransaction(async client => {
+  // Annotated rather than inferred: the callback returns three different
+  // shapes (quorum not yet met, rejected, approved with the member created),
+  // and the notification below asks which one this was.
+  const result: DecisionResult = await withTransaction(async client => {
     // One sign-off per person per step per application: checked before the
     // write, the same shape as the segregation check assertMayAct already
     // ran, so a repeat attempt reads as a conflict rather than a vote change.
@@ -846,6 +869,20 @@ export async function decideApplication(
     const member = await createMember(client, application, actor);
     return { status: toStatus, member };
   });
+
+  // S-902. After the commit, and only once the step has actually completed:
+  // a sign-off that did not reach quorum has decided nothing yet, and telling
+  // a member they were approved on the first of three votes would be wrong
+  // twice over if the other two never came.
+  if (!result.signoff) {
+    if (decision.outcome === 'approve') {
+      await notifyApproved(application, result.member?.memberNo);
+    } else {
+      await notifyRejected(application, comment);
+    }
+  }
+
+  return result;
 }
 
 /**

@@ -282,3 +282,85 @@ export function getMemberConfig(): MemberConfig {
     otpFixedCode,
   };
 }
+
+// How notifications actually leave the system (S-902, S-903).
+//
+// The template says what to send and the channel says how; this says through
+// whom — and it is the only place a provider is named. Changing provider is
+// changing these variables, which is what decision 11 asked for.
+export interface ChannelDelivery {
+  // 'graph' sends through the Society's Microsoft 365 mailbox, reusing the
+  // GRAPH_* registration documents already use. 'http' posts
+  // { to, subject, body } to whichever gateway the Society has — the same
+  // shape the member app's one-time codes already use, so one gateway can
+  // carry both. 'log' writes to the server log and is non-production only.
+  kind: 'graph' | 'http' | 'log' | 'unconfigured';
+  // The mailbox mail is sent as, for 'graph'.
+  from?: string;
+  webhookUrl?: string;
+  webhookToken?: string;
+}
+
+export interface NotificationConfig {
+  email: ChannelDelivery;
+  whatsapp: ChannelDelivery;
+}
+
+export class NotificationConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'NotificationConfigError';
+  }
+}
+
+// Read one channel's settings. Anything incomplete reads as 'unconfigured'
+// rather than half-configured: a channel that cannot say who it sends as, or
+// where it posts to, has no way to deliver, and saying so here is what makes
+// the delivery log (S-904) show a configuration problem instead of a silent
+// success.
+function channelDelivery(
+  prefix: string,
+  allowed: ReadonlySet<ChannelDelivery['kind']>
+): ChannelDelivery {
+  const requested = readEnv(`${prefix}_DELIVERY`);
+  const from = readEnv(`${prefix}_FROM`);
+  const webhookUrl = readEnv(`${prefix}_WEBHOOK_URL`);
+  const webhookToken = readEnv(`${prefix}_WEBHOOK_TOKEN`);
+
+  let kind: ChannelDelivery['kind'] = 'unconfigured';
+  if (requested === 'graph' && allowed.has('graph') && from) kind = 'graph';
+  else if (requested === 'http' && webhookUrl) kind = 'http';
+  else if (requested === 'log') kind = 'log';
+
+  return { kind, from, webhookUrl, webhookToken };
+}
+
+/**
+ * Where each channel sends.
+ *
+ * Unlike getMemberConfig this never throws: a notification must not be able to
+ * break the approval that caused it, so a channel with nothing configured is
+ * reported as such and refused at send time — where the refusal is recorded
+ * against the notification and visible in the delivery log.
+ */
+export function getNotificationConfig(): NotificationConfig {
+  const production = isProductionEnvironment();
+
+  // 'log' is a developer's channel: it reports success while telling the
+  // member nothing. In production that is the worst possible failure mode, so
+  // it is not an available kind there at all.
+  const demote = (channel: ChannelDelivery): ChannelDelivery =>
+    production && channel.kind === 'log'
+      ? { ...channel, kind: 'unconfigured' }
+      : channel;
+
+  return {
+    email: demote(
+      channelDelivery('NOTIFY_EMAIL', new Set(['graph', 'http', 'log']))
+    ),
+    // No 'graph': Microsoft 365 sends mail, not WhatsApp.
+    whatsapp: demote(
+      channelDelivery('NOTIFY_WHATSAPP', new Set(['http', 'log']))
+    ),
+  };
+}

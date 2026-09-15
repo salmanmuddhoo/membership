@@ -121,40 +121,49 @@ create index notification_entity_idx
 -- migration 0010 does.
 set local albarakah.actor_description = 'migration 0053_notifications';
 
+--
+-- On the `||` below: PostgreSQL concatenates two string literals separated by
+-- a newline, but the E'' prefix is only legal on the FIRST literal of such a
+-- group — `'plain' <newline> E'escaped'` is a syntax error, not a
+-- concatenation. These bodies need \n in more than one place, so they are
+-- joined with the operator instead, where every operand may carry its own
+-- prefix.
 insert into notification_template
     (event_code, channel, subject, body, description)
 values
     ('application.submitted', 'email',
      'We have your application, {{applicant_name}}',
      E'Assalamoualaikoum {{applicant_name}},\n\n'
-     'We have received your application ({{reference}}) and it is now with '
-     E'our team for review. We will write again once a decision is made.\n\n'
-     'Al Barakah MCSL',
+     || 'We have received your application ({{reference}}) and it is now '
+     || E'with our team for review. We will write again once a decision is '
+     || E'made.\n\n'
+     || 'Al Barakah MCSL',
      'Sent when an application is submitted for central processing.'),
 
     ('application.returned', 'email',
      'Your application {{reference}} needs a correction',
      E'Assalamoualaikoum {{applicant_name}},\n\n'
-     E'Your application ({{reference}}) needs one thing corrected:\n\n'
-     E'{{comment}}\n\n'
-     E'Please contact your regional officer to put it right.\n\n'
-     'Al Barakah MCSL',
+     || E'Your application ({{reference}}) needs one thing corrected:\n\n'
+     || E'{{comment}}\n\n'
+     || E'Please contact your regional officer to put it right.\n\n'
+     || 'Al Barakah MCSL',
      'Sent when an application is returned to the originating staff.'),
 
     ('application.approved', 'email',
      'Welcome to Al Barakah, {{applicant_name}}',
      E'Assalamoualaikoum {{applicant_name}},\n\n'
-     'Your membership has been approved. Your member number is '
-     E'{{member_no}}.\n\n'
-     'Al Barakah MCSL',
+     || 'Your membership has been approved. Your member number is '
+     || E'{{member_no}}.\n\n'
+     || 'Al Barakah MCSL',
      'Sent when a membership application is approved.'),
 
     ('application.rejected', 'email',
      'About your application {{reference}}',
      E'Assalamoualaikoum {{applicant_name}},\n\n'
-     E'Your application ({{reference}}) was not approved on this occasion.\n\n'
-     E'{{comment}}\n\n'
-     'Al Barakah MCSL',
+     || E'Your application ({{reference}}) was not approved on this '
+     || E'occasion.\n\n'
+     || E'{{comment}}\n\n'
+     || 'Al Barakah MCSL',
      'Sent when a membership application is rejected.'),
 
     -- The one WhatsApp template the Society asked for first. No subject:
