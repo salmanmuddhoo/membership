@@ -17,7 +17,8 @@
 //   mid-send leaves a 'pending' row rather than no evidence at all, which is
 //   what lets S-904 retry it later rather than guess.
 import { query } from '../db/pool';
-import { configuredChannels } from './channels';
+import { activeChannels } from './channels';
+import { backoffMinutes } from './retry';
 import {
   render,
   templateFor,
@@ -53,21 +54,10 @@ export interface NotifyRequest {
   entityId?: string;
 }
 
-// Which provider carries a channel is read from configuration per send
-// (channels.ts). An override registered here wins over it, which is how a
-// test substitutes a channel it can inspect — and how anything that wants to
-// send through something the environment cannot describe does so.
-const overrides = new Map<NotificationChannel, Channel>();
-
-export function registerChannel(channel: Channel): void {
-  overrides.set(channel.name, channel);
-}
-
-// Tests only: forget every override, so one file's substitute channel is not
-// still in place in the next.
-export function resetChannels(): void {
-  overrides.clear();
-}
+// Which provider carries a channel is channels.ts's question, for the first
+// attempt and the retry job alike. Re-exported because this module is the
+// surface the rest of the system already sends through.
+export { registerChannel, resetChannels } from './channels';
 
 function recipientFor(
   channel: NotificationChannel,
@@ -113,12 +103,22 @@ async function markSent(id: string): Promise<void> {
   );
 }
 
+// The first attempt's failure also schedules the second (S-904). Without a
+// due time the row would still be found eventually — the retry job picks up
+// anything unscheduled once it is old enough — but it would wait out that
+// grace period instead of the backoff, which is longer than a transient relay
+// failure deserves.
 async function markFailed(id: string, error: unknown): Promise<void> {
   await query(
     `update notification
-        set status = 'failed', attempts = attempts + 1, last_error = $2
+        set status = 'failed', attempts = attempts + 1, last_error = $2,
+            next_attempt_at = $3
       where id = $1`,
-    [id, error instanceof Error ? error.message : 'Unknown error.']
+    [
+      id,
+      error instanceof Error ? error.message : 'Unknown error.',
+      new Date(Date.now() + backoffMinutes(1) * 60_000),
+    ]
   );
 }
 
@@ -132,7 +132,7 @@ async function markFailed(id: string, error: unknown): Promise<void> {
  */
 export async function notify(request: NotifyRequest): Promise<string[]> {
   const written: string[] = [];
-  const configured = configuredChannels();
+  const channels = activeChannels();
 
   for (const channel of ['email', 'whatsapp'] as const) {
     try {
@@ -155,9 +155,7 @@ export async function notify(request: NotifyRequest): Promise<string[]> {
       written.push(id);
 
       try {
-        await (overrides.get(channel) ?? configured.get(channel)!).send(
-          message
-        );
+        await channels.get(channel)!.send(message);
         await markSent(id);
       } catch (error) {
         console.error(`[notify] ${channel} send failed:`, error);

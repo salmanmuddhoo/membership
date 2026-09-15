@@ -188,3 +188,33 @@ export function configuredChannels(
     ['whatsapp', channelFor('whatsapp', config.whatsapp)],
   ]);
 }
+
+// A channel registered here wins over whatever the environment describes.
+// That is how a test substitutes a channel it can inspect, and how anything
+// that must send through something configuration cannot express does so.
+const overrides = new Map<NotificationChannel, Channel>();
+
+export function registerChannel(channel: Channel): void {
+  overrides.set(channel.name, channel);
+}
+
+// Tests only: forget every override, so one file's substitute channel is not
+// still in place in the next.
+export function resetChannels(): void {
+  overrides.clear();
+}
+
+/**
+ * The channels as this environment actually has them: what configuration
+ * describes, with any override laid over the top.
+ *
+ * EVERY sender resolves through here — notify()'s first attempt and the retry
+ * job alike. Resolving it in two places is exactly how the two came to
+ * disagree about which provider carries a message: the retry job used to read
+ * configuration directly and silently ignore a registered channel.
+ */
+export function activeChannels(): Map<NotificationChannel, Channel> {
+  const channels = configuredChannels();
+  for (const [name, channel] of overrides) channels.set(name, channel);
+  return channels;
+}
