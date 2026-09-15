@@ -154,17 +154,16 @@ if (Astro.request.method === 'POST') {
       <a
         href="/applications"
         class="inline-block text-sm text-neutral-500 underline dark:text-neutral-400"
-        >← All applications</a
       >
+        ← All applications
+      </a>
     </div>
 
-    {
-      error && (
-        <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-          {error}
-        </div>
-      )
-    }
+    {error && (
+      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+        {error}
+      </div>
+    )}
 
     <form method="post" id="capture-form" class="space-y-6">
       <CaptureFields
@@ -174,11 +173,9 @@ if (Astro.request.method === 'POST') {
       />
 
       <div class="flex flex-wrap items-center gap-3">
-        {
-          /* Hidden until the script below un-hides it, so a reader with
+        {/* Hidden until the script below un-hides it, so a reader with
             scripting off never sees an inert button — they get the noscript
-            one, which works by being a real form submission. */
-        }
+            one, which works by being a real form submission. */}
         <button
           type="button"
           id="next-button"
@@ -190,12 +187,11 @@ if (Astro.request.method === 'POST') {
         <span
           id="autosave-status"
           class="text-xs text-neutral-500 dark:text-neutral-400"
-          aria-live="polite"></span>
-        {
-          /* Next is driven by the script below. Without it, submitting this
+          aria-live="polite"
+        ></span>
+        {/* Next is driven by the script below. Without it, submitting this
             button the ordinary way saves and moves on in one step, which is
-            the same thing Next does with scripting on. */
-        }
+            the same thing Next does with scripting on. */}
         <noscript>
           <button
             type="submit"

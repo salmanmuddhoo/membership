@@ -144,29 +144,27 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         </p>
       </div>
       <div class="ref">
-        <p><strong>{payment.receiptNo}</strong></p>
+        <p>
+          <strong>{payment.receiptNo}</strong>
+        </p>
         <p>{dateFormat.format(payment.receivedAt)}</p>
         {isReprint && <p class="reprint">REPRINT</p>}
       </div>
     </header>
 
-    {
-      isReprint && (
-        <p class="reprint-note">
-          Reprint. First issued {dateFormat.format(prints.firstPrintedAt!)} by{' '}
-          {prints.firstPrintedByName}.
-        </p>
-      )
-    }
+    {isReprint && (
+      <p class="reprint-note">
+        Reprint. First issued {dateFormat.format(prints.firstPrintedAt!)} by{' '}
+        {prints.firstPrintedByName}.
+      </p>
+    )}
 
-    {
-      payment.voidedAt && (
-        <p class="void-note">
-          Voided {dateFormat.format(payment.voidedAt)} by {payment.voidedByName}
-          . {payment.voidReason}
-        </p>
-      )
-    }
+    {payment.voidedAt && (
+      <p class="void-note">
+        Voided {dateFormat.format(payment.voidedAt)} by {payment.voidedByName}.{' '}
+        {payment.voidReason}
+      </p>
+    )}
 
     <dl class="facts">
       <div class="row">
@@ -180,14 +178,12 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           {payment.methodReference && ` · ${payment.methodReference}`}
         </dd>
       </div>
-      {
-        payment.refundsReceiptNo && (
-          <div class="row">
-            <dt>Refund of</dt>
-            <dd>{payment.refundsReceiptNo}</dd>
-          </div>
-        )
-      }
+      {payment.refundsReceiptNo && (
+        <div class="row">
+          <dt>Refund of</dt>
+          <dd>{payment.refundsReceiptNo}</dd>
+        </div>
+      )}
       <div class="row">
         <dt>Received by</dt>
         <dd>
@@ -229,115 +225,109 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     </div>
 
     <div class="actions screen-only">
-      <button type="button" id="print" data-payment-id={payment.id}
-        >Print</button
-      >
+      <button type="button" id="print" data-payment-id={payment.id}>
+        Print
+      </button>
       {ownerHref && <a href={ownerHref}>Back</a>}
     </div>
   </div>
 
-  {
-    refunds.length > 0 && (
-      <section class="screen-only panel">
-        <h2>Refunded against this receipt</h2>
-        <ul>
-          {refunds.map(refund => (
-            <li>
-              <a href={`/receipts/${refund.id}`}>{refund.receiptNo}</a> ·{' '}
-              {formatMoney(refund.totalAmount, refund.currency)} ·{' '}
-              {dateFormat.format(refund.receivedAt)}
-            </li>
-          ))}
-        </ul>
-      </section>
-    )
-  }
+  {refunds.length > 0 && (
+    <section class="screen-only panel">
+      <h2>Refunded against this receipt</h2>
+      <ul>
+        {refunds.map(refund => (
+          <li>
+            <a href={`/receipts/${refund.id}`}>{refund.receiptNo}</a> ·{' '}
+            {formatMoney(refund.totalAmount, refund.currency)} ·{' '}
+            {dateFormat.format(refund.receivedAt)}
+          </li>
+        ))}
+      </ul>
+    </section>
+  )}
 
-  {
-    canRefund && refundable.length > 0 && (
-      <section class="screen-only panel">
-        <h2>Refund</h2>
-        {!anythingRefundable && (
-          <p>Nothing on this receipt is still refundable.</p>
-        )}
-        <form method="post">
-          <table class="lines">
-            <tbody>
-              {refundable.map(component => (
-                <tr>
-                  <td>
-                    <label for={`refund-${component.code}`}>
-                      {component.label}
-                    </label>
-                    <span class="hint">
-                      {component.blockedReason
-                        ? component.blockedReason
-                        : `${formatMoney(component.refundable)} of ${formatMoney(
-                            component.paid
-                          )} still refundable`}
-                    </span>
-                  </td>
-                  <td class="amount">
-                    <input
-                      id={`refund-${component.code}`}
-                      type="text"
-                      inputmode="decimal"
-                      name={`refund.${component.code}`}
-                      value="0.00"
-                      disabled={Number(component.refundable) === 0}
-                    />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+  {canRefund && refundable.length > 0 && (
+    <section class="screen-only panel">
+      <h2>Refund</h2>
+      {!anythingRefundable && (
+        <p>Nothing on this receipt is still refundable.</p>
+      )}
+      <form method="post">
+        <table class="lines">
+          <tbody>
+            {refundable.map(component => (
+              <tr>
+                <td>
+                  <label for={`refund-${component.code}`}>
+                    {component.label}
+                  </label>
+                  <span class="hint">
+                    {component.blockedReason
+                      ? component.blockedReason
+                      : `${formatMoney(component.refundable)} of ${formatMoney(
+                          component.paid
+                        )} still refundable`}
+                  </span>
+                </td>
+                <td class="amount">
+                  <input
+                    id={`refund-${component.code}`}
+                    type="text"
+                    inputmode="decimal"
+                    name={`refund.${component.code}`}
+                    value="0.00"
+                    disabled={Number(component.refundable) === 0}
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
 
-          <label>
-            Method
-            <select name="method">
-              {PAYMENT_METHODS.map(method => (
-                <option value={method}>{METHOD_LABELS[method]}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Cheque or transfer reference
-            <input type="text" name="methodReference" />
-          </label>
-          <label>
-            Reason
-            <input type="text" name="reason" required />
-          </label>
+        <label>
+          Method
+          <select name="method">
+            {PAYMENT_METHODS.map(method => (
+              <option value={method}>{METHOD_LABELS[method]}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Cheque or transfer reference
+          <input type="text" name="methodReference" />
+        </label>
+        <label>
+          Reason
+          <input type="text" name="reason" required />
+        </label>
 
-          <button
-            type="submit"
-            name="intent"
-            value="refund"
-            disabled={!anythingRefundable}
-          >
-            Record refund
-          </button>
-        </form>
-      </section>
-    )
-  }
+        <button
+          type="submit"
+          name="intent"
+          value="refund"
+          disabled={!anythingRefundable}
+        >
+          Record refund
+        </button>
+      </form>
+    </section>
+  )}
 
-  {
-    canVoid && !payment.voidedAt && (
-      <section class="screen-only panel danger">
-        <h2>Void this receipt</h2>
-        <form method="post" id="void-form">
-          <label>
-            Reason
-            <input type="text" name="reason" required />
-          </label>
-          <button type="submit" name="intent" value="void">
-            Void {payment.receiptNo}
-          </button>
-        </form>
-      </section>
-    )
-  }
+  {canVoid && !payment.voidedAt && (
+    <section class="screen-only panel danger">
+      <h2>Void this receipt</h2>
+      <form method="post" id="void-form">
+        <label>
+          Reason
+          <input type="text" name="reason" required />
+        </label>
+        <button type="submit" name="intent" value="void">
+          Void {payment.receiptNo}
+        </button>
+      </form>
+    </section>
+  )}
 </BaseLayout>
 
 <style>

@@ -107,24 +107,18 @@ const STATUSES = ['active', 'pending', 'inactive', 'dormant'];
   <div class="mx-auto max-w-5xl space-y-6">
     <ConfigNav />
 
-    {
-      error && (
-        <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-          {error}
-        </div>
-      )
-    }
-    {
-      notice && (
-        <div class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-lg border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
-          {notice}
-        </div>
-      )
-    }
+    {error && (
+      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+        {error}
+      </div>
+    )}
+    {notice && (
+      <div class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-lg border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
+        {notice}
+      </div>
+    )}
 
-    <section
-      class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
-    >
+    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
       <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
         Products
       </h2>
@@ -134,281 +128,277 @@ const STATUSES = ['active', 'pending', 'inactive', 'dormant'];
       </p>
 
       <div class="mt-5 space-y-4">
-        {
-          types.map(type => (
-            <details class="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
-              <summary class="flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-1">
-                <span class="font-medium text-neutral-800 dark:text-neutral-100">
-                  {type.name}
+        {types.map(type => (
+          <details class="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+            <summary class="flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-1">
+              <span class="font-medium text-neutral-800 dark:text-neutral-100">
+                {type.name}
+              </span>
+              <code class="rounded bg-neutral-100 px-1.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
+                {type.code}
+              </code>
+              {type.isMembershipDefault && (
+                <span class="bg-mint-200 dark:bg-mint-900 rounded px-1.5 py-0.5 text-xs text-neutral-800 dark:text-neutral-100">
+                  opens on approval
                 </span>
-                <code class="rounded bg-neutral-100 px-1.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
-                  {type.code}
-                </code>
-                {type.isMembershipDefault && (
-                  <span class="bg-mint-200 dark:bg-mint-900 rounded px-1.5 py-0.5 text-xs text-neutral-800 dark:text-neutral-100">
-                    opens on approval
-                  </span>
-                )}
-                {!type.isActive && (
-                  <span class="rounded bg-red-100 px-1.5 py-0.5 text-xs text-red-800 dark:bg-red-950 dark:text-red-200">
-                    inactive
-                  </span>
-                )}
-                <span class="text-xs text-neutral-500 dark:text-neutral-400">
-                  min. Rs {type.minimumOpeningAmount}
+              )}
+              {!type.isActive && (
+                <span class="rounded bg-red-100 px-1.5 py-0.5 text-xs text-red-800 dark:bg-red-950 dark:text-red-200">
+                  inactive
                 </span>
-              </summary>
+              )}
+              <span class="text-xs text-neutral-500 dark:text-neutral-400">
+                min. Rs {type.minimumOpeningAmount}
+              </span>
+            </summary>
 
-              <form method="post" class="mt-4 grid gap-3 sm:grid-cols-2">
-                <input type="hidden" name="typeId" value={type.id} />
-                <label class="text-sm text-neutral-600 dark:text-neutral-300">
-                  Name
-                  <input
-                    type="text"
-                    name="name"
-                    value={type.name}
-                    disabled={!canManage}
-                    class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-                  />
-                </label>
-                <label class="text-sm text-neutral-600 dark:text-neutral-300">
-                  Category
-                  <input
-                    type="text"
-                    name="category"
-                    value={type.category}
-                    disabled={!canManage}
-                    class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-                  />
-                </label>
-                <label class="text-sm text-neutral-600 dark:text-neutral-300">
-                  Minimum opening amount (Rs)
-                  <input
-                    type="text"
-                    inputmode="decimal"
-                    name="minimumOpeningAmount"
-                    value={type.minimumOpeningAmount}
-                    disabled={!canManage}
-                    class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-                  />
-                </label>
-                <label class="text-sm text-neutral-600 dark:text-neutral-300">
-                  Default status
-                  <select
-                    name="defaultStatus"
-                    disabled={!canManage}
-                    class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-                  >
-                    {STATUSES.map(s => (
-                      <option value={s} selected={s === type.defaultStatus}>
-                        {s}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label class="text-sm text-neutral-600 dark:text-neutral-300">
-                  Number prefix for a non-member's account (e.g. HSA)
-                  <input
-                    type="text"
-                    name="numberPrefix"
-                    value={type.numberPrefix ?? ''}
-                    disabled={!canManage}
-                    class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-                  />
-                </label>
-                <label class="text-sm text-neutral-600 sm:col-span-2 dark:text-neutral-300">
-                  Documents required to open
-                  <select
-                    name="checklistId"
-                    disabled={!canManage}
-                    class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-                  >
-                    <option value="">— none —</option>
-                    {checklists.map(c => (
-                      <option value={c.id} selected={c.id === type.checklistId}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label class="flex items-center gap-x-2 text-sm text-neutral-600 dark:text-neutral-300">
-                  <input
-                    type="checkbox"
-                    name="requiresApproval"
-                    checked={type.requiresApproval}
-                    disabled={!canManage}
-                    class="text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600"
-                  />
-                  Opening needs approval
-                </label>
-                <label class="flex items-center gap-x-2 text-sm text-neutral-600 dark:text-neutral-300">
-                  <input
-                    type="checkbox"
-                    name="isActive"
-                    checked={type.isActive}
-                    disabled={!canManage}
-                    class="text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600"
-                  />
-                  Active
-                </label>
+            <form method="post" class="mt-4 grid gap-3 sm:grid-cols-2">
+              <input type="hidden" name="typeId" value={type.id} />
+              <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                Name
+                <input
+                  type="text"
+                  name="name"
+                  value={type.name}
+                  disabled={!canManage}
+                  class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                />
+              </label>
+              <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                Category
+                <input
+                  type="text"
+                  name="category"
+                  value={type.category}
+                  disabled={!canManage}
+                  class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                />
+              </label>
+              <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                Minimum opening amount (Rs)
+                <input
+                  type="text"
+                  inputmode="decimal"
+                  name="minimumOpeningAmount"
+                  value={type.minimumOpeningAmount}
+                  disabled={!canManage}
+                  class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                />
+              </label>
+              <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                Default status
+                <select
+                  name="defaultStatus"
+                  disabled={!canManage}
+                  class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                >
+                  {STATUSES.map(s => (
+                    <option value={s} selected={s === type.defaultStatus}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                Number prefix for a non-member's account (e.g. HSA)
+                <input
+                  type="text"
+                  name="numberPrefix"
+                  value={type.numberPrefix ?? ''}
+                  disabled={!canManage}
+                  class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                />
+              </label>
+              <label class="text-sm text-neutral-600 sm:col-span-2 dark:text-neutral-300">
+                Documents required to open
+                <select
+                  name="checklistId"
+                  disabled={!canManage}
+                  class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                >
+                  <option value="">— none —</option>
+                  {checklists.map(c => (
+                    <option value={c.id} selected={c.id === type.checklistId}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label class="flex items-center gap-x-2 text-sm text-neutral-600 dark:text-neutral-300">
+                <input
+                  type="checkbox"
+                  name="requiresApproval"
+                  checked={type.requiresApproval}
+                  disabled={!canManage}
+                  class="text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600"
+                />
+                Opening needs approval
+              </label>
+              <label class="flex items-center gap-x-2 text-sm text-neutral-600 dark:text-neutral-300">
+                <input
+                  type="checkbox"
+                  name="isActive"
+                  checked={type.isActive}
+                  disabled={!canManage}
+                  class="text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600"
+                />
+                Active
+              </label>
 
-                {!type.isMembershipDefault && (
-                  <fieldset class="sm:col-span-2">
-                    <legend class="text-sm text-neutral-600 dark:text-neutral-300">
-                      Who may open this
-                    </legend>
-                    <p class="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
-                      Nothing ticked means every membership type may. Tick one
-                      or more to restrict it to only those.
-                    </p>
-                    <div class="mt-2 flex flex-wrap gap-3">
-                      {membershipTypes.map(mt => (
-                        <label class="flex items-center gap-x-2 text-sm text-neutral-800 dark:text-neutral-100">
-                          <input
-                            type="checkbox"
-                            name="membershipTypeId"
-                            value={mt.id}
-                            checked={type.eligibleMembershipTypeIds.includes(
-                              mt.id
-                            )}
-                            disabled={!canManage}
-                            class="text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600"
-                          />
-                          {mt.name}
-                        </label>
-                      ))}
-                    </div>
-                  </fieldset>
-                )}
-
-                {canManage && (
-                  <div class="flex flex-wrap gap-2 pt-2 sm:col-span-2">
-                    <button
-                      type="submit"
-                      name="intent"
-                      value="update"
-                      class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
-                    >
-                      Save
-                    </button>
-                    {!type.isMembershipDefault && (
-                      <button
-                        type="submit"
-                        name="intent"
-                        value="eligibility"
-                        class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
-                      >
-                        Save eligibility
-                      </button>
-                    )}
-                    {type.isActive && (
-                      <>
+              {!type.isMembershipDefault && (
+                <fieldset class="sm:col-span-2">
+                  <legend class="text-sm text-neutral-600 dark:text-neutral-300">
+                    Who may open this
+                  </legend>
+                  <p class="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                    Nothing ticked means every membership type may. Tick one or
+                    more to restrict it to only those.
+                  </p>
+                  <div class="mt-2 flex flex-wrap gap-3">
+                    {membershipTypes.map(mt => (
+                      <label class="flex items-center gap-x-2 text-sm text-neutral-800 dark:text-neutral-100">
                         <input
-                          type="hidden"
-                          name="opens"
-                          value={type.isMembershipDefault ? 'no' : 'yes'}
+                          type="checkbox"
+                          name="membershipTypeId"
+                          value={mt.id}
+                          checked={type.eligibleMembershipTypeIds.includes(
+                            mt.id
+                          )}
+                          disabled={!canManage}
+                          class="text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600"
                         />
-                        <button
-                          type="submit"
-                          name="intent"
-                          value="opens-on-approval"
-                          class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
-                        >
-                          {type.isMembershipDefault
-                            ? 'Do not open on approval'
-                            : 'Open on approval'}
-                        </button>
-                      </>
-                    )}
+                        {mt.name}
+                      </label>
+                    ))}
                   </div>
-                )}
-              </form>
+                </fieldset>
+              )}
+
               {canManage && (
-                <form method="post" class="mt-2" data-confirm-delete-type>
-                  <input type="hidden" name="typeId" value={type.id} />
+                <div class="flex flex-wrap gap-2 pt-2 sm:col-span-2">
                   <button
                     type="submit"
                     name="intent"
-                    value="delete"
-                    class="rounded-lg border border-red-300 px-3 py-1.5 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
+                    value="update"
+                    class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
                   >
-                    Delete
+                    Save
                   </button>
-                </form>
+                  {!type.isMembershipDefault && (
+                    <button
+                      type="submit"
+                      name="intent"
+                      value="eligibility"
+                      class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                    >
+                      Save eligibility
+                    </button>
+                  )}
+                  {type.isActive && (
+                    <>
+                      <input
+                        type="hidden"
+                        name="opens"
+                        value={type.isMembershipDefault ? 'no' : 'yes'}
+                      />
+                      <button
+                        type="submit"
+                        name="intent"
+                        value="opens-on-approval"
+                        class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                      >
+                        {type.isMembershipDefault
+                          ? 'Do not open on approval'
+                          : 'Open on approval'}
+                      </button>
+                    </>
+                  )}
+                </div>
               )}
-            </details>
-          ))
-        }
+            </form>
+            {canManage && (
+              <form method="post" class="mt-2" data-confirm-delete-type>
+                <input type="hidden" name="typeId" value={type.id} />
+                <button
+                  type="submit"
+                  name="intent"
+                  value="delete"
+                  class="rounded-lg border border-red-300 px-3 py-1.5 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
+                >
+                  Delete
+                </button>
+              </form>
+            )}
+          </details>
+        ))}
       </div>
     </section>
 
-    {
-      canManage && (
-        <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-          <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-            Add an account type
-          </h2>
-          <form method="post" class="mt-4 grid gap-3 sm:grid-cols-2">
-            <input type="hidden" name="intent" value="create" />
-            <label class="text-sm text-neutral-600 dark:text-neutral-300">
-              Code
-              <input
-                type="text"
-                name="code"
-                required
-                placeholder="term_deposit"
-                class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-              />
-            </label>
-            <label class="text-sm text-neutral-600 dark:text-neutral-300">
-              Name
-              <input
-                type="text"
-                name="name"
-                required
-                class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-              />
-            </label>
-            <label class="text-sm text-neutral-600 dark:text-neutral-300">
-              Category
-              <input
-                type="text"
-                name="category"
-                value="savings"
-                class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-              />
-            </label>
-            <label class="text-sm text-neutral-600 dark:text-neutral-300">
-              Minimum opening amount (Rs)
-              <input
-                type="text"
-                inputmode="decimal"
-                name="minimumOpeningAmount"
-                value="0.00"
-                class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-              />
-            </label>
-            <label class="text-sm text-neutral-600 dark:text-neutral-300">
-              Number prefix for a non-member's account (e.g. HSA)
-              <input
-                type="text"
-                name="numberPrefix"
-                placeholder="Only needed to open this for a non-member"
-                class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-              />
-            </label>
-            <div class="sm:col-span-2">
-              <button
-                type="submit"
-                class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
-              >
-                Create
-              </button>
-            </div>
-          </form>
-        </section>
-      )
-    }
+    {canManage && (
+      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+          Add an account type
+        </h2>
+        <form method="post" class="mt-4 grid gap-3 sm:grid-cols-2">
+          <input type="hidden" name="intent" value="create" />
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            Code
+            <input
+              type="text"
+              name="code"
+              required
+              placeholder="term_deposit"
+              class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+            />
+          </label>
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            Name
+            <input
+              type="text"
+              name="name"
+              required
+              class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+            />
+          </label>
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            Category
+            <input
+              type="text"
+              name="category"
+              value="savings"
+              class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+            />
+          </label>
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            Minimum opening amount (Rs)
+            <input
+              type="text"
+              inputmode="decimal"
+              name="minimumOpeningAmount"
+              value="0.00"
+              class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+            />
+          </label>
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            Number prefix for a non-member's account (e.g. HSA)
+            <input
+              type="text"
+              name="numberPrefix"
+              placeholder="Only needed to open this for a non-member"
+              class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+            />
+          </label>
+          <div class="sm:col-span-2">
+            <button
+              type="submit"
+              class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+            >
+              Create
+            </button>
+          </div>
+        </form>
+      </section>
+    )}
   </div>
 </DashboardLayout>
 

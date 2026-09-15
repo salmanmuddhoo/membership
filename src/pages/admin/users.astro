@@ -100,99 +100,91 @@ const { users, total, truncated } = page;
   heading="Staff accounts"
 >
   <div class="mx-auto max-w-5xl space-y-6">
-    {
-      error && (
-        <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-          {error}
-        </div>
-      )
-    }
-    {
-      notice && (
-        <div class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-lg border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
-          {notice}
-        </div>
-      )
-    }
+    {error && (
+      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+        {error}
+      </div>
+    )}
+    {notice && (
+      <div class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-lg border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
+        {notice}
+      </div>
+    )}
 
-    {
-      canManage && (
-        <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-          <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-            Add a staff account
-          </h2>
-          <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
-            There is no password to set — the person signs in with their
-            Microsoft account.
-          </p>
+    {canManage && (
+      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+          Add a staff account
+        </h2>
+        <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+          There is no password to set — the person signs in with their Microsoft
+          account.
+        </p>
 
-          <form method="post" class="mt-4 space-y-4">
-            <input type="hidden" name="intent" value="create" />
-            <div class="grid gap-3 sm:grid-cols-2">
-              <label class="text-sm text-neutral-600 dark:text-neutral-300">
-                Work email
-                <input
-                  type="email"
-                  name="email"
-                  required
-                  placeholder="name@albarakah.mu"
-                  class="focus:border-mint-400 focus:ring-mint-400 mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-                />
-              </label>
-              <label class="text-sm text-neutral-600 dark:text-neutral-300">
-                Name
-                <input
-                  type="text"
-                  name="displayName"
-                  required
-                  placeholder="Aisha Beebeejaun"
-                  class="focus:border-mint-400 focus:ring-mint-400 mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-                />
-              </label>
-            </div>
-
-            {
-              // Officer feedback: a checkbox per role got bulky once there
-              // were more than a handful — a dropdown list scales the same
-              // way whether the Society has 6 roles or 60, and, driven from
-              // the same listRoles() read as the checkboxes were, still
-              // picks up a role the moment it is added on the Roles page
-              // and drops it the moment it is deleted, without a code
-              // change either way.
-            }
-            <label class="block text-sm text-neutral-600 dark:text-neutral-300">
-              Roles
-              <select
-                name="newRoles"
-                multiple
-                size={Math.min(Math.max(roles.length, 3), 8)}
-                class="focus:border-mint-400 focus:ring-mint-400 mt-1 block w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-              >
-                {roles.map(role => (
-                  <option value={role.code} title={role.description ?? ''}>
-                    {role.name}
-                  </option>
-                ))}
-              </select>
-              <span class="mt-1 block text-xs text-neutral-400 dark:text-neutral-500">
-                Ctrl-click (⌘-click on a Mac) to select more than one.
-              </span>
+        <form method="post" class="mt-4 space-y-4">
+          <input type="hidden" name="intent" value="create" />
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label class="text-sm text-neutral-600 dark:text-neutral-300">
+              Work email
+              <input
+                type="email"
+                name="email"
+                required
+                placeholder="name@albarakah.mu"
+                class="focus:border-mint-400 focus:ring-mint-400 mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+              />
             </label>
+            <label class="text-sm text-neutral-600 dark:text-neutral-300">
+              Name
+              <input
+                type="text"
+                name="displayName"
+                required
+                placeholder="Aisha Beebeejaun"
+                class="focus:border-mint-400 focus:ring-mint-400 mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+              />
+            </label>
+          </div>
 
-            <button
-              type="submit"
-              class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+          {
+            // Officer feedback: a checkbox per role got bulky once there
+            // were more than a handful — a dropdown list scales the same
+            // way whether the Society has 6 roles or 60, and, driven from
+            // the same listRoles() read as the checkboxes were, still
+            // picks up a role the moment it is added on the Roles page
+            // and drops it the moment it is deleted, without a code
+            // change either way.
+          }
+          <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+            Roles
+            <select
+              name="newRoles"
+              multiple
+              size={Math.min(Math.max(roles.length, 3), 8)}
+              class="focus:border-mint-400 focus:ring-mint-400 mt-1 block w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
             >
-              Create account
-            </button>
-          </form>
-        </section>
-      )
-    }
+              {roles.map(role => (
+                <option value={role.code} title={role.description ?? ''}>
+                  {role.name}
+                </option>
+              ))}
+            </select>
+            <span class="mt-1 block text-xs text-neutral-400 dark:text-neutral-500">
+              Ctrl-click (⌘-click on a Mac) to select more than one.
+            </span>
+          </label>
 
-    <section
-      class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
-    >
+          <button
+            type="submit"
+            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+          >
+            Create account
+          </button>
+        </form>
+      </section>
+    )}
+
+    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
       <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
         Staff accounts
       </h2>
@@ -202,7 +194,9 @@ const { users, total, truncated } = page;
       </p>
 
       <form method="get" class="mt-5 flex flex-wrap items-center gap-2">
-        <label for="q" class="sr-only">Search staff accounts</label>
+        <label for="q" class="sr-only">
+          Search staff accounts
+        </label>
         <input
           id="q"
           type="search"
@@ -217,21 +211,17 @@ const { users, total, truncated } = page;
         >
           Search
         </button>
-        {
-          search && (
-            <a
-              href="/admin/users"
-              class="px-2 py-1.5 text-sm text-neutral-500 underline dark:text-neutral-400"
-            >
-              Clear
-            </a>
-          )
-        }
-        {
-          showDeactivated && (
-            <input type="hidden" name="deactivated" value="1" />
-          )
-        }
+        {search && (
+          <a
+            href="/admin/users"
+            class="px-2 py-1.5 text-sm text-neutral-500 underline dark:text-neutral-400"
+          >
+            Clear
+          </a>
+        )}
+        {showDeactivated && (
+          <input type="hidden" name="deactivated" value="1" />
+        )}
       </form>
 
       {
@@ -258,119 +248,115 @@ const { users, total, truncated } = page;
       }
 
       <p class="mt-3 text-sm text-neutral-500 dark:text-neutral-400">
-        {
-          total === 0
-            ? search
-              ? `No accounts match \u201C${search}\u201D.`
-              : 'No accounts yet.'
-            : truncated
-              ? `Showing the first ${users.length} of ${total} accounts \u2014 search to narrow the list.`
-              : `${total} account${total === 1 ? '' : 's'}.`
-        }
+        {total === 0
+          ? search
+            ? `No accounts match \u201C${search}\u201D.`
+            : 'No accounts yet.'
+          : truncated
+            ? `Showing the first ${users.length} of ${total} accounts \u2014 search to narrow the list.`
+            : `${total} account${total === 1 ? '' : 's'}.`}
       </p>
 
       <div class="mt-5 space-y-4">
-        {
-          users.map(user => (
-            <details class="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
-              <summary class="flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-1">
-                <span class="font-medium text-neutral-800 dark:text-neutral-100">
-                  {user.displayName}
+        {users.map(user => (
+          <details class="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+            <summary class="flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-1">
+              <span class="font-medium text-neutral-800 dark:text-neutral-100">
+                {user.displayName}
+              </span>
+              <span class="text-sm text-neutral-500 dark:text-neutral-400">
+                {user.email}
+              </span>
+              {!user.isActive && (
+                <span class="rounded bg-red-100 px-1.5 py-0.5 text-xs text-red-800 dark:bg-red-950 dark:text-red-200">
+                  deactivated
                 </span>
-                <span class="text-sm text-neutral-500 dark:text-neutral-400">
-                  {user.email}
+              )}
+              {!user.hasSignedIn && (
+                <span class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-700 dark:text-neutral-300">
+                  never signed in
                 </span>
-                {!user.isActive && (
-                  <span class="rounded bg-red-100 px-1.5 py-0.5 text-xs text-red-800 dark:bg-red-950 dark:text-red-200">
-                    deactivated
-                  </span>
-                )}
-                {!user.hasSignedIn && (
-                  <span class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-700 dark:text-neutral-300">
-                    never signed in
-                  </span>
-                )}
-                <span class="text-xs text-neutral-400 dark:text-neutral-500">
-                  {user.roles.length > 0 ? user.roles.join(', ') : 'no roles'}
-                </span>
-              </summary>
+              )}
+              <span class="text-xs text-neutral-400 dark:text-neutral-500">
+                {user.roles.length > 0 ? user.roles.join(', ') : 'no roles'}
+              </span>
+            </summary>
 
-              <form method="post" class="mt-4 space-y-3">
-                <input type="hidden" name="userId" value={user.id} />
+            <form method="post" class="mt-4 space-y-3">
+              <input type="hidden" name="userId" value={user.id} />
 
-                <fieldset class="grid gap-2 sm:grid-cols-2">
-                  <legend class="mb-2 text-sm font-medium text-neutral-700 dark:text-neutral-200">
-                    Roles
-                  </legend>
-                  {roles.map(role => (
-                    <label class="flex items-center gap-x-2 text-sm text-neutral-600 dark:text-neutral-300">
-                      <input
-                        type="checkbox"
-                        name="roles"
-                        value={role.code}
-                        checked={user.roles.includes(role.code)}
-                        disabled={!canManage}
-                        class="text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600"
-                      />
-                      {role.name}
-                    </label>
-                  ))}
-                </fieldset>
+              <fieldset class="grid gap-2 sm:grid-cols-2">
+                <legend class="mb-2 text-sm font-medium text-neutral-700 dark:text-neutral-200">
+                  Roles
+                </legend>
+                {roles.map(role => (
+                  <label class="flex items-center gap-x-2 text-sm text-neutral-600 dark:text-neutral-300">
+                    <input
+                      type="checkbox"
+                      name="roles"
+                      value={role.code}
+                      checked={user.roles.includes(role.code)}
+                      disabled={!canManage}
+                      class="text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600"
+                    />
+                    {role.name}
+                  </label>
+                ))}
+              </fieldset>
 
-                {canManage && (
-                  <div class="flex flex-wrap gap-2 pt-2">
-                    <button
-                      type="submit"
-                      name="intent"
-                      value="roles"
-                      class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
-                    >
-                      Save roles
-                    </button>
-                    {user.isActive ? (
-                      user.id !== principal.userId && (
-                        <button
-                          type="submit"
-                          name="intent"
-                          value="deactivate"
-                          class="rounded-lg border border-red-300 px-3 py-1.5 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
-                        >
-                          Deactivate
-                        </button>
-                      )
-                    ) : (
+              {canManage && (
+                <div class="flex flex-wrap gap-2 pt-2">
+                  <button
+                    type="submit"
+                    name="intent"
+                    value="roles"
+                    class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+                  >
+                    Save roles
+                  </button>
+                  {user.isActive ? (
+                    user.id !== principal.userId && (
                       <button
                         type="submit"
                         name="intent"
-                        value="reactivate"
-                        class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                        value="deactivate"
+                        class="rounded-lg border border-red-300 px-3 py-1.5 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
                       >
-                        Reactivate
+                        Deactivate
                       </button>
-                    )}
-                    {/*
+                    )
+                  ) : (
+                    <button
+                      type="submit"
+                      name="intent"
+                      value="reactivate"
+                      class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                    >
+                      Reactivate
+                    </button>
+                  )}
+                  {/*
                       Offered only for an account that has never signed in.
                       That is not the whole test — the service checks every
                       reference before deleting — but it is the one an
                       administrator can see, and it keeps the button off the
                       rows where it would only ever explain itself.
                     */}
-                    {!user.hasSignedIn && user.id !== principal.userId && (
-                      <button
-                        type="submit"
-                        name="intent"
-                        value="delete"
-                        class="rounded-lg border border-red-400 px-3 py-1.5 text-sm font-medium text-red-800 transition hover:bg-red-50 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-950"
-                      >
-                        Delete
-                      </button>
-                    )}
-                  </div>
-                )}
-              </form>
-            </details>
-          ))
-        }
+                  {!user.hasSignedIn && user.id !== principal.userId && (
+                    <button
+                      type="submit"
+                      name="intent"
+                      value="delete"
+                      class="rounded-lg border border-red-400 px-3 py-1.5 text-sm font-medium text-red-800 transition hover:bg-red-50 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-950"
+                    >
+                      Delete
+                    </button>
+                  )}
+                </div>
+              )}
+            </form>
+          </details>
+        ))}
       </div>
     </section>
   </div>

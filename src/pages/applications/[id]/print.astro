@@ -170,15 +170,15 @@ const fixedViewport =
       <div>
         <h1>Al Barakah MCSL</h1>
         <p class="sub">
-          {
-            isAccountApplication
-              ? `Application form — ${accountsLabel}`
-              : `Application for Membership — ${accountsLabel}`
-          }
+          {isAccountApplication
+            ? `Application form — ${accountsLabel}`
+            : `Application for Membership — ${accountsLabel}`}
         </p>
       </div>
       <div class="ref">
-        <p><strong>{application.reference}</strong></p>
+        <p>
+          <strong>{application.reference}</strong>
+        </p>
         <p>{dateFormat.format(application.updatedAt)}</p>
       </div>
     </header>
@@ -240,114 +240,106 @@ const fixedViewport =
     <section class="declaration block">
       <h2>Declaration</h2>
       <p>
-        {
-          isAccountApplication
-            ? 'I declare that the information given above is true and complete to the best of my knowledge. I have read and accept the terms governing this account and the rules and by-laws of Al Barakah Multipurpose Co-operative Society Limited, and I undertake to abide by them. I understand that any information found to be false may result in my application being refused or the account being closed.'
-            : 'I declare that the information given above is true and complete to the best of my knowledge. I have read and accept the rules and by-laws of Al Barakah Multipurpose Co-operative Society Limited, and I undertake to abide by them. I understand that any information found to be false may result in my application being refused or my membership terminated.'
-        }
+        {isAccountApplication
+          ? 'I declare that the information given above is true and complete to the best of my knowledge. I have read and accept the terms governing this account and the rules and by-laws of Al Barakah Multipurpose Co-operative Society Limited, and I undertake to abide by them. I understand that any information found to be false may result in my application being refused or the account being closed.'
+          : 'I declare that the information given above is true and complete to the best of my knowledge. I have read and accept the rules and by-laws of Al Barakah Multipurpose Co-operative Society Limited, and I undertake to abide by them. I understand that any information found to be false may result in my application being refused or my membership terminated.'}
       </p>
     </section>
 
     <section class="block">
-      {
-        isEditable && (
-          <p class="sig-help no-print">
-            Tap Sign under each name, or print and sign by hand.
-          </p>
-        )
-      }
+      {isEditable && (
+        <p class="sig-help no-print">
+          Tap Sign under each name, or print and sign by hand.
+        </p>
+      )}
       <div class="signatures" data-application-id={application.id}>
-        {
-          SIGNATURES.map(who => (
-            <div class="sig">
-              <div class="sig-pad" data-sig-pad data-sig-who={who}>
-                <div class="sig-line" />
-                <img class="sig-image" data-sig-image alt="" hidden />
-              </div>
-              {isEditable && (
-                <div class="sig-controls no-print">
-                  <button type="button" data-sig-open>
-                    Sign
-                  </button>
-                  <button type="button" data-sig-clear-image hidden>
-                    Clear
-                  </button>
-                </div>
-              )}
-              <p class="sig-name">{who}</p>
-              {SIGNATORY_DETAIL[who] ? (
-                <p class="sig-date">{`${SIGNATORY_DETAIL[who]} · ${signedOn}`}</p>
-              ) : (
-                // No record of who a witness is exists anywhere in this
-                // system — unlike Applicant and Nominee, there is nothing to
-                // fill this in from, so the officer types it here instead of
-                // on a hand-drawn line. Kept client-side only, exactly like
-                // the signature images above: it only has to survive long
-                // enough to reach Print (or Save as PDF), which is what
-                // actually carries it forward once uploaded.
-                <p class="sig-date witness-date">
-                  <input
-                    type="text"
-                    data-witness-name-input={who}
-                    placeholder="Name and date"
-                    disabled={!isEditable}
-                    class="witness-name-input"
-                  />
-                  <span data-witness-date-suffix hidden>
-                    {` · ${signedOn}`}
-                  </span>
-                </p>
-              )}
-              <div class="sig-line short" />
+        {SIGNATURES.map(who => (
+          <div class="sig">
+            <div class="sig-pad" data-sig-pad data-sig-who={who}>
+              <div class="sig-line" />
+              <img class="sig-image" data-sig-image alt="" hidden />
             </div>
-          ))
-        }
+            {isEditable && (
+              <div class="sig-controls no-print">
+                <button type="button" data-sig-open>
+                  Sign
+                </button>
+                <button type="button" data-sig-clear-image hidden>
+                  Clear
+                </button>
+              </div>
+            )}
+            <p class="sig-name">{who}</p>
+            {SIGNATORY_DETAIL[who] ? (
+              <p class="sig-date">{`${SIGNATORY_DETAIL[who]} · ${signedOn}`}</p>
+            ) : (
+              // No record of who a witness is exists anywhere in this
+              // system — unlike Applicant and Nominee, there is nothing to
+              // fill this in from, so the officer types it here instead of
+              // on a hand-drawn line. Kept client-side only, exactly like
+              // the signature images above: it only has to survive long
+              // enough to reach Print (or Save as PDF), which is what
+              // actually carries it forward once uploaded.
+              <p class="sig-date witness-date">
+                <input
+                  type="text"
+                  data-witness-name-input={who}
+                  placeholder="Name and date"
+                  disabled={!isEditable}
+                  class="witness-name-input"
+                />
+                <span data-witness-date-suffix hidden>
+                  {` · ${signedOn}`}
+                </span>
+              </p>
+            )}
+            <div class="sig-line short" />
+          </div>
+        ))}
       </div>
     </section>
 
-    {
-      isEditable && (
-        // Fixed to the actual screen, not to anything in this page's own
-        // millimetre-based layout — that layout is built for the paper this
-        // becomes, not a phone, and does not fit one, which is exactly why
-        // signing directly inside it used to drag the whole page around
-        // under a finger instead of drawing. A modal sized to the real
-        // viewport cannot inherit a scroll or a pinch-zoom state that isn't
-        // its own.
-        <div id="sig-modal" class="sig-modal no-print" hidden>
-          <div class="sig-modal-bar">
-            <span data-sig-modal-title>Sign</span>
-            <button type="button" data-sig-modal-close>
-              Cancel
-            </button>
-          </div>
-          <canvas class="sig-modal-canvas" data-sig-modal-canvas />
-          <div class="sig-modal-bar">
-            <button type="button" data-sig-modal-clear>
-              Clear
-            </button>
-            <button type="button" data-sig-modal-done class="primary">
-              Use this signature
-            </button>
-          </div>
+    {isEditable && (
+      // Fixed to the actual screen, not to anything in this page's own
+      // millimetre-based layout — that layout is built for the paper this
+      // becomes, not a phone, and does not fit one, which is exactly why
+      // signing directly inside it used to drag the whole page around
+      // under a finger instead of drawing. A modal sized to the real
+      // viewport cannot inherit a scroll or a pinch-zoom state that isn't
+      // its own.
+      <div id="sig-modal" class="sig-modal no-print" hidden>
+        <div class="sig-modal-bar">
+          <span data-sig-modal-title>Sign</span>
+          <button type="button" data-sig-modal-close>
+            Cancel
+          </button>
         </div>
-      )
-    }
+        <canvas class="sig-modal-canvas" data-sig-modal-canvas />
+        <div class="sig-modal-bar">
+          <button type="button" data-sig-modal-clear>
+            Clear
+          </button>
+          <button type="button" data-sig-modal-done class="primary">
+            Use this signature
+          </button>
+        </div>
+      </div>
+    )}
 
     <div class="actions">
-      <button type="button" id="print">Print</button>
-      {
-        isEditable ? (
-          <>
-            <a href={`${basePath}?step=1`}>← Back</a>
-            <a href={`${basePath}?step=3`} class="next">
-              Next: upload documents →
-            </a>
-          </>
-        ) : (
-          <a href={basePath}>Back to the application</a>
-        )
-      }
+      <button type="button" id="print">
+        Print
+      </button>
+      {isEditable ? (
+        <>
+          <a href={`${basePath}?step=1`}>← Back</a>
+          <a href={`${basePath}?step=3`} class="next">
+            Next: upload documents →
+          </a>
+        </>
+      ) : (
+        <a href={basePath}>Back to the application</a>
+      )}
     </div>
   </div>
 </BaseLayout>

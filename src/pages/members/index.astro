@@ -72,30 +72,26 @@ function accountButtonClasses(account: MemberListAccount): string {
 
 <DashboardLayout title="Members · Al Barakah MCSL" heading="Members">
   <div class="mx-auto max-w-5xl space-y-6">
-    <section
-      class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
-    >
+    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
       <div class="flex flex-wrap items-baseline justify-between gap-2">
-        <h2
-          class="text-lg font-semibold text-neutral-800 dark:text-neutral-100"
-        >
+        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
           Members
         </h2>
-        {
-          pendingDetailsUpdates > 0 && (
-            <a
-              href="/members/details-updates"
-              class="rounded-lg bg-amber-100 px-3 py-1.5 text-sm font-medium text-amber-900 transition hover:bg-amber-200 dark:bg-amber-950 dark:text-amber-200 dark:hover:bg-amber-900"
-            >
-              {pendingDetailsUpdates} details update
-              {pendingDetailsUpdates === 1 ? '' : 's'} to verify
-            </a>
-          )
-        }
+        {pendingDetailsUpdates > 0 && (
+          <a
+            href="/members/details-updates"
+            class="rounded-lg bg-amber-100 px-3 py-1.5 text-sm font-medium text-amber-900 transition hover:bg-amber-200 dark:bg-amber-950 dark:text-amber-200 dark:hover:bg-amber-900"
+          >
+            {pendingDetailsUpdates} details update
+            {pendingDetailsUpdates === 1 ? '' : 's'} to verify
+          </a>
+        )}
       </div>
 
       <form method="get" class="mt-5 flex flex-wrap items-center gap-2">
-        <label for="q" class="sr-only">Search members</label>
+        <label for="q" class="sr-only">
+          Search members
+        </label>
         <input
           id="q"
           type="search"
@@ -110,182 +106,172 @@ function accountButtonClasses(account: MemberListAccount): string {
         >
           Search
         </button>
-        {
-          search && (
-            <a
-              href="/members"
-              class="px-2 py-1.5 text-sm text-neutral-500 underline dark:text-neutral-400"
-            >
-              Clear
-            </a>
-          )
-        }
+        {search && (
+          <a
+            href="/members"
+            class="px-2 py-1.5 text-sm text-neutral-500 underline dark:text-neutral-400"
+          >
+            Clear
+          </a>
+        )}
       </form>
 
       <p class="mt-3 text-sm text-neutral-500 dark:text-neutral-400">
-        {
-          total === 0
-            ? search
-              ? `No members match “${search}”.`
-              : 'No members yet. One is created when an application is approved.'
-            : (() => {
-                // Officer feedback: split the count into members (they hold
-                // Shares/MSA) and non-members (only an additional account).
-                const breakdown =
-                  `${memberCount} member${memberCount === 1 ? '' : 's'}, ` +
-                  `${nonMemberCount} non-member${nonMemberCount === 1 ? '' : 's'}`;
-                return truncated
-                  ? `Showing the first ${members.length} of ${total} — ${breakdown}. Search to narrow the list.`
-                  : `${breakdown}.`;
-              })()
-        }
+        {total === 0
+          ? search
+            ? `No members match “${search}”.`
+            : 'No members yet. One is created when an application is approved.'
+          : (() => {
+              // Officer feedback: split the count into members (they hold
+              // Shares/MSA) and non-members (only an additional account).
+              const breakdown =
+                `${memberCount} member${memberCount === 1 ? '' : 's'}, ` +
+                `${nonMemberCount} non-member${nonMemberCount === 1 ? '' : 's'}`;
+              return truncated
+                ? `Showing the first ${members.length} of ${total} — ${breakdown}. Search to narrow the list.`
+                : `${breakdown}.`;
+            })()}
       </p>
 
-      {
-        members.length > 0 && (
-          <div class="mt-4 overflow-x-auto">
-            <table class="w-full text-sm">
-              <thead>
-                <tr class="text-left text-xs text-neutral-500 dark:text-neutral-400">
-                  <th class="py-2 pr-4 pl-4 font-medium">Name</th>
-                  <th class="py-2 pr-4 font-medium">Status</th>
-                  <th class="py-2 pr-4 font-medium">Joined</th>
-                  <th
-                    class="py-2 pr-4 font-medium"
-                    colspan={Math.max(1, activeAccountTypeColumns.length)}
+      {members.length > 0 && (
+        <div class="mt-4 overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-left text-xs text-neutral-500 dark:text-neutral-400">
+                <th class="py-2 pr-4 pl-4 font-medium">Name</th>
+                <th class="py-2 pr-4 font-medium">Status</th>
+                <th class="py-2 pr-4 font-medium">Joined</th>
+                <th
+                  class="py-2 pr-4 font-medium"
+                  colspan={Math.max(1, activeAccountTypeColumns.length)}
+                >
+                  Accounts
+                </th>
+                {canSeePayments && (
+                  <th class="py-2 pr-4 text-right font-medium">Total funds</th>
+                )}
+              </tr>
+            </thead>
+            <tbody>
+              {members.map(m => (
+                <tr
+                  data-href={`/members/${m.id}`}
+                  class="group cursor-pointer border-t border-neutral-200 dark:border-neutral-800"
+                >
+                  <td
+                    class={`py-2 pr-4 text-neutral-700 dark:text-neutral-200 ${ROW_HOVER}`}
                   >
-                    Accounts
-                  </th>
+                    <span class="flex flex-wrap items-center gap-x-2">
+                      {m.name}
+                      {m.kind === 'customer' && (
+                        <span class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
+                          Non-member
+                        </span>
+                      )}
+                    </span>
+                  </td>
+                  <td
+                    class={`py-2 pr-4 text-neutral-600 dark:text-neutral-300 ${ROW_HOVER}`}
+                  >
+                    {m.status}
+                  </td>
+                  <td
+                    class={`py-2 pr-4 text-xs text-neutral-500 dark:text-neutral-400 ${ROW_HOVER}`}
+                  >
+                    {dateFormat.format(m.joinedAt)}
+                  </td>
+                  {activeAccountTypeColumns.length === 0 ? (
+                    <td class={`py-2 pr-4 ${ROW_HOVER}`}>
+                      {m.accountBadges.length === 0 && (
+                        <span class="text-xs text-neutral-400 dark:text-neutral-500">
+                          —
+                        </span>
+                      )}
+                    </td>
+                  ) : (
+                    activeAccountTypeColumns.map(type => {
+                      const account = m.accountBadges.find(
+                        a => a.code === type.code
+                      );
+                      return (
+                        <td class={`py-2 pr-4 ${ROW_HOVER}`}>
+                          {account &&
+                            (canSeePayments ? (
+                              <button
+                                type="button"
+                                data-account-id={account.id}
+                                data-account-name={account.name}
+                                data-account-no={account.no}
+                                class:list={[
+                                  'cursor-pointer rounded-md px-2 py-1 text-xs font-semibold whitespace-nowrap',
+                                  accountButtonClasses(account),
+                                ]}
+                                title={account.name}
+                              >
+                                {account.no}
+                              </button>
+                            ) : (
+                              <span
+                                class:list={[
+                                  'rounded-md px-2 py-1 text-xs font-semibold whitespace-nowrap',
+                                  accountButtonClasses(account),
+                                ]}
+                                title={account.name}
+                              >
+                                {account.no}
+                              </span>
+                            ))}
+                        </td>
+                      );
+                    })
+                  )}
                   {canSeePayments && (
-                    <th class="py-2 pr-4 text-right font-medium">
-                      Total funds
-                    </th>
+                    <td
+                      class={`py-2 text-right font-medium text-neutral-800 tabular-nums dark:text-neutral-100 ${ROW_HOVER}`}
+                    >
+                      {formatMoney(m.totalFunds)}
+                    </td>
                   )}
                 </tr>
-              </thead>
-              <tbody>
-                {members.map(m => (
-                  <tr
-                    data-href={`/members/${m.id}`}
-                    class="group cursor-pointer border-t border-neutral-200 dark:border-neutral-800"
-                  >
-                    <td
-                      class={`py-2 pr-4 text-neutral-700 dark:text-neutral-200 ${ROW_HOVER}`}
-                    >
-                      <span class="flex flex-wrap items-center gap-x-2">
-                        {m.name}
-                        {m.kind === 'customer' && (
-                          <span class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
-                            Non-member
-                          </span>
-                        )}
-                      </span>
-                    </td>
-                    <td
-                      class={`py-2 pr-4 text-neutral-600 dark:text-neutral-300 ${ROW_HOVER}`}
-                    >
-                      {m.status}
-                    </td>
-                    <td
-                      class={`py-2 pr-4 text-xs text-neutral-500 dark:text-neutral-400 ${ROW_HOVER}`}
-                    >
-                      {dateFormat.format(m.joinedAt)}
-                    </td>
-                    {activeAccountTypeColumns.length === 0 ? (
-                      <td class={`py-2 pr-4 ${ROW_HOVER}`}>
-                        {m.accountBadges.length === 0 && (
-                          <span class="text-xs text-neutral-400 dark:text-neutral-500">
-                            —
-                          </span>
-                        )}
-                      </td>
-                    ) : (
-                      activeAccountTypeColumns.map(type => {
-                        const account = m.accountBadges.find(
-                          a => a.code === type.code
-                        );
-                        return (
-                          <td class={`py-2 pr-4 ${ROW_HOVER}`}>
-                            {account &&
-                              (canSeePayments ? (
-                                <button
-                                  type="button"
-                                  data-account-id={account.id}
-                                  data-account-name={account.name}
-                                  data-account-no={account.no}
-                                  class:list={[
-                                    'cursor-pointer rounded-md px-2 py-1 text-xs font-semibold whitespace-nowrap',
-                                    accountButtonClasses(account),
-                                  ]}
-                                  title={account.name}
-                                >
-                                  {account.no}
-                                </button>
-                              ) : (
-                                <span
-                                  class:list={[
-                                    'rounded-md px-2 py-1 text-xs font-semibold whitespace-nowrap',
-                                    accountButtonClasses(account),
-                                  ]}
-                                  title={account.name}
-                                >
-                                  {account.no}
-                                </span>
-                              ))}
-                          </td>
-                        );
-                      })
-                    )}
-                    {canSeePayments && (
-                      <td
-                        class={`py-2 text-right font-medium text-neutral-800 tabular-nums dark:text-neutral-100 ${ROW_HOVER}`}
-                      >
-                        {formatMoney(m.totalFunds)}
-                      </td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )
-      }
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </section>
 
-    {
-      canSeePayments && (
-        <dialog
-          id="account-transactions-dialog"
-          class="fixed top-1/2 left-1/2 m-0 w-[calc(100vw-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-neutral-200 bg-neutral-100 p-0 text-neutral-800 backdrop:bg-neutral-900/50 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-100"
-        >
-          <div class="flex items-center justify-between gap-3 border-b border-neutral-200 px-5 py-3 dark:border-neutral-800">
-            <div>
-              <p
-                data-dialog-name
-                class="text-sm font-semibold text-neutral-800 dark:text-neutral-100"
-              />
-              <code
-                data-dialog-no
-                class="text-xs text-neutral-500 dark:text-neutral-400"
-              />
-            </div>
-            <button
-              type="button"
-              data-dialog-close
-              class="rounded-lg border border-neutral-300 px-2.5 py-1 text-xs font-medium text-neutral-600 transition hover:bg-neutral-200 dark:border-neutral-600 dark:text-neutral-300 dark:hover:bg-neutral-800"
-            >
-              Close
-            </button>
+    {canSeePayments && (
+      <dialog
+        id="account-transactions-dialog"
+        class="fixed top-1/2 left-1/2 m-0 w-[calc(100vw-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-neutral-200 bg-neutral-100 p-0 text-neutral-800 backdrop:bg-neutral-900/50 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-100"
+      >
+        <div class="flex items-center justify-between gap-3 border-b border-neutral-200 px-5 py-3 dark:border-neutral-800">
+          <div>
+            <p
+              data-dialog-name
+              class="text-sm font-semibold text-neutral-800 dark:text-neutral-100"
+            />
+            <code
+              data-dialog-no
+              class="text-xs text-neutral-500 dark:text-neutral-400"
+            />
           </div>
-          <div
-            data-dialog-body
-            class="max-h-[60vh] overflow-y-auto px-5 py-4 text-sm"
+          <button
+            type="button"
+            data-dialog-close
+            class="rounded-lg border border-neutral-300 px-2.5 py-1 text-xs font-medium text-neutral-600 transition hover:bg-neutral-200 dark:border-neutral-600 dark:text-neutral-300 dark:hover:bg-neutral-800"
           >
-            Loading…
-          </div>
-        </dialog>
-      )
-    }
+            Close
+          </button>
+        </div>
+        <div
+          data-dialog-body
+          class="max-h-[60vh] overflow-y-auto px-5 py-4 text-sm"
+        >
+          Loading…
+        </div>
+      </dialog>
+    )}
   </div>
 </DashboardLayout>
 
