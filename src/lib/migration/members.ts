@@ -73,9 +73,10 @@
 //     are how "at different stages" works — upload another sheet later for
 //     more people, or the same one again to correct a detail or add a
 //     balance that was not yet known.
+import { createHash, randomUUID } from 'crypto';
 import type { PoolClient } from 'pg';
 import ExcelJS from 'exceljs';
-import { recordAudit } from '../access/audit';
+import { recordAudit, recordAuditQuietly } from '../access/audit';
 import type { Actor } from '../applications/capture';
 import {
   findGuardian,
@@ -1325,6 +1326,13 @@ async function advanceMemberNumberSeq(
 }
 
 export interface ImportOutcome {
+  // Unique identifier for this import batch, recorded on the audit trail.
+  batchId: string;
+  // SHA-256 hex digest of the uploaded file.
+  checksum: string;
+  // Sum of every balance written in this batch, in cents. Used for S-710
+  // reconciliation against a control total the operator supplies separately.
+  totalBalance: number;
   imported: {
     legacyCode: string;
     memberNo: string;
@@ -1431,15 +1439,32 @@ async function writeGuardianAndNomineeParties(
  * touched a second time — validateRows has already left those out of
  * accountEntries, the same reason a payment is never edited, only added to.
  */
+export function checksumBuffer(buffer: Buffer): string {
+  return createHash('sha256').update(buffer).digest('hex');
+}
+
+function rowBalance(row: ValidatedRow): number {
+  let cents = 0;
+  if (row.sharesBalance.trim() !== '') cents += toCents(row.sharesBalance);
+  if (row.msaBalance.trim() !== '') cents += toCents(row.msaBalance);
+  for (const entry of row.accountEntries) {
+    if (entry.amount.trim() !== '') cents += toCents(entry.amount);
+  }
+  return cents;
+}
+
 export async function importMembers(
   rows: ValidatedRow[],
   actor: Actor,
-  permissions: ReadonlySet<string>
+  permissions: ReadonlySet<string>,
+  checksum: string
 ): Promise<ImportOutcome> {
   assertMayMigrate(permissions);
 
+  const batchId = randomUUID();
   const imported: ImportOutcome['imported'] = [];
   const failed: ImportOutcome['failed'] = [];
+  let totalBalance = 0;
 
   for (const row of rows) {
     let allocation: ReceiptAllocation | null = null;
@@ -1534,6 +1559,7 @@ export async function importMembers(
             return updated.rows[0].member_no;
           });
 
+          totalBalance += rowBalance(row);
           imported.push({
             legacyCode: row.legacyCode,
             memberNo,
@@ -1670,6 +1696,7 @@ export async function importMembers(
             return created.memberNo;
           });
 
+          totalBalance += rowBalance(row);
           imported.push({
             legacyCode: row.legacyCode,
             memberNo,
@@ -1760,6 +1787,7 @@ export async function importMembers(
             );
           });
 
+          totalBalance += rowBalance(row);
           imported.push({
             legacyCode: row.legacyCode,
             memberNo: '',
@@ -1867,6 +1895,7 @@ export async function importMembers(
             );
           });
 
+          totalBalance += rowBalance(row);
           imported.push({
             legacyCode: row.legacyCode,
             memberNo: '',
@@ -1890,5 +1919,22 @@ export async function importMembers(
     }
   }
 
-  return { imported, failed };
+  await recordAuditQuietly({
+    actorUserId: actor.userId,
+    actorDescription: actor.email,
+    action: 'migration.batch.completed',
+    entityType: 'migration',
+    entityId: batchId,
+    newValue: {
+      checksum,
+      rows: rows.length,
+      imported: imported.length,
+      members: imported.filter(r => r.kind === 'member').length,
+      customers: imported.filter(r => r.kind === 'customer').length,
+      failed: failed.length,
+      totalBalance: fromCents(totalBalance),
+    },
+  });
+
+  return { batchId, checksum, totalBalance, imported, failed };
 }

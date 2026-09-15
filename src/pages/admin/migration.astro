@@ -8,6 +8,7 @@ import DashboardLayout from '@layouts/DashboardLayout.astro';
 import {
   MigrationError,
   buildImportTemplate,
+  checksumBuffer,
   eligibleMembershipTypesForMigration,
   importMembers,
   parseImportFile,
@@ -15,6 +16,7 @@ import {
   type ImportOutcome,
   type RowError,
 } from '@lib/migration/members';
+import { fromCents, toCents } from '@lib/payments/money';
 
 const principal = Astro.locals.principal!;
 const canMigrate = principal.permissions.has('system.migrate_members');
@@ -36,6 +38,14 @@ if (canMigrate && Astro.url.searchParams.has('template')) {
 let error: string | null = null;
 let rowErrors: RowError[] = [];
 let outcome: ImportOutcome | null = null;
+// S-710 reconciliation — set when the operator supplies a control total and
+// it does not match what was actually imported.
+let reconciliation: {
+  expectedRows: number | null;
+  expectedBalance: number | null; // in cents
+  passed: boolean;
+  messages: string[];
+} | null = null;
 
 if (Astro.request.method === 'POST') {
   if (!canMigrate) {
@@ -43,11 +53,15 @@ if (Astro.request.method === 'POST') {
   } else {
     const form = await Astro.request.formData();
     const file = form.get('file');
+    const expectedRowsRaw = (form.get('expected_rows') as string | null)?.trim();
+    const expectedBalanceRaw = (form.get('expected_balance') as string | null)?.trim();
+
     if (!(file instanceof File) || file.size === 0) {
       error = 'Choose a filled-in template to upload.';
     } else {
       try {
         const buffer = Buffer.from(await file.arrayBuffer());
+        const checksum = checksumBuffer(buffer);
         const rows = await parseImportFile(buffer);
         if (rows.length === 0) {
           error = 'No rows were found in that file.';
@@ -62,8 +76,39 @@ if (Astro.request.method === 'POST') {
             outcome = await importMembers(
               valid,
               { userId: principal.userId, email: principal.email },
-              principal.permissions
+              principal.permissions,
+              checksum
             );
+
+            // S-710: compare against operator-supplied control totals.
+            const expectedRows = expectedRowsRaw ? parseInt(expectedRowsRaw, 10) : null;
+            let expectedBalance: number | null = null;
+            if (expectedBalanceRaw) {
+              try {
+                expectedBalance = toCents(expectedBalanceRaw);
+              } catch {
+                // Ignore a non-numeric entry — treat as no control total.
+              }
+            }
+            if (expectedRows !== null || expectedBalance !== null) {
+              const messages: string[] = [];
+              if (expectedRows !== null && outcome.imported.length !== expectedRows) {
+                messages.push(
+                  `Expected ${expectedRows} row${expectedRows === 1 ? '' : 's'}, imported ${outcome.imported.length}.`
+                );
+              }
+              if (expectedBalance !== null && outcome.totalBalance !== expectedBalance) {
+                messages.push(
+                  `Expected balance Rs ${fromCents(expectedBalance)}, imported Rs ${fromCents(outcome.totalBalance)}.`
+                );
+              }
+              reconciliation = {
+                expectedRows,
+                expectedBalance,
+                passed: messages.length === 0,
+                messages,
+              };
+            }
           }
         }
       } catch (err) {
@@ -157,8 +202,21 @@ const customerCount =
           </section>
         )}
 
+        {outcome && reconciliation && !reconciliation.passed && (
+          <section class="rounded-2xl border border-red-300 bg-red-50 p-6 dark:border-red-900 dark:bg-red-950">
+            <h2 class="text-lg font-semibold text-red-900 dark:text-red-200">
+              Reconciliation failed
+            </h2>
+            <ul class="mt-2 space-y-1 text-sm text-red-800 dark:text-red-200">
+              {reconciliation.messages.map(m => (
+                <li>{m}</li>
+              ))}
+            </ul>
+          </section>
+        )}
+
         {outcome && (
-          <section class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-2xl border p-6">
+          <section class={`rounded-2xl border p-6 ${reconciliation && !reconciliation.passed ? 'border-neutral-200 bg-neutral-100 dark:border-neutral-800 dark:bg-neutral-950' : 'border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950'}`}>
             <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
               {outcome.imported.length} row
               {outcome.imported.length === 1 ? '' : 's'} processed
@@ -167,8 +225,19 @@ const customerCount =
               <p class="mt-1 text-sm text-neutral-600 dark:text-neutral-300">
                 {memberCount} member{memberCount === 1 ? '' : 's'},{' '}
                 {customerCount} non-member{customerCount === 1 ? '' : 's'}
+                {outcome.totalBalance > 0 && (
+                  <> · Rs {fromCents(outcome.totalBalance)} total balance</>
+                )}
               </p>
             )}
+            {reconciliation?.passed && (
+              <p class="mt-1 text-sm font-medium text-green-700 dark:text-green-400">
+                Reconciliation passed.
+              </p>
+            )}
+            <p class="mt-2 font-mono text-xs text-neutral-500 dark:text-neutral-500">
+              Batch {outcome.batchId} · SHA-256 {outcome.checksum.slice(0, 16)}…
+            </p>
             {outcome.imported.length > 0 && (
               <ul class="mt-3 space-y-1 text-sm text-neutral-700 dark:text-neutral-200">
                 {outcome.imported.map(m => (
@@ -207,7 +276,7 @@ const customerCount =
           <form
             method="post"
             enctype="multipart/form-data"
-            class="mt-4 space-y-3"
+            class="mt-4 space-y-4"
             data-migration-form
           >
             <div class="flex items-center gap-3">
@@ -229,6 +298,36 @@ const customerCount =
                 No file selected
               </span>
             </div>
+            <fieldset class="rounded-lg border border-neutral-200 p-4 dark:border-neutral-700">
+              <legend class="px-1 text-xs font-medium text-neutral-500 dark:text-neutral-400">
+                Control totals (optional — leave blank to skip reconciliation)
+              </legend>
+              <div class="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <label class="flex flex-col gap-1">
+                  <span class="text-xs text-neutral-600 dark:text-neutral-300">
+                    Expected rows
+                  </span>
+                  <input
+                    type="number"
+                    name="expected_rows"
+                    min="0"
+                    placeholder="e.g. 250"
+                    class="rounded border border-neutral-300 bg-white px-3 py-1.5 text-sm text-neutral-800 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                  />
+                </label>
+                <label class="flex flex-col gap-1">
+                  <span class="text-xs text-neutral-600 dark:text-neutral-300">
+                    Expected total balance (Rs)
+                  </span>
+                  <input
+                    type="text"
+                    name="expected_balance"
+                    placeholder="e.g. 1500000"
+                    class="rounded border border-neutral-300 bg-white px-3 py-1.5 text-sm text-neutral-800 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                  />
+                </label>
+              </div>
+            </fieldset>
             <button
               type="submit"
               class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
