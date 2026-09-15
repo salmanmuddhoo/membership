@@ -9,6 +9,7 @@ import {
 import { listMembershipTypes } from '@lib/config/reference';
 import {
   pendingApplicationIds,
+  returnedByLabelsFor,
   reviewStageLabelsFor,
 } from '@lib/applications/workflow';
 
@@ -125,10 +126,17 @@ const applications = [...unsortedApplications].sort(
 // President — and the status badge alone cannot say which. One batched read
 // for every 'new' row on the page, driven entirely by the configured chain
 // (`reviewStageLabelsFor`, workflow.ts) rather than assuming which two roles
-// those could be.
-const reviewStageLabels = await reviewStageLabelsFor(
-  applications.filter(a => a.status === 'new').map(a => a.id)
-);
+// those could be. The same principle applies to 'returned' rows: the status
+// badge alone does not say who sent it back, so a second batched read adds
+// "Returned by the X" for those.
+const [reviewStageLabels, returnedStageLabels] = await Promise.all([
+  reviewStageLabelsFor(
+    applications.filter(a => a.status === 'new').map(a => a.id)
+  ),
+  returnedByLabelsFor(
+    applications.filter(a => a.status === 'returned').map(a => a.id)
+  ),
+]);
 
 // No 'approved' entry: an approved application no longer appears in this
 // list at all (listApplications excludes it — it lives on the Members page
@@ -435,6 +443,12 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                             {reviewStageLabels.get(a.id)}
                           </span>
                         )}
+                        {a.status === 'returned' &&
+                          returnedStageLabels.has(a.id) && (
+                            <span class="mt-1 block text-xs text-neutral-500 dark:text-neutral-400">
+                              {returnedStageLabels.get(a.id)}
+                            </span>
+                          )}
                       </td>
                       <td
                         class="py-2 pr-4 text-xs text-neutral-500 dark:text-neutral-400"

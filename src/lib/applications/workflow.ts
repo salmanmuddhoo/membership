@@ -1290,6 +1290,69 @@ export async function pendingApplicationIds(
 }
 
 /**
+ * For a single returned application: who returned it in the current pass
+ * through the chain (since the last capture transition). Returns
+ * "Returned by the X" where X is the role that sent it back, or null if no
+ * such transition exists in the current pass (e.g. a newly opened draft that
+ * has never been reviewed).
+ */
+export async function returnedByLabel(
+  applicationId: string
+): Promise<string | null> {
+  const result = await query<{ actor_role: string | null }>(
+    `select actor_role
+       from application_transition
+      where application_id = $1
+        and to_status = 'returned'
+        and occurred_at >= coalesce(
+          (select max(occurred_at) from application_transition
+            where application_id = $1 and step_code = 'capture'),
+          '-infinity'::timestamptz
+        )
+      order by occurred_at desc
+      limit 1`,
+    [applicationId]
+  );
+  const role = result.rows[0]?.actor_role;
+  if (!role) return null;
+  return `Returned by the ${role}`;
+}
+
+/**
+ * `returnedByLabel`, batched: for a page of returned applications — one query
+ * for the whole list rather than once per row.
+ */
+export async function returnedByLabelsFor(
+  applicationIds: string[]
+): Promise<Map<string, string>> {
+  const labels = new Map<string, string>();
+  if (applicationIds.length === 0) return labels;
+  const result = await query<{
+    application_id: string;
+    actor_role: string | null;
+  }>(
+    `select distinct on (t.application_id) t.application_id, t.actor_role
+       from application_transition t
+      where t.application_id = any($1::uuid[])
+        and t.to_status = 'returned'
+        and t.occurred_at >= coalesce(
+          (select max(c.occurred_at) from application_transition c
+            where c.application_id = t.application_id
+              and c.step_code = 'capture'),
+          '-infinity'::timestamptz
+        )
+      order by t.application_id, t.occurred_at desc`,
+    [applicationIds]
+  );
+  for (const row of result.rows) {
+    if (row.actor_role) {
+      labels.set(row.application_id, `Returned by the ${row.actor_role}`);
+    }
+  }
+  return labels;
+}
+
+/**
  * S-611 follow-up: who actually holds this application right now, for as
  * long as its status stays 'new'.
  *

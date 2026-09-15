@@ -387,6 +387,15 @@ export async function buildImportTemplate(): Promise<Buffer> {
       col.width = 24;
     });
 
+    // Note on the Joined Date column (column 3) and Date of Birth column
+    // (wherever it falls in the applicant fields block).
+    sheet.getCell(1, 3).note = 'Format: YYYY-MM-DD (e.g. 2000-06-15)';
+    const dobIndex = fields.findIndex(f => f.fieldKey === 'date_of_birth');
+    if (dobIndex >= 0) {
+      sheet.getCell(1, 4 + dobIndex).note =
+        'Format: YYYY-MM-DD (e.g. 2015-01-15)';
+    }
+
     // Column 1: legacy code, 2: AB number, 3: joined date, then the
     // applicant fields, then the employment fields.
     applyChoiceDropdowns(sheet, fields, 4);
@@ -1100,14 +1109,7 @@ export async function validateRows(
       const guardianMemberNo = (
         row.guardian[guardianField.fieldKey] ?? ''
       ).trim();
-      if (!abGiven) {
-        if (guardianMemberNo !== '') {
-          problems.push(
-            'Guardian details need an AB Number — only a member has a ' +
-              'guardian recorded.'
-          );
-        }
-      } else if (guardianMemberNo === '') {
+      if (guardianMemberNo === '') {
         problems.push(`${guardianField.label} is required.`);
       } else {
         const found = await findGuardian(guardianMemberNo, '');
@@ -1145,19 +1147,10 @@ export async function validateRows(
         normalise(row.beneficiary, beneficiaryTypeFields);
       beneficiaryValues = normalisedBeneficiary;
       for (const error of beneficiaryFormatErrors) problems.push(error.label);
-      if (!abGiven) {
-        if (Object.values(beneficiaryValues).some(v => v !== '')) {
-          problems.push(
-            'Takaful beneficiary details need an AB Number — only a ' +
-              'member has one recorded.'
-          );
-        }
-      } else {
-        for (const field of beneficiaryTypeFields) {
-          if (!field.isMandatory) continue;
-          if ((beneficiaryValues[field.fieldKey] ?? '').trim() === '') {
-            problems.push(`${field.label} is required.`);
-          }
+      for (const field of beneficiaryTypeFields) {
+        if (!field.isMandatory) continue;
+        if ((beneficiaryValues[field.fieldKey] ?? '').trim() === '') {
+          problems.push(`${field.label} is required.`);
         }
       }
     }
@@ -1272,10 +1265,15 @@ export async function validateRows(
     }
 
     if (!abGiven && !anyAccountGiven) {
-      problems.push(
-        `Provide an ${AB_NUMBER_COLUMN}, or at least one account number, to ` +
-          'import this row.'
-      );
+      // A non-member Minor with a resolved guardian doesn't need an account —
+      // they are identified by their guardian, not a member number or account.
+      const hasGuardian = guardianField !== undefined;
+      if (!hasGuardian) {
+        problems.push(
+          `Provide an ${AB_NUMBER_COLUMN}, or at least one account number, to ` +
+            'import this row.'
+        );
+      }
     }
 
     if (problems.length > 0) {
@@ -1699,10 +1697,11 @@ export async function importMembers(
                    and subject = 'applicant' and ordinal = 1`,
               [applicationId, JSON.stringify(row.values)]
             );
-            // A non-member row carries no guardian or beneficiary (both stay
-            // member-only, validateRows' own !abGiven checks above) but
-            // Nominee 1/2 same as a member row — writeGuardianAndNomineeParties
-            // is a no-op for the empty guardian/beneficiary objects here.
+            // A non-member Minor row carries a guardian and beneficiary when
+            // configured; non-minor, non-member rows do not. Either way,
+            // writeGuardianAndNomineeParties writes only the objects that are
+            // non-empty, so it is correct for both. Nominee 1/2 same as a
+            // member row.
             await writeGuardianAndNomineeParties(client, applicationId, row, {
               skipBlankOrdinals: true,
             });
