@@ -126,6 +126,15 @@ const navGroups: NavGroup[] = [
       ...(can('audit.view')
         ? [{ label: 'Audit log', href: '/admin/audit-log', icon: 'reports' }]
         : []),
+      ...(can('notification.view')
+        ? [
+            {
+              label: 'Notifications',
+              href: '/admin/notifications',
+              icon: 'reports',
+            },
+          ]
+        : []),
     ],
   },
   // A group with nothing the person may see is dropped entirely, so the heading

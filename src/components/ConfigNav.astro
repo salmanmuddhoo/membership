@@ -28,6 +28,12 @@ export const CONFIG_SECTIONS = [
     label: 'Workflows',
     blurb: 'The approval chain, its steps and the statuses they move through.',
   },
+  {
+    href: '/admin/configuration/notification-templates',
+    label: 'Notification wording',
+    blurb:
+      'What a member is told when their application moves, and by which channel.',
+  },
 ] as const;
 
 const current = Astro.url.pathname;

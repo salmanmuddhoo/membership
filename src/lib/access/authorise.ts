@@ -40,6 +40,11 @@ const ROUTE_PERMISSIONS: ReadonlyArray<readonly [string, string]> = [
   ['/admin/reset-data', 'system.reset_data'],
   ['/admin/migration', 'system.migrate_members'],
   ['/admin/audit-log', 'audit.view'],
+  // What the Society sent to members (S-904). Its own permission rather than
+  // audit.view's: an officer about to ring a member who never replied needs
+  // to know the email bounced, which is not a reason to give them the whole
+  // audit trail.
+  ['/admin/notifications', 'notification.view'],
 
   // Reference configuration (M2 Feature 2.2). A prefix rule: every page under
   // it needs config.view to read, and each page checks config.manage itself
