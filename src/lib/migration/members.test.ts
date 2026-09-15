@@ -308,9 +308,9 @@ describe('validateRows', () => {
 describe('importMembers', () => {
   it('refuses without system.migrate_members', async () => {
     const { importMembers } = await load();
-    await expect(importMembers([], actor, new Set(), 'test')).rejects.toThrowError(
-      /permission/i
-    );
+    await expect(
+      importMembers([], actor, new Set(), 'test')
+    ).rejects.toThrowError(/permission/i);
   });
 
   it('creates an approved member with accounts, legacy code and an audit entry', async () => {
@@ -335,7 +335,12 @@ describe('importMembers', () => {
     const { valid, errors } = await validateRows(await parseImportFile(filled));
     expect(errors).toEqual([]);
 
-    const outcome = await importMembers(valid, actor, MIGRATE_PERMISSIONS, 'test');
+    const outcome = await importMembers(
+      valid,
+      actor,
+      MIGRATE_PERMISSIONS,
+      'test'
+    );
     expect(outcome.failed).toEqual([]);
     expect(outcome.imported).toHaveLength(1);
     expect(outcome.imported[0].legacyCode).toBe('LEG-200');
@@ -397,7 +402,12 @@ describe('importMembers', () => {
     expect(errors).toEqual([]);
     expect(valid[0].legacyCode).toBe('AB1250');
 
-    const outcome = await importMembers(valid, actor, MIGRATE_PERMISSIONS, 'test');
+    const outcome = await importMembers(
+      valid,
+      actor,
+      MIGRATE_PERMISSIONS,
+      'test'
+    );
     expect(outcome.failed).toEqual([]);
 
     const member = await run(
@@ -557,7 +567,12 @@ describe('importMembers', () => {
     const { valid, errors } = await validateRows(await parseImportFile(filled));
     expect(errors).toEqual([]);
 
-    const outcome = await importMembers(valid, actor, MIGRATE_PERMISSIONS, 'test');
+    const outcome = await importMembers(
+      valid,
+      actor,
+      MIGRATE_PERMISSIONS,
+      'test'
+    );
     expect(outcome.failed).toEqual([]);
 
     const payment = await run(
@@ -688,7 +703,12 @@ describe('importMembers', () => {
     expect(errors).toEqual([]);
     expect(valid[0].kind).toBe('customer');
 
-    const outcome = await importMembers(valid, actor, MIGRATE_PERMISSIONS, 'test');
+    const outcome = await importMembers(
+      valid,
+      actor,
+      MIGRATE_PERMISSIONS,
+      'test'
+    );
     expect(outcome.failed).toEqual([]);
 
     const asMember = await run(
@@ -991,7 +1011,12 @@ describe('fourth increment: Nominee, Minor, and NIC/mobile uniqueness', () => {
     const { valid, errors } = await validateRows(await parseImportFile(filled));
     expect(errors).toEqual([]);
 
-    const outcome = await importMembers(valid, actor, MIGRATE_PERMISSIONS, 'test');
+    const outcome = await importMembers(
+      valid,
+      actor,
+      MIGRATE_PERMISSIONS,
+      'test'
+    );
     expect(outcome.failed).toEqual([]);
 
     const nominees = await run(
@@ -1166,7 +1191,12 @@ describe('fourth increment: Nominee, Minor, and NIC/mobile uniqueness', () => {
     );
     expect(errors).toEqual([]);
 
-    const outcome = await importMembers(valid, actor, MIGRATE_PERMISSIONS, 'test');
+    const outcome = await importMembers(
+      valid,
+      actor,
+      MIGRATE_PERMISSIONS,
+      'test'
+    );
     expect(outcome.failed).toEqual([]);
 
     const guardianParty = await run(
@@ -1449,7 +1479,12 @@ describe('sixth increment: Employment Details columns and trimmed Nominee column
     const { valid, errors } = await validateRows(await parseImportFile(filled));
     expect(errors).toEqual([]);
 
-    const outcome = await importMembers(valid, actor, MIGRATE_PERMISSIONS, 'test');
+    const outcome = await importMembers(
+      valid,
+      actor,
+      MIGRATE_PERMISSIONS,
+      'test'
+    );
     expect(outcome.failed).toEqual([]);
 
     const employment = await run(
@@ -1505,7 +1540,12 @@ describe('sixth increment: Employment Details columns and trimmed Nominee column
     });
     const { valid, errors } = await validateRows(await parseImportFile(filled));
     expect(errors).toEqual([]);
-    const outcome = await importMembers(valid, actor, MIGRATE_PERMISSIONS, 'test');
+    const outcome = await importMembers(
+      valid,
+      actor,
+      MIGRATE_PERMISSIONS,
+      'test'
+    );
     expect(outcome.failed).toEqual([]);
 
     const employment = await run(

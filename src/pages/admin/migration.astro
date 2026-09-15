@@ -53,8 +53,12 @@ if (Astro.request.method === 'POST') {
   } else {
     const form = await Astro.request.formData();
     const file = form.get('file');
-    const expectedRowsRaw = (form.get('expected_rows') as string | null)?.trim();
-    const expectedBalanceRaw = (form.get('expected_balance') as string | null)?.trim();
+    const expectedRowsRaw = (
+      form.get('expected_rows') as string | null
+    )?.trim();
+    const expectedBalanceRaw = (
+      form.get('expected_balance') as string | null
+    )?.trim();
 
     if (!(file instanceof File) || file.size === 0) {
       error = 'Choose a filled-in template to upload.';
@@ -81,7 +85,9 @@ if (Astro.request.method === 'POST') {
             );
 
             // S-710: compare against operator-supplied control totals.
-            const expectedRows = expectedRowsRaw ? parseInt(expectedRowsRaw, 10) : null;
+            const expectedRows = expectedRowsRaw
+              ? parseInt(expectedRowsRaw, 10)
+              : null;
             let expectedBalance: number | null = null;
             if (expectedBalanceRaw) {
               try {
@@ -92,12 +98,18 @@ if (Astro.request.method === 'POST') {
             }
             if (expectedRows !== null || expectedBalance !== null) {
               const messages: string[] = [];
-              if (expectedRows !== null && outcome.imported.length !== expectedRows) {
+              if (
+                expectedRows !== null &&
+                outcome.imported.length !== expectedRows
+              ) {
                 messages.push(
                   `Expected ${expectedRows} row${expectedRows === 1 ? '' : 's'}, imported ${outcome.imported.length}.`
                 );
               }
-              if (expectedBalance !== null && outcome.totalBalance !== expectedBalance) {
+              if (
+                expectedBalance !== null &&
+                outcome.totalBalance !== expectedBalance
+              ) {
                 messages.push(
                   `Expected balance Rs ${fromCents(expectedBalance)}, imported Rs ${fromCents(outcome.totalBalance)}.`
                 );
@@ -216,7 +228,9 @@ const customerCount =
         )}
 
         {outcome && (
-          <section class={`rounded-2xl border p-6 ${reconciliation && !reconciliation.passed ? 'border-neutral-200 bg-neutral-100 dark:border-neutral-800 dark:bg-neutral-950' : 'border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950'}`}>
+          <section
+            class={`rounded-2xl border p-6 ${reconciliation && !reconciliation.passed ? 'border-neutral-200 bg-neutral-100 dark:border-neutral-800 dark:bg-neutral-950' : 'border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950'}`}
+          >
             <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
               {outcome.imported.length} row
               {outcome.imported.length === 1 ? '' : 's'} processed
