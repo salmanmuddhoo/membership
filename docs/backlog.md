@@ -82,7 +82,7 @@ FRD Section 23, plus this project's specifics. A story is done when:
 | EPIC-12 | Reporting                 | M9             | Should   |
 | EPIC-13 | API Platform              | M1 → M9        | Must     |
 | EPIC-14 | Legacy Data Migration     | M7             | Must     |
-| EPIC-15 | Resignation & Dormancy    | M8             | Must     |
+| EPIC-15 | Resignation & Dormancy    | M8 → Phase 2   | Must     |
 | EPIC-16 | DevSecOps Security Gate   | M0 ✅          | Must     |
 
 ---
@@ -2509,7 +2509,10 @@ that** the financial position follows the people.
 
 ---
 
-# M8 — Resignation & dormancy
+# M8 — Resignation & dormancy — Phase 2
+
+**Deferred to Phase 2.** Out of Phase 1 scope. The stories below stand as
+written, to be scheduled when Phase 2 is planned; nothing here is started.
 
 **Goal:** a member can resign through the approval chain, and dormancy is
 detected rather than noticed.
@@ -2570,6 +2573,21 @@ be contacted first.
 
 **Goal:** members hear from the Society, staff can report on it, and
 Albarakah.mu can submit applications.
+
+**Shipped, first increment** (S-901): the notification service exists and is
+provider-independent. `notification_template` is a configuration table like
+any other — an administrator writes the wording, the trigger from migration
+0010 records who changed it, and a write that cannot name its actor is
+refused. `notification` is the outbox: one row per intended send, carrying
+the subject and body **as they were rendered at the time**, so editing a
+template never rewrites what a member was already told. `notify()` picks up
+whichever channels an event has an active template for, skips a channel the
+recipient has no address for, and never throws — an approval that succeeded
+is not reported as failed because a relay was down. Until a real provider is
+registered the channel writes to the server log, which exercises the whole
+path; S-902 and S-903 register email and WhatsApp behind the same interface,
+and S-904 adds the retry schedule and the staff-facing delivery log. Still to
+do for S-901 itself: the administrator's own editing screen.
 
 ### S-901 · Provider-independent notification service with templates
 
