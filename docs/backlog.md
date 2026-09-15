@@ -82,7 +82,7 @@ FRD Section 23, plus this project's specifics. A story is done when:
 | EPIC-12 | Reporting                 | M9             | Should   |
 | EPIC-13 | API Platform              | M1 → M9        | Must     |
 | EPIC-14 | Legacy Data Migration     | M7             | Must     |
-| EPIC-15 | Resignation & Dormancy    | M8             | Must     |
+| EPIC-15 | Resignation & Dormancy    | M8 → Phase 2   | Must     |
 | EPIC-16 | DevSecOps Security Gate   | M0 ✅          | Must     |
 
 ---
@@ -2509,7 +2509,10 @@ that** the financial position follows the people.
 
 ---
 
-# M8 — Resignation & dormancy
+# M8 — Resignation & dormancy — Phase 2
+
+**Deferred to Phase 2.** Out of Phase 1 scope. The stories below stand as
+written, to be scheduled when Phase 2 is planned; nothing here is started.
 
 **Goal:** a member can resign through the approval chain, and dormancy is
 detected rather than noticed.
