@@ -1,0 +1,191 @@
+---
+// What a member is told, in the Society's own words (S-901).
+//
+// The wording is configuration, not code: changing "Welcome to Al Barakah" is
+// an edit here, not a release. Reaching this page needs config.view (the
+// prefix rule in authorise.ts); changing anything needs config.manage, which
+// this page checks itself.
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import ConfigNav from '@components/ConfigNav.astro';
+import { ConfigError } from '@lib/config/reference';
+import { placeholdersForEvent } from '@lib/notifications/event-codes';
+import {
+  listNotificationTemplates,
+  updateNotificationTemplate,
+  type NotificationChannel,
+} from '@lib/notifications/templates';
+
+const principal = Astro.locals.principal!;
+const canManage = principal.permissions.has('config.manage');
+
+let error: string | null = null;
+let notice: string | null = null;
+
+if (Astro.request.method === 'POST') {
+  if (!canManage) {
+    error = 'You do not have permission to change notification wording.';
+  } else {
+    const form = await Astro.request.formData();
+    const subject = String(form.get('subject') ?? '').trim();
+
+    try {
+      await updateNotificationTemplate(
+        String(form.get('id')),
+        {
+          subject: subject === '' ? null : subject,
+          body: String(form.get('body') ?? ''),
+          isActive: form.get('isActive') === 'on',
+        },
+        { userId: principal.userId, email: principal.email }
+      );
+      notice = 'Wording saved. Messages already sent keep what they said.';
+    } catch (err) {
+      if (err instanceof ConfigError) {
+        error = err.message;
+      } else {
+        console.error('[config/notification-templates]', err);
+        error = 'Something went wrong. Please try again.';
+      }
+    }
+  }
+}
+
+const templates = await listNotificationTemplates();
+
+const CHANNEL_LABELS: Record<NotificationChannel, string> = {
+  email: 'Email',
+  whatsapp: 'WhatsApp',
+};
+
+// The officer's name for the event, not the system's.
+const EVENT_LABELS: Record<string, string> = {
+  'application.submitted': 'Application received',
+  'application.returned': 'Application returned for correction',
+  'application.approved': 'Membership approved',
+  'application.rejected': 'Application not approved',
+  'account.submitted': 'Account application received',
+  'account.returned': 'Account application returned for correction',
+  'account.approved': 'Account opened',
+  'account.rejected': 'Account application not approved',
+};
+
+const eventLabel = (code: string) =>
+  EVENT_LABELS[code] ?? code.replace(/\./g, ' · ');
+
+// Grouped by event so the two channels for one thing sit together — an
+// administrator changing what an approval says wants both in front of them.
+const byEvent = new Map<string, typeof templates>();
+for (const template of templates) {
+  const group = byEvent.get(template.eventCode) ?? [];
+  group.push(template);
+  byEvent.set(template.eventCode, group);
+}
+---
+
+<DashboardLayout
+  title="Notification wording · Al Barakah MCSL"
+  heading="Notification wording"
+>
+  <div class="mx-auto max-w-5xl space-y-6">
+    <ConfigNav />
+
+    {error && (
+      <p class="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200">
+        {error}
+      </p>
+    )}
+    {notice && (
+      <p class="border-mint-400 bg-mint-50 dark:bg-mint-950 rounded-xl border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
+        {notice}
+      </p>
+    )}
+
+    {!canManage && (
+      <p class="rounded-xl border border-neutral-300 px-4 py-3 text-sm text-neutral-600 dark:border-neutral-700 dark:text-neutral-300">
+        You may read this wording but not change it.
+      </p>
+    )}
+
+    {[...byEvent.entries()].map(([eventCode, group]) => (
+      <section class="space-y-3 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+          {eventLabel(eventCode)}
+        </h2>
+
+        {(placeholdersForEvent(eventCode) ?? []).length > 0 && (
+          <p class="flex flex-wrap items-center gap-1.5 text-xs text-neutral-500 dark:text-neutral-400">
+            <span>Available:</span>
+            {(placeholdersForEvent(eventCode) ?? []).map(name => (
+              <code class="rounded bg-neutral-200 px-1.5 py-0.5 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-200">
+                {`{{${name}}}`}
+              </code>
+            ))}
+          </p>
+        )}
+
+        {group.map(template => (
+          <form
+            method="post"
+            class="space-y-3 rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900"
+          >
+            <input type="hidden" name="id" value={template.id} />
+
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <span class="text-sm font-semibold text-neutral-800 dark:text-neutral-100">
+                {CHANNEL_LABELS[template.channel]}
+              </span>
+              <label class="flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-300">
+                <input
+                  type="checkbox"
+                  name="isActive"
+                  checked={template.isActive}
+                  disabled={!canManage}
+                  class="rounded border-neutral-300 dark:border-neutral-600"
+                />
+                Send this
+              </label>
+            </div>
+
+            {template.channel === 'email' && (
+              <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+                Subject
+                <input
+                  type="text"
+                  name="subject"
+                  value={template.subject ?? ''}
+                  disabled={!canManage}
+                  class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-950 dark:text-neutral-100"
+                />
+              </label>
+            )}
+
+            <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+              Message
+              <textarea
+                name="body"
+                rows={template.channel === 'email' ? 8 : 4}
+                disabled={!canManage}
+                class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 font-mono text-sm dark:border-neutral-600 dark:bg-neutral-950 dark:text-neutral-100"
+              >{template.body}</textarea>
+            </label>
+
+            {canManage && (
+              <button
+                type="submit"
+                class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
+              >
+                Save
+              </button>
+            )}
+          </form>
+        ))}
+      </section>
+    ))}
+
+    {templates.length === 0 && (
+      <p class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 text-sm text-neutral-500 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-400">
+        No notification wording has been set up.
+      </p>
+    )}
+  </div>
+</DashboardLayout>

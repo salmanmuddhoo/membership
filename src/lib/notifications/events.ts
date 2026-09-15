@@ -11,6 +11,7 @@
 // before the request ends. An approval that succeeded is never reported as
 // failed because a relay was down.
 import { loadApplication, type Application } from '../applications/capture';
+import { eventCodeForKind, type Happening } from './event-codes';
 import { notify } from './notify';
 
 export const ENTITY_TYPE = 'membership_application';
@@ -91,27 +92,17 @@ export async function contactFor(
   };
 }
 
-/**
- * The event code for one thing happening to one kind of application.
- *
- * A membership application and an account application are different news. A
- * non-member opening a savings account must not be welcomed as a member, and
- * an existing member opening a second account must not be told their
- * membership has been approved — so the two carry different codes, and the
- * Society writes each its own wording (migration 0054).
- */
+// The same question, asked about an application rather than about a kind.
 export function eventCodeFor(
   application: Application,
-  happening: 'submitted' | 'returned' | 'approved' | 'rejected'
+  happening: Happening
 ): string {
-  const subject =
-    application.applicationKind === 'membership' ? 'application' : 'account';
-  return `${subject}.${happening}`;
+  return eventCodeForKind(application.applicationKind, happening);
 }
 
 async function notifyAbout(
   application: Application,
-  happening: 'submitted' | 'returned' | 'approved' | 'rejected',
+  happening: Happening,
   values: Record<string, string | null | undefined> = {}
 ): Promise<void> {
   const contact = await contactFor(application);

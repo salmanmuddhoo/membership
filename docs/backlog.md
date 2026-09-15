@@ -2574,6 +2574,64 @@ be contacted first.
 **Goal:** members hear from the Society, staff can report on it, and
 Albarakah.mu can submit applications.
 
+**Shipped, second increment** (S-902, S-903, S-904, and S-901's remaining
+screen): the channels are real, the events are wired, a failed send is retried
+and a failure is visible.
+
+**Migration 0053 had never once applied anywhere.** PostgreSQL concatenates
+two string literals separated by a newline, but the `E''` prefix is only legal
+on the FIRST literal of such a group — `'plain'` then `E'escaped'` on the next
+line is a syntax error — and four of the five seeded templates were written
+that way. Rejected at parse time by every PostgreSQL, on every database,
+whatever is already in it: so unlike 0030 (the same class of bug) this could
+not even in principle have applied somewhere and recorded a checksum, M9's two
+tables existed nowhere, and nothing after 0053 could ever have been reached.
+`scripts/migrate.test.ts` already covered it — it applies the real migration
+files — so the suite was red. The bodies are joined with `||` instead, where
+each operand may carry its own prefix, and `verify-migrations.sh` grandfathers
+the file with that evidence, since a new migration cannot fix a file that will
+be re-attempted and fail forever.
+
+**S-902, S-903.** Email leaves through the Society's Microsoft 365 mailbox,
+reusing the registration documents already use (`GraphCredentials` is split
+from `GraphConfig` because a mailbox has no document library); both channels
+also speak to a plain HTTP gateway, posting the shape the member app's
+one-time codes already post so one gateway can carry both. A channel nobody
+has configured now **refuses** — it used to write to the server log and report
+success, which is `'sent'` against a notification nobody received — and the
+log channel is unavailable in production. Events are raised in `workflow.ts`
+after the commit, never inside it; only a return is news to the applicant, and
+a sign-off that has not reached quorum notifies nobody. Migration 0054 adds
+`account.*` wording, because welcoming an existing member to Al Barakah, or
+telling a non-member their membership has been approved, are both wrong in a
+way the member notices. Contact details come from the application — there is
+no email or mobile column on `member` — and a minor's guardian is written to,
+under the minor's name.
+
+**S-904.** `next_attempt_at` (0055) is what makes a retry safe: the sender
+asks one indexed question, what is due now, and the backoff is arithmetic
+rather than state a job would lose on restart. 5m, 15m, 1h, 6h, 24h, giving up
+after six attempts — a little over thirty hours, so an overnight outage still
+delivers next morning. Giving up marks the row `abandoned` rather than
+deleting it. A row still `pending` was never marked either way, so it is
+picked up on age after ten minutes' grace, which tells an orphaned send from
+one still in flight. What is re-sent is the text stored on the row, never a
+re-render: editing wording must not change what a member was already told.
+The delivery log is **/admin/notifications**, behind its own permission (0056)
+rather than `audit.view`'s. Found while building it: the retry path resolved
+channels straight from configuration and silently ignored a registered one, so
+the first attempt and the retry could disagree about the provider; resolution
+now happens in exactly one place.
+
+**S-901's own screen** is Configuration → Notification wording. It refuses a
+placeholder the event does not fill in, naming the ones it does: a slot with
+no value renders as nothing, so `{{member_number}}` for `{{member_no}}` would
+reach a member as "Your member number is ." with nothing saying why. A test
+holds the seeded wording and the code to that same contract.
+
+**Still to do in M9:** S-905 to S-907 (reports) and S-908, S-909 (the public
+application API).
+
 **Shipped, first increment** (S-901): the notification service exists and is
 provider-independent. `notification_template` is a configuration table like
 any other — an administrator writes the wording, the trigger from migration
@@ -2587,9 +2645,10 @@ is not reported as failed because a relay was down. Until a real provider is
 registered the channel writes to the server log, which exercises the whole
 path; S-902 and S-903 register email and WhatsApp behind the same interface,
 and S-904 adds the retry schedule and the staff-facing delivery log. Still to
-do for S-901 itself: the administrator's own editing screen.
+do for S-901 itself: the administrator's own editing screen. _(All of which
+the second increment above has since done.)_
 
-### S-901 · Provider-independent notification service with templates
+### S-901 · Provider-independent notification service with templates ✅
 
 **As** the Society, **I need** notifications independent of any one provider,
 **so that** changing provider is configuration. _(decision 11)_
@@ -2597,13 +2656,13 @@ do for S-901 itself: the administrator's own editing screen.
 
 - Templates are configuration; channel is a detail behind one interface
 
-### S-902 · Email channel for the events in FRD Section 9
+### S-902 · Email channel for the events in FRD Section 9 ✅
 
 **As** a member, **I need** to be told what happened to my application,
 **so that** I am not left waiting. _(FRD Section 9)_
 `Must · 5 · EPIC-10`
 
-### S-903 · WhatsApp channel — membership approved
+### S-903 · WhatsApp channel — membership approved ✅
 
 **As** a member, **I need** approval by WhatsApp, **so that** I hear promptly.
 _(decision 11)_
@@ -2612,7 +2671,7 @@ _(decision 11)_
 - Sends to the international-form number captured in M3, which is why that
   conversion happened at capture rather than being deferred
 
-### S-904 · Notification delivery log and retry
+### S-904 · Notification delivery log and retry ✅
 
 **As** staff, **I need** to see whether a notification arrived, **so that** a
 silent failure is not mistaken for a member ignoring us.
