@@ -26,6 +26,7 @@ import {
   boardReadinessReasons,
   decideApplication,
   reopenRejectedApplication,
+  returnedByLabel,
   reviewApplication,
   reviewStageLabel,
   signoffsFor,
@@ -355,30 +356,41 @@ async function loadHolderContactFields(
   };
 }
 
-const [checklist, actions, history, stageLabel, payments, dueRead, contact] =
-  await Promise.all([
-    checklistFor({ applicationId: application.id }),
-    availableActions(application!, principal),
-    transitionsFor(application!.id),
-    reviewStageLabel(application!),
-    paymentsForApplication(application!.id),
-    canRecordPayment && !isDecided
-      ? amountDueForAdditionalAccount(application!.id).then(
-          due => ({ due, problem: null as string | null }),
-          (err: unknown) => ({
-            due: null as AccountAmountDue | null,
-            problem:
-              err instanceof PaymentError
-                ? err.message
-                : 'The amount due could not be read.',
-          })
-        )
-      : Promise.resolve(null),
-    loadHolderContactFields(
-      application!.existingHolderId,
-      application!.existingHolderApplicationId
-    ),
-  ]);
+const [
+  checklist,
+  actions,
+  history,
+  stageLabel,
+  payments,
+  dueRead,
+  contact,
+  returnedLabel,
+] = await Promise.all([
+  checklistFor({ applicationId: application.id }),
+  availableActions(application!, principal),
+  transitionsFor(application!.id),
+  reviewStageLabel(application!),
+  paymentsForApplication(application!.id),
+  canRecordPayment && !isDecided
+    ? amountDueForAdditionalAccount(application!.id).then(
+        due => ({ due, problem: null as string | null }),
+        (err: unknown) => ({
+          due: null as AccountAmountDue | null,
+          problem:
+            err instanceof PaymentError
+              ? err.message
+              : 'The amount due could not be read.',
+        })
+      )
+    : Promise.resolve(null),
+  loadHolderContactFields(
+    application!.existingHolderId,
+    application!.existingHolderApplicationId
+  ),
+  application!.status === 'returned'
+    ? returnedByLabel(application!.id)
+    : Promise.resolve(null as string | null),
+]);
 const applicantContactFields = contact.fields.filter(
   f => f.subject === 'applicant'
 );
@@ -522,6 +534,7 @@ const timeline = applicationTimeline({
   paymentRecorded: livePayment !== null,
   paymentReceiptNo: livePayment?.receiptNo ?? null,
   reviewStageLabel: stageLabel,
+  returnedByLabel: returnedLabel,
 });
 
 // Mirrors customer.astro / [id].astro step numbering exactly, so print.astro's

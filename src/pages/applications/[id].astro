@@ -26,6 +26,7 @@ import {
   boardReadinessReasons,
   decideApplication,
   reopenRejectedApplication,
+  returnedByLabel,
   reviewApplication,
   reviewStageLabel,
   signoffsFor,
@@ -484,27 +485,38 @@ const isDecided =
 // one round of parallel queries rather than one after another — and the
 // Board-readiness check below reuses three of these reads instead of
 // repeating them.
-const [checklist, blocking, actions, history, stageLabel, payments, dueRead] =
-  await Promise.all([
-    checklistFor({ applicationId: application!.id }),
-    problemsBlockingSubmission(application!),
-    availableActions(application!, principal),
-    transitionsFor(application!.id),
-    reviewStageLabel(application!),
-    paymentsForApplication(application!.id),
-    canRecordPayment && !isDecided
-      ? amountDueForApplication(application!.id).then(
-          due => ({ due, problem: null as string | null }),
-          (err: unknown) => ({
-            due: null as AmountDue | null,
-            problem:
-              err instanceof PaymentError
-                ? err.message
-                : 'The fee schedule could not be read.',
-          })
-        )
-      : Promise.resolve(null),
-  ]);
+const [
+  checklist,
+  blocking,
+  actions,
+  history,
+  stageLabel,
+  payments,
+  dueRead,
+  returnedLabel,
+] = await Promise.all([
+  checklistFor({ applicationId: application!.id }),
+  problemsBlockingSubmission(application!),
+  availableActions(application!, principal),
+  transitionsFor(application!.id),
+  reviewStageLabel(application!),
+  paymentsForApplication(application!.id),
+  canRecordPayment && !isDecided
+    ? amountDueForApplication(application!.id).then(
+        due => ({ due, problem: null as string | null }),
+        (err: unknown) => ({
+          due: null as AmountDue | null,
+          problem:
+            err instanceof PaymentError
+              ? err.message
+              : 'The fee schedule could not be read.',
+        })
+      )
+    : Promise.resolve(null),
+  application!.status === 'returned'
+    ? returnedByLabel(application!.id)
+    : Promise.resolve(null as string | null),
+]);
 const documentsComplete = checklist.length > 0 && isDocumentComplete(checklist);
 
 // Officer feedback: this used to read "Next: submit for review" no matter
@@ -708,6 +720,7 @@ const timeline = applicationTimeline({
   paymentRecorded: livePayment !== null,
   paymentReceiptNo: livePayment?.receiptNo ?? null,
   reviewStageLabel: stageLabel,
+  returnedByLabel: returnedLabel,
 });
 
 // The wizard steps an officer walks while the application is still theirs to

@@ -61,6 +61,10 @@ export interface TimelineInput {
   // absent, the only thing this could ever have meant before Regional
   // oversight was ever enforced.
   reviewStageLabel?: string | null;
+  // Who returned this application in the current pass, for a 'returned'
+  // application — "Returned by the Regional Manager" etc. Shown on the Submit
+  // step so the officer knows which reviewer sent it back.
+  returnedByLabel?: string | null;
 }
 
 // How far through the approval chain a status is. Two statuses share a rank
@@ -144,7 +148,9 @@ export function applicationTimeline(input: TimelineInput): TimelineStep[] {
       detail:
         rank >= 1 && rank < 3
           ? (input.reviewStageLabel ?? 'With the Secretary')
-          : undefined,
+          : returned && input.returnedByLabel
+            ? input.returnedByLabel
+            : undefined,
     },
     {
       key: 'decision',
