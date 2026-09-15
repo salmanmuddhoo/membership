@@ -2574,6 +2574,21 @@ be contacted first.
 **Goal:** members hear from the Society, staff can report on it, and
 Albarakah.mu can submit applications.
 
+**Shipped, first increment** (S-901): the notification service exists and is
+provider-independent. `notification_template` is a configuration table like
+any other — an administrator writes the wording, the trigger from migration
+0010 records who changed it, and a write that cannot name its actor is
+refused. `notification` is the outbox: one row per intended send, carrying
+the subject and body **as they were rendered at the time**, so editing a
+template never rewrites what a member was already told. `notify()` picks up
+whichever channels an event has an active template for, skips a channel the
+recipient has no address for, and never throws — an approval that succeeded
+is not reported as failed because a relay was down. Until a real provider is
+registered the channel writes to the server log, which exercises the whole
+path; S-902 and S-903 register email and WhatsApp behind the same interface,
+and S-904 adds the retry schedule and the staff-facing delivery log. Still to
+do for S-901 itself: the administrator's own editing screen.
+
 ### S-901 · Provider-independent notification service with templates
 
 **As** the Society, **I need** notifications independent of any one provider,
