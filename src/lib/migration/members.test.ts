@@ -308,9 +308,9 @@ describe('validateRows', () => {
 describe('importMembers', () => {
   it('refuses without system.migrate_members', async () => {
     const { importMembers } = await load();
-    await expect(importMembers([], actor, new Set())).rejects.toThrowError(
-      /permission/i
-    );
+    await expect(
+      importMembers([], actor, new Set(), 'test')
+    ).rejects.toThrowError(/permission/i);
   });
 
   it('creates an approved member with accounts, legacy code and an audit entry', async () => {
@@ -335,7 +335,12 @@ describe('importMembers', () => {
     const { valid, errors } = await validateRows(await parseImportFile(filled));
     expect(errors).toEqual([]);
 
-    const outcome = await importMembers(valid, actor, MIGRATE_PERMISSIONS);
+    const outcome = await importMembers(
+      valid,
+      actor,
+      MIGRATE_PERMISSIONS,
+      'test'
+    );
     expect(outcome.failed).toEqual([]);
     expect(outcome.imported).toHaveLength(1);
     expect(outcome.imported[0].legacyCode).toBe('LEG-200');
@@ -397,7 +402,12 @@ describe('importMembers', () => {
     expect(errors).toEqual([]);
     expect(valid[0].legacyCode).toBe('AB1250');
 
-    const outcome = await importMembers(valid, actor, MIGRATE_PERMISSIONS);
+    const outcome = await importMembers(
+      valid,
+      actor,
+      MIGRATE_PERMISSIONS,
+      'test'
+    );
     expect(outcome.failed).toEqual([]);
 
     const member = await run(
@@ -432,7 +442,8 @@ describe('importMembers', () => {
     const firstOutcome = await importMembers(
       firstValid,
       actor,
-      MIGRATE_PERMISSIONS
+      MIGRATE_PERMISSIONS,
+      'test'
     );
     expect(firstOutcome.failed).toEqual([]);
 
@@ -453,7 +464,8 @@ describe('importMembers', () => {
     const secondOutcome = await importMembers(
       secondParsed.valid,
       actor,
-      MIGRATE_PERMISSIONS
+      MIGRATE_PERMISSIONS,
+      'test'
     );
     expect(secondOutcome.failed).toEqual([]);
     expect(secondOutcome.imported[0].memberNo).toBe('AB1300');
@@ -505,7 +517,7 @@ describe('importMembers', () => {
       ...NOMINEE_1,
     });
     const firstValid = (await validateRows(await parseImportFile(first))).valid;
-    await importMembers(firstValid, actor, MIGRATE_PERMISSIONS);
+    await importMembers(firstValid, actor, MIGRATE_PERMISSIONS, 'test');
 
     const second = await fillSheet(template, 'Individual', {
       'Legacy Member Code': 'LEG-301',
@@ -555,7 +567,12 @@ describe('importMembers', () => {
     const { valid, errors } = await validateRows(await parseImportFile(filled));
     expect(errors).toEqual([]);
 
-    const outcome = await importMembers(valid, actor, MIGRATE_PERMISSIONS);
+    const outcome = await importMembers(
+      valid,
+      actor,
+      MIGRATE_PERMISSIONS,
+      'test'
+    );
     expect(outcome.failed).toEqual([]);
 
     const payment = await run(
@@ -686,7 +703,12 @@ describe('importMembers', () => {
     expect(errors).toEqual([]);
     expect(valid[0].kind).toBe('customer');
 
-    const outcome = await importMembers(valid, actor, MIGRATE_PERMISSIONS);
+    const outcome = await importMembers(
+      valid,
+      actor,
+      MIGRATE_PERMISSIONS,
+      'test'
+    );
     expect(outcome.failed).toEqual([]);
 
     const asMember = await run(
@@ -766,7 +788,8 @@ describe('importMembers', () => {
     const firstOutcome = await importMembers(
       firstValid,
       actor,
-      MIGRATE_PERMISSIONS
+      MIGRATE_PERMISSIONS,
+      'test'
     );
     expect(firstOutcome.failed).toEqual([]);
 
@@ -805,7 +828,8 @@ describe('importMembers', () => {
     const secondOutcome = await importMembers(
       secondParsed.valid,
       actor,
-      MIGRATE_PERMISSIONS
+      MIGRATE_PERMISSIONS,
+      'test'
     );
     expect(secondOutcome.failed).toEqual([]);
 
@@ -887,7 +911,7 @@ describe('importMembers', () => {
       ...NOMINEE_1,
     });
     const firstValid = (await validateRows(await parseImportFile(first))).valid;
-    await importMembers(firstValid, actor, MIGRATE_PERMISSIONS);
+    await importMembers(firstValid, actor, MIGRATE_PERMISSIONS, 'test');
 
     const second = await fillSheet(template, 'Individual', {
       'Legacy Member Code': 'LEG-503',
@@ -947,7 +971,8 @@ describe('importMembers', () => {
         rowFor('LEG-DUP-DB', 'B6666666666662', 'AB6666662'),
       ],
       actor,
-      MIGRATE_PERMISSIONS
+      MIGRATE_PERMISSIONS,
+      'test'
     );
 
     expect(outcome.imported).toHaveLength(1);
@@ -986,7 +1011,12 @@ describe('fourth increment: Nominee, Minor, and NIC/mobile uniqueness', () => {
     const { valid, errors } = await validateRows(await parseImportFile(filled));
     expect(errors).toEqual([]);
 
-    const outcome = await importMembers(valid, actor, MIGRATE_PERMISSIONS);
+    const outcome = await importMembers(
+      valid,
+      actor,
+      MIGRATE_PERMISSIONS,
+      'test'
+    );
     expect(outcome.failed).toEqual([]);
 
     const nominees = await run(
@@ -1076,7 +1106,7 @@ describe('fourth increment: Nominee, Minor, and NIC/mobile uniqueness', () => {
       'Nominee 2 Name': 'Second',
     });
     const firstValid = (await validateRows(await parseImportFile(first))).valid;
-    await importMembers(firstValid, actor, MIGRATE_PERMISSIONS);
+    await importMembers(firstValid, actor, MIGRATE_PERMISSIONS, 'test');
 
     // Re-import to correct the address only — Nominee 2 columns left blank,
     // same as an officer who has no reason to retype them this time.
@@ -1093,7 +1123,7 @@ describe('fourth increment: Nominee, Minor, and NIC/mobile uniqueness', () => {
     });
     const secondParsed = await validateRows(await parseImportFile(second));
     expect(secondParsed.errors).toEqual([]);
-    await importMembers(secondParsed.valid, actor, MIGRATE_PERMISSIONS);
+    await importMembers(secondParsed.valid, actor, MIGRATE_PERMISSIONS, 'test');
 
     const nominee2 = await run(
       appUrl,
@@ -1133,7 +1163,8 @@ describe('fourth increment: Nominee, Minor, and NIC/mobile uniqueness', () => {
     const guardianOutcome = await importMembers(
       guardianValid,
       actor,
-      MIGRATE_PERMISSIONS
+      MIGRATE_PERMISSIONS,
+      'test'
     );
     expect(guardianOutcome.failed).toEqual([]);
 
@@ -1160,7 +1191,12 @@ describe('fourth increment: Nominee, Minor, and NIC/mobile uniqueness', () => {
     );
     expect(errors).toEqual([]);
 
-    const outcome = await importMembers(valid, actor, MIGRATE_PERMISSIONS);
+    const outcome = await importMembers(
+      valid,
+      actor,
+      MIGRATE_PERMISSIONS,
+      'test'
+    );
     expect(outcome.failed).toEqual([]);
 
     const guardianParty = await run(
@@ -1211,7 +1247,7 @@ describe('fourth increment: Nominee, Minor, and NIC/mobile uniqueness', () => {
     const guardianValid = (
       await validateRows(await parseImportFile(guardianRow))
     ).valid;
-    await importMembers(guardianValid, actor, MIGRATE_PERMISSIONS);
+    await importMembers(guardianValid, actor, MIGRATE_PERMISSIONS, 'test');
 
     const minorRow = await fillSheet(template, 'Minor', {
       'Legacy Member Code': 'LEG-614-M',
@@ -1335,7 +1371,7 @@ describe('fourth increment: Nominee, Minor, and NIC/mobile uniqueness', () => {
       ...NOMINEE_1,
     });
     const firstValid = (await validateRows(await parseImportFile(first))).valid;
-    await importMembers(firstValid, actor, MIGRATE_PERMISSIONS);
+    await importMembers(firstValid, actor, MIGRATE_PERMISSIONS, 'test');
 
     // A different legacy code claiming the same NIC — refused.
     const clash = await fillSheet(template, 'Individual', {
@@ -1443,7 +1479,12 @@ describe('sixth increment: Employment Details columns and trimmed Nominee column
     const { valid, errors } = await validateRows(await parseImportFile(filled));
     expect(errors).toEqual([]);
 
-    const outcome = await importMembers(valid, actor, MIGRATE_PERMISSIONS);
+    const outcome = await importMembers(
+      valid,
+      actor,
+      MIGRATE_PERMISSIONS,
+      'test'
+    );
     expect(outcome.failed).toEqual([]);
 
     const employment = await run(
@@ -1499,7 +1540,12 @@ describe('sixth increment: Employment Details columns and trimmed Nominee column
     });
     const { valid, errors } = await validateRows(await parseImportFile(filled));
     expect(errors).toEqual([]);
-    const outcome = await importMembers(valid, actor, MIGRATE_PERMISSIONS);
+    const outcome = await importMembers(
+      valid,
+      actor,
+      MIGRATE_PERMISSIONS,
+      'test'
+    );
     expect(outcome.failed).toEqual([]);
 
     const employment = await run(
