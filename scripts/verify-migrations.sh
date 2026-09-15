@@ -38,23 +38,39 @@ changed=$(git diff --name-status --diff-filter=MDR "$merge_base..HEAD" -- migrat
 
 [ -z "$changed" ] && { echo "No existing migration has been modified."; exit 0; }
 
-# One narrow, named exception: migrations/0030_non_member_signed_form.sql
-# never once applied successfully anywhere — every attempt from the day it
-# merged (PR #83) through PR #88 failed on a pre-existing row and rolled
-# back, so no environment ever recorded its checksum, and every migration
-# after it was silently skipped the whole time. The usual harm this check
-# exists to prevent (a recorded checksum going stale) cannot happen for a
-# migration nothing ever recorded. Fixed in the PR that added this
-# exception (an `on conflict do nothing` guard) — never add a second name
-# here without the same "never once applied" evidence; the fix belongs in a
-# new migration otherwise, exactly as this check insists everywhere else.
-grandfathered='migrations/0030_non_member_signed_form.sql'
+# Narrow, named exceptions: migrations that never once applied successfully
+# anywhere, so no environment ever recorded a checksum for one to drift from.
+# The harm this check exists to prevent cannot happen to a migration nothing
+# ever recorded. Each entry needs that evidence — "it failed everywhere, on
+# every attempt, from the day it merged" — and nothing weaker; the fix belongs
+# in a NEW migration otherwise, exactly as this check insists everywhere else.
+#
+#   0030_non_member_signed_form.sql — its `insert into
+#   document_checklist_item` carried no `on conflict` guard and hit a row an
+#   administrator had already added by hand. Every attempt from the day it
+#   merged (PR #83) through PR #88 rolled back, and every migration after it
+#   was silently skipped the whole time. Fixed by the PR that added this
+#   exception.
+#
+#   0053_notifications.sql — a SYNTAX error: PostgreSQL concatenates two
+#   string literals separated by a newline, but the E'' prefix is only legal
+#   on the first literal of such a group, and four of the seeded templates
+#   put an E'' literal after a plain one. That is rejected at parse time by
+#   every PostgreSQL there is, on every database, regardless of what is
+#   already in it — so unlike 0030 this one could not even in principle have
+#   applied somewhere. M9's two tables therefore existed nowhere, and 0054
+#   onwards could never have been reached. Fixed by the PR that added this
+#   exception (the bodies are joined with `||` instead).
+grandfathered='
+migrations/0030_non_member_signed_form.sql
+migrations/0053_notifications.sql
+'
 
 offending=""
 while IFS=$'\t' read -r status path _rest; do
   [ -z "${path:-}" ] && continue
 
-  if [ "$path" = "$grandfathered" ]; then
+  if printf '%s' "$grandfathered" | grep -qx -- "$path"; then
     echo "  grandfathered (never applied anywhere — see script comment): $path"
     continue
   fi

@@ -65,27 +65,34 @@ export function graphFailureMessage(error: GraphError): string {
   );
 }
 
-export interface GraphConfig {
+// Signing in as the application, without saying what for. The document
+// library is one thing this tenant's registration is used for; sending the
+// Society's mail (S-902) is another, and a mailbox has no drive. Splitting
+// the credentials from the drive keeps a caller that only needs a token from
+// having to name a document library it will never touch.
+export interface GraphCredentials {
   tenantId: string;
   clientId: string;
   clientSecret: string;
-  // The drive (document library) documents are filed in.
-  driveId: string;
-  // Override for tests and for sovereign clouds.
+  // Overrides for tests and for sovereign clouds.
   graphBaseUrl: string;
   loginBaseUrl: string;
 }
 
-export function getGraphConfig(): GraphConfig {
+export interface GraphConfig extends GraphCredentials {
+  // The drive (document library) documents are filed in.
+  driveId: string;
+}
+
+export function getGraphCredentials(): GraphCredentials {
   const tenantId = readEnv('GRAPH_TENANT_ID');
   const clientId = readEnv('GRAPH_CLIENT_ID');
   const clientSecret = readEnv('GRAPH_CLIENT_SECRET');
-  const driveId = readEnv('GRAPH_DRIVE_ID');
 
-  if (!tenantId || !clientId || !clientSecret || !driveId) {
+  if (!tenantId || !clientId || !clientSecret) {
     throw new GraphError(
-      'SharePoint is not configured. Set GRAPH_TENANT_ID, GRAPH_CLIENT_ID, ' +
-        'GRAPH_CLIENT_SECRET and GRAPH_DRIVE_ID (see docs/documents.md).',
+      'Microsoft Graph is not configured. Set GRAPH_TENANT_ID, ' +
+        'GRAPH_CLIENT_ID and GRAPH_CLIENT_SECRET (see docs/documents.md).',
       'not_configured'
     );
   }
@@ -94,12 +101,26 @@ export function getGraphConfig(): GraphConfig {
     tenantId,
     clientId,
     clientSecret,
-    driveId,
     graphBaseUrl:
       readEnv('GRAPH_BASE_URL') ?? 'https://graph.microsoft.com/v1.0',
     loginBaseUrl:
       readEnv('GRAPH_LOGIN_URL') ?? 'https://login.microsoftonline.com',
   };
+}
+
+export function getGraphConfig(): GraphConfig {
+  const credentials = getGraphCredentials();
+  const driveId = readEnv('GRAPH_DRIVE_ID');
+
+  if (!driveId) {
+    throw new GraphError(
+      'SharePoint is not configured. Set GRAPH_DRIVE_ID to the document ' +
+        'library documents are filed in (see docs/documents.md).',
+      'not_configured'
+    );
+  }
+
+  return { ...credentials, driveId };
 }
 
 interface CachedToken {
@@ -116,7 +137,7 @@ let cached: CachedToken | undefined;
 const EXPIRY_MARGIN_MS = 60_000;
 
 export async function getAccessToken(
-  config: GraphConfig = getGraphConfig()
+  config: GraphCredentials = getGraphCredentials()
 ): Promise<string> {
   if (cached && cached.expiresAt > Date.now() + EXPIRY_MARGIN_MS) {
     return cached.token;

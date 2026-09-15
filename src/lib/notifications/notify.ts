@@ -17,6 +17,7 @@
 //   mid-send leaves a 'pending' row rather than no evidence at all, which is
 //   what lets S-904 retry it later rather than guess.
 import { query } from '../db/pool';
+import { configuredChannels } from './channels';
 import {
   render,
   templateFor,
@@ -52,31 +53,20 @@ export interface NotifyRequest {
   entityId?: string;
 }
 
-// Until a real provider is registered (S-902 email, S-903 WhatsApp), sending
-// writes a line to the server log. Deliberately a working channel rather than
-// a throwing stub: the outbox, the templates and the audit of what was sent
-// are all exercised, and swapping in a provider changes nothing above here.
-class LogChannel implements Channel {
-  constructor(readonly name: NotificationChannel) {}
+// Which provider carries a channel is read from configuration per send
+// (channels.ts). An override registered here wins over it, which is how a
+// test substitutes a channel it can inspect — and how anything that wants to
+// send through something the environment cannot describe does so.
+const overrides = new Map<NotificationChannel, Channel>();
 
-  async send(message: OutgoingMessage): Promise<void> {
-    console.info(
-      `[notify] ${message.channel} -> ${message.recipient}: ` +
-        `${message.subject ?? '(no subject)'}`
-    );
-  }
+export function registerChannel(channel: Channel): void {
+  overrides.set(channel.name, channel);
 }
 
-const channels = new Map<NotificationChannel, Channel>([
-  ['email', new LogChannel('email')],
-  ['whatsapp', new LogChannel('whatsapp')],
-]);
-
-// Replace a channel's provider. Called at startup by whichever provider the
-// deployment configures; the default above keeps the system working when
-// none is.
-export function registerChannel(channel: Channel): void {
-  channels.set(channel.name, channel);
+// Tests only: forget every override, so one file's substitute channel is not
+// still in place in the next.
+export function resetChannels(): void {
+  overrides.clear();
 }
 
 function recipientFor(
@@ -142,6 +132,7 @@ async function markFailed(id: string, error: unknown): Promise<void> {
  */
 export async function notify(request: NotifyRequest): Promise<string[]> {
   const written: string[] = [];
+  const configured = configuredChannels();
 
   for (const channel of ['email', 'whatsapp'] as const) {
     try {
@@ -164,7 +155,9 @@ export async function notify(request: NotifyRequest): Promise<string[]> {
       written.push(id);
 
       try {
-        await channels.get(channel)!.send(message);
+        await (overrides.get(channel) ?? configured.get(channel)!).send(
+          message
+        );
         await markSent(id);
       } catch (error) {
         console.error(`[notify] ${channel} send failed:`, error);
