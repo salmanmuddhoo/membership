@@ -12,13 +12,11 @@ const show = Boolean(env && env.toLowerCase() !== 'production');
 const label = env ? env.toUpperCase() : '';
 ---
 
-{
-  show && (
-    <span
-      class={`inline-flex items-center rounded-full border border-orange-300 bg-orange-100 px-2 py-0.5 text-xs font-semibold tracking-wide text-orange-800 dark:border-orange-900/50 dark:bg-orange-900/30 dark:text-orange-200 ${className}`}
-      title={`You are viewing the ${label} environment`}
-    >
-      {label}
-    </span>
-  )
-}
+{show && (
+  <span
+    class={`inline-flex items-center rounded-full border border-orange-300 bg-orange-100 px-2 py-0.5 text-xs font-semibold tracking-wide text-orange-800 dark:border-orange-900/50 dark:bg-orange-900/30 dark:text-orange-200 ${className}`}
+    title={`You are viewing the ${label} environment`}
+  >
+    {label}
+  </span>
+)}

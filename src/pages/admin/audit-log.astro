@@ -179,9 +179,7 @@ function describeEntry(entry: AuditEventRow): string {
 
 <DashboardLayout title="Audit log · Al Barakah MCSL" heading="Audit log">
   <div class="mx-auto max-w-6xl space-y-6">
-    <section
-      class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
-    >
+    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
       <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
         Filter
       </h2>
@@ -203,13 +201,11 @@ function describeEntry(entry: AuditEventRow): string {
             class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
           >
             <option value="">All actions</option>
-            {
-              actions.map(a => (
-                <option value={a} selected={a === action}>
-                  {a}
-                </option>
-              ))
-            }
+            {actions.map(a => (
+              <option value={a} selected={a === action}>
+                {a}
+              </option>
+            ))}
           </select>
         </label>
         <label class="text-sm text-neutral-600 dark:text-neutral-300">
@@ -219,13 +215,11 @@ function describeEntry(entry: AuditEventRow): string {
             class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
           >
             <option value="">All record types</option>
-            {
-              entityTypes.map(t => (
-                <option value={t} selected={t === entityType}>
-                  {t}
-                </option>
-              ))
-            }
+            {entityTypes.map(t => (
+              <option value={t} selected={t === entityType}>
+                {t}
+              </option>
+            ))}
           </select>
         </label>
         <label class="text-sm text-neutral-600 dark:text-neutral-300">
@@ -263,84 +257,72 @@ function describeEntry(entry: AuditEventRow): string {
           >
             Filter
           </button>
-          {
-            (actor || action || entityType || entityId || fromRaw || toRaw) && (
-              <a
-                href="/admin/audit-log"
-                class="text-sm text-neutral-500 underline dark:text-neutral-400"
-              >
-                Clear
-              </a>
-            )
-          }
+          {(actor || action || entityType || entityId || fromRaw || toRaw) && (
+            <a
+              href="/admin/audit-log"
+              class="text-sm text-neutral-500 underline dark:text-neutral-400"
+            >
+              Clear
+            </a>
+          )}
         </div>
       </form>
     </section>
 
-    <section
-      class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
-    >
+    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
       <div class="flex flex-wrap items-center justify-between gap-2">
-        <h2
-          class="text-lg font-semibold text-neutral-800 dark:text-neutral-100"
-        >
+        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
           {total} entr{total === 1 ? 'y' : 'ies'}
         </h2>
-        {
-          totalPages > 1 && (
-            <p class="text-sm text-neutral-500 dark:text-neutral-400">
-              Page {page} of {totalPages}
-            </p>
-          )
-        }
+        {totalPages > 1 && (
+          <p class="text-sm text-neutral-500 dark:text-neutral-400">
+            Page {page} of {totalPages}
+          </p>
+        )}
       </div>
 
-      {
-        events.length === 0 ? (
-          <p class="mt-4 text-sm text-neutral-500 dark:text-neutral-400">
-            Nothing matches those filters.
-          </p>
-        ) : (
-          <ul class="mt-4 space-y-2">
-            {events.map(entry => (
-              <li class="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
-                <p class="text-sm font-medium text-neutral-800 dark:text-neutral-100">
-                  {describeEntry(entry)}
-                </p>
-                <p class="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
-                  {dateTimeFormat.format(entry.occurredAt)}
-                  {entry.ipAddress && ` · ${entry.ipAddress}`}
-                </p>
-              </li>
-            ))}
-          </ul>
-        )
-      }
+      {events.length === 0 ? (
+        <p class="mt-4 text-sm text-neutral-500 dark:text-neutral-400">
+          Nothing matches those filters.
+        </p>
+      ) : (
+        <ul class="mt-4 space-y-2">
+          {events.map(entry => (
+            <li class="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+              <p class="text-sm font-medium text-neutral-800 dark:text-neutral-100">
+                {describeEntry(entry)}
+              </p>
+              <p class="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                {dateTimeFormat.format(entry.occurredAt)}
+                {entry.ipAddress && ` · ${entry.ipAddress}`}
+              </p>
+            </li>
+          ))}
+        </ul>
+      )}
 
-      {
-        totalPages > 1 && (
-          <div class="mt-4 flex items-center justify-between gap-2 text-sm">
-            {page > 1 ? (
-              <a
-                href={pageHref(page - 1)}
-                class="rounded-lg border border-neutral-300 px-3 py-1.5 font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
-              >
-                ← Newer
-              </a>
-            ) : (
-              <span />
-            )}
-            {page < totalPages && (
-              <a
-                href={pageHref(page + 1)}
-                class="rounded-lg border border-neutral-300 px-3 py-1.5 font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
-              >
-                Older →
-              </a>
-            )}
-          </div>
-        )
-      }
+      {totalPages > 1 && (
+        <div class="mt-4 flex items-center justify-between gap-2 text-sm">
+          {page > 1 ? (
+            <a
+              href={pageHref(page - 1)}
+              class="rounded-lg border border-neutral-300 px-3 py-1.5 font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+            >
+              ← Newer
+            </a>
+          ) : (
+            <span />
+          )}
+          {page < totalPages && (
+            <a
+              href={pageHref(page + 1)}
+              class="rounded-lg border border-neutral-300 px-3 py-1.5 font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+            >
+              Older →
+            </a>
+          )}
+        </div>
+      )}
     </section>
   </div>
 </DashboardLayout>

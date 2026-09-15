@@ -74,8 +74,7 @@ const STEP_HREF: Record<string, (base: string, id: string) => string> = {
 };
 ---
 
-{
-  /* Flat on the bottom, not `rounded-2xl` all round: every page that renders
+{/* Flat on the bottom, not `rounded-2xl` all round: every page that renders
      this docks the "Back / All applications / Printable form" bar directly
      beneath it (officer feedback — the two used to read as separate cards,
      one white and one grey, rather than one). That bar supplies the matching
@@ -87,8 +86,7 @@ const STEP_HREF: Record<string, (base: string, id: string) => string> = {
      way to close the gap, but that shrinks the containing block sticky
      positioning sticks within to only these two elements' own combined
      height, so both stopped sticking a moment after the page started
-     scrolling instead of for the whole page. */
-}
+     scrolling instead of for the whole page. */}
 <section
   id="application-timeline"
   class="sticky z-30 -mx-4 mb-0 rounded-t-2xl border border-neutral-200 bg-neutral-100 p-4 sm:mx-0 sm:p-6 dark:border-neutral-800 dark:bg-neutral-950"
@@ -96,46 +94,44 @@ const STEP_HREF: Record<string, (base: string, id: string) => string> = {
   aria-label="Application progress"
 >
   <ol class="flex flex-wrap items-stretch gap-3 sm:flex-nowrap">
-    {
-      steps.map(step => {
-        const href = applicationId
-          ? STEP_HREF[step.key]?.(base, applicationId)
-          : undefined;
-        const Tag = href ? 'a' : 'div';
-        return (
-          <li class="flex min-w-[8rem] flex-1 items-stretch sm:min-w-0">
-            <Tag
-              href={href}
+    {steps.map(step => {
+      const href = applicationId
+        ? STEP_HREF[step.key]?.(base, applicationId)
+        : undefined;
+      const Tag = href ? 'a' : 'div';
+      return (
+        <li class="flex min-w-[8rem] flex-1 items-stretch sm:min-w-0">
+          <Tag
+            href={href}
+            class:list={[
+              'step-arrow flex w-full flex-col justify-center py-2 pr-6 pl-6 text-center transition',
+              BOX[step.state],
+              href && 'cursor-pointer hover:brightness-95',
+            ]}
+          >
+            <span
               class:list={[
-                'step-arrow flex w-full flex-col justify-center py-2 pr-6 pl-6 text-center transition',
-                BOX[step.state],
-                href && 'cursor-pointer hover:brightness-95',
+                'block text-sm leading-tight font-semibold',
+                step.problem && PROBLEM_TEXT,
               ]}
             >
+              {step.label}
+            </span>
+            {step.detail && (
               <span
                 class:list={[
-                  'block text-sm leading-tight font-semibold',
-                  step.problem && PROBLEM_TEXT,
+                  'mt-0.5 block text-[0.7rem] leading-tight',
+                  step.problem ? PROBLEM_TEXT : DETAIL[step.state],
                 ]}
               >
-                {step.label}
+                {step.detail}
               </span>
-              {step.detail && (
-                <span
-                  class:list={[
-                    'mt-0.5 block text-[0.7rem] leading-tight',
-                    step.problem ? PROBLEM_TEXT : DETAIL[step.state],
-                  ]}
-                >
-                  {step.detail}
-                </span>
-              )}
-              <span class="sr-only">{READS[step.state]}</span>
-            </Tag>
-          </li>
-        );
-      })
-    }
+            )}
+            <span class="sr-only">{READS[step.state]}</span>
+          </Tag>
+        </li>
+      );
+    })}
   </ol>
 </section>
 

@@ -23,9 +23,7 @@ const {
   <head>
     <Meta description={description} viewport={viewport} />
     <title>{title}</title>
-    {
-      /* Set the theme before paint to avoid a flash of the wrong colour scheme. */
-    }
+    {/* Set the theme before paint to avoid a flash of the wrong colour scheme. */}
     <script is:inline>
       if (
         localStorage.getItem('hs_theme') === 'dark' ||

@@ -34,20 +34,18 @@ const current = Astro.url.pathname;
 ---
 
 <nav class="flex flex-wrap gap-2" aria-label="Configuration sections">
-  {
-    CONFIG_SECTIONS.map(section => (
-      <a
-        href={section.href}
-        aria-current={current === section.href ? 'page' : undefined}
-        class:list={[
-          'rounded-lg px-3 py-1.5 text-sm font-medium transition',
-          current === section.href
-            ? 'bg-mint-300 text-neutral-800'
-            : 'border border-neutral-300 text-neutral-700 hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800',
-        ]}
-      >
-        {section.label}
-      </a>
-    ))
-  }
+  {CONFIG_SECTIONS.map(section => (
+    <a
+      href={section.href}
+      aria-current={current === section.href ? 'page' : undefined}
+      class:list={[
+        'rounded-lg px-3 py-1.5 text-sm font-medium transition',
+        current === section.href
+          ? 'bg-mint-300 text-neutral-800'
+          : 'border border-neutral-300 text-neutral-700 hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800',
+      ]}
+    >
+      {section.label}
+    </a>
+  ))}
 </nav>

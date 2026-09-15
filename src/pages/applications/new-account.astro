@@ -160,113 +160,110 @@ if (Astro.request.method === 'POST') {
       <a
         href="/applications"
         class="inline-block text-sm text-neutral-500 underline dark:text-neutral-400"
-        >← All applications</a
       >
+        ← All applications
+      </a>
     </div>
 
-    {
-      error && (
-        <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-          {error}
-        </div>
-      )
-    }
+    {error && (
+      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+        {error}
+      </div>
+    )}
 
-    {
-      accountTypes.length === 0 ? (
-        <p class="text-sm text-neutral-500 dark:text-neutral-400">
-          {holder
-            ? `${holderName} already holds every account type available to open.`
-            : 'No account type is configured for this yet. Add one under Configuration → Account types.'}
-        </p>
-      ) : (
-        <form
-          method="post"
-          class="space-y-6 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
-        >
-          {holder && (
-            <div class="rounded-lg border border-neutral-200 bg-white px-4 py-3 text-sm dark:border-neutral-800 dark:bg-neutral-900">
-              <p class="text-neutral-800 dark:text-neutral-100">
-                Opening another account for{' '}
-                <span class="font-medium">{holderName}</span>
-              </p>
-              <p class="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
-                Their own details carry over from their record — pick the
-                account type(s) to open.
-                {customerHolder && ' They stay a non-member.'}
-              </p>
-            </div>
-          )}
+    {accountTypes.length === 0 ? (
+      <p class="text-sm text-neutral-500 dark:text-neutral-400">
+        {holder
+          ? `${holderName} already holds every account type available to open.`
+          : 'No account type is configured for this yet. Add one under Configuration → Account types.'}
+      </p>
+    ) : (
+      <form
+        method="post"
+        class="space-y-6 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
+      >
+        {holder && (
+          <div class="rounded-lg border border-neutral-200 bg-white px-4 py-3 text-sm dark:border-neutral-800 dark:bg-neutral-900">
+            <p class="text-neutral-800 dark:text-neutral-100">
+              Opening another account for{' '}
+              <span class="font-medium">{holderName}</span>
+            </p>
+            <p class="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+              Their own details carry over from their record — pick the account
+              type(s) to open.
+              {customerHolder && ' They stay a non-member.'}
+            </p>
+          </div>
+        )}
 
-          {!holder && (
-            <div>
-              <p class="text-sm text-neutral-500 dark:text-neutral-400">
-                Their own details are filled in on the next screen — the same
-                information a membership application asks for.
-              </p>
-              <label class="mt-2 block text-sm text-neutral-600 dark:text-neutral-300">
-                Applicant type
-                <select
-                  name="customerType"
-                  data-customer-type
-                  class="mt-1 block w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-                >
-                  <option
-                    value="individual"
-                    selected={customerType === 'individual'}
-                  >
-                    Individual
-                  </option>
-                  <option value="minor" selected={customerType === 'minor'}>
-                    Minor
-                  </option>
-                  <option
-                    value="corporate"
-                    selected={customerType === 'corporate'}
-                  >
-                    Corporate
-                  </option>
-                </select>
-              </label>
-              <p
-                data-minor-note
-                hidden={customerType !== 'minor'}
-                class="mt-2 text-xs text-neutral-500 dark:text-neutral-400"
+        {!holder && (
+          <div>
+            <p class="text-sm text-neutral-500 dark:text-neutral-400">
+              Their own details are filled in on the next screen — the same
+              information a membership application asks for.
+            </p>
+            <label class="mt-2 block text-sm text-neutral-600 dark:text-neutral-300">
+              Applicant type
+              <select
+                name="customerType"
+                data-customer-type
+                class="mt-1 block w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
               >
-                A parent or guardian's details are asked for too.
-              </p>
-            </div>
-          )}
+                <option
+                  value="individual"
+                  selected={customerType === 'individual'}
+                >
+                  Individual
+                </option>
+                <option value="minor" selected={customerType === 'minor'}>
+                  Minor
+                </option>
+                <option
+                  value="corporate"
+                  selected={customerType === 'corporate'}
+                >
+                  Corporate
+                </option>
+              </select>
+            </label>
+            <p
+              data-minor-note
+              hidden={customerType !== 'minor'}
+              class="mt-2 text-xs text-neutral-500 dark:text-neutral-400"
+            >
+              A parent or guardian's details are asked for too.
+            </p>
+          </div>
+        )}
 
-          <fieldset>
-            <legend class="text-sm text-neutral-600 dark:text-neutral-300">
-              Account type(s) to open
-            </legend>
-            <div class="mt-2 space-y-2">
-              {accountTypes.map(t => (
-                <label class="flex items-center gap-2 text-sm text-neutral-800 dark:text-neutral-100">
-                  <input
-                    type="checkbox"
-                    name="accountTypeId"
-                    value={t.id}
-                    checked={selected.has(t.id)}
-                    class="rounded border-neutral-300 dark:border-neutral-600"
-                  />
-                  {t.name}
-                </label>
-              ))}
-            </div>
-          </fieldset>
+        <fieldset>
+          <legend class="text-sm text-neutral-600 dark:text-neutral-300">
+            Account type(s) to open
+          </legend>
+          <div class="mt-2 space-y-2">
+            {accountTypes.map(t => (
+              <label class="flex items-center gap-2 text-sm text-neutral-800 dark:text-neutral-100">
+                <input
+                  type="checkbox"
+                  name="accountTypeId"
+                  value={t.id}
+                  checked={selected.has(t.id)}
+                  class="rounded border-neutral-300 dark:border-neutral-600"
+                />
+                {t.name}
+              </label>
+            ))}
+          </div>
+        </fieldset>
 
-          <button
-            type="submit"
-            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
-          >
-            Open account
-          </button>
-        </form>
-      )
-    }
+        <button
+          type="submit"
+          class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
+        >
+          Open account
+        </button>
+      </form>
+    )}
   </div>
 </DashboardLayout>
 

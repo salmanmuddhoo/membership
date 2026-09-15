@@ -728,918 +728,876 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           href="/applications"
           id="back-link"
           class="inline-block text-sm text-neutral-500 underline dark:text-neutral-400"
-          >← Back</a
         >
+          ← Back
+        </a>
         <a
           href="/applications"
           class="inline-block text-sm text-neutral-500 underline dark:text-neutral-400"
-          >All applications</a
         >
+          All applications
+        </a>
       </div>
       <a
         href={`/applications/${application!.id}/print`}
         class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
-        >Printable form</a
       >
+        Printable form
+      </a>
     </div>
 
-    {
-      error && (
-        <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-          {error}
-        </div>
-      )
-    }
-    {
-      notice && (
-        <div class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-lg border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
-          {notice}
-        </div>
-      )
-    }
-    {
-      formatProblems.length > 0 && (
-        <div class="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
-          <p class="font-medium">These entries could not be understood:</p>
-          <ul class="mt-1 list-inside list-disc">
-            {formatProblems.map(p => (
-              <li>{p.label}</li>
-            ))}
-          </ul>
-        </div>
-      )
-    }
+    {error && (
+      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+        {error}
+      </div>
+    )}
+    {notice && (
+      <div class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-lg border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
+        {notice}
+      </div>
+    )}
+    {formatProblems.length > 0 && (
+      <div class="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+        <p class="font-medium">These entries could not be understood:</p>
+        <ul class="mt-1 list-inside list-disc">
+          {formatProblems.map(p => (
+            <li>{p.label}</li>
+          ))}
+        </ul>
+      </div>
+    )}
 
-    <section
-      class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
-    >
+    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
       <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
         <span class="font-medium text-neutral-800 dark:text-neutral-100">
           {application!.selectedAccountTypes.map(t => t.name).join(' + ')}
         </span>
-        <span
-          class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200"
-        >
+        <span class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200">
           {application!.status}
         </span>
         <span class="text-xs text-neutral-500 dark:text-neutral-400">
-          captured by {application!.capturedByName} · updated {
-            dateFormat.format(application!.updatedAt)
-          }
+          captured by {application!.capturedByName} · updated{' '}
+          {dateFormat.format(application!.updatedAt)}
         </span>
       </div>
       <p class="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
         Not a member — this opens an account of their own.
       </p>
 
-      {
-        blocking.length > 0 && isEditable && (
-          <div class="mt-3 rounded-lg border border-neutral-300 px-3 py-2 text-sm text-neutral-600 dark:border-neutral-700 dark:text-neutral-300">
-            <p class="font-medium">
-              {blocking.length} item{blocking.length === 1 ? '' : 's'} still
-              need{blocking.length === 1 ? 's' : ''} attention.
-            </p>
-          </div>
-        )
-      }
+      {blocking.length > 0 && isEditable && (
+        <div class="mt-3 rounded-lg border border-neutral-300 px-3 py-2 text-sm text-neutral-600 dark:border-neutral-700 dark:text-neutral-300">
+          <p class="font-medium">
+            {blocking.length} item{blocking.length === 1 ? '' : 's'} still need
+            {blocking.length === 1 ? 's' : ''} attention.
+          </p>
+        </div>
+      )}
 
-      {
-        application!.status === 'rejected' && canCapture && (
-          <form method="post" class="mt-4">
-            <p class="mb-3 text-sm text-neutral-600 dark:text-neutral-300">
-              This application was rejected. Reopen it to correct what the
-              decision noted and submit again — the payment already recorded
-              still stands, so there is nothing to take again.
-            </p>
-            <button
-              type="submit"
-              name="intent"
-              value="reopen"
-              class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
-            >
-              Reopen for correction
-            </button>
-          </form>
-        )
-      }
+      {application!.status === 'rejected' && canCapture && (
+        <form method="post" class="mt-4">
+          <p class="mb-3 text-sm text-neutral-600 dark:text-neutral-300">
+            This application was rejected. Reopen it to correct what the
+            decision noted and submit again — the payment already recorded still
+            stands, so there is nothing to take again.
+          </p>
+          <button
+            type="submit"
+            name="intent"
+            value="reopen"
+            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
+          >
+            Reopen for correction
+          </button>
+        </form>
+      )}
     </section>
 
-    {
-      openedAccounts && (
-        <section class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-2xl border p-6">
-          <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-            Accounts opened
-          </h2>
-          <ul class="mt-2 space-y-1 text-sm text-neutral-700 dark:text-neutral-200">
-            {openedAccounts.accounts.map(a => (
-              <li>
-                <span class="font-medium">{a.accountNo}</span> — {a.typeName}
-              </li>
-            ))}
-          </ul>
-        </section>
-      )
-    }
+    {openedAccounts && (
+      <section class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-2xl border p-6">
+        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+          Accounts opened
+        </h2>
+        <ul class="mt-2 space-y-1 text-sm text-neutral-700 dark:text-neutral-200">
+          {openedAccounts.accounts.map(a => (
+            <li>
+              <span class="font-medium">{a.accountNo}</span> — {a.typeName}
+            </li>
+          ))}
+        </ul>
+      </section>
+    )}
 
-    {
-      explainedProblems.length > 0 && isEditable && (
-        <section class="rounded-2xl border border-red-300 bg-red-50 p-6 dark:border-red-900 dark:bg-red-950">
-          <h2 class="text-sm font-medium text-red-900 dark:text-red-200">
-            Needs attention
-          </h2>
-          <ul class="mt-2 list-inside list-disc text-sm text-red-800 dark:text-red-200">
-            {explainedProblems.map(p => (
-              <li>{p.label}</li>
-            ))}
-          </ul>
-        </section>
-      )
-    }
+    {explainedProblems.length > 0 && isEditable && (
+      <section class="rounded-2xl border border-red-300 bg-red-50 p-6 dark:border-red-900 dark:bg-red-950">
+        <h2 class="text-sm font-medium text-red-900 dark:text-red-200">
+          Needs attention
+        </h2>
+        <ul class="mt-2 list-inside list-disc text-sm text-red-800 dark:text-red-200">
+          {explainedProblems.map(p => (
+            <li>{p.label}</li>
+          ))}
+        </ul>
+      </section>
+    )}
 
-    {
-      blockingOnSubmit.length > 0 && (
-        <section class="rounded-2xl border border-red-300 bg-red-50 p-6 dark:border-red-900 dark:bg-red-950">
-          <h2 class="text-sm font-medium text-red-900 dark:text-red-200">
-            Still required before this can be submitted
-          </h2>
-          <ul class="mt-2 list-inside list-disc text-sm text-red-800 dark:text-red-200">
-            {blockingOnSubmit.map(b => (
-              <li>
-                {b.label} <span class="text-xs">({b.subject})</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )
-    }
+    {blockingOnSubmit.length > 0 && (
+      <section class="rounded-2xl border border-red-300 bg-red-50 p-6 dark:border-red-900 dark:bg-red-950">
+        <h2 class="text-sm font-medium text-red-900 dark:text-red-200">
+          Still required before this can be submitted
+        </h2>
+        <ul class="mt-2 list-inside list-disc text-sm text-red-800 dark:text-red-200">
+          {blockingOnSubmit.map(b => (
+            <li>
+              {b.label} <span class="text-xs">({b.subject})</span>
+            </li>
+          ))}
+        </ul>
+      </section>
+    )}
 
-    {
-      (!isEditable || currentStep === CAPTURE_STEP) && (
-        <form method="post" id="capture-form" class="space-y-6">
-          <CaptureFields
-            fields={fields}
-            parties={application!.parties}
-            blocking={blocking}
-            isEditable={isEditable}
-            nomineeCount={type.nomineeCount}
-          />
+    {(!isEditable || currentStep === CAPTURE_STEP) && (
+      <form method="post" id="capture-form" class="space-y-6">
+        <CaptureFields
+          fields={fields}
+          parties={application!.parties}
+          blocking={blocking}
+          isEditable={isEditable}
+          nomineeCount={type.nomineeCount}
+        />
 
-          {isEditable && (
-            <div class="flex flex-wrap items-center justify-between gap-3">
-              <div class="flex flex-wrap items-center gap-3">
-                <span
-                  id="autosave-status"
-                  class="text-xs text-neutral-500 dark:text-neutral-400"
-                  aria-live="polite"
-                />
-                <noscript>
-                  <button
-                    type="submit"
-                    name="intent"
-                    value="save"
-                    class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
-                  >
-                    Save draft
-                  </button>
-                </noscript>
-              </div>
-              <button
-                type="button"
-                id="capture-next-button"
-                disabled={blocking.length > 0}
-                class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Next
-              </button>
+        {isEditable && (
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div class="flex flex-wrap items-center gap-3">
+              <span
+                id="autosave-status"
+                class="text-xs text-neutral-500 dark:text-neutral-400"
+                aria-live="polite"
+              />
+              <noscript>
+                <button
+                  type="submit"
+                  name="intent"
+                  value="save"
+                  class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
+                >
+                  Save draft
+                </button>
+              </noscript>
             </div>
-          )}
-        </form>
-      )
-    }
+            <button
+              type="button"
+              id="capture-next-button"
+              disabled={blocking.length > 0}
+              class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Next
+            </button>
+          </div>
+        )}
+      </form>
+    )}
 
-    {
-      (!isEditable || currentStep === DOCUMENTS_STEP) &&
-        canSeeDocuments &&
-        checklist.length > 0 && (
-          <section
-            class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
-            id="documents"
-          >
-            <div class="flex flex-wrap items-baseline justify-between gap-2">
-              <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-                Documents
-              </h2>
-              <p class="text-sm text-neutral-500 dark:text-neutral-400">
-                {documentsComplete
-                  ? 'Every required document has been verified.'
-                  : `${requiredOutstanding} required ${
-                      requiredOutstanding === 1
-                        ? 'document is'
-                        : 'documents are'
-                    } not yet verified.`}
-              </p>
-            </div>
+    {(!isEditable || currentStep === DOCUMENTS_STEP) &&
+      canSeeDocuments &&
+      checklist.length > 0 && (
+        <section
+          class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
+          id="documents"
+        >
+          <div class="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+              Documents
+            </h2>
+            <p class="text-sm text-neutral-500 dark:text-neutral-400">
+              {documentsComplete
+                ? 'Every required document has been verified.'
+                : `${requiredOutstanding} required ${
+                    requiredOutstanding === 1 ? 'document is' : 'documents are'
+                  } not yet verified.`}
+            </p>
+          </div>
 
-            {[...documentsBySubject].map(([subject, entries]) => (
-              <div class="mt-5">
-                <h3 class="text-sm font-medium text-neutral-700 dark:text-neutral-200">
-                  {SUBJECT_LABELS[subject] ?? subject}
-                </h3>
-                <ul class="mt-2 space-y-3">
-                  {entries.map(entry => (
-                    <li class="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
-                      <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-                        <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-                          <span class="font-medium text-neutral-800 dark:text-neutral-100">
-                            {entry.documentName}
+          {[...documentsBySubject].map(([subject, entries]) => (
+            <div class="mt-5">
+              <h3 class="text-sm font-medium text-neutral-700 dark:text-neutral-200">
+                {SUBJECT_LABELS[subject] ?? subject}
+              </h3>
+              <ul class="mt-2 space-y-3">
+                {entries.map(entry => (
+                  <li class="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+                    <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+                      <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span class="font-medium text-neutral-800 dark:text-neutral-100">
+                          {entry.documentName}
+                        </span>
+                        <span
+                          class={`rounded px-1.5 py-0.5 text-xs ${DOCUMENT_STATE_CLASSES[entry.state]}`}
+                        >
+                          {DOCUMENT_STATE_LABELS[entry.state]}
+                        </span>
+                        {entry.requirement === 'required' ? (
+                          <span class="text-xs text-neutral-500 dark:text-neutral-400">
+                            required
                           </span>
-                          <span
-                            class={`rounded px-1.5 py-0.5 text-xs ${DOCUMENT_STATE_CLASSES[entry.state]}`}
-                          >
-                            {DOCUMENT_STATE_LABELS[entry.state]}
+                        ) : (
+                          <span class="text-xs text-neutral-500 dark:text-neutral-400">
+                            optional
                           </span>
-                          {entry.requirement === 'required' ? (
-                            <span class="text-xs text-neutral-500 dark:text-neutral-400">
-                              required
-                            </span>
-                          ) : (
-                            <span class="text-xs text-neutral-500 dark:text-neutral-400">
-                              optional
-                            </span>
-                          )}
-                        </div>
-
-                        {canUpload &&
-                          isEditable &&
-                          entry.state === 'missing' && (
-                            <div
-                              class="flex flex-wrap items-center gap-3"
-                              data-upload
-                              data-application-id={application!.id}
-                              data-document-type-id={entry.documentTypeId}
-                              data-subject={entry.subject}
-                              data-tracks-expiry={
-                                entry.tracksExpiry ? 'yes' : 'no'
-                              }
-                            >
-                              {entry.tracksExpiry && (
-                                <label class="text-xs text-neutral-600 dark:text-neutral-300">
-                                  Expires on
-                                  <input
-                                    type="date"
-                                    data-expires
-                                    class="mt-1 block rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-                                  />
-                                </label>
-                              )}
-                              <label class="cursor-pointer rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-200 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800">
-                                Upload
-                                <input
-                                  type="file"
-                                  data-file
-                                  accept={ACCEPTED_FILES}
-                                  capture="environment"
-                                  disabled
-                                  class="sr-only"
-                                />
-                              </label>
-                              <p
-                                data-status
-                                class="text-xs text-neutral-500 dark:text-neutral-400"
-                              >
-                                Uploading requires JavaScript.
-                              </p>
-                            </div>
-                          )}
-
-                        {canUpload &&
-                          isEditable &&
-                          entry.state !== 'missing' && (
-                            <form method="post" data-confirm-delete-document>
-                              <input
-                                type="hidden"
-                                name="documentId"
-                                value={entry.documentId}
-                              />
-                              <button
-                                type="submit"
-                                name="intent"
-                                value="delete-document"
-                                title="Delete this document"
-                                aria-label="Delete this document"
-                                class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-red-600 transition hover:bg-red-100 dark:text-red-400 dark:hover:bg-red-950"
-                              >
-                                <svg
-                                  class="size-4"
-                                  viewBox="0 0 24 24"
-                                  fill="none"
-                                  stroke="currentColor"
-                                  stroke-width="2"
-                                  stroke-linecap="round"
-                                  stroke-linejoin="round"
-                                  aria-hidden="true"
-                                >
-                                  <path d="M18 6 6 18M6 6l12 12" />
-                                </svg>
-                              </button>
-                            </form>
-                          )}
+                        )}
                       </div>
 
-                      {entry.uploadedAt && (
-                        <p class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-neutral-500 dark:text-neutral-400">
-                          <span>
-                            {entry.fileName} · filed by {entry.uploadedByName}{' '}
-                            on {dateFormat.format(entry.uploadedAt)}
-                            {entry.versionCount > 1 &&
-                              ` · version ${entry.versionCount}`}
-                            {entry.verifiedByName &&
-                              ` · verified by ${entry.verifiedByName}`}
-                            {entry.expiresAt &&
-                              ` · expires ${dateFormat.format(entry.expiresAt)}`}
-                          </span>
-                          <button
-                            type="button"
-                            data-view-document
-                            data-document-id={entry.documentId}
-                            class="font-medium text-neutral-700 underline hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-neutral-100"
-                          >
-                            View
-                          </button>
-                        </p>
-                      )}
-
-                      {entry.rejectionReason && (
-                        <p class="mt-2 rounded-lg border border-red-300 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:text-red-200">
-                          Rejected: {entry.rejectionReason}
-                        </p>
-                      )}
-
-                      {canVerify &&
-                        (entry.state === 'under_review' ||
-                          entry.state === 'uploaded') && (
-                          <form method="post" class="mt-3 space-y-2">
-                            <input
-                              type="hidden"
-                              name="documentId"
-                              value={entry.documentId}
-                            />
-                            {entry.documentCode === 'signed_form' && (
-                              <label class="flex items-center gap-x-2 rounded-lg border border-neutral-300 px-3 py-2 text-sm text-neutral-600 dark:border-neutral-600 dark:text-neutral-300">
-                                <input
-                                  type="checkbox"
-                                  name="allSignaturesConfirmed"
-                                  value="yes"
-                                  checked={
-                                    entry.confirmedSignatures.length ===
-                                    SIGNATURES.length
-                                  }
-                                  class="text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600"
-                                />
-                                All four signatures present on the scan (
-                                {SIGNATURES.join(', ')})
-                              </label>
-                            )}
-                            <input
-                              type="text"
-                              name="reason"
-                              placeholder="Reason — required if you reject this document"
-                              class="w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-                            />
-                            <div class="flex flex-wrap gap-2">
-                              <button
-                                type="submit"
-                                name="intent"
-                                value="verify-document"
-                                class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
-                              >
-                                Verify
-                              </button>
-                              <button
-                                type="submit"
-                                name="intent"
-                                value="reject-document"
-                                class="rounded-lg border border-red-300 px-3 py-1.5 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
-                              >
-                                Reject
-                              </button>
-                            </div>
-                          </form>
-                        )}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-
-            {isEditable && currentStep === DOCUMENTS_STEP && (
-              <div class="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800">
-                <a
-                  href={`/applications/${application!.id}/print`}
-                  class="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
-                >
-                  ← Back
-                </a>
-                <a
-                  href={
-                    requiredDocumentsMissing === 0
-                      ? `/applications/${application!.id}/customer?step=${PAYMENT_STEP}`
-                      : undefined
-                  }
-                  aria-disabled={requiredDocumentsMissing > 0}
-                  class:list={[
-                    'rounded-lg px-4 py-2 text-sm font-bold transition',
-                    requiredDocumentsMissing > 0
-                      ? 'cursor-not-allowed bg-neutral-300 text-neutral-500 dark:bg-neutral-700 dark:text-neutral-400'
-                      : 'bg-mint-300 hover:bg-mint-400 text-neutral-800',
-                  ]}
-                >
-                  {requiredDocumentsMissing > 0
-                    ? 'Next'
-                    : 'Next: record the payment'}
-                </a>
-              </div>
-            )}
-          </section>
-        )
-    }
-
-    {
-      (!isEditable || currentStep === PAYMENT_STEP) &&
-        (livePayment || due || dueProblem) && (
-          <section
-            class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
-            id="payment"
-          >
-            <div class="flex flex-wrap items-baseline justify-between gap-2">
-              <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-                Payment
-              </h2>
-              {livePayment &&
-                (canSeePayments ? (
-                  <a
-                    href={`/receipts/${livePayment.id}`}
-                    class="text-sm text-neutral-600 underline dark:text-neutral-300"
-                  >
-                    Receipt {livePayment.receiptNo}
-                  </a>
-                ) : (
-                  <span class="text-sm text-neutral-600 dark:text-neutral-300">
-                    Receipt {livePayment.receiptNo}
-                  </span>
-                ))}
-            </div>
-
-            {dueProblem && (
-              <p class="mt-3 rounded-lg border border-amber-300 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200">
-                {dueProblem}
-              </p>
-            )}
-
-            {livePayment && (
-              <div class="mt-4">
-                <p class="text-sm text-neutral-600 dark:text-neutral-300">
-                  {canSeePayments
-                    ? `${formatMoney(livePayment.totalAmount, livePayment.currency)} · ${METHOD_LABELS[livePayment.method]}`
-                    : 'Recorded'}{' '}
-                  · taken by {livePayment.recordedByName} on{' '}
-                  {dateFormat.format(livePayment.receivedAt)}
-                </p>
-
-                {canSeePayments && (
-                  <table class="mt-3 w-full text-sm">
-                    <tbody>
-                      {livePayment.accountLines.map(line => (
-                        <tr class="border-t border-neutral-200 dark:border-neutral-800">
-                          <td class="py-1.5 text-neutral-600 dark:text-neutral-300">
-                            {line.label}
-                          </td>
-                          <td class="py-1.5 text-right text-neutral-800 tabular-nums dark:text-neutral-100">
-                            {formatMoney(line.amount, livePayment.currency)}
-                          </td>
-                        </tr>
-                      ))}
-                      <tr class="border-t-2 border-neutral-300 dark:border-neutral-700">
-                        <td class="py-1.5 font-medium text-neutral-800 dark:text-neutral-100">
-                          Total
-                        </td>
-                        <td class="py-1.5 text-right font-bold text-neutral-800 tabular-nums dark:text-neutral-100">
-                          {formatMoney(
-                            livePayment.totalAmount,
-                            livePayment.currency
+                      {canUpload && isEditable && entry.state === 'missing' && (
+                        <div
+                          class="flex flex-wrap items-center gap-3"
+                          data-upload
+                          data-application-id={application!.id}
+                          data-document-type-id={entry.documentTypeId}
+                          data-subject={entry.subject}
+                          data-tracks-expiry={entry.tracksExpiry ? 'yes' : 'no'}
+                        >
+                          {entry.tracksExpiry && (
+                            <label class="text-xs text-neutral-600 dark:text-neutral-300">
+                              Expires on
+                              <input
+                                type="date"
+                                data-expires
+                                class="mt-1 block rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                              />
+                            </label>
                           )}
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                )}
-
-                {livePayment.varianceReason && canSeePayments && (
-                  <p class="mt-3 rounded-lg border border-amber-300 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200">
-                    {livePayment.varianceReason}
-                  </p>
-                )}
-
-                {refunds.length > 0 && canSeePayments && (
-                  <ul class="mt-3 space-y-1 text-sm text-neutral-600 dark:text-neutral-300">
-                    {refunds.map(refund => (
-                      <li>
-                        Refunded{' '}
-                        {formatMoney(refund.totalAmount, refund.currency)} on{' '}
-                        {dateFormat.format(refund.receivedAt)} ·{' '}
-                        <a href={`/receipts/${refund.id}`} class="underline">
-                          {refund.receiptNo}
-                        </a>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            )}
-
-            {due && (
-              <form
-                method="post"
-                class="mt-4 space-y-4"
-                data-payment-form
-                data-cash-threshold={cashThreshold}
-              >
-                <table class="w-full text-sm">
-                  <tbody>
-                    {due.components.map(component => (
-                      <tr class="border-t border-neutral-200 dark:border-neutral-800">
-                        <td class="py-2 text-neutral-600 dark:text-neutral-300">
-                          <label for={`amount-${component.accountTypeId}`}>
-                            {component.label}
+                          <label class="cursor-pointer rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-200 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800">
+                            Upload
+                            <input
+                              type="file"
+                              data-file
+                              accept={ACCEPTED_FILES}
+                              capture="environment"
+                              disabled
+                              class="sr-only"
+                            />
                           </label>
-                          {/* This IS the account type's own minimum opening
-                              amount — paying more is the payer's own choice
-                              and needs no reason; paying less is refused. */}
-                          <span class="ml-2 text-xs text-neutral-500 dark:text-neutral-400">
-                            at least {component.amount}
-                          </span>
-                        </td>
-                        <td class="w-40 py-2 text-right">
+                          <p
+                            data-status
+                            class="text-xs text-neutral-500 dark:text-neutral-400"
+                          >
+                            Uploading requires JavaScript.
+                          </p>
+                        </div>
+                      )}
+
+                      {canUpload && isEditable && entry.state !== 'missing' && (
+                        <form method="post" data-confirm-delete-document>
                           <input
-                            id={`amount-${component.accountTypeId}`}
-                            type="text"
-                            inputmode="decimal"
-                            name={`amount.${component.accountTypeId}`}
-                            value={
-                              paymentFormValues?.amounts[
-                                component.accountTypeId
-                              ] ?? component.amount
-                            }
-                            data-amount-input
-                            class="w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-right text-sm tabular-nums dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                            type="hidden"
+                            name="documentId"
+                            value={entry.documentId}
                           />
+                          <button
+                            type="submit"
+                            name="intent"
+                            value="delete-document"
+                            title="Delete this document"
+                            aria-label="Delete this document"
+                            class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-red-600 transition hover:bg-red-100 dark:text-red-400 dark:hover:bg-red-950"
+                          >
+                            <svg
+                              class="size-4"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="2"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              aria-hidden="true"
+                            >
+                              <path d="M18 6 6 18M6 6l12 12" />
+                            </svg>
+                          </button>
+                        </form>
+                      )}
+                    </div>
+
+                    {entry.uploadedAt && (
+                      <p class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-neutral-500 dark:text-neutral-400">
+                        <span>
+                          {entry.fileName} · filed by {entry.uploadedByName} on{' '}
+                          {dateFormat.format(entry.uploadedAt)}
+                          {entry.versionCount > 1 &&
+                            ` · version ${entry.versionCount}`}
+                          {entry.verifiedByName &&
+                            ` · verified by ${entry.verifiedByName}`}
+                          {entry.expiresAt &&
+                            ` · expires ${dateFormat.format(entry.expiresAt)}`}
+                        </span>
+                        <button
+                          type="button"
+                          data-view-document
+                          data-document-id={entry.documentId}
+                          class="font-medium text-neutral-700 underline hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-neutral-100"
+                        >
+                          View
+                        </button>
+                      </p>
+                    )}
+
+                    {entry.rejectionReason && (
+                      <p class="mt-2 rounded-lg border border-red-300 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:text-red-200">
+                        Rejected: {entry.rejectionReason}
+                      </p>
+                    )}
+
+                    {canVerify &&
+                      (entry.state === 'under_review' ||
+                        entry.state === 'uploaded') && (
+                        <form method="post" class="mt-3 space-y-2">
+                          <input
+                            type="hidden"
+                            name="documentId"
+                            value={entry.documentId}
+                          />
+                          {entry.documentCode === 'signed_form' && (
+                            <label class="flex items-center gap-x-2 rounded-lg border border-neutral-300 px-3 py-2 text-sm text-neutral-600 dark:border-neutral-600 dark:text-neutral-300">
+                              <input
+                                type="checkbox"
+                                name="allSignaturesConfirmed"
+                                value="yes"
+                                checked={
+                                  entry.confirmedSignatures.length ===
+                                  SIGNATURES.length
+                                }
+                                class="text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600"
+                              />
+                              All four signatures present on the scan (
+                              {SIGNATURES.join(', ')})
+                            </label>
+                          )}
+                          <input
+                            type="text"
+                            name="reason"
+                            placeholder="Reason — required if you reject this document"
+                            class="w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                          />
+                          <div class="flex flex-wrap gap-2">
+                            <button
+                              type="submit"
+                              name="intent"
+                              value="verify-document"
+                              class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+                            >
+                              Verify
+                            </button>
+                            <button
+                              type="submit"
+                              name="intent"
+                              value="reject-document"
+                              class="rounded-lg border border-red-300 px-3 py-1.5 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
+                            >
+                              Reject
+                            </button>
+                          </div>
+                        </form>
+                      )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+
+          {isEditable && currentStep === DOCUMENTS_STEP && (
+            <div class="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800">
+              <a
+                href={`/applications/${application!.id}/print`}
+                class="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+              >
+                ← Back
+              </a>
+              <a
+                href={
+                  requiredDocumentsMissing === 0
+                    ? `/applications/${application!.id}/customer?step=${PAYMENT_STEP}`
+                    : undefined
+                }
+                aria-disabled={requiredDocumentsMissing > 0}
+                class:list={[
+                  'rounded-lg px-4 py-2 text-sm font-bold transition',
+                  requiredDocumentsMissing > 0
+                    ? 'cursor-not-allowed bg-neutral-300 text-neutral-500 dark:bg-neutral-700 dark:text-neutral-400'
+                    : 'bg-mint-300 hover:bg-mint-400 text-neutral-800',
+                ]}
+              >
+                {requiredDocumentsMissing > 0
+                  ? 'Next'
+                  : 'Next: record the payment'}
+              </a>
+            </div>
+          )}
+        </section>
+      )}
+
+    {(!isEditable || currentStep === PAYMENT_STEP) &&
+      (livePayment || due || dueProblem) && (
+        <section
+          class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
+          id="payment"
+        >
+          <div class="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+              Payment
+            </h2>
+            {livePayment &&
+              (canSeePayments ? (
+                <a
+                  href={`/receipts/${livePayment.id}`}
+                  class="text-sm text-neutral-600 underline dark:text-neutral-300"
+                >
+                  Receipt {livePayment.receiptNo}
+                </a>
+              ) : (
+                <span class="text-sm text-neutral-600 dark:text-neutral-300">
+                  Receipt {livePayment.receiptNo}
+                </span>
+              ))}
+          </div>
+
+          {dueProblem && (
+            <p class="mt-3 rounded-lg border border-amber-300 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200">
+              {dueProblem}
+            </p>
+          )}
+
+          {livePayment && (
+            <div class="mt-4">
+              <p class="text-sm text-neutral-600 dark:text-neutral-300">
+                {canSeePayments
+                  ? `${formatMoney(livePayment.totalAmount, livePayment.currency)} · ${METHOD_LABELS[livePayment.method]}`
+                  : 'Recorded'}{' '}
+                · taken by {livePayment.recordedByName} on{' '}
+                {dateFormat.format(livePayment.receivedAt)}
+              </p>
+
+              {canSeePayments && (
+                <table class="mt-3 w-full text-sm">
+                  <tbody>
+                    {livePayment.accountLines.map(line => (
+                      <tr class="border-t border-neutral-200 dark:border-neutral-800">
+                        <td class="py-1.5 text-neutral-600 dark:text-neutral-300">
+                          {line.label}
+                        </td>
+                        <td class="py-1.5 text-right text-neutral-800 tabular-nums dark:text-neutral-100">
+                          {formatMoney(line.amount, livePayment.currency)}
                         </td>
                       </tr>
                     ))}
                     <tr class="border-t-2 border-neutral-300 dark:border-neutral-700">
-                      <td class="py-2 font-medium text-neutral-800 dark:text-neutral-100">
+                      <td class="py-1.5 font-medium text-neutral-800 dark:text-neutral-100">
                         Total
                       </td>
-                      <td
-                        data-payment-total
-                        class="py-2 text-right font-bold text-neutral-800 tabular-nums dark:text-neutral-100"
-                      >
-                        {formatMoney(initialTotal)}
+                      <td class="py-1.5 text-right font-bold text-neutral-800 tabular-nums dark:text-neutral-100">
+                        {formatMoney(
+                          livePayment.totalAmount,
+                          livePayment.currency
+                        )}
                       </td>
                     </tr>
                   </tbody>
                 </table>
+              )}
 
-                <div class="flex flex-wrap gap-3">
-                  <label class="text-sm text-neutral-600 dark:text-neutral-300">
-                    Method
-                    <select
-                      name="method"
-                      class="mt-1 block rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+              {livePayment.varianceReason && canSeePayments && (
+                <p class="mt-3 rounded-lg border border-amber-300 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200">
+                  {livePayment.varianceReason}
+                </p>
+              )}
+
+              {refunds.length > 0 && canSeePayments && (
+                <ul class="mt-3 space-y-1 text-sm text-neutral-600 dark:text-neutral-300">
+                  {refunds.map(refund => (
+                    <li>
+                      Refunded{' '}
+                      {formatMoney(refund.totalAmount, refund.currency)} on{' '}
+                      {dateFormat.format(refund.receivedAt)} ·{' '}
+                      <a href={`/receipts/${refund.id}`} class="underline">
+                        {refund.receiptNo}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
+          {due && (
+            <form
+              method="post"
+              class="mt-4 space-y-4"
+              data-payment-form
+              data-cash-threshold={cashThreshold}
+            >
+              <table class="w-full text-sm">
+                <tbody>
+                  {due.components.map(component => (
+                    <tr class="border-t border-neutral-200 dark:border-neutral-800">
+                      <td class="py-2 text-neutral-600 dark:text-neutral-300">
+                        <label for={`amount-${component.accountTypeId}`}>
+                          {component.label}
+                        </label>
+                        {/* This IS the account type's own minimum opening
+                              amount — paying more is the payer's own choice
+                              and needs no reason; paying less is refused. */}
+                        <span class="ml-2 text-xs text-neutral-500 dark:text-neutral-400">
+                          at least {component.amount}
+                        </span>
+                      </td>
+                      <td class="w-40 py-2 text-right">
+                        <input
+                          id={`amount-${component.accountTypeId}`}
+                          type="text"
+                          inputmode="decimal"
+                          name={`amount.${component.accountTypeId}`}
+                          value={
+                            paymentFormValues?.amounts[
+                              component.accountTypeId
+                            ] ?? component.amount
+                          }
+                          data-amount-input
+                          class="w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-right text-sm tabular-nums dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                  <tr class="border-t-2 border-neutral-300 dark:border-neutral-700">
+                    <td class="py-2 font-medium text-neutral-800 dark:text-neutral-100">
+                      Total
+                    </td>
+                    <td
+                      data-payment-total
+                      class="py-2 text-right font-bold text-neutral-800 tabular-nums dark:text-neutral-100"
                     >
-                      {PAYMENT_METHODS.map(method => (
-                        <option
-                          value={method}
-                          selected={paymentFormValues?.method === method}
-                        >
-                          {METHOD_LABELS[method]}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label class="flex-1 text-sm text-neutral-600 dark:text-neutral-300">
-                    Cheque or transfer reference
-                    <input
-                      type="text"
-                      name="methodReference"
-                      value={paymentFormValues?.methodReference ?? ''}
-                      class="mt-1 block w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-                    />
-                  </label>
-                </div>
+                      {formatMoney(initialTotal)}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
 
-                <div
-                  data-cash-reminder
-                  hidden
-                  class="space-y-2 rounded-lg border border-amber-300 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200"
-                >
-                  <p>
-                    Cash over {cashThreshold && formatMoney(cashThreshold)}{' '}
-                    needs a source of fund below — and the paper Source of Fund
-                    form, completed separately.
-                  </p>
-                  <label class="flex items-start gap-2 font-medium">
-                    <input
-                      type="checkbox"
-                      name="sourceOfFundFormConfirmed"
-                      value="true"
-                      data-cash-form-confirm
-                      checked={
-                        paymentFormValues?.sourceOfFundFormConfirmed ?? false
-                      }
-                      class="mt-0.5"
-                    />
-                    I confirm the paper Source of Fund form has been completed.
-                  </label>
-                </div>
-                <label class="block text-sm text-neutral-600 dark:text-neutral-300">
-                  Source of fund
+              <div class="flex flex-wrap gap-3">
+                <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                  Method
+                  <select
+                    name="method"
+                    class="mt-1 block rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                  >
+                    {PAYMENT_METHODS.map(method => (
+                      <option
+                        value={method}
+                        selected={paymentFormValues?.method === method}
+                      >
+                        {METHOD_LABELS[method]}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label class="flex-1 text-sm text-neutral-600 dark:text-neutral-300">
+                  Cheque or transfer reference
                   <input
                     type="text"
-                    name="sourceOfFund"
-                    value={paymentFormValues?.sourceOfFund ?? ''}
-                    class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                    name="methodReference"
+                    value={paymentFormValues?.methodReference ?? ''}
+                    class="mt-1 block w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
                   />
                 </label>
+              </div>
 
+              <div
+                data-cash-reminder
+                hidden
+                class="space-y-2 rounded-lg border border-amber-300 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200"
+              >
+                <p>
+                  Cash over {cashThreshold && formatMoney(cashThreshold)} needs
+                  a source of fund below — and the paper Source of Fund form,
+                  completed separately.
+                </p>
+                <label class="flex items-start gap-2 font-medium">
+                  <input
+                    type="checkbox"
+                    name="sourceOfFundFormConfirmed"
+                    value="true"
+                    data-cash-form-confirm
+                    checked={
+                      paymentFormValues?.sourceOfFundFormConfirmed ?? false
+                    }
+                    class="mt-0.5"
+                  />
+                  I confirm the paper Source of Fund form has been completed.
+                </label>
+              </div>
+              <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+                Source of fund
+                <input
+                  type="text"
+                  name="sourceOfFund"
+                  value={paymentFormValues?.sourceOfFund ?? ''}
+                  class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                />
+              </label>
+
+              <button
+                type="submit"
+                name="intent"
+                value="record-payment"
+                class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
+              >
+                Record payment and issue receipt
+              </button>
+            </form>
+          )}
+
+          {isEditable && currentStep === PAYMENT_STEP && (
+            <div class="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800">
+              <a
+                href={`/applications/${application!.id}/customer?step=${DOCUMENTS_STEP}`}
+                class="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+              >
+                ← Back
+              </a>
+              <a
+                href={
+                  livePayment
+                    ? `/applications/${application!.id}/customer?step=${SUBMIT_STEP}`
+                    : undefined
+                }
+                aria-disabled={livePayment === null}
+                class:list={[
+                  'rounded-lg px-4 py-2 text-sm font-bold transition',
+                  livePayment === null
+                    ? 'cursor-not-allowed bg-neutral-300 text-neutral-500 dark:bg-neutral-700 dark:text-neutral-400'
+                    : 'bg-mint-300 hover:bg-mint-400 text-neutral-800',
+                ]}
+              >
+                {livePayment === null ? 'Next' : `Next: ${nextStepLabel}`}
+              </a>
+            </div>
+          )}
+        </section>
+      )}
+
+    {(!isEditable || currentStep === SUBMIT_STEP) && actions.length > 0 && (
+      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+          Your next step
+        </h2>
+
+        {actions.map(action => {
+          const reviewMeta = REVIEW_STEP_META[action.stepCode];
+          return (
+            <form method="post" class="mt-4 space-y-3">
+              {action.stepCode === 'capture' && (
                 <button
                   type="submit"
                   name="intent"
-                  value="record-payment"
-                  class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
+                  value="submit"
+                  disabled={blocking.length > 0}
+                  class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  Record payment and issue receipt
+                  {blocking.length > 0
+                    ? `Submit (${blocking.length} item${blocking.length === 1 ? '' : 's'} still need attention)`
+                    : 'Submit for Processing'}
                 </button>
-              </form>
-            )}
+              )}
 
-            {isEditable && currentStep === PAYMENT_STEP && (
-              <div class="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800">
-                <a
-                  href={`/applications/${application!.id}/customer?step=${DOCUMENTS_STEP}`}
-                  class="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
-                >
-                  ← Back
-                </a>
-                <a
-                  href={
-                    livePayment
-                      ? `/applications/${application!.id}/customer?step=${SUBMIT_STEP}`
-                      : undefined
-                  }
-                  aria-disabled={livePayment === null}
-                  class:list={[
-                    'rounded-lg px-4 py-2 text-sm font-bold transition',
-                    livePayment === null
-                      ? 'cursor-not-allowed bg-neutral-300 text-neutral-500 dark:bg-neutral-700 dark:text-neutral-400'
-                      : 'bg-mint-300 hover:bg-mint-400 text-neutral-800',
-                  ]}
-                >
-                  {livePayment === null ? 'Next' : `Next: ${nextStepLabel}`}
-                </a>
-              </div>
-            )}
-          </section>
-        )
-    }
-
-    {
-      (!isEditable || currentStep === SUBMIT_STEP) && actions.length > 0 && (
-        <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-          <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-            Your next step
-          </h2>
-
-          {actions.map(action => {
-            const reviewMeta = REVIEW_STEP_META[action.stepCode];
-            return (
-              <form method="post" class="mt-4 space-y-3">
-                {action.stepCode === 'capture' && (
-                  <button
-                    type="submit"
-                    name="intent"
-                    value="submit"
-                    disabled={blocking.length > 0}
-                    class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {blocking.length > 0
-                      ? `Submit (${blocking.length} item${blocking.length === 1 ? '' : 's'} still need attention)`
-                      : 'Submit for Processing'}
-                  </button>
+              {action.stepCode === 'secretary_review' &&
+                boardReasons.length > 0 && (
+                  <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+                    <p class="font-medium">Not ready for the Board yet:</p>
+                    <ul class="mt-1 list-disc pl-5">
+                      {boardReasons.map(reason => (
+                        <li>{reason}</li>
+                      ))}
+                    </ul>
+                  </div>
                 )}
 
-                {action.stepCode === 'secretary_review' &&
-                  boardReasons.length > 0 && (
-                    <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-                      <p class="font-medium">Not ready for the Board yet:</p>
-                      <ul class="mt-1 list-disc pl-5">
-                        {boardReasons.map(reason => (
-                          <li>{reason}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                {/* Secretary review already reads this off boardReasons above
+              {/* Secretary review already reads this off boardReasons above
                    (documentsUnverified covers a rejection too, worded as "not
                    yet Verified"); Regional oversight has no readiness check of
                    its own, so this is the only place it hears about it. */}
-                {action.stepCode === 'regional_review' &&
-                  rejectedDocuments.length > 0 && (
-                    <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-                      <p class="font-medium">
-                        {rejectedDocuments.length} document
-                        {rejectedDocuments.length === 1 ? '' : 's'} rejected —
-                        return this application for correction. It cannot be
-                        forwarded until the officer replaces{' '}
-                        {rejectedDocuments.length === 1 ? 'it' : 'them'}.
-                      </p>
-                    </div>
-                  )}
+              {action.stepCode === 'regional_review' &&
+                rejectedDocuments.length > 0 && (
+                  <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+                    <p class="font-medium">
+                      {rejectedDocuments.length} document
+                      {rejectedDocuments.length === 1 ? '' : 's'} rejected —
+                      return this application for correction. It cannot be
+                      forwarded until the officer replaces{' '}
+                      {rejectedDocuments.length === 1 ? 'it' : 'them'}.
+                    </p>
+                  </div>
+                )}
 
-                {action.stepCode === 'president_decision' &&
-                  signoffs.length > 0 && (
-                    <div class="rounded-lg border border-neutral-300 bg-white px-4 py-3 text-sm dark:border-neutral-700 dark:bg-neutral-900">
-                      <p class="font-medium text-neutral-700 dark:text-neutral-200">
-                        {signoffs.filter(s => s.outcome === 'approve').length}{' '}
-                        of {action.quorumCount} sign-off
-                        {action.quorumCount === 1 ? '' : 's'} recorded
-                      </p>
-                      <ul class="mt-1 space-y-0.5 text-neutral-600 dark:text-neutral-300">
-                        {signoffs.map(s => (
-                          <li>
-                            {s.outcome === 'approve' ? 'Approved' : 'Rejected'}{' '}
-                            by {s.actorName}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
+              {action.stepCode === 'president_decision' &&
+                signoffs.length > 0 && (
+                  <div class="rounded-lg border border-neutral-300 bg-white px-4 py-3 text-sm dark:border-neutral-700 dark:bg-neutral-900">
+                    <p class="font-medium text-neutral-700 dark:text-neutral-200">
+                      {signoffs.filter(s => s.outcome === 'approve').length} of{' '}
+                      {action.quorumCount} sign-off
+                      {action.quorumCount === 1 ? '' : 's'} recorded
+                    </p>
+                    <ul class="mt-1 space-y-0.5 text-neutral-600 dark:text-neutral-300">
+                      {signoffs.map(s => (
+                        <li>
+                          {s.outcome === 'approve' ? 'Approved' : 'Rejected'} by{' '}
+                          {s.actorName}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
 
-                {reviewMeta && (
-                  <>
-                    <label class="block text-sm text-neutral-600 dark:text-neutral-300">
-                      Comment
-                      <textarea
-                        name="comment"
-                        rows="3"
-                        class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-                        placeholder={reviewMeta.commentPlaceholder}
-                      />
-                    </label>
-                    <div class="flex flex-wrap gap-2">
-                      <button
-                        type="submit"
-                        name="outcome"
-                        value={reviewMeta.forwardOutcome}
-                        disabled={
-                          (action.stepCode === 'secretary_review' &&
-                            boardReasons.length > 0) ||
-                          rejectedDocuments.length > 0
-                        }
-                        class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {reviewMeta.forwardLabel}
-                      </button>
-                      <button
-                        type="submit"
-                        name="outcome"
-                        value={reviewMeta.returnOutcome}
-                        class="rounded-lg border border-red-300 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
-                      >
-                        {reviewMeta.returnLabel}
-                      </button>
-                    </div>
+              {reviewMeta && (
+                <>
+                  <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+                    Comment
+                    <textarea
+                      name="comment"
+                      rows="3"
+                      class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                      placeholder={reviewMeta.commentPlaceholder}
+                    ></textarea>
+                  </label>
+                  <div class="flex flex-wrap gap-2">
+                    <button
+                      type="submit"
+                      name="outcome"
+                      value={reviewMeta.forwardOutcome}
+                      disabled={
+                        (action.stepCode === 'secretary_review' &&
+                          boardReasons.length > 0) ||
+                        rejectedDocuments.length > 0
+                      }
+                      class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {reviewMeta.forwardLabel}
+                    </button>
+                    <button
+                      type="submit"
+                      name="outcome"
+                      value={reviewMeta.returnOutcome}
+                      class="rounded-lg border border-red-300 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
+                    >
+                      {reviewMeta.returnLabel}
+                    </button>
+                  </div>
+                  <input
+                    type="hidden"
+                    name="intent"
+                    value={reviewMeta.intent}
+                  />
+                  {reviewMeta.intent === 'review' && (
                     <input
                       type="hidden"
-                      name="intent"
-                      value={reviewMeta.intent}
+                      name="stepCode"
+                      value={action.stepCode}
                     />
-                    {reviewMeta.intent === 'review' && (
-                      <input
-                        type="hidden"
-                        name="stepCode"
-                        value={action.stepCode}
-                      />
-                    )}
-                  </>
-                )}
-              </form>
-            );
-          })}
-        </section>
-      )
-    }
-
-    {
-      isEditable && currentStep === SUBMIT_STEP && (
-        <div class="flex">
-          <a
-            href={`/applications/${application!.id}/customer?step=${PAYMENT_STEP}`}
-            class="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
-          >
-            ← Back
-          </a>
-        </div>
-      )
-    }
-
-    {
-      (!isEditable || currentStep === SUBMIT_STEP) && history.length > 0 && (
-        <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-          <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-            History
-          </h2>
-          <ol class="mt-4 space-y-3">
-            {history.map(entry => (
-              <li class="border-l-2 border-neutral-300 pl-3 text-sm dark:border-neutral-700">
-                <div class="flex flex-wrap items-center gap-x-2">
-                  <span class="font-medium text-neutral-800 dark:text-neutral-100">
-                    {entry.fromStatus ?? 'created'} → {entry.toStatus}
-                  </span>
-                  {entry.actorRole && (
-                    <span class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
-                      {entry.actorRole}
-                    </span>
                   )}
-                  <span class="text-xs text-neutral-500 dark:text-neutral-400">
-                    {entry.actorName} · {dateFormat.format(entry.occurredAt)}
-                  </span>
-                </div>
-                {entry.comment && (
-                  <p class="mt-1 text-neutral-600 dark:text-neutral-300">
-                    {entry.comment}
-                  </p>
-                )}
-              </li>
-            ))}
-          </ol>
-        </section>
-      )
-    }
+                </>
+              )}
+            </form>
+          );
+        })}
+      </section>
+    )}
 
-    {
-      isDeletableDraft && (
-        <section class="rounded-2xl border border-neutral-200 p-6 dark:border-neutral-800">
-          <h2 class="text-sm font-medium text-neutral-800 dark:text-neutral-100">
-            Delete this draft
-          </h2>
-          <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
-            Removes everything captured on it and any documents filed against
-            it. This cannot be undone.
-          </p>
-          <form method="post" class="mt-4" data-confirm-delete>
-            <button
-              type="submit"
-              name="intent"
-              value="delete"
-              class="rounded-lg border border-red-300 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
-            >
-              Delete draft {application!.reference}
-            </button>
-          </form>
-        </section>
-      )
-    }
-
-    {
-      canSeeDocuments && (
-        <dialog
-          id="document-viewer-dialog"
-          class="fixed top-1/2 left-1/2 m-0 h-[85vh] w-[95vw] max-w-3xl -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-neutral-200 bg-white p-0 text-neutral-800 backdrop:bg-neutral-900/50 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100"
+    {isEditable && currentStep === SUBMIT_STEP && (
+      <div class="flex">
+        <a
+          href={`/applications/${application!.id}/customer?step=${PAYMENT_STEP}`}
+          class="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
         >
-          <div class="flex items-center justify-between gap-3 border-b border-neutral-200 px-5 py-3 dark:border-neutral-800">
-            <p
-              data-viewer-name
-              class="truncate text-sm font-semibold text-neutral-800 dark:text-neutral-100"
-            />
-            <button
-              type="button"
-              data-viewer-close
-              class="shrink-0 rounded-lg border border-neutral-300 px-2.5 py-1 text-xs font-medium text-neutral-600 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-300 dark:hover:bg-neutral-800"
-            >
-              Close
-            </button>
-          </div>
-          <div
-            data-viewer-body
-            class="flex h-[calc(85vh-3rem)] items-center justify-center overflow-auto p-4 text-sm"
+          ← Back
+        </a>
+      </div>
+    )}
+
+    {(!isEditable || currentStep === SUBMIT_STEP) && history.length > 0 && (
+      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+          History
+        </h2>
+        <ol class="mt-4 space-y-3">
+          {history.map(entry => (
+            <li class="border-l-2 border-neutral-300 pl-3 text-sm dark:border-neutral-700">
+              <div class="flex flex-wrap items-center gap-x-2">
+                <span class="font-medium text-neutral-800 dark:text-neutral-100">
+                  {entry.fromStatus ?? 'created'} → {entry.toStatus}
+                </span>
+                {entry.actorRole && (
+                  <span class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
+                    {entry.actorRole}
+                  </span>
+                )}
+                <span class="text-xs text-neutral-500 dark:text-neutral-400">
+                  {entry.actorName} · {dateFormat.format(entry.occurredAt)}
+                </span>
+              </div>
+              {entry.comment && (
+                <p class="mt-1 text-neutral-600 dark:text-neutral-300">
+                  {entry.comment}
+                </p>
+              )}
+            </li>
+          ))}
+        </ol>
+      </section>
+    )}
+
+    {isDeletableDraft && (
+      <section class="rounded-2xl border border-neutral-200 p-6 dark:border-neutral-800">
+        <h2 class="text-sm font-medium text-neutral-800 dark:text-neutral-100">
+          Delete this draft
+        </h2>
+        <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+          Removes everything captured on it and any documents filed against it.
+          This cannot be undone.
+        </p>
+        <form method="post" class="mt-4" data-confirm-delete>
+          <button
+            type="submit"
+            name="intent"
+            value="delete"
+            class="rounded-lg border border-red-300 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
           >
-            Loading…
-          </div>
-        </dialog>
-      )
-    }
+            Delete draft {application!.reference}
+          </button>
+        </form>
+      </section>
+    )}
+
+    {canSeeDocuments && (
+      <dialog
+        id="document-viewer-dialog"
+        class="fixed top-1/2 left-1/2 m-0 h-[85vh] w-[95vw] max-w-3xl -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-neutral-200 bg-white p-0 text-neutral-800 backdrop:bg-neutral-900/50 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100"
+      >
+        <div class="flex items-center justify-between gap-3 border-b border-neutral-200 px-5 py-3 dark:border-neutral-800">
+          <p
+            data-viewer-name
+            class="truncate text-sm font-semibold text-neutral-800 dark:text-neutral-100"
+          />
+          <button
+            type="button"
+            data-viewer-close
+            class="shrink-0 rounded-lg border border-neutral-300 px-2.5 py-1 text-xs font-medium text-neutral-600 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-300 dark:hover:bg-neutral-800"
+          >
+            Close
+          </button>
+        </div>
+        <div
+          data-viewer-body
+          class="flex h-[calc(85vh-3rem)] items-center justify-center overflow-auto p-4 text-sm"
+        >
+          Loading…
+        </div>
+      </dialog>
+    )}
   </div>
 </DashboardLayout>
 
