@@ -14,6 +14,7 @@ import {
 import { runJob, JobAlreadyRunning } from '../src/lib/jobs/runner';
 import { expireDocuments } from '../src/lib/documents/documents';
 import { transitionMinorsAtMajority } from '../src/lib/members/majority';
+import { retryDueNotifications } from '../src/lib/notifications/retry';
 
 // Jobs are named here rather than passed as arbitrary strings: the container's
 // arguments are configuration, and configuration should not be able to name a
@@ -61,6 +62,30 @@ const JOBS: Record<string, () => Promise<unknown>> = {
           transitioned: transitioned.length,
           memberNos: transitioned.map(t => t.memberNo),
         });
+      },
+    }),
+
+  // S-904. Attempts every notification whose backoff has elapsed, and gives
+  // up on one that has exhausted its attempts. Run often — every fifteen
+  // minutes or so — since the first retry is only five minutes behind the
+  // failure and a member waiting on an approval notices the difference.
+  //
+  // Safe at any time and on any environment: a run with nothing due does
+  // nothing at all, and a channel that is still unconfigured fails the same
+  // way it did the first time, visibly, without sending anything.
+  'notification-retry': () =>
+    runJob<{ sweptAt: string }>({
+      name: 'notification-retry',
+      run: async context => {
+        const outcome = await retryDueNotifications();
+        // processedCount is what was attempted, not what succeeded: a run
+        // that tried fifty and sent none is the one an operator most needs
+        // to see in the job's own history.
+        await context.save(
+          { sweptAt: new Date().toISOString() },
+          outcome.attempted
+        );
+        context.log('notifications retried', { ...outcome });
       },
     }),
 };

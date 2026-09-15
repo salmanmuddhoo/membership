@@ -142,6 +142,34 @@ crossing an age threshold on any given day is small, so this reads and
 writes in one query per run, the same shape as `document-expiry`. Run daily,
 alongside it.
 
+## `notification-retry` (S-904)
+
+A notification is recorded before it is attempted (`src/lib/notifications/`),
+so a relay that was down, or a process that died mid-send, always leaves a row
+to come back to. `retryDueNotifications` is what comes back to it: everything
+whose backoff has elapsed is attempted again, and anything that has exhausted
+its attempts is marked `abandoned` — still visible on **Notifications**, just
+no longer tried.
+
+What is re-sent is the text stored on the row, never a re-render of the
+template. Editing wording must not change what a member was already told.
+
+Backoff is 5m, 15m, 1h, 6h, then 24h, giving up after six attempts — a little
+over thirty hours in total, so an overnight outage still delivers the next
+morning. Run **every fifteen minutes**: the first retry is only five minutes
+behind the failure, and a member waiting on an approval notices the
+difference.
+
+No chunking, for the same reason `document-expiry` needs none: the queue is
+whatever failed since the last run, which is normally nothing. A run with
+nothing due does nothing at all, so it is safe on any environment, including
+one where no provider is configured yet — there, each attempt fails visibly
+rather than sending anything.
+
+```bash
+pnpm job notification-retry
+```
+
 ## Recommendation for M7 and M8
 
 - **M7 migration import** — a Manual job. Read the cleansed extract in batches,
@@ -155,7 +183,9 @@ alongside it.
   same shape `minor-majority-transition` (S-610, above) already proves.
 - **Add a job that watches the jobs.** A `job_run` row still `running` with an
   `updated_at` hours old means a container died and no schedule has picked it up.
-  Nothing currently notices. Worth building alongside M9's notification layer.
+  Nothing currently notices. Now that M9's notification layer exists
+  (`notify()`, and the delivery log that makes a failure visible), this has
+  somewhere to report to.
 
 ## What is proven, and what is not
 
