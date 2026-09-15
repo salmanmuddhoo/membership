@@ -52,6 +52,9 @@ delete process.env.NOTIFY_WHATSAPP_DELIVERY;
 const { notify, registerChannel, resetChannels } = await import('./notify');
 const { retryDueNotifications, MAX_ATTEMPTS } = await import('./retry');
 const { listNotifications, notificationCounts } = await import('./log');
+const { listNotificationTemplates, placeholdersIn } =
+  await import('./templates');
+const { placeholdersForEvent } = await import('./event-codes');
 const { clearReferenceCache } = await import('../config/cache');
 const pool = await import('../db/pool');
 
@@ -350,6 +353,47 @@ describe('retrying', () => {
     expect(outcome.attempted).toBe(2);
     expect(outcome.sent).toBe(1);
     expect(whatsapps).toHaveLength(1);
+  });
+});
+
+describe('the wording the migrations ship', () => {
+  // The seeded templates and placeholdersForEvent are two halves of one
+  // contract: the migration writes {{member_no}}, the code passes member_no.
+  // Nothing but this checks them against each other, and a mismatch shows up
+  // as a blank in a real member's inbox — "Your member number is ." — with
+  // nothing anywhere saying why.
+  it('uses only placeholders its own event fills in', async () => {
+    const templates = await listNotificationTemplates();
+    expect(templates.length).toBeGreaterThan(0);
+
+    for (const template of templates) {
+      const available = placeholdersForEvent(template.eventCode);
+      expect(
+        available,
+        `no placeholders known for ${template.eventCode}`
+      ).not.toBeNull();
+
+      const used = [
+        ...placeholdersIn(template.body),
+        ...placeholdersIn(template.subject ?? ''),
+      ];
+      for (const name of used) {
+        expect(
+          available,
+          `${template.eventCode}/${template.channel} uses {{${name}}}`
+        ).toContain(name);
+      }
+    }
+  });
+
+  // An email with no subject violates a check constraint; every seeded row
+  // has to satisfy it, and the editor refuses one that would not.
+  it('gives every email template a subject', async () => {
+    const templates = await listNotificationTemplates();
+    const emails = templates.filter(t => t.channel === 'email');
+
+    expect(emails.length).toBeGreaterThan(0);
+    expect(emails.every(t => (t.subject ?? '').trim() !== '')).toBe(true);
   });
 });
 

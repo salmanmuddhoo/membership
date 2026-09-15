@@ -9,7 +9,9 @@
 // the template editor an injection surface for anyone who can reach it.
 // Plain text has no such edge, and none of the events here need markup.
 import { cached } from '../config/cache';
+import { ConfigError } from '../config/reference';
 import { query, withConfigurationActor } from '../db/pool';
+import { placeholdersForEvent } from './event-codes';
 
 export type NotificationChannel = 'email' | 'whatsapp';
 
@@ -121,13 +123,72 @@ export interface TemplateEdit {
   isActive: boolean;
 }
 
+/**
+ * Check an edit before it reaches the database.
+ *
+ * Two things the schema cannot say for itself, and both of which a member
+ * would otherwise be the one to discover:
+ *
+ *   An email with no subject violates a check constraint (migration 0053),
+ *   which would reach the administrator as a database error naming a
+ *   constraint rather than as the empty field it actually is.
+ *
+ *   A placeholder the event does not fill renders as nothing at all — "Your
+ *   member number is ." — and nothing anywhere would say why. Only checked
+ *   for events this system actually raises; a code someone added by hand is
+ *   not necessarily wrong.
+ */
+export function problemsWithEdit(
+  template: NotificationTemplate,
+  edit: TemplateEdit
+): string[] {
+  const problems: string[] = [];
+
+  if (template.channel === 'email' && !edit.subject?.trim()) {
+    problems.push('An email needs a subject.');
+  }
+  if (!edit.body.trim()) {
+    problems.push('A message needs wording.');
+  }
+
+  const available = placeholdersForEvent(template.eventCode);
+  if (available) {
+    const used = new Set([
+      ...placeholdersIn(edit.body),
+      ...placeholdersIn(edit.subject ?? ''),
+    ]);
+    for (const name of [...used].sort()) {
+      if (!available.includes(name)) {
+        problems.push(
+          `{{${name}}} is not available here. This event fills in ` +
+            available.map(a => `{{${a}}}`).join(', ') +
+            '.'
+        );
+      }
+    }
+  }
+
+  return problems;
+}
+
 // Configuration write: goes through withConfigurationActor so the trigger
-// from migration 0010 can name who changed the wording.
+// from migration 0010 can name who changed the wording. Validated first, so a
+// bad edit is refused by name rather than by constraint.
 export async function updateNotificationTemplate(
   id: string,
   edit: TemplateEdit,
   actor: { userId: string; email: string }
 ): Promise<void> {
+  const template = (await listNotificationTemplates()).find(t => t.id === id);
+  if (!template) {
+    throw new ConfigError('That template no longer exists.', 'not_found');
+  }
+
+  const problems = problemsWithEdit(template, edit);
+  if (problems.length > 0) {
+    throw new ConfigError(problems.join(' '), 'invalid');
+  }
+
   await withConfigurationActor(
     { userId: actor.userId, description: actor.email },
     async client => {
