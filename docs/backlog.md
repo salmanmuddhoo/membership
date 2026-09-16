@@ -81,7 +81,7 @@ FRD Section 23, plus this project's specifics. A story is done when:
 | EPIC-11 | Audit & Compliance        | M1, continuous | Must     |
 | EPIC-12 | Reporting                 | M9             | Should   |
 | EPIC-13 | API Platform              | M1 → M9        | Must     |
-| EPIC-14 | Legacy Data Migration     | M7             | Must     |
+| EPIC-14 | Legacy Data Migration     | M7 ✅          | Must     |
 | EPIC-15 | Resignation & Dormancy    | M8 → Phase 2   | Must     |
 | EPIC-16 | DevSecOps Security Gate   | M0 ✅          | Must     |
 
@@ -2319,7 +2319,7 @@ Android each read on their own.
 
 ---
 
-# M7 — Legacy migration
+# M7 — Legacy migration ✅
 
 **Goal:** the existing register becomes members in this system, phase-wise —
 **members first, finance later**, per your direction.
@@ -2416,13 +2416,29 @@ Nominee Mobile and every other nominee field stay. Both changes are keyed
 by field key in `migration/members.ts`, so a relabel in configuration does
 not shake them loose.
 
-**Still ahead**: S-701 (an agreed, frozen source extract — this tool works
-against whatever is uploaded, it does not itself settle what that should
-be), S-707's formal sign-off step, S-708's dedicated audit event beyond the
-generic trail already written, and S-710 (reconciling an imported batch's
-balances against an agreed control total).
+**M7 is closed.** S-708 and S-710 shipped in the third increment (the batch
+audit event and balance reconciliation), and the business has since decided
+that **S-701 and S-707 are not needed**: the import works against whatever is
+uploaded and reports every rejected row, so a separately agreed and frozen
+extract, and a formal promote-after-sign-off step, are process the Society
+does not want.
 
-### S-701 · Agree and freeze the cleansed source extract
+**S-709 is delivered**, and more generally than its title reads. The import
+template carries a `Shares Balance` and an `MSA Deposit Balance` column, and
+generates a `<Account Type> Balance` column for **every account type the
+Society configures** — so a Haj savings account gets one the moment an
+administrator adds that account type, with no change here. Balances are
+written as one opening payment per member (`recordMigrationOpeningBalances`),
+itemised exactly as an ordinary payment is.
+
+**Loan balances, which S-709's title also names, are not imported — and could
+not be.** Phase 1 models no financing at all: there is no loan, no repayment
+schedule and no liability anywhere in the schema, and the word appears nowhere
+else in this backlog. A loan balance is not an account balance, so there is
+nothing for the import to write it to. That is a scope boundary rather than a
+gap in the importer, and it belongs to whatever phase introduces financing.
+
+### S-701 · Agree and freeze the cleansed source extract — not needed
 
 **As** the project, **I need** one agreed source file, **so that** an import
 can be repeated and reconciled against something fixed.
@@ -2478,7 +2494,7 @@ incomplete legacy record is not mistaken for a complete application.
 - **Given** a migrated member **Then** the missing fields are listed rather
   than silently blank
 
-### S-707 · Promote to production after business sign-off
+### S-707 · Promote to production after business sign-off — not needed
 
 **As** the project, **I need** an explicit sign-off before production import,
 **so that** the decision is deliberate and recorded. _(decision 3)_
@@ -2492,7 +2508,7 @@ distinguishable from ordinary data entry. _(FRD 7.12)_
 
 - Source checksum, counts, who authorised it, when
 
-### S-709 · Later pass — shares, savings, Haj and loan balances
+### S-709 · Later pass — shares, savings and Haj balances ✅ (loans: no such concept in Phase 1)
 
 **As** the Society, **I need** balances imported once members exist, **so
 that** the financial position follows the people.
@@ -2787,11 +2803,43 @@ cannot be used to flood or probe the system.
 then: retain indefinitely, which is safe but not compliant with a stated
 policy — so this is the one open value that should not stay open.
 
-### S-1001 · Penetration test and remediation
+**Started** (S-1001, S-1002, S-1005). What is code or writing is done; what
+needs the Society, an external tester or Azure is named as such.
+
+**S-1001** — `docs/security-review.md` records a manual review of the whole
+application: what was examined, what was found sound, and what only an
+external test can cover. It found one real defect, now fixed. `CaptureFields`
+rendered search results by interpolating an applicant's own typed name into
+`innerHTML`, and anyone who can start an application can type one — a member
+of the public through the app's own sign-up, and the website through S-908. It
+fired in a member of staff's browser with that officer's access.
+`src/lib/access/html-sinks.test.ts` fails the build if any HTML sink comes
+back, and was itself checked by reintroducing the original line. The external
+test is still needed for the deployed environment, the tenants, authenticated
+business-logic abuse and denial of service.
+
+**S-1002** — `docs/restore.md` has the procedure, and
+`pnpm figures:capture` / `pnpm figures:verify` turn a drill into a pass or a
+fail: twenty control figures including the money total and the high-water
+marks for member number, receipt serial and financial event sequence, because
+a restore that lost a day still has plausible counts. **The drill itself has
+not been run**, so the recovery time is unknown — that is the story's actual
+acceptance criterion and it needs Azure.
+
+**S-1005** — `docs/runbook.md`: the shape of the system, first moves on any
+report, symptom-by-symptom diagnosis, the routine jobs, what each secret
+breaks when rotated, escalation, and an explicit list of what is deliberately
+not automated.
+
+**Still needing the Society:** S-1003's retention periods (nothing can be
+disposed of until they are stated), S-1004's real staff accounts, and the
+external test itself.
+
+### S-1001 · Penetration test and remediation — review done, external test outstanding
 
 `Must · 8 · EPIC-01`
 
-### S-1002 · Backup and restore, proved by an actual restore
+### S-1002 · Backup and restore, proved by an actual restore — procedure and verification ready, drill outstanding
 
 **As** the Society, **I need** a restore that has been performed, **so that**
 the backup is known to work rather than assumed to.
@@ -2811,7 +2859,7 @@ the backup is known to work rather than assumed to.
 **so that** go-live is not the moment access is first tested. _(decision 15)_
 `Must · 3 · EPIC-02`
 
-### S-1005 · Operational runbook and handover
+### S-1005 · Operational runbook and handover ✅
 
 `Must · 5 · EPIC-01`
 
