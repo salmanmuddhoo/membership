@@ -38,8 +38,13 @@ export interface EndpointDescriptor {
   // cookie and defineEndpoint. 'member' is the member app's bearer token and
   // 'public' is nobody at all — both are only ever produced by
   // defineMemberEndpoint (lib/member/endpoint.ts), which is what enforces
-  // them; the field is here so the OpenAPI document can say so.
-  caller?: 'staff' | 'member' | 'public';
+  // them. 'integration' is a machine holding an API credential (S-909), only
+  // ever produced by defineIntegrationEndpoint. The field is here so the
+  // OpenAPI document can say so.
+  caller?: 'staff' | 'member' | 'public' | 'integration';
+  // For 'integration': what the credential must be allowed to do. Stated in
+  // the document because it is the first thing an integrator needs to know.
+  scope?: string;
   // Shape of a successful `data` payload, as an OpenAPI schema object.
   responseSchema: Record<string, unknown>;
   requestSchema?: Record<string, unknown>;

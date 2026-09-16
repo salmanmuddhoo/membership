@@ -2695,7 +2695,38 @@ silent failure is not mistaken for a member ignoring us.
 - Includes an access-and-actions report over the audit trail, which is what
   makes the trail useful rather than merely present
 
-### S-908 · Public application API for Albarakah.mu
+**Shipped** (S-908, S-909): Albarakah.mu can submit an application, and the
+endpoint it submits to is protected.
+
+A third kind of caller exists now — a machine holding a credential, after
+staff with a cookie and the member app with a token.
+`defineIntegrationEndpoint` is its wrapper: same descriptor, same envelope,
+same log line. Nobody is present when it calls, so the checks a person's own
+caution would cover are structural. The credential is read from the database
+on every request and never cached, so revoking one stops it on its very next
+call. Refusals are recorded rather than only logged, by reason, because a
+credential being tried and failing is the signal that someone is probing.
+Every way of being wrong returns the same 401, so a list of client ids cannot
+be sorted into real and invented. The limit is per credential at its own
+ceiling, with an address that has not yet authenticated limited separately
+and hard.
+
+The secret is 32 random bytes, stored only as a SHA-256 and shown once. A
+credential the system could show again is one a copy of the database hands
+over; re-issuing takes a moment.
+
+The submission itself goes through `startApplication` and `saveDraft` — the
+same services an officer's screen uses — so the field configuration, the
+phone normalisation and the reference allocation cannot diverge from the
+branch's. It lands in `received`, where a member-app submission lands, because
+a website can neither file the signed form nor take the payment: the officer
+completes the checklist and submits it into the chain. Fields are validated
+against the type's live configuration; a rejected submission leaves nothing
+behind, and a number with an application already open is refused before
+anything is created — otherwise a website with a wrong form would fill the
+officer's queue with drafts nobody asked for.
+
+### S-908 · Public application API for Albarakah.mu ✅
 
 **As** an external applicant, **I need** to apply from the website, **so
 that** joining does not require visiting an office. _(MEM-US-002, FRD 7.3)_
@@ -2706,7 +2737,7 @@ that** joining does not require visiting an office. _(MEM-US-002, FRD 7.3)_
 - **Given** a public submission **Then** it enters the same chain, with the
   same required documents
 
-### S-909 · API credentials, throttling and abuse protection
+### S-909 · API credentials, throttling and abuse protection ✅
 
 **As** the Society, **I need** the public endpoint protected, **so that** it
 cannot be used to flood or probe the system.
