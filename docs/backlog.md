@@ -2888,11 +2888,21 @@ retention period, **so that** nothing is held longer than the policy allows.
 - **Given** a disposal **Then** it is recorded in the audit trail, naming what
   went and never copying it
 
-### S-1004 · Provision real staff accounts and roles
+### S-1004 · Provision real staff accounts and roles — the test for it exists
 
 **As** the Society, **I need** the real people set up with the right roles,
 **so that** go-live is not the moment access is first tested. _(decision 15)_
 `Must · 3 · EPIC-02`
+
+`docs/functional-testing.md` and the suite behind it (`pnpm e2e`) walk the
+whole application-to-member journey against a deployment as **five different
+people**, because segregation of duties means they have to be: the officer who
+captures may not review, and the Secretary may not approve. So provisioning the
+accounts is what makes the suite runnable, and the suite is what proves the
+provisioning. It also prints what each role can and cannot open, which is the
+answer to "did we grant that correctly" that nothing else gives.
+
+Still needs the Society: the accounts themselves, in the Test Entra tenant.
 
 ### S-1005 · Operational runbook and handover ✅
 

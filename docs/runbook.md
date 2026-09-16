@@ -17,6 +17,7 @@ thing that goes stale.
 | Documents and SharePoint                       | `docs/documents.md`                      |
 | Security controls and the merge gate           | `SECURITY.md`, `docs/security-review.md` |
 | How long records are kept, and disposal        | `docs/retention.md`                      |
+| Functionally testing a deployment              | `docs/functional-testing.md`             |
 
 ## The shape of it
 
