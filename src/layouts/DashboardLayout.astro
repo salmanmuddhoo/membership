@@ -126,6 +126,9 @@ const navGroups: NavGroup[] = [
       ...(can('audit.view')
         ? [{ label: 'Audit log', href: '/admin/audit-log', icon: 'reports' }]
         : []),
+      ...(can('report.view')
+        ? [{ label: 'Reports', href: '/reports', icon: 'reports' }]
+        : []),
       ...(can('notification.view')
         ? [
             {

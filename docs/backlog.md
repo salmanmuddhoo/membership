@@ -2680,15 +2680,45 @@ silent failure is not mistaken for a member ignoring us.
 - **Given** a send fails **Then** it is retried on a schedule and the failure
   is visible until it succeeds or is abandoned
 
-### S-905 · Membership, document and account reports
+**Shipped** (S-905, S-906, S-907): nine reports, at **Reports**, in three
+groups — Membership, Money and Operations.
+
+One shape for all of them, so the page renders any report without knowing
+which and adding one is a definition rather than a screen. Every report offers
+the same table on screen and the same download as Excel: a report that cannot
+leave the screen is half a report, because the committee papers and the
+auditor both want a file and the alternative is somebody retyping figures.
+
+**Access is the existing access.** A report names an EXISTING data permission
+— `member.view`, `payment.view`, `audit.view` — and `report.view` only reaches
+the page. Reporting is a second way to read data that is already governed, so
+giving reports their own permissions would build a parallel scheme that
+drifts: the day somebody forgot to bar a role twice is the day a report became
+the way round it. The check is made again on the report's own page and on its
+export, so a URL typed by hand is not a way past it.
+
+**S-907's named report** is Access and actions: the audit trail summarised by
+actor and action, with refusals counted. The audit log page already lists
+every entry; what a report adds is the shape — who is doing the most, and
+whether anybody is being refused repeatedly. Alongside it, Scheduled work
+shows whether the jobs actually ran, which `docs/jobs.md` notes nothing
+currently notices.
+
+**Not built, and deliberately: the dormancy report S-906 names.** Dormancy is
+M8, deferred to Phase 2, so no member has ever been marked dormant and no rule
+decides it. A report over a state the system does not have would show an empty
+table reading as "nobody is dormant" rather than "this is not built yet",
+which is worse than not offering it. It belongs with M8.
+
+### S-905 · Membership, document and account reports ✅
 
 `Should · 8 · EPIC-12`
 
-### S-906 · Payments, receipts and dormancy reports
+### S-906 · Payments and receipts reports ✅ (dormancy waits on M8)
 
 `Should · 5 · EPIC-12`
 
-### S-907 · Operations and audit reports
+### S-907 · Operations and audit reports ✅
 
 `Should · 5 · EPIC-12`
 

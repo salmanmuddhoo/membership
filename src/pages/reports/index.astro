@@ -1,0 +1,60 @@
+---
+// The reports (S-905, S-906, S-907).
+//
+// Reaching this page needs report.view; which reports appear is decided by
+// the data permissions the person already holds, so this lists what they
+// could read elsewhere rather than opening a second door onto it.
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import { reportsFor, type ReportDefinition } from '@lib/reports/definitions';
+
+const principal = Astro.locals.principal!;
+const available = reportsFor(principal.permissions);
+
+const byCategory = new Map<string, ReportDefinition[]>();
+for (const report of available) {
+  byCategory.set(report.category, [
+    ...(byCategory.get(report.category) ?? []),
+    report,
+  ]);
+}
+
+// Membership first, then money, then how the system itself is running —
+// the order an officer thinks in.
+const ORDER = ['Membership', 'Money', 'Operations'];
+const categories = [...byCategory.entries()].sort(
+  (a, b) => ORDER.indexOf(a[0]) - ORDER.indexOf(b[0])
+);
+---
+
+<DashboardLayout title="Reports · Al Barakah MCSL" heading="Reports">
+  <div class="mx-auto max-w-4xl space-y-6">
+    {available.length === 0 && (
+      <p class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 text-sm text-neutral-500 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-400">
+        There is nothing here you have access to.
+      </p>
+    )}
+
+    {categories.map(([category, reports]) => (
+      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+          {category}
+        </h2>
+        <div class="mt-3 grid gap-3 sm:grid-cols-2">
+          {reports.map(report => (
+            <a
+              href={`/reports/${report.code}`}
+              class="hover:border-mint-400 rounded-xl border border-neutral-200 bg-white p-4 transition dark:border-neutral-800 dark:bg-neutral-900"
+            >
+              <span class="font-medium text-neutral-800 dark:text-neutral-100">
+                {report.title}
+              </span>
+              <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+                {report.summary}
+              </p>
+            </a>
+          ))}
+        </div>
+      </section>
+    ))}
+  </div>
+</DashboardLayout>

@@ -1,0 +1,197 @@
+---
+// One report, run (S-905, S-906, S-907).
+//
+// The page holds no query of its own: it renders whatever the definition
+// returns, so adding a report is a definition and never a screen.
+//
+// The report's own data permission is checked HERE as well as being used to
+// build the index. The prefix rule in authorise.ts grants report.view for the
+// whole of /reports, and a URL typed by hand must not be a way past the
+// permission that governs the data underneath.
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import { reportByCode, type FilterValues } from '@lib/reports/definitions';
+import {
+  reportFileName,
+  reportToWorkbook,
+  XLSX_CONTENT_TYPE,
+} from '@lib/reports/export';
+
+const principal = Astro.locals.principal!;
+const report = reportByCode(Astro.params.code ?? '');
+
+if (!report) return Astro.redirect('/reports');
+if (!principal.permissions.has(report.permission)) {
+  return Astro.redirect('/denied');
+}
+
+const params = Astro.url.searchParams;
+const filters: FilterValues = Object.fromEntries(
+  report.filters.map(f => [f.name, params.get(f.name) ?? ''])
+);
+
+// Only run when asked. Opening a report and immediately scanning every
+// payment ever taken is a cost nobody asked for, and the first thing an
+// officer does is choose a period.
+const asked = report.filters.some(f => (filters[f.name] ?? '') !== '');
+const showAll = params.get('all') === '1';
+const result = asked || showAll ? await report.run(filters) : null;
+
+// What the filters actually were, in words, for the top of the spreadsheet.
+const describeFilters = () =>
+  report.filters
+    .filter(f => (filters[f.name] ?? '') !== '')
+    .map(f => `${f.label}: ${filters[f.name]}`)
+    .join(', ');
+
+if (params.get('export') === 'xlsx' && result) {
+  const at = new Date();
+  const buffer = await reportToWorkbook(report.title, result, {
+    generatedAt: at,
+    generatedBy: principal.email,
+    filters: describeFilters(),
+  });
+  return new Response(new Uint8Array(buffer), {
+    headers: {
+      'content-type': XLSX_CONTENT_TYPE,
+      'content-disposition': `attachment; filename="${reportFileName(report.code, at)}"`,
+    },
+  });
+}
+
+// Resolved per request so a list of membership types is whatever the Society
+// currently configures, not what it configured at build time.
+const choices = new Map<string, { value: string; label: string }[]>();
+for (const filter of report.filters) {
+  if (filter.choices) choices.set(filter.name, await filter.choices());
+}
+
+const exportHref = () => {
+  const next = new URLSearchParams(params);
+  next.set('export', 'xlsx');
+  return `/reports/${report.code}?${next.toString()}`;
+};
+---
+
+<DashboardLayout
+  title={`${report.title} · Al Barakah MCSL`}
+  heading={report.title}
+>
+  <div class="mx-auto max-w-6xl space-y-6">
+    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+      <p class="text-sm text-neutral-600 dark:text-neutral-300">
+        {report.summary}
+      </p>
+
+      <form method="get" class="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {report.filters.map(filter => (
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            {filter.label}
+            {filter.kind === 'choice' ? (
+              <select
+                name={filter.name}
+                class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+              >
+                <option value="">All</option>
+                {(choices.get(filter.name) ?? []).map(choice => (
+                  <option
+                    value={choice.value}
+                    selected={choice.value === filters[filter.name]}
+                  >
+                    {choice.label}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type={filter.kind === 'date' ? 'date' : 'text'}
+                name={filter.name}
+                value={filters[filter.name]}
+                class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+              />
+            )}
+          </label>
+        ))}
+
+        <div class="flex items-end gap-3">
+          <button
+            type="submit"
+            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
+          >
+            Run
+          </button>
+          <a
+            href={`/reports/${report.code}?all=1`}
+            class="text-sm text-neutral-500 underline dark:text-neutral-400"
+          >
+            Everything
+          </a>
+        </div>
+      </form>
+    </section>
+
+    {result === null ? (
+      <p class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 text-sm text-neutral-500 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-400">
+        Choose a period and run it, or ask for everything.
+      </p>
+    ) : (
+      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+            {result.summary}
+          </h2>
+          {result.rows.length > 0 && (
+            <a
+              href={exportHref()}
+              class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-200 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+            >
+              Download as Excel
+            </a>
+          )}
+        </div>
+
+        {result.rows.length === 0 ? (
+          <p class="mt-4 text-sm text-neutral-500 dark:text-neutral-400">
+            Nothing matches.
+          </p>
+        ) : (
+          <div class="mt-4 overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="border-b border-neutral-300 dark:border-neutral-700">
+                  {result.columns.map(column => (
+                    <th
+                      class:list={[
+                        'px-2 py-2 font-semibold text-neutral-700 dark:text-neutral-200',
+                        column.numeric ? 'text-right' : 'text-left',
+                      ]}
+                    >
+                      {column.label}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {result.rows.map(row => (
+                  <tr class="border-b border-neutral-200 dark:border-neutral-800">
+                    {result.columns.map(column => (
+                      <td
+                        class:list={[
+                          'px-2 py-1.5 text-neutral-700 dark:text-neutral-300',
+                          column.numeric
+                            ? 'text-right tabular-nums'
+                            : 'text-left',
+                        ]}
+                      >
+                        {row[column.key] ?? ''}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    )}
+  </div>
+</DashboardLayout>
