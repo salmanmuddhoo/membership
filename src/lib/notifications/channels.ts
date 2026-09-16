@@ -80,6 +80,94 @@ async function sendThroughGraph(
 }
 
 /**
+ * Send through Meta's WhatsApp Business Platform (the Cloud API).
+ *
+ * Business-initiated messages — which every notification here is, since
+ * nobody messages the Society to ask whether their application was approved —
+ * may only be sent as a template Meta approved in advance. So this does not
+ * post the finished sentence: it names the approved template and supplies the
+ * values for its positional {{1}}, {{2}} slots, in the order the placeholders
+ * appear in our own body (migration 0057).
+ *
+ * The rendered text still travels on the outbox row. It is what the member
+ * was told, and what the delivery log shows; it simply is not what goes on
+ * the wire for this one provider.
+ */
+async function sendThroughCloudApi(
+  message: OutgoingMessage,
+  delivery: ChannelDelivery
+): Promise<void> {
+  if (!message.providerTemplateName) {
+    throw new NotificationConfigError(
+      'This message has no WhatsApp template name, and WhatsApp will not ' +
+        'accept a business-initiated message without one. Set it on ' +
+        'Configuration → Notification wording to match the template ' +
+        'approved in the Meta console.'
+    );
+  }
+
+  const base = delivery.baseUrl ?? 'https://graph.facebook.com';
+  const version = delivery.apiVersion ?? 'v21.0';
+  // Meta wants the number in international form without the leading '+'.
+  const to = message.recipient.replace(/^\+/, '');
+
+  let response: Response;
+  try {
+    response = await fetch(
+      `${base}/${version}/${delivery.phoneNumberId}/messages`,
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${delivery.token}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          messaging_product: 'whatsapp',
+          to,
+          type: 'template',
+          template: {
+            name: message.providerTemplateName,
+            language: { code: message.providerTemplateLanguage ?? 'en' },
+            // Omitted entirely for a template with no variables: Meta rejects
+            // an empty parameter list rather than treating it as none.
+            ...((message.parameters ?? []).length > 0
+              ? {
+                  components: [
+                    {
+                      type: 'body',
+                      parameters: (message.parameters ?? []).map(text => ({
+                        type: 'text',
+                        text,
+                      })),
+                    },
+                  ],
+                }
+              : {}),
+          },
+        }),
+      }
+    );
+  } catch (error) {
+    throw new NotificationSendError(
+      'WhatsApp could not be reached: ' +
+        (error instanceof Error ? error.message : 'unknown error')
+    );
+  }
+
+  if (!response.ok) {
+    // Meta's body names the actual reason — an unapproved template, a number
+    // outside the allowed list on a trial account, an expired token — and
+    // those are indistinguishable from the status alone. It carries no member
+    // data beyond the number already on the row.
+    const detail = await response.text().catch(() => '');
+    throw new NotificationSendError(
+      `WhatsApp refused the message (${response.status}): ` +
+        detail.slice(0, 500)
+    );
+  }
+}
+
+/**
  * Post to whichever gateway the Society uses.
  *
  * The body is `{ channel, to, subject, message }` — a superset of the
@@ -157,6 +245,8 @@ export function channelFor(
       switch (delivery.kind) {
         case 'graph':
           return sendThroughGraph(message, delivery.from!);
+        case 'cloud_api':
+          return sendThroughCloudApi(message, delivery);
         case 'http':
           return sendThroughGateway(message, delivery);
         case 'log':

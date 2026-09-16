@@ -104,12 +104,54 @@ function spyChannel(name: 'email' | 'whatsapp', failWith?: string) {
   return sent;
 }
 
+// The wording exactly as the migrations seeded it, so a test that edits a
+// template cannot change what every later test is working against. One test
+// here does precisely that — deliberately, to prove a retry ignores an edit —
+// and without this it also silently emptied the placeholders out of every
+// assertion that ran after it.
+let seededTemplates: { id: string; subject: string | null; body: string }[] =
+  [];
+
 beforeAll(async () => {
   await run(ADMIN_URL, `create database ${dbName}`);
   await run(ownerUrl, 'revoke all on schema public from public');
   await run(ownerUrl, `grant connect on database ${dbName} to albarakah_app`);
   await migrate(ownerUrl, MIGRATIONS_DIR);
+
+  const seeded = await run(
+    appUrl,
+    'select id, subject, body from notification_template'
+  );
+  seededTemplates = seeded.rows as typeof seededTemplates;
 });
+
+async function restoreSeededWording(): Promise<void> {
+  // One client for the whole transaction: `run` opens and closes its own, so
+  // the actor set in one call would not be in scope for the next. Statements
+  // are issued separately because a parameterised query may carry only one.
+  const client = new pg.Client({ connectionString: appUrl, ssl: false });
+  await client.connect();
+  try {
+    await client.query('begin');
+    // notification_template is configuration, so migration 0010's trigger
+    // requires an actor for the write — the same as the real page.
+    await client.query(
+      `select set_config('albarakah.actor_description', 'test fixture', true)`
+    );
+    for (const template of seededTemplates) {
+      await client.query(
+        `update notification_template
+            set subject = $2, body = $3
+          where id = $1
+            and (body is distinct from $3 or subject is distinct from $2)`,
+        [template.id, template.subject, template.body]
+      );
+    }
+    await client.query('commit');
+  } finally {
+    await client.end();
+  }
+}
 
 afterAll(async () => {
   await pool.closePool();
@@ -118,6 +160,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await run(appUrl, 'delete from notification');
+  await restoreSeededWording();
   resetChannels();
   clearReferenceCache();
 });
@@ -353,6 +396,102 @@ describe('retrying', () => {
     expect(outcome.attempted).toBe(2);
     expect(outcome.sent).toBe(1);
     expect(whatsapps).toHaveLength(1);
+  });
+});
+
+describe('a provider that sends approved templates (WhatsApp)', () => {
+  // The values, in the order the placeholders appear in the body — not the
+  // rendered sentence, which WhatsApp would reject for a business-initiated
+  // message. 0053's whatsapp body reads "...{{applicant_name}}, your Al
+  // Barakah membership has been approved. Your member number is
+  // {{member_no}}."
+  it('records the positional values the provider template needs', async () => {
+    let seen: { parameters?: string[] | null; name?: string | null } = {};
+    registerChannel({
+      name: 'whatsapp',
+      async send(message) {
+        seen = {
+          parameters: message.parameters,
+          name: message.providerTemplateName,
+        };
+      },
+    });
+    spyChannel('email');
+
+    await notify(REQUEST);
+
+    expect(seen.name).toBe('membership_approved');
+    expect(seen.parameters).toEqual(['Fatimah Joomun', 'AB1001']);
+
+    const stored = await run(
+      appUrl,
+      `select provider_parameters from notification where channel = 'whatsapp'`
+    );
+    expect(stored.rows[0].provider_parameters).toEqual([
+      'Fatimah Joomun',
+      'AB1001',
+    ]);
+  });
+
+  // Email sends a finished sentence, so positional values would be noise.
+  it('records none for a channel that sends finished text', async () => {
+    spyChannel('email');
+    spyChannel('whatsapp');
+
+    await notify(REQUEST);
+
+    const stored = await run(
+      appUrl,
+      `select provider_parameters from notification where channel = 'email'`
+    );
+    expect(stored.rows[0].provider_parameters).toBeNull();
+  });
+
+  // The retry must send what the first attempt would have sent — including
+  // the parameters, which are on the row rather than recomputed.
+  it('replays the same values on a retry', async () => {
+    spyChannel('email', 'relay down');
+    registerChannel({
+      name: 'whatsapp',
+      async send() {
+        throw new Error('WhatsApp down');
+      },
+    });
+    await notify(REQUEST);
+
+    let replayed: string[] | null | undefined;
+    resetChannels();
+    spyChannel('email');
+    registerChannel({
+      name: 'whatsapp',
+      async send(message) {
+        replayed = message.parameters;
+      },
+    });
+    await makeEverythingDue();
+    await retryDueNotifications();
+
+    expect(replayed).toEqual(['Fatimah Joomun', 'AB1001']);
+  });
+
+  // An empty value keeps its position: dropping it would shift the member
+  // number into the slot where the name belongs.
+  it('keeps a missing value as an empty slot rather than shifting the rest', async () => {
+    let parameters: string[] | null | undefined;
+    registerChannel({
+      name: 'whatsapp',
+      async send(message) {
+        parameters = message.parameters;
+      },
+    });
+    spyChannel('email');
+
+    await notify({
+      ...REQUEST,
+      values: { member_no: 'AB1001' },
+    });
+
+    expect(parameters).toEqual(['', 'AB1001']);
   });
 });
 

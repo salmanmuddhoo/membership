@@ -1,7 +1,12 @@
 // Rendering is the part of S-901 with no database in it: given a template
 // and an event's values, what does the member actually read?
 import { describe, expect, it } from 'vitest';
-import { placeholdersIn, problemsWithEdit, render } from './templates';
+import {
+  placeholderSequence,
+  placeholdersIn,
+  problemsWithEdit,
+  render,
+} from './templates';
 import { placeholdersForEvent } from './event-codes';
 import type { NotificationTemplate } from './templates';
 
@@ -69,6 +74,8 @@ describe('what the editor refuses', () => {
       body: 'Hello {{applicant_name}}',
       isActive: true,
       description: '',
+      providerTemplateName: null,
+      providerTemplateLanguage: 'en',
       ...overrides,
     };
   }
@@ -165,5 +172,37 @@ describe('placeholdersForEvent', () => {
   it('knows nothing about an event it does not raise', () => {
     expect(placeholdersForEvent('member.dormant')).toBeNull();
     expect(placeholdersForEvent('nonsense')).toBeNull();
+  });
+});
+
+describe('placeholderSequence', () => {
+  // A provider that takes positional parameters gets them in this order, so
+  // this is not cosmetic: sorted output would put AB1001 where the member's
+  // name belongs and nobody would find out until a member read the message.
+  it('keeps the order the placeholders appear in, not alphabetical', () => {
+    expect(
+      placeholderSequence('Hello {{name}}, your number is {{ab_number}}.')
+    ).toEqual(['name', 'ab_number']);
+    // placeholdersIn sorts; these two must not be confused for each other.
+    expect(
+      placeholdersIn('Hello {{name}}, your number is {{ab_number}}.')
+    ).toEqual(['ab_number', 'name']);
+  });
+
+  // One parameter, used twice — which is what the provider expects, since a
+  // template may repeat {{1}}.
+  it('counts a repeated placeholder once, at its first appearance', () => {
+    expect(placeholderSequence('{{a}} then {{b}} then {{a}}')).toEqual([
+      'a',
+      'b',
+    ]);
+  });
+
+  it('is case-insensitive, like rendering', () => {
+    expect(placeholderSequence('{{Name}} and {{name}}')).toEqual(['name']);
+  });
+
+  it('returns nothing for wording with no slots', () => {
+    expect(placeholderSequence('Plain text.')).toEqual([]);
   });
 });
