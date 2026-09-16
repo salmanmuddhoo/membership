@@ -421,9 +421,27 @@ const AUTO_FILLED_GUARDIAN_FIELDS = new Set([
         button.className =
           'block w-full px-3 py-2 text-left hover:bg-neutral-100 dark:hover:bg-neutral-800';
         const name = `${candidate.name} ${candidate.surname}`.trim();
-        button.innerHTML =
-          `<span class="block font-medium text-neutral-800 dark:text-neutral-100">${name || '(no name yet)'}</span>` +
-          `<span class="block text-xs text-neutral-500 dark:text-neutral-400">${candidate.reference} · ${STATUS_TEXT[candidate.status] ?? candidate.status}</span>`;
+
+        // Built as elements with textContent, never as an HTML string. Every
+        // value here is an applicant's own typed name or reference, and
+        // anyone who can start an application can type one — including a
+        // member of the public through the app's own sign-up, and the
+        // website through the public API. Interpolating them into innerHTML
+        // made that a script running in the officer's session, with the
+        // officer's access, the moment they searched.
+        const nameLine = document.createElement('span');
+        nameLine.className =
+          'block font-medium text-neutral-800 dark:text-neutral-100';
+        nameLine.textContent = name || '(no name yet)';
+
+        const detailLine = document.createElement('span');
+        detailLine.className =
+          'block text-xs text-neutral-500 dark:text-neutral-400';
+        detailLine.textContent =
+          `${candidate.reference} · ` +
+          `${STATUS_TEXT[candidate.status] ?? candidate.status}`;
+
+        button.replaceChildren(nameLine, detailLine);
         button.addEventListener('click', () => {
           setField('surname', candidate.surname);
           setField('name', candidate.name);
