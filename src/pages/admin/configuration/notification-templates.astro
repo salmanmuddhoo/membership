@@ -11,6 +11,7 @@ import { ConfigError } from '@lib/config/reference';
 import { placeholdersForEvent } from '@lib/notifications/event-codes';
 import {
   listNotificationTemplates,
+  placeholderSequence,
   updateNotificationTemplate,
   type NotificationChannel,
 } from '@lib/notifications/templates';
@@ -35,6 +36,12 @@ if (Astro.request.method === 'POST') {
           subject: subject === '' ? null : subject,
           body: String(form.get('body') ?? ''),
           isActive: form.get('isActive') === 'on',
+          providerTemplateName: String(
+            form.get('providerTemplateName') ?? ''
+          ).trim(),
+          providerTemplateLanguage: String(
+            form.get('providerTemplateLanguage') ?? ''
+          ).trim(),
         },
         { userId: principal.userId, email: principal.email }
       );
@@ -123,6 +130,21 @@ for (const template of templates) {
           </p>
         )}
 
+        {group.some(t => t.channel === 'whatsapp') &&
+          placeholderSequence(group.find(t => t.channel === 'whatsapp')!.body)
+            .length > 0 && (
+            <p class="flex flex-wrap items-center gap-1.5 text-xs text-neutral-500 dark:text-neutral-400">
+              <span>WhatsApp slots:</span>
+              {placeholderSequence(
+                group.find(t => t.channel === 'whatsapp')!.body
+              ).map((name, i) => (
+                <code class="rounded bg-neutral-200 px-1.5 py-0.5 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-200">
+                  {`{{${i + 1}}} = {{${name}}}`}
+                </code>
+              ))}
+            </p>
+          )}
+
         {group.map(template => (
           <form
             method="post"
@@ -157,6 +179,31 @@ for (const template of templates) {
                   class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-950 dark:text-neutral-100"
                 />
               </label>
+            )}
+
+            {template.channel === 'whatsapp' && (
+              <div class="grid gap-3 sm:grid-cols-3">
+                <label class="block text-sm text-neutral-600 sm:col-span-2 dark:text-neutral-300">
+                  WhatsApp template name
+                  <input
+                    type="text"
+                    name="providerTemplateName"
+                    value={template.providerTemplateName ?? ''}
+                    disabled={!canManage}
+                    class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-950 dark:text-neutral-100"
+                  />
+                </label>
+                <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+                  Language
+                  <input
+                    type="text"
+                    name="providerTemplateLanguage"
+                    value={template.providerTemplateLanguage}
+                    disabled={!canManage}
+                    class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-950 dark:text-neutral-100"
+                  />
+                </label>
+              </div>
             )}
 
             <label class="block text-sm text-neutral-600 dark:text-neutral-300">

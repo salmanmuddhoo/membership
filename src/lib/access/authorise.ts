@@ -45,6 +45,13 @@ const ROUTE_PERMISSIONS: ReadonlyArray<readonly [string, string]> = [
   // to know the email bounced, which is not a reason to give them the whole
   // audit trail.
   ['/admin/notifications', 'notification.view'],
+  // The API reference (S-110). Its own permission because its audience is
+  // whoever integrates with this system, who is often not the person who
+  // administers roles. Note what it does NOT govern: a request made from that
+  // page goes through the same middleware and the same per-endpoint
+  // permission as any other caller, so the page can only ever do what the
+  // officer using it could already do.
+  ['/admin/api', 'api.explore'],
 
   // Reference configuration (M2 Feature 2.2). A prefix rule: every page under
   // it needs config.view to read, and each page checks config.manage itself

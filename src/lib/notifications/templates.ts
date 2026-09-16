@@ -24,6 +24,12 @@ export interface NotificationTemplate {
   body: string;
   isActive: boolean;
   description: string;
+  // What the same wording is called in the provider's own console, for a
+  // channel that sends approved templates rather than finished text (S-903,
+  // migration 0057). Null for email, and for a gateway that takes a finished
+  // sentence.
+  providerTemplateName: string | null;
+  providerTemplateLanguage: string;
 }
 
 interface TemplateRow {
@@ -34,6 +40,8 @@ interface TemplateRow {
   body: string;
   is_active: boolean;
   description: string;
+  provider_template_name: string | null;
+  provider_template_language: string;
 }
 
 function toTemplate(row: TemplateRow): NotificationTemplate {
@@ -45,6 +53,8 @@ function toTemplate(row: TemplateRow): NotificationTemplate {
     body: row.body,
     isActive: row.is_active,
     description: row.description,
+    providerTemplateName: row.provider_template_name,
+    providerTemplateLanguage: row.provider_template_language,
   };
 }
 
@@ -53,7 +63,8 @@ export async function listNotificationTemplates(): Promise<
 > {
   return cached('notification_templates', async () => {
     const result = await query<TemplateRow>(
-      `select id, event_code, channel, subject, body, is_active, description
+      `select id, event_code, channel, subject, body, is_active, description,
+              provider_template_name, provider_template_language
          from notification_template
         order by event_code, channel`
     );
@@ -117,10 +128,35 @@ export function placeholdersIn(template: string): string[] {
   return [...found].sort();
 }
 
+/**
+ * The placeholders a template uses, in the order they first appear.
+ *
+ * Distinct from placeholdersIn, which sorts: this order is not cosmetic. A
+ * provider that sends approved templates (WhatsApp, S-903) takes POSITIONAL
+ * parameters — {{1}}, {{2}} — so the Nth placeholder written here is the Nth
+ * value sent. Sorting them would silently swap a member's name and their
+ * member number.
+ *
+ * Deduplicated by first appearance: a value used twice in one body is still
+ * one parameter, which is what the provider expects.
+ */
+export function placeholderSequence(template: string): string[] {
+  const seen: string[] = [];
+  for (const match of template.matchAll(PLACEHOLDER)) {
+    const name = match[1].toLowerCase();
+    if (!seen.includes(name)) seen.push(name);
+  }
+  return seen;
+}
+
 export interface TemplateEdit {
   subject: string | null;
   body: string;
   isActive: boolean;
+  // Only meaningful on a channel that sends approved templates; ignored
+  // elsewhere, so the editing screen need not know which is which.
+  providerTemplateName?: string | null;
+  providerTemplateLanguage?: string;
 }
 
 /**
@@ -194,9 +230,18 @@ export async function updateNotificationTemplate(
     async client => {
       await client.query(
         `update notification_template
-            set subject = $2, body = $3, is_active = $4
+            set subject = $2, body = $3, is_active = $4,
+                provider_template_name = $5,
+                provider_template_language = coalesce($6, 'en')
           where id = $1`,
-        [id, edit.subject, edit.body, edit.isActive]
+        [
+          id,
+          edit.subject,
+          edit.body,
+          edit.isActive,
+          edit.providerTemplateName?.trim() || null,
+          edit.providerTemplateLanguage?.trim() || null,
+        ]
       );
     }
   );

@@ -20,6 +20,7 @@ import { query } from '../db/pool';
 import { activeChannels } from './channels';
 import { backoffMinutes } from './retry';
 import {
+  placeholderSequence,
   render,
   templateFor,
   type NotificationChannel,
@@ -31,6 +32,13 @@ export interface OutgoingMessage {
   recipient: string;
   subject: string | null;
   body: string;
+  // For a provider that sends approved templates rather than finished text
+  // (WhatsApp, S-903): what the wording is called at the provider, and the
+  // values for its positional slots. `body` is still the rendered text, which
+  // is what the member reads and what the delivery log shows.
+  providerTemplateName?: string | null;
+  providerTemplateLanguage?: string;
+  parameters?: string[] | null;
 }
 
 export interface Channel {
@@ -68,6 +76,25 @@ function recipientFor(
   return trimmed === '' ? null : trimmed;
 }
 
+/**
+ * The values a provider template's positional slots take.
+ *
+ * Only for a channel that names a provider template; everything else sends
+ * finished text and has no use for them. An empty value is sent as an empty
+ * string rather than skipped — dropping it would shift every later parameter
+ * up one and put the member number where the name belongs.
+ */
+function parametersFor(
+  template: NotificationTemplate,
+  values: Record<string, string | null | undefined>
+): string[] | null {
+  if (!template.providerTemplateName) return null;
+  return placeholderSequence(template.body).map(name => {
+    const value = values[name];
+    return value == null ? '' : String(value);
+  });
+}
+
 async function record(
   template: NotificationTemplate,
   message: OutgoingMessage,
@@ -76,8 +103,8 @@ async function record(
   const result = await query<{ id: string }>(
     `insert into notification
        (event_code, channel, template_id, recipient, subject, body,
-        entity_type, entity_id)
-     values ($1, $2, $3, $4, $5, $6, $7, $8)
+        entity_type, entity_id, provider_parameters)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      returning id`,
     [
       request.eventCode,
@@ -88,6 +115,10 @@ async function record(
       message.body,
       request.entityType ?? null,
       request.entityId ?? null,
+      // Stored rather than recomputed at retry time, for the same reason the
+      // rendered body is: a second attempt sends what the first would have,
+      // even if the wording has been edited since.
+      message.parameters ? JSON.stringify(message.parameters) : null,
     ]
   );
   return result.rows[0].id;
@@ -149,6 +180,11 @@ export async function notify(request: NotifyRequest): Promise<string[]> {
           ? render(template.subject, request.values)
           : null,
         body: render(template.body, request.values),
+        providerTemplateName: template.providerTemplateName,
+        providerTemplateLanguage: template.providerTemplateLanguage,
+        // The body's own placeholder order is the parameter order: the Nth
+        // slot an administrator writes is the provider template's {{N}}.
+        parameters: parametersFor(template, request.values),
       };
 
       const id = await record(template, message, request);

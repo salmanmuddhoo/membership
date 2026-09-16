@@ -16,6 +16,11 @@ const NOTIFY_VARS = [
   'NOTIFY_WHATSAPP_DELIVERY',
   'NOTIFY_WHATSAPP_WEBHOOK_URL',
   'NOTIFY_WHATSAPP_WEBHOOK_TOKEN',
+  'NOTIFY_WHATSAPP_PHONE_NUMBER_ID',
+  'NOTIFY_WHATSAPP_TOKEN',
+  'NOTIFY_WHATSAPP_BASE_URL',
+  'NOTIFY_EMAIL_PHONE_NUMBER_ID',
+  'NOTIFY_EMAIL_TOKEN',
   'GRAPH_TENANT_ID',
   'GRAPH_CLIENT_ID',
   'GRAPH_CLIENT_SECRET',
@@ -223,6 +228,141 @@ describe('the gateway channel', () => {
     await expect(
       configuredChannels().get('whatsapp')!.send(WHATSAPP)
     ).rejects.toBeInstanceOf(NotificationSendError);
+  });
+});
+
+describe('WhatsApp through the Cloud API', () => {
+  beforeEach(() => {
+    process.env.NOTIFY_WHATSAPP_DELIVERY = 'cloud_api';
+    process.env.NOTIFY_WHATSAPP_PHONE_NUMBER_ID = '1234567890';
+    process.env.NOTIFY_WHATSAPP_TOKEN = 'meta-token';
+    process.env.NOTIFY_WHATSAPP_BASE_URL = 'https://graph.test';
+  });
+
+  const APPROVED = {
+    ...WHATSAPP,
+    providerTemplateName: 'membership_approved',
+    providerTemplateLanguage: 'en',
+    parameters: ['Fatimah Joomun', 'AB1001'],
+  };
+
+  // The whole point of S-903's rework: a business-initiated WhatsApp message
+  // may only be an approved template with positional values, never the
+  // finished sentence. Sending text here is rejected by Meta, not delivered.
+  it('sends the approved template and its values, not the finished text', async () => {
+    const fetchMock = fetchReturning(200, '{"messages":[{"id":"wamid.x"}]}');
+    vi.stubGlobal('fetch', fetchMock);
+    const { configuredChannels } = await load();
+
+    await configuredChannels().get('whatsapp')!.send(APPROVED);
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('https://graph.test/v21.0/1234567890/messages');
+    const body = JSON.parse(init!.body as string);
+    expect(body).toMatchObject({
+      messaging_product: 'whatsapp',
+      type: 'template',
+      template: {
+        name: 'membership_approved',
+        language: { code: 'en' },
+      },
+    });
+    expect(body.template.components[0].parameters).toEqual([
+      { type: 'text', text: 'Fatimah Joomun' },
+      { type: 'text', text: 'AB1001' },
+    ]);
+    // The rendered sentence is the outbox's record, not what goes on the wire.
+    expect(init!.body as string).not.toContain(WHATSAPP.body);
+  });
+
+  // Meta wants international form without the plus; M3 stores it with one.
+  it('strips the leading plus from the number', async () => {
+    const fetchMock = fetchReturning(200);
+    vi.stubGlobal('fetch', fetchMock);
+    const { configuredChannels } = await load();
+
+    await configuredChannels().get('whatsapp')!.send(APPROVED);
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1]!.body as string);
+    expect(body.to).toBe('23057891234');
+  });
+
+  it('authenticates with the token', async () => {
+    const fetchMock = fetchReturning(200);
+    vi.stubGlobal('fetch', fetchMock);
+    const { configuredChannels } = await load();
+
+    await configuredChannels().get('whatsapp')!.send(APPROVED);
+
+    const headers = fetchMock.mock.calls[0][1]!.headers as Record<
+      string,
+      string
+    >;
+    expect(headers.authorization).toBe('Bearer meta-token');
+  });
+
+  // Meta rejects an empty parameter list rather than reading it as none.
+  it('omits components for a template with no variables', async () => {
+    const fetchMock = fetchReturning(200);
+    vi.stubGlobal('fetch', fetchMock);
+    const { configuredChannels } = await load();
+
+    await configuredChannels()
+      .get('whatsapp')!
+      .send({ ...APPROVED, parameters: [] });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1]!.body as string);
+    expect(body.template).not.toHaveProperty('components');
+  });
+
+  // Without a template name there is nothing to send that WhatsApp would
+  // accept, and saying so is more use than a 400 from Meta.
+  it('refuses a message with no provider template name', async () => {
+    vi.stubGlobal('fetch', fetchReturning(200));
+    const { configuredChannels, NotificationConfigError } = await load();
+
+    await expect(
+      configuredChannels().get('whatsapp')!.send(WHATSAPP)
+    ).rejects.toBeInstanceOf(NotificationConfigError);
+  });
+
+  // An unapproved template and an expired token both come back as a 4xx, and
+  // only Meta's body tells them apart — so it reaches the delivery log.
+  it('carries Meta’s own reason into the failure', async () => {
+    vi.stubGlobal(
+      'fetch',
+      fetchReturning(
+        400,
+        '{"error":{"message":"template name does not exist"}}'
+      )
+    );
+    const { configuredChannels, NotificationSendError } = await load();
+
+    const send = configuredChannels().get('whatsapp')!.send(APPROVED);
+    await expect(send).rejects.toBeInstanceOf(NotificationSendError);
+    await expect(send).rejects.toThrowError(/template name does not exist/);
+  });
+
+  // Half-configured reads as not configured, the same as every other channel.
+  it('treats a missing phone number id as not configured', async () => {
+    delete process.env.NOTIFY_WHATSAPP_PHONE_NUMBER_ID;
+    const { configuredChannels, NotificationConfigError } = await load();
+
+    await expect(
+      configuredChannels().get('whatsapp')!.send(APPROVED)
+    ).rejects.toBeInstanceOf(NotificationConfigError);
+  });
+
+  // Microsoft 365 sends mail, not WhatsApp; the reverse is equally true.
+  it('is not available on the email channel', async () => {
+    process.env.NOTIFY_EMAIL_DELIVERY = 'cloud_api';
+    process.env.NOTIFY_EMAIL_PHONE_NUMBER_ID = '1234567890';
+    process.env.NOTIFY_EMAIL_TOKEN = 'meta-token';
+    const { configuredChannels, NotificationConfigError } = await load();
+
+    await expect(
+      configuredChannels().get('email')!.send(EMAIL)
+    ).rejects.toBeInstanceOf(NotificationConfigError);
   });
 });
 

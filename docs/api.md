@@ -106,6 +106,25 @@ endpoint cannot be added without being documented. A committed document that has
 drifted from the routes fails too — stale documentation is worse than none,
 because an integrator trusts it.
 
+## Reading it inside the application
+
+**API** (`/admin/api`) renders the same generated document grouped by
+category, with each endpoint's parameters, request and response schemas, and
+the permission it needs. Because it reads `docs/openapi.json`, it cannot drift
+from the routes: an endpoint missing a descriptor fails the build, and a stale
+committed document fails `pnpm openapi:check`.
+
+It can also make the request. That is an ordinary same-origin call carrying the
+officer's own session cookie, so it goes through the same middleware, the same
+per-endpoint permission check and the same rate limit as any other caller —
+**the page grants no access**. It removes the need for a separate HTTP client,
+nothing more.
+
+What it does change is how easy a destructive call becomes: one button rather
+than a deliberately composed request. So anything that is not a `GET` is held
+behind a switch that has to be turned on first. Reaching the page at all needs
+`api.explore`, which starts out granted to System Administrator only.
+
 ## Rate limiting
 
 A fixed-window counter kept **in the database**, not in process memory: the

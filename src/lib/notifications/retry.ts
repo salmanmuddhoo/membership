@@ -60,6 +60,12 @@ export interface DueNotification {
   subject: string | null;
   body: string;
   attempts: number;
+  // The provider template this was sent as, and its positional values
+  // (migration 0057). Read back from the row rather than resolved from the
+  // template again: a retry sends what the first attempt would have sent.
+  providerTemplateName: string | null;
+  providerTemplateLanguage: string | null;
+  providerParameters: string[] | null;
 }
 
 /**
@@ -79,24 +85,43 @@ export async function dueNotifications(
     subject: string | null;
     body: string;
     attempts: number;
+    provider_template_name: string | null;
+    provider_template_language: string | null;
+    provider_parameters: string[] | null;
   }>(
-    `select id, channel, recipient, subject, body, attempts
-       from notification
-      where status in ('pending', 'failed')
-        and attempts < $1
+    // The template is joined for its provider name and language only — a
+    // template deleted since leaves those null, and the send then refuses
+    // with a reason rather than guessing one.
+    `select n.id, n.channel, n.recipient, n.subject, n.body, n.attempts,
+            n.provider_parameters,
+            t.provider_template_name, t.provider_template_language
+       from notification n
+       left join notification_template t on t.id = n.template_id
+      where n.status in ('pending', 'failed')
+        and n.attempts < $1
         and (
-          next_attempt_at <= now()
+          n.next_attempt_at <= now()
           -- Never scheduled: a send that nothing lived long enough to mark
           -- either way. Picked up on age instead.
-          or (next_attempt_at is null
-              and created_at < now() - ($2 || ' minutes')::interval)
+          or (n.next_attempt_at is null
+              and n.created_at < now() - ($2 || ' minutes')::interval)
         )
-      order by created_at
+      order by n.created_at
       limit $3`,
     [MAX_ATTEMPTS, PENDING_GRACE_MINUTES, limit]
   );
 
-  return result.rows;
+  return result.rows.map(r => ({
+    id: r.id,
+    channel: r.channel,
+    recipient: r.recipient,
+    subject: r.subject,
+    body: r.body,
+    attempts: r.attempts,
+    providerTemplateName: r.provider_template_name,
+    providerTemplateLanguage: r.provider_template_language,
+    providerParameters: r.provider_parameters,
+  }));
 }
 
 async function markSent(id: string): Promise<void> {
@@ -175,6 +200,10 @@ export async function retryDueNotifications(
         recipient: notification.recipient,
         subject: notification.subject,
         body: notification.body,
+        providerTemplateName: notification.providerTemplateName,
+        providerTemplateLanguage:
+          notification.providerTemplateLanguage ?? undefined,
+        parameters: notification.providerParameters,
       });
       await markSent(notification.id);
       outcome.sent += 1;

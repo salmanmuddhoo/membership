@@ -289,16 +289,26 @@ export function getMemberConfig(): MemberConfig {
 // whom — and it is the only place a provider is named. Changing provider is
 // changing these variables, which is what decision 11 asked for.
 export interface ChannelDelivery {
-  // 'graph' sends through the Society's Microsoft 365 mailbox, reusing the
-  // GRAPH_* registration documents already use. 'http' posts
-  // { to, subject, body } to whichever gateway the Society has — the same
+  // 'graph' sends email through the Society's Microsoft 365 mailbox, reusing
+  // the GRAPH_* registration documents already use. 'cloud_api' sends
+  // WhatsApp through Meta's own WhatsApp Business Platform. 'http' posts
+  // { to, subject, message } to whichever gateway the Society has — the same
   // shape the member app's one-time codes already use, so one gateway can
   // carry both. 'log' writes to the server log and is non-production only.
-  kind: 'graph' | 'http' | 'log' | 'unconfigured';
+  kind: 'graph' | 'cloud_api' | 'http' | 'log' | 'unconfigured';
   // The mailbox mail is sent as, for 'graph'.
   from?: string;
   webhookUrl?: string;
   webhookToken?: string;
+  // For 'cloud_api': the WhatsApp Business phone number the Society sends as,
+  // named by the id Meta gives it rather than by the number itself, and a
+  // token with permission to send from it.
+  phoneNumberId?: string;
+  token?: string;
+  // Overridable so a test can point the sender at a stub, and so a pinned
+  // Graph API version can be moved without a release.
+  baseUrl?: string;
+  apiVersion?: string;
 }
 
 export interface NotificationConfig {
@@ -326,13 +336,31 @@ function channelDelivery(
   const from = readEnv(`${prefix}_FROM`);
   const webhookUrl = readEnv(`${prefix}_WEBHOOK_URL`);
   const webhookToken = readEnv(`${prefix}_WEBHOOK_TOKEN`);
+  const phoneNumberId = readEnv(`${prefix}_PHONE_NUMBER_ID`);
+  const token = readEnv(`${prefix}_TOKEN`);
 
   let kind: ChannelDelivery['kind'] = 'unconfigured';
   if (requested === 'graph' && allowed.has('graph') && from) kind = 'graph';
-  else if (requested === 'http' && webhookUrl) kind = 'http';
+  else if (
+    requested === 'cloud_api' &&
+    allowed.has('cloud_api') &&
+    phoneNumberId &&
+    token
+  ) {
+    kind = 'cloud_api';
+  } else if (requested === 'http' && webhookUrl) kind = 'http';
   else if (requested === 'log') kind = 'log';
 
-  return { kind, from, webhookUrl, webhookToken };
+  return {
+    kind,
+    from,
+    webhookUrl,
+    webhookToken,
+    phoneNumberId,
+    token,
+    baseUrl: readEnv(`${prefix}_BASE_URL`),
+    apiVersion: readEnv(`${prefix}_API_VERSION`),
+  };
 }
 
 /**
@@ -360,7 +388,7 @@ export function getNotificationConfig(): NotificationConfig {
     ),
     // No 'graph': Microsoft 365 sends mail, not WhatsApp.
     whatsapp: demote(
-      channelDelivery('NOTIFY_WHATSAPP', new Set(['http', 'log']))
+      channelDelivery('NOTIFY_WHATSAPP', new Set(['cloud_api', 'http', 'log']))
     ),
   };
 }
