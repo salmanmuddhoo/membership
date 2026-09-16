@@ -75,6 +75,12 @@ const ROUTE_PERMISSIONS: ReadonlyArray<readonly [string, string]> = [
   // as viewing an application against approving it.
   ['/members/details-updates', 'member.view'],
 
+  // Reports (M9). A prefix rule: report.view reaches the page, and each
+  // report additionally checks the data permission it names — member.view,
+  // payment.view, audit.view — so a URL typed by hand is not a way past the
+  // permission that governs the data underneath.
+  ['/reports/', 'report.view'],
+
   // Receipts (M5). Reading a receipt is payment.view; auditing the sequence is
   // the Treasurer's own permission. The longer prefix wins, so the exact rule
   // for the reconciliation page tightens the broader one rather than being
