@@ -147,14 +147,18 @@ function buildDocument(descriptors: EndpointDescriptor[]) {
           ? '(a member app session)'
           : d.caller === 'public'
             ? '(none — public)'
-            : (d.permission ?? '(any signed-in account)'),
+            : d.caller === 'integration'
+              ? `(an API credential with scope: ${d.scope})`
+              : (d.permission ?? '(any signed-in account)'),
       // The staff cookie is the document-wide default; the member surface
       // overrides it per operation (docs/member-app.md).
       ...(d.caller === 'member'
         ? { security: [{ memberToken: [] }] }
         : d.caller === 'public'
           ? { security: [] }
-          : {}),
+          : d.caller === 'integration'
+            ? { security: [{ apiCredential: [] }] }
+            : {}),
       responses: {
         '200': {
           description: 'Success',
@@ -233,6 +237,15 @@ function buildDocument(descriptors: EndpointDescriptor[]) {
           description:
             "The member app's access token, from /api/v1/member/auth/" +
             'verify-otp or /refresh. Resolves to a member_session server-side.',
+        },
+        apiCredential: {
+          type: 'http',
+          scheme: 'bearer',
+          description:
+            'An API credential (S-909), as `<client_id>.<secret>`. Issued ' +
+            'from Administration -> API credentials and shown once. Checked ' +
+            'against the database on every request, so revoking one stops it ' +
+            'immediately.',
         },
       },
     },

@@ -125,6 +125,53 @@ than a deliberately composed request. So anything that is not a `GET` is held
 behind a switch that has to be turned on first. Reaching the page at all needs
 `api.explore`, which starts out granted to System Administrator only.
 
+## A third caller: machines
+
+`/api/v1/public` is reached by a server rather than a person — Albarakah.mu
+submitting an application (S-908). It is built with
+`defineIntegrationEndpoint` (`lib/api/integration-endpoint.ts`): same
+descriptor, same envelope, same log line, and a credential instead of a
+session.
+
+Nobody is present, so what a person's own caution would cover has to be
+structural:
+
+- **The credential is checked against the database on every request**, never
+  cached. Revoking one stops it on its very next call.
+- **Refusals are recorded**, not merely logged (S-909). A credential being
+  tried and failing is the signal that someone is probing, and it is worth
+  more than a success when it repeats. The reason is recorded as
+  `no_credential`, `invalid_credential`, `out_of_scope`, `rate_limited` or
+  `too_many_attempts`.
+- **Every way of being wrong returns the same 401.** No credential, a wrong
+  secret and a revoked one are indistinguishable to the caller, so a list of
+  client ids cannot be sorted into real and invented.
+- **The limit is per credential**, at its own ceiling, so one integration
+  looping on a bug cannot exhaust another's allowance. An address that has
+  not yet authenticated is limited separately and hard — nothing legitimate
+  fails to authenticate repeatedly.
+- **The scope is written per endpoint**, so a new endpoint added beside an
+  existing one does not inherit its reach.
+
+### Credentials
+
+Issued at **Administration → API credentials** (`api_credential.manage`), as
+`<client_id>.<secret>`:
+
+```
+Authorization: Bearer ab_kJ3f….9tQm…
+```
+
+The client id is the lookup half and is not secret. The secret is 32 random
+bytes, stored only as a SHA-256 and **shown once**. There is no way to read it
+back — a credential the system could show again is one a copy of the database
+hands over, and re-issuing takes a moment. Tokens begin `ab_` so a leaked one
+is recognisable to a secret scanner.
+
+The middleware never resolves a staff cookie under `/api/v1/public/`, so a
+signed-in officer's browser cannot reach these endpoints as themselves, and
+`defineIntegrationEndpoint` never resolves a cookie or a member token.
+
 ## Rate limiting
 
 A fixed-window counter kept **in the database**, not in process memory: the

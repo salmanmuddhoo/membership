@@ -17,6 +17,13 @@ const API_PREFIX = '/api/';
 // endpoint saw it.
 const MEMBER_API_PREFIX = '/api/v1/member/';
 
+// The same reasoning for the machine-caller surface (S-908, S-909): a public
+// endpoint resolves its own API credential in defineIntegrationEndpoint, and
+// running the staff checks would refuse every request as unauthenticated
+// before the endpoint saw one. A staff cookie is never resolved here, so a
+// signed-in officer's browser cannot reach these endpoints as themselves.
+const PUBLIC_API_PREFIX = '/api/v1/public/';
+
 // An API caller is not a browser: redirecting it to a sign-in page produces a
 // 302 to some HTML, which a client parsing JSON cannot make sense of. API
 // routes therefore refuse with the standard envelope and the right status.
@@ -92,7 +99,10 @@ export const onRequest = defineMiddleware(async (context, next) => {
     return next();
   }
 
-  if (pathname.startsWith(MEMBER_API_PREFIX)) {
+  if (
+    pathname.startsWith(MEMBER_API_PREFIX) ||
+    pathname.startsWith(PUBLIC_API_PREFIX)
+  ) {
     return next();
   }
 

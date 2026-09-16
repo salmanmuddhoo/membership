@@ -73,6 +73,11 @@
         "type": "http",
         "scheme": "bearer",
         "description": "The member app's access token, from /api/v1/member/auth/verify-otp or /refresh. Resolves to a member_session server-side."
+      },
+      "apiCredential": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "An API credential (S-909), as `<client_id>.<secret>`. Issued from Administration -> API credentials and shown once. Checked against the database on every request, so revoking one stops it immediately."
       }
     }
   },
@@ -5740,6 +5745,157 @@
                         },
                         "value": {
                           "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/public/applications": {
+      "post": {
+        "summary": "Submit a membership application from the public website",
+        "description": "Creates the application through the same service the staff screens use, so the two cannot diverge. It lands in the branch queue as `received`: a website can neither file the signed form nor take the payment, so an officer completes the document checklist and submits it into the approval chain. Fields are validated against the membership type's current configuration; documents are not, because they are collected at the branch. Only the reference is returned.",
+        "tags": [
+          "Public website"
+        ],
+        "operationId": "postPublicApplications",
+        "x-required-permission": "(an API credential with scope: applications.submit)",
+        "security": [
+          {
+            "apiCredential": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "reference",
+                        "status"
+                      ],
+                      "properties": {
+                        "reference": {
+                          "type": "string",
+                          "description": "Quote this to the Society. It is the only identifier a public caller is given."
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "received"
+                          ]
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "membershipTypeCode",
+                  "parties"
+                ],
+                "properties": {
+                  "membershipTypeCode": {
+                    "type": "string",
+                    "description": "A membership type the Society currently accepts, e.g. `individual`. Read them from /api/v1/member/reference."
+                  },
+                  "parties": {
+                    "type": "array",
+                    "description": "One entry per person on the form. The applicant (subject `applicant`, ordinal 1) is required; a nominee or guardian is sent the same way when the type configures one. Fields the type does not configure are ignored rather than refused.",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "subject",
+                        "ordinal",
+                        "values"
+                      ],
+                      "properties": {
+                        "subject": {
+                          "type": "string",
+                          "enum": [
+                            "applicant",
+                            "nominee",
+                            "guardian",
+                            "beneficiary",
+                            "employment"
+                          ]
+                        },
+                        "ordinal": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "values": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "description": "Keyed by field key, e.g. `name`, `surname`, `mobile`, `nic`. A telephone number is converted to international form on the way in."
                         }
                       }
                     }

@@ -52,6 +52,10 @@ const ROUTE_PERMISSIONS: ReadonlyArray<readonly [string, string]> = [
   // permission as any other caller, so the page can only ever do what the
   // officer using it could already do.
   ['/admin/api', 'api.explore'],
+  // Issuing a credential creates a caller that reaches the system with no
+  // person behind it, which is a different kind of act from reading the API
+  // reference — so a different permission, and a narrower one (S-909).
+  ['/admin/api-credentials', 'api_credential.manage'],
 
   // Reference configuration (M2 Feature 2.2). A prefix rule: every page under
   // it needs config.view to read, and each page checks config.manage itself
