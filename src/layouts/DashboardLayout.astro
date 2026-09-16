@@ -135,6 +135,9 @@ const navGroups: NavGroup[] = [
             },
           ]
         : []),
+      ...(can('api.explore')
+        ? [{ label: 'API', href: '/admin/api', icon: 'settings' }]
+        : []),
     ],
   },
   // A group with nothing the person may see is dropped entirely, so the heading
