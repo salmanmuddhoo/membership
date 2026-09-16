@@ -170,6 +170,37 @@ rather than sending anything.
 pnpm job notification-retry
 ```
 
+## `retention-disposal` (S-1003)
+
+Disposes of what is past the period the Society has set for it, and of nothing
+at all until one is set: every period ships unset, unset means retain
+indefinitely, and a class with no period is not queried. On a database where
+the Society has stated nothing this run reads three rows and exits, which is
+what makes it safe to schedule ahead of that decision.
+
+Chunked in passes rather than by keyset, because the shape of the work is
+different from a sweep: each pass takes a bounded number of the oldest due
+records and commits, and the job stops when a pass finds nothing. That keeps a
+first sweep of a years-deep log off one long transaction, and `SIGTERM` between
+passes stops the job with everything so far committed.
+
+Idempotent, as every job body above must be, by construction rather than by
+care: notifications and drafts are deleted, so a repeated chunk does not find
+them, and a redacted application carries `disposed_at`.
+
+A draft that `deleteDraftApplication` refuses — one paid against, or with a
+transition behind it — is counted and skipped, never thrown. It is offered
+again on every run, which is correct: it is not disposable, and saying so
+repeatedly beats forgetting it exists. It deliberately does not count as
+progress, or the pass loop would never terminate.
+
+Run **daily**, alongside `document-expiry`. `docs/retention.md` has what each
+class means and what disposal does to it.
+
+```bash
+pnpm job retention-disposal
+```
+
 ## Recommendation for M7 and M8
 
 - **M7 migration import** — a Manual job. Read the cleansed extract in batches,

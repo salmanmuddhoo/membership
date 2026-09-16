@@ -1505,6 +1505,96 @@ export async function expireDocuments(
  * folder that was never the real one and leaves the actual files behind,
  * uncounted for.
  */
+/**
+ * Remove the files an application filed, without assuming it owns the folder
+ * they are in (S-1003).
+ *
+ * discardApplicationFiles below deletes a folder derived from the
+ * application's own reference and applicant name. That is right for a draft an
+ * officer abandons, and not enough for retention disposal, which reaches
+ * applications draft deletion never can. Since migration 0043 an application
+ * captured for someone who already had one files into THAT application's
+ * folder, so an existing member's refused request to open another account has
+ * its documents in the member's folder — and a path derived from the refused
+ * application's own reference names a folder that was never created. Disposal
+ * would delete nothing and leave the papers where they are.
+ *
+ * So this works from what was actually recorded rather than from a
+ * reconstruction of it: the paths on this application's own document versions,
+ * skipping any file another document still holds — the same carry-forward case
+ * removeFiledDocument guards against, and for the same reason.
+ *
+ * The folder goes only when this application owns it. That guard is defensive
+ * rather than a fix: a borrowed folder always belongs to an approved
+ * application (capture.ts resolves folder_application_id through the member's
+ * or customer's own founding one), and an approved application is never
+ * disposed of — so the derived path cannot currently name a folder in use. It
+ * is cheap to be sure of that here rather than to depend on it.
+ */
+export async function discardApplicationDocuments(
+  applicationId: string,
+  config?: GraphConfig
+): Promise<void> {
+  const application = await query<{
+    reference: string;
+    folder_application_id: string | null;
+    surname: string | null;
+    first_name: string | null;
+  }>(
+    `select a.reference, a.folder_application_id,
+            p.values->>'surname' as surname,
+            p.values->>'name'    as first_name
+       from membership_application a
+       left join application_party p
+         on p.application_id = a.id
+        and p.subject = 'applicant' and p.ordinal = 1
+      where a.id = $1`,
+    [applicationId]
+  );
+  if (application.rowCount === 0) return;
+  const row = application.rows[0];
+
+  // Every path this application put a file at, live or superseded — disposal
+  // is meant to leave nothing behind, not only the current version. Excluded
+  // is any path or Graph item that a document belonging to something else
+  // still holds a live version of: that file is theirs, not this
+  // application's, however it came to be shared.
+  const files = await query<{ sharepoint_path: string }>(
+    `select distinct v.sharepoint_path
+       from document_version v
+       join document d on d.id = v.document_id
+      where d.application_id = $1
+        and v.sharepoint_path is not null
+        and not exists (
+          select 1
+            from document_version o
+            join document od on od.id = o.document_id
+           where od.application_id is distinct from $1
+             and o.state = 'committed'
+             and o.superseded_at is null
+             and (o.sharepoint_path = v.sharepoint_path
+                  or (o.sharepoint_item_id is not null
+                      and o.sharepoint_item_id = v.sharepoint_item_id))
+        )`,
+    [applicationId]
+  );
+
+  for (const file of files.rows) {
+    await deleteItemByPath(file.sharepoint_path, config);
+  }
+
+  // Null means this application owns its own folder (migration 0043). Set
+  // means it borrows another's, and that one is somebody else's to keep.
+  if (row.folder_application_id === null) {
+    await discardApplicationFiles(
+      row.reference,
+      row.surname ?? '',
+      row.first_name ?? '',
+      config
+    );
+  }
+}
+
 export async function discardApplicationFiles(
   reference: string,
   surname = '',

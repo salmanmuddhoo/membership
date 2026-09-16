@@ -16,6 +16,7 @@ thing that goes stale.
 | The API, its callers and its limits            | `docs/api.md`                            |
 | Documents and SharePoint                       | `docs/documents.md`                      |
 | Security controls and the merge gate           | `SECURITY.md`, `docs/security-review.md` |
+| How long records are kept, and disposal        | `docs/retention.md`                      |
 
 ## The shape of it
 
@@ -102,8 +103,8 @@ error.
   scheduled run resumes from its checkpoint; there is nothing to clear by hand.
 - A run that is not there at all means the schedule did not fire — check the
   Container Apps job in Azure.
-- `notification-retry` should run every fifteen minutes; `document-expiry` and
-  `minor-majority-transition` daily.
+- `notification-retry` should run every fifteen minutes; `document-expiry`,
+  `minor-majority-transition` and `retention-disposal` daily.
 
 ### The application is up but every page is slow
 
@@ -192,5 +193,9 @@ Recorded so nobody assumes otherwise:
   are visible to whoever opens the page.
 - **Branch protection is off**, by decision of the sole maintainer — see
   `SECURITY.md`. The audit informs the merge; it does not block it.
-- **Retention and disposal are not implemented.** Everything is kept
-  indefinitely until the Society states its periods (S-1003).
+- **Nothing is disposed of yet**, though the mechanism is built. Every
+  retention period ships unset, and unset means keep indefinitely. Disposal
+  starts when somebody enters a number on **Configuration → Retention** —
+  see `docs/retention.md`, which also puts the one question this cannot
+  answer for the Society: whether to weaken the append-only audit trail in
+  order to honour a period on it.
