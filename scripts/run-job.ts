@@ -15,6 +15,10 @@ import { runJob, JobAlreadyRunning } from '../src/lib/jobs/runner';
 import { expireDocuments } from '../src/lib/documents/documents';
 import { transitionMinorsAtMajority } from '../src/lib/members/majority';
 import { retryDueNotifications } from '../src/lib/notifications/retry';
+import {
+  disposeDueRecords,
+  disposedAnything,
+} from '../src/lib/retention/disposal';
 
 // Jobs are named here rather than passed as arbitrary strings: the container's
 // arguments are configuration, and configuration should not be able to name a
@@ -86,6 +90,72 @@ const JOBS: Record<string, () => Promise<unknown>> = {
           outcome.attempted
         );
         context.log('notifications retried', { ...outcome });
+      },
+    }),
+
+  // S-1003. Disposes of what is past the period the Society has set for it.
+  //
+  // Safe to schedule before the Society has stated anything: every period
+  // starts unset, unset means retain indefinitely, and a class with no period
+  // is not queried at all. On a database where nothing has been set this run
+  // reads three rows and stops.
+  //
+  // Run daily, alongside document-expiry. Nothing here is time-critical — a
+  // record disposed of tomorrow instead of tonight is a record one day past
+  // its period — and a daily run keeps each one small once the first sweep is
+  // behind it.
+  'retention-disposal': () =>
+    runJob<{ passes: number }>({
+      name: 'retention-disposal',
+      run: async context => {
+        // Passes rather than one large statement: each is its own bounded
+        // transaction, so the first sweep of a years-deep log does not hold
+        // one open across the whole table, and SIGTERM between passes stops
+        // the job cleanly with everything so far committed.
+        let passes = context.checkpoint?.passes ?? 0;
+
+        for (;;) {
+          if (context.shouldStop()) {
+            context.log('stop requested between passes', { passes });
+            return;
+          }
+
+          const outcome = await disposeDueRecords();
+          passes += 1;
+
+          const disposed =
+            outcome.notificationsDeleted +
+            outcome.applicationsRedacted +
+            outcome.draftsDeleted;
+
+          await context.save({ passes }, disposed);
+
+          if (outcome.draftsRefused > 0) {
+            // Not a failure: a draft with a receipt against it is not
+            // disposable, and it will be counted again every run. Logged so
+            // that is visible rather than looking like a pass that stalled.
+            context.log('drafts refused disposal', {
+              refused: outcome.draftsRefused,
+            });
+          }
+
+          if (outcome.filesFailed > 0) {
+            // This one IS a problem: an applicant's identity papers are still
+            // in SharePoint past the period the Society set. The application
+            // is deliberately left undisposed so the next run tries again,
+            // and this says so rather than letting it look like nothing due.
+            context.log('files not removed; applications left undisposed', {
+              applications: outcome.filesFailed,
+            });
+          }
+
+          if (!disposedAnything(outcome)) {
+            context.log('nothing further due', { passes });
+            return;
+          }
+
+          context.log('disposed', { ...outcome });
+        }
       },
     }),
 };

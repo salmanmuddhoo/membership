@@ -2801,10 +2801,12 @@ cannot be used to flood or probe the system.
 
 **Needs confirming first:** KYC and audit retention periods. Default until
 then: retain indefinitely, which is safe but not compliant with a stated
-policy — so this is the one open value that should not stay open.
+policy — so this is the one open value that should not stay open. It is no
+longer a blocker on code, though: S-1003 makes the periods configuration, so
+the Society states its policy by entering it.
 
-**Started** (S-1001, S-1002, S-1005). What is code or writing is done; what
-needs the Society, an external tester or Azure is named as such.
+**Started** (S-1001, S-1002, S-1003, S-1005). What is code or writing is done;
+what needs the Society, an external tester or Azure is named as such.
 
 **S-1001** — `docs/security-review.md` records a manual review of the whole
 application: what was examined, what was found sound, and what only an
@@ -2831,9 +2833,34 @@ report, symptom-by-symptom diagnosis, the routine jobs, what each secret
 breaks when rotated, escalation, and an explicit list of what is deliberately
 not automated.
 
-**Still needing the Society:** S-1003's retention periods (nothing can be
-disposed of until they are stated), S-1004's real staff accounts, and the
-external test itself.
+**S-1003** — the mechanism, with every period unset. `retention_policy`
+(migration 0061) carries one row per class of record that can be disposed of;
+**Configuration → Retention** sets a period against each, behind its own
+`retention.manage` permission rather than `config.manage`, and shows beside it
+**how many records that period would dispose of today** — a number of months
+has no visible consequence until somebody can see what it destroys. The
+`retention-disposal` job honours whatever is set, in bounded passes, auditing
+every disposal under `retention.disposed` without recording what it disposed
+of. Unset means retain indefinitely, so merging this changed the behaviour of
+nothing.
+
+Three classes can be disposed of: the notification log (the row goes — it is
+the personal data), an application that was not approved (the applicant's
+details, documents and SharePoint files go; the reference and the date it was
+refused stay), and a draft nobody submitted (it goes entirely, through the
+officer's own delete path and its refusals).
+
+**Two are deliberately absent, both recorded in `docs/retention.md`.** A
+member's own KYC documents cannot be anchored yet: the period runs from the end
+of the relationship, and resignation and closure are M8. And the audit trail
+cannot be disposed of at all — migration 0004's trigger refuses UPDATE, DELETE
+and TRUNCATE on `audit_event` and migration 0005 revokes the privileges too.
+Honouring a period on audit records means narrowing both of those deliberately,
+which is a decision for the Society with its cost stated, not a consequence of
+a backlog line mentioning audit. It is put to them rather than taken.
+
+**Still needing the Society:** the retention periods themselves and the audit
+question above (S-1003), S-1004's real staff accounts, and the external test.
 
 ### S-1001 · Penetration test and remediation — review done, external test outstanding
 
@@ -2848,10 +2875,18 @@ the backup is known to work rather than assumed to.
 - **Given** a restore drill **Then** the recovered system is verified against
   known figures, and the time taken is recorded
 
-### S-1003 · Retention and disposal policy applied
+### S-1003 · Retention and disposal policy applied — mechanism done, periods outstanding
 
-**Depends on** the confirmed retention periods.
+**As** the Society, **I need** records disposed of once they are past their
+retention period, **so that** nothing is held longer than the policy allows.
 `Must · 5 · EPIC-11`
+
+- **Given** no period is set **Then** nothing is disposed of, which is the
+  state this ships in
+- **Given** a period **Then** the screen shows how many records it would
+  dispose of before it is saved
+- **Given** a disposal **Then** it is recorded in the audit trail, naming what
+  went and never copying it
 
 ### S-1004 · Provision real staff accounts and roles
 
@@ -2941,11 +2976,11 @@ app.
 Each is absorbed by configuration, so none blocks the start of development.
 They must be confirmed before the milestone that consumes them.
 
-| Value                                          | Needed by    | Default if unconfirmed                                                                       |
-| ---------------------------------------------- | ------------ | -------------------------------------------------------------------------------------------- |
-| Minor MSA deposit                              | M5 · S-501   | Not required — **shipped this way**                                                          |
-| Processing fee amount and applicability        | M5 · S-507   | Zero / not applicable — **shipped this way**                                                 |
-| Nominee count and percentage rules             | M6 · S-602   | Single nominee, no percentages — **shipped this way, changeable per type without a release** |
-| Dormant reactivation rule                      | M8 · S-805   | Flag for staff action                                                                        |
-| KYC and audit retention periods                | M10          | Retain indefinitely                                                                          |
-| Whether Abeyance and Manager review are wanted | Post-go-live | Available but disabled                                                                       |
+| Value                                          | Needed by    | Default if unconfirmed                                                                         |
+| ---------------------------------------------- | ------------ | ---------------------------------------------------------------------------------------------- |
+| Minor MSA deposit                              | M5 · S-501   | Not required — **shipped this way**                                                            |
+| Processing fee amount and applicability        | M5 · S-507   | Zero / not applicable — **shipped this way**                                                   |
+| Nominee count and percentage rules             | M6 · S-602   | Single nominee, no percentages — **shipped this way, changeable per type without a release**   |
+| Dormant reactivation rule                      | M8 · S-805   | Flag for staff action                                                                          |
+| KYC and audit retention periods                | M10          | Retain indefinitely — now settable on Configuration → Retention (audit: see docs/retention.md) |
+| Whether Abeyance and Manager review are wanted | Post-go-live | Available but disabled                                                                         |

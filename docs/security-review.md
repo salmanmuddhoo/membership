@@ -92,6 +92,14 @@ this repository cannot apply or verify.
 
 **Retention periods are still unset.** The default is to retain indefinitely,
 which is safe against loss and not compliant with any stated policy (S-1003,
-and the open value M10 records). Nothing can be disposed of until the Society
-states how long KYC and audit records are kept, and that decision gates the
-disposal mechanism rather than the other way round.
+and the open value M10 records). The mechanism now exists — the Society states
+its periods on **Configuration → Retention** and the disposal job honours them
+— so what is outstanding is the decision, not the code.
+
+One part of that decision is ours to put rather than to make. **The audit trail
+cannot be disposed of**, by two deliberate controls: migration 0004's trigger
+refuses UPDATE, DELETE and TRUNCATE on `audit_event`, and migration 0005
+revokes those privileges from the application role as well. Those controls are
+what make the rest of this review's findings provable, and honouring a
+retention period on audit records means narrowing both. `docs/retention.md`
+sets out what that would cost. It is a decision for the Society, taken as one.

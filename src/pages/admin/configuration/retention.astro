@@ -1,0 +1,151 @@
+---
+// How long each kind of record is kept (S-1003).
+//
+// Reaching this page needs config.view, like every page under
+// /admin/configuration/ (the prefix rule in authorise.ts). CHANGING anything
+// needs retention.manage rather than config.manage: this is the one control
+// in the application that schedules the irreversible destruction of member
+// data, and it should not come with the ability to rename a document type.
+//
+// The count beside each period is the whole point of the screen. A period is
+// a number with no obvious consequence until somebody can see how many records
+// it would destroy, so the page shows that before anything is saved, and
+// again after.
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import ConfigNav from '@components/ConfigNav.astro';
+import { ConfigError } from '@lib/config/reference';
+import { previewDisposal } from '@lib/retention/disposal';
+import {
+  setRetentionPeriod,
+  MAXIMUM_PERIOD_MONTHS,
+  MINIMUM_PERIOD_MONTHS,
+  type RetentionClass,
+} from '@lib/retention/policy';
+
+const principal = Astro.locals.principal!;
+const canManage = principal.permissions.has('retention.manage');
+
+let error: string | null = null;
+let notice: string | null = null;
+
+if (Astro.request.method === 'POST') {
+  if (!canManage) {
+    error = 'You do not have permission to change retention periods.';
+  } else {
+    const form = await Astro.request.formData();
+    const code = String(form.get('code') ?? '') as RetentionClass;
+    const raw = String(form.get('periodMonths') ?? '').trim();
+
+    try {
+      if (raw === '') {
+        await setRetentionPeriod(code, null, {
+          userId: principal.userId,
+          email: principal.email,
+        });
+        notice = 'Saved. These records are now kept indefinitely.';
+      } else if (!/^\d+$/.test(raw)) {
+        error = 'Enter a whole number of months, or leave it empty.';
+      } else {
+        await setRetentionPeriod(code, Number(raw), {
+          userId: principal.userId,
+          email: principal.email,
+        });
+        notice = 'Saved. The count below shows what is now due.';
+      }
+    } catch (err) {
+      if (err instanceof ConfigError) {
+        error = err.message;
+      } else {
+        console.error('[config/retention]', err);
+        error = 'Something went wrong. Please try again.';
+      }
+    }
+  }
+}
+
+const due = await previewDisposal();
+
+const dateFormat = new Intl.DateTimeFormat('en-GB', {
+  day: 'numeric',
+  month: 'long',
+  year: 'numeric',
+  timeZone: 'UTC',
+});
+---
+
+<DashboardLayout title="Retention · Al Barakah MCSL" heading="Retention">
+  <div class="mx-auto max-w-5xl space-y-6">
+    <ConfigNav />
+
+    {error && (
+      <p class="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200">
+        {error}
+      </p>
+    )}
+    {notice && (
+      <p class="border-mint-400 bg-mint-50 dark:bg-mint-950 rounded-xl border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
+        {notice}
+      </p>
+    )}
+
+    {!canManage && (
+      <p class="rounded-xl border border-neutral-300 px-4 py-3 text-sm text-neutral-600 dark:border-neutral-700 dark:text-neutral-300">
+        You may read these periods but not change them.
+      </p>
+    )}
+
+    <p class="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">
+      Setting a period deletes records permanently, on a schedule. There is no
+      undo. Leave a period empty to keep those records indefinitely.
+    </p>
+
+    <section class="space-y-3 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+      {due.map(item => (
+        <form
+          method="post"
+          class="flex flex-wrap items-end justify-between gap-4 rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900"
+        >
+          <input type="hidden" name="code" value={item.code} />
+
+          <div class="min-w-[16rem] flex-1">
+            <span class="block font-medium text-neutral-800 dark:text-neutral-100">
+              {item.label}
+            </span>
+            <span class="mt-1 block text-sm text-neutral-500 dark:text-neutral-400">
+              {item.periodMonths === null
+                ? 'Kept indefinitely'
+                : item.dueCount === 0
+                  ? `Nothing older than ${dateFormat.format(item.cutoff!)}`
+                  : `${item.dueCount.toLocaleString('en-GB')} due for disposal — recorded before ${dateFormat.format(item.cutoff!)}`}
+            </span>
+          </div>
+
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            Months
+            <input
+              type="number"
+              name="periodMonths"
+              value={item.periodMonths ?? ''}
+              min={MINIMUM_PERIOD_MONTHS}
+              max={MAXIMUM_PERIOD_MONTHS}
+              step="1"
+              inputmode="numeric"
+              placeholder="—"
+              disabled={!canManage}
+              class="mt-1 block w-28 rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-950 dark:text-neutral-100"
+            />
+          </label>
+
+          {canManage && (
+            <button
+              type="submit"
+              class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-semibold text-neutral-800 transition"
+            >
+              Save
+            </button>
+          )}
+        </form>
+      ))}
+    </section>
+  </div>
+</DashboardLayout>

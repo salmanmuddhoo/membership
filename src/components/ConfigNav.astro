@@ -34,6 +34,11 @@ export const CONFIG_SECTIONS = [
     blurb:
       'What a member is told when their application moves, and by which channel.',
   },
+  {
+    href: '/admin/configuration/retention',
+    label: 'Retention',
+    blurb: 'How long each kind of record is kept before it is disposed of.',
+  },
 ] as const;
 
 const current = Astro.url.pathname;
