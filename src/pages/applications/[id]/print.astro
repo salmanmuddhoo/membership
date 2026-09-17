@@ -91,6 +91,7 @@ const type = (await listMembershipTypes()).find(
   t => t.id === formSource.membershipTypeId
 )!;
 const fields = visibleFields(type);
+const isMinor = type.code === 'minor';
 
 // So the officer can file the signed form straight off this page once the
 // applicant has signed on screen, instead of printing, saving a PDF by hand
@@ -185,6 +186,11 @@ const fixedViewport =
   viewport={fixedViewport}
 >
   <div class="print-page">
+    {/* Officer feedback: a minor's form is worked differently — a guardian
+        signs alongside — and nothing on the printed sheet said so. Stated at
+        the very top, where whoever picks the form up reads it first. */}
+    {isMinor && <p class="kind-band">MINOR</p>}
+
     <header class="head">
       <div>
         <h1>Al Barakah MCSL</h1>
@@ -404,6 +410,17 @@ const fixedViewport =
      person and signed, so it is set in absolute units against white — not in
      the application's theme, which follows the reader's dark mode and would
      print an unreadable page. */
+  .kind-band {
+    margin: 0 0 4mm;
+    text-align: center;
+    font-family: system-ui, sans-serif;
+    font-size: 12pt;
+    font-weight: 700;
+    letter-spacing: 2px;
+    border: 1px solid #111;
+    padding: 1.5mm 0;
+  }
+
   .print-page {
     position: relative;
     max-width: 190mm;

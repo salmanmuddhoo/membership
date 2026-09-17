@@ -71,8 +71,11 @@
   );
 
   if (viewerDialog && viewerName && viewerBody && viewerClose && viewerPrint) {
-    // Which document is on screen, for Print to ask for its bytes.
+    // Which document is on screen, for Print to ask for its bytes, and what
+    // kind it is — an image and a PDF are printed differently.
     let openDocumentId: string | null = null;
+    let openContentType = '';
+    let openFileName = '';
     // The frame the last print built, kept only so the next print can take
     // it out of the page first.
     let printFrame: HTMLIFrameElement | null = null;
@@ -89,6 +92,8 @@
     viewerDialog.addEventListener('close', () => {
       viewerBody.replaceChildren();
       openDocumentId = null;
+      openContentType = '';
+      openFileName = '';
       discardPrintFrame();
     });
 
@@ -115,8 +120,7 @@
         viewerPrint.disabled = false;
         viewerPrint.textContent = 'Print';
       };
-
-      frame.addEventListener('load', () => {
+      const send = () => {
         done();
         try {
           frame.contentWindow?.focus();
@@ -128,16 +132,62 @@
           );
           discardPrintFrame();
         }
-      });
-      frame.addEventListener('error', () => {
+      };
+      const failed = () => {
         done();
         discardPrintFrame();
         void window.appAlert('The file could not be prepared for printing.');
-      });
+      };
 
-      frame.src = `/api/v1/documents/content?documentId=${encodeURIComponent(
+      const bytes = `/api/v1/documents/content?documentId=${encodeURIComponent(
         openDocumentId
       )}`;
+
+      if (openContentType.startsWith('image/')) {
+        // Officer feedback: printing a photographed document sent the raw
+        // image to the printer at its natural size, so a phone camera's
+        // 4000px-tall scan came out split over three or four sheets. A page
+        // of our own around it, with the image told to fit inside it, puts
+        // the whole document on one sheet whatever it was captured at.
+        //
+        // Built with DOM calls into the frame's own empty document rather
+        // than from a string of HTML: a frame appended with no src is
+        // already a same-origin about:blank, so it can be filled this way
+        // and still be told to print — and nothing here is ever parsed as
+        // markup, which is the rule html-sinks.test.ts holds this codebase
+        // to.
+        document.body.appendChild(frame);
+        printFrame = frame;
+        const sheet = frame.contentDocument;
+        if (!sheet) {
+          failed();
+          return;
+        }
+        sheet.title = openFileName;
+        const style = sheet.createElement('style');
+        style.textContent = [
+          '@page { margin: 10mm; }',
+          'html, body { height: 100%; margin: 0; padding: 0; }',
+          'body { display: flex; align-items: center; justify-content: center; }',
+          'img { max-width: 100%; max-height: 100%; object-fit: contain; }',
+        ].join('\n');
+        sheet.head.appendChild(style);
+        const image = sheet.createElement('img');
+        image.alt = '';
+        // Printed once the bytes are actually there — an image still
+        // loading prints as a blank sheet.
+        image.addEventListener('load', send);
+        image.addEventListener('error', failed);
+        image.src = bytes;
+        sheet.body.appendChild(image);
+        return;
+      }
+
+      // A PDF already carries its own page boundaries; the browser's own
+      // viewer honours them, and wrapping it would only fight that.
+      frame.addEventListener('load', send);
+      frame.addEventListener('error', failed);
+      frame.src = bytes;
       document.body.appendChild(frame);
       printFrame = frame;
     });
@@ -174,6 +224,8 @@
           viewerName.textContent = fileName;
           viewerBody.replaceChildren();
           openDocumentId = documentId;
+          openContentType = contentType;
+          openFileName = fileName;
           discardPrintFrame();
           if (
             contentType.startsWith('image/') &&

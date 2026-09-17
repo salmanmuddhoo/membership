@@ -2487,6 +2487,48 @@ locally on a case-insensitive disk and 404s on the deployed one.
 
 ---
 
+### The Cash Deposit Form becomes a page, and four fixes to how documents are worked ✅
+
+**A form nobody could read is not a form they signed.** The Cash Deposit Form
+was a box on the Payments step: the applicant was handed a screen showing a
+button and a line of small print, and asked to sign. It is now a page of its
+own, `/applications/<id>/source-of-fund`, laid out and worked exactly as the
+printed application form is — the whole sheet, the purposes and the
+source-of-funds list ticked on it, signed at the bottom with the same
+full-screen pad (Clear, Use this signature), filed when it is right. What
+stays on the Payments step is only the gate: one link out while the form is
+needed, with the receipt held until it is filed — the submit disabled, not
+merely warned about — and, once it is, the file named with View and Delete
+beside it, so an applicant who signed in error signs again. The amount
+travels to the form in its link, off the same live Total the receipt will
+carry, so the figure signed for and the figure receipted cannot differ.
+
+**Printing an image sent three or four sheets to the printer.** The browser
+prints raw bytes at natural size, so a phone photograph of an A4 page came
+out split — 4 pages for a 900×3600 scan, measured, and 1 once wrapped. The
+print frame now puts an image inside a minimal page of ours that tells it to
+fit. A PDF still goes to the endpoint directly: it carries its own page
+boundaries.
+
+**Verifying a document threw the reviewer back to the top of the page.** Six
+documents meant scrolling back down five times. Each form posts to its own
+document's anchor, so the response lands on the item just decided — no
+script, and better than restoring a pixel offset, since deciding a document
+changes its own height. The reason box is revealed by Reject and nothing
+else; verifying never needed one. The Verify/Reject controls moved into
+`DocumentReviewForm.astro` rather than a fourth copy of this logic — and,
+having deleted a payment script by matching on blank lines last time, this
+extraction matched on the markup itself.
+
+**A minor's form says so.** "MINOR" is stated at the top of the printed
+sheet, where whoever picks it up reads it first: that form is worked
+differently — a guardian signs alongside — and nothing on it said so.
+
+**"Printable form" is gone from the timeline bar.** Not needed: the wizard's
+own signature step leads there.
+
+---
+
 # M7 — Legacy migration ✅
 
 **Goal:** the existing register becomes members in this system, phase-wise —

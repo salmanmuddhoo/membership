@@ -35,6 +35,11 @@ const SINKS = [
   /\.outerHTML\s*=/,
   /insertAdjacentHTML\s*\(/,
   /document\.write\s*\(/,
+  // An iframe's srcdoc parses its whole value as a document, so a name
+  // interpolated into one is the same hole as innerHTML. The print frame
+  // (DocumentViewer.astro) builds its page with DOM calls instead, which is
+  // what this keeps true.
+  /\.srcdoc\s*=/,
 ];
 
 async function sourceFiles(dir: string): Promise<string[]> {
