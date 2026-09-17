@@ -621,6 +621,17 @@ const sourceOfFundFiling =
         'applicant'
       )
     : null;
+
+// Who signs the Source of Fund form: the applicant, whose money it is. Read
+// off the applicant party rather than the signed-in officer — the officer
+// witnesses the deposit, they do not declare where it came from.
+const sofApplicant = application?.parties.find(
+  p => p.subject === 'applicant' && p.ordinal === 1
+);
+const depositorName = [sofApplicant?.values.name, sofApplicant?.values.surname]
+  .filter(v => (v ?? '').trim() !== '')
+  .join(' ');
+const depositorNic = (sofApplicant?.values.nic ?? '').trim();
 const initialTotal = due
   ? fromCents(sumCents(due.components.map(c => c.amount)))
   : '0';
@@ -1318,7 +1329,8 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               <CashSourceOfFundForm
                 applicationId={application!.id}
                 reference={application!.reference}
-                officerName={principal.displayName}
+                depositorName={depositorName}
+                depositorNic={depositorNic}
                 cashThreshold={cashThreshold ? formatMoney(cashThreshold) : ''}
                 checklistItems={sourceOfFundChecklistItems}
                 documentTypeId={sourceOfFundDocumentType?.id ?? ''}
@@ -1782,6 +1794,94 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       'Remove this document? You can file it again after.'
     );
   }
+  const paymentForm = document.querySelector<HTMLFormElement>(
+    '[data-payment-form]'
+  );
+  if (paymentForm) {
+    const totalCell = paymentForm.querySelector<HTMLElement>(
+      '[data-payment-total]'
+    );
+    const amountInputs = paymentForm.querySelectorAll<HTMLInputElement>(
+      '[data-amount-input]'
+    );
+
+    const parseCents = (raw: string): number => {
+      const trimmed = raw.trim();
+      if (!/^-?\d+(\.\d{1,2})?$/.test(trimmed)) return 0;
+      const negative = trimmed.startsWith('-');
+      const [whole, fraction = ''] = trimmed.replace('-', '').split('.');
+      return (
+        (negative ? -1 : 1) *
+        (Number(whole) * 100 + Number(fraction.padEnd(2, '0')))
+      );
+    };
+
+    const formatCents = (cents: number): string => {
+      const sign = cents < 0 ? '-' : '';
+      const absolute = Math.abs(cents);
+      const rupees = new Intl.NumberFormat('en-GB').format(
+        Math.trunc(absolute / 100)
+      );
+      return `${sign}MUR ${rupees}.${String(absolute % 100).padStart(2, '0')}`;
+    };
+
+    // A visual nudge only — the same rule is enforced server-side
+    // regardless of whether this script ever runs.
+    const methodSelect =
+      paymentForm.querySelector<HTMLSelectElement>('[name="method"]');
+    const cashReminder = paymentForm.querySelector<HTMLElement>(
+      '[data-cash-reminder]'
+    );
+    // Required only while the reminder itself is showing — otherwise a
+    // payment nowhere near the threshold would be blocked by a checkbox for
+    // a form it was never asked to confirm.
+    const cashFormConfirm = paymentForm.querySelector<HTMLInputElement>(
+      '[data-cash-form-confirm]'
+    );
+    const cashThresholdCents = paymentForm.dataset.cashThreshold
+      ? parseCents(paymentForm.dataset.cashThreshold)
+      : null;
+    const cashMaximumCents = paymentForm.dataset.cashMaximum
+      ? parseCents(paymentForm.dataset.cashMaximum)
+      : null;
+    const cashMaximumWarning = paymentForm.querySelector<HTMLElement>(
+      '[data-cash-maximum-warning]'
+    );
+    const submitButton = paymentForm.querySelector<HTMLButtonElement>(
+      '[data-payment-submit]'
+    );
+
+    const recomputeTotal = () => {
+      let total = 0;
+      for (const input of amountInputs) total += parseCents(input.value);
+      if (totalCell) totalCell.textContent = formatCents(total);
+
+      if (cashReminder && cashThresholdCents !== null) {
+        const needsSourceOfFund =
+          methodSelect?.value === 'cash' && total > cashThresholdCents;
+        cashReminder.hidden = !needsSourceOfFund;
+        if (cashFormConfirm) cashFormConfirm.required = needsSourceOfFund;
+      }
+
+      // Refused server-side regardless (payments.ts's own
+      // applyCashPaymentRules runs first, ahead of every other check) — this
+      // only stops the officer typing a figure that can never be recorded
+      // and finding out after the round trip.
+      if (cashMaximumCents !== null) {
+        const overMaximum =
+          methodSelect?.value === 'cash' && total > cashMaximumCents;
+        if (cashMaximumWarning) cashMaximumWarning.hidden = !overMaximum;
+        if (submitButton) submitButton.disabled = overMaximum;
+      }
+    };
+
+    for (const input of amountInputs) {
+      input.addEventListener('input', recomputeTotal);
+    }
+    methodSelect?.addEventListener('change', recomputeTotal);
+    recomputeTotal();
+  }
+
   const form = document.getElementById(
     'capture-form'
   ) as HTMLFormElement | null;

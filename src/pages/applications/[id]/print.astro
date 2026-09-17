@@ -195,6 +195,15 @@ const fixedViewport =
         </p>
       </div>
       <div class="ref">
+        {/* In the flow rather than floated over the corner: absolutely
+            positioned, it covered the reference beside it. It carries
+            no-print, so the printed form and the captured PDF are unchanged
+            by its being here. */}
+        <p class="no-print">
+          <button type="button" id="print">
+            Print
+          </button>
+        </p>
         <p>
           <strong>{application.reference}</strong>
         </p>
@@ -350,29 +359,35 @@ const fixedViewport =
       </div>
     )}
 
+    {/* Three columns rather than a row of gaps, so the upload button sits
+        centred on the page whatever the two links either side of it are
+        called — and stays centred when one of them is not there at all. */}
     <div class="actions">
-      <button type="button" id="print">
-        Print
-      </button>
-      {isEditable && signedFormType && (
-        <button
-          type="button"
-          id="file-signed-form"
-          data-filed-document-id={filedSignedForm?.documentId ?? ''}
-        >
-          {filedSignedForm ? 'File this signature again' : 'File signed form'}
-        </button>
-      )}
-      {isEditable ? (
-        <>
+      <div class="actions-start">
+        {isEditable ? (
           <a href={`${basePath}?step=1`}>← Back</a>
+        ) : (
+          <a href={basePath}>Back to the application</a>
+        )}
+      </div>
+      <div class="actions-centre">
+        {isEditable && signedFormType && (
+          <button
+            type="button"
+            id="file-signed-form"
+            data-filed-document-id={filedSignedForm?.documentId ?? ''}
+          >
+            Upload to sharepoint
+          </button>
+        )}
+      </div>
+      <div class="actions-end">
+        {isEditable && (
           <a href={`${basePath}?step=3`} class="next">
             Next: upload documents →
           </a>
-        </>
-      ) : (
-        <a href={basePath}>Back to the application</a>
-      )}
+        )}
+      </div>
     </div>
     {isEditable && signedFormType && (
       <p data-sign-file-status class="no-print status-line" aria-live="polite">
@@ -652,16 +667,42 @@ const fixedViewport =
     font-weight: bold;
   }
 
+  .ref button#print {
+    margin-bottom: 2mm;
+    padding: 2mm 5mm;
+    border: 1px solid #333;
+    background: #eee;
+    cursor: pointer;
+    font-family: system-ui, sans-serif;
+    font-size: 10pt;
+    color: #111;
+  }
+
   .actions {
     margin-top: 8mm;
-    display: flex;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
     gap: 4mm;
     align-items: center;
     font-family: system-ui, sans-serif;
     font-size: 10pt;
   }
+  /* Each column stretches; the control inside it is what gets aligned.
+     justify-self would align the column box, which leaves an inline link
+     sitting at its left edge whatever the box does. */
+  .actions-start {
+    text-align: left;
+  }
+  .actions-centre {
+    text-align: center;
+  }
+  .actions-end {
+    text-align: right;
+  }
   .actions button,
   .actions a.next {
+    /* The arrow belongs on the label's own line, not wrapped below it. */
+    white-space: nowrap;
     padding: 2mm 5mm;
     border: 1px solid #333;
     background: #eee;
@@ -746,6 +787,7 @@ const fixedViewport =
 
 <script>
   import { renderElementToPdf } from '@lib/client/pdf';
+  import { trimmedSignature } from '@lib/client/signature';
   import { uploadDocumentBlob } from '@lib/client/document-upload';
 
   document.getElementById('print')?.addEventListener('click', () => {
@@ -1000,13 +1042,19 @@ const fixedViewport =
       const clearImageButton = controls?.querySelector<HTMLButtonElement>(
         '[data-sig-clear-image]'
       );
-      if (image) {
-        image.src = modalCanvas.toDataURL('image/png');
+      // Nothing drawn is treated as nothing meant: the pad closes with the
+      // block left as it was, rather than storing a blank image that reads
+      // on screen as a signature nobody can see.
+      const trimmed = trimmedSignature(modalCanvas);
+      if (image && trimmed) {
+        image.src = trimmed;
         image.hidden = false;
         storeSignature(activePad.dataset.sigWho ?? '', image.src);
       }
-      if (openButton) openButton.textContent = 'Re-sign';
-      if (clearImageButton) clearImageButton.hidden = false;
+      if (trimmed) {
+        if (openButton) openButton.textContent = 'Re-sign';
+        if (clearImageButton) clearImageButton.hidden = false;
+      }
       closeModal();
     });
   }
@@ -1151,7 +1199,6 @@ const fixedViewport =
             onStatus: message => say(message),
           });
           fileButton.dataset.filedDocumentId = documentId;
-          fileButton.textContent = 'File this signature again';
           // No file name here: the server names what it files (document type
           // and reference, plus a version), and naming the one this page sent
           // would tell the officer a name that is not on the drive. The name

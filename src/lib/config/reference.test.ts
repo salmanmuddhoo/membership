@@ -1714,10 +1714,18 @@ describe('the cash source-of-fund checklist (a system setting, not reference dat
     );
   });
 
-  it('reads the placeholder migration 0062 seeded, before anyone has changed it', async () => {
+  // Migration 0062 seeded a placeholder because the Society's wording had not
+  // been given yet; 0063 replaced it with the list on their own paper Cash
+  // Deposit Form. This asserts the seeded default, whatever it is called —
+  // what matters is that a fresh database arrives with a usable list rather
+  // than an empty one.
+  it('reads the list the migrations seeded, before anyone has changed it', async () => {
     const { config } = await load();
     expect(await config.cashSourceOfFundChecklist()).toEqual([
-      "Placeholder — replace with the Society's own Source of Fund checklist items before go-live.",
+      'Trade / Business',
+      'Sale of Property: Car / Land / Others',
+      'Cash Gift',
+      'Other',
     ]);
   });
 
