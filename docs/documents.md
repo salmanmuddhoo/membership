@@ -188,6 +188,15 @@ page as it stands — signatures included — into a PDF client-side
 assembling A4 pages) and files it through the same brokered upload a manual
 filing uses, so step 3 opens with it already `under_review`.
 
+**A signature is cropped to its own ink.** The signing pad fills the screen,
+so a name written across the middle of it exports as a small mark on a very
+large, mostly transparent image — placed on a signature line with a set
+height, it scales by its own aspect ratio and the writing disappears.
+`trimmedSignature` (`src/lib/client/signature.ts`) crops to the drawn area
+first, and reports an untouched pad as nothing rather than as a blank image
+nobody can tell from a real one. Both signing pads use it: the printed
+form's four blocks, and the Cash Deposit Form on the Payments step.
+
 **Filing is its own button, and not Next.** It first rode on "Next: upload
 documents →", which meant an officer who simply passed back through step 2
 filed a second copy nobody had asked for (officer feedback). Next is a plain
@@ -228,15 +237,19 @@ to them. The URL is fetched on click rather than embedded in the page — it is
 a secret in the same sense an upload ticket is one, and a page that sat open
 for an hour would otherwise carry a live one in its HTML the whole time.
 
-**Printing needs the bytes, not the link.** The viewer renders SharePoint's
-own pre-authenticated URL, which is cheap and correct — but nothing can print
-it: a cross-origin frame will not take `window.print()`, and SharePoint sends
-no CORS headers for a script to fetch the file and re-host it. `GET
-/api/v1/documents/content` (`document.view`, the same permission and the same
-document) streams the same bytes through this server instead, and the Print
-button in the viewer points a hidden frame at that — which, being same-origin,
-can be told to print. It is offered only for what the browser will actually
-render: an image or a PDF.
+**Printing needs the bytes, not the link — and so, it turned out, does
+showing a PDF.** `GET /api/v1/documents/content` (`document.view`, the same
+permission and the same document) streams the bytes through this server
+instead of handing over SharePoint's URL. Print needs it because a
+cross-origin frame will not take `window.print()`, and SharePoint sends no
+CORS headers for a script to fetch the file and re-host it; the Print button
+points a hidden frame at this endpoint, which being same-origin can be told
+to print. The viewer's own PDF frame needs it for a different reason:
+SharePoint's URL comes back as `Content-Disposition: attachment`, so a frame
+pointed at it downloads the file rather than showing it — the officer
+clicked View and got a save prompt and an empty box. An image is still
+rendered straight from SharePoint's URL: `<img>` ignores the disposition
+header, and there is no reason to pay for the bytes twice.
 
 Both the viewer and its Print live in one place, `src/components/DocumentViewer.astro`,
 included by the pages that show documents — the three application kinds and a

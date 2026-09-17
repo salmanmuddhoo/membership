@@ -17,7 +17,13 @@
 interface Props {
   applicationId: string;
   reference: string;
-  officerName: string;
+  // Whose money it is. The depositor signs this form, not the officer —
+  // it is their declaration about where the cash came from. Either may be
+  // empty (an additional account names its holder but keeps no NIC of its
+  // own here), in which case the form prints a ruled line to fill by hand,
+  // the way the paper one always did.
+  depositorName: string;
+  depositorNic: string;
   cashThreshold: string;
   checklistItems: string[];
   documentTypeId: string;
@@ -27,12 +33,23 @@ interface Props {
 const {
   applicationId,
   reference,
-  officerName,
+  depositorName,
+  depositorNic,
   cashThreshold,
   checklistItems,
   documentTypeId,
   alreadyFiled,
 } = Astro.props;
+
+// The purposes the Society's own paper form offers. Fixed, because they are
+// that form's content rather than something this system decides — unlike the
+// source-of-funds list below it, which Configuration owns.
+const PURPOSES = [
+  'Shares',
+  'Donation/Gift',
+  'Repayment of loan',
+  'Deposit',
+] as const;
 
 const canSign = checklistItems.length > 0 && documentTypeId !== '';
 ---
@@ -63,7 +80,8 @@ const canSign = checklistItems.length > 0 && documentTypeId !== '';
       data-sof-root
       data-application-id={applicationId}
       data-reference={reference}
-      data-officer-name={officerName}
+      data-depositor-name={depositorName}
+      data-depositor-nic={depositorNic}
       data-document-type-id={documentTypeId}
       class="space-y-3"
     >
@@ -89,22 +107,54 @@ const canSign = checklistItems.length > 0 && documentTypeId !== '';
         </p>
       </div>
 
-      <div data-sof-pending hidden={!!alreadyFiled} class="space-y-3">
-        <ul class="space-y-1.5">
-          {checklistItems.map((item, index) => (
-            <li>
+      <div data-sof-pending hidden={!!alreadyFiled} class="space-y-4">
+        <fieldset>
+          <legend class="font-medium">Purpose</legend>
+          <div class="mt-1.5 grid gap-1.5 sm:grid-cols-2">
+            {PURPOSES.map(purpose => (
               <label class="flex items-start gap-2">
                 <input
                   type="checkbox"
-                  data-sof-checklist-item
-                  data-index={index}
+                  data-sof-purpose
+                  value={purpose}
                   class="mt-0.5"
                 />
-                <span>{item}</span>
+                <span>{purpose}</span>
               </label>
-            </li>
-          ))}
-        </ul>
+            ))}
+            <label class="flex items-start gap-2">
+              <input type="checkbox" data-sof-purpose-other class="mt-0.5" />
+              <span>Others</span>
+            </label>
+          </div>
+          <input
+            type="text"
+            data-sof-purpose-specify
+            placeholder="Please specify"
+            class="mt-1.5 block w-full rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-sm text-neutral-800 dark:border-amber-800 dark:bg-neutral-900 dark:text-neutral-100"
+          />
+        </fieldset>
+
+        <fieldset>
+          <legend class="font-medium">
+            The source of funds of this deposit is from
+          </legend>
+          <ul class="mt-1.5 space-y-1.5">
+            {checklistItems.map((item, index) => (
+              <li>
+                <label class="flex items-start gap-2">
+                  <input
+                    type="checkbox"
+                    data-sof-checklist-item
+                    data-index={index}
+                    class="mt-0.5"
+                  />
+                  <span>{item}</span>
+                </label>
+              </li>
+            ))}
+          </ul>
+        </fieldset>
 
         <div class="flex flex-wrap items-center gap-3">
           <button
@@ -112,11 +162,11 @@ const canSign = checklistItems.length > 0 && documentTypeId !== '';
             data-sof-sign
             class="rounded-lg border border-amber-400 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 transition hover:bg-amber-50 dark:border-amber-700 dark:bg-neutral-900 dark:text-amber-200 dark:hover:bg-neutral-800"
           >
-            Sign
+            Applicant signs
           </button>
           <img
             data-sof-sig-preview
-            alt="Officer's signature"
+            alt="Depositor's signature"
             hidden
             class="h-8 border-b border-amber-400"
           />
@@ -170,6 +220,7 @@ const canSign = checklistItems.length > 0 && documentTypeId !== '';
 <script>
   import { renderElementToPdf } from '@lib/client/pdf';
   import { uploadDocumentBlob } from '@lib/client/document-upload';
+  import { trimmedSignature } from '@lib/client/signature';
 
   for (const root of document.querySelectorAll<HTMLElement>(
     '[data-sof-root]'
@@ -206,8 +257,17 @@ const canSign = checklistItems.length > 0 && documentTypeId !== '';
 
     const applicationId = root.dataset.applicationId ?? '';
     const reference = root.dataset.reference ?? '';
-    const officerName = root.dataset.officerName ?? '';
+    const depositorName = root.dataset.depositorName ?? '';
+    const depositorNic = root.dataset.depositorNic ?? '';
     const documentTypeId = root.dataset.documentTypeId ?? '';
+    const purposes =
+      root.querySelectorAll<HTMLInputElement>('[data-sof-purpose]');
+    const purposeOther = root.querySelector<HTMLInputElement>(
+      '[data-sof-purpose-other]'
+    );
+    const purposeSpecify = root.querySelector<HTMLInputElement>(
+      '[data-sof-purpose-specify]'
+    );
 
     const say = (message: string) => {
       if (statusEl) statusEl.textContent = message;
@@ -234,7 +294,7 @@ const canSign = checklistItems.length > 0 && documentTypeId !== '';
         bar.style.cssText =
           'display:flex;justify-content:space-between;align-items:center;padding:10px 14px;font:600 14px system-ui,sans-serif;border-bottom:1px solid #ddd;';
         const title = document.createElement('span');
-        title.textContent = 'Sign — Source of Fund form';
+        title.textContent = 'Depositor’s signature — Cash Deposit Form';
         const cancel = document.createElement('button');
         cancel.type = 'button';
         cancel.textContent = 'Cancel';
@@ -320,9 +380,7 @@ const canSign = checklistItems.length > 0 && documentTypeId !== '';
           ctx.clearRect(0, 0, canvas.width, canvas.height);
           ctx.restore();
         });
-        done.addEventListener('click', () =>
-          finish(canvas.toDataURL('image/png'))
-        );
+        done.addEventListener('click', () => finish(trimmedSignature(canvas)));
       });
 
     signButton.addEventListener('click', async () => {
@@ -339,75 +397,174 @@ const canSign = checklistItems.length > 0 && documentTypeId !== '';
 
     fileButton.addEventListener('click', async () => {
       if (!signatureDataUrl) return;
-      const sourceOfFundInput = document.querySelector<HTMLInputElement>(
-        '[name="sourceOfFund"]'
-      );
-      const sourceOfFund = sourceOfFundInput?.value.trim() ?? '';
+      // What the form says was deposited: the total the officer is about to
+      // record, read off the same cell the page keeps live, so the two can
+      // never disagree about the figure.
+      const amountText =
+        document
+          .querySelector<HTMLElement>('[data-payment-total]')
+          ?.textContent?.trim() ?? '';
 
       fileButton.disabled = true;
       signButton.disabled = true;
       say('Preparing the form…');
 
       // Built off-screen rather than reusing anything already in the page —
-      // this content (the checklist as it stood, the source of fund text as
-      // typed, the signature just captured) exists nowhere else on screen,
-      // so there is no existing element to rasterise the way print.astro
-      // rasterises its own visible form.
+      // this content (the boxes as ticked, the amount as it stands, the
+      // signature just captured) exists nowhere else on screen, so there is
+      // no existing element to rasterise the way print.astro rasterises its
+      // own visible form. Laid out as the Society's paper Cash Deposit Form
+      // is, so the filed PDF and the pad on the counter read the same.
       const sheet = document.createElement('div');
       sheet.style.cssText =
-        'position:fixed;left:-9999px;top:0;width:700px;padding:32px;' +
-        'background:#fff;color:#111;font-family:Georgia,serif;font-size:13px;line-height:1.5;';
-      const checked = [...items].map(item => {
-        const label = item.closest('label')?.textContent?.trim() ?? '';
-        return label;
-      });
-      const h1 = document.createElement('h1');
-      h1.style.cssText = 'font-size:16px;margin:0 0 4px;';
-      h1.textContent = 'Al Barakah MCSL — Source of Fund form';
-      const sub = document.createElement('p');
-      sub.style.cssText = 'margin:0 0 18px;color:#555;';
-      sub.textContent = `${reference} · ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}`;
-      const sofLabel = document.createElement('p');
-      sofLabel.style.cssText = 'font-weight:700;margin:0 0 4px;';
-      sofLabel.textContent = 'Source of fund';
-      const sofValue = document.createElement('p');
-      sofValue.style.cssText =
-        'margin:0 0 18px;padding-bottom:4px;border-bottom:1px solid #999;min-height:1.4em;';
-      sofValue.textContent = sourceOfFund || '(not given)';
-      const listLabel = document.createElement('p');
-      listLabel.style.cssText = 'font-weight:700;margin:0 0 6px;';
-      listLabel.textContent = 'Confirmed';
-      const list = document.createElement('ul');
-      list.style.cssText = 'margin:0 0 24px;padding-left:0;list-style:none;';
-      for (const label of checked) {
-        const li = document.createElement('li');
-        li.style.cssText = 'margin:0 0 4px;';
-        li.textContent = `✓ ${label}`;
-        list.appendChild(li);
+        'position:fixed;left:-9999px;top:0;width:720px;padding:36px;' +
+        'background:#fff;color:#111;font-family:Arial,Helvetica,sans-serif;' +
+        'font-size:13px;line-height:1.5;';
+
+      const el = (tag: string, css: string, text?: string) => {
+        const node = document.createElement(tag);
+        node.style.cssText = css;
+        if (text !== undefined) node.textContent = text;
+        return node;
+      };
+      // Written rather than drawn: a box glyph renders differently font to
+      // font, and the rasteriser only ever sees what the font gave it.
+      const box = (ticked: boolean) => (ticked ? '[X]' : '[  ]');
+      // What the paper form leaves blank for a pen, wherever this system
+      // has no value of its own to print.
+      const ruled = (value: string) => value.trim() || '_'.repeat(30);
+
+      sheet.append(
+        el(
+          'h1',
+          'font-size:17px;font-weight:700;text-align:center;margin:0;letter-spacing:.5px;',
+          'AL BARAKAH MCSL'
+        ),
+        el(
+          'h2',
+          'font-size:15px;font-weight:700;text-align:center;margin:6px 0 20px;letter-spacing:.5px;',
+          'CASH DEPOSIT FORM'
+        )
+      );
+
+      // The bordered block: who, how much, when, and what for.
+      const table = el(
+        'div',
+        'border:1px solid #111;border-bottom:none;margin-bottom:22px;'
+      );
+      const row = (label: string, value: string) => {
+        const line = el(
+          'div',
+          'border-bottom:1px solid #111;padding:8px 10px;font-weight:700;'
+        );
+        line.append(
+          el('span', '', `${label} `),
+          el('span', 'font-weight:400;', value)
+        );
+        return line;
+      };
+      table.append(
+        row('NAME:', ruled(depositorName)),
+        row('RUPEES:', ruled(amountText)),
+        row(
+          'Date:',
+          new Date().toLocaleDateString('en-GB', {
+            day: 'numeric',
+            month: 'long',
+            year: 'numeric',
+          })
+        )
+      );
+
+      const purposeCell = el(
+        'div',
+        'border-bottom:1px solid #111;padding:8px 10px;'
+      );
+      purposeCell.append(
+        el('p', 'font-weight:700;margin:0 0 6px;', 'Purpose:')
+      );
+      const purposeGrid = el(
+        'div',
+        'display:flex;flex-wrap:wrap;column-gap:40px;row-gap:4px;'
+      );
+      for (const input of purposes) {
+        purposeGrid.append(
+          el('span', 'width:45%;', `${box(input.checked)} ${input.value}`)
+        );
       }
-      const sigLabel = document.createElement('p');
-      sigLabel.style.cssText = 'font-weight:700;margin:24px 0 4px;';
-      sigLabel.textContent = 'Signed';
+      purposeGrid.append(
+        el('span', 'width:45%;', `${box(!!purposeOther?.checked)} Others...`)
+      );
+      purposeCell.append(purposeGrid);
+      purposeCell.append(
+        el(
+          'p',
+          'margin:8px 0 0;font-style:italic;',
+          `(Please Specify: ${ruled(purposeSpecify?.value ?? '')}`.concat(')')
+        )
+      );
+      table.append(purposeCell);
+      sheet.append(table);
+
+      // The configured list, ticked as the officer and applicant worked
+      // through it. Every item prints, ticked or not — a form showing only
+      // what was agreed to is not the form that was signed.
+      sheet.append(
+        el(
+          'p',
+          'margin:0 0 10px;',
+          'I hereby certify that the source of funds of this deposit is from:'
+        )
+      );
+      const list = el('div', 'margin:0 0 22px;padding-left:24px;');
+      for (const item of items) {
+        const label = item.closest('label')?.textContent?.trim() ?? '';
+        list.append(
+          el('p', 'margin:0 0 6px;', `${box(item.checked)}  ${label}`)
+        );
+      }
+      sheet.append(list);
+
+      sheet.append(
+        el(
+          'p',
+          'margin:0 0 26px;',
+          'I hereby certify that this deposit does not directly or indirectly ' +
+            'originate from or is not in any way whatsoever connected with any ' +
+            'illicit financial activity, pursuant to any Anti-Money Laundering ' +
+            'Legislation in force in the Republic of Mauritius.'
+        )
+      );
+
+      const sigRow = el('div', 'margin:0 0 14px;');
+      sigRow.append(el('span', 'font-weight:700;', "DEPOSITOR'S SIGNATURE: "));
       const sigImg = document.createElement('img');
       sigImg.src = signatureDataUrl;
       sigImg.alt = 'Signature';
       sigImg.style.cssText =
-        'display:block;height:60px;border-bottom:1px solid #333;';
-      const sigName = document.createElement('p');
-      sigName.style.cssText = 'margin:4px 0 0;color:#555;';
-      sigName.textContent = `${officerName} · ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}`;
+        'height:46px;max-width:300px;object-fit:contain;object-position:left ' +
+        'bottom;vertical-align:middle;border-bottom:1px solid #111;';
+      sigRow.append(sigImg);
+      sheet.append(sigRow);
 
+      const field = (label: string, value: string) => {
+        const line = el('p', 'margin:0 0 12px;');
+        line.append(
+          el('span', 'font-weight:700;', `${label} `),
+          el('span', '', ruled(value))
+        );
+        return line;
+      };
       sheet.append(
-        h1,
-        sub,
-        sofLabel,
-        sofValue,
-        listLabel,
-        list,
-        sigLabel,
-        sigImg,
-        sigName
+        field('NAME OF DEPOSITOR:', depositorName),
+        field('NIC / PASSPORT NO:', depositorNic),
+        el(
+          'p',
+          'margin:26px 0 0;font-size:11px;color:#555;',
+          `${reference} · filed from the Payments step`
+        )
       );
+
       document.body.appendChild(sheet);
 
       try {

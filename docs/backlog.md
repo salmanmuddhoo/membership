@@ -2433,6 +2433,60 @@ the earlier signature rather than scanning it more clearly.
 
 ---
 
+### A regression to own, the Cash Deposit Form as it is on paper, and four smaller fixes ✅
+
+**The payment script had been deleted, and two reports were the same bug.**
+Extracting the document viewer into a shared component (previous entry) took
+the payment script with it on all three application pages — the script
+extraction matched on a blank line and ran past the end of the block it meant
+to remove. What the branch saw was two separate faults: the total stopped
+updating as an amount was typed, and the Source of Fund form "disappeared".
+Both were `recomputeTotal`, which computes the one and unhides the other.
+Restored from the commit before, byte for byte rather than retyped, and the
+diff against that commit is empty for every line of it. The lesson is
+recorded here rather than in a comment: an automated edit that finds its
+boundaries by counting blank lines has no way to tell a block's end from a
+paragraph break, and the typecheck passed both times because the deleted code
+had no callers left to complain.
+
+**The Source of Fund form is the Society's own Cash Deposit Form.** Migration
+0062 seeded a placeholder list because the wording had not been given; it has
+now, and 0063 replaces it with the paper form's own — Trade/Business, Sale of
+Property, Cash Gift, Other — leaving a Society that has already written its
+own list alone. The generated PDF is laid out as the paper one is, down to
+the bordered name/amount/date/purpose block and the Anti-Money Laundering
+declaration, so the filed copy and the pad on the counter read the same.
+"Relationship with A/C holder" is the one line deliberately dropped, per the
+branch. The applicant signs it, not the officer: it is a declaration about
+whose money this is.
+
+**A signature is now cropped to its ink.** A full-screen pad exported whole
+is a small mark on a very large transparent image, which scales to nothing on
+a signature line — which is exactly how the first filed Cash Deposit Form
+came out. `trimmedSignature` (`src/lib/client/signature.ts`) crops first, and
+treats an untouched pad as nothing signed. Both pads use it.
+
+**View could not show a PDF.** The viewer pointed its frame at SharePoint's
+own pre-authenticated URL, which comes back as
+`Content-Disposition: attachment` — so the frame downloaded the file instead
+of rendering it. It now uses the same-origin `/api/v1/documents/content` the
+Print button already had. Images still come straight from SharePoint: `<img>`
+ignores the disposition header, and there is no reason to pay for the bytes
+twice.
+
+**The printed form's action bar.** Print moved to the top right, in the
+header's own column rather than floated over the corner, where it covered
+the reference. Back sits hard left, "Upload to sharepoint" — renamed from
+"File this signature again" — centred on the page, and Next hard right, laid
+out as three grid columns so the middle button stays centred whatever the
+two either side are called.
+
+**The login background.** `public/background.jpg` was replaced by
+`Background.jpg`; the page still asked for the lowercase name, which serves
+locally on a case-insensitive disk and 404s on the deployed one.
+
+---
+
 # M7 — Legacy migration ✅
 
 **Goal:** the existing register becomes members in this system, phase-wise —

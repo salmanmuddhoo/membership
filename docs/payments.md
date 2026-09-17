@@ -118,18 +118,40 @@ only that it is.
 
 **How it becomes true** is `CashSourceOfFundForm.astro`, embedded in the
 Payments step of all three application pages (S-1003-adjacent officer
-feedback, migration 0062). The officer works through a checklist
+feedback, migration 0062). It is the Society's own paper Cash Deposit Form,
+filled in and signed on screen: the depositor's name and the amount, the
+purpose, the source-of-funds list, the Anti-Money Laundering declaration,
+and the depositor's signature, name and NIC. Rendered to a PDF client-side
+(`src/lib/client/pdf.ts`) and filed to the applicant's SharePoint folder
+through the same brokered upload every other document uses
+(`src/lib/client/document-upload.ts`) — as `source_of_fund_form`, a document
+type that deliberately carries no checklist entry of its own: it is
+triggered by the payment amount, not by the applicant's KYC pack, so
+`documents.ts`'s `filedDocumentFor` reads it directly rather than through
+`checklistFor`.
+
+**The applicant signs it, not the officer.** It is a declaration about where
+the depositor's own money came from; the officer witnesses the deposit and
+has nothing to declare. The name and NIC printed on it come from the
+applicant party, and an additional-account application — which captures no
+applicant of its own — prints its holder's name and leaves the NIC as a
+ruled line, the way the paper form always did.
+
+**The source-of-funds list is configuration**
 (`payment.cash_source_of_fund_checklist`, config_entry, a JSON array of
-strings — the Society's own wording, seeded with one placeholder item and
-replaced from Configuration → Fee schedules, not this codebase's to write),
-signs on screen, and the checklist plus the source-of-fund text plus the
-signature are rendered to a PDF client-side (`src/lib/client/pdf.ts`) and
-filed to the applicant's SharePoint folder through the same brokered upload
-every other document uses (`src/lib/client/document-upload.ts`) — as
-`source_of_fund_form`, a document type that deliberately carries no
-checklist entry of its own: it is triggered by the payment amount, not by
-the applicant's KYC pack, so `documents.ts`'s `filedDocumentFor` reads it
-directly rather than through `checklistFor`.
+strings, one item per line on Configuration → Fee schedules). Migration 0062
+seeded a placeholder because the wording had not been given; 0063 replaced
+it with the paper form's own list. Every item prints on the signed PDF,
+ticked or not — a form showing only what was agreed to is not the form that
+was signed. The purposes above it are fixed in the component instead: they
+are that form's content, not something this system decides.
+
+**Amounts are read off the live total** the officer is about to record
+(`[data-payment-total]`), so the figure on the filed form and the figure on
+the receipt cannot disagree. A signature is cropped to its own ink before it
+is used (`src/lib/client/signature.ts`); a full-screen pad exported whole is
+a small mark on a very large image, which scales down to nothing on a
+signature line.
 
 Without scripting, the checklist and signing cannot run at all — both are
 client-side work with no server equivalent — so a `<noscript>` block falls

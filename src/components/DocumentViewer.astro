@@ -185,8 +185,15 @@
             img.className = 'max-h-full max-w-full object-contain';
             viewerBody.appendChild(img);
           } else if (contentType === 'application/pdf') {
+            // Served from this origin, not from SharePoint's own URL: that
+            // one comes back as Content-Disposition: attachment, which makes
+            // a frame download the file instead of showing it — the officer
+            // clicked View and got a save prompt and an empty box. The same
+            // endpoint Print already uses sends it inline.
             const frame = document.createElement('iframe');
-            frame.src = url;
+            frame.src = `/api/v1/documents/content?documentId=${encodeURIComponent(
+              documentId
+            )}`;
             frame.title = fileName;
             frame.className = 'h-full w-full';
             viewerBody.appendChild(frame);
