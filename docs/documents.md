@@ -179,6 +179,29 @@ Rejecting still records whichever were checked (`document.confirmed_signatures`)
 so a Secretary who rejects for an unrelated reason — a blurry scan — does not
 lose the ones they had already confirmed when the replacement arrives.
 
+**Filing the signed form no longer needs a separate scan.** The print page
+(step 2, "Application signature") already let a signatory draw on screen; what
+used to happen next was print → save as PDF → go to step 3 → upload that file
+by hand. Now, once the Applicant has signed, clicking "Next: upload
+documents →" renders the page as it stands — signatures included — into a
+PDF client-side (`src/lib/client/pdf.ts`, html2canvas-pro rasterising the DOM
+and jsPDF assembling A4 pages) and files it through the same brokered upload
+a manual filing uses, so step 3 opens with it already `under_review`.
+
+This is deliberately not a hard gate. If the Applicant has not signed on
+screen — signing on paper instead, or not yet — the link is still a plain
+navigation to step 3, exactly as it always was; only a captured signature
+changes what happens before that. A SharePoint hiccup during the render or
+the upload leaves the officer on the print page with what went wrong and a
+second click that falls through to the same plain navigation, never stuck.
+
+`.no-print` elements (the Sign buttons, the witness-name inputs' own hint,
+the action bar) are excluded from the capture by a `.capturing` class applied
+to `.print-page` itself for the moment the rasteriser runs — applied there
+and not to `<body>` because Astro scopes this page's stylesheet to elements
+it renders, and a class added outside that tree would not match the CSS rule
+meant to hide them.
+
 ### Viewing and removing what was filed
 
 **Viewing is brokered the same way filing is, in the other direction.**

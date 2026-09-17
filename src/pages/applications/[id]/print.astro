@@ -17,6 +17,7 @@ import {
 } from '@lib/applications/capture';
 import {
   listAccountTypes,
+  listDocumentTypes,
   listMembershipTypes,
   type FieldSubject,
 } from '@lib/config/reference';
@@ -90,6 +91,15 @@ const type = (await listMembershipTypes()).find(
   t => t.id === formSource.membershipTypeId
 )!;
 const fields = visibleFields(type);
+
+// So "Next: upload documents" can file the signed form itself once the
+// applicant has signed on screen, instead of the officer printing, saving a
+// PDF by hand and uploading it as a separate step (officer feedback). Looked
+// up once here rather than assumed: the id is a database value, not
+// something the client can be trusted to already know.
+const signedFormType = (await listDocumentTypes()).find(
+  t => t.code === 'signed_form'
+);
 
 // Officer feedback: the form gave no clue which account it was for — every
 // membership type prints as one generic-sounding heading, and an account
@@ -252,7 +262,12 @@ const fixedViewport =
           Tap Sign under each name, or print and sign by hand.
         </p>
       )}
-      <div class="signatures" data-application-id={application.id}>
+      <div
+        class="signatures"
+        data-application-id={application.id}
+        data-reference={application.reference}
+        data-signed-form-type-id={signedFormType?.id ?? ''}
+      >
         {SIGNATURES.map(who => (
           <div class="sig">
             <div class="sig-pad" data-sig-pad data-sig-who={who}>
@@ -333,7 +348,12 @@ const fixedViewport =
       {isEditable ? (
         <>
           <a href={`${basePath}?step=1`}>← Back</a>
-          <a href={`${basePath}?step=3`} class="next">
+          <a
+            href={`${basePath}?step=3`}
+            class="next"
+            id="next-upload-documents"
+            data-signed-form-available={signedFormType ? 'yes' : 'no'}
+          >
             Next: upload documents →
           </a>
         </>
@@ -341,6 +361,13 @@ const fixedViewport =
         <a href={basePath}>Back to the application</a>
       )}
     </div>
+    {isEditable && signedFormType && (
+      <p
+        data-sign-file-status
+        class="no-print status-line"
+        aria-live="polite"
+      />
+    )}
   </div>
 </BaseLayout>
 
@@ -630,6 +657,33 @@ const fixedViewport =
     text-decoration: none;
     color: #111;
   }
+  .actions a.next[aria-disabled='true'] {
+    cursor: wait;
+    opacity: 0.6;
+  }
+
+  .status-line {
+    margin-top: 3mm;
+    font-family: system-ui, sans-serif;
+    font-size: 9pt;
+    color: #444;
+    min-height: 1em;
+  }
+  .status-line[data-tone='error'] {
+    color: #9a1c1c;
+  }
+
+  /* Applied for the instant html2canvas is rasterising the form (pdf.ts),
+     so the generated PDF shows the form the way it prints — not the Sign
+     buttons, the witness hint, or the action bar underneath it, none of
+     which are part of what was actually signed. The @media print rule below
+     achieves the same thing for an ACTUAL print; this is the screen-time
+     equivalent, needed because html2canvas captures the screen stylesheet,
+     not the print one. */
+  .capturing .actions,
+  .capturing .no-print {
+    display: none !important;
+  }
 
   @media print {
     /* The controls are for the screen; the paper carries the form. */
@@ -678,6 +732,9 @@ const fixedViewport =
 </style>
 
 <script>
+  import { renderElementToPdf } from '@lib/client/pdf';
+  import { uploadDocumentBlob } from '@lib/client/document-upload';
+
   document.getElementById('print')?.addEventListener('click', () => {
     window.print();
   });
@@ -938,6 +995,140 @@ const fixedViewport =
       if (openButton) openButton.textContent = 'Re-sign';
       if (clearImageButton) clearImageButton.hidden = false;
       closeModal();
+    });
+  }
+
+  // Officer feedback: printing, saving as a PDF and then uploading that same
+  // file on the Documents step was three separate actions to get one
+  // document filed. Once the applicant has signed on screen, this is the
+  // fourth signature block onward — Next does the filing itself: render the
+  // page exactly as it stands into a PDF and file it as the Signed
+  // Application Form, so step 3 opens with nothing left to upload for it.
+  //
+  // Deliberately not a hard gate. The applicant may still be signing on
+  // paper instead (the ruled line under each name is the fallback that was
+  // always there), and a SharePoint hiccup must not strand the officer on
+  // this page — either way, Next still gets them to step 3, exactly as the
+  // plain link always did; this only adds what happens before that when it
+  // can.
+  const nextLink = document.querySelector<HTMLAnchorElement>(
+    '#next-upload-documents'
+  );
+  const statusLine = document.querySelector<HTMLElement>(
+    '[data-sign-file-status]'
+  );
+
+  if (
+    nextLink &&
+    signaturesEl &&
+    nextLink.dataset.signedFormAvailable === 'yes'
+  ) {
+    const destination = nextLink.getAttribute('href') ?? '';
+    const reference = signaturesEl.getAttribute('data-reference') ?? '';
+    const signedFormTypeId =
+      signaturesEl.getAttribute('data-signed-form-type-id') ?? '';
+
+    const say = (message: string, tone: 'info' | 'error' = 'info') => {
+      if (!statusLine) return;
+      statusLine.textContent = message;
+      statusLine.dataset.tone = tone;
+    };
+
+    const applicantSigned = (): boolean => {
+      const image = document.querySelector<HTMLImageElement>(
+        '[data-sig-who="Applicant"] [data-sig-image]'
+      );
+      return !!image && !image.hidden;
+    };
+
+    let busy = false;
+
+    nextLink.addEventListener('click', event => {
+      if (busy) {
+        // A second click while the first is still filing must not start a
+        // second upload racing the first, and must not be read as "give up,
+        // navigate anyway" either.
+        event.preventDefault();
+        return;
+      }
+
+      if (!applicantSigned()) {
+        // Nothing captured to file — the plain navigation this link always
+        // was is exactly right here, whether that is because the applicant
+        // is signing on paper instead or has not signed at all yet.
+        return;
+      }
+
+      event.preventDefault();
+      busy = true;
+      nextLink.setAttribute('aria-disabled', 'true');
+      say('Preparing the signed form…');
+
+      void (async () => {
+        const printPage = document.querySelector<HTMLElement>('.print-page');
+        if (!printPage) {
+          say(
+            'Could not prepare the PDF: the form is not on this page.',
+            'error'
+          );
+          busy = false;
+          nextLink.removeAttribute('aria-disabled');
+          return;
+        }
+
+        // Applied to .print-page itself, not <body> — this stylesheet is
+        // scoped by Astro to elements this component renders, and toggling
+        // the class outside that tree would add it to an element the rule
+        // below can never match. The controls close/hide for the capture
+        // only, and are restored whatever happens next: a failure here must
+        // not leave the page looking different from how the officer left it.
+        printPage.classList.add('capturing');
+        let blob: Blob;
+        try {
+          blob = await renderElementToPdf(printPage);
+        } catch (error) {
+          printPage.classList.remove('capturing');
+          say(
+            error instanceof Error
+              ? `Could not prepare the PDF: ${error.message}`
+              : 'Could not prepare the PDF.',
+            'error'
+          );
+          busy = false;
+          nextLink.removeAttribute('aria-disabled');
+          return;
+        }
+        printPage.classList.remove('capturing');
+
+        try {
+          await uploadDocumentBlob({
+            applicationId,
+            documentTypeId: signedFormTypeId,
+            subject: 'applicant',
+            fileName: `${reference} - Signed application form.pdf`,
+            blob,
+            onStatus: message => say(message),
+          });
+          window.location.href = destination;
+        } catch (error) {
+          say(
+            (error instanceof Error
+              ? error.message
+              : 'The signed form could not be filed.') +
+              ' Click Next again to continue — upload it by hand on the ' +
+              'next step instead.',
+            'error'
+          );
+          busy = false;
+          nextLink.removeAttribute('aria-disabled');
+          // A second click continues rather than trying the same upload
+          // again: the message just promised that, and retrying an upload
+          // that is failing (SharePoint down, a network that is not coming
+          // back this minute) traps the officer in a loop instead of
+          // letting them fall back to the manual path that already exists.
+          nextLink.dataset.signedFormAvailable = 'no';
+        }
+      })();
     });
   }
 </script>

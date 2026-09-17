@@ -95,6 +95,47 @@ a required amount that differs from the schedule, given a reason, exactly as
 before. Nothing on this page can produce that request any more, but a
 correction made another way — direct API use, say — still can.
 
+## Cash
+
+Two configurable controls apply to cash and nothing else, both in
+`applyCashPaymentRules` (`payments.ts`), checked in this order for every
+cash payment regardless of which of the three application kinds it is
+against — `recordPayment` and `recordAccountOpeningPayment` both call it, so
+there is one place this is enforced rather than three.
+
+**A hard ceiling first** (`payment.cash_maximum`, config_entry, default
+500,000 MUR). Above it, the payment is refused outright — not a reminder, a
+refusal, and nothing on the Payments page can override it. Checked before
+anything else: a payment too large to take is too large to take regardless
+of what the source-of-fund note says.
+
+**A source-of-fund requirement above a lower threshold**
+(`payment.cash_source_of_fund_threshold`, default 45,000). Above it, a
+receipt cannot be issued until `sourceOfFund` is non-empty and
+`sourceOfFundFormConfirmed` is true. Both are plain fields on `payment` —
+this module has no opinion on how `sourceOfFundFormConfirmed` became true,
+only that it is.
+
+**How it becomes true** is `CashSourceOfFundForm.astro`, embedded in the
+Payments step of all three application pages (S-1003-adjacent officer
+feedback, migration 0062). The officer works through a checklist
+(`payment.cash_source_of_fund_checklist`, config_entry, a JSON array of
+strings — the Society's own wording, seeded with one placeholder item and
+replaced from Configuration → Fee schedules, not this codebase's to write),
+signs on screen, and the checklist plus the source-of-fund text plus the
+signature are rendered to a PDF client-side (`src/lib/client/pdf.ts`) and
+filed to the applicant's SharePoint folder through the same brokered upload
+every other document uses (`src/lib/client/document-upload.ts`) — as
+`source_of_fund_form`, a document type that deliberately carries no
+checklist entry of its own: it is triggered by the payment amount, not by
+the applicant's KYC pack, so `documents.ts`'s `filedDocumentFor` reads it
+directly rather than through `checklistFor`.
+
+Without scripting, the checklist and signing cannot run at all — both are
+client-side work with no server equivalent — so a `<noscript>` block falls
+back to the plain confirmation checkbox this replaces, which still satisfies
+the same server-side rule if the paper form is completed the old way.
+
 ## Refunds
 
 A refund is a `payment` row with `kind = 'refund'`, its own receipt number, and

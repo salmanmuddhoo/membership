@@ -35,12 +35,14 @@ import {
 } from '@lib/applications/workflow';
 import {
   checklistFor,
+  filedDocumentFor,
   isDocumentComplete,
   removeFiledDocument,
   reviewDocument,
   DocumentError,
   SIGNATURES,
 } from '@lib/documents/documents';
+import CashSourceOfFundForm from '@components/CashSourceOfFundForm.astro';
 import {
   amountDueForAdditionalAccount,
   paymentsForApplication,
@@ -60,7 +62,12 @@ import {
   type EditableContactField,
 } from '@lib/members/contact';
 import { forDisplay } from '@lib/applications/phone';
-import { cashSourceOfFundThreshold } from '@lib/config/reference';
+import {
+  cashMaximum,
+  cashSourceOfFundChecklist,
+  cashSourceOfFundThreshold,
+  listDocumentTypes,
+} from '@lib/config/reference';
 
 const principal = Astro.locals.principal!;
 const canSeeDocuments = principal.permissions.has('document.view');
@@ -494,6 +501,19 @@ const dueProblem: string | null = livePayment
   ? null
   : (dueRead?.problem ?? null);
 const cashThreshold = due ? await cashSourceOfFundThreshold() : null;
+const cashMax = due ? await cashMaximum() : null;
+const sourceOfFundChecklistItems = due ? await cashSourceOfFundChecklist() : [];
+const sourceOfFundDocumentType = due
+  ? (await listDocumentTypes()).find(t => t.code === 'source_of_fund_form')
+  : undefined;
+const sourceOfFundFiling =
+  due && sourceOfFundDocumentType
+    ? await filedDocumentFor(
+        application!.id,
+        sourceOfFundDocumentType.id,
+        'applicant'
+      )
+    : null;
 const initialTotal = due
   ? fromCents(sumCents(due.components.map(c => c.amount)))
   : '0';
@@ -1165,6 +1185,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               class="mt-4 space-y-4"
               data-payment-form
               data-cash-threshold={cashThreshold}
+              data-cash-maximum={cashMax}
             >
               <table class="w-full text-sm">
                 <tbody>
@@ -1240,30 +1261,15 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                 </label>
               </div>
 
-              <div
-                data-cash-reminder
-                hidden
-                class="space-y-2 rounded-lg border border-amber-300 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200"
-              >
-                <p>
-                  Cash over {cashThreshold && formatMoney(cashThreshold)} needs
-                  a source of fund below — and the paper Source of Fund form,
-                  completed separately.
-                </p>
-                <label class="flex items-start gap-2 font-medium">
-                  <input
-                    type="checkbox"
-                    name="sourceOfFundFormConfirmed"
-                    value="true"
-                    data-cash-form-confirm
-                    checked={
-                      paymentFormValues?.sourceOfFundFormConfirmed ?? false
-                    }
-                    class="mt-0.5"
-                  />
-                  I confirm the paper Source of Fund form has been completed.
-                </label>
-              </div>
+              <CashSourceOfFundForm
+                applicationId={application!.id}
+                reference={application!.reference}
+                officerName={principal.displayName}
+                cashThreshold={cashThreshold ? formatMoney(cashThreshold) : ''}
+                checklistItems={sourceOfFundChecklistItems}
+                documentTypeId={sourceOfFundDocumentType?.id ?? ''}
+                alreadyFiled={sourceOfFundFiling}
+              />
               <label class="block text-sm text-neutral-600 dark:text-neutral-300">
                 Source of fund
                 <input
@@ -1274,11 +1280,21 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                 />
               </label>
 
+              <p
+                data-cash-maximum-warning
+                hidden
+                class="rounded-lg border border-red-300 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:text-red-200"
+              >
+                Cash payments above {cashMax && formatMoney(cashMax)} are not
+                authorised. Use another payment method, or split the payment.
+              </p>
+
               <button
                 type="submit"
                 name="intent"
                 value="record-payment"
-                class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
+                data-payment-submit
+                class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Record payment and issue receipt
               </button>
@@ -1797,6 +1813,15 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     const cashThresholdCents = paymentForm.dataset.cashThreshold
       ? parseCents(paymentForm.dataset.cashThreshold)
       : null;
+    const cashMaximumCents = paymentForm.dataset.cashMaximum
+      ? parseCents(paymentForm.dataset.cashMaximum)
+      : null;
+    const cashMaximumWarning = paymentForm.querySelector<HTMLElement>(
+      '[data-cash-maximum-warning]'
+    );
+    const submitButton = paymentForm.querySelector<HTMLButtonElement>(
+      '[data-payment-submit]'
+    );
 
     const recomputeTotal = () => {
       let total = 0;
@@ -1808,6 +1833,17 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           methodSelect?.value === 'cash' && total > cashThresholdCents;
         cashReminder.hidden = !needsSourceOfFund;
         if (cashFormConfirm) cashFormConfirm.required = needsSourceOfFund;
+      }
+
+      // Refused server-side regardless (payments.ts's own
+      // applyCashPaymentRules runs first, ahead of every other check) — this
+      // only stops the officer typing a figure that can never be recorded
+      // and finding out after the round trip.
+      if (cashMaximumCents !== null) {
+        const overMaximum =
+          methodSelect?.value === 'cash' && total > cashMaximumCents;
+        if (cashMaximumWarning) cashMaximumWarning.hidden = !overMaximum;
+        if (submitButton) submitButton.disabled = overMaximum;
       }
     };
 

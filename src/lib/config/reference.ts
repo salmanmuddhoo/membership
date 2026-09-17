@@ -1951,3 +1951,104 @@ export async function setCashSourceOfFundThreshold(
     );
   });
 }
+
+// Officer feedback: a cash payment strictly above this is refused outright —
+// not a reminder like the threshold above, a hard ceiling nothing on this
+// screen can override. Defaults to 500,000 (MUR) if never configured —
+// migration 0062 seeds the same value, so this default is only ever read
+// before that migration has run.
+const CASH_MAXIMUM_KEY = 'payment.cash_maximum';
+const DEFAULT_CASH_MAXIMUM = '500000';
+
+async function readCashMaximum(): Promise<string> {
+  const result = await query<{ value: string }>(
+    `select value::text as value from config_entry where key = $1`,
+    [CASH_MAXIMUM_KEY]
+  );
+  return result.rows[0]?.value ?? DEFAULT_CASH_MAXIMUM;
+}
+
+export function cashMaximum(): Promise<string> {
+  return cached('cash-maximum', readCashMaximum);
+}
+
+export async function setCashMaximum(
+  amount: string,
+  actor: Actor
+): Promise<void> {
+  if (!/^\d+(\.\d{1,2})?$/.test(amount.trim())) {
+    throw new ConfigError(
+      `${amount || 'That'} is not a whole amount in rupees.`
+    );
+  }
+
+  await withConfigurationActor(actorFor(actor), async client => {
+    await client.query(
+      `insert into config_entry (key, value, value_type, description, updated_by)
+       values (
+         $1, to_jsonb($2::numeric), 'number',
+         'A cash payment strictly above this amount (MUR) is refused ' ||
+         'outright — the officer is not authorised to take it, and no ' ||
+         'override exists on this screen.',
+         $3
+       )
+       on conflict (key) do update
+         set value = excluded.value, updated_by = excluded.updated_by`,
+      [CASH_MAXIMUM_KEY, amount, actor.userId]
+    );
+  });
+}
+
+// The checklist an officer works through, on screen, before signing the
+// Source of Fund form for a cash payment above the threshold above. The
+// Society's own wording, not this codebase's — seeded with one placeholder
+// item by migration 0062 rather than invented compliance language nobody
+// has approved, and replaced from Configuration -> Fee schedules before
+// go-live.
+const CASH_SOURCE_OF_FUND_CHECKLIST_KEY =
+  'payment.cash_source_of_fund_checklist';
+const DEFAULT_CASH_SOURCE_OF_FUND_CHECKLIST: string[] = [];
+
+async function readCashSourceOfFundChecklist(): Promise<string[]> {
+  const result = await query<{ value: unknown }>(
+    `select value from config_entry where key = $1`,
+    [CASH_SOURCE_OF_FUND_CHECKLIST_KEY]
+  );
+  const value = result.rows[0]?.value;
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : DEFAULT_CASH_SOURCE_OF_FUND_CHECKLIST;
+}
+
+export function cashSourceOfFundChecklist(): Promise<string[]> {
+  return cached('cash-source-of-fund-checklist', readCashSourceOfFundChecklist);
+}
+
+export async function setCashSourceOfFundChecklist(
+  items: string[],
+  actor: Actor
+): Promise<void> {
+  const cleaned = items.map(item => item.trim()).filter(item => item !== '');
+  if (cleaned.length === 0) {
+    throw new ConfigError(
+      'Enter at least one checklist item, or the form has nothing for an ' +
+        'officer to confirm.'
+    );
+  }
+
+  await withConfigurationActor(actorFor(actor), async client => {
+    await client.query(
+      `insert into config_entry (key, value, value_type, description, updated_by)
+       values (
+         $1, to_jsonb($2::text[]), 'json',
+         'What the officer confirms, item by item, before signing the ' ||
+         'on-screen Source of Fund form for a cash payment above ' ||
+         'payment.cash_source_of_fund_threshold.',
+         $3
+       )
+       on conflict (key) do update
+         set value = excluded.value, updated_by = excluded.updated_by`,
+      [CASH_SOURCE_OF_FUND_CHECKLIST_KEY, cleaned, actor.userId]
+    );
+  });
+}

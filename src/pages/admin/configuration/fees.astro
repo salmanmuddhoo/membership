@@ -4,9 +4,13 @@ import ConfigNav from '@components/ConfigNav.astro';
 import {
   ConfigError,
   FEE_COMPONENTS,
+  cashMaximum,
+  cashSourceOfFundChecklist,
   cashSourceOfFundThreshold,
   listFeeSchedules,
   publishFeeVersion,
+  setCashMaximum,
+  setCashSourceOfFundChecklist,
   setCashSourceOfFundThreshold,
   type FeeComponentCode,
   type FeeRequirement,
@@ -35,6 +39,19 @@ if (Astro.request.method === 'POST') {
           actor
         );
         notice = 'Cash source-of-fund threshold updated.';
+      } else if (intent === 'set-cash-maximum') {
+        await setCashMaximum(
+          String(form.get('cashMaximum') ?? '').trim(),
+          actor
+        );
+        notice = 'Cash maximum updated.';
+      } else if (intent === 'set-cash-checklist') {
+        const items = String(form.get('cashChecklist') ?? '')
+          .split('\n')
+          .map(item => item.trim())
+          .filter(item => item !== '');
+        await setCashSourceOfFundChecklist(items, actor);
+        notice = 'Source of Fund checklist updated.';
       } else {
         const components = FEE_COMPONENTS.map(code => ({
           code: code as FeeComponentCode,
@@ -66,6 +83,8 @@ if (Astro.request.method === 'POST') {
 
 const schedules = await listFeeSchedules();
 const cashThreshold = await cashSourceOfFundThreshold();
+const cashMax = await cashMaximum();
+const checklistItems = await cashSourceOfFundChecklist();
 
 const COMPONENT_LABELS: Record<string, string> = {
   entrance: 'Entrance Fee',
@@ -239,22 +258,70 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         Cash payments
       </h2>
       <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
-        Above this, recording a cash receipt asks for a source of fund and
-        reminds the officer to complete the paper Source of Fund form.
+        Above the threshold, recording a cash receipt asks the officer to sign a
+        Source of Fund form on screen. Above the maximum, cash is not accepted
+        at all — the officer is told to use another method or split the payment.
       </p>
 
-      <form method="post" class="mt-4 flex flex-wrap items-end gap-3">
-        <input type="hidden" name="intent" value="set-cash-threshold" />
-        <label class="text-sm text-neutral-600 dark:text-neutral-300">
-          Threshold (Rs)
-          <input
-            type="text"
-            inputmode="decimal"
-            name="cashThreshold"
-            value={cashThreshold}
+      <div class="mt-4 flex flex-wrap gap-6">
+        <form method="post" class="flex flex-wrap items-end gap-3">
+          <input type="hidden" name="intent" value="set-cash-threshold" />
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            Source of fund threshold (Rs)
+            <input
+              type="text"
+              inputmode="decimal"
+              name="cashThreshold"
+              value={cashThreshold}
+              disabled={!canManage}
+              class="mt-1 block w-40 rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+            />
+          </label>
+          {canManage && (
+            <button
+              type="submit"
+              class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+            >
+              Save
+            </button>
+          )}
+        </form>
+
+        <form method="post" class="flex flex-wrap items-end gap-3">
+          <input type="hidden" name="intent" value="set-cash-maximum" />
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            Maximum (Rs)
+            <input
+              type="text"
+              inputmode="decimal"
+              name="cashMaximum"
+              value={cashMax}
+              disabled={!canManage}
+              class="mt-1 block w-40 rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+            />
+          </label>
+          {canManage && (
+            <button
+              type="submit"
+              class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+            >
+              Save
+            </button>
+          )}
+        </form>
+      </div>
+
+      <form method="post" class="mt-5 space-y-2">
+        <input type="hidden" name="intent" value="set-cash-checklist" />
+        <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+          Source of Fund checklist — one item per line, shown to the officer in
+          this order before they sign
+          <textarea
+            name="cashChecklist"
+            rows={Math.max(4, checklistItems.length + 1)}
             disabled={!canManage}
-            class="mt-1 block w-40 rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-          />
+            class="mt-1 block w-full max-w-xl rounded-lg border border-neutral-300 bg-white px-2 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+          >{checklistItems.join('\n')}</textarea>
         </label>
         {canManage && (
           <button

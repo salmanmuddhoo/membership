@@ -551,6 +551,36 @@ export async function documentsForMember(
   return groups.filter(g => g.entries.length > 0);
 }
 
+/**
+ * The live filing of one document type/subject against an application, for a
+ * document that is NOT part of any checklist — S-1003's retention job has
+ * its own reason to bypass the checklist machinery, and the on-screen
+ * Source of Fund form (payment.cash_maximum's own migration, 0062) is
+ * another: it is filed from the Payments step, not Documents, and asking
+ * `checklistFor` for it would mean adding it to a checklist an applicant's
+ * KYC pack was never meant to carry.
+ */
+export async function filedDocumentFor(
+  applicationId: string,
+  documentTypeId: string,
+  subject: FieldSubject
+): Promise<{ documentId: string; fileName: string } | null> {
+  const result = await query<{ document_id: string; file_name: string }>(
+    `select d.id as document_id, v.file_name
+       from document d
+       join document_version v
+         on v.document_id = d.id
+        and v.state = 'committed' and v.superseded_at is null
+      where d.application_id = $1
+        and d.document_type_id = $2
+        and d.subject = $3
+      limit 1`,
+    [applicationId, documentTypeId, subject]
+  );
+  const row = result.rows[0];
+  return row ? { documentId: row.document_id, fileName: row.file_name } : null;
+}
+
 /** Whether every required item is Verified — and nothing else may assert it. */
 export function isDocumentComplete(entries: ChecklistEntry[]): boolean {
   return entries

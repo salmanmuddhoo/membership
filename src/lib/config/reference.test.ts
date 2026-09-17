@@ -1673,6 +1673,88 @@ describe('the cash source-of-fund threshold (a system setting, not reference dat
   });
 });
 
+describe('the cash maximum (a system setting, not reference data)', () => {
+  afterEach(async () => {
+    const { config } = await load();
+    // Migration 0062 seeds 500000; put it back for the same reason the
+    // threshold's own afterEach does.
+    await config.setCashMaximum('500000', actor);
+  });
+
+  it('reads the value migration 0062 seeded, before anyone has changed it', async () => {
+    const { config } = await load();
+    expect(await config.cashMaximum()).toBe('500000');
+  });
+
+  it('can be changed, and the new value reads back', async () => {
+    const { config } = await load();
+    await config.setCashMaximum('750000', actor);
+    expect(await config.cashMaximum()).toBe('750000');
+  });
+
+  it('refuses a value that is not a whole amount in rupees', async () => {
+    const { config } = await load();
+    await expect(
+      config.setCashMaximum('not a number', actor)
+    ).rejects.toThrowError(/not a whole amount/);
+    await expect(config.setCashMaximum('-100', actor)).rejects.toThrowError(
+      /not a whole amount/
+    );
+  });
+});
+
+describe('the cash source-of-fund checklist (a system setting, not reference data)', () => {
+  afterEach(async () => {
+    const { config } = await load();
+    await config.setCashSourceOfFundChecklist(
+      [
+        "Placeholder — replace with the Society's own Source of Fund checklist items before go-live.",
+      ],
+      actor
+    );
+  });
+
+  it('reads the placeholder migration 0062 seeded, before anyone has changed it', async () => {
+    const { config } = await load();
+    expect(await config.cashSourceOfFundChecklist()).toEqual([
+      "Placeholder — replace with the Society's own Source of Fund checklist items before go-live.",
+    ]);
+  });
+
+  it('can be replaced with the Society’s own items, in order', async () => {
+    const { config } = await load();
+    await config.setCashSourceOfFundChecklist(
+      [
+        'Asked the payer where the cash came from.',
+        'Checked their identity document.',
+      ],
+      actor
+    );
+    expect(await config.cashSourceOfFundChecklist()).toEqual([
+      'Asked the payer where the cash came from.',
+      'Checked their identity document.',
+    ]);
+  });
+
+  it('drops blank lines rather than storing an empty checklist item', async () => {
+    const { config } = await load();
+    await config.setCashSourceOfFundChecklist(
+      ['One real item.', '   ', ''],
+      actor
+    );
+    expect(await config.cashSourceOfFundChecklist()).toEqual([
+      'One real item.',
+    ]);
+  });
+
+  it('refuses to be left with nothing for an officer to confirm', async () => {
+    const { config } = await load();
+    await expect(
+      config.setCashSourceOfFundChecklist(['   ', ''], actor)
+    ).rejects.toThrowError(/at least one checklist item/);
+  });
+});
+
 // The "Open other account" button on a member/non-member detail page, and
 // the account page's own checkboxes, are both driven by openableAccountTypes
 // — a pure filter, tested here without a database.

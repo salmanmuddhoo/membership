@@ -550,7 +550,7 @@ describe('S-501: recording a payment', () => {
           },
           principalFor(officer)
         )
-      ).rejects.toThrow(/Confirm.*Source of Fund form/s);
+      ).rejects.toThrow(/Sign the Source of Fund form/s);
     });
 
     it('accepts it once a source of fund note is given and the form is confirmed', async () => {
@@ -602,6 +602,92 @@ describe('S-501: recording a payment', () => {
       );
       expect(payment.totalAmount).toBe(FULL_TOTAL);
       expect(payment.sourceOfFund).toBe('');
+    });
+  });
+
+  // Officer feedback: above config's own payment.cash_maximum (default
+  // 500,000), cash is refused outright — no note, no form confirmation, no
+  // override on this screen can authorise it.
+  describe('cash above the maximum is refused outright', () => {
+    afterEach(async () => {
+      const { config } = await load();
+      await config.setCashMaximum('500000', officer);
+      // The last test in this block also moves the threshold, to prove the
+      // maximum is checked ahead of it — reset both, or every test after
+      // this file reads a threshold no other test set.
+      await config.setCashSourceOfFundThreshold('45000', officer);
+    });
+
+    it('refuses it, even with a source of fund note and the form confirmed', async () => {
+      const { payments, config } = await load();
+      await config.setCashMaximum('5000', officer);
+      const application = await newApplication();
+
+      await expect(
+        payments.recordPayment(
+          {
+            applicationId: application.id,
+            method: 'cash',
+            amounts: FULL,
+            sourceOfFund: 'Sale of livestock, per the applicant.',
+            sourceOfFundFormConfirmed: true,
+          },
+          principalFor(officer)
+        )
+      ).rejects.toThrow(/not authorised/);
+
+      // Refused before anything is written — no receipt spent on a payment
+      // that was never taken.
+      const receipted = await run(
+        appUrl,
+        'select 1 from payment where application_id = $1',
+        [application.id]
+      );
+      expect(receipted.rowCount).toBe(0);
+    });
+
+    it('accepts cash at exactly the maximum', async () => {
+      const { payments, config } = await load();
+      await config.setCashMaximum(FULL_TOTAL, officer);
+      const application = await newApplication();
+
+      const payment = await payments.recordPayment(
+        { applicationId: application.id, method: 'cash', amounts: FULL },
+        principalFor(officer)
+      );
+      expect(payment.totalAmount).toBe(FULL_TOTAL);
+    });
+
+    it('does not apply to a non-cash method, however large the total', async () => {
+      const { payments, config } = await load();
+      await config.setCashMaximum('1000', officer);
+      const application = await newApplication();
+
+      const payment = await payments.recordPayment(
+        {
+          applicationId: application.id,
+          method: 'bank_transfer',
+          amounts: FULL,
+        },
+        principalFor(officer)
+      );
+      expect(payment.totalAmount).toBe(FULL_TOTAL);
+    });
+
+    it('is checked before the source-of-fund threshold, so the maximum message wins', async () => {
+      const { payments, config } = await load();
+      // Both configured low, maximum lower than the threshold would ever
+      // matter for FULL_TOTAL — proves the order, not just the outcome.
+      await config.setCashSourceOfFundThreshold('100', officer);
+      await config.setCashMaximum('1000', officer);
+      const application = await newApplication();
+
+      await expect(
+        payments.recordPayment(
+          { applicationId: application.id, method: 'cash', amounts: FULL },
+          principalFor(officer)
+        )
+      ).rejects.toThrow(/not authorised/);
     });
   });
 
@@ -1653,7 +1739,7 @@ describe('S-613: paying to open an account for an existing member', () => {
           },
           principalFor(officer)
         )
-      ).rejects.toThrow(/Confirm.*Source of Fund form/s);
+      ).rejects.toThrow(/Sign the Source of Fund form/s);
     });
 
     it('accepts it once a source of fund note is given and the form is confirmed', async () => {
@@ -1673,6 +1759,32 @@ describe('S-613: paying to open an account for an existing member', () => {
       );
       expect(payment.sourceOfFund).toBe('Savings, per the member.');
       expect(payment.sourceOfFundFormConfirmed).toBe(true);
+    });
+  });
+
+  describe('cash above the maximum is refused outright, here too', () => {
+    afterEach(async () => {
+      const { config } = await load();
+      await config.setCashMaximum('500000', officer);
+    });
+
+    it('refuses it, even with the source of fund form confirmed', async () => {
+      const { payments, config } = await load();
+      await config.setCashMaximum('500', officer);
+      const application = await newAdditionalAccountApplication([hsaId]);
+
+      await expect(
+        payments.recordAccountOpeningPayment(
+          {
+            applicationId: application.id,
+            method: 'cash',
+            amounts: { [hsaId]: '1000.00' },
+            sourceOfFund: 'Savings, per the member.',
+            sourceOfFundFormConfirmed: true,
+          },
+          principalFor(officer)
+        )
+      ).rejects.toThrow(/not authorised/);
     });
   });
 
