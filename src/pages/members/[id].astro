@@ -26,6 +26,8 @@ import {
   type EditableContactField,
 } from '@lib/members/contact';
 import { listAccountTypes, openableAccountTypes } from '@lib/config/reference';
+import { approvalCommentsFor } from '@lib/applications/workflow';
+import DocumentViewer from '@components/DocumentViewer.astro';
 
 const principal = Astro.locals.principal!;
 const canSeePayments = principal.permissions.has('payment.view');
@@ -283,6 +285,13 @@ const canOpenAnotherAccount =
   ).length > 0;
 const joinedAt = (member ?? customer)!.joinedAt;
 const applicationReference = (member ?? customer)!.applicationReference;
+// Officer feedback: what the Secretary and the President said on the way to
+// approving this member, reachable from the reference that is already on
+// screen. Nothing written means nothing to open, and the reference stays
+// plain text rather than a link to an empty box.
+const approvalComments = applicationId
+  ? await approvalCommentsFor(applicationId)
+  : [];
 const pageTitle = member ? member.memberNo : name;
 ---
 
@@ -356,7 +365,17 @@ const pageTitle = member ? member.memberNo : name;
             <>
               {' '}
               · from application{' '}
-              <span class="font-medium">{applicationReference}</span>
+              {approvalComments.length > 0 ? (
+                <button
+                  type="button"
+                  data-open-approval-comments
+                  class="text-mint-700 dark:text-mint-300 font-medium underline"
+                >
+                  {applicationReference}
+                </button>
+              ) : (
+                <span class="font-medium">{applicationReference}</span>
+              )}
             </>
           )}
           {member?.capturedByName && (
@@ -643,30 +662,36 @@ const pageTitle = member ? member.memberNo : name;
       </section>
     )}
 
-    {canSeeDocuments && (
+    {canSeeDocuments && <DocumentViewer />}
+
+    {approvalComments.length > 0 && (
       <dialog
-        id="document-viewer-dialog"
-        class="fixed top-1/2 left-1/2 m-0 h-[85vh] w-[95vw] max-w-3xl -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-neutral-200 bg-white p-0 text-neutral-800 backdrop:bg-neutral-900/50 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100"
+        id="approval-comments-dialog"
+        class="fixed top-1/2 left-1/2 m-0 w-[90vw] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-neutral-200 bg-white p-0 text-neutral-800 backdrop:bg-neutral-900/50 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100"
       >
         <div class="flex items-center justify-between gap-3 border-b border-neutral-200 px-5 py-3 dark:border-neutral-800">
-          <p
-            data-viewer-name
-            class="truncate text-sm font-semibold text-neutral-800 dark:text-neutral-100"
-          />
+          <p class="truncate text-sm font-semibold">{applicationReference}</p>
           <button
             type="button"
-            data-viewer-close
+            data-close-approval-comments
             class="shrink-0 rounded-lg border border-neutral-300 px-2.5 py-1 text-xs font-medium text-neutral-600 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-300 dark:hover:bg-neutral-800"
           >
             Close
           </button>
         </div>
-        <div
-          data-viewer-body
-          class="flex h-[calc(85vh-3rem)] items-center justify-center overflow-auto p-4 text-sm"
-        >
-          Loading…
-        </div>
+        <ul class="max-h-[60vh] space-y-4 overflow-y-auto px-5 py-4">
+          {approvalComments.map(entry => (
+            <li>
+              <p class="text-xs text-neutral-500 dark:text-neutral-400">
+                {entry.role} · {entry.actorName} ·{' '}
+                {dateFormat.format(entry.occurredAt)}
+              </p>
+              <p class="mt-1 text-sm whitespace-pre-line text-neutral-700 dark:text-neutral-200">
+                {entry.comment}
+              </p>
+            </li>
+          ))}
+        </ul>
       </dialog>
     )}
 
@@ -718,116 +743,6 @@ const pageTitle = member ? member.memberNo : name;
     )}
   </div>
 </DashboardLayout>
-
-<script>
-  // S-403, S-404 · Viewing a filed document — identical to the application
-  // pages' own script for the same endpoint (documents.ts is generic across
-  // application kinds, and this reads it back the same way regardless of
-  // which application actually filed it).
-  //
-  // Officer feedback: this used to be window.open(url), which handed the
-  // browser a SharePoint download link — a save-to-disk prompt on some
-  // devices before the file could even be looked at. An <img> or a PDF's own
-  // <iframe> viewer renders the same URL in place instead, closed with an
-  // explicit Close rather than left to guess when a new tab was done with it.
-  const viewerDialog = document.getElementById(
-    'document-viewer-dialog'
-  ) as HTMLDialogElement | null;
-  const viewerName =
-    viewerDialog?.querySelector<HTMLElement>('[data-viewer-name]');
-  const viewerBody =
-    viewerDialog?.querySelector<HTMLElement>('[data-viewer-body]');
-  const viewerClose = viewerDialog?.querySelector<HTMLButtonElement>(
-    '[data-viewer-close]'
-  );
-
-  if (viewerDialog && viewerName && viewerBody && viewerClose) {
-    viewerClose.addEventListener('click', () => viewerDialog.close());
-    // Emptying the body on close, not just on the next open: a filled
-    // <iframe> or <img> left behind keeps loading, or keeps playing, in a
-    // dialog that is supposedly shut.
-    viewerDialog.addEventListener('close', () => {
-      viewerBody.replaceChildren();
-    });
-
-    for (const viewButton of document.querySelectorAll<HTMLButtonElement>(
-      '[data-view-document]'
-    )) {
-      viewButton.addEventListener('click', async () => {
-        const documentId = viewButton.dataset.documentId;
-        if (!documentId) return;
-
-        const original = viewButton.textContent;
-        viewButton.disabled = true;
-        viewButton.textContent = 'Opening…';
-
-        try {
-          const response = await fetch('/api/v1/documents/view-url', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ documentId }),
-          });
-          const body = await response.json();
-          if (!response.ok) {
-            throw new Error(
-              body?.error?.message ?? 'The file could not be opened.'
-            );
-          }
-          const {
-            url,
-            fileName,
-            contentType,
-          }: { url: string; fileName: string; contentType: string } = body.data;
-
-          viewerName.textContent = fileName;
-          viewerBody.replaceChildren();
-          if (
-            contentType.startsWith('image/') &&
-            contentType !== 'image/heic'
-          ) {
-            const img = document.createElement('img');
-            img.src = url;
-            img.alt = fileName;
-            img.className = 'max-h-full max-w-full object-contain';
-            viewerBody.appendChild(img);
-          } else if (contentType === 'application/pdf') {
-            const frame = document.createElement('iframe');
-            frame.src = url;
-            frame.title = fileName;
-            frame.className = 'h-full w-full';
-            viewerBody.appendChild(frame);
-          } else {
-            // HEIC (no browser renders it inline) and anything unforeseen:
-            // still openable, just not previewable here.
-            const p = document.createElement('p');
-            p.className = 'text-center text-neutral-600 dark:text-neutral-300';
-            p.textContent = "This file type can't be previewed here.";
-            const link = document.createElement('a');
-            link.href = url;
-            link.target = '_blank';
-            link.rel = 'noopener';
-            link.className = 'mt-2 inline-block underline';
-            link.textContent = 'Open in a new tab';
-            const wrap = document.createElement('div');
-            wrap.className = 'text-center';
-            wrap.append(p, link);
-            viewerBody.appendChild(wrap);
-          }
-          viewerDialog.showModal();
-        } catch (error) {
-          await window.appAlert(
-            error instanceof Error
-              ? error.message
-              : 'The file could not be opened.'
-          );
-        } finally {
-          viewButton.disabled = false;
-          viewButton.textContent = original;
-        }
-      });
-    }
-  }
-</script>
 
 <script>
   // Officer feedback: edit in place, in the block the values already live
@@ -971,5 +886,26 @@ const pageTitle = member ? member.memberNo : name;
         saveButton.textContent = original;
       }
     });
+  }
+</script>
+
+<script>
+  // The reviewers' remarks, opened from the application reference in the
+  // header. Rendered with the page rather than fetched: it is a handful of
+  // lines the server already read, and a round trip to show them would only
+  // put a spinner between the officer and three sentences.
+  const approvalDialog = document.getElementById(
+    'approval-comments-dialog'
+  ) as HTMLDialogElement | null;
+  const openApproval = document.querySelector<HTMLButtonElement>(
+    '[data-open-approval-comments]'
+  );
+  const closeApproval = approvalDialog?.querySelector<HTMLButtonElement>(
+    '[data-close-approval-comments]'
+  );
+
+  if (approvalDialog && openApproval && closeApproval) {
+    openApproval.addEventListener('click', () => approvalDialog.showModal());
+    closeApproval.addEventListener('click', () => approvalDialog.close());
   }
 </script>

@@ -2374,6 +2374,65 @@ off the wire, ending in an issued receipt.
 
 ---
 
+### Seven more from the branch: what submits an application, what a status says, and printing what was filed ✅
+
+**Recording a payment stopped submitting the application.** The previous
+round made the receipt submit for processing by itself, on the reasoning
+that nothing else stood between it and the next person. What the branch
+actually experienced: take the payment, open the receipt to check it, come
+back — and the application has left their queue without anyone having
+decided that. Removed from all three kinds; `docs/payments.md` records why
+the earlier reasoning did not survive contact with the officers using it.
+The explicit Submit path is untouched, and the end-to-end test that used to
+accept "submitted either way" now expects the button.
+
+**An NIC in flight is an NIC taken.** The duplicate check looked only at
+approved identities — `member` and `customer` — on the reasoning that an
+application still in progress was not yet "on file". It is: two applications
+carrying the same NIC collide at approval instead, which is later and
+worse. `findNicHolder` now also names the application already carrying it
+(any status but `rejected`, which is the one outcome that genuinely frees
+it again), excluding the application being checked and the source customer
+an S-614 conversion legitimately shares an NIC with.
+
+**A status names a stage, never a person.** "Submit for Approval" said no
+more about the President holding a file than `new` said about the Secretary,
+so `reviewStageLabel` answers for every non-capture stage in the chain
+rather than only `new`; a draft still names nobody, because "Draft" already
+says whose it is. And the line is gold and bold for whoever's own role is
+holding it — read off `pendingApplicationIds`, the same query that already
+sorts those rows to the top and feeds the nav badge, so the highlight cannot
+disagree with the count.
+
+**Print, on what was filed.** A document can be printed from the viewer, on
+an application's KYC step and on a member's page alike. It needed a
+same-origin route to the bytes (`GET /api/v1/documents/content`): the viewer
+renders SharePoint's own pre-authenticated URL, and a cross-origin frame
+will not take `window.print()` — nor will SharePoint let a script fetch the
+file to re-host it, sending no CORS headers. The viewer and its Print now
+live in one `DocumentViewer.astro` rather than in four copies that had
+already drifted apart in their comments.
+
+**A member's application reference opens what the reviewers said.** Where
+the Secretary or the President wrote a comment on the way to approval, the
+reference on the member's page is a link to a small closable dialog holding
+them; where neither wrote anything, it stays plain text rather than
+promising a box with nothing in it.
+
+**Filing the signed form is its own button, and keeps one version.** Filing
+rode on "Next: upload documents →", so an officer merely passing back
+through step 2 filed a second copy nobody asked for. It is now a button of
+its own, and where a signed form is already on file, filing removes it
+(`POST /api/v1/documents/remove`, wrapping the same `removeFiledDocument`
+the Remove button already ran) before uploading the replacement — otherwise
+SharePoint's `rename` conflict behaviour leaves a pile of near-identical
+copies a digit apart and "the signed form" stops naming one thing. Removal
+runs first, so a failure there never creates the second copy. The one
+document type that works this way, deliberately: a re-signature withdraws
+the earlier signature rather than scanning it more clearly.
+
+---
+
 # M7 — Legacy migration ✅
 
 **Goal:** the existing register becomes members in this system, phase-wise —

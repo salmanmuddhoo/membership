@@ -1267,6 +1267,41 @@ export async function getDocumentViewUrl(
 }
 
 /**
+ * The bytes of a filed document, read through this server rather than
+ * handed to the browser as a SharePoint link.
+ *
+ * Printing is what needs this. The viewer opens `getDocumentViewUrl`'s
+ * pre-authenticated URL directly, which is cheaper and renders fine — but a
+ * cross-origin frame cannot be told to print, and SharePoint's own URLs
+ * carry no CORS headers for a script to fetch them either. Serving the same
+ * bytes from this origin is what makes the print frame scriptable, for a PDF
+ * and an image alike.
+ */
+export async function getDocumentContent(
+  documentId: string,
+  config?: GraphConfig
+): Promise<{
+  body: ReadableStream<Uint8Array>;
+  fileName: string;
+  contentType: string;
+}> {
+  const { url, fileName, contentType } = await getDocumentViewUrl(
+    documentId,
+    config
+  );
+
+  const response = await fetch(url);
+  if (!response.ok || !response.body) {
+    throw new DocumentError(
+      'The file could not be read from SharePoint. Please try again.',
+      'refused'
+    );
+  }
+
+  return { body: response.body, fileName, contentType };
+}
+
+/**
  * Undo a mistaken upload, so the checklist reads Missing again and the item
  * can be filed afresh.
  *

@@ -762,6 +762,191 @@ describe('an applicant’s NIC must not already belong to a member or non-member
     );
   });
 
+  // Officer feedback: an application already carrying this NIC through the
+  // chain has taken it, decision or no decision — the second one is refused
+  // now rather than left to collide once the first is approved.
+  it('refuses an NIC another application is already carrying', async () => {
+    const { capture } = await load();
+    const { id: firstId, reference } = await capture.startApplication(
+      'individual',
+      officer
+    );
+    await capture.saveDraft(
+      firstId,
+      [
+        {
+          subject: 'applicant',
+          ordinal: 1,
+          values: {
+            surname: 'Peerthum',
+            name: 'Ismail',
+            nic: 'N0777777777777',
+          },
+        },
+      ],
+      officer
+    );
+    await run(
+      appUrl,
+      `update membership_application set status = 'new' where id = $1`,
+      [firstId]
+    );
+
+    const { id } = await capture.startApplication('individual', officer);
+    await capture.saveDraft(
+      id,
+      [
+        {
+          subject: 'applicant',
+          ordinal: 1,
+          values: { surname: 'Boodhun', name: 'Priya', nic: 'N0777777777777' },
+        },
+      ],
+      officer
+    );
+
+    const application = await capture.loadApplication(id);
+    const problems = await capture.problemsBlockingSubmission(application!);
+    const nicProblem = problems.find(
+      p => p.subject === 'applicant' && p.fieldKey === 'nic'
+    );
+    expect(nicProblem?.label).toMatch(
+      new RegExp(`already on file for application ${reference}`)
+    );
+  });
+
+  it('refuses it for a non-member opening an account, too', async () => {
+    const { capture } = await load();
+    const { id: firstId, reference } = await capture.startApplication(
+      'individual',
+      officer
+    );
+    await capture.saveDraft(
+      firstId,
+      [
+        {
+          subject: 'applicant',
+          ordinal: 1,
+          values: {
+            surname: 'Peerthum',
+            name: 'Ismail',
+            nic: 'N0888888888888',
+          },
+        },
+      ],
+      officer
+    );
+    await run(
+      appUrl,
+      `update membership_application set status = 'new' where id = $1`,
+      [firstId]
+    );
+
+    const type = await run(
+      appUrl,
+      `select id from membership_type where code = 'individual'`
+    );
+    const second = await run(
+      appUrl,
+      `insert into membership_application
+         (application_kind, membership_type_id, captured_by)
+       values ('customer_account', $1, $2)
+       returning id`,
+      [type.rows[0].id, officer.userId]
+    );
+    await capture.saveDraft(
+      second.rows[0].id,
+      [
+        {
+          subject: 'applicant',
+          ordinal: 1,
+          values: { surname: 'Boodhun', name: 'Priya', nic: 'N0888888888888' },
+        },
+      ],
+      officer
+    );
+
+    const application = await capture.loadApplication(second.rows[0].id);
+    const problems = await capture.problemsBlockingSubmission(application!);
+    const nicProblem = problems.find(
+      p => p.subject === 'applicant' && p.fieldKey === 'nic'
+    );
+    expect(nicProblem?.label).toMatch(
+      new RegExp(`already on file for application ${reference}`)
+    );
+  });
+
+  // A rejected application is the one that frees the NIC again: nobody was
+  // registered under it, so the next person to apply is not a duplicate.
+  it('is silent once the other application has been rejected', async () => {
+    const { capture } = await load();
+    const { id: firstId } = await capture.startApplication(
+      'individual',
+      officer
+    );
+    await capture.saveDraft(
+      firstId,
+      [
+        {
+          subject: 'applicant',
+          ordinal: 1,
+          values: {
+            surname: 'Peerthum',
+            name: 'Ismail',
+            nic: 'N0999999999999',
+          },
+        },
+      ],
+      officer
+    );
+    await run(
+      appUrl,
+      `update membership_application set status = 'rejected' where id = $1`,
+      [firstId]
+    );
+
+    const { id } = await capture.startApplication('individual', officer);
+    await capture.saveDraft(
+      id,
+      [
+        {
+          subject: 'applicant',
+          ordinal: 1,
+          values: { surname: 'Boodhun', name: 'Priya', nic: 'N0999999999999' },
+        },
+      ],
+      officer
+    );
+
+    const application = await capture.loadApplication(id);
+    const problems = await capture.problemsBlockingSubmission(application!);
+    expect(
+      problems.some(p => p.subject === 'applicant' && p.fieldKey === 'nic')
+    ).toBe(false);
+  });
+
+  it('never reads an application’s own applicant as a duplicate of itself', async () => {
+    const { capture } = await load();
+    const { id } = await capture.startApplication('individual', officer);
+    await capture.saveDraft(
+      id,
+      [
+        {
+          subject: 'applicant',
+          ordinal: 1,
+          values: { surname: 'Boodhun', name: 'Priya', nic: 'N1010101010101' },
+        },
+      ],
+      officer
+    );
+
+    const application = await capture.loadApplication(id);
+    const problems = await capture.problemsBlockingSubmission(application!);
+    expect(
+      problems.some(p => p.subject === 'applicant' && p.fieldKey === 'nic')
+    ).toBe(false);
+  });
+
   it('is silent for an NIC nobody already holds', async () => {
     const { capture } = await load();
     const { id } = await capture.startApplication('individual', officer);

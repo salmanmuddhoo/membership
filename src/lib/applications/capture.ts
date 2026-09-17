@@ -1413,11 +1413,15 @@ export async function findGuardian(
 }
 
 // Officer feedback: an NIC identifies one person, so an applicant already on
-// file under it — member or non-member — is not a new person to register,
-// whatever else a fresh application says about them. Checked against `member`
-// and `customer` only (the same scope the M7 migration's own NIC check uses,
-// migration/members.ts) — an application still in progress elsewhere is not
-// "on file" in this sense yet, only an approved identity is.
+// file under it is not a new person to register, whatever else a fresh
+// application says about them. "On file" covers an approved identity (member
+// or non-member customer) and an application already carrying that NIC
+// through the chain — waiting on a decision is still taken, so the second
+// application is refused rather than left to collide at approval. Only a
+// rejected application frees the NIC again.
+//
+// `excludeApplicationId`: the application being checked names its own
+// applicant, and is not a duplicate of itself.
 //
 // `excludeCustomerId`: S-614's own "apply to become a member" is the one
 // legitimate exception — startMembershipApplicationFromCustomer prefills the
@@ -1427,6 +1431,7 @@ export async function findGuardian(
 // that happens to have typed the same NIC.
 async function findNicHolder(
   nic: string,
+  excludeApplicationId: string,
   excludeCustomerId: string | null = null
 ): Promise<{ label: string } | null> {
   const member = await query<{ member_no: string }>(
@@ -1458,6 +1463,29 @@ async function findNicHolder(
   if (customer.rowCount! > 0) {
     const name = (customer.rows[0].name ?? '').trim();
     return { label: name ? `non-member ${name}` : 'an existing non-member' };
+  }
+
+  // An application already carrying this NIC through the chain. The last
+  // clause drops the source customer's own application, which is the same
+  // person converting rather than a separate claim on the NIC.
+  const application = await query<{ reference: string }>(
+    `select a.reference
+       from membership_application a
+       join application_party p
+         on p.application_id = a.id
+        and p.subject = 'applicant' and p.ordinal = 1
+      where lower(p.values->>'nic') = lower($1)
+        and a.id <> $2::uuid
+        and a.status <> 'rejected'
+        and ($3::uuid is null
+             or a.id is distinct from
+                (select c.application_id from customer c where c.id = $3::uuid))
+      order by a.created_at
+      limit 1`,
+    [nic, excludeApplicationId, excludeCustomerId]
+  );
+  if (application.rowCount! > 0) {
+    return { label: `application ${application.rows[0].reference}` };
   }
 
   return null;
@@ -1675,7 +1703,11 @@ export async function problemsBlockingSubmission(
         application.applicationKind === 'membership'
           ? application.sourceCustomerId
           : null;
-      const holder = await findNicHolder(nic, excludeCustomerId);
+      const holder = await findNicHolder(
+        nic,
+        application.id,
+        excludeCustomerId
+      );
       if (holder) {
         problems.push({
           subject: 'applicant',

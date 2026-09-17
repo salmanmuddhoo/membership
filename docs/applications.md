@@ -471,8 +471,23 @@ the Secretary" line under the status badge (`regionalReviewPassedIds`, one
 query for the whole page rather than one per row), and `[id].astro`'s
 timeline passes the same label into the "Submit" step's own detail, which
 used to read "With the Secretary" unconditionally the moment status reached
-`new`. Disabled, or once status has moved past `new` altogether, there is
-nothing more to say and neither shows anything extra.
+`new`.
+
+**No status names who is holding it, so the line is not `new`'s alone.**
+"Submit for Approval" says as little about the President holding a file as
+`new` said about the Secretary, so `reviewStageLabel` now answers for every
+stage in the chain rather than short-circuiting on `new` — whichever
+non-capture step has the row's own status as its `fromStatus`. A draft is
+still nobody's to review: it is the work of whoever is typing it, which
+"Draft" already says, and the capture step is skipped for exactly that
+reason.
+
+**Gold, for the person whose own role is the one holding it up.** Every role
+sees the same "With the X" line, but only the signed-in holder of role X sees
+it bold and gold — driven by `pendingApplicationIds`, the same read that
+already sorts those rows to the top of the list and counts the nav badge, so
+the highlight and the count can never disagree about whose work it is. A
+Secretary looking at a Presidential row sees it plain, and vice versa.
 
 ## Nothing incomplete reaches the Board (S-608)
 
