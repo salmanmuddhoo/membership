@@ -2319,6 +2319,61 @@ Android each read on their own.
 
 ---
 
+### Three officer-feedback items: the hidden admin menu, filing the signed form automatically, and a cash ceiling ✅
+
+**The sidebar's own menu had no scroll of its own.** `<nav>` inside the
+fixed-position sidebar had no `overflow-y-auto`, so once a System
+Administrator's own menu (Roles, Staff accounts, Configuration, Reset test
+data, Migration, Audit log, Reports, Notifications, API, API credentials)
+overflowed a shorter screen, the tail of it was clipped with nothing to
+scroll — reachable only by zooming the whole page out, which is what "I
+have to zoom out to see it" was actually describing. `overflow-y-auto` and
+`min-h-0` on the nav (the latter needed because a flex child does not
+shrink below its content's own height by default, which is what was
+pushing the overflow onto the fixed parent instead of into a scrollbar).
+Reproduced and fixed the only way worth doing either: at a short viewport,
+screenshotted with the fix reverted (the tail of the menu genuinely
+unreachable) and again restored (the same items now scroll into view).
+
+**The signed application form files itself.** `docs/documents.md` has the
+detail; in short, once the Applicant has signed on screen at step 2, Next
+renders the page into a PDF and files it, so step 3 opens with nothing left
+to upload for it. Built on two new small client-side modules
+(`src/lib/client/pdf.ts`, `src/lib/client/document-upload.ts`) rather than a
+server-side renderer — a headless browser in a Vercel function is heavy, and
+a second place that has to agree with what the officer actually saw on
+screen is worse than none. `html2canvas-pro` rather than the base
+`html2canvas`: the latter's colour parser predates `oklch()`, which is how
+Tailwind v4 — every page here, print.astro included — expresses its
+palette, and it throws rather than renders. Found by actually generating a
+PDF and reading the error, not by inspecting the dependency list.
+
+**A hard ceiling on cash, and the paper Source of Fund form becomes an
+on-screen one.** `docs/payments.md`'s own "Cash" section has the detail.
+`payment.cash_maximum` (default 500,000, config_entry, the same pattern
+`payment.cash_source_of_fund_threshold` already used) is checked ahead of
+everything else in `applyCashPaymentRules`, refusing a cash payment above it
+outright — the officer is not authorised, and nothing on the Payments page
+can override that. Above the older, lower threshold, the confirmation
+checkbox is replaced by `CashSourceOfFundForm.astro`: a checklist
+(`payment.cash_source_of_fund_checklist`, the Society's own wording, seeded
+with one placeholder item since a compliance checklist is not this
+codebase's to invent) the officer works through and signs, filed to
+SharePoint through the same PDF-and-upload path the signed form now uses.
+Shared, not copied three times, even though the payment form's surrounding
+markup already was (`[id].astro`, `account.astro`, `customer.astro`) —
+signing on screen is exactly the kind of fiddly, easy-to-drift-in-one-copy
+logic that is worth a shared component even where the codebase otherwise
+tolerates duplication.
+
+Verified against a real database on all three application kinds — a plain
+membership application, an existing member's additional account, and a
+non-member's own — not assumed identical because the diffs matched: each
+walked end to end with a real signature and a real generated PDF captured
+off the wire, ending in an issued receipt.
+
+---
+
 # M7 — Legacy migration ✅
 
 **Goal:** the existing register becomes members in this system, phase-wise —

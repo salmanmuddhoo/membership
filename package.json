@@ -33,7 +33,9 @@
     "@tailwindcss/vite": "^4.3.3",
     "astro": "^7.3.2",
     "exceljs": "^4.4.0",
+    "html2canvas-pro": "^2.4.3",
     "jose": "^6.2.12",
+    "jspdf": "^4.2.1",
     "pg": "^8.23.0",
     "preline": "^5.0.0",
     "tailwindcss": "^4.3.3"

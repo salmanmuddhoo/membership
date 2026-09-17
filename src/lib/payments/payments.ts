@@ -16,6 +16,7 @@ import { recordAudit } from '../access/audit';
 import { checkSegregation } from '../admin/segregation';
 import { query, withTransaction } from '../db/pool';
 import {
+  cashMaximum,
   cashSourceOfFundThreshold,
   currentFeeVersion,
   feeVersionById,
@@ -109,32 +110,50 @@ export const FLOOR_FEE_COMPONENTS: ReadonlySet<FeeComponentCode> = new Set([
   'msa_deposit',
 ]);
 
-// Officer feedback: a cash payment above a configurable threshold needs a
-// source of fund on record, and the officer must affirmatively confirm they
-// have also completed the paper Source of Fund form — a form outside this
-// application, so all this can do is require the confirmation and say so.
-// Shared between recordPayment and recordAccountOpeningPayment rather than
-// written twice.
-async function requireSourceOfFundIfCash(
+// Officer feedback, two rules on a cash payment. Shared between
+// recordPayment and recordAccountOpeningPayment rather than written twice —
+// every application kind takes cash through one of those two functions, so
+// one place is what makes this apply to all of them.
+//
+// 1. A hard ceiling (payment.cash_maximum). Above it, nothing on this
+//    screen can authorise the payment at all — not a reason, not a form,
+//    a refusal. Checked first: a payment too large to take is too large
+//    to take regardless of what the officer wrote in the source-of-fund
+//    note.
+// 2. Above the lower, older threshold (payment.cash_source_of_fund_
+//    threshold, 0032), a source of fund on record and the officer's
+//    affirmative confirmation that the Source of Fund form was completed —
+//    once a paper form outside this application, now the on-screen form the
+//    Payments step itself signs and files (0062); this function only knows
+//    that the confirmation must be true, not how it was earned.
+async function applyCashPaymentRules(
   method: PaymentMethod,
   totalCents: number,
   sourceOfFund: string,
   sourceOfFundFormConfirmed: boolean
 ): Promise<void> {
   if (method !== 'cash') return;
+
+  const maximumCents = toCents(await cashMaximum());
+  if (totalCents > maximumCents) {
+    throw new PaymentError(
+      `Cash payments above ${fromCents(maximumCents)} are not authorised. ` +
+        'Use another payment method, or split the payment.'
+    );
+  }
+
   const thresholdCents = toCents(await cashSourceOfFundThreshold());
   if (totalCents <= thresholdCents) return;
   if (sourceOfFund.trim() === '') {
     throw new PaymentError(
       `Cash payments over ${fromCents(thresholdCents)} need a source of ` +
         'fund note before a receipt can be issued. The officer must also ' +
-        'complete the paper Source of Fund form.'
+        'sign the Source of Fund form.'
     );
   }
   if (!sourceOfFundFormConfirmed) {
     throw new PaymentError(
-      'Confirm that the paper Source of Fund form has been completed ' +
-        'before recording a cash payment over ' +
+      'Sign the Source of Fund form before recording a cash payment over ' +
         `${fromCents(thresholdCents)}.`
     );
   }
@@ -908,7 +927,7 @@ export async function recordPayment(
 
   const sourceOfFund = (input.sourceOfFund ?? '').trim();
   const sourceOfFundFormConfirmed = input.sourceOfFundFormConfirmed ?? false;
-  await requireSourceOfFundIfCash(
+  await applyCashPaymentRules(
     input.method,
     total,
     sourceOfFund,
@@ -1199,7 +1218,7 @@ export async function recordAccountOpeningPayment(
 
   const sourceOfFund = (input.sourceOfFund ?? '').trim();
   const sourceOfFundFormConfirmed = input.sourceOfFundFormConfirmed ?? false;
-  await requireSourceOfFundIfCash(
+  await applyCashPaymentRules(
     input.method,
     total,
     sourceOfFund,
