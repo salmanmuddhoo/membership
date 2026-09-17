@@ -255,6 +255,25 @@ Both the viewer and its Print live in one place, `src/components/DocumentViewer.
 included by the pages that show documents — the three application kinds and a
 member — rather than copied into each of them.
 
+**An image is printed inside a page of ours, not on its own.** Sent to the
+printer as raw bytes, a phone photograph of an A4 page comes out across three
+or four sheets, because the browser prints it at its natural size — 4 pages
+for a 900×3600 scan, measured. The print frame wraps an image in a minimal
+document that tells it to fit (`@page` margin, `max-height: 100%`,
+`object-fit: contain`), which puts it on one sheet whatever it was captured
+at. A PDF is pointed at the endpoint directly: it carries its own page
+boundaries and the browser's viewer honours them.
+
+**Verifying a document keeps the officer where they are.** Deciding one used
+to re-render the page from the top, so a reviewer working down a list of six
+scrolled back five times. Each document's form posts to that document's own
+anchor (`#doc-<id>`), so the response lands on the item just decided — no
+script, and better than restoring a pixel offset, since deciding a document
+changes its own height. The reason box is revealed by Reject and nothing
+else: verifying needs no reason, and the first Reject asks for one rather
+than making the round trip to be refused. Without scripting the box is
+simply always visible, which is what it was before.
+
 **Removing a filed document is Replace without the replacement — and, unlike
 Replace, it does not keep the file.** `removeFiledDocument` (`document.upload`)
 supersedes the live version exactly as a genuine replacement would (S-409),

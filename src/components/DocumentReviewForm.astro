@@ -1,0 +1,110 @@
+---
+// The Verify / Reject controls under a filed document, on the KYC step.
+//
+// One component rather than the identical copy each of the three application
+// pages carried.
+//
+// Two pieces of officer feedback shape it:
+//
+//  * The page used to come back scrolled to the top after every decision, so
+//    a reviewer working down a list of six documents scrolled back down five
+//    times. The form posts to its own document's anchor, so the response
+//    lands on the item just decided. Done with the form's action rather than
+//    a script: no JavaScript, and it beats restoring a pixel offset, since
+//    deciding a document changes its own height.
+//
+//  * A reason belongs to a rejection. Verifying needs none, and a box asking
+//    for one sat there for both. It is revealed by Reject and by nothing
+//    else — see the script below, which also explains what happens without
+//    it.
+import { SIGNATURES } from '@lib/documents/documents';
+
+interface Props {
+  documentId: string;
+  documentCode: string;
+  confirmedSignatures: string[];
+}
+
+const { documentId, documentCode, confirmedSignatures } = Astro.props;
+
+const action = `${Astro.url.pathname}${Astro.url.search}#doc-${documentId}`;
+---
+
+<form method="post" action={action} class="mt-3 space-y-2" data-review-form>
+  <input type="hidden" name="documentId" value={documentId} />
+  {documentCode === 'signed_form' && (
+    <label class="flex items-center gap-x-2 rounded-lg border border-neutral-300 px-3 py-2 text-sm text-neutral-600 dark:border-neutral-600 dark:text-neutral-300">
+      <input
+        type="checkbox"
+        name="allSignaturesConfirmed"
+        value="yes"
+        checked={confirmedSignatures.length === SIGNATURES.length}
+        class="text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600"
+      />
+      All four signatures present on the scan ({SIGNATURES.join(', ')})
+    </label>
+  )}
+  <div data-reject-reason>
+    <input
+      type="text"
+      name="reason"
+      placeholder="Why is this being rejected?"
+      class="w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+    />
+  </div>
+  <div class="flex flex-wrap gap-2">
+    <button
+      type="submit"
+      name="intent"
+      value="verify-document"
+      class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+    >
+      Verify
+    </button>
+    <button
+      type="submit"
+      name="intent"
+      value="reject-document"
+      data-reject
+      class="rounded-lg border border-red-300 px-3 py-1.5 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
+    >
+      Reject
+    </button>
+  </div>
+</form>
+
+<script>
+  // The reason box starts visible in the markup and is hidden here, so a
+  // reviewer without scripting gets what they had before — one box, filled
+  // in only when rejecting — rather than a Reject button that refuses every
+  // time with nowhere to type the reason.
+  for (const form of document.querySelectorAll<HTMLFormElement>(
+    '[data-review-form]'
+  )) {
+    const reason = form.querySelector<HTMLElement>('[data-reject-reason]');
+    const reject = form.querySelector<HTMLButtonElement>('[data-reject]');
+    const input = form.querySelector<HTMLInputElement>('[name="reason"]');
+    if (!reason || !reject || !input) continue;
+
+    reason.hidden = true;
+
+    reject.addEventListener('click', event => {
+      if (!reason.hidden) return;
+      // First click asks; the second one rejects. The server requires a
+      // reason regardless, so this only saves the round trip that would
+      // otherwise refuse and lose the reviewer's place on the page.
+      event.preventDefault();
+      reason.hidden = false;
+      reject.textContent = 'Confirm rejection';
+      input.focus();
+    });
+
+    // Changing their mind and verifying instead puts the box away, so the
+    // next document does not inherit a half-typed rejection.
+    form.addEventListener('submit', event => {
+      const submitter = (event as SubmitEvent)
+        .submitter as HTMLButtonElement | null;
+      if (submitter?.value === 'verify-document') input.value = '';
+    });
+  }
+</script>

@@ -116,19 +116,32 @@ receipt cannot be issued until `sourceOfFund` is non-empty and
 this module has no opinion on how `sourceOfFundFormConfirmed` became true,
 only that it is.
 
-**How it becomes true** is `CashSourceOfFundForm.astro`, embedded in the
-Payments step of all three application pages (S-1003-adjacent officer
-feedback, migration 0062). It is the Society's own paper Cash Deposit Form,
-filled in and signed on screen: the depositor's name and the amount, the
-purpose, the source-of-funds list, the Anti-Money Laundering declaration,
-and the depositor's signature, name and NIC. Rendered to a PDF client-side
-(`src/lib/client/pdf.ts`) and filed to the applicant's SharePoint folder
-through the same brokered upload every other document uses
+**How it becomes true** is the Cash Deposit Form, which is a page of its
+own — `/applications/<id>/source-of-fund` (officer feedback, migration
+0062). It began as a box on the Payments step, and that was the problem: the
+applicant was asked to sign for a declaration they could not read, because
+it was a line of small print beside a button. It is now laid out and worked
+exactly as the printed application form is — the whole sheet on screen, the
+purposes and the source-of-funds list ticked on it, signed at the bottom
+with the same full-screen pad, filed when it is right. Rendered to a PDF
+client-side (`src/lib/client/pdf.ts`) from the page itself, so what is filed
+is the sheet that was read and signed rather than a second rendering of it,
+and uploaded through the same brokered path every other document uses
 (`src/lib/client/document-upload.ts`) — as `source_of_fund_form`, a document
 type that deliberately carries no checklist entry of its own: it is
 triggered by the payment amount, not by the applicant's KYC pack, so
 `documents.ts`'s `filedDocumentFor` reads it directly rather than through
 `checklistFor`.
+
+**What the Payments step keeps is the gate.** While the form is needed and
+not yet filed, the step shows one link out to it and the receipt cannot be
+issued — the submit is disabled, not merely warned about. Once it is filed
+the step names the file, and offers View and Delete: deleting it is the
+page's own `delete-document` intent, audited and removing the file from
+SharePoint, so an applicant who signed in error simply signs again. The
+hidden `sourceOfFundFormConfirmed` field the server reads is set from the
+filed document itself and never from anything an officer ticks — the only
+evidence the form exists is the form existing.
 
 **The applicant signs it, not the officer.** It is a declaration about where
 the depositor's own money came from; the officer witnesses the deposit and
@@ -147,8 +160,9 @@ was signed. The purposes above it are fixed in the component instead: they
 are that form's content, not something this system decides.
 
 **Amounts are read off the live total** the officer is about to record
-(`[data-payment-total]`), so the figure on the filed form and the figure on
-the receipt cannot disagree. A signature is cropped to its own ink before it
+(`[data-payment-total]`) and travel to the form in its own link, so the
+figure the applicant signs for and the figure on the receipt cannot
+disagree. A signature is cropped to its own ink before it
 is used (`src/lib/client/signature.ts`); a full-screen pad exported whole is
 a small mark on a very large image, which scales down to nothing on a
 signature line.

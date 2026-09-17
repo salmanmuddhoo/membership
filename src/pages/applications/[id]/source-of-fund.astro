@@ -1,0 +1,570 @@
+---
+// The Cash Deposit Form, on a page of its own (officer feedback).
+//
+// It began as a box on the Payments step, where the applicant was asked to
+// sign for something they could not read: the declaration was a line of
+// small print beside a button. It is a form they put their name to, so it is
+// laid out and worked exactly as the printed application form is — the whole
+// sheet on screen, signed at the bottom, filed when it is right.
+//
+// Styled like print.astro rather than like the rest of the application:
+// absolute units against white, because this is a form, not a screen.
+import BaseLayout from '@layouts/BaseLayout.astro';
+import { loadApplication, isEditableStatus } from '@lib/applications/capture';
+import {
+  cashSourceOfFundChecklist,
+  listDocumentTypes,
+} from '@lib/config/reference';
+import { filedDocumentFor } from '@lib/documents/documents';
+import { formatMoney } from '@lib/payments/money';
+
+const principal = Astro.locals.principal!;
+const { id } = Astro.params;
+const application = id ? await loadApplication(id) : null;
+if (!application) return new Response('Not found', { status: 404 });
+if (
+  application.status === 'draft' &&
+  application.capturedBy !== principal.userId
+) {
+  return new Response('Not found', { status: 404 });
+}
+if (!isEditableStatus(application.status)) {
+  return new Response('Not found', { status: 404 });
+}
+
+// Back to whichever Payments step sent them here.
+const basePath =
+  application.applicationKind === 'additional_account'
+    ? `/applications/${application.id}/account`
+    : application.applicationKind === 'customer_account'
+      ? `/applications/${application.id}/customer`
+      : `/applications/${application.id}`;
+const paymentsStep = `${basePath}?step=4`;
+
+// Whose money it is. An additional account captures no applicant of its own,
+// so it names its holder and leaves the NIC for a pen, as the paper form
+// always did.
+const applicant = application.parties.find(
+  p => p.subject === 'applicant' && p.ordinal === 1
+);
+const depositorName =
+  application.applicationKind === 'additional_account'
+    ? application.existingHolderLabel
+    : [applicant?.values.name, applicant?.values.surname]
+        .filter(v => (v ?? '').trim() !== '')
+        .join(' ');
+const depositorNic =
+  application.applicationKind === 'additional_account'
+    ? ''
+    : (applicant?.values.nic ?? '').trim();
+
+// What the officer is about to take, carried from the Payments step so the
+// figure on the form and the figure on the receipt are the same one. Absent
+// (a form opened straight from its URL) it simply prints a ruled blank.
+const amountParam = Astro.url.searchParams.get('amount') ?? '';
+const amount = /^\d+(\.\d{1,2})?$/.test(amountParam)
+  ? formatMoney(amountParam)
+  : '';
+
+const checklistItems = await cashSourceOfFundChecklist();
+const documentType = (await listDocumentTypes()).find(
+  t => t.code === 'source_of_fund_form'
+);
+const alreadyFiled = documentType
+  ? await filedDocumentFor(application.id, documentType.id, 'applicant')
+  : null;
+
+// The purposes the Society's own paper form offers. Fixed, because they are
+// that form's content rather than something this system decides — unlike the
+// source-of-funds list below them, which Configuration owns.
+const PURPOSES = [
+  'Shares',
+  'Donation/Gift',
+  'Repayment of loan',
+  'Deposit',
+] as const;
+
+const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
+---
+
+<BaseLayout title={`${application.reference} · Cash Deposit Form`}>
+  <div
+    class="form-page"
+    data-application-id={application.id}
+    data-reference={application.reference}
+    data-document-type-id={documentType?.id ?? ''}
+    data-payments-step={paymentsStep}
+    data-filed-document-id={alreadyFiled?.documentId ?? ''}
+  >
+    <header class="head">
+      <div>
+        <h1>AL BARAKAH MCSL</h1>
+        <p class="sub">CASH DEPOSIT FORM</p>
+      </div>
+      <div class="ref">
+        <p>
+          <strong>{application.reference}</strong>
+        </p>
+        <p>{dateFormat.format(new Date())}</p>
+      </div>
+    </header>
+
+    <div class="box">
+      <div class="row">
+        <span class="label">NAME:</span>
+        <span class="value">{depositorName || <i class="blank" />}</span>
+      </div>
+      <div class="row">
+        <span class="label">RUPEES:</span>
+        <span class="value">{amount || <i class="blank" />}</span>
+      </div>
+      <div class="row">
+        <span class="label">Date:</span>
+        <span class="value">{dateFormat.format(new Date())}</span>
+      </div>
+      <div class="row purpose">
+        <p class="label">Purpose:</p>
+        <div class="grid">
+          {PURPOSES.map(purpose => (
+            <label>
+              <input type="checkbox" data-purpose value={purpose} />
+              <span>{purpose}</span>
+            </label>
+          ))}
+          <label>
+            <input type="checkbox" data-purpose-other />
+            <span>Others...</span>
+          </label>
+        </div>
+        <p class="specify">
+          <label>
+            <i>(Please Specify:</i>
+            <input type="text" data-purpose-specify />
+            <i>)</i>
+          </label>
+        </p>
+      </div>
+    </div>
+
+    <p class="certify">
+      I hereby certify that the source of funds of this deposit is from:
+    </p>
+    {checklistItems.length > 0 ? (
+      <ul class="sources">
+        {checklistItems.map(item => (
+          <li>
+            <label>
+              <input type="checkbox" data-source value={item} />
+              <span>{item}</span>
+            </label>
+          </li>
+        ))}
+      </ul>
+    ) : (
+      <p class="missing no-print">
+        No source-of-funds list is configured. An administrator sets one from
+        Configuration → Fee schedules.
+      </p>
+    )}
+
+    <p class="certify">
+      I hereby certify that this deposit does not directly or indirectly
+      originate from or is not in any way whatsoever connected with any illicit
+      financial activity, pursuant to any Anti-Money Laundering Legislation in
+      force in the Republic of Mauritius.
+    </p>
+
+    <div class="sign">
+      <p class="label">DEPOSITOR'S SIGNATURE:</p>
+      <div class="sig-pad">
+        <div class="sig-line"></div>
+        <img class="sig-image" data-sig-image alt="" hidden />
+      </div>
+      <div class="sig-controls no-print">
+        <button type="button" data-sig-open>
+          Sign
+        </button>
+        <button type="button" data-sig-clear hidden>
+          Clear
+        </button>
+      </div>
+    </div>
+
+    <p class="field">
+      <span class="label">NAME OF DEPOSITOR:</span>
+      <span class="value">{depositorName || <i class="blank" />}</span>
+    </p>
+    <p class="field">
+      <span class="label">NIC / PASSPORT NO:</span>
+      <span class="value">{depositorNic || <i class="blank" />}</span>
+    </p>
+
+    <div class="actions no-print">
+      <div class="actions-start">
+        <a href={paymentsStep}>← Back to payments</a>
+      </div>
+      <div class="actions-centre">
+        {documentType && (
+          <button type="button" id="file-form" disabled>
+            Upload to sharepoint
+          </button>
+        )}
+      </div>
+      <div class="actions-end"></div>
+    </div>
+    <p data-status class="status-line no-print" aria-live="polite">
+      {alreadyFiled
+        ? `On file: ${alreadyFiled.fileName}. Signing again replaces it.`
+        : 'Tick what applies, have the applicant sign, then upload.'}
+    </p>
+  </div>
+</BaseLayout>
+
+<style>
+  /* Deliberately plain and self-contained, exactly as the printed
+     application form is: this is a sheet a person reads and signs, not a
+     screen, so it is set in absolute units against white rather than in the
+     application's theme. */
+  .form-page {
+    max-width: 190mm;
+    margin: 0 auto;
+    padding: 12mm 10mm;
+    background: #fff;
+    color: #111;
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 11pt;
+    line-height: 1.5;
+  }
+
+  .head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 6mm;
+    margin-bottom: 8mm;
+  }
+  .head h1 {
+    margin: 0;
+    font-size: 15pt;
+    letter-spacing: 1px;
+  }
+  .head .sub {
+    margin: 1mm 0 0;
+    font-size: 12pt;
+    font-weight: bold;
+    letter-spacing: 1px;
+  }
+  .head .ref {
+    text-align: right;
+    font-size: 9pt;
+  }
+  .head .ref p {
+    margin: 0;
+  }
+
+  .box {
+    border: 1px solid #111;
+    border-bottom: none;
+    margin-bottom: 6mm;
+  }
+  .box .row {
+    border-bottom: 1px solid #111;
+    padding: 2.5mm 3mm;
+  }
+  .label {
+    font-weight: bold;
+  }
+  .label + .value {
+    margin-left: 1.5mm;
+  }
+  .value {
+    font-weight: normal;
+  }
+  .blank {
+    display: inline-block;
+    min-width: 60mm;
+    border-bottom: 1px solid #999;
+  }
+
+  .purpose .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1mm 6mm;
+    margin-top: 1.5mm;
+  }
+  .purpose label,
+  .sources label {
+    display: flex;
+    align-items: flex-start;
+    gap: 2mm;
+  }
+  .purpose .specify {
+    margin: 2mm 0 0;
+    font-style: italic;
+  }
+  .purpose .specify label {
+    display: flex;
+    align-items: center;
+    gap: 1mm;
+  }
+  .purpose .specify input {
+    flex: 1;
+    border: none;
+    border-bottom: 1px solid #999;
+    font: inherit;
+    font-style: normal;
+    padding: 0 1mm;
+    background: transparent;
+    color: inherit;
+  }
+
+  .certify {
+    margin: 0 0 4mm;
+  }
+  .sources {
+    list-style: none;
+    margin: 0 0 6mm;
+    padding-left: 8mm;
+  }
+  .sources li {
+    margin-bottom: 1.5mm;
+  }
+  .missing {
+    font-style: italic;
+    color: #9a1c1c;
+  }
+
+  .sign {
+    margin: 8mm 0 4mm;
+  }
+  .sig-pad {
+    position: relative;
+    height: 22mm;
+    max-width: 90mm;
+  }
+  .sig-line {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    border-bottom: 1px solid #111;
+  }
+  .sig-image {
+    position: absolute;
+    left: 0;
+    bottom: 0.5mm;
+    max-height: 20mm;
+    max-width: 100%;
+  }
+  .sig-controls {
+    margin-top: 1.5mm;
+    display: flex;
+    gap: 2mm;
+  }
+  .sig-controls button {
+    font: inherit;
+    font-size: 9pt;
+    padding: 1mm 3mm;
+    border: 1px solid #333;
+    background: #eee;
+    cursor: pointer;
+    color: #111;
+  }
+
+  .field {
+    margin: 0 0 3mm;
+  }
+
+  .actions {
+    margin-top: 10mm;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    gap: 4mm;
+    align-items: center;
+    font-family: system-ui, sans-serif;
+    font-size: 10pt;
+  }
+  .actions-start {
+    text-align: left;
+  }
+  .actions-centre {
+    text-align: center;
+  }
+  .actions-end {
+    text-align: right;
+  }
+  .actions button,
+  .actions a {
+    white-space: nowrap;
+    padding: 2mm 5mm;
+    border: 1px solid #333;
+    background: #eee;
+    cursor: pointer;
+    font: inherit;
+    text-decoration: none;
+    color: #111;
+  }
+  .actions button:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+
+  .status-line {
+    margin-top: 3mm;
+    font-family: system-ui, sans-serif;
+    font-size: 9pt;
+    color: #444;
+    min-height: 1em;
+  }
+  .status-line[data-tone='error'] {
+    color: #9a1c1c;
+  }
+
+  /* Hidden for the capture, so the filed PDF is the form and not the
+     controls around it — the same trick print.astro uses, and applied to
+     this page's own root for the same scoping reason. */
+  .capturing .no-print,
+  .capturing .sig-controls {
+    display: none !important;
+  }
+</style>
+
+<script>
+  import { renderElementToPdf } from '@lib/client/pdf';
+  import { uploadDocumentBlob } from '@lib/client/document-upload';
+  import { openSignaturePad } from '@lib/client/signature';
+
+  const page = document.querySelector<HTMLElement>('.form-page');
+  const fileButton = document.querySelector<HTMLButtonElement>('#file-form');
+  const statusEl = document.querySelector<HTMLElement>('[data-status]');
+  const sigImage = document.querySelector<HTMLImageElement>('[data-sig-image]');
+  const signButton =
+    document.querySelector<HTMLButtonElement>('[data-sig-open]');
+  const clearButton =
+    document.querySelector<HTMLButtonElement>('[data-sig-clear]');
+
+  if (page && fileButton && sigImage && signButton && clearButton) {
+    const applicationId = page.dataset.applicationId ?? '';
+    const reference = page.dataset.reference ?? '';
+    const documentTypeId = page.dataset.documentTypeId ?? '';
+    const paymentsStep = page.dataset.paymentsStep ?? '';
+
+    const say = (message: string, tone: 'info' | 'error' = 'info') => {
+      if (!statusEl) return;
+      statusEl.textContent = message;
+      statusEl.dataset.tone = tone;
+    };
+
+    let signature: string | null = null;
+    const refresh = () => {
+      fileButton.disabled = !signature || documentTypeId === '';
+    };
+    refresh();
+
+    signButton.addEventListener('click', async () => {
+      const result = await openSignaturePad("Depositor's signature");
+      if (!result) return;
+      signature = result;
+      sigImage.src = result;
+      sigImage.hidden = false;
+      signButton.textContent = 'Re-sign';
+      clearButton.hidden = false;
+      refresh();
+    });
+
+    clearButton.addEventListener('click', () => {
+      signature = null;
+      sigImage.hidden = true;
+      sigImage.removeAttribute('src');
+      signButton.textContent = 'Sign';
+      clearButton.hidden = true;
+      refresh();
+    });
+
+    fileButton.addEventListener('click', () => {
+      if (!signature) return;
+      fileButton.disabled = true;
+      signButton.disabled = true;
+      say('Preparing the form…');
+
+      void (async () => {
+        // Rasterised from the page itself, so what is filed is the sheet the
+        // applicant read and signed rather than a second rendering of it
+        // that could drift.
+        page.classList.add('capturing');
+        let blob: Blob;
+        try {
+          blob = await renderElementToPdf(page);
+        } catch (error) {
+          page.classList.remove('capturing');
+          say(
+            error instanceof Error
+              ? `Could not prepare the PDF: ${error.message}`
+              : 'Could not prepare the PDF.',
+            'error'
+          );
+          fileButton.disabled = false;
+          signButton.disabled = false;
+          return;
+        }
+        page.classList.remove('capturing');
+
+        // A form signed again replaces the one on file rather than joining
+        // it: SharePoint would otherwise keep both under names a digit
+        // apart, and "the Source of Fund form" would stop naming one thing.
+        const filedDocumentId = page.dataset.filedDocumentId ?? '';
+        if (filedDocumentId) {
+          say('Removing the copy on file…');
+          try {
+            const response = await fetch('/api/v1/documents/remove', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ documentId: filedDocumentId }),
+            });
+            if (!response.ok) {
+              const body = await response.json().catch(() => null);
+              throw new Error(
+                body?.error?.message ??
+                  'The copy already on file could not be removed.'
+              );
+            }
+            page.dataset.filedDocumentId = '';
+          } catch (error) {
+            say(
+              error instanceof Error
+                ? error.message
+                : 'The copy already on file could not be removed.',
+              'error'
+            );
+            fileButton.disabled = false;
+            signButton.disabled = false;
+            return;
+          }
+        }
+
+        try {
+          await uploadDocumentBlob({
+            applicationId,
+            documentTypeId,
+            subject: 'applicant',
+            fileName: `${reference} - Source of fund form.pdf`,
+            blob,
+            onStatus: message => say(message),
+          });
+          // Straight back to the step that sent them, which now shows the
+          // form on file and lets the receipt be issued.
+          window.location.href = paymentsStep;
+        } catch (error) {
+          say(
+            (error instanceof Error
+              ? error.message
+              : 'The form could not be filed.') + ' Please try again.',
+            'error'
+          );
+          fileButton.disabled = false;
+          signButton.disabled = false;
+        }
+      })();
+    });
+  }
+</script>

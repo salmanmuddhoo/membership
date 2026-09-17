@@ -1,57 +1,26 @@
 ---
-// The Source of Fund form for a cash payment above the threshold, signed on
-// screen instead of on paper (officer feedback, migration 0062).
+// What the Payments step shows about the Cash Deposit Form (migration 0062,
+// officer feedback).
 //
-// Lives inside the Payments step's own <form> — this renders no <form> of
-// its own, only a hidden checkbox named sourceOfFundFormConfirmed that the
-// enclosing page's existing script already knows how to gate: it toggles
-// [data-cash-reminder]'s visibility and this checkbox's `required` exactly
-// as it did for the plain confirmation checkbox this replaces. Ticking it
-// is not something an officer does directly any more — the Sign and File
-// actions below do it once both have actually happened — but the contract
-// with the server (payments.ts's own applyCashPaymentRules) is unchanged:
-// true means the form was completed, whichever way it was.
+// The form itself is a page of its own — /applications/<id>/source-of-fund.
+// It used to be laid out inside this box, which asked the applicant to sign
+// for a declaration they could not read: it was a line of small print beside
+// a button. This is only the gate now: one link out to the form while it is
+// still needed, and what is on file once it is done.
 //
-// The checklist content is Configuration's own (Fees → Cash payments), not
-// this component's — it renders whatever the Society has put there.
+// It renders no <form> of its own — it sits inside the Payments step's — only
+// a hidden checkbox named sourceOfFundFormConfirmed, which the server reads
+// (payments.ts's applyCashPaymentRules) as "the form was completed". That is
+// checked here from the filed document itself rather than from anything the
+// officer ticks: the only evidence the form exists is the form existing.
 interface Props {
   applicationId: string;
-  reference: string;
-  // Whose money it is. The depositor signs this form, not the officer —
-  // it is their declaration about where the cash came from. Either may be
-  // empty (an additional account names its holder but keeps no NIC of its
-  // own here), in which case the form prints a ruled line to fill by hand,
-  // the way the paper one always did.
-  depositorName: string;
-  depositorNic: string;
   cashThreshold: string;
-  checklistItems: string[];
-  documentTypeId: string;
+  formPath: string;
   alreadyFiled: { documentId: string; fileName: string } | null;
 }
 
-const {
-  applicationId,
-  reference,
-  depositorName,
-  depositorNic,
-  cashThreshold,
-  checklistItems,
-  documentTypeId,
-  alreadyFiled,
-} = Astro.props;
-
-// The purposes the Society's own paper form offers. Fixed, because they are
-// that form's content rather than something this system decides — unlike the
-// source-of-funds list below it, which Configuration owns.
-const PURPOSES = [
-  'Shares',
-  'Donation/Gift',
-  'Repayment of loan',
-  'Deposit',
-] as const;
-
-const canSign = checklistItems.length > 0 && documentTypeId !== '';
+const { applicationId, cashThreshold, formPath, alreadyFiled } = Astro.props;
 ---
 
 <div
@@ -59,557 +28,97 @@ const canSign = checklistItems.length > 0 && documentTypeId !== '';
   hidden
   class="space-y-3 rounded-lg border border-amber-300 px-3 py-3 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200"
 >
-  <p>
-    Cash over {cashThreshold} needs the Source of Fund form below, signed before
-    the receipt can be issued.
-  </p>
-
   <input
     type="checkbox"
     name="sourceOfFundFormConfirmed"
     value="true"
-    id="sof-confirmed"
     data-cash-form-confirm
     tabindex="-1"
     checked={!!alreadyFiled}
     class="sr-only"
   />
 
-  {canSign ? (
-    <div
-      data-sof-root
-      data-application-id={applicationId}
-      data-reference={reference}
-      data-depositor-name={depositorName}
-      data-depositor-nic={depositorNic}
-      data-document-type-id={documentTypeId}
-      class="space-y-3"
-    >
-      <div data-sof-filed hidden={!alreadyFiled} class="space-y-1">
-        <p class="font-medium">Source of Fund form filed</p>
-        <p class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-          <span data-sof-filename>{alreadyFiled?.fileName ?? ''}</span>
-          <button
-            type="button"
-            data-view-document
-            data-document-id={alreadyFiled?.documentId ?? ''}
-            class="font-medium text-amber-900 underline hover:text-amber-950 dark:text-amber-200 dark:hover:text-amber-100"
-          >
-            View
-          </button>
-          <button
-            type="button"
-            data-sof-redo
-            class="font-medium text-amber-900 underline hover:text-amber-950 dark:text-amber-200 dark:hover:text-amber-100"
-          >
-            Sign again
-          </button>
-        </p>
-      </div>
-
-      <div data-sof-pending hidden={!!alreadyFiled} class="space-y-4">
-        <fieldset>
-          <legend class="font-medium">Purpose</legend>
-          <div class="mt-1.5 grid gap-1.5 sm:grid-cols-2">
-            {PURPOSES.map(purpose => (
-              <label class="flex items-start gap-2">
-                <input
-                  type="checkbox"
-                  data-sof-purpose
-                  value={purpose}
-                  class="mt-0.5"
-                />
-                <span>{purpose}</span>
-              </label>
-            ))}
-            <label class="flex items-start gap-2">
-              <input type="checkbox" data-sof-purpose-other class="mt-0.5" />
-              <span>Others</span>
-            </label>
-          </div>
-          <input
-            type="text"
-            data-sof-purpose-specify
-            placeholder="Please specify"
-            class="mt-1.5 block w-full rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-sm text-neutral-800 dark:border-amber-800 dark:bg-neutral-900 dark:text-neutral-100"
-          />
-        </fieldset>
-
-        <fieldset>
-          <legend class="font-medium">
-            The source of funds of this deposit is from
-          </legend>
-          <ul class="mt-1.5 space-y-1.5">
-            {checklistItems.map((item, index) => (
-              <li>
-                <label class="flex items-start gap-2">
-                  <input
-                    type="checkbox"
-                    data-sof-checklist-item
-                    data-index={index}
-                    class="mt-0.5"
-                  />
-                  <span>{item}</span>
-                </label>
-              </li>
-            ))}
-          </ul>
-        </fieldset>
-
-        <div class="flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            data-sof-sign
-            class="rounded-lg border border-amber-400 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 transition hover:bg-amber-50 dark:border-amber-700 dark:bg-neutral-900 dark:text-amber-200 dark:hover:bg-neutral-800"
-          >
-            Applicant signs
-          </button>
-          <img
-            data-sof-sig-preview
-            alt="Depositor's signature"
-            hidden
-            class="h-8 border-b border-amber-400"
-          />
-          <button
-            type="button"
-            data-sof-file
-            disabled
-            class="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-amber-600 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            File Source of Fund form
-          </button>
-        </div>
-        <p data-sof-status class="text-xs" aria-live="polite" />
-      </div>
-    </div>
+  {alreadyFiled ? (
+    <>
+      <p class="font-medium">Source of Fund form signed and filed</p>
+      <p class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+        <span>{alreadyFiled.fileName}</span>
+        <button
+          type="button"
+          data-view-document
+          data-document-id={alreadyFiled.documentId}
+          class="font-medium underline hover:text-amber-950 dark:hover:text-amber-100"
+        >
+          View
+        </button>
+        {/* A real submit, not a script: deleting a filed document is the
+            page's own delete-document intent, which audits it and takes the
+            file out of SharePoint. formnovalidate because this button has
+            nothing to do with the payment fields around it. */}
+        <button
+          type="submit"
+          name="intent"
+          value="delete-document"
+          formnovalidate
+          class="font-medium underline hover:text-amber-950 dark:hover:text-amber-100"
+        >
+          Delete
+        </button>
+        <input
+          type="hidden"
+          name="documentId"
+          value={alreadyFiled.documentId}
+        />
+      </p>
+      <p class="text-xs">Delete it if the applicant needs to sign again.</p>
+    </>
   ) : (
-    <p class="text-xs italic">
-      No Source of Fund checklist is configured yet — an administrator sets one
-      from Configuration → Fee schedules.
-    </p>
+    <>
+      <p>
+        Cash over {cashThreshold} needs a signed Source of Fund form before the
+        receipt can be issued.
+      </p>
+      <p>
+        <a
+          href={formPath}
+          data-source-of-fund-link
+          data-application-id={applicationId}
+          class="inline-block rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-amber-600"
+        >
+          Source of fund form
+        </a>
+      </p>
+    </>
   )}
-
-  {/* A person without scripting cannot sign on screen or generate a PDF —
-       html2canvas and jsPDF are both client-side work with nothing server
-       equivalent. What they get instead is the confirmation this replaces:
-       the checkbox above stays a real, checkable control (not disabled), so
-       ticking it by hand and completing the form on paper still satisfies
-       the same server-side rule. */}
-  <noscript>
-    <style>
-      [data-sof-root] {
-        display: none;
-      }
-      [data-cash-form-confirm] {
-        position: static !important;
-        width: auto !important;
-        height: auto !important;
-        clip: auto !important;
-        clip-path: none !important;
-        overflow: visible !important;
-        white-space: normal !important;
-        margin-right: 0.5em;
-      }
-    </style>
-    <label for="sof-confirmed" class="flex items-start gap-2 font-medium">
-      I confirm the paper Source of Fund form has been completed.
-    </label>
-  </noscript>
 </div>
 
 <script>
-  import { renderElementToPdf } from '@lib/client/pdf';
-  import { uploadDocumentBlob } from '@lib/client/document-upload';
-  import { trimmedSignature } from '@lib/client/signature';
+  // The amount travels to the form so the figure the applicant signs for is
+  // the one about to be taken, rather than a second guess at it. Read off
+  // the same Total cell the Payments step keeps live, and refreshed as it
+  // changes — a link built once at render would carry a stale figure.
+  const link = document.querySelector<HTMLAnchorElement>(
+    '[data-source-of-fund-link]'
+  );
+  const totalCell = document.querySelector<HTMLElement>('[data-payment-total]');
 
-  for (const root of document.querySelectorAll<HTMLElement>(
-    '[data-sof-root]'
-  )) {
-    const reminder = root.closest<HTMLElement>('[data-cash-reminder]');
-    const confirmBox = reminder?.querySelector<HTMLInputElement>(
-      '[data-cash-form-confirm]'
-    );
-    const filedView = root.querySelector<HTMLElement>('[data-sof-filed]');
-    const pendingView = root.querySelector<HTMLElement>('[data-sof-pending]');
-    const fileNameEl = root.querySelector<HTMLElement>('[data-sof-filename]');
-    const viewButton = root.querySelector<HTMLButtonElement>(
-      '[data-view-document]'
-    );
-    const redoButton = root.querySelector<HTMLButtonElement>('[data-sof-redo]');
-    const signButton = root.querySelector<HTMLButtonElement>('[data-sof-sign]');
-    const fileButton = root.querySelector<HTMLButtonElement>('[data-sof-file]');
-    const sigPreview = root.querySelector<HTMLImageElement>(
-      '[data-sof-sig-preview]'
-    );
-    const statusEl = root.querySelector<HTMLElement>('[data-sof-status]');
-    const items = root.querySelectorAll<HTMLInputElement>(
-      '[data-sof-checklist-item]'
-    );
-    if (
-      !confirmBox ||
-      !filedView ||
-      !pendingView ||
-      !signButton ||
-      !fileButton
-    ) {
-      continue;
-    }
+  if (link && totalCell) {
+    const base = link.getAttribute('href') ?? '';
 
-    const applicationId = root.dataset.applicationId ?? '';
-    const reference = root.dataset.reference ?? '';
-    const depositorName = root.dataset.depositorName ?? '';
-    const depositorNic = root.dataset.depositorNic ?? '';
-    const documentTypeId = root.dataset.documentTypeId ?? '';
-    const purposes =
-      root.querySelectorAll<HTMLInputElement>('[data-sof-purpose]');
-    const purposeOther = root.querySelector<HTMLInputElement>(
-      '[data-sof-purpose-other]'
-    );
-    const purposeSpecify = root.querySelector<HTMLInputElement>(
-      '[data-sof-purpose-specify]'
-    );
-
-    const say = (message: string) => {
-      if (statusEl) statusEl.textContent = message;
+    const sync = () => {
+      // "MUR 68,500.00" back to "68500.00", which is what the form's own
+      // query parameter accepts.
+      const digits = (totalCell.textContent ?? '').replace(/[^\d.]/g, '');
+      link.href = /^\d+(\.\d{1,2})?$/.test(digits)
+        ? `${base}?amount=${encodeURIComponent(digits)}`
+        : base;
     };
 
-    let signatureDataUrl: string | null = null;
-
-    const updateFileButton = () => {
-      const allChecked = [...items].every(item => item.checked);
-      fileButton.disabled = !allChecked || !signatureDataUrl;
-    };
-    for (const item of items) item.addEventListener('change', updateFileButton);
-
-    // A full-screen canvas, built fresh each time rather than kept in the
-    // markup — this component may sit on a page that never needs it (no
-    // cash payment ever crosses the threshold), and a modal nobody opens is
-    // not worth shipping in the initial HTML.
-    const openSignatureModal = (): Promise<string | null> =>
-      new Promise(resolve => {
-        const overlay = document.createElement('div');
-        overlay.style.cssText =
-          'position:fixed;inset:0;z-index:70;background:#fff;display:flex;flex-direction:column;';
-        const bar = document.createElement('div');
-        bar.style.cssText =
-          'display:flex;justify-content:space-between;align-items:center;padding:10px 14px;font:600 14px system-ui,sans-serif;border-bottom:1px solid #ddd;';
-        const title = document.createElement('span');
-        title.textContent = 'Depositor’s signature — Cash Deposit Form';
-        const cancel = document.createElement('button');
-        cancel.type = 'button';
-        cancel.textContent = 'Cancel';
-        cancel.style.cssText =
-          'font:inherit;padding:4px 10px;border:1px solid #999;background:#eee;';
-        bar.append(title, cancel);
-
-        const canvas = document.createElement('canvas');
-        canvas.style.cssText = 'flex:1;touch-action:none;cursor:crosshair;';
-
-        const bottomBar = document.createElement('div');
-        bottomBar.style.cssText = bar.style.cssText;
-        const clear = document.createElement('button');
-        clear.type = 'button';
-        clear.textContent = 'Clear';
-        clear.style.cssText = cancel.style.cssText;
-        const done = document.createElement('button');
-        done.type = 'button';
-        done.textContent = 'Use this signature';
-        done.style.cssText =
-          'font:inherit;font-weight:700;padding:4px 10px;border:1px solid #333;background:#cdeedb;';
-        bottomBar.append(clear, done);
-
-        overlay.append(bar, canvas, bottomBar);
-        document.body.appendChild(overlay);
-
-        const ctx = canvas.getContext('2d');
-        const size = () => {
-          if (!ctx) return;
-          const rect = canvas.getBoundingClientRect();
-          const dpr = window.devicePixelRatio || 1;
-          canvas.width = Math.max(1, Math.round(rect.width * dpr));
-          canvas.height = Math.max(1, Math.round(rect.height * dpr));
-          ctx.scale(dpr, dpr);
-          ctx.lineWidth = 2.5;
-          ctx.lineCap = 'round';
-          ctx.lineJoin = 'round';
-          ctx.strokeStyle = '#1a1a2e';
-        };
-        // Measured after layout, not on the same tick the overlay was
-        // inserted on — a just-inserted element can still report a zero
-        // size, which would leave the canvas with no drawing surface.
-        requestAnimationFrame(size);
-
-        let drawing = false;
-        let last: { x: number; y: number } | null = null;
-        const pointFrom = (e: PointerEvent) => {
-          const box = canvas.getBoundingClientRect();
-          return { x: e.clientX - box.left, y: e.clientY - box.top };
-        };
-        canvas.addEventListener('pointerdown', e => {
-          e.preventDefault();
-          canvas.setPointerCapture(e.pointerId);
-          drawing = true;
-          last = pointFrom(e);
-        });
-        canvas.addEventListener('pointermove', e => {
-          if (!drawing || !last || !ctx) return;
-          const point = pointFrom(e);
-          ctx.beginPath();
-          ctx.moveTo(last.x, last.y);
-          ctx.lineTo(point.x, point.y);
-          ctx.stroke();
-          last = point;
-        });
-        const stop = () => {
-          drawing = false;
-          last = null;
-        };
-        canvas.addEventListener('pointerup', stop);
-        canvas.addEventListener('pointercancel', stop);
-        canvas.addEventListener('pointerleave', stop);
-
-        const finish = (result: string | null) => {
-          overlay.remove();
-          resolve(result);
-        };
-        cancel.addEventListener('click', () => finish(null));
-        clear.addEventListener('click', () => {
-          if (!ctx) return;
-          ctx.save();
-          ctx.setTransform(1, 0, 0, 1, 0, 0);
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
-          ctx.restore();
-        });
-        done.addEventListener('click', () => finish(trimmedSignature(canvas)));
-      });
-
-    signButton.addEventListener('click', async () => {
-      const result = await openSignatureModal();
-      if (!result) return;
-      signatureDataUrl = result;
-      if (sigPreview) {
-        sigPreview.src = result;
-        sigPreview.hidden = false;
-      }
-      signButton.textContent = 'Re-sign';
-      updateFileButton();
-    });
-
-    fileButton.addEventListener('click', async () => {
-      if (!signatureDataUrl) return;
-      // What the form says was deposited: the total the officer is about to
-      // record, read off the same cell the page keeps live, so the two can
-      // never disagree about the figure.
-      const amountText =
-        document
-          .querySelector<HTMLElement>('[data-payment-total]')
-          ?.textContent?.trim() ?? '';
-
-      fileButton.disabled = true;
-      signButton.disabled = true;
-      say('Preparing the form…');
-
-      // Built off-screen rather than reusing anything already in the page —
-      // this content (the boxes as ticked, the amount as it stands, the
-      // signature just captured) exists nowhere else on screen, so there is
-      // no existing element to rasterise the way print.astro rasterises its
-      // own visible form. Laid out as the Society's paper Cash Deposit Form
-      // is, so the filed PDF and the pad on the counter read the same.
-      const sheet = document.createElement('div');
-      sheet.style.cssText =
-        'position:fixed;left:-9999px;top:0;width:720px;padding:36px;' +
-        'background:#fff;color:#111;font-family:Arial,Helvetica,sans-serif;' +
-        'font-size:13px;line-height:1.5;';
-
-      const el = (tag: string, css: string, text?: string) => {
-        const node = document.createElement(tag);
-        node.style.cssText = css;
-        if (text !== undefined) node.textContent = text;
-        return node;
-      };
-      // Written rather than drawn: a box glyph renders differently font to
-      // font, and the rasteriser only ever sees what the font gave it.
-      const box = (ticked: boolean) => (ticked ? '[X]' : '[  ]');
-      // What the paper form leaves blank for a pen, wherever this system
-      // has no value of its own to print.
-      const ruled = (value: string) => value.trim() || '_'.repeat(30);
-
-      sheet.append(
-        el(
-          'h1',
-          'font-size:17px;font-weight:700;text-align:center;margin:0;letter-spacing:.5px;',
-          'AL BARAKAH MCSL'
-        ),
-        el(
-          'h2',
-          'font-size:15px;font-weight:700;text-align:center;margin:6px 0 20px;letter-spacing:.5px;',
-          'CASH DEPOSIT FORM'
-        )
-      );
-
-      // The bordered block: who, how much, when, and what for.
-      const table = el(
-        'div',
-        'border:1px solid #111;border-bottom:none;margin-bottom:22px;'
-      );
-      const row = (label: string, value: string) => {
-        const line = el(
-          'div',
-          'border-bottom:1px solid #111;padding:8px 10px;font-weight:700;'
-        );
-        line.append(
-          el('span', '', `${label} `),
-          el('span', 'font-weight:400;', value)
-        );
-        return line;
-      };
-      table.append(
-        row('NAME:', ruled(depositorName)),
-        row('RUPEES:', ruled(amountText)),
-        row(
-          'Date:',
-          new Date().toLocaleDateString('en-GB', {
-            day: 'numeric',
-            month: 'long',
-            year: 'numeric',
-          })
-        )
-      );
-
-      const purposeCell = el(
-        'div',
-        'border-bottom:1px solid #111;padding:8px 10px;'
-      );
-      purposeCell.append(
-        el('p', 'font-weight:700;margin:0 0 6px;', 'Purpose:')
-      );
-      const purposeGrid = el(
-        'div',
-        'display:flex;flex-wrap:wrap;column-gap:40px;row-gap:4px;'
-      );
-      for (const input of purposes) {
-        purposeGrid.append(
-          el('span', 'width:45%;', `${box(input.checked)} ${input.value}`)
-        );
-      }
-      purposeGrid.append(
-        el('span', 'width:45%;', `${box(!!purposeOther?.checked)} Others...`)
-      );
-      purposeCell.append(purposeGrid);
-      purposeCell.append(
-        el(
-          'p',
-          'margin:8px 0 0;font-style:italic;',
-          `(Please Specify: ${ruled(purposeSpecify?.value ?? '')}`.concat(')')
-        )
-      );
-      table.append(purposeCell);
-      sheet.append(table);
-
-      // The configured list, ticked as the officer and applicant worked
-      // through it. Every item prints, ticked or not — a form showing only
-      // what was agreed to is not the form that was signed.
-      sheet.append(
-        el(
-          'p',
-          'margin:0 0 10px;',
-          'I hereby certify that the source of funds of this deposit is from:'
-        )
-      );
-      const list = el('div', 'margin:0 0 22px;padding-left:24px;');
-      for (const item of items) {
-        const label = item.closest('label')?.textContent?.trim() ?? '';
-        list.append(
-          el('p', 'margin:0 0 6px;', `${box(item.checked)}  ${label}`)
-        );
-      }
-      sheet.append(list);
-
-      sheet.append(
-        el(
-          'p',
-          'margin:0 0 26px;',
-          'I hereby certify that this deposit does not directly or indirectly ' +
-            'originate from or is not in any way whatsoever connected with any ' +
-            'illicit financial activity, pursuant to any Anti-Money Laundering ' +
-            'Legislation in force in the Republic of Mauritius.'
-        )
-      );
-
-      const sigRow = el('div', 'margin:0 0 14px;');
-      sigRow.append(el('span', 'font-weight:700;', "DEPOSITOR'S SIGNATURE: "));
-      const sigImg = document.createElement('img');
-      sigImg.src = signatureDataUrl;
-      sigImg.alt = 'Signature';
-      sigImg.style.cssText =
-        'height:46px;max-width:300px;object-fit:contain;object-position:left ' +
-        'bottom;vertical-align:middle;border-bottom:1px solid #111;';
-      sigRow.append(sigImg);
-      sheet.append(sigRow);
-
-      const field = (label: string, value: string) => {
-        const line = el('p', 'margin:0 0 12px;');
-        line.append(
-          el('span', 'font-weight:700;', `${label} `),
-          el('span', '', ruled(value))
-        );
-        return line;
-      };
-      sheet.append(
-        field('NAME OF DEPOSITOR:', depositorName),
-        field('NIC / PASSPORT NO:', depositorNic),
-        el(
-          'p',
-          'margin:26px 0 0;font-size:11px;color:#555;',
-          `${reference} · filed from the Payments step`
-        )
-      );
-
-      document.body.appendChild(sheet);
-
-      try {
-        const blob = await renderElementToPdf(sheet);
-        const { documentId } = await uploadDocumentBlob({
-          applicationId,
-          documentTypeId,
-          subject: 'applicant',
-          fileName: `${reference} - Source of fund form.pdf`,
-          blob,
-          onStatus: message => say(message),
-        });
-
-        confirmBox.checked = true;
-        pendingView.hidden = true;
-        filedView.hidden = false;
-        if (fileNameEl) {
-          fileNameEl.textContent = `${reference} - Source of fund form.pdf`;
-        }
-        if (viewButton) viewButton.dataset.documentId = documentId;
-        say('');
-      } catch (error) {
-        say(
-          error instanceof Error
-            ? `Could not file the form: ${error.message}`
-            : 'Could not file the form.'
-        );
-        fileButton.disabled = false;
-        signButton.disabled = false;
-      } finally {
-        sheet.remove();
-      }
-    });
-
-    redoButton?.addEventListener('click', () => {
-      confirmBox.checked = false;
-      filedView.hidden = true;
-      pendingView.hidden = false;
-      for (const item of items) item.checked = false;
-      signatureDataUrl = null;
-      if (sigPreview) sigPreview.hidden = true;
-      signButton.textContent = 'Sign';
-      signButton.disabled = false;
-      updateFileButton();
-      say('');
+    sync();
+    new MutationObserver(sync).observe(totalCell, {
+      childList: true,
+      characterData: true,
+      subtree: true,
     });
   }
 </script>
