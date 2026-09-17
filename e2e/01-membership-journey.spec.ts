@@ -163,12 +163,9 @@ test.describe('an Individual application, capture to member', () => {
     const page = await as('officer');
     await page.goto(`${applicationUrl}?step=5`);
 
-    // Two ways this legitimately happens, and the test cares about the
-    // outcome rather than which one. Recording the payment submits the
-    // application by itself when the officer holds application.submit
-    // (officer feedback — it is the last thing standing between the
-    // application and the next person), and where they do not, the Submit
-    // button is still there for whoever does.
+    // Submission is always a deliberate click — recording a payment never
+    // submits by itself. The button is absent only for someone without
+    // application.submit, who leaves it for whoever holds it.
     const submit = page.getByRole('button', {
       name: /^Submit for Processing$/,
     });

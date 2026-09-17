@@ -182,18 +182,32 @@ lose the ones they had already confirmed when the replacement arrives.
 **Filing the signed form no longer needs a separate scan.** The print page
 (step 2, "Application signature") already let a signatory draw on screen; what
 used to happen next was print → save as PDF → go to step 3 → upload that file
-by hand. Now, once the Applicant has signed, clicking "Next: upload
-documents →" renders the page as it stands — signatures included — into a
-PDF client-side (`src/lib/client/pdf.ts`, html2canvas-pro rasterising the DOM
-and jsPDF assembling A4 pages) and files it through the same brokered upload
-a manual filing uses, so step 3 opens with it already `under_review`.
+by hand. Now, once the Applicant has signed, "File signed form" renders the
+page as it stands — signatures included — into a PDF client-side
+(`src/lib/client/pdf.ts`, html2canvas-pro rasterising the DOM and jsPDF
+assembling A4 pages) and files it through the same brokered upload a manual
+filing uses, so step 3 opens with it already `under_review`.
+
+**Filing is its own button, and not Next.** It first rode on "Next: upload
+documents →", which meant an officer who simply passed back through step 2
+filed a second copy nobody had asked for (officer feedback). Next is a plain
+link again; filing happens when the officer says so and at no other time.
+
+**Only the last signature is kept.** Where a signed form is already on file,
+filing again removes it (`POST /api/v1/documents/remove`, the same
+`removeFiledDocument` the Remove button on step 3 runs) before uploading the
+new one, so SharePoint holds one signed form and not a pile of near-identical
+copies a digit apart in their names. The removal runs first, so a failure
+there stops the second copy being created at all — the checklist reads
+Missing in the meantime, which is what it genuinely is. This is the one
+document type that works this way, and deliberately: a re-signature means the
+earlier signature was withdrawn, not that a clearer scan of it arrived.
 
 This is deliberately not a hard gate. If the Applicant has not signed on
-screen — signing on paper instead, or not yet — the link is still a plain
-navigation to step 3, exactly as it always was; only a captured signature
-changes what happens before that. A SharePoint hiccup during the render or
-the upload leaves the officer on the print page with what went wrong and a
-second click that falls through to the same plain navigation, never stuck.
+screen — signing on paper instead, or not yet — the button says so and files
+nothing; the officer prints and uploads on step 3 as they always could. A
+SharePoint hiccup during the render or the upload leaves them on the print
+page with what went wrong and that same manual path still open.
 
 `.no-print` elements (the Sign buttons, the witness-name inputs' own hint,
 the action bar) are excluded from the capture by a `.capturing` class applied
@@ -213,6 +227,20 @@ lets an officer open a document at all: they have no SharePoint account (see
 to them. The URL is fetched on click rather than embedded in the page — it is
 a secret in the same sense an upload ticket is one, and a page that sat open
 for an hour would otherwise carry a live one in its HTML the whole time.
+
+**Printing needs the bytes, not the link.** The viewer renders SharePoint's
+own pre-authenticated URL, which is cheap and correct — but nothing can print
+it: a cross-origin frame will not take `window.print()`, and SharePoint sends
+no CORS headers for a script to fetch the file and re-host it. `GET
+/api/v1/documents/content` (`document.view`, the same permission and the same
+document) streams the same bytes through this server instead, and the Print
+button in the viewer points a hidden frame at that — which, being same-origin,
+can be told to print. It is offered only for what the browser will actually
+render: an image or a PDF.
+
+Both the viewer and its Print live in one place, `src/components/DocumentViewer.astro`,
+included by the pages that show documents — the three application kinds and a
+member — rather than copied into each of them.
 
 **Removing a filed document is Replace without the replacement — and, unlike
 Replace, it does not keep the file.** `removeFiledDocument` (`document.upload`)

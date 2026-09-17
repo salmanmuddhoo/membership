@@ -223,3 +223,12 @@ it deterministic.
 It cannot be deleted, voided receipt or not. Deleting an abandoned draft is for
 a draft nobody has acted on; taking payment is acting on it, and the applicant
 is holding a receipt that names the application.
+
+**Recording a payment does not submit it.** It briefly did — the reasoning
+was that the wizard had already gated everything else, so the receipt was the
+last thing standing between the application and the next person in the chain.
+In practice that took the decision out of the officer's hands: they took a
+payment, opened the receipt to check it, came back, and found the application
+gone from their queue without having asked for that (officer feedback).
+Submission is "Next: submit for processing" and nothing else, on all three
+application kinds.

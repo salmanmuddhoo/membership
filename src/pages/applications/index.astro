@@ -120,19 +120,18 @@ const applications = [...unsortedApplications].sort(
   (a, b) => Number(attentionIds.has(b.id)) - Number(attentionIds.has(a.id))
 );
 
-// S-611 follow-up: 'new' means as many different things as the configured
-// chain has steps waiting on it — still with the Regional Manager, past them
-// and with the Secretary, or (Secretary review disabled) straight with the
-// President — and the status badge alone cannot say which. One batched read
-// for every 'new' row on the page, driven entirely by the configured chain
-// (`reviewStageLabelsFor`, workflow.ts) rather than assuming which two roles
-// those could be. The same principle applies to 'returned' rows: the status
-// badge alone does not say who sent it back, so a second batched read adds
-// "Returned by the X" for those.
+// S-611 follow-up: a status names a stage, never the person holding it.
+// 'new' means as many different things as the configured chain has steps
+// waiting on it — still with the Regional Manager, past them and with the
+// Secretary, or (Secretary review disabled) straight with the President —
+// and "Submit for Approval" says no more about the President holding it.
+// One batched read for the whole page, driven entirely by the configured
+// chain (`reviewStageLabelsFor`, workflow.ts) rather than assuming which
+// roles those could be. The same principle applies to 'returned' rows: the
+// status badge alone does not say who sent it back, so a second batched
+// read adds "Returned by the X" for those.
 const [reviewStageLabels, returnedStageLabels] = await Promise.all([
-  reviewStageLabelsFor(
-    applications.filter(a => a.status === 'new').map(a => a.id)
-  ),
+  reviewStageLabelsFor(applications.map(a => ({ id: a.id, status: a.status }))),
   returnedByLabelsFor(
     applications.filter(a => a.status === 'returned').map(a => a.id)
   ),
@@ -422,8 +421,20 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                       >
                         {STATUS_LABELS[a.status] ?? a.status}
                       </span>
-                      {a.status === 'new' && reviewStageLabels.has(a.id) && (
-                        <span class="mt-1 block text-xs text-neutral-500 dark:text-neutral-400">
+                      {reviewStageLabels.has(a.id) && (
+                        <span
+                          class:list={[
+                            'mt-1 block text-xs',
+                            // Gold and bold only for the person whose own
+                            // role is the one holding it up: a Secretary
+                            // scanning this list needs the rows waiting on
+                            // them to stand out from the rows waiting on
+                            // somebody else, which read the same otherwise.
+                            attentionIds.has(a.id)
+                              ? 'font-semibold text-amber-700 dark:text-amber-400'
+                              : 'text-neutral-500 dark:text-neutral-400',
+                          ]}
+                        >
                           {reviewStageLabels.get(a.id)}
                         </span>
                       )}

@@ -707,6 +707,7 @@ export interface DecisionResult {
 }
 
 const STEP_CODE_PRESIDENT_DECISION = 'president_decision';
+const STEP_CODE_SECRETARY_REVIEW = 'secretary_review';
 
 /**
  * S-306, S-609 · President decision: approve or reject, with a Board quorum.
@@ -996,6 +997,51 @@ export async function signoffsFor(
     actorName: r.actor_name,
     actorEmail: r.actor_email,
     outcome: r.outcome,
+    comment: r.comment,
+    occurredAt: r.occurred_at,
+  }));
+}
+
+export interface ApprovalComment {
+  // The role as the chain names it — "Secretary", "President / Chairperson".
+  role: string;
+  actorName: string;
+  comment: string;
+  occurredAt: Date;
+}
+
+/**
+ * What the Secretary and the President wrote on their way through.
+ *
+ * Officer feedback: a member's page named the application they came from and
+ * nothing else, so anything a reviewer had said about them was a page nobody
+ * thought to open. Only the steps a reviewer speaks at, and only where they
+ * actually wrote something — a forward with no comment is not a remark, and
+ * an empty popup is worse than no link at all.
+ */
+export async function approvalCommentsFor(
+  applicationId: string
+): Promise<ApprovalComment[]> {
+  const result = await query<{
+    actor_role: string | null;
+    actor_name: string;
+    comment: string;
+    occurred_at: Date;
+  }>(
+    `select t.actor_role, u.display_name as actor_name, t.comment,
+            t.occurred_at
+       from application_transition t
+       join app_user u on u.id = t.actor_user_id
+      where t.application_id = $1
+        and t.step_code in ($2, $3)
+        and coalesce(trim(t.comment), '') <> ''
+      order by t.occurred_at, t.id`,
+    [applicationId, STEP_CODE_SECRETARY_REVIEW, STEP_CODE_PRESIDENT_DECISION]
+  );
+
+  return result.rows.map(r => ({
+    role: r.actor_role ?? 'Reviewer',
+    actorName: r.actor_name,
     comment: r.comment,
     occurredAt: r.occurred_at,
   }));
@@ -1405,14 +1451,19 @@ export async function returnedByLabelsFor(
 export async function reviewStageLabel(
   application: Application
 ): Promise<string | null> {
-  if (application.status !== 'new') return null;
-  const [chain, passed] = await Promise.all([
-    activeChain(WORKFLOW_CODE),
-    passedSteps(application.id),
-  ]);
+  const chain = await activeChain(WORKFLOW_CODE);
+  // Every stage in the chain, not 'new' alone: an application at
+  // 'submitted_for_approval' is with the President just as plainly, and the
+  // status name ("Submit for Approval") no more says so than 'new' did.
+  // The capture step is the exception — a draft is not "with" anyone, it is
+  // the work of whoever is typing it, which is what Draft already says.
+  const waiting = chain.filter(
+    s => s.code !== 'capture' && s.fromStatus === application.status
+  );
+  if (waiting.length === 0) return null;
 
-  for (const step of chain) {
-    if (step.fromStatus !== application.status) continue;
+  const passed = await passedSteps(application.id);
+  for (const step of waiting) {
     if (step.fromStatus === step.toStatus && passed.has(step.code)) continue;
     if (unmetGates(chain, step, passed).length > 0) continue;
     return `With the ${step.roleName}`;
@@ -1467,48 +1518,53 @@ export async function regionalReviewPassedIds(
 /**
  * `reviewStageLabel`, batched: which role currently holds each of these
  * applications, for the "With the X" line the Applications list shows under
- * a 'new' row's status badge (S-611 follow-up). Every application passed in
- * is assumed to be at 'new' already — the list only ever asks this for those.
+ * a row's status badge (S-611 follow-up).
  *
  * Reads the configured chain once and, per gate it contains, one query for
  * the whole batch — not the fixed "Regional Manager or Secretary" the list
  * page used to assume itself: whichever step the chain actually has waiting
- * on 'new' (bridged past any disabled step ahead of it, `activeChain`'s own
- * job) is what gets named here, so a Secretary-review step disabled in
- * configuration stops being named without this needing to know that
- * happened.
+ * on each row's own status (bridged past any disabled step ahead of it,
+ * `activeChain`'s own job) is what gets named here, so a Secretary-review
+ * step disabled in configuration stops being named without this needing to
+ * know that happened.
  */
 export async function reviewStageLabelsFor(
-  applicationIds: string[]
+  applications: { id: string; status: string }[]
 ): Promise<Map<string, string>> {
   const labels = new Map<string, string>();
-  if (applicationIds.length === 0) return labels;
+  if (applications.length === 0) return labels;
 
   const chain = await activeChain(WORKFLOW_CODE);
-  const waiting = chain.filter(s => s.fromStatus === 'new');
+  const waiting = chain.filter(s => s.code !== 'capture');
   if (waiting.length === 0) return labels;
 
+  // A gate is only asked about the rows actually sitting at its own
+  // fromStatus — a page of Presidential rows costs no Regional query.
   const gatePassed = new Map<string, Set<string>>();
   for (const step of waiting) {
     if (step.fromStatus !== step.toStatus) continue;
     gatePassed.set(
       step.code,
-      await passedIdsForStep(step.code, applicationIds)
+      await passedIdsForStep(
+        step.code,
+        applications.filter(a => a.status === step.fromStatus).map(a => a.id)
+      )
     );
   }
 
-  for (const id of applicationIds) {
-    for (const step of waiting) {
+  for (const application of applications) {
+    const here = waiting.filter(s => s.fromStatus === application.status);
+    for (const step of here) {
       const isGate = step.fromStatus === step.toStatus;
-      if (isGate && gatePassed.get(step.code)!.has(id)) continue;
-      const unmet = waiting.filter(
+      if (isGate && gatePassed.get(step.code)!.has(application.id)) continue;
+      const unmet = here.filter(
         s =>
           s.stepNo < step.stepNo &&
           s.fromStatus === s.toStatus &&
-          !gatePassed.get(s.code)!.has(id)
+          !gatePassed.get(s.code)!.has(application.id)
       );
       if (unmet.length > 0) continue;
-      labels.set(id, `With the ${step.roleName}`);
+      labels.set(application.id, `With the ${step.roleName}`);
       break;
     }
   }

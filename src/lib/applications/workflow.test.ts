@@ -2387,14 +2387,17 @@ describe('S-611: Regional oversight, enabled or not, gates the chain', () => {
       'With the Secretary'
     );
 
-    // Nothing to say once it has moved past 'new' altogether.
+    // Past 'new' it is the President holding it, and says so — the status
+    // ("Submit for Approval") never did.
     await workflow.reviewApplication(
       id,
       { outcome: 'forward', comment: 'Complete.' },
       secretary
     );
     application = (await capture.loadApplication(id))!;
-    expect(await workflow.reviewStageLabel(application)).toBeNull();
+    expect(await workflow.reviewStageLabel(application)).toBe(
+      'With the President / Chairperson'
+    );
   });
 
   it('says "With the Secretary" straight away while disabled', async () => {
@@ -2609,8 +2612,49 @@ describe('Disabling Secretary review bridges straight to the President', () => {
     await workflow.submitApplication(id, officer);
     const application = (await capture.loadApplication(id))!;
 
-    const labels = await workflow.reviewStageLabelsFor([id]);
+    const labels = await workflow.reviewStageLabelsFor([
+      { id, status: application.status },
+    ]);
     expect(labels.get(id)).toBe(await workflow.reviewStageLabel(application));
+  });
+
+  // Officer feedback: the President's own queue read as "Submit for Approval"
+  // and nothing else — the status names the stage, never who is holding it.
+  it('names the President on an application waiting on their decision', async () => {
+    const { capture, workflow } = await load();
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+    await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Complete.' },
+      secretary
+    );
+
+    const application = (await capture.loadApplication(id))!;
+    expect(application.status).toBe('submitted_for_approval');
+    expect(await workflow.reviewStageLabel(application)).toBe(
+      'With the President / Chairperson'
+    );
+
+    const labels = await workflow.reviewStageLabelsFor([
+      { id, status: application.status },
+    ]);
+    expect(labels.get(id)).toBe('With the President / Chairperson');
+  });
+
+  // A draft is nobody's to review — it is the work of whoever is typing it,
+  // which "Draft" already says.
+  it('names nobody on a draft', async () => {
+    const { capture, workflow } = await load();
+    const id = await captureComplete();
+    const application = (await capture.loadApplication(id))!;
+
+    expect(application.status).toBe('draft');
+    expect(await workflow.reviewStageLabel(application)).toBeNull();
+    const labels = await workflow.reviewStageLabelsFor([
+      { id, status: application.status },
+    ]);
+    expect(labels.has(id)).toBe(false);
   });
 });
 

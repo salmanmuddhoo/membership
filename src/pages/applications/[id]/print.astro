@@ -21,7 +21,7 @@ import {
   listMembershipTypes,
   type FieldSubject,
 } from '@lib/config/reference';
-import { SIGNATURES } from '@lib/documents/documents';
+import { filedDocumentFor, SIGNATURES } from '@lib/documents/documents';
 
 const principal = Astro.locals.principal!;
 const { id } = Astro.params;
@@ -92,14 +92,23 @@ const type = (await listMembershipTypes()).find(
 )!;
 const fields = visibleFields(type);
 
-// So "Next: upload documents" can file the signed form itself once the
-// applicant has signed on screen, instead of the officer printing, saving a
-// PDF by hand and uploading it as a separate step (officer feedback). Looked
-// up once here rather than assumed: the id is a database value, not
-// something the client can be trusted to already know.
+// So the officer can file the signed form straight off this page once the
+// applicant has signed on screen, instead of printing, saving a PDF by hand
+// and uploading it as a separate step (officer feedback). Looked up once
+// here rather than assumed: the id is a database value, not something the
+// client can be trusted to already know.
 const signedFormType = (await listDocumentTypes()).find(
   t => t.code === 'signed_form'
 );
+// Whether one is on file already, which decides whether filing again is a
+// first filing or a replacement — and a replacement takes the previous one
+// out of SharePoint rather than leaving both there (officer feedback: a
+// re-signature must not accumulate copies; only the last version is the
+// signed form).
+const filedSignedForm =
+  signedFormType && isEditableStatus(application.status)
+    ? await filedDocumentFor(application.id, signedFormType.id, 'applicant')
+    : null;
 
 // Officer feedback: the form gave no clue which account it was for — every
 // membership type prints as one generic-sounding heading, and an account
@@ -345,15 +354,19 @@ const fixedViewport =
       <button type="button" id="print">
         Print
       </button>
+      {isEditable && signedFormType && (
+        <button
+          type="button"
+          id="file-signed-form"
+          data-filed-document-id={filedSignedForm?.documentId ?? ''}
+        >
+          {filedSignedForm ? 'File this signature again' : 'File signed form'}
+        </button>
+      )}
       {isEditable ? (
         <>
           <a href={`${basePath}?step=1`}>← Back</a>
-          <a
-            href={`${basePath}?step=3`}
-            class="next"
-            id="next-upload-documents"
-            data-signed-form-available={signedFormType ? 'yes' : 'no'}
-          >
+          <a href={`${basePath}?step=3`} class="next">
             Next: upload documents →
           </a>
         </>
@@ -362,11 +375,11 @@ const fixedViewport =
       )}
     </div>
     {isEditable && signedFormType && (
-      <p
-        data-sign-file-status
-        class="no-print status-line"
-        aria-live="polite"
-      />
+      <p data-sign-file-status class="no-print status-line" aria-live="polite">
+        {filedSignedForm
+          ? `On file: ${filedSignedForm.fileName}`
+          : 'Sign above, then file the form. It replaces the copy on file, so only the last signature is kept.'}
+      </p>
     )}
   </div>
 </BaseLayout>
@@ -657,7 +670,7 @@ const fixedViewport =
     text-decoration: none;
     color: #111;
   }
-  .actions a.next[aria-disabled='true'] {
+  .actions button:disabled {
     cursor: wait;
     opacity: 0.6;
   }
@@ -1000,30 +1013,27 @@ const fixedViewport =
 
   // Officer feedback: printing, saving as a PDF and then uploading that same
   // file on the Documents step was three separate actions to get one
-  // document filed. Once the applicant has signed on screen, this is the
-  // fourth signature block onward — Next does the filing itself: render the
-  // page exactly as it stands into a PDF and file it as the Signed
-  // Application Form, so step 3 opens with nothing left to upload for it.
+  // document filed. Once the applicant has signed on screen, this button
+  // does the filing itself: render the page exactly as it stands into a PDF
+  // and file it as the Signed Application Form, so step 3 opens with
+  // nothing left to upload for it.
   //
-  // Deliberately not a hard gate. The applicant may still be signing on
-  // paper instead (the ruled line under each name is the fallback that was
-  // always there), and a SharePoint hiccup must not strand the officer on
-  // this page — either way, Next still gets them to step 3, exactly as the
-  // plain link always did; this only adds what happens before that when it
-  // can.
-  const nextLink = document.querySelector<HTMLAnchorElement>(
-    '#next-upload-documents'
-  );
+  // Its own button, not Next. Filing used to ride on "Next: upload
+  // documents", which meant simply passing back through this step filed a
+  // second copy nobody asked for (officer feedback). Next is a plain link
+  // again, and filing happens when — and only when — the officer says so.
+  //
+  // Deliberately not a hard gate either. The applicant may still be signing
+  // on paper instead (the ruled line under each name is the fallback that
+  // was always there), and a SharePoint hiccup must not strand the officer
+  // here: the manual upload on step 3 is still open to them.
+  const fileButton =
+    document.querySelector<HTMLButtonElement>('#file-signed-form');
   const statusLine = document.querySelector<HTMLElement>(
     '[data-sign-file-status]'
   );
 
-  if (
-    nextLink &&
-    signaturesEl &&
-    nextLink.dataset.signedFormAvailable === 'yes'
-  ) {
-    const destination = nextLink.getAttribute('href') ?? '';
+  if (fileButton && signaturesEl) {
     const reference = signaturesEl.getAttribute('data-reference') ?? '';
     const signedFormTypeId =
       signaturesEl.getAttribute('data-signed-form-type-id') ?? '';
@@ -1043,25 +1053,20 @@ const fixedViewport =
 
     let busy = false;
 
-    nextLink.addEventListener('click', event => {
-      if (busy) {
-        // A second click while the first is still filing must not start a
-        // second upload racing the first, and must not be read as "give up,
-        // navigate anyway" either.
-        event.preventDefault();
-        return;
-      }
+    fileButton.addEventListener('click', () => {
+      if (busy) return;
 
       if (!applicantSigned()) {
-        // Nothing captured to file — the plain navigation this link always
-        // was is exactly right here, whether that is because the applicant
-        // is signing on paper instead or has not signed at all yet.
+        say(
+          'There is no signature on screen to file. Sign above first, or ' +
+            'print the form and upload the signed copy on the next step.',
+          'error'
+        );
         return;
       }
 
-      event.preventDefault();
       busy = true;
-      nextLink.setAttribute('aria-disabled', 'true');
+      fileButton.disabled = true;
       say('Preparing the signed form…');
 
       void (async () => {
@@ -1072,7 +1077,7 @@ const fixedViewport =
             'error'
           );
           busy = false;
-          nextLink.removeAttribute('aria-disabled');
+          fileButton.disabled = false;
           return;
         }
 
@@ -1095,13 +1100,49 @@ const fixedViewport =
             'error'
           );
           busy = false;
-          nextLink.removeAttribute('aria-disabled');
+          fileButton.disabled = false;
           return;
         }
         printPage.classList.remove('capturing');
 
+        // A re-signature replaces what is on file rather than joining it:
+        // SharePoint would otherwise keep both, under names a digit apart,
+        // and "the signed form" would stop naming one thing. Removed before
+        // the upload rather than after, so a failure here stops the second
+        // copy being created at all; the checklist reads Missing in the
+        // meantime, which is what it genuinely is.
+        const filedDocumentId = fileButton.dataset.filedDocumentId ?? '';
+        if (filedDocumentId) {
+          say('Removing the copy on file…');
+          try {
+            const response = await fetch('/api/v1/documents/remove', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ documentId: filedDocumentId }),
+            });
+            if (!response.ok) {
+              const body = await response.json().catch(() => null);
+              throw new Error(
+                body?.error?.message ??
+                  'The copy already on file could not be removed.'
+              );
+            }
+            fileButton.dataset.filedDocumentId = '';
+          } catch (error) {
+            say(
+              error instanceof Error
+                ? error.message
+                : 'The copy already on file could not be removed.',
+              'error'
+            );
+            busy = false;
+            fileButton.disabled = false;
+            return;
+          }
+        }
+
         try {
-          await uploadDocumentBlob({
+          const { documentId } = await uploadDocumentBlob({
             applicationId,
             documentTypeId: signedFormTypeId,
             subject: 'applicant',
@@ -1109,24 +1150,24 @@ const fixedViewport =
             blob,
             onStatus: message => say(message),
           });
-          window.location.href = destination;
+          fileButton.dataset.filedDocumentId = documentId;
+          fileButton.textContent = 'File this signature again';
+          // No file name here: the server names what it files (document type
+          // and reference, plus a version), and naming the one this page sent
+          // would tell the officer a name that is not on the drive. The name
+          // that is appears on the next load of this page, from the server.
+          say('Signed form filed. Filing again replaces it.');
         } catch (error) {
           say(
             (error instanceof Error
               ? error.message
               : 'The signed form could not be filed.') +
-              ' Click Next again to continue — upload it by hand on the ' +
-              'next step instead.',
+              ' Upload it by hand on the next step instead.',
             'error'
           );
+        } finally {
           busy = false;
-          nextLink.removeAttribute('aria-disabled');
-          // A second click continues rather than trying the same upload
-          // again: the message just promised that, and retrying an upload
-          // that is failing (SharePoint down, a network that is not coming
-          // back this minute) traps the officer in a loop instead of
-          // letting them fall back to the manual path that already exists.
-          nextLink.dataset.signedFormAvailable = 'no';
+          fileButton.disabled = false;
         }
       })();
     });
