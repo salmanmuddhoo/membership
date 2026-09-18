@@ -91,12 +91,17 @@ if (Astro.request.method === 'POST') {
     error = 'Select at least one account type to open.';
   } else if (memberHolder) {
     try {
+      // Officer feedback: landed on the signature step, because nothing is
+      // filed yet on a just-started application and that is where the step
+      // defaulting sends an unsigned one. An application opened this second
+      // begins at its first step — the holder's own details, which is what
+      // the officer came to check.
       const created = await startAdditionalAccountApplication(
         memberHolder.id,
         [...selected],
         actor
       );
-      return Astro.redirect(`/applications/${created.id}/account`);
+      return Astro.redirect(`/applications/${created.id}/account?step=1`);
     } catch (err) {
       if (err instanceof ApplicationError) {
         error = err.message;
@@ -115,7 +120,7 @@ if (Astro.request.method === 'POST') {
       // Straight into the new application's own workflow — its applicant
       // details (the customer's own), the signed form, documents, payment
       // and the review chain, the same as the member flow.
-      return Astro.redirect(`/applications/${created.id}/account`);
+      return Astro.redirect(`/applications/${created.id}/account?step=1`);
     } catch (err) {
       if (err instanceof ApplicationError) {
         error = err.message;
@@ -134,7 +139,7 @@ if (Astro.request.method === 'POST') {
       // Nothing about the applicant is captured yet — the officer fills that
       // in on the application itself, the same way a membership
       // application's capture form works.
-      return Astro.redirect(`/applications/${created.id}/customer`);
+      return Astro.redirect(`/applications/${created.id}/customer?step=1`);
     } catch (err) {
       if (err instanceof ApplicationError) {
         error = err.message;

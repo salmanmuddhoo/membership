@@ -261,6 +261,23 @@ Both the viewer and its Print live in one place, `src/components/DocumentViewer.
 included by the pages that show documents — the three application kinds and a
 member — rather than copied into each of them.
 
+**A phone has no PDF viewer to put in a frame.** Officer feedback: on a
+tablet or a phone, View on a filed PDF — the signed application form, the
+Cash Deposit Form — opened an empty box. Neither mobile Safari nor Chrome on
+Android renders a PDF inside an iframe; they hand the file to the operating
+system instead. Nothing about the bytes or the headers is wrong, so there is
+no version of the frame that works there. The viewer asks
+`navigator.pdfViewerEnabled` — the browser's own answer, and exactly false on
+those two — and where it is false offers **Open document** instead, pointing
+at the same `/api/v1/documents/content`. The device's own full-screen reader
+takes it from there, which is a better place to read an A4 form than a box
+inside a dialog anyway. Print goes with the frame: a PDF that cannot be
+rendered cannot be printed from either, and the reader it opens in carries
+its own print and share. Where the property is missing the answer is taken
+as yes — it postdates every desktop browser that renders PDFs in a frame,
+and being wrong there costs a frame that would have worked, not a document
+nobody can read.
+
 **An image is printed inside a page of ours, not on its own.** Sent to the
 printer as raw bytes, a phone photograph of an A4 page comes out across three
 or four sheets, because the browser prints it at its natural size — 4 pages
@@ -279,6 +296,18 @@ changes its own height. The reason box is revealed by Reject and nothing
 else: verifying needs no reason, and the first Reject asks for one rather
 than making the round trip to be refused. Without scripting the box is
 simply always visible, which is what it was before.
+
+**The officer who captured an application may not verify its documents.**
+Segregation already stopped whoever _filed_ a document from verifying that
+one document (below), which left the capturing officer free to sign off a
+scan a colleague happened to upload against their own application. Checking
+your own application's papers is the same conflict one step out, so
+`reviewDocument` refuses the author outright — whatever permission they
+hold, and whoever did the filing (officer feedback). The Verify and Reject
+controls are hidden from them too, but the refusal is the control; the
+hiding only keeps a button off the screen that could never work. A document
+filed against a member directly has no application and so no author to be in
+conflict with, and is untouched by this.
 
 **Removing a filed document is Replace without the replacement — and, unlike
 Replace, it does not keep the file.** `removeFiledDocument` (`document.upload`)

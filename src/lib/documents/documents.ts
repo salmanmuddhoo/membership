@@ -1130,10 +1130,12 @@ export async function reviewDocument(
     id: string;
     state: string;
     document_code: string;
+    captured_by: string | null;
   }>(
-    `select d.id, d.state, t.code as document_code
+    `select d.id, d.state, t.code as document_code, a.captured_by
        from document d
        join document_type t on t.id = d.document_type_id
+       left join membership_application a on a.id = d.application_id
       where d.id = $1`,
     [documentId]
   );
@@ -1150,6 +1152,25 @@ export async function reviewDocument(
     throw new DocumentError(
       'There is no filed version of that document to verify.',
       'conflict'
+    );
+  }
+
+  // Officer feedback: segregation below asks who filed this one document,
+  // which leaves the officer who captured the application free to verify a
+  // scan a colleague happened to upload against it. Checking their own
+  // application's papers is the same conflict one step out, so the author is
+  // refused whatever the permission says and whoever did the filing.
+  //
+  // Only for a document that belongs to an application. One filed against a
+  // member directly has no author to be in conflict with.
+  if (
+    document.rows[0].captured_by &&
+    document.rows[0].captured_by === principal.userId
+  ) {
+    throw new DocumentError(
+      'You captured this application, so someone else must check its ' +
+        'documents.',
+      'refused'
     );
   }
 

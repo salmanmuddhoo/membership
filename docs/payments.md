@@ -127,6 +127,16 @@ receipt cannot be issued until `sourceOfFund` is non-empty and
 this module has no opinion on how `sourceOfFundFormConfirmed` became true,
 only that it is.
 
+The free-text **Source of fund** field that used to sit beside it is gone,
+and with it the server's own requirement that it be non-empty (officer
+feedback). The filed form already carries where the money came from, ticked
+and signed by the depositor; asking the officer to type it again was asking
+the same question twice, and answering it in a box nobody signed. What
+remains above the threshold is the form itself. The `payment.source_of_fund`
+column stays and still holds what earlier receipts recorded — a column that
+changed meaning would rewrite history — and is simply written empty from
+here on.
+
 **How it becomes true** is the Cash Deposit Form, which is a page of its
 own — `/applications/<id>/source-of-fund` (officer feedback, migration
 0062). It began as a box on the Payments step, and that was the problem: the
@@ -196,6 +206,14 @@ Without scripting, the checklist and signing cannot run at all — both are
 client-side work with no server equivalent — so a `<noscript>` block falls
 back to the plain confirmation checkbox this replaces, which still satisfies
 the same server-side rule if the paper form is completed the old way.
+
+**A reference is asked for only where there is one.** Cheque, bank transfer
+and mobile money each settle with a number worth recording; cash and card do
+not, and a box labelled "Cheque or transfer reference" under a cash payment
+is a question with no answer (officer feedback). The field appears for those
+three methods and is hidden for the other two, recomputed as the method
+changes. Without scripting it simply stays visible, which is what it was
+before.
 
 ## Refunds
 

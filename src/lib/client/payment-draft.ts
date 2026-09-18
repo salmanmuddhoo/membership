@@ -22,7 +22,7 @@ function fieldsOf(form: HTMLFormElement): HTMLElement[] {
   return [
     ...form.querySelectorAll<HTMLInputElement>('[data-amount-input]'),
     ...form.querySelectorAll<HTMLSelectElement | HTMLInputElement>(
-      '[name="method"], [name="methodReference"], [name="sourceOfFund"]'
+      '[name="method"], [name="methodReference"]'
     ),
   ];
 }

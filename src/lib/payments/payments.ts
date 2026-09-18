@@ -118,18 +118,18 @@ export const FLOOR_FEE_COMPONENTS: ReadonlySet<FeeComponentCode> = new Set([
 // 1. A hard ceiling (payment.cash_maximum). Above it, nothing on this
 //    screen can authorise the payment at all — not a reason, not a form,
 //    a refusal. Checked first: a payment too large to take is too large
-//    to take regardless of what the officer wrote in the source-of-fund
-//    note.
+//    to take regardless of the Source of Fund form.
 // 2. Above the lower, older threshold (payment.cash_source_of_fund_
-//    threshold, 0032), a source of fund on record and the officer's
-//    affirmative confirmation that the Source of Fund form was completed —
-//    once a paper form outside this application, now the on-screen form the
-//    Payments step itself signs and files (0062); this function only knows
-//    that the confirmation must be true, not how it was earned.
+//    threshold, 0032), the officer's affirmative confirmation that the
+//    Source of Fund form was completed — once a paper form outside this
+//    application, now the on-screen form the Payments step itself signs and
+//    files (0062). Officer feedback: the filed form already carries the
+//    reason, so asking for a second, free-text note here was asking the
+//    same question twice; this function only knows that the confirmation
+//    must be true, not how it was earned.
 async function applyCashPaymentRules(
   method: PaymentMethod,
   totalCents: number,
-  sourceOfFund: string,
   sourceOfFundFormConfirmed: boolean
 ): Promise<void> {
   if (method !== 'cash') return;
@@ -144,13 +144,6 @@ async function applyCashPaymentRules(
 
   const thresholdCents = toCents(await cashSourceOfFundThreshold());
   if (totalCents <= thresholdCents) return;
-  if (sourceOfFund.trim() === '') {
-    throw new PaymentError(
-      `Cash payments over ${fromCents(thresholdCents)} need a source of ` +
-        'fund note before a receipt can be issued. The officer must also ' +
-        'sign the Source of Fund form.'
-    );
-  }
   if (!sourceOfFundFormConfirmed) {
     throw new PaymentError(
       'Sign the Source of Fund form before recording a cash payment over ' +
@@ -927,12 +920,7 @@ export async function recordPayment(
 
   const sourceOfFund = (input.sourceOfFund ?? '').trim();
   const sourceOfFundFormConfirmed = input.sourceOfFundFormConfirmed ?? false;
-  await applyCashPaymentRules(
-    input.method,
-    total,
-    sourceOfFund,
-    sourceOfFundFormConfirmed
-  );
+  await applyCashPaymentRules(input.method, total, sourceOfFundFormConfirmed);
 
   const existing = await query<{ receipt_no: string }>(
     `select r.receipt_no
@@ -1218,12 +1206,7 @@ export async function recordAccountOpeningPayment(
 
   const sourceOfFund = (input.sourceOfFund ?? '').trim();
   const sourceOfFundFormConfirmed = input.sourceOfFundFormConfirmed ?? false;
-  await applyCashPaymentRules(
-    input.method,
-    total,
-    sourceOfFund,
-    sourceOfFundFormConfirmed
-  );
+  await applyCashPaymentRules(input.method, total, sourceOfFundFormConfirmed);
 
   const existing = await query<{ receipt_no: string }>(
     `select r.receipt_no
