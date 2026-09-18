@@ -323,13 +323,23 @@ async function fileRequiredDocuments(
 // Board readiness gate needs Verified, not merely filed). The Secretary
 // verifies in the real chain, and never the person who filed it — officer
 // files, secretary verifies, so there is no segregation conflict here.
+//
+// Nor may the verifier be whoever captured the application (documents.ts):
+// a test below hands capture to the Secretary to prove the chain refuses
+// them, and the Secretary cannot then check the papers of an application
+// they captured themselves. The President stands in for that one, which
+// keeps this helper's job — making a fixture Board-ready — out of the
+// conflict the test is actually about.
 async function verifyRequiredDocuments(
   documents: Awaited<ReturnType<typeof load>>['documents'],
-  applicationId: string
+  applicationId: string,
+  capturedBy: Principal = officer
 ) {
+  const reviewer =
+    capturedBy.userId === secretary.userId ? president : secretary;
   const verifier = {
-    ...secretary,
-    permissions: new Set([...secretary.permissions, 'document.verify']),
+    ...reviewer,
+    permissions: new Set([...reviewer.permissions, 'document.verify']),
   };
   const checklist = await documents.checklistFor({ applicationId });
 
@@ -390,7 +400,7 @@ async function captureComplete(capturedBy: Principal = officer) {
   const { id } = await capture.startApplication('individual', actor);
   await capture.saveDraft(id, COMPLETE_INDIVIDUAL(), actor);
   await fileRequiredDocuments(documents, id);
-  await verifyRequiredDocuments(documents, id);
+  await verifyRequiredDocuments(documents, id, capturedBy);
   await recordFullPayment(payments, id);
   return id;
 }
