@@ -1497,13 +1497,13 @@ describe('S-405: folders are created once', () => {
 });
 
 describe('S-407: verifying, and who may', () => {
-  it('refuses the officer who filed it, even with the permission', async () => {
+  it('refuses the officer who captured the application, even with the permission', async () => {
     const { documents } = await load();
     const entry = (await documents.checklistFor({ applicationId })).find(
       e => e.subject === 'applicant' && e.documentCode === 'id_card'
     )!;
 
-    // Entitled to verify documents in general; filed this one.
+    // Entitled to verify documents in general; captured this application.
     const officerWhoCanVerify = {
       ...officer,
       permissions: new Set(['document.verify']) as ReadonlySet<string>,
@@ -1512,6 +1512,53 @@ describe('S-407: verifying, and who may', () => {
     await expect(
       documents.reviewDocument(
         entry.documentId!,
+        { outcome: 'verify' },
+        officerWhoCanVerify
+      )
+    ).rejects.toThrowError(/captured this application/);
+  });
+
+  // The narrower rule underneath, on an application the filer did not
+  // capture: the author check above would otherwise mask it, since the
+  // officer who captures an application usually files against it too.
+  it('refuses whoever filed the document, on an application they did not capture', async () => {
+    const { documents } = await load();
+    const type = await run(
+      appUrl,
+      `select id, checklist_id from membership_type where code = 'individual'`
+    );
+    const other = await run(
+      appUrl,
+      `insert into membership_application (membership_type_id, captured_by)
+       values ($1, $2) returning id`,
+      [type.rows[0].id, secretary.userId]
+    );
+    const otherApplicationId = other.rows[0].id;
+    await snapshotChecklist(otherApplicationId, [type.rows[0].checklist_id]);
+
+    const begun = await documents.beginUpload(
+      {
+        applicationId: otherApplicationId,
+        documentTypeId: idCardTypeId,
+        subject: 'applicant',
+        fileName: 'id.jpg',
+        contentType: 'image/jpeg',
+        sizeBytes: 1024,
+        expiresAt: new Date('2030-01-01'),
+      },
+      officer
+    );
+    drive.files.set(begun.ticket.itemPath, { id: 'graph-other', size: 1024 });
+    await documents.commitUpload(begun.versionId, officer);
+
+    const officerWhoCanVerify = {
+      ...officer,
+      permissions: new Set(['document.verify']) as ReadonlySet<string>,
+    };
+
+    await expect(
+      documents.reviewDocument(
+        begun.documentId,
         { outcome: 'verify' },
         officerWhoCanVerify
       )

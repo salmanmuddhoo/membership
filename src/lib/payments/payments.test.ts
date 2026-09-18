@@ -522,17 +522,26 @@ describe('S-501: recording a payment', () => {
       await config.setCashSourceOfFundThreshold('45000', officer);
     });
 
-    it('refuses cash over the threshold without one, and points at the paper form too', async () => {
+    // Officer feedback: the free-text note was dropped from the form — the
+    // filed Source of Fund form is the only evidence now required — so an
+    // empty note no longer refuses the payment on its own.
+    it('accepts cash over the threshold with an empty source of fund note, once the form is confirmed', async () => {
       const { payments, config } = await load();
       await config.setCashSourceOfFundThreshold('5000', officer);
       const application = await newApplication();
 
-      await expect(
-        payments.recordPayment(
-          { applicationId: application.id, method: 'cash', amounts: FULL },
-          principalFor(officer)
-        )
-      ).rejects.toThrow(/source of fund note.*Source of Fund form/s);
+      const payment = await payments.recordPayment(
+        {
+          applicationId: application.id,
+          method: 'cash',
+          amounts: FULL,
+          sourceOfFund: '',
+          sourceOfFundFormConfirmed: true,
+        },
+        principalFor(officer)
+      );
+      expect(payment.sourceOfFund).toBe('');
+      expect(payment.sourceOfFundFormConfirmed).toBe(true);
     });
 
     it('refuses cash over the threshold with a note but no form confirmation', async () => {
@@ -1707,21 +1716,26 @@ describe('S-613: paying to open an account for an existing member', () => {
       await config.setCashSourceOfFundThreshold('45000', officer);
     });
 
-    it('refuses cash over the threshold without one', async () => {
+    // Officer feedback: the free-text note was dropped from the form — the
+    // filed Source of Fund form is the only evidence now required — so an
+    // empty note no longer refuses the payment on its own.
+    it('accepts cash over the threshold with an empty source of fund note, once the form is confirmed', async () => {
       const { payments, config } = await load();
       await config.setCashSourceOfFundThreshold('500', officer);
       const application = await newAdditionalAccountApplication([hsaId]);
 
-      await expect(
-        payments.recordAccountOpeningPayment(
-          {
-            applicationId: application.id,
-            method: 'cash',
-            amounts: { [hsaId]: '1000.00' },
-          },
-          principalFor(officer)
-        )
-      ).rejects.toThrow(/source of fund note.*Source of Fund form/s);
+      const payment = await payments.recordAccountOpeningPayment(
+        {
+          applicationId: application.id,
+          method: 'cash',
+          amounts: { [hsaId]: '1000.00' },
+          sourceOfFund: '',
+          sourceOfFundFormConfirmed: true,
+        },
+        principalFor(officer)
+      );
+      expect(payment.sourceOfFund).toBe('');
+      expect(payment.sourceOfFundFormConfirmed).toBe(true);
     });
 
     it('refuses cash over the threshold with a note but no form confirmation', async () => {

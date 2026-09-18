@@ -122,6 +122,12 @@ if (initial.applicationKind === 'customer_account') {
 }
 let application: MembershipApplication | null = initial;
 
+// Officer feedback: holding document.verify does not make an officer a
+// second pair of eyes on their own application. The author never sees the
+// control — reviewDocument refuses them regardless, this only keeps a button
+// off the screen that could never work.
+const canVerifyHere = canVerify && application?.capturedBy !== principal.userId;
+
 const type = (await listMembershipTypes()).find(
   t => t.id === application!.membershipTypeId
 )!;
@@ -220,7 +226,11 @@ if (Astro.request.method === 'POST') {
     const method = String(form.get('method') ?? '') as PaymentMethod;
     const methodReference = String(form.get('methodReference') ?? '');
     const varianceReason = String(form.get('varianceReason') ?? '');
-    const sourceOfFund = String(form.get('sourceOfFund') ?? '');
+    // Officer feedback: the free-text source-of-fund note is gone from the
+    // form — the filed Source of Fund form is the only evidence required —
+    // but recordPayment still takes the parameter, so it goes through empty
+    // rather than the receipt's own source_of_fund column changing meaning.
+    const sourceOfFund = '';
     // Unchecked checkboxes are absent from the posted form entirely, not
     // present with some falsy value.
     const sourceOfFundFormConfirmed =
@@ -1191,7 +1201,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                       </p>
                     )}
 
-                    {canVerify &&
+                    {canVerifyHere &&
                       (entry.state === 'under_review' ||
                         entry.state === 'uploaded') && (
                         <DocumentReviewForm
@@ -1430,7 +1440,10 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                     ))}
                   </select>
                 </label>
-                <label class="flex-1 text-sm text-neutral-600 dark:text-neutral-300">
+                <label
+                  data-method-reference-field
+                  class="flex-1 text-sm text-neutral-600 dark:text-neutral-300"
+                >
                   Cheque or transfer reference
                   <input
                     type="text"
@@ -1447,18 +1460,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                 formPath={`/applications/${application!.id}/source-of-fund`}
                 alreadyFiled={sourceOfFundFiling}
               />
-              <label
-                data-source-of-fund-field
-                class="block text-sm text-neutral-600 dark:text-neutral-300"
-              >
-                Source of fund
-                <input
-                  type="text"
-                  name="sourceOfFund"
-                  value={paymentFormValues?.sourceOfFund ?? ''}
-                  class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-                />
-              </label>
 
               {/* Entrance, Takaful, Shares and the MSA deposit are each
                     governed by their own rule above — this only still
@@ -2072,9 +2073,12 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     const submitButton = paymentForm.querySelector<HTMLButtonElement>(
       '[data-payment-submit]'
     );
-    const sourceOfFundField = paymentForm.querySelector<HTMLElement>(
-      '[data-source-of-fund-field]'
+    const methodReferenceField = paymentForm.querySelector<HTMLElement>(
+      '[data-method-reference-field]'
     );
+    // Officer feedback: only these methods carry a reference to record —
+    // cash and card settle with nothing to write down.
+    const REFERENCED_METHODS = new Set(['cheque', 'bank_transfer', 'mobile']);
 
     // Restored before the first recalculation below, so the total and the
     // cash rules are computed against what the officer actually typed
@@ -2106,7 +2110,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         isCash &&
         total > cashThresholdCents;
       if (cashReminder) cashReminder.hidden = !needsSourceOfFund;
-      if (sourceOfFundField) sourceOfFundField.hidden = overMaximum;
       const sourceOfFundMissing =
         needsSourceOfFund && !(cashFormConfirm?.checked ?? false);
 
@@ -2115,6 +2118,11 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       if (submitButton) {
         submitButton.disabled = overMaximum || sourceOfFundMissing;
       }
+
+      if (methodReferenceField)
+        methodReferenceField.hidden = !REFERENCED_METHODS.has(
+          methodSelect?.value ?? ''
+        );
     };
 
     for (const input of amountInputs) {

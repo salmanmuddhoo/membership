@@ -1412,6 +1412,109 @@ export async function findGuardian(
   return null;
 }
 
+// The same shape members/create.ts assembles a name in, kept here rather
+// than imported from it: that module already imports this one, and a SQL
+// fragment is not worth a cycle between them.
+const GUARDED_NAME_SQL = `
+  trim(coalesce(p.values->>'name', '') || ' ' || coalesce(p.values->>'surname', ''))
+`;
+
+/** One person this member or customer is named as the guardian of. */
+export interface GuardedParty {
+  /** Where their own page is, ready to link to. */
+  href: string;
+  /** Their Member No., or their application's reference until they have one. */
+  reference: string;
+  name: string;
+  status: string;
+  isMember: boolean;
+}
+
+// findGuardian read the other way round: not "who is this minor's guardian"
+// but "who is this person the guardian of" (officer feedback — a guardian's
+// own page said nothing about the children whose accounts they are
+// responsible for).
+//
+// Matched on the same two things a guardian is ever identified by, because
+// that is what capture wrote: the Member No. or application reference typed
+// into the minor's guardian block, or that block's NIC. Taking either means
+// a guardian recorded before they were themselves a member is still found
+// once they are one.
+//
+// Both arms are returned — a minor already approved, and one still on the
+// way through the chain — because the guardian is equally responsible for
+// either, and a page listing only the approved ones would quietly lose a
+// child whose application is sitting with the Secretary. A rejected
+// application is the one thing left out: it will never produce a member,
+// which is the same reason findGuardian refuses to resolve one.
+export async function guardianOf(
+  memberNo: string,
+  nic: string
+): Promise<GuardedParty[]> {
+  if (!memberNo && !nic) return [];
+
+  const matchesGuardian = `
+    (($1 <> '' and lower(g.values->>'member_id') = lower($1))
+     or ($2 <> '' and g.values->>'nic' = $2))`;
+
+  const members = await query<{
+    id: string;
+    reference: string;
+    status: string;
+    name: string;
+  }>(
+    `select m.id, m.member_no as reference, m.status, ${GUARDED_NAME_SQL} as name
+       from member m
+       join application_party g
+         on g.application_id = m.application_id and g.subject = 'guardian'
+       left join application_party p
+         on p.application_id = m.application_id
+        and p.subject = 'applicant' and p.ordinal = 1
+      where ${matchesGuardian}
+      order by m.member_no`,
+    [memberNo, nic]
+  );
+
+  // Approved applications are left out here rather than deduplicated after:
+  // every one of them has a member row above, which is the record worth
+  // linking to.
+  const applications = await query<{
+    id: string;
+    reference: string;
+    status: string;
+    name: string;
+  }>(
+    `select a.id, a.reference, a.status, ${GUARDED_NAME_SQL} as name
+       from membership_application a
+       join application_party g
+         on g.application_id = a.id and g.subject = 'guardian'
+       left join application_party p
+         on p.application_id = a.id
+        and p.subject = 'applicant' and p.ordinal = 1
+      where a.status not in ('approved', 'rejected')
+        and ${matchesGuardian}
+      order by a.reference`,
+    [memberNo, nic]
+  );
+
+  return [
+    ...members.rows.map(r => ({
+      href: `/members/${r.id}`,
+      reference: r.reference,
+      name: r.name,
+      status: r.status,
+      isMember: true,
+    })),
+    ...applications.rows.map(r => ({
+      href: `/applications/${r.id}`,
+      reference: r.reference,
+      name: r.name,
+      status: r.status,
+      isMember: false,
+    })),
+  ];
+}
+
 // Officer feedback: an NIC identifies one person, so an applicant already on
 // file under it is not a new person to register, whatever else a fresh
 // application says about them. "On file" covers an approved identity (member

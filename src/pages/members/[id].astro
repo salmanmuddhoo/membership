@@ -3,11 +3,12 @@ import DashboardLayout from '@layouts/DashboardLayout.astro';
 import { loadMember, loadCustomer } from '@lib/members/create';
 import {
   ApplicationError,
-  loadApplication,
   findGuardian,
+  guardianOf,
   startMembershipApplicationFromCustomer,
 } from '@lib/applications/capture';
 import { forDisplay } from '@lib/applications/phone';
+import { otherPartyGroups } from '@lib/applications/parties';
 import {
   paymentsForApplication,
   paymentsForMember,
@@ -126,6 +127,16 @@ const guardianLinkId = guardianMemberIdField?.value
   ? ((await findGuardian(guardianMemberIdField.value, ''))?.id ?? null)
   : null;
 
+// The other direction: the children this person is responsible for (officer
+// feedback — a guardian's own page named none of them). Both keys are
+// offered because capture writes whichever the officer had: the Member No.
+// typed into the minor's guardian block, or that block's NIC, which is how
+// a guardian recorded before they were a member themselves is still found.
+const guardedParties = await guardianOf(
+  member?.memberNo ?? '',
+  applicantContactFields.find(f => f.fieldKey === 'nic')?.value ?? ''
+);
+
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
   const intent = String(form.get('intent') ?? '');
@@ -201,64 +212,14 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
   timeStyle: 'short',
 });
 
-// Phone values are stored in E.164; +23057891234 is not what anyone wants to
-// read off a screen. Still needed here for Nominee/Takaful beneficiary
-// below — the applicant's own and Employment Details' own phone fields are
-// already formatted by fieldDisplay above, driven by each field's own
-// dataType instead of a key-name guess.
-const PHONE_KEYS = new Set(['mobile', 'telephone', 'contact_telephone']);
-
-// Officer feedback: the applicant's own details (and Employment Details,
-// and — Minor only — the guardian's) are read from contactFields above; a
-// nominee or Takaful beneficiary is who this record concerns beyond the
-// applicant, and belongs on its own card. Read from the application itself
-// — the member/customer record only ever kept the applicant's own values
-// (loadMember/loadCustomer) — via the applicationId both already carry.
-const SUBJECT_LABELS: Record<string, string> = {
-  nominee: 'Nominee',
-  beneficiary: 'Takaful beneficiary',
-};
+// Who this record concerns beyond the applicant — a nominee, a Takaful
+// beneficiary. Read from the application itself, since the member/customer
+// row only ever kept the applicant's own values (loadMember/loadCustomer),
+// via the applicationId both already carry. The applicant's own details,
+// Employment Details and — Minor only — the guardian's each have their own
+// card above, driven by contactFields instead.
 const applicationId = (member ?? customer)!.applicationId;
-const sourceApplication = applicationId
-  ? await loadApplication(applicationId)
-  : null;
-// Officer feedback: a membership type that captures two nominees writes a
-// row for each the moment the form is drafted (saveDraft, capture.ts) — one
-// exists in application_party whether or not the officer ever filled it in.
-// Left in, an untouched Nominee 2 showed up here as a heading over nothing.
-// Filtered out by whether anything was actually entered, not by presence of
-// the row — and before subjectOccurrences below, so a member with only
-// Nominee 1 filled in reads "Nominee", not "Nominee 1" for the one that
-// remains. Applicant, Employment Details and guardian all have their own
-// card already, driven by contactFields, not this generic one.
-const otherParties = (sourceApplication?.parties ?? [])
-  .filter(
-    p =>
-      p.subject !== 'applicant' &&
-      p.subject !== 'employment' &&
-      p.subject !== 'guardian'
-  )
-  .filter(p => Object.values(p.values).some(value => value.trim() !== ''));
-const subjectOccurrences = otherParties.reduce<Record<string, number>>(
-  (counts, p) => {
-    counts[p.subject] = (counts[p.subject] ?? 0) + 1;
-    return counts;
-  },
-  {}
-);
-const otherPartyGroups = otherParties.map(p => ({
-  key: `${p.subject}-${p.ordinal}`,
-  label:
-    (SUBJECT_LABELS[p.subject] ?? p.subject) +
-    (subjectOccurrences[p.subject] > 1 ? ` ${p.ordinal}` : ''),
-  details: Object.entries(p.values)
-    .filter(([, value]) => value.trim() !== '')
-    .map(([key, value]) => ({
-      key,
-      label: key.replace(/_/g, ' '),
-      value: PHONE_KEYS.has(key) ? forDisplay(value) : value,
-    })),
-}));
+const partyGroups = await otherPartyGroups(applicationId);
 
 const name = (member ?? customer)!.name;
 // Officer feedback: a minor — member or non-member alike — carries a tag so
@@ -548,13 +509,41 @@ const pageTitle = member ? member.memberNo : name;
       </section>
     )}
 
-    {otherPartyGroups.length > 0 && (
+    {guardedParties.length > 0 && (
+      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+          Guardian of
+        </h2>
+        <ul class="mt-4 space-y-2">
+          {guardedParties.map(party => (
+            <li class="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
+              <a
+                href={party.href}
+                class="font-medium text-neutral-800 underline dark:text-neutral-100"
+              >
+                {party.reference}
+              </a>
+              <span class="text-neutral-800 dark:text-neutral-100">
+                {party.name}
+              </span>
+              <span class="text-neutral-500 capitalize dark:text-neutral-400">
+                {party.isMember
+                  ? party.status
+                  : `application · ${party.status}`}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </section>
+    )}
+
+    {partyGroups.length > 0 && (
       <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
         <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
           Nominee
         </h2>
         <div class="mt-4 space-y-4">
-          {otherPartyGroups.map(group => (
+          {partyGroups.map(group => (
             <div>
               <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-200">
                 {group.label}

@@ -2558,6 +2558,40 @@ gain, and nothing in it can fail an upload.
 
 **A corporate application's form says so**, the way a minor's already did.
 
+### A guardian's own page, a PDF on a phone, and four smaller fixes ✅
+
+**A guardian's page names the children.** "Guardian of" lists everyone this
+member or customer is recorded as the guardian of, each a link to their own
+page — the approved ones and the applications still on the way through,
+since the guardian is equally responsible for either. Matched on the two
+things a guardian is ever identified by, the Member No. or the NIC typed
+into the minor's own guardian block, so a guardian recorded before they were
+themselves a member is still found once they are one.
+
+**A filed PDF opens on a phone.** View gave an empty box on a tablet: no
+mobile browser renders a PDF inside a frame. Where the browser says it has
+no viewer, the dialog offers Open document instead and the device's own
+full-screen reader takes it — better for reading an A4 form than a box in a
+dialog. Print goes with the frame, since what cannot be rendered cannot be
+printed either.
+
+**The author of an application cannot verify its documents.** Segregation
+only asked who filed each document, which left the capturing officer free to
+sign off a scan a colleague had uploaded. The refusal is in the service; the
+controls are hidden from them as well.
+
+**The Source of fund field is gone from the Payments step.** The filed form
+carries the reason, ticked and signed. The column stays for what earlier
+receipts recorded.
+
+**A payment reference is asked for only for cheque, transfer and mobile
+money.** Cash and card settle with nothing to write down.
+
+**Open other account lands on Applicant details**, not on the signature step
+— and, for a minor or a corporate holder, shows the parent/guardian and the
+nominee there, so the officer can see who stands behind the account without
+opening the holder's page in another tab.
+
 ---
 
 # M7 — Legacy migration ✅
