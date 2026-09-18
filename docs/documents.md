@@ -195,7 +195,13 @@ height, it scales by its own aspect ratio and the writing disappears.
 `trimmedSignature` (`src/lib/client/signature.ts`) crops to the drawn area
 first, and reports an untouched pad as nothing rather than as a blank image
 nobody can tell from a real one. Both signing pads use it: the printed
-form's four blocks, and the Cash Deposit Form on the Payments step.
+form's four blocks, and the Cash Deposit Form on the Payments step. The
+pad's own bottom bar carries Clear and "Use this signature", and carries
+them on every screen: the canvas is sized to the device pixel ratio, so on a
+2x display its height attribute is twice the viewport — and a flex item will
+not shrink below its content unless told to, which pushed that bar off the
+bottom of the page and left an officer with nothing but Cancel (officer
+feedback).
 
 **Filing is its own button, and not Next.** It first rode on "Next: upload
 documents →", which meant an officer who simply passed back through step 2
@@ -297,6 +303,29 @@ above) instead, and the Upload control only reappears once that × has been
 used — one thing to do with a document at a time, visible rather than
 implied. Both — the × and Upload — sit on the same line as the document's own
 name and status, not in a row underneath it.
+
+**A photographed document is shrunk before it leaves the device.** A phone
+camera produces several megabytes for a page of A4, and every one of them
+crosses a branch connection twice — once on the way to SharePoint, and again
+each time somebody opens or prints the document. None of that resolution is
+readable: a long edge of 2400px carries a scanned form comfortably.
+`compressImageForUpload` (`src/lib/client/image-compression.ts`) re-encodes
+to JPEG at that size before the upload begins, and the status line says what
+it did ("Compressed 5.2 MB to 780 KB…") rather than leaving the officer to
+wonder why the file that went up has a different name. Measured: a 3000×4000
+PNG of 1.1 MB filed as 725 KB of `image/jpeg`.
+
+It hands the file back untouched whenever there is nothing to gain — it is
+not an image, it is already under a megabyte, the browser cannot decode it
+(HEIC, below), or the re-encode came out no smaller. A compression that makes
+a file bigger is not one worth keeping. Nothing here is allowed to fail an
+upload either: a browser without `createImageBitmap`, or a canvas that will
+not give up a blob, files the original.
+
+The re-encode happens on the device and not on this server deliberately. The
+bytes never pass through here — that is the whole point of the brokered
+upload — so compressing centrally would mean routing every scan through this
+server to save bandwidth it had just spent.
 
 Still open for later in M4: HEIC previews (accepted, but a browser cannot render
 one, so the thumbnail is a generic icon), and resuming a dropped transfer via

@@ -109,6 +109,17 @@ refusal, and nothing on the Payments page can override it. Checked before
 anything else: a payment too large to take is too large to take regardless
 of what the source-of-fund note says.
 
+**Above the ceiling, the refusal is the only thing on screen.** The two
+rules are independent on the server and were shown that way at first, so a
+cash total of 600,000 asked the officer for a Source of Fund form _and_ told
+them the payment was not authorised — work to prepare a payment that cannot
+be taken however well it is answered (officer feedback). The Payments step
+now hides the source-of-fund reminder, the link to the form and the Source of
+fund field whenever the ceiling is crossed, leaving the refusal and a
+disabled submit. The server is unchanged: it still checks the ceiling first
+and refuses on its own, because a screen deciding what to show is not a
+control.
+
 **A source-of-fund requirement above a lower threshold**
 (`payment.cash_source_of_fund_threshold`, default 45,000). Above it, a
 receipt cannot be issued until `sourceOfFund` is non-empty and
@@ -166,6 +177,20 @@ disagree. A signature is cropped to its own ink before it
 is used (`src/lib/client/signature.ts`); a full-screen pad exported whole is
 a small mark on a very large image, which scales down to nothing on a
 signature line.
+
+**Leaving the Payments step does not lose what was typed.** The form is
+server-rendered and the link to the Cash Deposit Form is a plain link, so
+coming back re-rendered the fee schedule's defaults and the officer found
+their amount — and the cash method that made the form's own button appear —
+reset to nothing (officer feedback). `keepPaymentDraft`
+(`src/lib/client/payment-draft.ts`) holds the half-finished form in
+`sessionStorage` under the application's id and puts it back before the
+step's first recalculation, so the total and the cash rules above are
+computed against what was actually typed. It is a draft and not a record: it
+never overwrites a read-only amount, which is the fee schedule's own figure;
+it does not outlive the tab or follow the officer to another application; and
+it is cleared the moment the payment is submitted, from when the receipt is
+the truth.
 
 Without scripting, the checklist and signing cannot run at all — both are
 client-side work with no server equivalent — so a `<noscript>` block falls

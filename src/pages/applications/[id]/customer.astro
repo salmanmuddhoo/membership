@@ -1194,6 +1194,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               method="post"
               class="mt-4 space-y-4"
               data-payment-form
+              data-application-id={application!.id}
               data-cash-threshold={cashThreshold}
               data-cash-maximum={cashMax}
             >
@@ -1277,7 +1278,10 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                 formPath={`/applications/${application!.id}/source-of-fund`}
                 alreadyFiled={sourceOfFundFiling}
               />
-              <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+              <label
+                data-source-of-fund-field
+                class="block text-sm text-neutral-600 dark:text-neutral-300"
+              >
                 Source of fund
                 <input
                   type="text"
@@ -1533,6 +1537,11 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 </DashboardLayout>
 
 <script>
+  import {
+    compressImageForUpload,
+    formatBytes,
+  } from '@lib/client/image-compression';
+  import { keepPaymentDraft } from '@lib/client/payment-draft';
   const backLink = document.getElementById(
     'back-link'
   ) as HTMLAnchorElement | null;
@@ -1603,8 +1612,8 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     };
 
     file.addEventListener('change', async () => {
-      const chosen = file.files?.[0];
-      if (!chosen) return;
+      const picked = file.files?.[0];
+      if (!picked) return;
 
       if (panel.dataset.tracksExpiry === 'yes' && !expiry?.value) {
         say('Enter the expiry date first — this document type expires.');
@@ -1615,6 +1624,22 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       uploadsInFlight++;
       file.disabled = true;
       say('Preparing…');
+
+      // A photographed document arrives at several megabytes and none of
+      // that resolution is readable on the page. Shrunk here, before it
+      // crosses the branch connection — and left alone where there is
+      // nothing to gain, which is what compressImageForUpload decides.
+      let chosen = picked;
+      try {
+        chosen = await compressImageForUpload(picked);
+        if (chosen.size < picked.size) {
+          say(
+            `Compressed ${formatBytes(picked.size)} to ${formatBytes(chosen.size)}…`
+          );
+        }
+      } catch {
+        // Nothing here is worth failing an upload over.
+      }
 
       try {
         const begun = await fetch('/api/v1/documents/begin-upload', {
@@ -1791,6 +1816,14 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     const submitButton = paymentForm.querySelector<HTMLButtonElement>(
       '[data-payment-submit]'
     );
+    const sourceOfFundField = paymentForm.querySelector<HTMLElement>(
+      '[data-source-of-fund-field]'
+    );
+
+    // Restored before the first recalculation below, so the total and the
+    // cash rules are computed against what the officer actually typed
+    // rather than against the defaults it replaces.
+    keepPaymentDraft(paymentForm, paymentForm.dataset.applicationId ?? '');
 
     const recomputeTotal = () => {
       let total = 0;
@@ -1799,16 +1832,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 
       const isCash = methodSelect?.value === 'cash';
 
-      // The Source of Fund form, while it is needed. Its box is a link out to
-      // the form and, once signed, what is on file — the hidden confirmation
-      // beside it is checked from that filed document, never by hand, so
-      // "still to do" and "the receipt is held" are the same condition.
-      const needsSourceOfFund =
-        cashThresholdCents !== null && isCash && total > cashThresholdCents;
-      if (cashReminder) cashReminder.hidden = !needsSourceOfFund;
-      const sourceOfFundMissing =
-        needsSourceOfFund && !(cashFormConfirm?.checked ?? false);
-
       // Refused server-side regardless (payments.ts's own
       // applyCashPaymentRules runs first, ahead of every other check) — this
       // only stops the officer typing a figure that can never be recorded
@@ -1816,6 +1839,20 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       const overMaximum =
         cashMaximumCents !== null && isCash && total > cashMaximumCents;
       if (cashMaximumWarning) cashMaximumWarning.hidden = !overMaximum;
+
+      // Officer feedback: above the ceiling the refusal is the only thing
+      // worth saying. Asking for a Source of Fund form, or for where the
+      // money came from, is asking the officer to prepare a payment that
+      // cannot be taken however well they answer.
+      const needsSourceOfFund =
+        !overMaximum &&
+        cashThresholdCents !== null &&
+        isCash &&
+        total > cashThresholdCents;
+      if (cashReminder) cashReminder.hidden = !needsSourceOfFund;
+      if (sourceOfFundField) sourceOfFundField.hidden = overMaximum;
+      const sourceOfFundMissing =
+        needsSourceOfFund && !(cashFormConfirm?.checked ?? false);
 
       // One place decides it, so the two reasons cannot re-enable each
       // other's refusal.

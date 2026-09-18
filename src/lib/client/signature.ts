@@ -74,9 +74,12 @@ export function openSignaturePad(title: string): Promise<string | null> {
     overlay.style.cssText =
       'position:fixed;inset:0;z-index:70;background:#fff;display:flex;flex-direction:column;';
 
+    // flex-shrink:0 so neither bar can be squeezed out by the canvas between
+    // them — the buttons are the whole point of the pad.
     const barStyle =
-      'display:flex;justify-content:space-between;align-items:center;' +
-      'padding:10px 14px;font:600 14px system-ui,sans-serif;border-bottom:1px solid #ddd;';
+      'flex:0 0 auto;display:flex;justify-content:space-between;' +
+      'align-items:center;padding:10px 14px;font:600 14px system-ui,sans-serif;' +
+      'border-bottom:1px solid #ddd;';
     const buttonStyle =
       'font:inherit;padding:4px 10px;border:1px solid #999;background:#eee;cursor:pointer;';
 
@@ -91,10 +94,20 @@ export function openSignaturePad(title: string): Promise<string | null> {
     bar.append(heading, cancel);
 
     const canvas = document.createElement('canvas');
-    canvas.style.cssText = 'flex:1;touch-action:none;cursor:crosshair;';
+    // min-height:0 is what keeps "Use this signature" on the screen. A flex
+    // item defaults to min-height:auto, which for a canvas means its own
+    // height attribute — and size() below sets that to the measured height
+    // times the device pixel ratio. On a 2x screen the canvas then refuses
+    // to shrink below twice the viewport, the column overflows, and the
+    // bottom bar is pushed off the bottom of the page with no way to reach
+    // it (officer feedback: "there is only Cancel").
+    canvas.style.cssText =
+      'flex:1 1 auto;min-height:0;min-width:0;display:block;' +
+      'touch-action:none;cursor:crosshair;';
 
     const bottomBar = document.createElement('div');
-    bottomBar.style.cssText = barStyle;
+    bottomBar.style.cssText =
+      barStyle.replace('border-bottom', 'border-top') + 'gap:8px;';
     const clear = document.createElement('button');
     clear.type = 'button';
     clear.textContent = 'Clear';

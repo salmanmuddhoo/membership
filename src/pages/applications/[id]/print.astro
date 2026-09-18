@@ -91,7 +91,16 @@ const type = (await listMembershipTypes()).find(
   t => t.id === formSource.membershipTypeId
 )!;
 const fields = visibleFields(type);
-const isMinor = type.code === 'minor';
+// The band across the top of the sheet. A Minor's form is worked differently
+// (a guardian signs alongside) and a Corporate one is a different form
+// altogether — whoever picks either up should read which before anything
+// else. Named from the type's own code rather than its label, which an
+// administrator may rename.
+const KIND_BANDS: Record<string, string> = {
+  minor: 'MINOR',
+  corporate: 'CORPORATE',
+};
+const kindBand = KIND_BANDS[type.code];
 
 // So the officer can file the signed form straight off this page once the
 // applicant has signed on screen, instead of printing, saving a PDF by hand
@@ -186,10 +195,7 @@ const fixedViewport =
   viewport={fixedViewport}
 >
   <div class="print-page">
-    {/* Officer feedback: a minor's form is worked differently — a guardian
-        signs alongside — and nothing on the printed sheet said so. Stated at
-        the very top, where whoever picks the form up reads it first. */}
-    {isMinor && <p class="kind-band">MINOR</p>}
+    {kindBand && <p class="kind-band">{kindBand}</p>}
 
     <header class="head">
       <div>

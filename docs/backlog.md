@@ -2527,6 +2527,37 @@ differently — a guardian signs alongside — and nothing on it said so.
 **"Printable form" is gone from the timeline bar.** Not needed: the wizard's
 own signature step leads there.
 
+### The cash ceiling, a lost amount, a pad with no way out, smaller scans ✅
+
+**Over the ceiling, the refusal is all there is.** A cash total above
+MUR 500,000 used to ask for a Source of Fund form and say the payment was
+not authorised, in the same breath — preparing a payment that cannot be
+taken however well it is answered. The reminder, the link to the form and
+the Source of fund field are now hidden once the ceiling is crossed; what is
+left is the refusal and a disabled submit. The server still refuses on its
+own: a screen deciding what to show is not a control.
+
+**The amount survives the round trip to the Cash Deposit Form.** Going to
+the form and back re-rendered the Payments step from the fee schedule's
+defaults, so the typed amount — and the cash method that made the form's
+button appear at all — were gone on return. The half-finished form is kept
+in `sessionStorage` per application and restored before the step's first
+recalculation, and cleared the moment a payment is recorded.
+
+**The signing pad had only Cancel.** On a 2x screen the canvas's own height
+attribute is twice the viewport, and a flex item will not shrink below its
+content — so the bottom bar, Clear and "Use this signature" both, was pushed
+off the bottom of the page with no way to reach it. One `min-height: 0`; the
+bars no longer shrink either.
+
+**A photographed document is shrunk before it is filed.** Re-encoded on the
+device to JPEG at a 2400px long edge, which is more than enough to read a
+form and a fraction of what a phone camera produces — measured, a 1.1 MB
+scan filed as 725 KB. The file goes up untouched when there is nothing to
+gain, and nothing in it can fail an upload.
+
+**A corporate application's form says so**, the way a minor's already did.
+
 ---
 
 # M7 — Legacy migration ✅
