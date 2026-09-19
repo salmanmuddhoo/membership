@@ -2592,6 +2592,36 @@ money.** Cash and card settle with nothing to write down.
 nominee there, so the officer can see who stands behind the account without
 opening the holder's page in another tab.
 
+### Total funds, who the depositor is, and a way off Vercel ✅
+
+**Total funds counted only the first deposit** for a non-member who had
+opened a second account. The customer arm of the sum read the one
+application that created the customer; a second account is its own
+application with its own id, so its money counted as nothing. Joined through
+`account.opened_by_application_id` now, exactly as the member arm already
+was — and the member arm's own cases were checked rather than assumed: a
+member opening an account after joining, a customer converting to a member,
+and a migrated opening balance all already summed correctly, each covered by
+a test.
+
+**The depositor is the guardian, or the contact person.** A Minor cannot pay
+in for themselves and a registered entity is not a person. One rule
+(`depositorFor`) serves the receipt and the Cash Deposit Form, so the two
+cannot disagree; both still name the account as well as who paid.
+
+**The Source of Fund form reaches the people it concerns** — the chain
+deciding on the application, and the member's own payment history. It was
+readable only from the Payments step of the application that took it.
+
+**An Azure-only path off Vercel is written down** (`docs/deployment-azure.md`):
+the adapter swap, the services, the domain, and every environment variable
+with its secret and dev-only status. Two things it surfaced are worth
+knowing on their own: `package.json`'s `start` script is `astro dev`, which
+would serve production from the dev server on a host that honours `npm
+start`; and every security header this app sets lives in `vercel.json`, so
+moving off Vercel drops the CSP and HSTS silently unless they move into
+`src/middleware.ts` first.
+
 ---
 
 # M7 — Legacy migration ✅

@@ -11,6 +11,7 @@
 // absolute units against white, because this is a form, not a screen.
 import BaseLayout from '@layouts/BaseLayout.astro';
 import { loadApplication, isEditableStatus } from '@lib/applications/capture';
+import { depositorForApplication } from '@lib/applications/depositor';
 import {
   cashSourceOfFundChecklist,
   listDocumentTypes,
@@ -41,22 +42,36 @@ const basePath =
       : `/applications/${application.id}`;
 const paymentsStep = `${basePath}?step=4`;
 
-// Whose money it is. An additional account captures no applicant of its own,
-// so it names its holder and leaves the NIC for a pen, as the paper form
-// always did.
-const applicant = application.parties.find(
+// Whose money it is — the person at the counter, which for a Minor is their
+// guardian and for a Corporate entity its Contact Person (depositorFor).
+//
+// An additional account captures no applicant of its own, so the rule is
+// applied to whoever holds it: their founding application is where their
+// guardian or contact person was captured. Falling back to the holder's own
+// label where that application cannot be read, as the paper form did —
+// naming the holder and leaving the NIC for a pen.
+const depositor = await depositorForApplication(application.id);
+const depositorName =
+  depositor.name ||
+  (application.applicationKind === 'additional_account'
+    ? application.existingHolderLabel
+    : '');
+const depositorNic = depositor.nic;
+
+// Whose account it is, which is not always who paid into it: the form has a
+// NAME at the top and a NAME OF DEPOSITOR at the bottom, and for a Minor or
+// a Corporate entity those are two different people. The same two names the
+// receipt filed alongside this form carries.
+const applicantParty = application.parties.find(
   p => p.subject === 'applicant' && p.ordinal === 1
 );
-const depositorName =
+const holderName =
   application.applicationKind === 'additional_account'
     ? application.existingHolderLabel
-    : [applicant?.values.name, applicant?.values.surname]
-        .filter(v => (v ?? '').trim() !== '')
+    : [applicantParty?.values.name, applicantParty?.values.surname]
+        .map(v => (v ?? '').trim())
+        .filter(v => v !== '')
         .join(' ');
-const depositorNic =
-  application.applicationKind === 'additional_account'
-    ? ''
-    : (applicant?.values.nic ?? '').trim();
 
 // What the officer is about to take, carried from the Payments step so the
 // figure on the form and the figure on the receipt are the same one. Absent
@@ -112,7 +127,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
     <div class="box">
       <div class="row">
         <span class="label">NAME:</span>
-        <span class="value">{depositorName || <i class="blank" />}</span>
+        <span class="value">{holderName || <i class="blank" />}</span>
       </div>
       <div class="row">
         <span class="label">RUPEES:</span>
@@ -215,7 +230,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
     <p data-status class="status-line no-print" aria-live="polite">
       {alreadyFiled
         ? `On file: ${alreadyFiled.fileName}. Signing again replaces it.`
-        : 'Tick what applies, have the applicant sign, then upload.'}
+        : 'Tick what applies, have the depositor sign, then upload.'}
     </p>
   </div>
 </BaseLayout>

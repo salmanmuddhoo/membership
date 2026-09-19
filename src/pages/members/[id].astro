@@ -19,6 +19,7 @@ import { formatMoney } from '@lib/payments/money';
 import {
   checklistFor,
   documentsForMember,
+  filedDocumentFor,
   type MemberDocumentGroup,
 } from '@lib/documents/documents';
 import {
@@ -26,7 +27,11 @@ import {
   PERMISSION_EDIT_CONTACT,
   type EditableContactField,
 } from '@lib/members/contact';
-import { listAccountTypes, openableAccountTypes } from '@lib/config/reference';
+import {
+  listAccountTypes,
+  listDocumentTypes,
+  openableAccountTypes,
+} from '@lib/config/reference';
 import { approvalCommentsFor } from '@lib/applications/workflow';
 import DocumentViewer from '@components/DocumentViewer.astro';
 
@@ -184,6 +189,31 @@ const payments: Payment[] = canSeePayments
     ? await paymentsForMember(member.id)
     : await paymentsForApplication(customer!.applicationId)
   : [];
+
+// Officer feedback: a cash deposit over the threshold was signed for on a
+// Cash Deposit Form, and the only place that form could be read was the
+// application that took the payment — which an officer looking at a
+// member's payment history has no reason to be on, and for an approved
+// application no longer opens on the Payments step at all. Keyed by the
+// application each payment was taken against, since a member's payments
+// come from more than one (the founding application, plus any additional
+// account opened since) and each carries its own form.
+const sourceOfFundType = canSeePayments
+  ? (await listDocumentTypes()).find(t => t.code === 'source_of_fund_form')
+  : undefined;
+const sourceOfFundByApplication = new Map<
+  string,
+  { documentId: string; fileName: string }
+>();
+if (sourceOfFundType) {
+  const applicationIds = [
+    ...new Set(payments.map(p => p.applicationId).filter(Boolean)),
+  ] as string[];
+  for (const id of applicationIds) {
+    const filing = await filedDocumentFor(id, sourceOfFundType.id, 'applicant');
+    if (filing) sourceOfFundByApplication.set(id, filing);
+  }
+}
 
 // Officer feedback: what has been filed for this person, everywhere it was
 // filed — a member can have more than one application on file (the founding
@@ -723,6 +753,20 @@ const pageTitle = member ? member.memberNo : name;
                     {dateFormat.format(payment.receivedAt)} · taken by{' '}
                     {payment.recordedByName}
                   </span>
+                  {payment.applicationId &&
+                    sourceOfFundByApplication.has(payment.applicationId) && (
+                      <button
+                        type="button"
+                        data-view-document
+                        data-document-id={
+                          sourceOfFundByApplication.get(payment.applicationId)!
+                            .documentId
+                        }
+                        class="rounded-lg border border-neutral-300 px-2.5 py-1 text-xs font-medium text-neutral-600 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                      >
+                        Source of Fund
+                      </button>
+                    )}
                 </div>
               </li>
             ))}

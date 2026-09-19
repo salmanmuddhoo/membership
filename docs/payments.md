@@ -164,6 +164,29 @@ hidden `sourceOfFundFormConfirmed` field the server reads is set from the
 filed document itself and never from anything an officer ticks — the only
 evidence the form exists is the form existing.
 
+**Who pays is not always whose account it is.** A Minor cannot pay in for
+themselves and a registered entity is not a person, so the depositor named
+on the receipt and on the Cash Deposit Form is the guardian and the Contact
+Person respectively (`depositorFor`, `src/lib/applications/depositor.ts`) —
+officer feedback: both named the child, who had signed nothing and handed
+over nothing. One function, because a receipt and a form filed together that
+disagree about who paid are worse than either being wrong alone. Both
+documents still name the account as well: the form has a NAME at the top and
+a NAME OF DEPOSITOR at the bottom, and the receipt gains an "Account of" row
+whenever the two differ. For an Individual they are the same person and
+nothing changes. An additional account captures nobody of its own, so the
+rule is applied to the holder's founding application, which is where their
+guardian or contact person was captured.
+
+**The filed form follows the money.** It used to be readable only from the
+Payments step of the application that took it, which meant the people it
+most concerns could not see it: the Regional Manager, Secretary and
+President are deciding on a cash deposit whose declaration they had no way
+to open, and an approved application does not show that step at all. It now
+appears in the Documents section of the application — its own item, not a
+checklist entry, which it never was — and on the member's own page beside
+the payment it was signed for.
+
 **The applicant signs it, not the officer.** It is a declaration about where
 the depositor's own money came from; the officer witnesses the deposit and
 has nothing to declare. The name and NIC printed on it come from the

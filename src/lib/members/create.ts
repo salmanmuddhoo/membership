@@ -1027,15 +1027,29 @@ export async function listMembers(
                 '[]'
               ) as accounts,
               -- A customer never has Shares or an MSA (they are not a
-              -- member) — only whatever account type(s) their own S-614
-              -- application opened, the same payment_account_line source
+              -- member) — only whatever account type(s) their own
+              -- applications opened, the same payment_account_line source
               -- HSA/Investment use for a member above.
+              --
+              -- Joined through account.opened_by_application_id exactly as
+              -- the member arm is, and for the same reason: this used to
+              -- read c.application_id, the one application that created the
+              -- customer, so a non-member who opened a second account later
+              -- (an Investment beside their HSA — its own application, its
+              -- own id) had that second deposit counted as nothing. The
+              -- money had not moved; only the application it was taken
+              -- against was a different one (officer feedback).
               coalesce(
                 (select sum(case when p.kind = 'payment' then pal.amount
                                   else -pal.amount end)
-                   from payment_account_line pal
-                   join payment p on p.id = pal.payment_id
-                  where p.voided_at is null and p.application_id = c.application_id),
+                   from account acc
+                   join payment_account_line pal
+                     on pal.account_type_id = acc.account_type_id
+                   join payment p
+                     on p.id = pal.payment_id
+                    and p.application_id = acc.opened_by_application_id
+                  where acc.customer_id = c.id
+                    and p.voided_at is null),
                 0
               ) as total_funds
          from customer c

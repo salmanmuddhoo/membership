@@ -620,17 +620,22 @@ const dueProblem: string | null = livePayment
   : (dueRead?.problem ?? null);
 const cashThreshold = due ? await cashSourceOfFundThreshold() : null;
 const cashMax = due ? await cashMaximum() : null;
-const sourceOfFundDocumentType = due
-  ? (await listDocumentTypes()).find(t => t.code === 'source_of_fund_form')
-  : undefined;
-const sourceOfFundFiling =
-  due && sourceOfFundDocumentType
-    ? await filedDocumentFor(
-        application!.id,
-        sourceOfFundDocumentType.id,
-        'applicant'
-      )
-    : null;
+const sourceOfFundDocumentType = (await listDocumentTypes()).find(
+  t => t.code === 'source_of_fund_form'
+);
+// Read whether or not there is a payment still to take. It used to be
+// looked up only while the Payments step was live, which meant the one
+// person who most needs it — whoever the application goes to next in the
+// chain — opened it and saw nothing (officer feedback). A form signed for a
+// cash deposit is part of what the Regional Manager, the Secretary and the
+// President are deciding on.
+const sourceOfFundFiling = sourceOfFundDocumentType
+  ? await filedDocumentFor(
+      application!.id,
+      sourceOfFundDocumentType.id,
+      'applicant'
+    )
+  : null;
 const initialTotal = due
   ? fromCents(sumCents(due.components.map(c => c.amount)))
   : '0';
@@ -1076,6 +1081,34 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               </ul>
             </div>
           ))}
+
+          {/* Not a checklist item — it is triggered by the amount and the
+              method, not by the applicant's KYC pack — so it has no group of
+              its own above. It still belongs on this page: it is part of
+              what the chain is deciding on, and whoever the application goes
+              to next used to have no way to read it (officer feedback). */}
+          {sourceOfFundFiling && (
+            <div class="mt-5">
+              <h3 class="text-sm font-medium text-neutral-700 dark:text-neutral-200">
+                Source of Fund
+              </h3>
+              <ul class="mt-2 space-y-2">
+                <li class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-neutral-200 bg-white px-4 py-3 dark:border-neutral-800 dark:bg-neutral-900">
+                  <span class="text-sm text-neutral-800 dark:text-neutral-100">
+                    {sourceOfFundFiling.fileName}
+                  </span>
+                  <button
+                    type="button"
+                    data-view-document
+                    data-document-id={sourceOfFundFiling.documentId}
+                    class="rounded-lg border border-neutral-300 px-2.5 py-1 text-xs font-medium text-neutral-600 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                  >
+                    View
+                  </button>
+                </li>
+              </ul>
+            </div>
+          )}
 
           {isEditable && currentStep === DOCUMENTS_STEP && (
             <div class="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800">
