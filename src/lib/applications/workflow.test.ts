@@ -3718,6 +3718,19 @@ describe('a customer opens a further account, end to end', () => {
       [customerId]
     );
     expect(stillCustomer.rows[0].status).toBe('active');
+
+    // Officer feedback: the Members page's "Total funds" column showed only
+    // the first deposit. The customer arm of listMembers' sum read the one
+    // application that created the customer, so a second account — its own
+    // application, its own id — counted as nothing. Both deposits are the
+    // same customer's money whichever application took them.
+    const row = (
+      await members.listMembers({
+        search: decided.member!.accounts[0].accountNo!,
+      })
+    ).members.find(m => m.id === customerId)!;
+    expect(row.kind).toBe('customer');
+    expect(row.totalFunds).toBe('2000.00');
   });
 
   it('refuses a second account of a type the customer already holds', async () => {

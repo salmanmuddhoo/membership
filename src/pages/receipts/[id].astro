@@ -21,6 +21,7 @@ import {
   type RefundableComponent,
 } from '@lib/payments/payments';
 import { formatMoney } from '@lib/payments/money';
+import { depositorForApplication } from '@lib/applications/depositor';
 import type { FeeComponentCode } from '@lib/config/reference';
 
 const principal = Astro.locals.principal!;
@@ -111,10 +112,22 @@ const refunds = related.filter(p => p.refundsId === payment!.id && !p.voidedAt);
 // Officer feedback: this named the application or the member, never the
 // person who actually paid — the applicant's own name, with the reference
 // that ties it back to a specific record.
-const owner =
-  [payment.applicantName, payment.applicationReference ?? payment.memberNo]
-    .filter(Boolean)
-    .join(' · ') || '—';
+//
+// And for two membership types the applicant is still not who paid: a Minor
+// cannot pay in for themselves and a Corporate entity is not a person, so
+// the guardian and the Contact Person respectively are who stood at the
+// counter (depositorFor). "Received from" names them, and the account they
+// paid into gets a line of its own so nothing is lost — the same two names
+// the Cash Deposit Form filed alongside this receipt carries.
+const depositor = await depositorForApplication(payment.applicationId);
+const reference = payment.applicationReference ?? payment.memberNo;
+const paidBy = depositor.name && depositor.name !== payment.applicantName;
+const owner = paidBy
+  ? depositor.name
+  : [payment.applicantName, reference].filter(Boolean).join(' · ') || '—';
+const accountOf = paidBy
+  ? [payment.applicantName, reference].filter(Boolean).join(' · ') || '—'
+  : null;
 const ownerHref = payment.applicationId
   ? `/applications/${payment.applicationId}`
   : payment.memberId
@@ -171,6 +184,12 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         <dt>Received from</dt>
         <dd>{owner}</dd>
       </div>
+      {accountOf && (
+        <div class="row">
+          <dt>Account of</dt>
+          <dd>{accountOf}</dd>
+        </div>
+      )}
       <div class="row">
         <dt>Method</dt>
         <dd>
