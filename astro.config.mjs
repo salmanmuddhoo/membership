@@ -1,14 +1,32 @@
 import { defineConfig } from 'astro/config';
 import tailwindcss from '@tailwindcss/vite';
+import node from '@astrojs/node';
 import vercel from '@astrojs/vercel';
+
+// One repository, two hosts: Test on Vercel, production on Azure App
+// Service. Astro takes a single adapter, but this file is a module, so the
+// adapter is chosen when the build runs rather than written down once.
+//
+// Vercel sets VERCEL=1 in its own build environment, so Test needs no
+// configuration at all; DEPLOY_TARGET is the explicit override for anyone
+// who wants to produce a Vercel build elsewhere (CI does, to run
+// verify:routes, which reads .vercel/output).
+//
+// The default is deliberately the Azure build. A pipeline that loses its
+// variable then still builds production correctly and breaks Test instead —
+// the cheaper of the two mistakes.
+const buildsForVercel =
+  !!process.env.VERCEL || process.env.DEPLOY_TARGET === 'vercel';
 
 // https://astro.build/config
 export default defineConfig({
   // Server-rendered so authentication can be enforced in middleware.
   output: 'server',
-  adapter: vercel(),
-  // Public site URL. Set to the deployed domain in production.
-  site: 'https://al-barakah.example.com',
+  adapter: buildsForVercel ? vercel() : node({ mode: 'standalone' }),
+  // Public site URL, per environment: Azure and Vercel each serve their own
+  // domain. PUBLIC_SITE_URL is set in the host's own configuration; the
+  // fallback only ever applies to a local build.
+  site: process.env.PUBLIC_SITE_URL ?? 'https://al-barakah.example.com',
   // Every same-origin link becomes prefetchable with no per-link markup
   // (prefetchAll) — `prefetch: true` alone only makes the data-astro-prefetch
   // attribute available, it does not turn it on anywhere, and nothing in

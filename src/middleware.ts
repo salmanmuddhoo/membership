@@ -1,4 +1,4 @@
-import { defineMiddleware } from 'astro:middleware';
+import { defineMiddleware, sequence } from 'astro:middleware';
 import { createServerAuth } from '@lib/auth/server';
 import { recordAuditQuietly } from '@lib/access/audit';
 import { authorise } from '@lib/access/authorise';
@@ -65,7 +65,7 @@ function clientAddress(headers: Headers): string | null {
 //
 // Steps 2 and 3 are what make authorisation uniform: a page cannot forget to
 // check, because the check happens before the page runs.
-export const onRequest = defineMiddleware(async (context, next) => {
+const guard = defineMiddleware(async (context, next) => {
   const { pathname } = context.url;
 
   let user = null;
@@ -188,3 +188,63 @@ export const onRequest = defineMiddleware(async (context, next) => {
 
   return next();
 });
+
+// Response headers, on every response this app produces.
+//
+// They used to live in vercel.json, which meant they were Vercel's to apply
+// and nobody else's — with Test on Vercel and production on Azure, that
+// would have protected the test site and left the real one bare, silently.
+// Set here instead: middleware runs on both hosts, and the list stays in
+// code review rather than in a hosting console nobody diffs.
+//
+// Applied around the guard rather than inside it, so a redirect to /login
+// and an API refusal carry them too — both are responses the guard returns
+// without ever reaching a page.
+export const SECURITY_HEADERS: Record<string, string> = {
+  'Content-Security-Policy': [
+    "default-src 'self'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-src 'self' https://*.sharepoint.com",
+    "frame-ancestors 'self'",
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: https://images.unsplash.com https://*.sharepoint.com",
+    "connect-src 'self' https://*.sharepoint.com",
+    "object-src 'none'",
+    'upgrade-insecure-requests',
+    'block-all-mixed-content',
+  ].join('; '),
+  'Permissions-Policy': 'interest-cohort=()',
+  'Referrer-Policy': 'no-referrer-when-downgrade',
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'SAMEORIGIN',
+  'X-XSS-Protection': '1; mode=block',
+  // An officer's pages are personal and change as they work. Never held by
+  // a shared cache, and revalidated every time.
+  'Cache-Control': 'public, max-age=0, must-revalidate',
+  // An internal tool has nothing to offer a search engine.
+  'X-Robots-Tag': 'noindex, nofollow, noarchive, nosnippet',
+};
+
+const securityHeaders = defineMiddleware(async (context, next) => {
+  const response = await next();
+
+  for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
+    response.headers.set(name, value);
+  }
+
+  // Only over HTTPS. A browser ignores HSTS on a plain connection anyway,
+  // and sending it from `astro dev` on localhost is the one way this could
+  // do harm — pinning HTTPS for a host that has no certificate.
+  if (context.url.protocol === 'https:') {
+    response.headers.set(
+      'Strict-Transport-Security',
+      'max-age=31536000; includeSubDomains; preload'
+    );
+  }
+
+  return response;
+});
+
+export const onRequest = sequence(securityHeaders, guard);
