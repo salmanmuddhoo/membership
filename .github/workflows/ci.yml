@@ -65,8 +65,14 @@ jobs:
       - name: Check the API document is generated and current
         run: pnpm openapi:check
 
-      - name: Type-check and build
+      # Two hosts, two adapters (astro.config.mjs): Test deploys to Vercel and
+      # production to Azure App Service. The Vercel build comes first because
+      # verify:routes below reads what that adapter emits; DEPLOY_TARGET is
+      # what asks for it, since the default here is the Azure build.
+      - name: Type-check and build (Test target)
         run: pnpm build
+        env:
+          DEPLOY_TARGET: vercel
 
       # The Vercel adapter emits a closed allow-list of routes, with a final
       # catch-all that 404s. A page missing from that list is unreachable in
@@ -76,6 +82,15 @@ jobs:
       # fails next to the build that caused it.
       - name: Every page is reachable in the build output
         run: pnpm verify:routes
+
+      # And again for production's own adapter. Only the packaging differs,
+      # but "only the packaging" is exactly what a broken adapter breaks —
+      # and it would otherwise break in the Azure pipeline, after review,
+      # rather than here. Seconds, on an already-warm build.
+      - name: Build for production's target too
+        run: pnpm build
+        env:
+          DEPLOY_TARGET: azure
 
   test:
     name: Tests

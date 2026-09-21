@@ -2622,6 +2622,32 @@ start`; and every security header this app sets lives in `vercel.json`, so
 moving off Vercel drops the CSP and HSTS silently unless they move into
 `src/middleware.ts` first.
 
+### Two hosts, one repository ✅
+
+**Test stays on Vercel; production goes to Azure.** `astro.config.mjs` picks
+its adapter when the build runs — the node adapter by default, Vercel's when
+`VERCEL=1` (which Vercel sets itself) or `DEPLOY_TARGET=vercel`. The default
+is the Azure build deliberately: a pipeline that loses its variable then
+still builds production correctly and breaks Test instead.
+
+**The `start` script no longer runs the dev server.** It was `astro dev`,
+which Vercel never invokes but App Service would have, serving production
+from the development server.
+
+**The security headers moved out of `vercel.json` and into
+`src/middleware.ts`**, so both hosts get them. Applied around the existing
+guard, so a redirect to `/login` and an API refusal carry them too; HSTS only
+over HTTPS. A test reads the list out of the source — the wiring was proved
+against a running server, this is what stops a header quietly disappearing.
+
+**CI builds both targets**, since `verify:routes` reads what the Vercel
+adapter emits and an adapter that stops compiling should fail there rather
+than in the deployment pipeline.
+
+**`docs/deployment-azure.md` was rewritten for someone who has never opened
+the Azure portal** — numbered steps, what each thing is for, what you should
+see after each one, and a symptom-to-fix table.
+
 ---
 
 # M7 — Legacy migration ✅
