@@ -15,7 +15,7 @@ const endpoint = defineEndpoint(
       '(docs/ledger.md). An account nothing has ever posted to reads as ' +
       '"0.00" with no entries.',
     tag: 'Transactions',
-    permission: 'payment.view',
+    permission: 'account.view',
     responseSchema: {
       type: 'object',
       required: ['accountId', 'accountNo', 'balance', 'currency', 'entryCount'],

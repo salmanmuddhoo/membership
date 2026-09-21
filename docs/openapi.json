@@ -95,7 +95,7 @@
           "Transactions"
         ],
         "operationId": "getAccountsIdBalance",
-        "x-required-permission": "payment.view",
+        "x-required-permission": "account.view",
         "responses": {
           "200": {
             "description": "Success",
@@ -210,7 +210,7 @@
           "Transactions"
         ],
         "operationId": "getAccountsIdHistory",
-        "x-required-permission": "payment.view",
+        "x-required-permission": "account.view",
         "responses": {
           "200": {
             "description": "Success",
@@ -403,7 +403,7 @@
           "Payments"
         ],
         "operationId": "getAccountsIdTransactions",
-        "x-required-permission": "payment.view",
+        "x-required-permission": "account.view",
         "responses": {
           "200": {
             "description": "Success",

@@ -3560,6 +3560,27 @@ each now reads the ledger, and the payment tests that built an account by
 hand now carry its receipt the way approval does. The deposit page and the
 endpoint already shared one service function, as S-1310 asks.
 
+**Shipped, seventh increment** (S-1311), and M13 closes: money has its own
+permissions. Migration 0069 adds `transaction.view`, `transaction.post`,
+`account.view` and `receipt.void` beside 0068's `transaction.capture`,
+creates the three Section 5 roles Phase 1 never needed — Clerk, Account
+Officer, Auditor — with no members, and maps the defaults: Clerk and
+Regional Officer capture, Account Officer and Regional Officer post
+(at a regional counter the officer who takes a deposit posts it),
+Treasurer voids, Auditor views; `account.view` rides on `member.view` and
+`transaction.view` on `payment.view`, so nobody lost a figure. The history
+page and the three account endpoints moved from `member.view` and
+`payment.view` onto `account.view`, and the member page hides the balances
+without it. A deposit — one act, no chain — now needs `transaction.post`
+as well as capture; a Clerk holding capture alone is told to ask an
+Account Officer, until M14's chain hands a capture on. The capture path
+writes `transaction.captured` to the trail before the engine writes
+`transaction.posted`, and three `segregation_rule` rows key on it: the
+officer who captured may not approve, may not post through a chain, may
+not void the receipt. Nothing consults them yet on the one-act deposit;
+M14's post and approve actions and S-1505's void do. M13's one open end
+is S-1306's filed Source of Fund document for a deposit (◐).
+
 ### S-1301 · The account ledger ✅
 
 **As** the Society, **I need** every movement of money on an account to be
@@ -3760,7 +3781,7 @@ it. _(API-US-001, FRD 10)_
 - The deposit page calls the same service function the endpoint does — one
   path, as `saveDraft` and the capture pages already share one
 
-### S-1311 · Who may do what to money
+### S-1311 · Who may do what to money ✅
 
 **As** the Society, **I need** transaction permissions that match the roles
 in FRD Section 5, **so that** a clerk records and a Treasurer voids.

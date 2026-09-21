@@ -17,7 +17,7 @@ const endpoint = defineEndpoint(
       'debit with a one-line description. For the running balance, the ' +
       'receipt and paging, use /accounts/{id}/history.',
     tag: 'Payments',
-    permission: 'payment.view',
+    permission: 'account.view',
     responseSchema: {
       type: 'object',
       required: ['transactions'],

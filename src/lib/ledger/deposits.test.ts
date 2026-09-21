@@ -107,7 +107,7 @@ beforeAll(async () => {
   officer = principalFor(
     byEmail.get('officer@albarakah.mu'),
     'officer@albarakah.mu',
-    ['transaction.capture']
+    ['transaction.capture', 'transaction.post']
   );
   onlooker = principalFor(
     byEmail.get('viewer@albarakah.mu'),
@@ -262,6 +262,7 @@ describe('recording a deposit', () => {
     );
     const second = principalFor(other.rows[0].id, 'second@albarakah.mu', [
       'transaction.capture',
+      'transaction.post',
     ]);
     const theirs = await deposits.recordDeposit(
       { accountId: msa, amount: '250.00', method: 'cash', idempotencyKey: key },
@@ -284,6 +285,14 @@ describe('recording a deposit', () => {
     await expect(
       attempt({ accountId: shares, amount: '10', method: 'cash' }, onlooker)
     ).rejects.toThrowError(/permission/);
+    // S-1311: capture without post is a Clerk's, and a deposit has no chain
+    // to hand it on to yet.
+    const clerk = principalFor(onlooker.userId, 'viewer@albarakah.mu', [
+      'transaction.capture',
+    ]);
+    await expect(
+      attempt({ accountId: shares, amount: '10', method: 'cash' }, clerk)
+    ).rejects.toThrowError(/record a deposit but not post it/);
     await expect(
       attempt({
         accountId: '00000000-0000-0000-0000-000000000000',
@@ -333,6 +342,49 @@ describe('recording a deposit', () => {
     expect(await count('select count(*)::int as n from receipt_number')).toBe(
       receipts
     );
+  });
+
+  // S-1311: who captured is on the trail before who posted, and the rules
+  // key on it wherever posting or voiding is someone else's act.
+  it('records who captured it, and the segregation rules read that row', async () => {
+    const deposits = await load();
+    const deposit = await deposits.recordDeposit(
+      { accountId: shares, amount: '75', method: 'cash' },
+      officer
+    );
+    const trail = await run(
+      appUrl,
+      `select action, actor_user_id from audit_event
+        where entity_type = 'transaction' and entity_id = $1
+        order by occurred_at, id`,
+      [deposit.reference]
+    );
+    expect(trail.rows).toEqual([
+      { action: 'transaction.captured', actor_user_id: officer.userId },
+      { action: 'transaction.posted', actor_user_id: officer.userId },
+    ]);
+
+    const { checkSegregation } = await import('../admin/segregation');
+    for (const later of [
+      'transaction.approved',
+      'transaction.posted',
+      'transaction.voided',
+    ]) {
+      const own = await checkSegregation(
+        officer.userId,
+        'transaction',
+        deposit.reference,
+        later
+      );
+      expect(own.allowed, later).toBe(false);
+      const other = await checkSegregation(
+        onlooker.userId,
+        'transaction',
+        deposit.reference,
+        later
+      );
+      expect(other.allowed, later).toBe(true);
+    }
   });
 
   // S-1306: the same three configuration entries a cash payment reads

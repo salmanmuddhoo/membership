@@ -69,10 +69,10 @@ const ROUTE_PERMISSIONS: ReadonlyArray<readonly [string, string]> = [
   // is not being able to act on it.
   ['/applications/', 'application.view'],
   ['/members/', 'member.view'],
-  // An account's history (S-1309): what an officer sees on the member's
-  // page, one account at a time. S-1311 gives money its own permissions
-  // and tightens this.
-  ['/accounts/', 'member.view'],
+  // An account's balance and history (S-1309, S-1311): money has its own
+  // permission, held by default by everyone who may see a member, and
+  // removable from a role without taking the member's page away.
+  ['/accounts/', 'account.view'],
   // Details a member sent from the app (docs/member-app.md). Seeing the
   // queue is member.view like the rest of /members; acting on one needs
   // member.details_verify, which the page checks itself — the same split

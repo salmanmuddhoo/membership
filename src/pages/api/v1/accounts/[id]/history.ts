@@ -17,7 +17,7 @@ const endpoint = defineEndpoint(
       'what the ledger says. Page backwards with `before`, the ' +
       '`sequenceNo` of the oldest entry on the page you have.',
     tag: 'Transactions',
-    permission: 'payment.view',
+    permission: 'account.view',
     query: [
       {
         name: 'limit',
