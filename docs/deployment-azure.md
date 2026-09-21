@@ -1,338 +1,206 @@
-# Deploying to Azure instead of Vercel
+# Putting production on Azure
 
-This is for whoever runs the Society's Azure subscription and is taking
-production off Vercel. It assumes you already know App Service, Flexible
-Server and Entra — it does not re-explain them — and it tells you exactly
-what in this repository has to change to make that possible, and what to
-click and set once it does.
+This guide is for someone who has never used Azure. Follow it with the Azure
+portal open in another window. Every step is something to click or type, and
+after each one it says what you should see, so you can tell it worked before
+moving on.
 
-`docs/adr/0001-azure-native-backend.md` and the "Networking, and an open
-decision" section of `docs/database.md` already anticipated this move
-(direction set 26 August 2026: "moving the API into Azure would be a
-deployment change, not a rewrite"). That is why this is mostly configuration:
-the data layer, the access layer and the API handlers are plain TypeScript
-with no Vercel-specific runtime dependency. The one place Vercel is actually
-load-bearing is the Astro **adapter**.
+## What you are about to do
 
-## 1. What has to change in the repo
+The Test site stays exactly where it is, on Vercel. Nothing about it changes,
+and nothing you do here can break it. What you are setting up is a second,
+separate home for the real system — the one the branch actually uses — on
+Microsoft Azure.
 
-### The adapter
+The code already knows how to run in both places. That work is done: when
+Vercel builds the site it produces a Vercel version, and when Azure builds it
+it produces an Azure version, from the same repository, with no switch for you
+to remember.
 
-`astro.config.mjs` builds the app for Vercel's serverless functions today:
+You will create four things: somewhere to keep them all, a database, the web
+app itself, and a way for GitHub to send new code across. Then you point the
+Society's domain name at it.
 
-```js
-import { defineConfig } from 'astro/config';
-import tailwindcss from '@tailwindcss/vite';
-import vercel from '@astrojs/vercel';
+Set aside an afternoon. Most of the time is waiting for Azure to finish
+creating things. None of it needs you to write code.
 
-export default defineConfig({
-  output: 'server',
-  adapter: vercel(),
-  site: 'https://al-barakah.example.com',
-  prefetch: { prefetchAll: true, defaultStrategy: 'tap' },
-  vite: {
-    plugins: [tailwindcss()],
-  },
-});
-```
+## Before you start
 
-App Service runs a long-lived Node process, not a function platform, so the
-adapter has to change to `@astrojs/node` in `standalone` mode — it builds a
-plain Node HTTP server rather than a set of Vercel functions:
+You need all of these in hand. If one is missing, get it first — stopping
+halfway to chase a password is how mistakes happen.
 
-```js
-import { defineConfig } from 'astro/config';
-import tailwindcss from '@tailwindcss/vite';
-import node from '@astrojs/node';
+- [ ] **An Azure subscription**, and to know who pays the bill. If the Society
+      has never used Azure, someone has to create the account and add a card.
+- [ ] **Administrator access to the GitHub repository**, so you can add
+      secrets and change the workflow.
+- [ ] **Access to the staff sign-in app registration** in Microsoft Entra. It
+      already exists — it is what officers sign in through today. You will add
+      one address to it.
+- [ ] **The Society's production domain name**, and access to wherever its DNS
+      is managed (the registrar's control panel, usually).
+- [ ] **The current production values** for the settings listed in step 4 —
+      the SharePoint/Graph details, the notification gateway tokens, and so
+      on. The list is in that step; gather them before you start typing.
+- [ ] **Somewhere safe to write down passwords.** You will create a database
+      password that cannot be recovered if you lose it.
 
-export default defineConfig({
-  output: 'server',
-  adapter: node({ mode: 'standalone' }),
-  site: 'https://<your-production-domain>',
-  prefetch: { prefetchAll: true, defaultStrategy: 'tap' },
-  vite: {
-    plugins: [tailwindcss()],
-  },
-});
-```
+## The pieces, and what each one is for
 
-`output: 'server'` stays as it is — nothing about server rendering or the
-auth middleware changes, only which adapter packages the output.
+- **Resource group** — a folder that holds everything for this project. It
+  lets you find it all in one place, see one bill for it, and delete the lot
+  if you ever want to start over.
+- **Azure Database for PostgreSQL** — where every member, application,
+  payment and audit record is stored. This is the part that matters most; the
+  web app can be rebuilt in twenty minutes, the data cannot.
+- **App Service** — the computer that runs the website. You do not manage the
+  machine itself; you give Azure the code and it runs it.
+- **Application settings** — the passwords, addresses and switches the app
+  reads when it starts. They live in Azure rather than in the code, so a
+  secret is never committed to GitHub.
+- **Key Vault** (optional, later) — a safe for those passwords, so they can be
+  changed without touching the web app. You can start without it.
 
-And in `package.json`:
+## Step 1 — Create the folder (resource group)
 
-- Remove the `@astrojs/vercel` dependency.
-- Add `@astrojs/node` as a dependency (not a devDependency — it is imported by
-  `astro.config.mjs` at build time and its runtime is what `pnpm build`
-  produces). **Pin it to the major version that supports Astro 7** — run
-  `pnpm add @astrojs/node@latest` (or `npx astro add node`, which also edits
-  `astro.config.mjs` for you) and let pnpm resolve the compatible version;
-  this repo does not currently depend on it, so no version is verified here.
-- The `start` script (currently `astro dev`, which is the **dev** server) is
-  not what production runs. Production runs the build's own entry file
-  directly:
+1. Sign in at **portal.azure.com**.
+2. In the search box at the top, type **Resource groups** and click it.
+3. Click **Create**.
+4. **Subscription**: pick the Society's subscription.
+5. **Resource group**: name it something you will recognise, for example
+   `albarakah-production`.
+6. **Region**: choose **South Africa North**. This is the closest Azure region
+   to Mauritius, and every other piece will go in the same one — the database
+   and the web app talking to each other across regions is slow in a way you
+   would feel on every page.
+7. Click **Review + create**, then **Create**.
 
-  ```json
-  "start": "node ./dist/server/entry.mjs"
+**You should see** the resource group appear in the list within a few seconds.
+
+> Keep every piece in this one resource group and this one region. Mixing
+> regions is the single most common cause of a site that works but feels slow.
+
+## Step 2 — Create the database
+
+1. In the search box, type **Azure Database for PostgreSQL** and click it.
+2. Click **Create**, then choose **Flexible server**.
+3. **Resource group**: the one you just made.
+4. **Server name**: something like `albarakah-production-db`. This becomes part
+   of its address, so it has to be unique across all of Azure — if it is taken,
+   add something to it.
+5. **Region**: **South Africa North**, the same as the folder.
+6. **PostgreSQL version**: choose 16 unless you have a reason not to. It is
+   what the system is developed against.
+7. **Workload type**: for a society of this size, **Development** or the
+   smallest Production tier is enough to start. You can increase it later
+   without rebuilding; you cannot easily decrease it, so start small.
+8. **Authentication method**: PostgreSQL authentication only.
+9. **Admin username** and **password**: make up both and **write them down
+   somewhere safe now**. Azure will not show you the password again, and
+   recovering from losing it means resetting it and updating every setting
+   that uses it.
+10. Click **Next: Networking**.
+11. **Connectivity method**: **Public access**. (There is a more private
+    option using a virtual network. It is better, and it is also a lot more to
+    set up. Start here; `docs/database.md` discusses moving to it later.)
+12. Tick **Allow public access from any Azure service within Azure to this
+    server**. This is a firewall rule — a list of who is allowed to connect at
+    all. This particular rule lets your web app, which is also inside Azure,
+    reach the database.
+13. Add a second firewall rule for **your own computer's IP address**, so you
+    can connect from your machine to run the first setup. Azure offers a button
+    to add your current address.
+14. **SSL/TLS**: leave encryption **on**. It is on by default. Do not turn it
+    off — it is what stops the connection between the app and the database
+    being readable in transit.
+15. Click **Review + create**, then **Create**.
+
+**You should see** a deployment page. Creating a database server takes five to
+ten minutes. Wait for "Your deployment is complete".
+
+16. When it is done, open the server and find its **Server name** — it looks
+    like `albarakah-production-db.postgres.database.azure.com`. Write it down;
+    you need it in step 4.
+
+Then create the database itself inside the server:
+
+17. In the server's left-hand menu, find **Databases**, and add one named
+    `albarakah`.
+
+> **If you skip the firewall rules**, the site will load but every page will
+> fail with a database error. That is the symptom to recognise.
+
+## Step 3 — Create the web app
+
+1. In the search box, type **App Services** and click it.
+2. Click **Create**, then **Web App**.
+3. **Resource group**: the same one.
+4. **Name**: something like `albarakah-production`. This gives you a free
+   address to test with — `albarakah-production.azurewebsites.net` — before the
+   real domain is pointed at it.
+5. **Publish**: **Code**.
+6. **Runtime stack**: **Node 22 LTS**. This matches what the project is built
+   and tested with.
+7. **Operating System**: **Linux**.
+8. **Region**: **South Africa North**, the same as everything else.
+9. **Pricing plan**: choose a **Basic** plan or better. Avoid the Free tier —
+   it stops the app when it is idle, so the first officer in each morning
+   would wait a long time for the first page.
+10. Click **Review + create**, then **Create**.
+
+**You should see** "Your deployment is complete" after a minute or two. Click
+**Go to resource**, then open the address shown at the top right. You will get
+a placeholder page — there is no code on it yet. That is correct.
+
+Now tell it how to start the app:
+
+11. In the web app's left-hand menu, open **Configuration** (on some
+    subscriptions this sits under **Settings**).
+12. Find **Startup Command** and set it to:
+
+    ```
+    node ./dist/server/entry.mjs
+    ```
+
+13. Click **Save**.
+
+> That one line is what runs the built application. If it is left blank, Azure
+> guesses, and the guess is usually wrong — the symptom is a site that returns
+> an error page with no useful detail.
+
+## Step 4 — Fill in the settings
+
+An **application setting** is one named value the app reads when it starts —
+a password, an address, a switch. They live in Azure, not in the code, which
+is why no password is ever committed to GitHub.
+
+1. In the web app's left-hand menu, open **Environment variables** (older
+   portals call this **Configuration** → **Application settings**).
+2. For each row in the table below, click **Add**, type the name in **Name**
+   exactly as written, and the value in **Value**.
+3. Click **Apply** / **Save** when you have entered them all. The app restarts.
+
+Take the names exactly as they appear. They are matched letter for letter, and
+a typo produces a setting the app never reads — with no error to tell you.
+
+Three of them deserve attention before you start:
+
+- **`DATABASE_URL`** is the whole connection in one line. Build it from what
+  you wrote down in step 2:
+
+  ```
+  postgresql://USERNAME:PASSWORD@SERVERNAME.postgres.database.azure.com:5432/albarakah?sslmode=require
   ```
 
-  That is the file `astro build` emits with the node adapter in standalone
-  mode. App Service's Node runtime looks for `npm start` (or the pnpm
-  equivalent) by default, so this is what it will invoke — set it correctly
-  or the deployment serves nothing.
+  Keep `?sslmode=require` on the end. It is what insists the connection is
+  encrypted.
 
-This is a code change, committed to the branch that deploys to Azure — not a
-setting you flip in the Azure portal. A portal setting cannot turn Vercel
-serverless functions into a Node server; the build output itself is
-different.
+- **`PUBLIC_SITE_URL`** is the address the site will live at. Until your
+  domain is pointed at Azure (step 7), use the `.azurewebsites.net` address.
+  Change it when the domain goes live.
 
-**Decision for you: test stays on Vercel, or moves too?** `docs/environments.md`
-describes one Vercel project with a `test` custom environment (branch `main`)
-and `production` (branch `production`). An Astro project has exactly one
-adapter in `astro.config.mjs`, so once it is `@astrojs/node` the repo can no
-longer build a Vercel deployment from that same config. If Test is to stay on
-Vercel, you need either a second config/branch that keeps the Vercel adapter,
-or to move Test to Azure as well (an App Service deployment slot, for
-example) and retire the Vercel project entirely. This document does not
-decide that for you — `docs/environments.md` is maintained separately and
-will need its own update once you have.
-
-### Security headers currently set by `vercel.json`
-
-`vercel.json` sets the CSP, HSTS, `X-Frame-Options` and the other response
-headers for every route, plus `regions: ["cpt1"]` to keep the compute next to
-the South Africa North database. None of that is read by App Service.
-`regions` has no Azure equivalent to set — see step 2, App Service region
-choice, instead. The headers do need to exist somewhere, and as this is written they exist
-nowhere else: `src/middleware.ts` sets none of them. **Moving off Vercel
-without reproducing them drops the CSP, HSTS and the rest silently** — the
-app keeps working, so nothing tells you it happened. Do this before Azure
-serves any real traffic, not after.
-
-Emit them from `src/middleware.ts` rather than as App Service response-header
-rules: they then apply wherever the app runs, which is the platform
-independence the ADR argues for, and they stay in review with the code
-instead of in a portal nobody diffs. `vercel.json` is the list to work from
-— copy it exactly, then delete it with the Vercel project.
-
-### Nothing else in `src/` names Vercel
-
-There is no `@astrojs/vercel` import anywhere under `src/` — the adapter is
-only referenced from `astro.config.mjs` and `package.json`. `.vercel/` is a
-local/CI build artifact (gitignored) and needs no action.
-
-## 2. Which Azure services
-
-| Service                                                      | Why                                                                                                                                                                                                                                                                                                                                                         |
-| ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **App Service (Linux, Node)**                                | Runs the standalone Node server the build produces. Choose the **Node 22 LTS** runtime stack to match what CI already builds and tests against (`node-version: 22` in every `.github/workflows/*.yml` job) — the repo pins no version in `package.json` itself, so this is your call to make explicit; consider adding an `engines.node` field once you do. |
-| **Azure Database for PostgreSQL — Flexible Server**          | Already the database in every environment (`docs/database.md`, `docs/adr/0001-azure-native-backend.md`) — this does not change with the move off Vercel.                                                                                                                                                                                                    |
-| **Microsoft Entra External ID (CIAM)** app registration      | Staff sign-in. Already exists per environment — see `docs/adr/0001-azure-native-backend.md`'s provisioning checklist. Only its **redirect URIs** need attention when the domain changes (step 4, below).                                                                                                                                                    |
-| **Microsoft Graph app registration (Al Barakah 365 tenant)** | SharePoint document filing. Already set up and documented in full in `docs/documents.md` (`Sites.Selected` permission, per-site grant, `GRAPH_DRIVE_ID`) — nothing about it changes because the app moved off Vercel; do not re-provision it, just carry the same `GRAPH_*` values into App Service configuration (step 5).                                 |
-| **GitHub Actions** (already in the repo)                     | Extend it to build, deploy to App Service and run migrations, rather than introducing a separate Azure DevOps or portal-ZIP path — see step 3.                                                                                                                                                                                                              |
-
-## 3. Step by step to first deploy
-
-1. **Resource group.** One per environment you are standing up on Azure (at
-   minimum, production), in the same region as the database for latency —
-   the existing database is **Azure South Africa North**
-   (`docs/database.md`), so put App Service there too unless you have a
-   reason not to.
-
-2. **Azure Database for PostgreSQL Flexible Server**, if not already
-   provisioned for this environment (it already exists for test/production
-   per the ADR — reuse it if you are only moving compute, not the database).
-   If provisioning fresh, follow `docs/database.md`'s "Setting up a new
-   environment" section for the role/grant setup, and:
-   - Allow-list the `PGCRYPTO` and `CITEXT` extensions on the server
-     parameter `azure.extensions` before the first migration runs.
-   - **TLS is mandatory.** `src/lib/config.ts`'s `normaliseSslMode` rewrites
-     any `DATABASE_URL` to `sslmode=verify-full` in a deployed environment and
-     **refuses to start** if the URL asks for anything weaker — production
-     must use `?sslmode=verify-full` (or nothing; it gets added). Do not set
-     `DATABASE_ALLOW_INSECURE` in Azure App Service — it is refused outright
-     the moment `PUBLIC_APP_ENV` reads as production (unset counts as
-     production), and it exists only for a local, TLS-less development
-     cluster.
-   - **Network access:** `docs/database.md` leaves this an open decision
-     (firewall allow-list vs. private endpoint) precisely because Vercel's
-     dynamic egress IPs made a firewall allow-list impractical. Moving
-     compute to App Service removes that constraint — **VNet-integrate the
-     App Service and use a private endpoint to the Flexible Server**, which
-     is the option `docs/database.md` already names as "where a financial
-     application usually ends up." If you are not ready for that on day one,
-     a firewall allow-list scoped to App Service's outbound IPs (App Service
-     on a non-Free tier gives you a stable set, under **Networking →
-     Outbound IP addresses**) is the fallback — do not open the firewall
-     wide in production.
-
-3. **App Service plan and Web App.** Linux, Node 22. Create it in the same
-   resource group and region as the database. If you went with a private
-   endpoint in step 2, enable **VNet integration** on the Web App now, before
-   first deploy, so the very first migration/connection attempt can reach the
-   database.
-
-4. **Deployment method: extend the existing GitHub Actions, not portal ZIP
-   deploy.** The repo already has `.github/workflows/ci.yml` (build, format,
-   `verify:routes`, `openapi:check`, `verify:migrations`, tests) and
-   `.github/workflows/migrate.yml` (runs `pnpm migrate` against
-   `DATABASE_MIGRATION_URL`, gated by a GitHub Environment per environment).
-   Add a **deploy** job or workflow, gated the same way `migrate.yml` is (a
-   GitHub Environment per Azure target, `main` → test, `production` →
-   production), that runs after `ci.yml` succeeds:
-
-   ```yaml
-   name: Deploy to Azure
-
-   on:
-     workflow_run:
-       workflows: [CI]
-       types: [completed]
-       branches: [main, production]
-
-   permissions:
-     id-token: write # for OIDC login to Azure — no stored publish profile
-     contents: read
-
-   concurrency:
-     group: deploy-${{ github.ref }}
-     cancel-in-progress: false
-
-   jobs:
-     deploy:
-       if: ${{ github.event.workflow_run.conclusion == 'success' }}
-       runs-on: ubuntu-latest
-       environment: ${{ github.event.workflow_run.head_branch == 'production' && 'production' || 'test' }}
-       steps:
-         - uses: actions/checkout@v7
-           with:
-             ref: ${{ github.event.workflow_run.head_sha }}
-
-         - uses: pnpm/action-setup@v6
-           with:
-             version: 10
-
-         - uses: actions/setup-node@v7
-           with:
-             node-version: 22
-             cache: pnpm
-
-         - name: Install and build
-           run: |
-             pnpm install --frozen-lockfile
-             pnpm build
-
-         - name: Azure login (OIDC)
-           uses: azure/login@v2
-           with:
-             client-id: ${{ secrets.AZURE_CLIENT_ID }}
-             tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-             subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-         - name: Deploy to App Service
-           uses: azure/webapps-deploy@v3
-           with:
-             app-name: <your-app-service-name>
-             package: .
-   ```
-
-   Use **federated OIDC credentials** for `azure/login` (an Entra app
-   registration with a federated credential trusting this GitHub repo/branch)
-   rather than a stored publish-profile secret, for the same reason
-   `docs/database.md` recommends OIDC for the just-in-time firewall rule
-   idea — no long-lived Azure secret sitting in GitHub. Register that
-   deploy-credential app registration in your own Azure AD tenant; it is
-   unrelated to the two application registrations (`ENTRA_*`, `GRAPH_*`)
-   already documented.
-
-   This is a starting point, not a tuned pipeline — exact App Service
-   deployment action inputs, the trigger shape (`workflow_run` vs. putting
-   the deploy steps directly in `ci.yml`), and how many environments you
-   stand up are yours to decide; nothing here is verified against a real
-   Azure deployment.
-
-5. **Migrations stay exactly as documented** — `.github/workflows/migrate.yml`
-   already runs `pnpm migrate` against `DATABASE_MIGRATION_URL` (the schema
-   owner, a GitHub Environment secret) after a merge to `main` or
-   `production`. That workflow is platform-agnostic already: it does not
-   touch Vercel or Azure compute, only the database. Nothing about it needs
-   to change for this move, **except** the networking point in step 2 — if
-   you put the database behind a private endpoint, the migration job (which
-   runs on a GitHub-hosted runner, not inside your VNet) needs the
-   just-in-time firewall rule or self-hosted-runner treatment
-   `docs/database.md`'s "The same problem applies to CI" section already
-   describes. Apply the same choice you made for the application's own
-   network access.
-
-## 4. The custom domain
-
-1. **App Service → Custom domains → Add custom domain.** Enter the
-   production hostname (e.g. `app.albarakah.mu` or whatever
-   `docs/environments.md`'s production URL becomes).
-2. **DNS records**, at your DNS provider (not Azure, unless Azure also hosts
-   the zone):
-   - A **CNAME** record for the hostname, pointing at
-     `<your-app-service-name>.azurewebsites.net` — this is the normal path
-     for a subdomain.
-   - If the domain is a bare/apex domain that cannot take a CNAME, use an
-     **A record** pointing at the Web App's inbound IP address (App Service
-     → **Custom domains** shows it) plus a **TXT record**
-     (`asuid.<hostname>` → the Web App's custom domain verification ID,
-     also shown on that same screen) so Azure can verify you own the domain.
-3. **Domain verification** in the portal once DNS has propagated.
-4. **TLS: add a Managed Certificate** (App Service → Certificates → Managed
-   certificates → free, auto-renewing) and bind it to the custom domain
-   (SNI SSL binding).
-5. **Enforce HTTPS.** App Service → Configuration → General settings →
-   **HTTPS Only: On**. Do not rely on application-level redirects for this —
-   `vercel.json`'s `upgrade-insecure-requests` CSP directive helps in-page but
-   does not itself redirect a plain-HTTP request; App Service's own
-   HTTPS-only switch is what actually refuses port 80.
-
-### What must be updated when the domain changes
-
-Everything below is **URL-derived** and must move together, or sign-in and
-notifications break silently for the new domain while looking fine in the
-old one:
-
-- **`ENTRA_REDIRECT_URI`** and **`ENTRA_POST_LOGOUT_REDIRECT_URI`** — update
-  in **both** places:
-  1. App Service → Configuration → Application settings (the running app's
-     values).
-  2. The **Entra app registration itself** (Authentication → Redirect URIs /
-     Front-channel logout URL) — `docs/adr/0001-azure-native-backend.md`'s
-     checklist is where these were first set
-     (`https://<app-url>/auth/callback`, `https://<app-url>/auth/logout`).
-     `src/lib/config.ts`'s `getEntraConfig()` fails closed with
-     `/login?error=config` if the app setting is missing, but a value that is
-     merely **wrong** — pointing at the old domain — fails differently: Entra
-     redirects back to a URI it does not recognise and rejects the handshake
-     (`docs/runbook.md` calls this out as `/login?error=auth`, "a mismatched
-     redirect URI"). Missing either half of this update is exactly the
-     failure mode `docs/runbook.md`'s "Nobody can sign in" section describes.
-- **`site` in `astro.config.mjs`** — the public site URL Astro bakes into the
-  build (canonical links, etc). Update it to the new domain and rebuild;
-  it is not an environment variable, so a config-only App Service change will
-  not fix it.
-- Nothing else found in this repo derives from the domain automatically —
-  `GRAPH_*` values point at Microsoft's own tenant/drive, not at this app's
-  URL, and `NOTIFY_*` similarly. If you introduce anything else that embeds
-  the app's own URL (a webhook callback URL, for instance), add it to this
-  list.
-
-## 5. Where environment variables go
-
-**App Service → Configuration → Application settings** for everything below.
-For the values marked **secret**, prefer an **Azure Key Vault reference**
-(`@Microsoft.KeyVault(SecretUri=...)` as the setting's value, with the Web
-App's managed identity granted `get` on the vault) over pasting the secret
-directly into Application settings — it gives you rotation and access
-auditing without a redeploy, and keeps the secret out of the App Service
-configuration export/ARM template.
-
-This is every variable this repository's application code reads
-(`src/lib/config.ts`, `src/lib/db/pool.ts`, `src/lib/documents/graph.ts`,
-`src/lib/api/rate-limit.ts`, and `.env.example`):
+- **`ENTRA_REDIRECT_URI`** is where Microsoft sends an officer back to after
+  they sign in. It must match what is registered in Entra exactly — step 8
+  covers both halves.
 
 | Variable                          | For                                                                                         | Secret? | Production value                                                                                                                                                                          |
 | --------------------------------- | ------------------------------------------------------------------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -343,6 +211,7 @@ This is every variable this repository's application code reads
 | `ENTRA_CLIENT_SECRET`             | Entra app registration client secret (sign-in)                                              | **Yes** | Key Vault reference                                                                                                                                                                       |
 | `ENTRA_REDIRECT_URI`              | OIDC callback URL — must match the app registration exactly                                 | No      | `https://<production-domain>/auth/callback` — update in both places (step 4)                                                                                                              |
 | `ENTRA_POST_LOGOUT_REDIRECT_URI`  | Where Entra sends the user after sign-out                                                   | No      | `https://<production-domain>/login`                                                                                                                                                       |
+| `PUBLIC_SITE_URL`                 | The address this site is served at — Azure and Vercel each set their own                    | No      | `https://<production-domain>`; until the domain is live, the `.azurewebsites.net` address                                                                                                 |
 | `ENTRA_SCOPES`                    | OIDC scopes requested                                                                       | No      | `openid profile email offline_access` (the default if unset)                                                                                                                              |
 | `AUTH_SESSION_SECRET`             | Signs the staff session cookie                                                              | **Yes** | Key Vault reference; `openssl rand -base64 40`. Rotating it signs out every staff member at once (`docs/runbook.md`).                                                                     |
 | `DATABASE_URL`                    | Application's Postgres connection (least-privilege role, no DDL)                            | **Yes** | Key Vault reference; `postgresql://albarakah_app:<password>@<server>.postgres.database.azure.com:5432/albarakah?sslmode=verify-full`                                                      |
@@ -378,78 +247,213 @@ This is every variable this repository's application code reads
 | `NOTIFY_WHATSAPP_WEBHOOK_TOKEN`   | Bearer token for that gateway                                                               | **Yes** | Key Vault reference, only if using `http` delivery                                                                                                                                        |
 | `PUBLIC_APP_ENV`                  | UI "TEST" badge, and the safety flag every `*_ONLY`/insecure setting above checks           | No      | **Leave unset (or `production`) in production.** Set to `test` only on the test environment.                                                                                              |
 
-`NOTIFY_EMAIL_DELIVERY=log` and `NOTIFY_WHATSAPP_DELIVERY=log` are the same
-shape of local-only escape hatch as `DATABASE_ALLOW_INSECURE` and
-`MEMBER_OTP_DELIVERY=log` — do not set either in production; `getNotificationConfig()`
-demotes a `log` channel to `unconfigured` in production regardless, so setting
-it there would only silently stop that channel rather than actually log
-anything.
+### About the ones marked "Do not set"
 
-Two more are development-only and absent from the table for the same reason:
-`GRAPH_BASE_URL` and `GRAPH_LOGIN_URL` override where the Graph client
-points, so a developer can run the whole upload path against a local stub.
-Set in Azure they would send every member document somewhere that is not
-SharePoint. Leave both unset; the defaults are Microsoft's own endpoints.
+A few settings exist only to make local development possible — connecting to a
+database without encryption, accepting a fixed sign-in code, turning off rate
+limiting. Setting any of them in production would weaken the system, so the
+application refuses to start if it finds them. Leave them out entirely; do not
+set them to `false` or `no`.
 
-The notification variables are built from a shared prefix
-(`channelDelivery('NOTIFY_EMAIL', …)` / `'NOTIFY_WHATSAPP'`), so the code
-technically accepts `NOTIFY_EMAIL_PHONE_NUMBER_ID` and `NOTIFY_EMAIL_TOKEN`
-too. They mean nothing for email — Microsoft 365 sends mail, not WhatsApp —
-and are left out of the table deliberately rather than by oversight.
+### Key Vault, later
 
-## 6. After deploying
+Key Vault is a safe for passwords. Instead of the password itself, the setting
+holds a pointer to the vault, and the web app is given permission to read it.
+The gain is that changing a password no longer means editing the web app, and
+you get a record of what read it and when.
 
-- **Run the repo's own gates against the new build**, the same ones CI
-  already runs: `pnpm verify:routes` (every declared page is reachable in the
-  build output — written for the Vercel adapter's route manifest; confirm it
-  still reads what `@astrojs/node` produces, or treat this as something to
-  verify once, not assumed), `pnpm openapi:check` (the committed OpenAPI
-  document matches every `defineEndpoint`), and `pnpm verify:migrations`
-  (no already-applied migration was edited). All three already run in
-  `.github/workflows/ci.yml` on every PR; nothing new to add there, just
-  confirm they still pass once the adapter changes.
-- **Health check:** `GET /api/v1/health`, signed in — reports whether the
-  database is reachable and whether the Graph/SharePoint settings are
-  present (`src/pages/api/v1/health.ts`). Point App Service's own **Health
-  check** (Monitoring → Health check) at it if you want App Service to
-  recycle an unhealthy instance automatically; note it requires
-  authentication, so a plain unauthenticated ping will get a 401, not a
-  200 — App Service's health check feature does support this via warm-up,
-  but confirm behaviour against an authenticated probe before relying on it.
-- **Logs:** App Service → **Log stream** for live stdout/stderr (what
-  `console.error('[db] query failed:', err)`-style logging in
-  `src/lib/db/pool.ts` and elsewhere lands as). For anything beyond
-  live-tailing — searching by the `x-correlation-id` header
-  `docs/runbook.md` builds its whole "first moves" section around — wire up
-  **Application Insights** (App Service → Application Insights → enable) so
-  those logs are queryable rather than only streamable. `docs/runbook.md`'s
-  guidance currently says "one search of the Vercel logs for that id" —
-  once Azure is where logs live, that becomes a Log Analytics/Application
-  Insights query instead, and `docs/runbook.md` (maintained separately) will
-  need that pointer updated.
-- Everything else about day-to-day operation — rotating secrets, diagnosing
-  a symptom, the scheduled jobs, backup/restore — is unchanged by this move
-  and already covered in `docs/runbook.md`. Read it.
+It is worth doing, and it is not worth doing today. Get the site running with
+the values typed in directly, then move the ones marked **Yes** in the Secret
+column into a vault once you are not also learning everything else at the same
+time. `docs/runbook.md` covers changing each secret.
 
-## 7. What is left behind
+## Step 5 — Let GitHub deploy for you
 
-Once Azure is serving production and you are confident in it:
+Rather than uploading files by hand every time, GitHub builds the site and
+sends it to Azure whenever the production branch changes.
 
-- **Vercel project:** remove the `production` environment/branch mapping (or
-  the whole project, if Test also moved to Azure) so nothing accidentally
-  still resolves the old domain or holds a stale copy of the secrets in
-  step 5.
-- **DNS:** remove any record still pointing the production hostname at
-  Vercel once the Azure custom domain (step 4) is live and verified — do
-  this only after the cutover, not before, so there is no window with no
-  working domain.
-- **The Entra app registration's redirect URIs:** remove the old Vercel
-  hostname's callback/logout URLs once nothing uses them, so a stale entry
-  is not sitting there as an unused-but-valid redirect target.
-- **Repo cleanup:** `vercel.json` and the `@astrojs/vercel` dependency (once
-  its config lines are removed per step 1) have no purpose once nothing
-  deploys to Vercel — delete them in the same change that removes the
-  adapter, rather than leaving dead configuration for the next person to
-  puzzle over. If a `regions` equivalent or the response headers moved into
-  `src/middleware.ts` per step 1, confirm that happened before deleting
-  `vercel.json`, not after.
+1. In the web app, open **Deployment Center**.
+2. Choose **GitHub** as the source and sign in when asked.
+3. Pick the repository and the **production** branch.
+4. Azure offers to write a workflow file for you. Let it — it will also add
+   the publishing credential to your GitHub repository as a secret, which is
+   the fiddly part to do by hand.
+
+**You should see** a new file appear in the repository under
+`.github/workflows/`, and a run start on GitHub's **Actions** tab.
+
+5. Open that new workflow file and check two things:
+   - the Node version is **22**
+   - the build step runs `pnpm install --frozen-lockfile` and then `pnpm build`
+
+   If Azure generated `npm install`, change it to pnpm — this project uses
+   pnpm, and its lockfile is `pnpm-lock.yaml`.
+
+You do **not** need to set `DEPLOY_TARGET` anywhere. With no variable set, the
+build produces the Azure version, which is what you want here. Vercel sets its
+own marker, so Test keeps producing the Vercel version without being told.
+
+**You should see** the run finish green, and the `.azurewebsites.net` address
+now show the sign-in page instead of the placeholder.
+
+## Step 6 — Set up the database tables
+
+The database you created in step 2 is empty. The project applies its own
+schema through migrations — numbered files, applied in order, recorded as they
+go, so the same set never runs twice.
+
+There is already a workflow for this at `.github/workflows/migrate.yml`. It
+needs one secret:
+
+1. On GitHub, go to the repository's **Settings** → **Secrets and variables**
+   → **Actions**.
+2. Add a secret named **`DATABASE_MIGRATION_URL`**. Its value is the same
+   connection string as `DATABASE_URL`, but using the **admin** username and
+   password from step 2 — applying migrations needs permission to change the
+   structure, which the app's own account deliberately does not have.
+3. Run the migrate workflow from the **Actions** tab.
+
+**You should see** it report the migrations it applied. Run it a second time:
+it should report that there is nothing to do. That is how you know the record
+of what has run is working.
+
+> This secret belongs on GitHub, not in the web app's settings. The running
+> site never needs the power to change the database structure, and giving it
+> that power is worth avoiding.
+
+## Step 7 — Point the domain at it
+
+1. In the web app, open **Custom domains**.
+2. Click **Add custom domain** and type the Society's domain.
+3. Azure shows you the DNS records it needs. There are two:
+   - a **TXT** record, usually named `asuid.www` or `asuid`, holding a long
+     verification string. This proves you control the domain.
+   - a **CNAME** record for `www` pointing at
+     `albarakah-production.azurewebsites.net`, or an **A** record holding
+     Azure's IP address if you are using the domain with no `www` in front.
+4. Add those records in whichever control panel manages the Society's DNS.
+5. Come back to Azure and click **Validate**.
+
+**You should see** both checks go green. DNS changes can take anywhere from a
+few minutes to a few hours to spread; if validation fails, wait and try again
+before changing anything.
+
+6. Once the domain is added, click **Add certificate** / **Create App Service
+   Managed Certificate**. This is free and renews itself. It is what puts the
+   padlock in the browser.
+7. When the certificate is issued, go to **Configuration** → **General
+   settings** and turn **HTTPS Only** to **On**, so anyone arriving on `http://`
+   is moved to the secure address.
+8. Go back to **Environment variables** and change **`PUBLIC_SITE_URL`** to the
+   real domain.
+
+> **The certificate will not issue** until the DNS records are correct and
+> visible. If it keeps failing, check the records first rather than retrying.
+
+## Step 8 — Update the sign-in settings
+
+This is the step most likely to be missed, and the symptom is that nobody can
+sign in.
+
+When an officer signs in, Microsoft sends them back to a specific address. That
+address has to be registered in advance, and it has to match exactly.
+
+1. In the portal, go to **Microsoft Entra ID** → **App registrations** and open
+   the staff sign-in registration (the one already used today).
+2. Open **Authentication**.
+3. Under **Redirect URIs**, add:
+
+   ```
+   https://YOUR-DOMAIN/auth/callback
+   ```
+
+4. Leave the existing Test entry in place. Both environments can be registered
+   at once, and removing Test's would break Test.
+5. Click **Save**.
+6. Back in the web app's **Environment variables**, set **`ENTRA_REDIRECT_URI`**
+   to that same address, character for character, and
+   **`ENTRA_POST_LOGOUT_REDIRECT_URI`** to `https://YOUR-DOMAIN/login`.
+
+> **If these two do not match**, sign-in fails with a message about a redirect
+> URI that is not registered. It is not a subtle failure — but it is confusing
+> the first time, because everything else works.
+
+If the domain ever changes, both of these change with it.
+
+## Step 9 — Check it worked
+
+Open the site at the real domain and walk through this list:
+
+1. **The sign-in page loads**, with a padlock in the address bar.
+2. **You can sign in** as yourself and reach the dashboard.
+3. **A page with data loads** — open Members. If the list appears, the app is
+   talking to the database.
+4. **A document opens** — open any member with a filed document and click
+   View. If it opens, the SharePoint connection is working. If it fails, check
+   the `GRAPH_*` settings against `docs/documents.md`.
+5. **The test site still works.** Open the Vercel address and sign in there
+   too. Nothing you have done should have touched it, and confirming that is
+   worth thirty seconds.
+
+### Watching it afterwards
+
+- **Log stream** in the web app's menu shows what the app is printing, live.
+  This is the first place to look when something is wrong.
+- **Application Insights** can be switched on for longer-term history and
+  alerts. Useful, not urgent.
+- Do **not** point Azure's built-in health check at `/api/v1/health`. That
+  endpoint deliberately requires a signed-in account, so an anonymous probe
+  gets a 401 and Azure would conclude the site is broken. Point it at `/login`,
+  which is public, or leave the health check switched off.
+
+Day-to-day operations — changing secrets, what to do when something breaks,
+who to escalate to — are in `docs/runbook.md`.
+
+## If something goes wrong
+
+| What you see                                        | Usually means                                                           | What to do                                                                                       |
+| --------------------------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Site shows an error page with no detail             | The startup command is wrong or missing                                 | Check it reads `node ./dist/server/entry.mjs` exactly (step 3), then look at the Log stream      |
+| Every page fails with a database error              | The firewall is not letting the app through, or `DATABASE_URL` is wrong | Re-check the two firewall rules (step 2) and the connection string, including `?sslmode=require` |
+| Sign-in fails, message mentions a redirect URI      | The two halves of step 8 do not match                                   | Compare them character for character, including `https://` and any trailing slash                |
+| Sign-in loops back to the sign-in page              | `AUTH_SESSION_SECRET` is missing or changed                             | Check it is set; if you changed it, everyone is signed out once and that is expected             |
+| Deployment succeeded but the old version is showing | The build produced nothing, or the restart has not happened             | Check the GitHub Actions log for a failed build step; restart the web app                        |
+| The certificate will not issue                      | DNS records are wrong or have not spread yet                            | Re-check the TXT and CNAME records, then wait — do not delete and recreate                       |
+| Documents will not open                             | The `GRAPH_*` settings are wrong or point at the test library           | Check them against `docs/documents.md`; production must use its own SharePoint site              |
+
+## What stays on Vercel
+
+Test is untouched. It keeps deploying from the `main` branch exactly as it did
+before, and nothing in this guide changes that.
+
+The only thing worth setting there is **`PUBLIC_SITE_URL`**, in the Vercel
+project's own environment variables, pointing at the test address. Without it
+the site still works; it only affects how the app writes its own address into
+links.
+
+Two things changed in the repository that are worth knowing about, though
+neither needs action from you:
+
+- The security headers that used to be set in `vercel.json` are now set by the
+  application itself, so both sites get them. `vercel.json` still pins the
+  region and the caching of static files.
+- The build chooses its own target. Vercel sets a marker that the build reads,
+  so Test carries on producing a Vercel build with nothing configured.
+
+## Words you will see
+
+- **Resource group** — a folder holding everything for one project.
+- **Region** — which of Microsoft's data centres it physically runs in.
+- **App Service** — Azure's way of running a website without you managing the
+  machine.
+- **Flexible server** — the kind of PostgreSQL database to create. The other
+  kind is older and being retired.
+- **Firewall rule** — a line saying who is allowed to connect to the database.
+- **Application setting** — one named value the app reads when it starts.
+- **Key Vault** — a safe for passwords, which settings can point at instead of
+  holding the password themselves.
+- **Managed certificate** — the free HTTPS certificate Azure issues and renews
+  for a domain you have proved you own.
+- **Deployment Center** — where you connect Azure to GitHub so new code
+  arrives on its own.
+- **Startup command** — the one line Azure runs to start your app.
