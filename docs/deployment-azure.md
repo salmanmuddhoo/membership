@@ -43,6 +43,9 @@ halfway to chase a password is how mistakes happen.
       on. The list is in that step; gather them before you start typing.
 - [ ] **Somewhere safe to write down passwords.** You will create a database
       password that cannot be recovered if you lose it.
+- [ ] **Confirmation that the `production` branch is up to date with `main`.**
+      Step 5 explains why and how to check — this is worth ten seconds now
+      rather than a confusing failure later.
 
 ## The pieces, and what each one is for
 
@@ -202,6 +205,13 @@ Three of them deserve attention before you start:
   they sign in. It must match what is registered in Entra exactly — step 8
   covers both halves.
 
+- **`WEBSITE_RUN_FROM_PACKAGE`**, set to `1`, is not one of the application's
+  own settings — the app never reads it — but it goes in the same list, so add
+  it now while you are here. GitHub builds and tests the code before it ever
+  reaches Azure (step 5); this setting tells Azure to run that exact result
+  rather than trying to build the code itself a second time, with tools
+  (`npm`, not this project's `pnpm`) that do not match what was tested.
+
 | Variable                          | For                                                                                         | Secret? | Production value                                                                                                                                                                          |
 | --------------------------------- | ------------------------------------------------------------------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ENTRA_METADATA_URL`              | Entra OIDC metadata document URL (or use the two below instead)                             | No      | From the Entra app registration's Endpoints panel                                                                                                                                         |
@@ -269,32 +279,68 @@ time. `docs/runbook.md` covers changing each secret.
 
 ## Step 5 — Let GitHub deploy for you
 
-Rather than uploading files by hand every time, GitHub builds the site and
-sends it to Azure whenever the production branch changes.
+> **Before this step:** `production` has to actually hold the code this guide
+> assumes — including the change that lets the build produce what Azure runs
+> in the first place. If development has been happening on `main`,
+> `production` can be a long way behind it. Ask whoever maintains the
+> repository to confirm, or check yourself: on GitHub, compare the two
+> branches (`.../compare/production...main`) and see whether anything is
+> listed. Bringing `production` up to date is a pull request from `main` into
+> `production`, then merged — `docs/environments.md` covers it, and it is
+> **never** done by committing to `production` directly. Do this before the
+> first deploy, not after it fails in a way that is hard to tell apart from
+> everything else that could be wrong.
 
-1. In the web app, open **Deployment Center**.
-2. Choose **GitHub** as the source and sign in when asked.
-3. Pick the repository and the **production** branch.
-4. Azure offers to write a workflow file for you. Let it — it will also add
-   the publishing credential to your GitHub repository as a secret, which is
-   the fiddly part to do by hand.
+Rather than uploading files by hand every time, a workflow file already in the
+repository — `.github/workflows/deploy-production.yml` — builds the site and
+sends it to Azure automatically, every time `production` changes. You do not
+need to write it, and you do not need Azure's own **Deployment Center**
+wizard: that wizard needs to commit a file to the branch and hold a live
+connection to GitHub, and either can fail with a bare error and nothing to
+act on — for reasons as ordinary as a branch protection rule, unrelated to
+anything you typed. The workflow file below sidesteps the wizard entirely; it
+only needs one credential from you.
 
-**You should see** a new file appear in the repository under
-`.github/workflows/`, and a run start on GitHub's **Actions** tab.
+1. In the web app, open **Overview**, and click **Download publish profile**.
+   This saves a small file. It is a credential — treat it like a password,
+   and never commit it to the repository.
+2. On GitHub, go to the repository's **Settings → Environments**. If an
+   environment named **production** already exists (it does if the database
+   migrations in step 6 have been set up before), open it; otherwise, create
+   one with that exact name.
+3. Add an **environment secret** named **`AZURE_WEBAPP_PUBLISH_PROFILE`**,
+   and paste the entire contents of the file from step 1 as its value.
+4. Open `.github/workflows/deploy-production.yml` in the repository and find
+   the line `app-name: albarakah-production`. If you named the web app
+   something else in step 3, change it here to match, exactly.
 
-5. Open that new workflow file and check two things:
-   - the Node version is **22**
-   - the build step runs `pnpm install --frozen-lockfile` and then `pnpm build`
+**You should see**, the next time `production` changes, a run named **Deploy
+to Azure** appear on GitHub's **Actions** tab.
 
-   If Azure generated `npm install`, change it to pnpm — this project uses
-   pnpm, and its lockfile is `pnpm-lock.yaml`.
-
-You do **not** need to set `DEPLOY_TARGET` anywhere. With no variable set, the
-build produces the Azure version, which is what you want here. Vercel sets its
-own marker, so Test keeps producing the Vercel version without being told.
+To trigger the very first deploy right now rather than waiting for the next
+code change: open the **Actions** tab, click **Deploy to Azure** in the list
+on the left, then **Run workflow**, choosing the `production` branch.
 
 **You should see** the run finish green, and the `.azurewebsites.net` address
 now show the sign-in page instead of the placeholder.
+
+### If you would rather use Azure's own wizard
+
+Nothing else in this guide depends on it, and the workflow file above is the
+one to trust. If you try the wizard anyway — **Deployment Center** → source
+**GitHub** → pick the repository and the `production` branch — and it fails
+with an error and no new file appears under `.github/workflows/`, check these
+two things before anything else:
+
+- **Settings → Branches** (or **Rules → Rulesets**) on GitHub, on the
+  `production` branch: if **"Require a pull request before merging"** is
+  switched on, Azure cannot push a file to it directly.
+- Your GitHub profile's **Settings → Applications → Installed GitHub Apps**:
+  find the Azure entry and confirm it has access to **this** repository, not
+  only "selected repositories" that do not include it.
+
+With the workflow file already in place, though, there is nothing the wizard
+would still need to do.
 
 ## Step 6 — Set up the database tables
 
@@ -411,15 +457,17 @@ who to escalate to — are in `docs/runbook.md`.
 
 ## If something goes wrong
 
-| What you see                                        | Usually means                                                           | What to do                                                                                       |
-| --------------------------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| Site shows an error page with no detail             | The startup command is wrong or missing                                 | Check it reads `node ./dist/server/entry.mjs` exactly (step 3), then look at the Log stream      |
-| Every page fails with a database error              | The firewall is not letting the app through, or `DATABASE_URL` is wrong | Re-check the two firewall rules (step 2) and the connection string, including `?sslmode=require` |
-| Sign-in fails, message mentions a redirect URI      | The two halves of step 8 do not match                                   | Compare them character for character, including `https://` and any trailing slash                |
-| Sign-in loops back to the sign-in page              | `AUTH_SESSION_SECRET` is missing or changed                             | Check it is set; if you changed it, everyone is signed out once and that is expected             |
-| Deployment succeeded but the old version is showing | The build produced nothing, or the restart has not happened             | Check the GitHub Actions log for a failed build step; restart the web app                        |
-| The certificate will not issue                      | DNS records are wrong or have not spread yet                            | Re-check the TXT and CNAME records, then wait — do not delete and recreate                       |
-| Documents will not open                             | The `GRAPH_*` settings are wrong or point at the test library           | Check them against `docs/documents.md`; production must use its own SharePoint site              |
+| What you see                                                                | Usually means                                                                                           | What to do                                                                                                                       |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Site shows an error page with no detail                                     | The startup command is wrong or missing                                                                 | Check it reads `node ./dist/server/entry.mjs` exactly (step 3), then look at the Log stream                                      |
+| Every page fails with a database error                                      | The firewall is not letting the app through, or `DATABASE_URL` is wrong                                 | Re-check the two firewall rules (step 2) and the connection string, including `?sslmode=require`                                 |
+| Sign-in fails, message mentions a redirect URI                              | The two halves of step 8 do not match                                                                   | Compare them character for character, including `https://` and any trailing slash                                                |
+| Sign-in loops back to the sign-in page                                      | `AUTH_SESSION_SECRET` is missing or changed                                                             | Check it is set; if you changed it, everyone is signed out once and that is expected                                             |
+| Deployment succeeded but the old version is showing                         | The build produced nothing, or the restart has not happened                                             | Check the GitHub Actions log for a failed build step; restart the web app                                                        |
+| The certificate will not issue                                              | DNS records are wrong or have not spread yet                                                            | Re-check the TXT and CNAME records, then wait — do not delete and recreate                                                       |
+| Documents will not open                                                     | The `GRAPH_*` settings are wrong or point at the test library                                           | Check them against `docs/documents.md`; production must use its own SharePoint site                                              |
+| The GitHub Actions run fails at "Deploy to Azure Web App"                   | The publish profile secret is missing or wrong, or the web app name in the workflow file does not match | Re-check the `AZURE_WEBAPP_PUBLISH_PROFILE` secret (step 5) and the `app-name` line in `.github/workflows/deploy-production.yml` |
+| The run succeeds but the site still shows the placeholder or an old version | `WEBSITE_RUN_FROM_PACKAGE` is not set to `1` (step 4), so Azure is trying to rebuild the code itself    | Add or fix that setting, then re-run the workflow from the Actions tab                                                           |
 
 ## What stays on Vercel
 
