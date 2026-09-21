@@ -9,6 +9,7 @@
 // all. A deposit below the escalation threshold has no approval chain (FRD
 // 6.2); M14 puts the threshold in front of this.
 import { createHash } from 'node:crypto';
+import { recordAudit } from '../access/audit';
 import type { Principal } from '../access/principal';
 import { query, withTransaction } from '../db/pool';
 import {
@@ -37,6 +38,12 @@ export class DepositError extends Error {
 }
 
 export const PERMISSION_CAPTURE = 'transaction.capture';
+// Posting directly, below the escalation threshold (FRD 6.3). A deposit has
+// no chain (FRD 6.2), so recording one is capturing and posting in one act,
+// and needs both. Someone who may only capture — a Clerk — records for an
+// Account Officer to post, which is M14's chain; until it lands, they are
+// told so rather than left with a deposit nobody can post (S-1311).
+export const PERMISSION_POST = 'transaction.post';
 
 export interface DepositInput {
   accountId: string;
@@ -273,6 +280,13 @@ export async function recordDeposit(
       'forbidden'
     );
   }
+  if (!principal.permissions.has(PERMISSION_POST)) {
+    throw new DepositError(
+      'You may record a deposit but not post it. Ask an Account Officer to ' +
+        'record it.',
+      'forbidden'
+    );
+  }
 
   let amountCents: number;
   try {
@@ -333,7 +347,7 @@ export async function recordDeposit(
     const id = await withTransaction(async client => {
       let inserted;
       try {
-        inserted = await client.query<{ id: string }>(
+        inserted = await client.query<{ id: string; reference: string }>(
           `insert into transaction
              (kind, member_id, customer_id, account_id, amount, method,
               method_reference, reason, status, receipt_number_id,
@@ -341,7 +355,7 @@ export async function recordDeposit(
               source_of_fund_form_confirmed)
            values ('deposit', $1, $2, $3, $4, $5, $6, $7, 'submitted', $8,
                    $9, $10, $11, $12)
-           returning id`,
+           returning id, reference`,
           [
             to.memberId,
             to.customerId,
@@ -369,7 +383,26 @@ export async function recordDeposit(
         }
         throw err;
       }
-      const id = inserted.rows[0].id;
+      const { id, reference } = inserted.rows[0];
+      // Who captured it, on the trail, before who posted it (S-1311): the
+      // segregation rules key on this row when posting or voiding is a
+      // separate act by someone else.
+      await recordAudit(
+        {
+          actorUserId: principal.userId,
+          actorDescription: principal.email,
+          action: 'transaction.captured',
+          entityType: 'transaction',
+          entityId: reference,
+          newValue: {
+            kind: 'deposit',
+            account_id: to.id,
+            amount: fromCents(amountCents),
+            method: method.code,
+          },
+        },
+        client
+      );
       await postTransaction(id, actor, client);
       await markReceiptIssued(receipt.id, client);
       return id;

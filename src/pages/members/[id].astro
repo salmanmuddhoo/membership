@@ -37,6 +37,9 @@ import DocumentViewer from '@components/DocumentViewer.astro';
 
 const principal = Astro.locals.principal!;
 const canSeePayments = principal.permissions.has('payment.view');
+// S-1311: the balance and the history are money, with a permission of their
+// own; without it the accounts still list, without figures.
+const canSeeAccounts = principal.permissions.has('account.view');
 const canSeeDocuments = principal.permissions.has('document.view');
 // Officer feedback: who may turn a non-member customer into a membership
 // applicant is its own, narrower question than who may capture applications
@@ -285,11 +288,14 @@ const canDeposit =
 // nothing has ever posted to, which the page shows as a dash rather than
 // a zero that would read as a fact.
 const balances = new Map(
-  await Promise.all(
-    person.accounts.map(
-      async a => [a.id, (await accountBalance(a.id))?.balance ?? null] as const
-    )
-  )
+  canSeeAccounts
+    ? await Promise.all(
+        person.accounts.map(
+          async a =>
+            [a.id, (await accountBalance(a.id))?.balance ?? null] as const
+        )
+      )
+    : []
 );
 const joinedAt = (member ?? customer)!.joinedAt;
 const applicationReference = (member ?? customer)!.applicationReference;
@@ -659,17 +665,21 @@ const pageTitle = member ? member.memberNo : name;
                   {account.openedViaMigration ? 'migrated' : 'opened'}{' '}
                   {dateFormat.format(account.openedAt)}
                 </span>
-                <span class="ml-auto font-medium text-neutral-800 tabular-nums dark:text-neutral-100">
-                  {balances.get(account.id) === null
-                    ? '—'
-                    : formatMoney(balances.get(account.id)!)}
-                </span>
-                <a
-                  href={`/accounts/${account.id}`}
-                  class="text-sm font-medium text-neutral-700 underline hover:text-neutral-900 dark:text-neutral-200 dark:hover:text-neutral-100"
-                >
-                  History
-                </a>
+                {canSeeAccounts && (
+                  <>
+                    <span class="ml-auto font-medium text-neutral-800 tabular-nums dark:text-neutral-100">
+                      {balances.get(account.id) === null
+                        ? '—'
+                        : formatMoney(balances.get(account.id)!)}
+                    </span>
+                    <a
+                      href={`/accounts/${account.id}`}
+                      class="text-sm font-medium text-neutral-700 underline hover:text-neutral-900 dark:text-neutral-200 dark:hover:text-neutral-100"
+                    >
+                      History
+                    </a>
+                  </>
+                )}
               </div>
             </li>
           ))}

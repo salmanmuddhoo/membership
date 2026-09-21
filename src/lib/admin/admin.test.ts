@@ -144,13 +144,14 @@ describe('S-201: roles and their permissions', () => {
 
   it('refuses a duplicate code', async () => {
     const { roles } = await load();
+    // A code of this test's own: 'clerk' is a seeded role since 0069.
     await roles.createRole(
-      { code: 'clerk', name: 'Clerk', permissions: [] },
+      { code: 'duplicate_test', name: 'Duplicate', permissions: [] },
       actor
     );
     await expect(
       roles.createRole(
-        { code: 'clerk', name: 'Clerk Again', permissions: [] },
+        { code: 'duplicate_test', name: 'Duplicate Again', permissions: [] },
         actor
       )
     ).rejects.toThrowError(/already exists/);

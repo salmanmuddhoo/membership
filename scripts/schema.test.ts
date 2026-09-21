@@ -378,8 +378,68 @@ describe('S-1301, S-1302 the ledger', () => {
         order by r.code`
     );
     expect(result.rows.map(r => r.code)).toEqual([
+      'account_officer',
+      'clerk',
       'regional_officer',
       'system_administrator',
+    ]);
+  });
+
+  // 0069: FRD Section 5's table — a Clerk captures, an Account Officer
+  // posts, a Treasurer voids, an Auditor views — and money's own views ride
+  // on what a role already sees.
+  it('maps the transaction permissions onto FRD Section 5 and seeds its rules', async () => {
+    const holders = async (code: string) =>
+      (
+        await run(
+          appUrl,
+          `select r.code from role r
+             join role_permission rp on rp.role_id = r.id
+             join permission p on p.id = rp.permission_id
+            where p.code = $1 order by r.code`,
+          [code]
+        )
+      ).rows.map(r => r.code);
+    expect(await holders('transaction.post')).toEqual([
+      'account_officer',
+      'regional_officer',
+      'system_administrator',
+    ]);
+    expect(await holders('receipt.void')).toEqual([
+      'system_administrator',
+      'treasurer',
+    ]);
+    expect(await holders('account.view')).toEqual(
+      expect.arrayContaining([
+        'auditor',
+        'clerk',
+        'regional_officer',
+        'treasurer',
+      ])
+    );
+    expect(await holders('transaction.view')).toEqual(
+      expect.arrayContaining(['auditor', 'regional_manager', 'treasurer'])
+    );
+
+    const rules = await run(
+      appUrl,
+      `select earlier_action, later_action from segregation_rule
+        where entity_type = 'transaction' and is_enabled
+        order by later_action`
+    );
+    expect(rules.rows).toEqual([
+      {
+        earlier_action: 'transaction.captured',
+        later_action: 'transaction.approved',
+      },
+      {
+        earlier_action: 'transaction.captured',
+        later_action: 'transaction.posted',
+      },
+      {
+        earlier_action: 'transaction.captured',
+        later_action: 'transaction.voided',
+      },
     ]);
   });
 

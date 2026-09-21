@@ -146,6 +146,16 @@ Nothing derives a balance from payments any more: the stand-in that read
 "opening payment less refund" is gone, because those two lines are now the
 account's first entries (S-1303).
 
+## Who may do what
+
+`transaction.capture` records; `transaction.post` posts directly below the
+escalation threshold, so a deposit — one act — needs both; `account.view`
+reads a balance or a history; `transaction.view` reads transactions;
+`receipt.void` voids a receipt. The default mapping and the segregation
+rules are in `docs/access-control.md` (S-1311). The capture path writes a
+`transaction.captured` audit row before `post_transaction()` writes
+`transaction.posted`, which is what the rules key on.
+
 ## Reversal
 
 A `reversal` names the transaction it reverses (`reverses_id`) and posts the

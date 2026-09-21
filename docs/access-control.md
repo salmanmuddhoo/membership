@@ -49,6 +49,26 @@ database **on each request**. There is no cache and no copy in the session, so
 revoking a role takes effect on that person's very next click rather than when
 their session happens to expire.
 
+### Money (S-1311)
+
+Transactions carry permissions of their own, in the same `entity.action`
+form: `transaction.capture`, `transaction.post` (post directly, below the
+escalation threshold — FRD 6.3), `transaction.view`, `account.view` (an
+account's balance and history) and `receipt.void`. Migration 0069 maps them
+onto FRD Section 5's roles — Clerk captures, Account Officer posts,
+Treasurer voids, Auditor views — creating those three roles with no members,
+and gives `account.view` to every role that had `member.view` and
+`transaction.view` to every role that had `payment.view`, so nobody lost a
+figure they could see the day before. A deposit has no chain, so recording
+one is capturing and posting in one act and needs both permissions; a Clerk
+is told so until M14's chain hands their capture on.
+
+The segregation rules (`entity_type = 'transaction'`) say the officer who
+captured a transaction may not approve it, post it through a chain, or void
+its receipt. They key on the `transaction.captured` audit row the capture
+path writes, and are consulted wherever that later act is someone else's;
+the one-act deposit consults none.
+
 ## Provisioning an account
 
 Accounts are created by **email address**, never by Entra subject. The OIDC

@@ -140,6 +140,13 @@ describe('the live route map', () => {
   // and are reachable from the sidebar, so what they require has to be true —
   // a menu entry whose permission does not match the route's is how a person
   // ends up clicking a link and being refused.
+  it("protects an account's history with money's own permission (S-1311)", () => {
+    expect(requiredPermissionFor('/accounts/some-id')).toBe('account.view');
+    expect(requiredPermissionFor('/members/some-id/deposit')).toBe(
+      'member.view'
+    );
+  });
+
   it('protects the administration pages by name', () => {
     expect(requiredPermissionFor('/admin/roles')).toBe('role.view');
     expect(requiredPermissionFor('/admin/users')).toBe('user.view');
