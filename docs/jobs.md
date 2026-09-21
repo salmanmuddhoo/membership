@@ -201,6 +201,26 @@ class means and what disposal does to it.
 pnpm job retention-disposal
 ```
 
+## `ledger-verify` (S-1301)
+
+Asks `ledger_drift()` which accounts' cached balance disagrees with the sum of
+their entries, and resolves each one from the entries with
+`rebuild_account_balance()`. On a healthy database this reads nothing back and
+exits; on any other it repairs and writes one `ledger.repaired` audit row per
+account, naming the figure the cache held and the figure the entries prove.
+That trail is the point: a cache that drifted once is a bug somewhere, and
+the row is how it gets found. `docs/ledger.md` has why the entries win.
+
+Not chunked — the drift query is one aggregate over `account_entry`, and the
+repairs are one short transaction each — and idempotent by construction: a
+rebuilt cache does not drift, so a second run finds nothing.
+
+Run **nightly**, alongside `retention-disposal`.
+
+```bash
+pnpm job ledger-verify
+```
+
 ## Recommendation for M7 and M8
 
 - **M7 migration import** — a Manual job. Read the cleansed extract in batches,

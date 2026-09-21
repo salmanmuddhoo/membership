@@ -27,6 +27,9 @@ Two further restrictions apply to the application role:
   `payment` and `receipt_number` cannot be deleted from at all. Voiding a
   receipt is an UPDATE, which is why those two keep the privilege. See
   `docs/payments.md`.
+- `account_entry`, `account_balance` — no writes at all. A balance moves only
+  through `post_transaction()`, a `SECURITY DEFINER` function, so there is no
+  road to one that bypasses the ledger. See `docs/ledger.md`.
 
 **One narrow, named exception.** `reset_all_test_data()` (migration 0019) can
 truncate every table above, `audit_event` included — a `SECURITY DEFINER`

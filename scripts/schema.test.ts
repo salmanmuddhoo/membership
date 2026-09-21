@@ -256,3 +256,74 @@ describe('least privilege', () => {
     ).rejects.toThrowError(/permission denied/);
   });
 });
+
+// The account ledger (0064). FRD 6.1's "no transaction type may be
+// implemented as a one-off balance update outside this engine" is a grant,
+// and these are what make a second road to a balance fail the build rather
+// than a review. Posting itself, and the triggers that need a row to fire
+// on, are exercised in src/lib/ledger/ledger.test.ts.
+describe('S-1301, S-1302 the ledger', () => {
+  it('denies the application any direct write to the entries', async () => {
+    await expect(
+      run(
+        appUrl,
+        `insert into account_entry (account_id, transaction_id, direction, amount)
+         values (gen_random_uuid(), gen_random_uuid(), 'credit', 1)`
+      )
+    ).rejects.toThrowError(/permission denied for table account_entry/);
+    await expect(
+      run(appUrl, `update account_entry set amount = 1`)
+    ).rejects.toThrowError(/permission denied for table account_entry/);
+    await expect(run(appUrl, `delete from account_entry`)).rejects.toThrowError(
+      /permission denied for table account_entry/
+    );
+  });
+
+  it('denies the application any direct write to the balance cache', async () => {
+    await expect(
+      run(
+        appUrl,
+        `insert into account_balance (account_id, balance) values (gen_random_uuid(), 1)`
+      )
+    ).rejects.toThrowError(/permission denied for table account_balance/);
+    await expect(
+      run(appUrl, `update account_balance set balance = 0`)
+    ).rejects.toThrowError(/permission denied for table account_balance/);
+    await expect(
+      run(appUrl, `delete from account_balance`)
+    ).rejects.toThrowError(/permission denied for table account_balance/);
+  });
+
+  it('lets the application read both, and post through the one function', async () => {
+    await run(appUrl, `select * from account_entry`);
+    await run(appUrl, `select * from account_balance`);
+    await run(appUrl, `select * from ledger_drift()`);
+    // Execute is granted: a made-up id fails on the lookup, not at the door.
+    await expect(
+      run(appUrl, `select post_transaction(gen_random_uuid(), null, 'test')`)
+    ).rejects.toThrowError(/no transaction/);
+  });
+
+  it('refuses a truncate of the ledger, for the owner too', async () => {
+    await expect(run(ownerUrl, `truncate account_entry`)).rejects.toThrowError(
+      /append-only/
+    );
+    // A bare truncate of transaction is refused by its foreign keys before any
+    // trigger runs; cascade reaches the entries, whose guard refuses it.
+    await expect(
+      run(ownerUrl, `truncate transaction cascade`)
+    ).rejects.toThrowError(/append-only/);
+    await expect(
+      run(ownerUrl, `truncate account_balance`)
+    ).rejects.toThrowError(/maintained by the ledger/);
+  });
+
+  it('refuses a financial event with no subject, or two', async () => {
+    await expect(
+      run(
+        ownerUrl,
+        `insert into financial_event (event_type, payload) values ('transaction.posted', '{}')`
+      )
+    ).rejects.toThrowError(/financial_event_has_one_subject/);
+  });
+});
