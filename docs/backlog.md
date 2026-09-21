@@ -82,7 +82,7 @@ FRD Section 23, plus this project's specifics. A story is done when:
 | EPIC-12 | Reporting                 | M9             | Should   |
 | EPIC-13 | API Platform              | M1 → M9        | Must     |
 | EPIC-14 | Legacy Data Migration     | M7 ✅          | Must     |
-| EPIC-15 | Resignation & Dormancy    | M8 → Phase 2   | Must     |
+| EPIC-15 | Resignation & Dormancy    | M8 → M17       | Must     |
 | EPIC-16 | DevSecOps Security Gate   | M0 ✅          | Must     |
 
 ---
@@ -2858,8 +2858,12 @@ that** the financial position follows the people.
 
 # M8 — Resignation & dormancy — Phase 2
 
-**Deferred to Phase 2.** Out of Phase 1 scope. The stories below stand as
-written, to be scheduled when Phase 2 is planned; nothing here is started.
+**Deferred to Phase 2, and now planned there.** Resignation (S-801 to S-803)
+is superseded in full by M17's S-1703, per the Phase 2 FRD's Section 2 — the
+stories below are kept for the record and are not to be built as written.
+Dormancy (S-804 to S-806) is not in the Phase 2 FRD: Phase 2 makes the status
+real and blocking (S-1701, S-1501) but nothing sets it until these three are
+scheduled. See Phase 2 open point 3.
 
 **Goal:** a member can resign through the approval chain, and dormancy is
 detected rather than noticed.
@@ -3268,6 +3272,1071 @@ Every user story named in FRD Section 22 is covered.
 | MIG-US-001    | S-703, S-704        |
 | PAY-US-001    | S-502               |
 | DEVSEC-US-001 | M0 — delivered      |
+
+# Product backlog — Phase 2
+
+Decomposition of the Phase 2 Functional Requirements Document — Customer
+Transactions — into milestones and user stories, in the same shape as Phase
+1's. Sequencing is by dependency, and the first milestone is a walking
+skeleton: one deposit, end to end, on a real ledger.
+
+- **Source of truth for requirements:** Phase 2 FRD v1.0 (Draft), Sections
+  1–21. Its stories are numbered ACC-, TXN-, APR-, RCT-, CLS-, RES-, DEM-,
+  CSH-, BNK-, API-, ENG-, UX-, CFG- and NOTIF-US-nnn; the traceability table
+  at the end maps every one.
+- **Source of truth for what exists:** the schema in `migrations/`, not the
+  Phase 1 FRD. Where the FRD assumes something Phase 1 was written to do and
+  the code does it differently, the code wins and the difference is recorded
+  below under **What the FRD assumes, and what is actually there**.
+- **Supersedes:** M8's resignation stories (S-801 to S-803) in full, per FRD
+  Section 2. M8's dormancy stories (S-804 to S-806) are not in this FRD and
+  stay deferred — see open point 3.
+
+## How this backlog is elaborated
+
+Stories for **M13–M15** carry full Given/When/Then acceptance criteria: the
+ledger, the approval matrix and the three everyday transactions are what gets
+built first, and their criteria are what a first sprint is planned against.
+Stories for **M16–M21** have enough definition to sequence and estimate, and
+are refined at the start of the milestone that contains them — the same rule
+Phase 1 followed, for the same reason.
+
+Estimates are the Phase 1 scale (relative Fibonacci, for sequencing, not for
+dates). Priority is FRD Section 18: every TXN-, ACC-, APR-, RCT-, CLS-, RES-
+and DEM- story is Must; the cashier module is Should; export polish is Could.
+
+## What Phase 1 already delivers
+
+The FRD was written assuming Phase 1 as specified. Phase 1 as **built** gets
+Phase 2 further than that, and in three places it already answers a Phase 2
+story outright. None of these is re-done.
+
+| Phase 2 needs                                             | Phase 1 has                                                                                                                                                                            | Consequence                                                                                             |
+| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| Shares and MSA opened together, inseparably (ACC-US-002)  | Migration 0018: both account types are `is_membership_default`, both opened at approval, one number for the person and both accounts                                                   | **Done.** ACC-US-002 is traced to S-309/0018                                                            |
+| One account of each type per member (ACC-US-007)          | `account_one_per_type_per_member_idx`, 0018                                                                                                                                            | **Done** for the single-instance case; multi-instance HSA is open point 5                               |
+| Opening HSA or Investment for a member (ACC-US-003)       | M11 additional-account applications, S-612/S-613, on the membership chain                                                                                                              | **Done.** The chevron it uses is the one M14 generalises                                                |
+| A configurable, editable approval chain (APR-US-009..012) | `workflow_definition` + `workflow_step` (0010): steps assigned to roles, `is_enabled` to remove one without deleting it, `quorum_count`; `activeChain` reads it live on every decision | **The chain exists.** Phase 2 adds the _matrix_ that selects one, and the transaction status vocabulary |
+| Segregation of duties on approvals                        | `segregation_rule`, keyed by `entity_type`                                                                                                                                             | Reused with `entity_type = 'transaction'`                                                               |
+| A chevron that reflects the live chain (UX-US-005)        | `ApplicationTimeline.astro` renders whatever `TimelineStep[]` it is given; only the _producer_ (`applicationTimeline`) is application-specific                                         | Generalise the producer; the component is reused unchanged                                              |
+| Cash cap and Source of Funds threshold (TXN-US-003, -011) | `payment.cash_maximum`, `payment.cash_source_of_fund_threshold`, `payment.cash_source_of_fund_checklist` (0062), Administrator-editable, with the SOF form as a checklist document     | **Done for payments.** Deposits read the same three entries                                             |
+| Sequential, voidable receipts with gap detection (RCT-)   | `receipt_number` (0017): serial + generated `RCT-000001`, states allocated/issued/abandoned/void, S-506 reconciliation view                                                            | Extended to transactions; the number is never reused                                                    |
+| Structured financial events for Phase 5 (ENG-)            | `financial_event` (0017), one self-contained payload per payment/refund/void                                                                                                           | `event_type` widened — by a new migration, 0017 is on `main`                                            |
+| Nominee to default the claimant from (DEM-US-001)         | S-602 nominee capture; S-607 Takaful beneficiary                                                                                                                                       | Read, not rebuilt                                                                                       |
+| Notifications, templates, retry, delivery log (NOTIF-)    | M9: `notify()`, per-event templates, channels, `next_attempt_at` retry, `/admin/notifications`                                                                                         | NOTIF-US-006 is done; Phase 2 adds event codes and wording                                              |
+| Reports with export (Section 13)                          | `src/lib/reports/definitions.ts`, S-905–S-907, Excel export                                                                                                                            | New definitions in the same file                                                                        |
+| Two actor types on one API framework (API-US-003)         | `defineEndpoint` (staff cookie) and `defineMemberEndpoint` (member bearer token) share one envelope, rate limiter, log line and audit trail                                            | Same engine behind both; open point 9 records the surface decision                                      |
+
+## What the FRD assumes, and what is actually there
+
+The FRD's Section 21 says every open point is resolved. Six things the code
+raises are not in it, because the FRD could not see the code. Each has a
+default the stories below are written to; each is listed again, with its
+default, under **Phase 2 open points**.
+
+1. **There is no balance anywhere.** Phase 1 records what was paid
+   (`payment`, `payment_line` per fee component) and never a balance —
+   "opening payment less refund" is the nearest thing, computed on the fly.
+   The ledger is new, and every existing member's Shares and MSA must open
+   with the money Phase 1 already took from them, or every balance starts at
+   zero. That backfill is S-1303, and its acceptance criterion is a control
+   total.
+2. **`member.status` has no constraint.** It is `text` with a default. Phase
+   2 adds `resigned` and `demised` and the constraint that names the whole
+   vocabulary — nothing today would refuse a misspelling.
+3. **Dormancy is referenced, not delivered.** The FRD blocks withdrawals on a
+   Dormant member (TXN-US-005) and cites Phase 1 Section 7.11, but detection
+   is M8's S-804, deferred, and this FRD does not schedule it. Phase 2 makes
+   the status real and blocking; nothing sets it.
+4. **Payment methods are a check constraint**, not configuration
+   (`payment.method in ('cash', 'cheque', 'bank_transfer', …)`, 0017). FRD 6.6
+   wants Juice, Salary Deduction, Standing Order, Deposit at Bank and Internet
+   Banking, addable without a release. That is a table, and a migration that
+   maps today's codes onto it.
+5. **A transfer to a non-member has nowhere to land.** FRD 6.4 lists "another
+   member, a non-member, or Other" as destinations; a non-member has no
+   account to credit. Default: a transfer whose destination is not an account
+   on the system is a debit leg and a disbursement out — one movement, not
+   two — and a credit leg exists only when there is an account to credit.
+6. **Receipts by email need a link, not an attachment.** M9's channels carry
+   text; nothing attaches a file, and a PDF of a member's transaction in a
+   mailbox is personal financial data at rest somewhere the Society does not
+   control. Default: the message carries a link to the receipt on the site,
+   which FRD 11.1 allows ("or a link to retrieve it"). WhatsApp media is
+   Should.
+
+## Epic index
+
+| Epic    | Title                                              | Milestone | Priority |
+| ------- | -------------------------------------------------- | --------- | -------- |
+| EPIC-17 | Account Structure                                  | M13       | Must     |
+| EPIC-18 | Transaction Engine — Deposit, Withdrawal, Transfer | M13 → M15 | Must     |
+| EPIC-19 | Approval Matrix & Dynamic Workflow                 | M14       | Must     |
+| EPIC-20 | Receipts & Statements                              | M16       | Must     |
+| EPIC-21 | Account Closure                                    | M17       | Must     |
+| EPIC-22 | Resignation                                        | M17       | Must     |
+| EPIC-23 | Demised Member Handling                            | M17       | Must     |
+| EPIC-24 | Cashier / Teller                                   | M20       | Should   |
+| EPIC-25 | Bank Accounts & Reconciliation Foundation          | M19       | Must     |
+| EPIC-26 | Mobile-Ready API Layer                             | M13, M21  | Must     |
+| EPIC-27 | Unified Transaction Engine                         | M13       | Must     |
+| EPIC-28 | Consistent Workflow UX                             | M14       | Must     |
+| EPIC-29 | Configuration Readiness                            | M18       | Must     |
+| EPIC-30 | End-User & Staff Notifications                     | M18       | Must     |
+
+---
+
+# M13 — The ledger, and one deposit end to end
+
+**Goal:** money exists. Every account has a balance derived from an immutable
+ledger, every existing member's Shares and MSA open with what Phase 1 already
+took from them, and an officer can record a deposit that posts, receipts and
+appears on the member's page — the walking skeleton every later milestone
+hangs from, built the way Phase 1's M3 was.
+
+**Why the ledger comes first and alone:** FRD 6.1's single engine is a
+property that is either true from the first line or never true afterwards. So
+M13 builds the engine with exactly one transaction type on it, proves the
+database refuses any other route to a balance (S-1302), and only then adds
+types. A deposit below the escalation threshold needs no chain, which is why
+it — and not a withdrawal — is the skeleton.
+
+**Needs confirming first:** open point 1, the mapping from Phase 1 fee
+components to opening balances. Default: `shares` lines open the Shares
+balance, `msa_deposit` lines open the MSA balance, everything else (entrance,
+processing, Takaful) is income and opens nothing. The backfill is written to
+that default and its control total will say whether the Society agrees.
+
+### S-1301 · The account ledger
+
+**As** the Society, **I need** every movement of money on an account to be
+one immutable row, **so that** a balance is something the history proves
+rather than a number a program keeps. _(ENG-US-001, ENG-US-002, FRD 3, 6.1)_
+`Must · 8 · EPIC-27`
+
+- **Given** a posted transaction **Then** it has produced one `account_entry`
+  per account it touched (a deposit one, a transfer two), each carrying the
+  account, the transaction, the direction, the amount and the posting time,
+  and none of them can be updated or deleted — the same trigger and grant
+  shape `audit_event` has (0004, 0005)
+- **Given** an account **When** its balance is asked for **Then** it is the
+  sum of its entries, and `account_balance` — one row per account, updated in
+  the same database transaction as the entries — is a cache of that sum, read
+  for speed and never trusted over it
+- **Given** the cache and the entries disagree **Then** the nightly
+  `ledger-verify` job (the M1 runner) says so, loudly, and the cache is
+  rebuilt from the entries — never the other way round
+- Amounts are `numeric(14, 2)`, as fees already are; a Mauritian rupee has
+  cents and floating point does not
+- **Depends on:** nothing. This is the foundation
+
+### S-1302 · No other road to a balance
+
+**As** a technical lead, **I need** the database itself to refuse a balance
+change that did not come through the engine, **so that** FRD 6.1 is enforced
+rather than promised. _(ENG-US-001, ENG-US-003, FRD 6.1, 16)_
+`Must · 5 · EPIC-27`
+
+- **Given** the application's own role (`albarakah_app`) **Then** it holds no
+  `insert`, `update` or `delete` on `account_entry` or `account_balance` at
+  all — the only way in is `post_transaction()`, a `security definer`
+  function owned by the schema owner, exactly the pattern `reset_all_test_data`
+  and the retention job already use
+- **Given** a developer adds a second code path that writes either table
+  **Then** `scripts/schema.test.ts` fails, the way it already fails if the
+  application role gains DDL — the FRD's "automated check that fails the
+  build" is a grant assertion, not a grep
+- `post_transaction()` takes a transaction id and does everything atomic
+  about posting: entries, cache, status, the financial event, the receipt
+  issue — one function, one transaction, so "half posted" is not a state that
+  can exist
+
+### S-1303 · Phase 1's money becomes Phase 2's opening balances
+
+**As** the Treasurer, **I need** every member's Shares and MSA to open with
+the amounts they actually paid at membership, **so that** the first balance
+an officer sees is right. _(ACC-US-004, FRD 4.1, open point 1)_
+`Must · 8 · EPIC-17`
+
+- **Given** an approved member with a Phase 1 payment **When** the migration
+  runs **Then** each `payment_line` whose fee component is `shares` becomes
+  an opening entry on their Shares account and each `msa_deposit` line an
+  opening entry on their MSA, dated the payment's date and naming its receipt;
+  a refund reverses the lines it refunded
+- **Given** the migration has run **Then** the sum of all Shares balances
+  equals the sum of all issued, unrefunded `shares` lines — and the same for
+  MSA — and `pnpm figures:capture` (S-1002) gains both totals, so a restore
+  drill checks them too
+- **Given** a member migrated by M7 with a legacy balance (S-709) **Then**
+  that balance is the opening entry instead, referenced to the import, and
+  the two sources are never both applied to one account
+- **Given** a member approved after this migration **Then** approval itself
+  posts the same opening entries through `post_transaction()` (S-1305), so
+  the backfill is one-time and the live path is the engine
+
+### S-1304 · Account types learn their limits
+
+**As** an administrator, **I need** each account type to carry its floor,
+its limits and what is allowed on it, **so that** the rules are configuration
+and the engine reads them. _(ACC-US-001, ACC-US-006, FRD 4.3, 9)_
+`Must · 5 · EPIC-17`
+
+- `account_type` gains `minimum_balance` (one floor, used identically by
+  withdrawal and transfer — FRD 4.3 is explicit that there are not two),
+  `allows_deposit`, `allows_withdrawal`, `allows_transfer`, and
+  `maximum_transaction_amount` (nullable — no limit)
+- **Given** the migration **Then** every existing type has a working value:
+  Shares keeps its 5000 opening minimum (0018) and gets a matching holding
+  floor; MSA, HSA and Investment get a floor of 0 and all three operations
+  allowed — so nothing is blank on day one (FRD 9)
+- **Given** Configuration → Account types **Then** each is editable there,
+  audited through the trigger every configuration table already carries
+  (S-210), and a change takes effect on the next transaction with no release
+
+### S-1305 · One engine, one transaction type: deposit
+
+**As** an officer, **I need** to record a deposit into any account a member
+holds, **so that** funds are added under full traceability — and so that
+there is now a transaction on the system at all. _(TXN-US-001, ENG-US-001,
+FRD 6.2)_
+`Must · 8 · EPIC-18`
+
+- `transaction` is one table for every kind: reference `TX-000001` from its
+  own sequence, `kind` (`deposit` now; `withdrawal`, `transfer_leg`,
+  `disbursement` are added by the milestones that use them, each a
+  migration widening the check), member, account, amount, method, status,
+  the officer, the region, an optional reason, and the receipt once issued.
+  A posted row is immutable — its own trigger, like `payment`'s
+- **Given** the officer picks a member (the search S-613 already has),
+  enters an amount, picks a method and an account **When** they submit
+  **Then** the deposit posts immediately through `post_transaction()`,
+  the balance moves, and a receipt is issued — because a deposit below the
+  escalation threshold has no chain (FRD 6.2); M14 puts the threshold in
+  front of it
+- **Given** the account type has `allows_deposit = false`, or the account
+  is not active, or the member is not active **Then** the deposit is
+  refused before anything is written, naming which
+- **Given** a Shares account **Then** it is a valid destination like any
+  other — FRD 4.1: Shares is topped up, not paid once
+- **Given** the deposit posts **Then** one `financial_event` of type
+  `transaction.posted` carries the whole thing, self-contained, the way
+  `payment.recorded` does — and `financial_event.event_type`'s check is
+  widened by a new migration, never by editing 0017
+
+### S-1306 · Cash controls apply to a deposit as they do to a payment
+
+**As** the Society, **I need** the Source of Funds requirement and the cash
+cap to govern a cash deposit exactly as they govern a cash payment, **so
+that** there is one control, not two. _(TXN-US-003, TXN-US-011, FRD 6.7)_
+`Must · 5 · EPIC-18`
+
+- **Given** a cash deposit above `payment.cash_source_of_fund_threshold`
+  **Then** the SOF form is required — the same checklist document (0062),
+  the same print–scan–upload path, the same Missing → Verified lifecycle
+  (S-407) — and the deposit cannot post until it is Verified
+- **Given** a cash deposit above `payment.cash_maximum` **Then** it is
+  refused outright, with the message the payment step already shows
+- **Given** any method other than cash **Then** neither applies — the flag
+  is on the method (S-1307), not on a list of method names in code
+- The three configuration entries are reused, not duplicated: a deposit is
+  a payment, and an administrator sets each number once
+
+### S-1307 · Payment methods become configuration
+
+**As** an administrator, **I need** to add a payment method without a
+release, **so that** the list matches how members actually pay. _(TXN-US-002,
+FRD 6.6, open point 4)_
+`Must · 5 · EPIC-18`
+
+- `payment_method` is a configuration table: code, name, `is_cash` (drives
+  S-1306), `requires_reference` (cheque number, transfer reference — drives
+  BNK-US-002), `touches_bank`, `is_active`, sort order; audited like every
+  other configuration table
+- **Given** the migration **Then** it is seeded with today's methods under
+  their existing codes and the FRD's additions (Juice, Salary Deduction,
+  Standing Order, Deposit at Bank, Internet Banking, Other), and
+  `payment.method` and `transaction.method` become references to it — the
+  check constraint from 0017 is replaced, by a new migration, with every
+  existing row mapped
+- **Given** a method with `requires_reference` **Then** the reference is
+  mandatory on the form and on the record — the Phase 1 rule "show the
+  reference only for cheque, transfer and mobile money" becomes data
+
+### S-1308 · An idempotency key on every write
+
+**As** the system, **I need** a retried submission to be the same
+transaction and not a second one, **so that** a double-click or a dropped
+connection cannot move money twice. _(API-US-002, FRD 3, 16)_
+`Must · 5 · EPIC-26`
+
+- `transaction.idempotency_key` is unique per acting user; the form issues
+  one when it renders and sends it with the submit
+- **Given** the same key with the same payload **Then** the response is the
+  original transaction, unchanged, with no new row; **given** the same key
+  with a different payload **Then** 409, and nothing is written
+- `defineEndpoint` gains the check as a declared property of a write
+  endpoint, so `/api/v1/deposits` and every later write endpoint gets it by
+  declaration, and the OpenAPI document says so (S-110)
+
+### S-1309 · The balance, where an officer looks
+
+**As** an officer, **I need** to see a member's accounts with their balances
+on the member's page, **so that** I can answer the question they came in
+with. _(ACC-US-004, TXN-US-007, FRD 6.9)_
+`Must · 3 · EPIC-17`
+
+- **Given** the member page **Then** each account shows type, status and
+  balance, from the cache (S-1301), with a link to its history
+- **Given** an account's history **Then** it lists every posted transaction
+  for it, newest first, paginated, with a running balance computed from the
+  entries — which is the statement S-1601 later exports
+- Balance replaces "opening payment less refund" wherever the member app
+  (Phase 4) and the member page showed it
+
+### S-1310 · A deposit is reachable from the API
+
+**As** a developer, **I need** the deposit to be an endpoint like every other
+operation, **so that** the API is the product and the page is a client of
+it. _(API-US-001, FRD 10)_
+`Must · 3 · EPIC-26`
+
+- `POST /api/v1/deposits` (with S-1308's key), `GET
+/api/v1/accounts/{id}/balance`, `GET /api/v1/accounts/{id}/history`, all
+  through `defineEndpoint`, all in the OpenAPI document, all behind the
+  permissions S-1311 defines
+- The deposit page calls the same service function the endpoint does — one
+  path, as `saveDraft` and the capture pages already share one
+
+### S-1311 · Who may do what to money
+
+**As** the Society, **I need** transaction permissions that match the roles
+in FRD Section 5, **so that** a clerk records and a Treasurer voids.
+_(CFG-US-003, FRD 5, 12)_
+`Must · 3 · EPIC-29`
+
+- Permissions, in the existing `entity.action` form: `transaction.capture`,
+  `transaction.view`, `transaction.post` (below-threshold actioning, FRD 6.3
+  "Account Officer can action directly"), `receipt.void`, `account.view`;
+  the approval-step permissions arrive with M14
+- **Given** the migration **Then** the default mapping matches Section 5's
+  table — Regional Officer/Clerk capture, Account Officer post, Treasurer
+  void, Auditor view — and is editable at Administration → Roles (S-201)
+- `segregation_rule` gains `entity_type = 'transaction'` rows: the officer
+  who captured may not be the one who posts or approves
+
+---
+
+# M14 — The approval matrix, on the chain that already exists
+
+**Goal:** an administrator decides which transactions need whose approval,
+in what order, and can change their mind without a release — and the screen
+shows the chain that is live, not the one the front end was built with.
+
+**What is reused, and what is new:** Phase 1's `workflow_definition` and
+`workflow_step` already do everything FRD 6.5 asks of a chain — steps
+assigned to roles, an ordered sequence, `is_enabled` to remove a step
+without deleting it, `quorum_count`, and `activeChain` reading it live on
+every decision (S-209, S-611). Nothing in this milestone rewrites that. What
+Phase 1 does not have is the _matrix_: the rule that says which chain — or
+none — a given transaction falls under, keyed on kind, amount, account type
+and the initiating role. That is one table and one function, and the rest is
+giving transactions a status vocabulary the existing steps can name.
+
+### S-1401 · The approval matrix
+
+**As** an administrator, **I need** to say which transactions escalate and
+to which chain, **so that** routine transactions post and the rest are
+reviewed. _(APR-US-001, APR-US-002, APR-US-006, FRD 6.5, 17)_
+`Must · 8 · EPIC-19`
+
+- `approval_rule`: transaction kind, optional account type, optional
+  initiating role, an amount band (from, to — `to` null for "and above"),
+  and the `workflow_definition` it routes to — **or none**, which means
+  "post immediately". Rules are ordered; the first match wins; the table is
+  configuration, audited like the rest
+- **Given** a transaction is submitted **Then** `resolveRoute()` finds its
+  rule and either posts it (S-1305's path, unchanged) or places it at the
+  first enabled step of the chosen chain — and records which rule and which
+  chain, so the trail (S-1406) can say why it went where it went
+- **Given** no rule matches **Then** the transaction escalates to the most
+  demanding chain configured for its kind — an administrator who forgot a
+  band gets a review, never a silent post
+- **Given** the migration **Then** the defaults from FRD 6.5's table exist:
+  deposits post; withdrawals and transfers-out above a threshold go
+  Secretary → President; closures, resignations and demised claims go
+  Secretary → President; the threshold is a configuration value (FRD 9)
+- Configuration → Approval matrix edits it, with the same "who changed what,
+  when" every configuration screen has (S-210)
+
+### S-1402 · A chain per transaction kind, on `workflow_step`
+
+**As** an administrator, **I need** to define an ordered chain of role steps
+for withdrawals, transfers, closures, resignations and demised claims, **so
+that** governance is a setting. _(APR-US-009, APR-US-010, APR-US-011, FRD
+6.5)_
+`Must · 5 · EPIC-19`
+
+- A `workflow_definition` with `entity_type = 'transaction'` per kind,
+  seeded, each with `workflow_step` rows whose `from_status`/`to_status`
+  name the transaction statuses: `submitted` → `under_review` →
+  `approved` → `posted`, with `returned` and `rejected` as exits — the
+  same shape a membership application's chain has, which is why
+  Configuration → Workflows edits it with no new screen
+- **Given** a step is disabled or re-ordered **When** the next transaction
+  of that kind is submitted **Then** it routes through the chain as it now
+  is — `activeChain` already reads live; this story's work is the status
+  vocabulary and the tests that prove a removed Regional Manager step is
+  skipped by the next withdrawal
+- **Given** a transaction already queued at a step **When** that step is
+  disabled **Then** it stays there until that role acts on it — verified
+  against how `activeChain` treats a disabled step for an in-flight item,
+  and made so if it is not (APR-US-012 is the FRD's one explicit rule
+  about in-flight work; it is a test before it is a feature)
+
+### S-1403 · Review and decision, one screen for every kind
+
+**As** the Secretary and the President, **I need** one queue of everything
+waiting on me and one screen to act on any of it, **so that** I do not learn
+six interfaces. _(APR-US-003, APR-US-004, UX-US-004, FRD 6.5, 8)_
+`Must · 8 · EPIC-19`
+
+- **Given** a role with a step on any transaction chain **Then**
+  `/transactions/pending` lists everything at a step that role owns —
+  withdrawals, transfers, and later closures, resignations and claims —
+  filterable by kind, with the amount, the member and how long it has waited
+- **Given** an item **Then** the review screen is one component
+  parameterised by kind: the details, the documents, the trail, and
+  **Forward** / **Return with comment** / **Reject with comment** — the
+  comment mandatory on the last two, as it is for applications (S-305,
+  S-306)
+- **Given** the President approves a withdrawal **Then** it moves to
+  `approved`, and posting is a separate act by whoever records the
+  disbursement (S-1503) — approval decides, disbursement moves money, and
+  the two are not the same click
+- `pendingActionCount` (the sidebar badge) counts transaction steps too,
+  so the President sees one number
+
+### S-1404 · Return, edit, resubmit — at the step that returned it
+
+**As** the officer who captured it, **I need** to correct a returned
+transaction and send it back to the step that returned it, **so that** an
+approval already given is not asked for twice. _(APR-US-005, APR-US-008, FRD
+6.5.1)_
+`Must · 5 · EPIC-19`
+
+- **Given** a transaction returned from step _n_ **Then** it is editable by
+  its captor only — amount, method, reason, account — and by nobody while it
+  sits at any other step
+- **Given** it is resubmitted **Then** it re-enters at step _n_, keeps its
+  reference, and its trail shows both versions and the comment that
+  prompted the change; an application's `reopenRejectedApplication` is the
+  pattern, generalised
+- **Given** the edit changes the amount across a matrix band **Then**
+  `resolveRoute()` runs again and the transaction may go to a different
+  chain — the FRD says re-enter at the rejecting step; a changed amount is
+  a changed transaction, and the rule that would have applied on first
+  submission applies now. Recorded as decision 11
+
+### S-1405 · The chevron reads the live chain
+
+**As** an officer, **I need** the strip at the top of every transaction to
+show the steps this one will actually go through, **so that** the screen
+and the configuration cannot disagree. _(UX-US-001, UX-US-002, UX-US-005,
+FRD 8)_
+`Must · 5 · EPIC-28`
+
+- `chainTimeline(entityType, id)` in `src/lib/workflow/timeline.ts`
+  produces `TimelineStep[]` for any entity with a chain, from the live
+  `workflow_step` rows plus the entity's fixed stages (Details, Documents,
+  Submit … Disbursement); `applicationTimeline` becomes one caller of it
+- `ApplicationTimeline.astro` is reused unchanged — it never knew what an
+  application was — and gains a neutral name in the same change
+- **Given** a deposit below threshold **Then** its chevron has no approval
+  stages at all; **given** a step is disabled **Then** every chevron
+  rendered from then on omits it, with no front-end change
+
+### S-1406 · The trail an auditor reads
+
+**As** an auditor, **I need** the actual sequence of steps a transaction went
+through and who acted at each, **so that** governance can be verified after
+the chain has changed. _(APR-US-007, FRD 12)_
+`Must · 3 · EPIC-19`
+
+- `transaction_transition` mirrors `application_transition`: step, actor,
+  action, comment, time, and the rule and chain that routed it — so two
+  withdrawals either side of a chain edit show different trails, and both
+  are right
+- Read-only on the transaction page, and in the audit log under the
+  transaction's reference
+
+---
+
+# M15 — Withdrawal and transfer
+
+**Goal:** money leaves an account under the floor, the limits, the matrix
+and the trail — and a transfer is two legs under one id, never two
+transactions that happen to match.
+
+### S-1501 · Withdrawal
+
+**As** an officer, **I need** to record a withdrawal that the engine
+validates before anyone approves it, **so that** a request that cannot
+succeed is refused at the counter. _(TXN-US-004, TXN-US-005, FRD 6.3)_
+`Must · 8 · EPIC-18`
+
+- **Given** a withdrawal is submitted **Then** before it is written the
+  engine checks, in order, and names the first failure: the account is
+  active and the type allows withdrawal; the member is active — not
+  dormant, resigned or demised; the available balance covers it (S-1502);
+  the resulting balance is not below the type's floor (hard, FRD 4.3); the
+  amount is within the type's maximum
+- **Given** it passes **Then** `resolveRoute()` (S-1401) posts it or places
+  it on its chain; **given** it posts **Then** the disbursement details —
+  method, and the reference the method requires — are recorded on the same
+  transaction, and a receipt is issued
+- **Given** a Shares account **Then** the floor is the configured holding
+  minimum (S-1304), so an officer cannot withdraw a member below membership
+  by mistake — resignation (M17) is the way out. Recorded as decision 12
+- `kind = 'withdrawal'` is added to `transaction`; `POST /api/v1/withdrawals`
+
+### S-1502 · Available, not merely current
+
+**As** an officer, **I need** the balance I quote to allow for what is
+already on its way out, **so that** two withdrawals in one afternoon do not
+both pass. _(TXN-US-007, open point 7)_
+`Must · 3 · EPIC-18`
+
+- `available = balance − sum(pending debits)` where pending is any
+  withdrawal or transfer-out for that account in `submitted`,
+  `under_review` or `approved` — a query, not a ledger entry, so a rejection
+  releases it by doing nothing
+- Shown beside the current balance on the withdrawal and transfer screens,
+  and returned by the balance endpoint as a second figure
+
+### S-1503 · Disbursing an approved withdrawal
+
+**As** the Treasurer, **I need** to record how an approved withdrawal was
+paid out, **so that** the money moves when it is paid, not when it is
+approved. _(TXN-US-004, CLS-US-005 pattern, FRD 6.3, 15)_
+`Must · 5 · EPIC-18`
+
+- **Given** an `approved` withdrawal **Then** a holder of `transaction.post`
+  records the method and reference, and only then does `post_transaction()`
+  run — the ledger entry is dated the disbursement, not the decision
+- **Given** the method `touches_bank` (S-1307) **Then** the reference is
+  mandatory and, from M19, names which of the Society's bank accounts it
+  came from
+- Segregation: the approver and the disburser are different people
+  (S-1311's rules)
+
+### S-1504 · Transfer
+
+**As** an officer, **I need** to move money between accounts as one
+transfer, **so that** the two sides can never be reconciled apart.
+_(TXN-US-006, FRD 6.4, open point 5)_
+`Must · 8 · EPIC-18`
+
+- `transfer` (id, reference `TR-000001`, member, reason, status) links
+  `transaction` rows with `kind = 'transfer_leg'`: a debit leg on the source
+  and, **when the destination is an account on the system**, a credit leg
+  on it. Posting is atomic across both legs or neither
+- **Given** the destination is the member's own account, or another
+  member's, or a customer's (S-614) **Then** it is a credit leg and the
+  destination account's `allows_deposit` and status are checked too
+- **Given** the destination is a non-member or "Other" **Then** there is no
+  credit leg: the debit leg carries the payee's name and the disbursement
+  method and reference, and posts through S-1503's disbursement step — the
+  default in open point 5, because there is no account to credit
+- **Given** the source **Then** every withdrawal check in S-1501 applies,
+  floor included; **given** the destination is another party **Then**
+  `resolveRoute()` treats it as a withdrawal for the matrix (FRD 6.4:
+  "funds are leaving the source member's control"); an own-account transfer
+  has its own kind in the matrix and posts by default
+- `POST /api/v1/transfers`, one call, one idempotency key for the pair
+
+### S-1505 · Drafts, and what a submitted transaction can and cannot become
+
+**As** an officer, **I need** to abandon a mistake before it is submitted and
+to know that after submission nothing disappears, **so that** the record is
+honest. _(TXN-US-008, FRD 6.5.1, 12)_
+`Must · 3 · EPIC-18`
+
+- **Given** a `draft` **Then** its captor can edit or delete it, and it has
+  no reference, no receipt and no ledger effect — as an application draft
+- **Given** anything past `draft` **Then** it is never deleted: it is
+  returned, rejected, or posted, and every state is in the trail
+- **Given** a posted transaction was wrong **Then** the correction is a
+  reversing transaction that references it (`reverses_id`), through the
+  engine, on its own receipt — never an edit. Recorded as decision 13
+
+### S-1506 · Transaction history, across accounts
+
+**As** an officer, **I need** a member's transactions across every account
+in one list, **so that** a query is answered from one screen. _(TXN-US-009,
+FRD 6.9, 10)_
+`Must · 3 · EPIC-18`
+
+- `/members/{id}/transactions` and `GET /api/v1/transactions?member=` —
+  paginated, filterable by account, kind, status and date; a transfer shows
+  once, with both legs
+- The same query, unfiltered, is `/transactions` for a region's own view of
+  its day
+
+---
+
+# M16 — Receipts and statements
+
+**Goal:** every movement of money produces a receipt in the sequence Phase 1
+started, a member can be given one without a printer, and any account's
+statement can be read or exported from the same endpoint the future app will
+call.
+
+### S-1601 · Every transaction takes a receipt from the one sequence
+
+**As** the Treasurer, **I need** deposits, withdrawals, transfers and
+disbursements receipted in the same `RCT-` sequence as payments, **so that**
+a gap means the same thing everywhere. _(RCT-US-001, RCT-US-007, FRD 6.8)_
+`Must · 5 · EPIC-20`
+
+- `post_transaction()` allocates from `receipt_number` and issues on post,
+  exactly as `recordPayment` does (S-502); the receipt names the transaction
+  reference, member, account, amount, method, date, officer and region, all
+  read from the transaction — no field is typed twice
+- A transfer's two legs share one receipt; the printable form (S-503's
+  renderer) gains a transaction variant
+
+### S-1602 · A receipt by email or WhatsApp
+
+**As** an officer, **I need** to send the member their receipt without
+printing it, **so that** they leave with a record. _(RCT-US-002, NOTIF-US-005,
+FRD 6.8, open point 6)_
+`Must · 5 · EPIC-20` — WhatsApp media `Should`
+
+- **Given** a receipt is issued **Then** a `receipt.issued` notification
+  (M9 templates) carries a link to `/receipts/{id}`, which the member's own
+  sign-in (Phase 4) or a signed, expiring link opens; sent automatically
+  when the event's template is active, and re-sendable from the receipt
+- WhatsApp as a document, if the Society's account supports media, is the
+  Should half — the text-and-link message is the Must half
+
+### S-1603 · Void, and the reasons a sequence has holes
+
+**As** the Treasurer, **I need** to void a wrong receipt with a reason and to
+see every gap and void in one report, **so that** the sequence stays
+explainable. _(RCT-US-003, RCT-US-004, RCT-US-006, FRD 6.8, 12)_
+`Must · 3 · EPIC-20`
+
+- `state = 'void'` with a reason and the voiding user already exists (0017,
+  S-506); a transaction's receipt voids the same way and requires
+  `receipt.void`; voiding a receipt never un-posts the transaction —
+  correction is S-1505's reversal
+- S-506's reconciliation view lists transaction receipts alongside payment
+  receipts, and the `receipts` report (S-906) gains kind, void reason and
+  totals by period, branch, officer and method
+- Treasurer notified on void (S-1805)
+
+### S-1604 · The statement
+
+**As** an officer — and later the member — **I need** an account's statement
+for a date range, on screen and as PDF or Excel, **so that** history is
+available on demand. _(RCT-US-005, FRD 6.9, 10)_
+`Must · 5 · EPIC-20` — export polish `Could`
+
+- `GET /api/v1/accounts/{id}/statement?from&to` returns date, description,
+  debit, credit and running balance from the entries; the page is a client
+  of it; Excel through the export S-905 built, PDF through the receipt
+  renderer's page layout
+- Opening and closing balance for the range are on the document, so a
+  member can check it against the last one
+
+---
+
+# M17 — Closure, resignation, demised
+
+**Goal:** a member can leave a product, leave the Society, or die, and in
+each case the money goes to the right person through the same engine and
+the same chain as any withdrawal, with the accounts closed and the status
+telling the truth. Supersedes M8's S-801 to S-803.
+
+**Shape shared by all three:** a _request_ record (reason, signature, the
+documents its checklist requires, the trail) that, on approval, produces
+`disbursement`-kind transactions through S-1503's step and then changes
+status. No request touches a balance itself.
+
+### S-1701 · Member status gets a vocabulary
+
+**As** the system, **I need** `member.status` to name every state a member
+can be in and refuse any other, **so that** `resigned` and `demised` mean
+something. _(RES-US-006, DEM-US-007, open point 2)_
+`Must · 2 · EPIC-22`
+
+- A check constraint, by migration, naming what the code already writes
+  (`active`, `inactive`, `pending` …) plus `dormant`, `resigned`,
+  `demised`; a member in the last three cannot transact or open an account,
+  and the member page says why
+
+### S-1702 · Closure request (HSA / Investment)
+
+**As** an officer, **I need** to close a member's secondary account with the
+member's signature and the reason, **so that** they can leave a product
+without leaving the Society. _(CLS-US-001..006, ACC-US-005, FRD 7.1)_
+`Must · 8 · EPIC-21`
+
+- Only account types that are not `is_membership_default` are offered;
+  Shares and MSA are refused by the API with a message naming resignation
+- The balance is computed, shown and not editable; the signed request is a
+  checklist document; routes per the matrix; on approval a `disbursement`
+  for the balance is recorded through S-1503, and on posting the account is
+  `closed` and refuses every later transaction
+- The chevron: Details → Signature → Documents → Submit → the live chain →
+  Disbursement
+
+### S-1703 · Resignation request (Shares + MSA, ends membership)
+
+**As** an officer, **I need** to resign a member, **so that** both their core
+accounts close together and their membership ends. _(RES-US-001..006, FRD
+7.2)_
+`Must · 8 · EPIC-22`
+
+- Shares and MSA are selected as one unit and cannot be resigned singly; any
+  HSA or Investment the member holds is untouched (FRD 7.2 — the two
+  processes are independent)
+- Pre-checks before submission, each configurable and each named when it
+  blocks: pending transactions on either account, unpaid fees, and —
+  when Phase 3/4 exists — outstanding financing (a stub that always passes,
+  with the hook in place)
+- On approval one combined `disbursement` is recorded and posted; both
+  accounts close; `member.status = 'resigned'`; the member's documents
+  become anchorable for retention (docs/retention.md's "cannot be anchored
+  yet" is now anchored)
+
+### S-1704 · Demised claim
+
+**As** an officer, **I need** to settle a deceased member's entitlements to
+their claimant, **so that** the family is paid what is owed and nothing
+more. _(DEM-US-001..007, FRD 7.3)_
+`Must · 13 → split · EPIC-23`
+
+Split before it is pulled: **7a** the claim record and the claimant (nominee
+default from S-602, or `other` with name, address, NIC, relation) with the
+Death Certificate and Affidavit as checklist documents — `5`; **7b** the
+computed, read-only total (every open account's balance, plus the Takaful
+benefit from configuration as its own line) and the disbursement and
+closure on approval — `5`; **7c** the review screen's presentation of the
+two figures and the documents — `3`.
+
+- `config: demised.takaful_benefit`, default 15,000, Administrator-editable
+- On posting every account closes and `member.status = 'demised'` — a
+  distinct value from `resigned`, and the report S-1806 tells them apart
+- The Affidavit is a document category, not a validation: whether the file
+  is the right legal instrument is the reviewer's call, and the screen says
+  so in one line (FRD 7.3)
+
+### S-1705 · Notifications at every stage of an exit
+
+**As** the member or claimant, **I need** to hear when a request is
+submitted, under review, approved with the payout, or rejected, **so that**
+nobody has to phone. _(CLS-US-007, RES-US-007, DEM-US-008, FRD 11.1)_
+`Must · 3 · EPIC-30`
+
+- Event codes `closure.*`, `resignation.*`, `demised.*` for `submitted`,
+  `under_review`, `approved`, `rejected`, with wording seeded and editable
+  at Configuration → Notification wording; a demised claim writes to the
+  claimant's contact, not the member's
+
+### S-1706 · Exits report
+
+**As** a manager, **I need** closures, resignations and demised claims by
+period with amounts and turnaround, **so that** exits are visible.
+_(RES-US-008, FRD 13)_
+`Should · 3 · EPIC-12`
+
+---
+
+# M18 — Ready to use: configuration, notifications, reports
+
+**Goal:** FRD Section 9's rule is met and provable — no officer is ever
+blocked by a value nobody set — and every transaction event reaches the
+people it should, and can be reported on.
+
+### S-1801 · Every Phase 2 setting has a working default
+
+**As** an administrator, **I need** to adjust configuration rather than
+author it, **so that** officers can transact on day one. _(CFG-US-001,
+CFG-US-004, CFG-US-006, FRD 9)_
+`Must · 3 · EPIC-29`
+
+- Each milestone's migration seeds its own defaults (S-1304, S-1307,
+  S-1401, S-1402, S-1704); this story is the test that asserts none of
+  Section 9's items reads as unset on a fresh database, and the UAT step
+  that has a new officer complete one of each transaction with no
+  administrator involved
+
+### S-1802 · Configuration → Readiness
+
+**As** an administrator, **I need** one page listing every Phase 2 setting
+with its value and when it last changed, **so that** I can confirm the
+platform is ready before go-live. _(CFG-US-005, FRD 9)_
+`Must · 5 · EPIC-29`
+
+- Reads `config_entry_history` for "last changed by whom", and flags an
+  item that has never been changed since it was seeded — "still at
+  default" is information, not an error
+
+### S-1803 · Transaction notifications to members
+
+**As** a member, **I need** to be told when my deposit is confirmed, my
+withdrawal is submitted, pending, disbursed or rejected, and my transfer has
+completed, **so that** I know without asking. _(NOTIF-US-001, FRD 11.1)_
+`Must · 5 · EPIC-30`
+
+- Event codes `deposit.posted`, `withdrawal.submitted`,
+  `withdrawal.under_review`, `withdrawal.disbursed`, `withdrawal.rejected`,
+  `transfer.posted` (to both members, when both are); raised after commit
+  in the engine, as `workflow.ts` raises application events (M9)
+- `balance.near_floor` — advisory when a posted transaction leaves an
+  account within a configurable margin of its floor
+
+### S-1804 · Notifications to staff
+
+**As** an approver or captor, **I need** to know when something waits on me
+or has come back to me, **so that** approvals do not stall. _(NOTIF-US-002,
+NOTIF-US-003, FRD 11.2)_
+`Must · 3 · EPIC-30`
+
+- `transaction.awaiting` to every holder of the step's role, on arrival at
+  a step; `transaction.returned` to the captor with the comment and a link;
+  staff addresses come from `app_user`, which has them
+
+### S-1805 · Treasurer told of a void
+
+_(NOTIF-US-004, FRD 11.2)_ `Must · 1 · EPIC-30` — `receipt.voided`, with
+reason and user, to holders of `receipt.void`.
+
+### S-1806 · Reports for Section 13
+
+**As** a manager and an auditor, **I need** the reports Section 13 lists,
+**so that** transactions, approvals, exits, receipts and floors are visible.
+_(ACC-US-008, FRD 13)_
+`Should · 8 → split by report · EPIC-12`
+
+- New definitions in `definitions.ts`, each its own change: transactions
+  (by period, method, type, officer, region); pending approvals with age
+  and turnaround; exits (S-1706); receipts extended (S-1603); accounts at
+  or near floor; the `accounts` report (S-905) gains balance and status
+  filters. Cashier reports arrive with M20
+
+---
+
+# M19 — Bank accounts and reconciliation-ready records
+
+**Goal:** the Society's own bank accounts are known to the system and every
+transaction that touches one names it and carries a reference, so Phase 5
+can match statements without re-engineering Phase 2.
+
+### S-1901 · The Society's bank accounts
+
+_(BNK-US-001, BNK-US-004, FRD 15)_ `Must · 3 · EPIC-25` — `bank_account`
+configuration: bank, reference, currency, opening balance, active; full
+details visible only with `bank_account.manage`; a read-only balance derived
+from posted transactions that name it.
+
+### S-1902 · Every bank-touching transaction names its bank account
+
+_(BNK-US-002, BNK-US-003, FRD 15)_ `Must · 3 · EPIC-25` — where the method
+`touches_bank` (S-1307), `transaction.bank_account_id` and the reference are
+both mandatory; a sample reconciliation dry-run against a real statement is
+the acceptance test, and the `financial_event` payload carries both fields.
+
+---
+
+# M20 — Cashier
+
+**Goal:** each regional office's cash drawer opens with a float, is expected
+to hold what the day's cash transactions say, and closes against a count.
+Should-Have: designed here, not required for go-live.
+
+### S-2001 · Open and close the drawer
+
+_(CSH-US-001, CSH-US-003, FRD 14)_ `Should · 5 · EPIC-24` — `cash_session`
+per cashier per day: opening float, closing count, computed expected,
+over/short logged and audited; a cashier cannot open twice or close what
+they did not open.
+
+### S-2002 · Expected cash, live
+
+_(CSH-US-002, CSH-US-004, FRD 14)_ `Should · 3 · EPIC-24` — every cash
+transaction posted while a session is open is attributed to it (region,
+branch, cashier on the transaction); expected = float + cash in − cash out,
+from the ledger.
+
+### S-2003 · Daily cash reconciliation report
+
+_(CSH-US-005, FRD 13, 14)_ `Should · 3 · EPIC-12`
+
+---
+
+# M21 — Member-scoped access, ahead of Phase 6
+
+**Goal:** the balance, statement and history a member will see in the app
+are the same endpoints staff use, behind the member's own token, and a
+member-initiated transaction — when the Society switches it on — is subject
+to every rule a staff-initiated one is.
+
+### S-2101 · Balance, statement and history for a member's own accounts
+
+_(API-US-001, API-US-003, FRD 10)_ `Must · 5 · EPIC-26` — `/api/v1/member/
+accounts`, `/balance`, `/statement`, `/history` through `defineMemberEndpoint`
+(Phase 4), resolving the member server-side as `link-member` does, calling
+the same service functions as the staff endpoints; the response schema is
+the staff one.
+
+### S-2102 · Per-endpoint switch for member-initiated writes
+
+_(API-US-005, API-US-006, FRD 10)_ `Must · 5 · EPIC-26` — `config:
+member_api.enabled_operations`, default none; deposit, withdrawal and
+transfer as member endpoints that exist, refuse until enabled, and when
+enabled call `resolveRoute()` and the engine exactly as a clerk's submission
+does — the initiating role is "member", which the matrix can route
+differently, never more leniently.
+
+### S-2103 · The API reference covers Phase 2
+
+_(API-US-004)_ `Must · 2 · EPIC-26` — every endpoint above is in the OpenAPI
+document (`pnpm openapi:check` already fails otherwise) and the in-app
+explorer (S-110) groups them under Transactions and Accounts.
+
+---
+
+# Phase 2 traceability
+
+Every story in FRD Section 20 is covered. "Phase 1" means built already
+(see the reuse table); a bare story id is where it is scheduled.
+
+| FRD story    | Backlog                                                                                                           |
+| ------------ | ----------------------------------------------------------------------------------------------------------------- |
+| ACC-US-001   | S-1304                                                                                                            |
+| ACC-US-002   | Phase 1 — S-309, migration 0018                                                                                   |
+| ACC-US-003   | Phase 1 — S-612, S-613                                                                                            |
+| ACC-US-004   | S-1309, S-1303                                                                                                    |
+| ACC-US-005   | S-1702                                                                                                            |
+| ACC-US-006   | S-1304                                                                                                            |
+| ACC-US-007   | Phase 1 — migration 0018; open point 5                                                                            |
+| ACC-US-008   | S-1806                                                                                                            |
+| TXN-US-001   | S-1305                                                                                                            |
+| TXN-US-002   | S-1307                                                                                                            |
+| TXN-US-003   | S-1306 (Phase 1 0062 for payments)                                                                                |
+| TXN-US-004   | S-1501                                                                                                            |
+| TXN-US-005   | S-1501, S-1701                                                                                                    |
+| TXN-US-006   | S-1504                                                                                                            |
+| TXN-US-007   | S-1502, S-1309                                                                                                    |
+| TXN-US-008   | S-1505                                                                                                            |
+| TXN-US-009   | S-1506                                                                                                            |
+| TXN-US-010   | Not a story: the FRD's Section 18 says "TXN-US-001 to TXN-US-010", but its Section 20 table runs 001–009 then 011 |
+| TXN-US-011   | S-1306 (Phase 1 0062 for payments)                                                                                |
+| APR-US-001   | S-1401                                                                                                            |
+| APR-US-002   | S-1401                                                                                                            |
+| APR-US-003   | S-1403                                                                                                            |
+| APR-US-004   | S-1403                                                                                                            |
+| APR-US-005   | S-1404, S-1804                                                                                                    |
+| APR-US-006   | S-1401                                                                                                            |
+| APR-US-007   | S-1406                                                                                                            |
+| APR-US-008   | S-1404                                                                                                            |
+| APR-US-009   | S-1402 (Phase 1 S-209 for the mechanism)                                                                          |
+| APR-US-010   | S-1402                                                                                                            |
+| APR-US-011   | S-1402                                                                                                            |
+| APR-US-012   | S-1402                                                                                                            |
+| RCT-US-001   | S-1601                                                                                                            |
+| RCT-US-002   | S-1602                                                                                                            |
+| RCT-US-003   | S-1603 (Phase 1 S-506 for payments)                                                                               |
+| RCT-US-004   | S-1603 (Phase 1 S-506)                                                                                            |
+| RCT-US-005   | S-1604                                                                                                            |
+| RCT-US-006   | S-1603                                                                                                            |
+| RCT-US-007   | S-1601                                                                                                            |
+| CLS-US-001   | S-1702                                                                                                            |
+| CLS-US-002   | S-1702                                                                                                            |
+| CLS-US-003   | S-1702                                                                                                            |
+| CLS-US-004   | S-1702, S-1403                                                                                                    |
+| CLS-US-005   | S-1702, S-1503                                                                                                    |
+| CLS-US-006   | S-1702                                                                                                            |
+| CLS-US-007   | S-1705                                                                                                            |
+| RES-US-001   | S-1703                                                                                                            |
+| RES-US-002   | S-1703                                                                                                            |
+| RES-US-003   | S-1703                                                                                                            |
+| RES-US-004   | S-1703, S-1403                                                                                                    |
+| RES-US-005   | S-1703                                                                                                            |
+| RES-US-006   | S-1703, S-1701                                                                                                    |
+| RES-US-007   | S-1705                                                                                                            |
+| RES-US-008   | S-1706                                                                                                            |
+| DEM-US-001   | S-1704 (7a)                                                                                                       |
+| DEM-US-002   | S-1704 (7a)                                                                                                       |
+| DEM-US-003   | S-1704 (7b)                                                                                                       |
+| DEM-US-004   | S-1704 (7b)                                                                                                       |
+| DEM-US-005   | S-1704 (7a)                                                                                                       |
+| DEM-US-006   | S-1704 (7c), S-1403                                                                                               |
+| DEM-US-007   | S-1704 (7b), S-1701                                                                                               |
+| DEM-US-008   | S-1705                                                                                                            |
+| CSH-US-001   | S-2001                                                                                                            |
+| CSH-US-002   | S-2002                                                                                                            |
+| CSH-US-003   | S-2001                                                                                                            |
+| CSH-US-004   | S-2002                                                                                                            |
+| CSH-US-005   | S-2003                                                                                                            |
+| BNK-US-001   | S-1901                                                                                                            |
+| BNK-US-002   | S-1902                                                                                                            |
+| BNK-US-003   | S-1902                                                                                                            |
+| BNK-US-004   | S-1901                                                                                                            |
+| API-US-001   | S-1310, S-2101                                                                                                    |
+| API-US-002   | S-1308                                                                                                            |
+| API-US-003   | S-2101; open point 9                                                                                              |
+| API-US-004   | S-2103                                                                                                            |
+| API-US-005   | S-2102                                                                                                            |
+| API-US-006   | S-2102                                                                                                            |
+| ENG-US-001   | S-1301, S-1302, S-1305                                                                                            |
+| ENG-US-002   | S-1301                                                                                                            |
+| ENG-US-003   | S-1302                                                                                                            |
+| ENG-US-004   | S-1302, S-1601 (one function does both)                                                                           |
+| UX-US-001    | S-1405                                                                                                            |
+| UX-US-002    | S-1405                                                                                                            |
+| UX-US-003    | Phase 1 — the signature and upload pages are reused by every request; S-1702                                      |
+| UX-US-004    | S-1403                                                                                                            |
+| UX-US-005    | S-1405                                                                                                            |
+| CFG-US-001   | S-1801                                                                                                            |
+| CFG-US-002   | Phase 1 — S-901's screen; S-1803 for the events                                                                   |
+| CFG-US-003   | S-1311                                                                                                            |
+| CFG-US-004   | S-1801                                                                                                            |
+| CFG-US-005   | S-1802                                                                                                            |
+| CFG-US-006   | S-1801                                                                                                            |
+| NOTIF-US-001 | S-1803, S-1705                                                                                                    |
+| NOTIF-US-002 | S-1804                                                                                                            |
+| NOTIF-US-003 | S-1804                                                                                                            |
+| NOTIF-US-004 | S-1805                                                                                                            |
+| NOTIF-US-005 | S-1602                                                                                                            |
+| NOTIF-US-006 | Phase 1 — S-904, `/admin/notifications`                                                                           |
+
+# Phase 2 open points
+
+The FRD closes its own open points. These are the ones the code raises. Each
+has a default the stories are written to, so none blocks the start of M13;
+each should be confirmed before the milestone that consumes it.
+
+| #   | Point                                                       | Needed by    | Default the backlog assumes                                                                               |
+| --- | ----------------------------------------------------------- | ------------ | --------------------------------------------------------------------------------------------------------- |
+| 1   | Which Phase 1 fee components open which balance             | M13 · S-1303 | `shares` → Shares, `msa_deposit` → MSA; entrance, processing, Takaful open nothing                        |
+| 2   | The full `member.status` vocabulary                         | M17 · S-1701 | What the code writes today plus `dormant`, `resigned`, `demised`                                          |
+| 3   | Dormancy: detection and reactivation (M8's S-804 to S-806)  | M15 · S-1501 | The status exists and blocks; nothing sets it. Detection stays deferred until it is scheduled             |
+| 4   | Payment method list and which need a reference              | M13 · S-1307 | FRD 6.6's list; cheque, transfers and bank methods require a reference                                    |
+| 5   | HSA / Investment as multi-instance per member               | M13          | One of each type per member (0018) stands; multi-instance is a later migration if wanted                  |
+| 6   | Receipt by email: link or attachment                        | M16 · S-1602 | A link; WhatsApp media is Should                                                                          |
+| 7   | Whether a pending withdrawal reserves balance               | M15 · S-1502 | Yes: available = balance − pending debits, as a query                                                     |
+| 8   | Transfer to a non-member: where the credit goes             | M15 · S-1504 | Nowhere: debit leg plus disbursement out, no credit leg                                                   |
+| 9   | One API surface for staff and member (API-US-003)           | M21          | Two surfaces on one framework and one engine, as Phase 4 built; the rules are identical, the paths differ |
+| 10  | Withdrawing from Shares below the holding minimum           | M15 · S-1501 | Refused; resignation is the only way below it                                                             |
+| 11  | A returned transaction whose amount crosses a matrix band   | M14 · S-1404 | Re-routed by the rule that now applies                                                                    |
+| 12  | Correcting a posted transaction                             | M15 · S-1505 | A reversing transaction, never an edit                                                                    |
+| 13  | Receipt number format and yearly reset (FRD shows RC-2026-) | M16 · S-1601 | `RCT-` continuous, as 0017; prefix becomes configuration; no yearly reset                                 |
+| 14  | Takaful / funeral benefit amount                            | M17 · S-1704 | Rs 15,000, configuration                                                                                  |
+| 15  | Minimum balance floors and approval thresholds per type     | M13 · S-1304 | Shares: the holding minimum; others 0; escalation threshold a single configured amount                    |
+| 16  | Board quorum on President's step for large disbursements    | M14          | 1 — `quorum_count` exists (0022) and can be raised without a release                                      |
 
 # Phase 4 — Member mobile app (AD-03) ✅ first slice
 
