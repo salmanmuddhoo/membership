@@ -1,0 +1,92 @@
+name: Deploy to Azure
+
+# Sends the app to the production Web App on Azure whenever `production`
+# moves — which, per docs/environments.md, only happens when someone
+# deliberately promotes it from `main`. There is no automatic Deployment
+# Center wizard involved: that wizard needs to commit a workflow file to the
+# branch itself and re-authorise a GitHub connection, either of which can
+# fail for reasons that show up only as a generic error with nothing to act
+# on. This file is that commit, written once and reviewed like any other
+# change instead.
+#
+# Requires one secret, on the "production" GitHub Environment (the same one
+# migrate.yml already uses for DATABASE_MIGRATION_URL):
+#
+#   AZURE_WEBAPP_PUBLISH_PROFILE — downloaded from the Web App's Overview
+#   page in the Azure portal ("Download publish profile"). It is the
+#   credential this workflow signs in with; treat it like a password.
+#
+# And one line below to edit once, by hand: the Web App's own name.
+#
+# The web app must also have the application setting
+# WEBSITE_RUN_FROM_PACKAGE = 1 (docs/deployment-azure.md, step 4). Without it
+# Azure tries to rebuild what arrives here itself — with npm, not pnpm, and
+# without the devDependencies this build needs — rather than simply running
+# what was already built and tested here.
+on:
+  push:
+    branches: [production]
+  workflow_dispatch: {}
+
+concurrency:
+  # Two deploys racing each other is worse than one waiting its turn.
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Build and deploy
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # astro.config.mjs's own default is the Azure (node) build — DEPLOY_
+      # TARGET is only what asks it for the Vercel one — so nothing needs
+      # setting here for this to come out right.
+      - name: Build
+        run: pnpm build
+
+      # Pruned to what the running app actually needs, after the build that
+      # needed the rest has already run: devDependencies (vitest, prettier,
+      # typescript, playwright — none of it ships) are dropped from
+      # node_modules in place, rather than shipping a copy of this
+      # repository's entire toolchain to a production server.
+      - name: Drop what only the build needed
+        run: pnpm install --prod --frozen-lockfile
+
+      # Assembled into its own folder rather than deployed from the checkout
+      # as it stands — the checkout also holds the source, the test suite
+      # and .git, none of which has any business on the server, and mixing
+      # them into the same zip only makes a future "why is this here"
+      # harder to answer.
+      - name: Assemble the deployable package
+        run: |
+          rm -rf deploy
+          mkdir -p deploy
+          cp -r dist deploy/dist
+          cp -r node_modules deploy/node_modules
+          cp package.json deploy/package.json
+
+      - name: Deploy to Azure Web App
+        uses: azure/webapps-deploy@v3
+        with:
+          # CHANGE THIS — the Web App's own name, from step 3 of the guide.
+          app-name: albarakah-production
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: deploy
