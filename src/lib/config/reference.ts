@@ -335,6 +335,15 @@ export interface AccountType {
   // this: HSA's own rows naming only Individual and Minor, not a special
   // case anywhere in code.
   eligibleMembershipTypeIds: string[];
+  // S-1304: what the engine reads before it moves money on an account of
+  // this type (migration 0065). One floor, read identically by a withdrawal
+  // and a transfer out; three switches for what the type accepts at all;
+  // and a per-transaction cap, null for none.
+  minimumBalance: string;
+  allowsDeposit: boolean;
+  allowsWithdrawal: boolean;
+  allowsTransfer: boolean;
+  maximumTransactionAmount: string | null;
 }
 
 // numeric comes back from node-postgres as a string, and it stays one all the
@@ -355,11 +364,18 @@ async function readAccountTypes(): Promise<AccountType[]> {
     is_active: boolean;
     sort_order: number;
     number_prefix: string | null;
+    minimum_balance: string;
+    allows_deposit: boolean;
+    allows_withdrawal: boolean;
+    allows_transfer: boolean;
+    maximum_transaction_amount: string | null;
   }>(
     `select a.id, a.code, a.name, a.category, a.minimum_opening_amount,
             a.checklist_id, c.name as checklist_name,
             a.requires_approval, a.default_status, a.is_membership_default,
-            a.is_active, a.sort_order, a.number_prefix
+            a.is_active, a.sort_order, a.number_prefix,
+            a.minimum_balance, a.allows_deposit, a.allows_withdrawal,
+            a.allows_transfer, a.maximum_transaction_amount
        from account_type a
        left join document_checklist c on c.id = a.checklist_id
       order by a.sort_order, a.name`
@@ -396,6 +412,11 @@ async function readAccountTypes(): Promise<AccountType[]> {
     sortOrder: r.sort_order,
     eligibleMembershipTypeIds: eligibleByType.get(r.id) ?? [],
     numberPrefix: r.number_prefix,
+    minimumBalance: r.minimum_balance,
+    allowsDeposit: r.allows_deposit,
+    allowsWithdrawal: r.allows_withdrawal,
+    allowsTransfer: r.allows_transfer,
+    maximumTransactionAmount: r.maximum_transaction_amount,
   }));
 }
 
@@ -410,6 +431,16 @@ export interface AccountTypeInput {
   // S-614: optional — most account types (Shares, the MSA) never open
   // through the customer_account flow and need no number of their own.
   numberPrefix?: string | null;
+  // S-1304: the type's limits. Optional so that a caller with no opinion
+  // on them — a test, an import — can leave them alone: on create an omitted
+  // one takes the column's default (a floor of 0, everything allowed, no
+  // cap), and on update an omitted one is left as it stands. The
+  // configuration screen sends all five, every time.
+  minimumBalance?: string;
+  allowsDeposit?: boolean;
+  allowsWithdrawal?: boolean;
+  allowsTransfer?: boolean;
+  maximumTransactionAmount?: string | null;
 }
 
 const CODE_PATTERN = /^[a-z][a-z0-9_]{1,39}$/;
@@ -421,6 +452,45 @@ function validateAmount(amount: string): void {
       'An amount must be a number with at most two decimal places.'
     );
   }
+}
+
+// The five limit columns as they go to the database: a trimmed amount or
+// null where the caller said nothing, so the same list serves an insert that
+// falls back to the column default and an update that coalesces to the
+// current value. A blank cap is no cap; a cap of zero is refused here, with
+// a reason, rather than by the check constraint with a constraint name.
+function limitsFor(input: {
+  minimumBalance?: string;
+  allowsDeposit?: boolean;
+  allowsWithdrawal?: boolean;
+  allowsTransfer?: boolean;
+  maximumTransactionAmount?: string | null;
+}): [
+  string | null,
+  boolean | null,
+  boolean | null,
+  boolean | null,
+  string | null,
+] {
+  const floor = input.minimumBalance?.trim();
+  if (floor !== undefined) validateAmount(floor);
+  const cap = input.maximumTransactionAmount?.trim() || null;
+  if (cap !== null) {
+    validateAmount(cap);
+    if (Number(cap) === 0) {
+      throw new ConfigError(
+        'A maximum transaction amount must be above zero. Leave it blank ' +
+          'for no limit.'
+      );
+    }
+  }
+  return [
+    floor === undefined ? null : floor,
+    input.allowsDeposit ?? null,
+    input.allowsWithdrawal ?? null,
+    input.allowsTransfer ?? null,
+    input.maximumTransactionAmount === undefined ? null : cap,
+  ];
 }
 
 export async function createAccountType(
@@ -436,6 +506,7 @@ export async function createAccountType(
   }
   if (!input.name.trim()) throw new ConfigError('A name is required.');
   validateAmount(input.minimumOpeningAmount);
+  const limits = limitsFor(input);
 
   return withConfigurationActor(actorFor(actor), async client => {
     const existing = await client.query(
@@ -450,12 +521,19 @@ export async function createAccountType(
     }
 
     const result = await client.query<{ id: string }>(
+      // The limits fall back to the column defaults (0065) where the caller
+      // gave none — `default` in a values list cannot be parameterised, so
+      // the fallback is spelled out here and must agree with the migration.
       `insert into account_type
          (code, name, category, minimum_opening_amount, checklist_id,
           requires_approval, default_status, number_prefix,
-          sort_order)
+          sort_order, minimum_balance, allows_deposit, allows_withdrawal,
+          allows_transfer, maximum_transaction_amount)
        values ($1, $2, $3, $4, $5, $6, $7, $8,
-               coalesce((select max(sort_order) + 1 from account_type), 1))
+               coalesce((select max(sort_order) + 1 from account_type), 1),
+               coalesce($9::numeric, 0), coalesce($10::boolean, true),
+               coalesce($11::boolean, true), coalesce($12::boolean, true),
+               $13::numeric)
        returning id`,
       [
         code,
@@ -466,6 +544,7 @@ export async function createAccountType(
         input.requiresApproval,
         input.defaultStatus,
         input.numberPrefix?.trim() || null,
+        ...limits,
       ]
     );
     return result.rows[0].id;
@@ -479,6 +558,7 @@ export async function updateAccountType(
 ): Promise<void> {
   if (!input.name.trim()) throw new ConfigError('A name is required.');
   validateAmount(input.minimumOpeningAmount);
+  const limits = limitsFor(input);
 
   await withConfigurationActor(actorFor(actor), async client => {
     // Deactivating the last product a membership opens would leave an
@@ -505,10 +585,21 @@ export async function updateAccountType(
     }
 
     const result = await client.query(
+      // A limit the caller did not mention keeps its value. The cap is the
+      // one that cannot coalesce — null is a value there (no limit) — so a
+      // caller who wants it left alone omits the key rather than passing
+      // null, which limitsFor() tells apart.
       `update account_type
           set name = $2, category = $3, minimum_opening_amount = $4,
               checklist_id = $5, requires_approval = $6, default_status = $7,
-              is_active = $8, number_prefix = $9
+              is_active = $8, number_prefix = $9,
+              minimum_balance = coalesce($10::numeric, minimum_balance),
+              allows_deposit = coalesce($11::boolean, allows_deposit),
+              allows_withdrawal = coalesce($12::boolean, allows_withdrawal),
+              allows_transfer = coalesce($13::boolean, allows_transfer),
+              maximum_transaction_amount = case
+                when $15::boolean then $14::numeric
+                else maximum_transaction_amount end
         where id = $1`,
       [
         id,
@@ -520,6 +611,8 @@ export async function updateAccountType(
         input.defaultStatus,
         input.isActive,
         input.numberPrefix?.trim() || null,
+        ...limits,
+        input.maximumTransactionAmount !== undefined,
       ]
     );
     if (result.rowCount === 0) {

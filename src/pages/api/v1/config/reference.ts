@@ -149,6 +149,20 @@ const read = defineEndpoint(
                   'approval opens.',
               },
               isActive: { type: 'boolean' },
+              minimumBalance: {
+                type: 'string',
+                description:
+                  'The balance an account of this type may not fall below.',
+              },
+              allowsDeposit: { type: 'boolean' },
+              allowsWithdrawal: { type: 'boolean' },
+              allowsTransfer: { type: 'boolean' },
+              maximumTransactionAmount: {
+                type: 'string',
+                nullable: true,
+                description:
+                  'The most one transaction may carry; null for no limit.',
+              },
             },
           },
         },

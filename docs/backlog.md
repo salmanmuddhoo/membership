@@ -3447,6 +3447,24 @@ Nothing creates a transaction row yet. This increment changes the behaviour
 of nothing on its own; the deposit that first uses it is S-1305's own change,
 as M11's schema-first phase was.
 
+**Shipped, second increment** (S-1304): each account type now carries what
+the engine will read before it moves money. Migration 0065 adds
+`minimum_balance` (one floor — FRD 4.3 is explicit that a withdrawal and a
+transfer do not have separate ones), `allows_deposit`, `allows_withdrawal`,
+`allows_transfer` and `maximum_transaction_amount` (null for no limit; zero
+is refused, since that is what the switches are for). Nothing is blank on
+day one: every type defaults to a floor of 0, everything allowed and no cap,
+and Shares' floor is set from its opening minimum — the 5000 of 0018 — at
+migration time. All five are on Configuration → Account types, on both
+forms, and the existing configuration trigger audits them with the rest of
+the row; the reference API returns them. In `AccountTypeInput` they are
+optional: omitted means the column default on create and unchanged on
+update, so the dozen existing callers with no opinion on limits did not
+change, while the screen always sends all five, so an emptied cap there
+means cleared. Enforcement is deliberately not here — a floor is read by a
+withdrawal (M14) and a transfer (M15), a cap and the switches by every
+kind, and each arrives with the kind that needs it.
+
 ### S-1301 · The account ledger ✅
 
 **As** the Society, **I need** every movement of money on an account to be
@@ -3514,7 +3532,7 @@ an officer sees is right. _(ACC-US-004, FRD 4.1, open point 1)_
   posts the same opening entries through `post_transaction()` (S-1305), so
   the backfill is one-time and the live path is the engine
 
-### S-1304 · Account types learn their limits
+### S-1304 · Account types learn their limits ✅
 
 **As** an administrator, **I need** each account type to carry its floor,
 its limits and what is allowed on it, **so that** the rules are configuration

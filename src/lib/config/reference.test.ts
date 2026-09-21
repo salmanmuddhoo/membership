@@ -778,6 +778,171 @@ describe('S-206: the accounts a membership opens', () => {
   });
 });
 
+// S-1304: the limits the transaction engine reads before it moves money on
+// an account of a type (migration 0065). Nothing enforces them yet — that is
+// M14 and M15 — so what is asserted here is that they exist, seed sensibly,
+// round-trip through the service, and audit like the rest of the row.
+describe('S-1304: an account type carries its limits', () => {
+  const base = {
+    category: 'savings',
+    minimumOpeningAmount: '0',
+    checklistId: null,
+    requiresApproval: false,
+    defaultStatus: 'active',
+  };
+
+  it('ships every type with a working value; Shares with a floor equal to its opening minimum', async () => {
+    const { config } = await load();
+    const types = await config.listAccountTypes();
+    const shares = types.find(t => t.code === 'shares')!;
+    const msa = types.find(t => t.code === 'msa')!;
+
+    // Set at migration time from the 5000 the seed carries (0018), whatever
+    // the opening minimum has been changed to since by the tests above.
+    expect(shares.minimumBalance).toBe('5000.00');
+    expect(msa.minimumBalance).toBe('0.00');
+    for (const type of [shares, msa]) {
+      expect(type.allowsDeposit).toBe(true);
+      expect(type.allowsWithdrawal).toBe(true);
+      expect(type.allowsTransfer).toBe(true);
+      expect(type.maximumTransactionAmount).toBeNull();
+    }
+  });
+
+  it('takes the defaults when a caller says nothing about limits', async () => {
+    const { config } = await load();
+    const id = await config.createAccountType(
+      { ...base, code: 'limits_default', name: 'Limits default' },
+      actor
+    );
+    const type = (await config.listAccountTypes()).find(t => t.id === id)!;
+    expect(type.minimumBalance).toBe('0.00');
+    expect(type.allowsDeposit).toBe(true);
+    expect(type.allowsWithdrawal).toBe(true);
+    expect(type.allowsTransfer).toBe(true);
+    expect(type.maximumTransactionAmount).toBeNull();
+  });
+
+  it('stores the limits a caller gives, and leaves alone what a later call does not mention', async () => {
+    const { config } = await load();
+    const id = await config.createAccountType(
+      {
+        ...base,
+        code: 'limits_given',
+        name: 'Limits given',
+        minimumBalance: '250',
+        allowsWithdrawal: false,
+        maximumTransactionAmount: '100000',
+      },
+      actor
+    );
+    const read = async () =>
+      (await config.listAccountTypes()).find(t => t.id === id)!;
+
+    let type = await read();
+    expect(type.minimumBalance).toBe('250.00');
+    expect(type.allowsDeposit).toBe(true);
+    expect(type.allowsWithdrawal).toBe(false);
+    expect(type.allowsTransfer).toBe(true);
+    expect(type.maximumTransactionAmount).toBe('100000.00');
+
+    // An update with no opinion on the limits changes nothing about them.
+    await config.updateAccountType(
+      id,
+      { ...base, name: 'Limits renamed', isActive: true },
+      actor
+    );
+    type = await read();
+    expect(type.name).toBe('Limits renamed');
+    expect(type.minimumBalance).toBe('250.00');
+    expect(type.allowsWithdrawal).toBe(false);
+    expect(type.maximumTransactionAmount).toBe('100000.00');
+
+    // One that names them changes them, and a blank cap is no cap — the
+    // configuration screen sends all five every time, so an emptied field
+    // there has to mean "cleared", not "unchanged".
+    await config.updateAccountType(
+      id,
+      {
+        ...base,
+        name: 'Limits renamed',
+        isActive: true,
+        minimumBalance: '0',
+        allowsDeposit: true,
+        allowsWithdrawal: true,
+        allowsTransfer: false,
+        maximumTransactionAmount: null,
+      },
+      actor
+    );
+    type = await read();
+    expect(type.minimumBalance).toBe('0.00');
+    expect(type.allowsWithdrawal).toBe(true);
+    expect(type.allowsTransfer).toBe(false);
+    expect(type.maximumTransactionAmount).toBeNull();
+  });
+
+  it('refuses a cap of zero, and a floor that is not an amount', async () => {
+    const { config } = await load();
+    await expect(
+      config.createAccountType(
+        {
+          ...base,
+          code: 'limits_zero_cap',
+          name: 'x',
+          maximumTransactionAmount: '0',
+        },
+        actor
+      )
+    ).rejects.toThrowError(/above zero/);
+    await expect(
+      config.createAccountType(
+        { ...base, code: 'limits_bad_floor', name: 'x', minimumBalance: 'ten' },
+        actor
+      )
+    ).rejects.toThrowError(/two decimal places/);
+  });
+
+  it('audits a change to a limit like any other field on the row', async () => {
+    const { config } = await load();
+    const shares = (await config.listAccountTypes()).find(
+      t => t.code === 'shares'
+    )!;
+    const fields = {
+      name: shares.name,
+      category: shares.category,
+      minimumOpeningAmount: shares.minimumOpeningAmount,
+      checklistId: shares.checklistId,
+      requiresApproval: shares.requiresApproval,
+      defaultStatus: shares.defaultStatus,
+      isActive: true,
+    };
+    await config.updateAccountType(
+      shares.id,
+      { ...fields, minimumBalance: '5500' },
+      actor
+    );
+    try {
+      const audited = await run(
+        appUrl,
+        `select previous_value->>'minimum_balance' as before,
+                new_value->>'minimum_balance' as after
+           from audit_event
+          where action = 'config.account_type.update' and entity_id = $1
+          order by occurred_at desc limit 1`,
+        [shares.id]
+      );
+      expect(audited.rows[0]).toEqual({ before: '5000.00', after: '5500.00' });
+    } finally {
+      await config.updateAccountType(
+        shares.id,
+        { ...fields, minimumBalance: '5000' },
+        actor
+      );
+    }
+  });
+});
+
 describe('S-207: fee schedules', () => {
   // Shares is what makes someone a member and is mandatory. The MSA deposit is
   // optional: the account opens either way, and whether money goes into it at
@@ -1778,6 +1943,11 @@ describe('openableAccountTypes', () => {
     isActive: true,
     sortOrder: 0,
     numberPrefix: null,
+    minimumBalance: '0.00',
+    allowsDeposit: true,
+    allowsWithdrawal: true,
+    allowsTransfer: true,
+    maximumTransactionAmount: null,
   };
   const shares = {
     ...base,
