@@ -121,6 +121,15 @@ A deposit below the escalation threshold has no chain (FRD 6.2), so it posts
 on submit; M14 puts the threshold in front of this call. `transaction.capture`
 is the permission, held by whoever holds `payment.record`.
 
+Two ways in, one form. **Deposit** on the person's page (in the banner, with
+the other kinds as they arrive) opens `/members/{id}/deposit` with their
+accounts to choose from. **Transactions** in the sidebar shows every kind as
+a card — Deposit live, the rest arriving with their milestones — and Deposit
+there asks for the account type and its number (the member's own for Shares
+and the MSA, the account's own for an HSA or Investment;
+`findAccountByNumber`, `src/lib/ledger/lookup.ts`), then opens the same form
+with that account chosen.
+
 ## Where a balance is read
 
 - **The member's page** shows each account's balance from the cache, with a

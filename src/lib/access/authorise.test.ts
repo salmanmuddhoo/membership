@@ -145,6 +145,10 @@ describe('the live route map', () => {
     expect(requiredPermissionFor('/members/some-id/deposit')).toBe(
       'member.view'
     );
+    expect(requiredPermissionFor('/transactions')).toBe('transaction.capture');
+    expect(requiredPermissionFor('/transactions/deposit')).toBe(
+      'transaction.capture'
+    );
   });
 
   it('protects the administration pages by name', () => {

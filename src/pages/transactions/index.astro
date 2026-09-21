@@ -1,0 +1,67 @@
+---
+// Transactions (officer feedback): one place to start any movement of money,
+// rather than finding the person first. Each card is a kind; the ones a
+// later milestone brings are here already, unavailable, so the shape of the
+// page does not change under an officer as they arrive.
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+
+const KINDS: { label: string; href: string | null; blurb: string }[] = [
+  {
+    label: 'Deposit',
+    href: '/transactions/deposit',
+    blurb: 'Money into a Shares, MSA or other account.',
+  },
+  { label: 'Withdrawal', href: null, blurb: 'Money out of an account.' },
+  { label: 'Transfer', href: null, blurb: 'Between accounts, or out.' },
+  { label: 'Resignation', href: null, blurb: 'A member leaves the Society.' },
+  {
+    label: 'Closure',
+    href: null,
+    blurb: 'Close an HSA or Investment account.',
+  },
+  {
+    label: 'Demise',
+    href: null,
+    blurb: 'Settle a deceased member’s accounts.',
+  },
+];
+---
+
+<DashboardLayout title="Transactions · Al Barakah MCSL" heading="Transactions">
+  <div class="mx-auto max-w-4xl">
+    <ul class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      {KINDS.map(kind =>
+        kind.href ? (
+          <li>
+            <a
+              href={kind.href}
+              class="block rounded-2xl border border-neutral-200 bg-neutral-100 p-6 transition hover:border-mint-400 hover:bg-white dark:border-neutral-800 dark:bg-neutral-950 dark:hover:border-mint-700 dark:hover:bg-neutral-900"
+            >
+              <span class="block text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+                {kind.label}
+              </span>
+              <span class="mt-1 block text-sm text-neutral-500 dark:text-neutral-400">
+                {kind.blurb}
+              </span>
+            </a>
+          </li>
+        ) : (
+          <li
+            aria-disabled="true"
+            class="rounded-2xl border border-dashed border-neutral-300 p-6 opacity-60 dark:border-neutral-700"
+          >
+            <span class="block text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+              {kind.label}
+            </span>
+            <span class="mt-1 block text-sm text-neutral-500 dark:text-neutral-400">
+              {kind.blurb}
+            </span>
+            <span class="mt-2 inline-block rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
+              Not yet available
+            </span>
+          </li>
+        )
+      )}
+    </ul>
+  </div>
+</DashboardLayout>

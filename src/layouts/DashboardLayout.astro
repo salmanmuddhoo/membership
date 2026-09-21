@@ -83,6 +83,9 @@ const navGroups: NavGroup[] = [
   {
     label: 'Money',
     items: [
+      ...(can('transaction.capture')
+        ? [{ label: 'Transactions', href: '/transactions', icon: 'reports' }]
+        : []),
       ...(can('receipt.reconcile')
         ? [
             {

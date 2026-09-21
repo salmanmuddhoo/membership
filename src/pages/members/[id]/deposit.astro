@@ -48,6 +48,10 @@ const depositable = accounts.filter(
 );
 
 const paymentMethods = await offeredPaymentMethods();
+// From the Transactions page (officer feedback): the account is already
+// chosen, and the way back is there rather than to the person's page.
+const requestedAccount = Astro.url.searchParams.get('account') ?? '';
+const fromTransactions = Astro.url.searchParams.get('from') === 'transactions';
 const cashThreshold = await cashSourceOfFundThreshold();
 const cashMax = await cashMaximum();
 
@@ -64,7 +68,10 @@ let values: Record<
   | 'idempotencyKey',
   string
 > = {
-  accountId: depositable[0]?.id ?? '',
+  accountId:
+    depositable.find(a => a.id === requestedAccount)?.id ??
+    depositable[0]?.id ??
+    '',
   amount: '',
   method: paymentMethods[0]?.code ?? '',
   methodReference: '',
@@ -116,7 +123,15 @@ const INPUT =
 
 <DashboardLayout title="Deposit · Al Barakah MCSL" heading="Record a deposit">
   <div class="mx-auto max-w-3xl space-y-6">
-    <p class="text-sm text-neutral-600 dark:text-neutral-300">
+    <p class="flex flex-wrap items-center gap-x-3 text-sm text-neutral-600 dark:text-neutral-300">
+      {fromTransactions && (
+        <a
+          href="/transactions"
+          class="text-neutral-500 underline dark:text-neutral-400"
+        >
+          ← Transactions
+        </a>
+      )}
       <a
         href={`/members/${person.id}`}
         class="font-medium underline hover:text-neutral-900 dark:hover:text-neutral-100"
@@ -166,7 +181,11 @@ const INPUT =
             Back to {member ? 'member' : 'customer'}
           </a>
           <a
-            href={`/members/${person.id}/deposit`}
+            href={
+              fromTransactions
+                ? '/transactions/deposit'
+                : `/members/${person.id}/deposit`
+            }
             class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
           >
             Record another

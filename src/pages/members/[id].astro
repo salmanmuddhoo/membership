@@ -314,12 +314,28 @@ const pageTitle = member ? member.memberNo : name;
   heading={member ? `Member ${member.memberNo}` : name}
 >
   <div class="mx-auto max-w-4xl space-y-6">
-    <a
-      href="/members"
-      class="inline-block text-sm text-neutral-500 underline dark:text-neutral-400"
-    >
-      ← All members
-    </a>
+    <div class="flex flex-wrap items-center justify-between gap-2">
+      <a
+        href="/members"
+        class="inline-block text-sm text-neutral-500 underline dark:text-neutral-400"
+      >
+        ← All members
+      </a>
+      {/* Officer feedback: the transactions an officer starts on this
+          person, up here where they are reached first. Deposit today; each
+          later kind (Transfer, Withdrawal, …) joins it as it arrives, and the
+          Transactions page starts the same ones from a number instead. */}
+      {canDeposit && (
+        <div class="flex flex-wrap gap-2">
+          <a
+            href={`/members/${recordId}/deposit`}
+            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+          >
+            Deposit
+          </a>
+        </div>
+      )}
+    </div>
 
     {error && (
       <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
@@ -620,19 +636,9 @@ const pageTitle = member ? member.memberNo : name;
     )}
 
     <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-      <div class="flex flex-wrap items-center justify-between gap-2">
-        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-          Accounts
-        </h2>
-        {canDeposit && (
-          <a
-            href={`/members/${recordId}/deposit`}
-            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
-          >
-            Record a deposit
-          </a>
-        )}
-      </div>
+      <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+        Accounts
+      </h2>
       {(member ?? customer)!.accounts.length === 0 ? (
         <p class="mt-1 text-sm text-red-700 dark:text-red-300">
           {member
