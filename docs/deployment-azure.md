@@ -132,6 +132,59 @@ Then create the database itself inside the server:
 > **If you skip the firewall rules**, the site will load but every page will
 > fail with a database error. That is the symptom to recognise.
 
+### One more thing this server needs before anything can be built on it
+
+The admin account you just made is not the one the application connects as
+day to day — that is a separate, much more limited account named
+`albarakah_app`, which can read and write rows but is not allowed to change
+the database's structure. Nothing creates it for you. Do this now, while the
+server is fresh in your mind, rather than after a migration fails on it.
+
+18. Still on the server, find **Server parameters** in the left-hand menu.
+    Search for **`azure.extensions`**, and add `PGCRYPTO` and `CITEXT` to its
+    value — a comma-separated list; add to whatever is already there rather
+    than replacing it. Click **Save**. (Azure blocks every extension by
+    default; the very first migration needs these two.)
+19. Open **Cloud Shell** — the `>_` icon in the portal's top toolbar. Accept
+    the defaults if it asks to create storage, and choose **Bash** if asked.
+    It comes with `psql` already installed; nothing to download.
+20. Run, with your own server name and admin username in place of the two
+    placeholders:
+
+    ```
+    psql "host=<server-name>.postgres.database.azure.com port=5432 dbname=albarakah user=<admin-username> sslmode=require"
+    ```
+
+    It asks for the admin password — paste it. Nothing appears on screen
+    while you do; that is normal for a password prompt, not a fault.
+
+21. **You should see** a prompt reading `albarakah=>`. Paste this, making up
+    a **new** password where marked — never the admin's own — and putting
+    your own admin username in place of the one placeholder that needs it:
+
+    ```sql
+    CREATE ROLE albarakah_app WITH LOGIN PASSWORD '<make one up>';
+    REVOKE ALL ON SCHEMA public FROM PUBLIC;
+    GRANT ALL ON SCHEMA public TO "<admin-username>";
+    GRANT CONNECT ON DATABASE albarakah TO albarakah_app;
+    GRANT USAGE ON SCHEMA public TO albarakah_app;
+    ```
+
+    That third line is easy to think unnecessary — surely the admin account
+    can already do everything? On Azure specifically, no: this admin is a
+    member of a powerful group role, not a true Postgres superuser the way
+    the `postgres` account is on your own machine, and it does not bypass
+    permission checks the way a real superuser does. It could create things
+    in `public` only because of a default right every account starts with,
+    and the line above it — a real hardening step, not a mistake — just took
+    that default away from every account, admin included. This puts it back,
+    for the admin specifically, without reopening it to everyone.
+
+22. **Write that password down now.** It is `albarakah_app`'s own, and it is
+    what `DATABASE_URL` in step 4 is built from — not the admin's password,
+    which goes only into `DATABASE_MIGRATION_URL` in step 6.
+23. Type `\q` and press Enter to leave `psql`.
+
 ## Step 3 — Create the web app
 
 1. In the search box, type **App Services** and click it.
@@ -349,15 +402,22 @@ schema through migrations — numbered files, applied in order, recorded as they
 go, so the same set never runs twice.
 
 There is already a workflow for this at `.github/workflows/migrate.yml`. It
-needs one secret:
+needs one secret, on the same **production** GitHub Environment as step 5's:
 
-1. On GitHub, go to the repository's **Settings** → **Secrets and variables**
-   → **Actions**.
-2. Add a secret named **`DATABASE_MIGRATION_URL`**. Its value is the same
-   connection string as `DATABASE_URL`, but using the **admin** username and
-   password from step 2 — applying migrations needs permission to change the
-   structure, which the app's own account deliberately does not have.
-3. Run the migrate workflow from the **Actions** tab.
+1. On GitHub, go to the repository's **Settings → Environments → production**
+   (create it first if step 5 has not already).
+2. Add an **environment secret** named **`DATABASE_MIGRATION_URL`**. Build it
+   the same way as `DATABASE_URL` in step 4, but with the **admin** username
+   and password from step 2 — never `albarakah_app`. Applying migrations
+   needs permission to change the database's structure, which `albarakah_app`
+   is deliberately never given:
+
+   ```
+   postgresql://<admin-username>:<admin-password>@<server-name>.postgres.database.azure.com:5432/albarakah?sslmode=require
+   ```
+
+3. Run the migrate workflow from the **Actions** tab (**Apply migrations** →
+   **Run workflow** → choose **production**).
 
 **You should see** it report the migrations it applied. Run it a second time:
 it should report that there is nothing to do. That is how you know the record
@@ -366,6 +426,14 @@ of what has run is working.
 > This secret belongs on GitHub, not in the web app's settings. The running
 > site never needs the power to change the database structure, and giving it
 > that power is worth avoiding.
+>
+> **If this fails with "password authentication failed for user
+> `albarakah_app`"**, this secret has `albarakah_app`'s connection string in
+> it rather than the admin's — an easy mix-up, since the two strings differ
+> by only a username and a password. Rebuild it with the admin account. And
+> if `albarakah_app` was never created at all (step 2, items 18–23), the
+> error names the admin account instead, since Azure gives the same message
+> either way rather than confirming which usernames exist.
 
 ## Step 7 — Point the domain at it
 
@@ -468,6 +536,10 @@ who to escalate to — are in `docs/runbook.md`.
 | Documents will not open                                                     | The `GRAPH_*` settings are wrong or point at the test library                                           | Check them against `docs/documents.md`; production must use its own SharePoint site                                              |
 | The GitHub Actions run fails at "Deploy to Azure Web App"                   | The publish profile secret is missing or wrong, or the web app name in the workflow file does not match | Re-check the `AZURE_WEBAPP_PUBLISH_PROFILE` secret (step 5) and the `app-name` line in `.github/workflows/deploy-production.yml` |
 | The run succeeds but the site still shows the placeholder or an old version | `WEBSITE_RUN_FROM_PACKAGE` is not set to `1` (step 4), so Azure is trying to rebuild the code itself    | Add or fix that setting, then re-run the workflow from the Actions tab                                                           |
+| Migrations fail: "password authentication failed for user ..."              | `DATABASE_MIGRATION_URL` holds the wrong account, or `albarakah_app` was never created                  | See step 6's note directly below its instructions                                                                                |
+| The first migration fails mentioning `pgcrypto` or `citext`                 | The two extensions were never allow-listed on the server                                                | Step 2, item 18 — `azure.extensions` under Server parameters                                                                     |
+| Migrations fail: "database ... does not exist"                              | The database was created under a different name than `albarakah`                                        | Rename it to match — `ALTER DATABASE <what-you-called-it> RENAME TO albarakah;`, connected to a different database               |
+| Migrations fail: "permission denied for schema public"                      | The admin account lost its own rights on `public` when step 2's `REVOKE ALL ... FROM PUBLIC` ran        | Step 2, item 21 — the `GRANT ALL ON SCHEMA public TO "<admin-username>"` line restores it                                        |
 
 ## What stays on Vercel
 
