@@ -1,0 +1,132 @@
+---
+// Deposit, from the Transactions page (officer feedback): pick the account
+// type, enter its number — the member's AB number for Shares and the MSA,
+// the account's own number for an HSA or Investment — and land on the same
+// deposit form the person's page opens, with that account chosen.
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import { listAccountTypes } from '@lib/config/reference';
+import { PERMISSION_CAPTURE } from '@lib/ledger/deposits';
+import { findAccountByNumber } from '@lib/ledger/lookup';
+
+const principal = Astro.locals.principal!;
+if (!principal.permissions.has(PERMISSION_CAPTURE)) {
+  return Astro.redirect('/denied');
+}
+
+const types = (await listAccountTypes()).filter(t => t.isActive);
+const depositable = types.filter(t => t.allowsDeposit);
+
+const typeId = Astro.url.searchParams.get('type') ?? '';
+const number = Astro.url.searchParams.get('number') ?? '';
+const chosen = depositable.find(t => t.id === typeId) ?? null;
+
+let error: string | null = null;
+if (chosen && number.trim()) {
+  const found = await findAccountByNumber(chosen.id, number);
+  if (found) {
+    return Astro.redirect(
+      `/members/${found.holderId}/deposit?account=${found.accountId}&from=transactions`
+    );
+  }
+  error = `No ${chosen.name} account ${number.trim().toUpperCase()}.`;
+} else if (typeId && !chosen) {
+  error = 'Choose an account type that accepts deposits.';
+}
+
+const INPUT =
+  'mt-1 block w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100';
+---
+
+<DashboardLayout title="Deposit · Al Barakah MCSL" heading="Deposit">
+  <div class="mx-auto max-w-2xl space-y-6">
+    <a
+      href="/transactions"
+      class="inline-block text-sm text-neutral-500 underline dark:text-neutral-400"
+    >
+      ← Transactions
+    </a>
+
+    {error && (
+      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+        {error}
+      </div>
+    )}
+
+    <form
+      method="get"
+      data-deposit-lookup
+      class="space-y-4 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
+    >
+      <fieldset>
+        <legend class="text-sm text-neutral-600 dark:text-neutral-300">
+          Account
+        </legend>
+        <div class="mt-2 flex flex-wrap gap-2">
+          {depositable.map(type => (
+            <label class="cursor-pointer">
+              <input
+                type="radio"
+                name="type"
+                value={type.id}
+                data-membership-default={
+                  type.isMembershipDefault ? 'true' : 'false'
+                }
+                data-prefix={type.numberPrefix ?? ''}
+                checked={type.id === (chosen?.id ?? depositable[0]?.id)}
+                class="peer sr-only"
+              />
+              <span class="peer-checked:bg-mint-300 peer-checked:border-mint-400 peer-focus-visible:ring-mint-400 inline-block rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm font-medium text-neutral-800 transition peer-focus-visible:ring-2 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100">
+                {type.name}
+              </span>
+            </label>
+          ))}
+        </div>
+      </fieldset>
+
+      <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+        <span data-number-label>Member number</span>
+        <input
+          type="text"
+          name="number"
+          required
+          autofocus
+          autocomplete="off"
+          value={number}
+          data-number
+          placeholder="AB0001"
+          class={INPUT}
+        />
+      </label>
+
+      <button
+        type="submit"
+        class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+      >
+        Find account
+      </button>
+    </form>
+  </div>
+</DashboardLayout>
+
+<script>
+  // The label follows the type: a member's own number for Shares and the
+  // MSA, the account's own for anything else (migrations 0018, 0027).
+  const form = document.querySelector<HTMLFormElement>('[data-deposit-lookup]');
+  if (form) {
+    const label = form.querySelector<HTMLElement>('[data-number-label]');
+    const input = form.querySelector<HTMLInputElement>('[data-number]');
+    const update = () => {
+      const chosen = form.querySelector<HTMLInputElement>(
+        'input[name="type"]:checked'
+      );
+      const own = chosen?.dataset.membershipDefault === 'true';
+      const prefix = chosen?.dataset.prefix || 'HSA';
+      if (label) label.textContent = own ? 'Member number' : 'Account number';
+      if (input) input.placeholder = own ? 'AB0001' : `${prefix}0001`;
+    };
+    for (const radio of form.querySelectorAll('input[name="type"]')) {
+      radio.addEventListener('change', update);
+    }
+    update();
+  }
+</script>

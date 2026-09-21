@@ -3581,6 +3581,17 @@ not void the receipt. Nothing consults them yet on the one-act deposit;
 M14's post and approve actions and S-1505's void do. M13's one open end
 is S-1306's filed Source of Fund document for a deposit (◐).
 
+**Officer feedback, after M13:** a **Transactions** page (sidebar, under
+Money) with a card per kind — Deposit, Withdrawal, Transfer, Resignation,
+Closure, Demise; only Deposit is live, the others are on the page already,
+unavailable, so the shape does not change as they arrive. Deposit there
+starts from the account type and its number — the member's AB number for
+Shares and the MSA, the account's own number for an HSA or Investment
+(`findAccountByNumber`) — and lands on the same deposit form the person's
+page opens, with that account chosen. On the person's page the button is
+now **Deposit**, in the top banner beside "← All members", where the other
+kinds will join it; it is no longer in the Accounts section.
+
 ### S-1301 · The account ledger ✅
 
 **As** the Society, **I need** every movement of money on an account to be

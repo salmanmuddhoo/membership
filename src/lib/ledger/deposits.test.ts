@@ -387,6 +387,42 @@ describe('recording a deposit', () => {
     }
   });
 
+  // Officer feedback: the Transactions page finds the account from the
+  // type and a number — the member's own for Shares and the MSA, the
+  // account's own for the rest.
+  it('finds an account from its type and number, however the number is typed', async () => {
+    await load();
+    const { findAccountByNumber } = await import('./lookup');
+    const memberNo = (
+      await run(appUrl, `select member_no from member where id = $1`, [
+        memberId,
+      ])
+    ).rows[0].member_no as string;
+    const types = Object.fromEntries(
+      (await run(appUrl, `select code, id from account_type`)).rows.map(r => [
+        r.code,
+        r.id,
+      ])
+    );
+
+    const byMember = await findAccountByNumber(
+      types.shares,
+      ` ${memberNo.toLowerCase()} `
+    );
+    expect(byMember).toMatchObject({
+      accountId: shares,
+      accountNo: memberNo,
+      holderId: memberId,
+      holderKind: 'member',
+    });
+    const byAccount = await findAccountByNumber(types.hsa, 'hsa0001');
+    expect(byAccount).toMatchObject({ accountId: hsa, accountNo: 'HSA0001' });
+    // The number is read against the type asked for, never across types.
+    expect(await findAccountByNumber(types.hsa, memberNo)).toBeNull();
+    expect(await findAccountByNumber(types.shares, 'HSA0001')).toBeNull();
+    expect(await findAccountByNumber(types.shares, '   ')).toBeNull();
+  });
+
   // S-1306: the same three configuration entries a cash payment reads
   // (0032, 0062), through the same function.
   it('applies the cash controls to cash, and only to cash', async () => {
