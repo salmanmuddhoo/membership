@@ -2303,3 +2303,252 @@ export async function updatePaymentMethod(
     }
   });
 }
+
+// ---------------------------------------------------------------------------
+// S-1401 · The approval matrix
+// ---------------------------------------------------------------------------
+// Which chain — or none — a transaction falls under (migration 0070).
+// Ordered within a kind; the first match wins; a rule with no chain means
+// "post immediately". resolveRoute (ledger/routing.ts) is the reader; this
+// is the administrator's side of it.
+export const TRANSACTION_KINDS = [
+  'deposit',
+  'withdrawal',
+  'transfer',
+  'closure',
+  'resignation',
+  'demise',
+] as const;
+export type TransactionKind = (typeof TRANSACTION_KINDS)[number];
+
+export interface ApprovalRule {
+  id: string;
+  kind: TransactionKind;
+  accountTypeId: string | null;
+  accountTypeName: string | null;
+  initiatingRoleId: string | null;
+  initiatingRoleCode: string | null;
+  initiatingRoleName: string | null;
+  amountFrom: string;
+  // Null: and above.
+  amountTo: string | null;
+  // Null: post immediately.
+  workflowDefinitionId: string | null;
+  workflowCode: string | null;
+  workflowName: string | null;
+  note: string;
+  sortOrder: number;
+  isActive: boolean;
+}
+
+async function readApprovalRules(): Promise<ApprovalRule[]> {
+  const result = await query<{
+    id: string;
+    kind: TransactionKind;
+    account_type_id: string | null;
+    account_type_name: string | null;
+    initiating_role_id: string | null;
+    initiating_role_code: string | null;
+    initiating_role_name: string | null;
+    amount_from: string;
+    amount_to: string | null;
+    workflow_definition_id: string | null;
+    workflow_code: string | null;
+    workflow_name: string | null;
+    note: string;
+    sort_order: number;
+    is_active: boolean;
+  }>(
+    `select r.id, r.kind, r.account_type_id, t.name as account_type_name,
+            r.initiating_role_id, ro.code as initiating_role_code,
+            ro.name as initiating_role_name,
+            r.amount_from, r.amount_to,
+            r.workflow_definition_id, d.code as workflow_code,
+            d.name as workflow_name,
+            r.note, r.sort_order, r.is_active
+       from approval_rule r
+       left join account_type t on t.id = r.account_type_id
+       left join role ro on ro.id = r.initiating_role_id
+       left join workflow_definition d on d.id = r.workflow_definition_id
+      order by r.kind, r.sort_order, r.created_at`
+  );
+  return result.rows.map(r => ({
+    id: r.id,
+    kind: r.kind,
+    accountTypeId: r.account_type_id,
+    accountTypeName: r.account_type_name,
+    initiatingRoleId: r.initiating_role_id,
+    initiatingRoleCode: r.initiating_role_code,
+    initiatingRoleName: r.initiating_role_name,
+    amountFrom: r.amount_from,
+    amountTo: r.amount_to,
+    workflowDefinitionId: r.workflow_definition_id,
+    workflowCode: r.workflow_code,
+    workflowName: r.workflow_name,
+    note: r.note,
+    sortOrder: r.sort_order,
+    isActive: r.is_active,
+  }));
+}
+
+export function listApprovalRules(): Promise<ApprovalRule[]> {
+  return cached('approval-rules', readApprovalRules);
+}
+
+export interface ApprovalRuleInput {
+  kind: string;
+  accountTypeId: string | null;
+  initiatingRoleId: string | null;
+  amountFrom: string;
+  amountTo: string | null;
+  workflowDefinitionId: string | null;
+  note: string;
+  isActive: boolean;
+}
+
+function validateApprovalRule(input: ApprovalRuleInput): {
+  kind: TransactionKind;
+  amountFrom: string;
+  amountTo: string | null;
+} {
+  if (!(TRANSACTION_KINDS as readonly string[]).includes(input.kind)) {
+    throw new ConfigError('Choose which kind of transaction the rule is for.');
+  }
+  const amountFrom = input.amountFrom.trim() || '0';
+  validateAmount(amountFrom);
+  const amountTo = input.amountTo?.trim() || null;
+  if (amountTo !== null) {
+    validateAmount(amountTo);
+    if (Number(amountTo) < Number(amountFrom)) {
+      throw new ConfigError('The band’s upper amount is below its lower.');
+    }
+  }
+  return { kind: input.kind as TransactionKind, amountFrom, amountTo };
+}
+
+export async function createApprovalRule(
+  input: ApprovalRuleInput,
+  actor: Actor
+): Promise<string> {
+  const { kind, amountFrom, amountTo } = validateApprovalRule(input);
+  return withConfigurationActor(actorFor(actor), async client => {
+    const result = await client.query<{ id: string }>(
+      `insert into approval_rule
+         (kind, account_type_id, initiating_role_id, amount_from, amount_to,
+          workflow_definition_id, note, is_active, sort_order)
+       values ($1, $2, $3, $4, $5, $6, $7, $8,
+               coalesce((select max(sort_order) + 10 from approval_rule
+                          where kind = $1), 10))
+       returning id`,
+      [
+        kind,
+        input.accountTypeId,
+        input.initiatingRoleId,
+        amountFrom,
+        amountTo,
+        input.workflowDefinitionId,
+        input.note.trim(),
+        input.isActive,
+      ]
+    );
+    return result.rows[0].id;
+  });
+}
+
+export async function updateApprovalRule(
+  id: string,
+  input: ApprovalRuleInput,
+  actor: Actor
+): Promise<void> {
+  const { kind, amountFrom, amountTo } = validateApprovalRule(input);
+  await withConfigurationActor(actorFor(actor), async client => {
+    const result = await client.query(
+      `update approval_rule
+          set kind = $2, account_type_id = $3, initiating_role_id = $4,
+              amount_from = $5, amount_to = $6, workflow_definition_id = $7,
+              note = $8, is_active = $9
+        where id = $1`,
+      [
+        id,
+        kind,
+        input.accountTypeId,
+        input.initiatingRoleId,
+        amountFrom,
+        amountTo,
+        input.workflowDefinitionId,
+        input.note.trim(),
+        input.isActive,
+      ]
+    );
+    if (result.rowCount === 0) {
+      throw new ConfigError('That rule no longer exists.', 'not_found');
+    }
+  });
+}
+
+// Up or down within its kind: the order is the matrix, since the first
+// match wins.
+export async function moveApprovalRule(
+  id: string,
+  direction: 'up' | 'down',
+  actor: Actor
+): Promise<void> {
+  await withConfigurationActor(actorFor(actor), async client => {
+    const rows = await client.query<{ id: string; sort_order: number }>(
+      `select id, sort_order from approval_rule
+        where kind = (select kind from approval_rule where id = $1)
+        order by sort_order, created_at`,
+      [id]
+    );
+    const index = rows.rows.findIndex(r => r.id === id);
+    if (index === -1) {
+      throw new ConfigError('That rule no longer exists.', 'not_found');
+    }
+    const other = rows.rows[direction === 'up' ? index - 1 : index + 1];
+    if (!other) return;
+    // Renumber the whole kind, swapped: two rules that happened to share a
+    // sort order would otherwise never change places.
+    const order = rows.rows.map(r => r.id);
+    [order[index], order[index + (direction === 'up' ? -1 : 1)]] = [
+      order[index + (direction === 'up' ? -1 : 1)],
+      order[index],
+    ];
+    for (const [position, ruleId] of order.entries()) {
+      await client.query(
+        'update approval_rule set sort_order = $2 where id = $1',
+        [ruleId, (position + 1) * 10]
+      );
+    }
+  });
+}
+
+// A rule a transaction was routed by stays, because the trail names it;
+// deactivate instead.
+export async function deleteApprovalRule(
+  id: string,
+  actor: Actor
+): Promise<void> {
+  await withConfigurationActor(actorFor(actor), async client => {
+    const used = await client.query(
+      `select 1 from transaction where approval_rule_id = $1
+       union all
+       select 1 from transaction_transition where approval_rule_id = $1
+       limit 1`,
+      [id]
+    );
+    if (used.rowCount) {
+      throw new ConfigError(
+        'This rule has routed a transaction, so it stays on the trail. ' +
+          'Deactivate it instead.',
+        'conflict'
+      );
+    }
+    const result = await client.query(
+      'delete from approval_rule where id = $1',
+      [id]
+    );
+    if (result.rowCount === 0) {
+      throw new ConfigError('That rule no longer exists.', 'not_found');
+    }
+  });
+}

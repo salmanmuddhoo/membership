@@ -59,6 +59,14 @@ const depositSchema = {
     capturedByName: { type: 'string' },
     createdAt: { type: 'string', format: 'date-time' },
     postedAt: { type: 'string', format: 'date-time', nullable: true },
+    workflowName: {
+      type: 'string',
+      nullable: true,
+      description: 'The approval chain it was routed to, if any.',
+    },
+    currentStepCode: { type: 'string', nullable: true },
+    currentStepName: { type: 'string', nullable: true },
+    currentStepRole: { type: 'string', nullable: true },
   },
 };
 
@@ -73,7 +81,9 @@ const create = defineEndpoint(
       'its holder is not active, the account type does not accept ' +
       'deposits, the amount exceeds the type’s per-transaction ' +
       'maximum, the method is not offered or needs a reference that is ' +
-      'missing, or a cash amount breaches the cash controls. Idempotent by ' +
+      'missing, or a cash amount breaches the cash controls. A deposit the ' +
+      'approval matrix routes to a chain is submitted, not posted: status ' +
+      '"submitted", no receipt yet, and the step it waits at. Idempotent by ' +
       'the Idempotency-Key header.',
     tag: 'Transactions',
     permission: PERMISSION_CAPTURE,

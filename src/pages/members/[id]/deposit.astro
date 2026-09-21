@@ -149,13 +149,26 @@ const INPUT =
     {deposit ? (
       <section class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-2xl border p-6">
         <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-          Deposit {deposit.reference} posted
+          {deposit.status === 'posted'
+            ? `Deposit ${deposit.reference} posted`
+            : `Deposit ${deposit.reference} submitted for approval`}
         </h2>
+        {deposit.status !== 'posted' && deposit.currentStepName && (
+          <p class="mt-1 text-sm text-neutral-600 dark:text-neutral-300">
+            Waiting for {deposit.currentStepName}
+            {deposit.currentStepRole && ` (${deposit.currentStepRole})`}. The
+            receipt is issued when it posts.
+          </p>
+        )}
         <dl class="mt-4 grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
-          <dt class="text-neutral-500 dark:text-neutral-400">Receipt</dt>
-          <dd class="font-medium text-neutral-800 dark:text-neutral-100">
-            {deposit.receiptNo}
-          </dd>
+          {deposit.receiptNo && (
+            <>
+              <dt class="text-neutral-500 dark:text-neutral-400">Receipt</dt>
+              <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+                {deposit.receiptNo}
+              </dd>
+            </>
+          )}
           <dt class="text-neutral-500 dark:text-neutral-400">Amount</dt>
           <dd class="font-medium text-neutral-800 dark:text-neutral-100">
             {formatMoney(deposit.amount, deposit.currency)} by{' '}
@@ -166,12 +179,16 @@ const INPUT =
           <dd class="font-medium text-neutral-800 dark:text-neutral-100">
             {deposit.accountNo} · {deposit.accountTypeName}
           </dd>
-          <dt class="text-neutral-500 dark:text-neutral-400">Balance now</dt>
-          <dd class="font-medium text-neutral-800 dark:text-neutral-100">
-            {deposit.balanceAfter
-              ? formatMoney(deposit.balanceAfter, deposit.currency)
-              : '—'}
-          </dd>
+          {deposit.balanceAfter && (
+            <>
+              <dt class="text-neutral-500 dark:text-neutral-400">
+                Balance now
+              </dt>
+              <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+                {formatMoney(deposit.balanceAfter, deposit.currency)}
+              </dd>
+            </>
+          )}
         </dl>
         <div class="mt-5 flex flex-wrap gap-2">
           <a
