@@ -166,6 +166,144 @@ of hours, not as a first response to something unexplained.
 `/admin/reset-data`, refused outright unless `PUBLIC_APP_ENV` marks the
 deployment non-production. See `docs/environments.md`.
 
+## Clearing production back to empty
+
+Wipes every member, application, payment and document from production. Not a
+button in the app — the in-app reset screen (`/admin/reset-data`) is
+test-only and does not appear in production's sidebar. This is a deliberate,
+hands-on database operation, for before real members are loaded or to clear
+a pilot round. Nobody runs this without being asked to.
+
+1. **Connect as the schema owner** (the Azure admin account —
+   `DATABASE_MIGRATION_URL`, see `docs/database.md`), to the `albarakah`
+   database. Not `albarakah_app`.
+
+   `reset_all_test_data()` is `security definer`, owned by the schema owner.
+   The refusal that keeps it off production lives in the application
+   (`resetAllTestData()`, `src/lib/admin/reset.ts`), not in the function
+   itself — that is why this runs from a psql prompt against production while
+   the site itself refuses to run it there.
+
+2. **Look before wiping.**
+
+   ```sql
+   select
+     (select count(*) from member)                 as members,
+     (select count(*) from membership_application) as applications,
+     (select count(*) from payment)                as payments,
+     (select count(*) from document)               as documents,
+     (select count(*) from audit_event)            as audit_rows;
+   ```
+
+3. **Run the reset**, naming who is running it and why — the function raises
+   if the description is empty:
+
+   ```sql
+   select reset_all_test_data(
+     '<the administrator''s app_user id>'::uuid,
+     '<name or email> — reason for the clear'
+   );
+   ```
+
+   Truncates `membership_application`, `receipt_number`, `sharepoint_folder`
+   and `audit_event` with `cascade` — which empties everything hanging off
+   them: members, accounts, payments, documents, transitions, receipts,
+   financial events. Truncates `account_number_counter` and restarts the
+   application, member and receipt number sequences, so numbering begins at 1
+   again. Writes one `system.data_reset` audit row naming who ran it — the
+   only row left in the audit trail afterwards.
+
+4. **Removing staff accounts, if that is wanted.** `app_user` holds service
+   accounts as well as people:
+
+   - `member-app@system.albarakah.mu` — the actor the member mobile app
+     captures applications as
+   - `public-api@system.albarakah.mu` — the actor for applications submitted
+     through the public API from the Society's website
+   - `retention@system.albarakah.mu` — the actor the retention and disposal
+     job acts as
+
+   Each has an `entra_subject` beginning `system:`, a value no real sign-in
+   token can carry, and holds no role. **Deleting them breaks the member app,
+   the website integration and the disposal job, and nothing recreates
+   them** — the migrations that insert them use
+   `on conflict (email) do nothing` and are already recorded as applied, so
+   re-running migrations will not bring them back. Restoring one means
+   inserting the row by hand.
+
+   Exclude them:
+
+   ```sql
+   delete from app_user
+    where id <> '<the administrator''s app_user id>'::uuid
+      and (entra_subject is null or entra_subject not like 'system:%');
+   ```
+
+   `user_role` rows for the deleted accounts go with them:
+   `user_role.user_id` cascades on delete (migration 0002).
+
+   **The delete can still refuse.** Six columns in tables the reset leaves
+   alone point at `app_user` without cascading, and a row in any of them
+   naming an account being deleted stops the whole statement:
+   `user_role.granted_by`, `config_entry.updated_by`,
+   `config_entry_history.changed_by`, `fee_schedule_version.created_by`,
+   `notification_template.updated_by`, and `api_credential.created_by` /
+   `revoked_by`. They record who configured the Society's settings, fees,
+   notification wording and API credentials — none of which a data reset
+   touches. On a system nobody has worked in yet there is nothing there and
+   the delete goes through. After a pilot round there will be.
+
+   Check before running it, with the administrator's id in place of the
+   placeholder:
+
+   ```sql
+   select 'user_role.granted_by'           as reference, count(*)
+     from user_role           where granted_by is distinct from '<id>'::uuid and granted_by is not null
+   union all select 'config_entry.updated_by', count(*)
+     from config_entry        where updated_by is distinct from '<id>'::uuid and updated_by is not null
+   union all select 'config_entry_history.changed_by', count(*)
+     from config_entry_history where changed_by is distinct from '<id>'::uuid and changed_by is not null
+   union all select 'fee_schedule_version.created_by', count(*)
+     from fee_schedule_version where created_by is distinct from '<id>'::uuid and created_by is not null
+   union all select 'notification_template.updated_by', count(*)
+     from notification_template where updated_by is distinct from '<id>'::uuid and updated_by is not null
+   union all select 'api_credential.created_by', count(*)
+     from api_credential      where created_by is distinct from '<id>'::uuid and created_by is not null;
+   ```
+
+   All zero: run the delete. Anything above zero: stop and decide
+   deliberately. Clearing those columns is not a tidy-up — `config_entry` and
+   `notification_template` carry the trigger that refuses an unattributed
+   write and writes its own audit row, and `config_entry_history` refuses
+   direct writes altogether (`docs/database.md`). Deactivating those accounts
+   instead, which is what migration 0002 intends, costs nothing and leaves
+   the record intact.
+
+   This is a departure from migration 0002's "deactivation, never deletion":
+   chosen deliberately here, because the reset above already empties the
+   audit trail.
+
+   Wrap steps 3 and 4 in one transaction, so a failure leaves nothing half
+   done:
+
+   ```sql
+   begin;
+   select reset_all_test_data(
+     '<admin app_user id>'::uuid, '<name/email> — reason for the clear'
+   );
+   delete from app_user
+    where id <> '<admin app_user id>'::uuid
+      and (entra_subject is null or entra_subject not like 'system:%');
+   commit;
+   ```
+
+5. **What this does not reach: SharePoint.** `sharepoint_folder` rows go, but
+   the filed documents stay in the library — the database cannot reach into
+   SharePoint. Clear anything filed during a pilot there separately. See
+   `docs/documents.md`.
+
+6. **Recovery.** Only a database restore undoes this. See `docs/restore.md`.
+
 ## Backup and restore
 
 See `docs/restore.md`. The short version: Azure's own automated backups, and a
