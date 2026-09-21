@@ -182,15 +182,36 @@ function buildDocument(descriptors: EndpointDescriptor[]) {
       },
     };
 
-    if (d.query?.length) {
-      operation.parameters = d.query.map(q => ({
-        name: q.name,
-        in: 'query',
-        required: q.required ?? false,
-        ...(q.description ? { description: q.description } : {}),
-        schema: q.schema,
-      }));
+    const parameters: Record<string, unknown>[] = (d.query ?? []).map(q => ({
+      name: q.name,
+      in: 'query',
+      required: q.required ?? false,
+      ...(q.description ? { description: q.description } : {}),
+      schema: q.schema,
+    }));
+    // A write declared idempotent (S-1308) demands the key and answers a
+    // repeat with the original; the document says both.
+    if (d.idempotent) {
+      parameters.push({
+        name: 'Idempotency-Key',
+        in: 'header',
+        required: true,
+        description:
+          'A unique key for this request, chosen by the caller (a UUID will ' +
+          'do). Sending the same key with the same body again returns the ' +
+          'original result and writes nothing; the same key with a ' +
+          'different body is refused with 409.',
+        schema: { type: 'string', maxLength: 128 },
+      });
+      (operation.responses as Record<string, unknown>)['409'] = errorResponse(
+        'The Idempotency-Key was already used with a different request.'
+      );
+      (operation.responses as Record<string, unknown>)['422'] = errorResponse(
+        'The request could not be processed as submitted, or the ' +
+          'Idempotency-Key header is missing.'
+      );
     }
+    if (parameters.length) operation.parameters = parameters;
 
     if (d.requestSchema) {
       operation.requestBody = {

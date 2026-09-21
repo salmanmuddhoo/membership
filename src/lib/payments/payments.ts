@@ -101,7 +101,9 @@ export const FLOOR_FEE_COMPONENTS: ReadonlySet<FeeComponentCode> = new Set([
 // Officer feedback, two rules on a cash payment. Shared between
 // recordPayment and recordAccountOpeningPayment rather than written twice —
 // every application kind takes cash through one of those two functions, so
-// one place is what makes this apply to all of them.
+// one place is what makes this apply to all of them. A deposit (S-1306,
+// ledger/deposits.ts) is a payment for this purpose and calls the same
+// function: FRD 6.7 wants one control, not two.
 //
 // 1. A hard ceiling (payment.cash_maximum). Above it, nothing on this
 //    screen can authorise the payment at all — not a reason, not a form,
@@ -115,7 +117,7 @@ export const FLOOR_FEE_COMPONENTS: ReadonlySet<FeeComponentCode> = new Set([
 //    reason, so asking for a second, free-text note here was asking the
 //    same question twice; this function only knows that the confirmation
 //    must be true, not how it was earned.
-async function applyCashPaymentRules(
+export async function applyCashPaymentRules(
   method: PaymentMethodConfig,
   totalCents: number,
   sourceOfFundFormConfirmed: boolean
@@ -143,7 +145,9 @@ async function applyCashPaymentRules(
 // The method named on a form has to be one an officer may choose today
 // (S-1307): configured, active, and not the system's own. A retired method
 // is still readable on every receipt that used it; it is only not offered.
-async function offeredMethod(code: string): Promise<PaymentMethodConfig> {
+export async function offeredMethod(
+  code: string
+): Promise<PaymentMethodConfig> {
   const method = await paymentMethodByCode(code);
   if (!method || !method.isActive || method.isSystem) {
     throw new PaymentError('Choose how the payment was made.');
@@ -154,7 +158,7 @@ async function offeredMethod(code: string): Promise<PaymentMethodConfig> {
 // A cheque number, a transfer reference: demanded where the method says so
 // (requires_reference), and only there — the same rule the form applies on
 // screen, enforced here whether or not the script ran.
-function requireReference(
+export function requireReference(
   method: PaymentMethodConfig,
   reference: string | undefined
 ): void {

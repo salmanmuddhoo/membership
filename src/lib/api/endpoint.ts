@@ -51,6 +51,13 @@ export interface EndpointDescriptor {
   // Query-string parameters the endpoint reads. Optional by default: an
   // endpoint that requires one says so with `required: true`.
   query?: QueryParameter[];
+  // A write that must not happen twice (S-1308). Declared here so the
+  // wrapper demands an Idempotency-Key header and the OpenAPI document says
+  // so; the handler receives the key and the service it calls decides what
+  // the same key means (the same request answered with the original, a
+  // different one refused as a conflict). A retried double-click or a
+  // dropped connection therefore cannot move money twice.
+  idempotent?: boolean;
 }
 
 export interface QueryParameter {
@@ -64,6 +71,12 @@ export interface RequestContext {
   principal: Principal;
   correlationId: string;
   context: APIContext;
+  // Read and parse the JSON body, or fail as validation_failed.
+  body<T>(): Promise<T>;
+  // The Idempotency-Key header. Always set on an endpoint declared
+  // idempotent — the wrapper refuses the request without one — and null
+  // otherwise.
+  idempotencyKey: string | null;
 }
 
 export type EndpointHandler = (ctx: RequestContext) => Promise<Response>;
@@ -163,8 +176,41 @@ export function defineEndpoint(
         );
       }
 
+      // The key is validated before the handler runs, so a handler on an
+      // idempotent endpoint can rely on having one. Bounded: it is stored on
+      // the row it protects, and a caller who sends a novel is not retrying.
+      const rawKey = context.request.headers.get('idempotency-key')?.trim();
+      const idempotencyKey = rawKey ? rawKey.slice(0, 128) : null;
+      if (descriptor.idempotent && !idempotencyKey) {
+        return finish(
+          apiError(
+            'validation_failed',
+            correlationId,
+            'An Idempotency-Key header is required.'
+          ),
+          principal.email,
+          'validation_failed'
+        );
+      }
+
+      const body = async <T>(): Promise<T> => {
+        const parsed = (await context.request
+          .json()
+          .catch(() => null)) as T | null;
+        if (parsed === null || typeof parsed !== 'object') {
+          throw new ApiError('validation_failed', 'A JSON body is required.');
+        }
+        return parsed;
+      };
+
       try {
-        const response = await handler({ principal, correlationId, context });
+        const response = await handler({
+          principal,
+          correlationId,
+          context,
+          body,
+          idempotencyKey,
+        });
         return finish(response, principal.email);
       } catch (error) {
         if (error instanceof ApiError) {

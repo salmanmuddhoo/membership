@@ -87,6 +87,40 @@ balance is refused — the money is on an account, so "this was never taken"
 would be untrue — and the correction is a refund, which reverses through the
 engine on its own receipt.
 
+## Recording a deposit
+
+`recordDeposit()` in `src/lib/ledger/deposits.ts` is the first capture path
+on the engine, and the shape every later kind follows (S-1305). In order:
+
+1. **The key.** Given an idempotency key the officer already used, the
+   original deposit is returned if the request is the same (a fingerprint of
+   account, amount in cents, method, reference and note, stored beside the
+   key) and refused as a conflict if it differs. Nothing is re-decided
+   (S-1308). The form issues a key when it renders, so a refresh after a
+   success cannot post twice; `POST /api/v1/deposits` demands one in the
+   `Idempotency-Key` header, by declaration (`docs/api.md`).
+2. **The method**, exactly as a payment: offered today, its reference
+   present where it requires one (S-1307).
+3. **The cash controls**, exactly as a payment: the same function
+   (`applyCashPaymentRules`) reading the same three configuration entries —
+   the ceiling refuses, the threshold demands the Source of Fund form's
+   confirmation (S-1306). What is not yet there for a deposit is the filed
+   checklist document with its Missing → Verified lifecycle; the deposit
+   records the officer's confirmation (`source_of_fund_form_confirmed`, the
+   column a payment has carried since 0034).
+4. **The destination**: the holder active, the account active, the type's
+   `allows_deposit`, the type's `maximum_transaction_amount` (S-1304). Each
+   refusal names its rule, before anything is written.
+5. **The write**: a receipt number allocated on its own (so a number that
+   never became a receipt shows in the sequence, S-502), then in one
+   database transaction the `transaction` row, `post_transaction()`, and
+   the receipt marked issued. A failure inside abandons the number with the
+   reason.
+
+A deposit below the escalation threshold has no chain (FRD 6.2), so it posts
+on submit; M14 puts the threshold in front of this call. `transaction.capture`
+is the permission, held by whoever holds `payment.record`.
+
 ## Reversal
 
 A `reversal` names the transaction it reverses (`reverses_id`) and posts the

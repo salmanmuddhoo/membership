@@ -325,16 +325,18 @@ describe('what cannot change', () => {
     await run(
       appUrl,
       `insert into transaction
-         (kind, member_id, account_id, amount, method, status, captured_by, idempotency_key)
-       values ('deposit', $1, $2, 5, 'cash', 'draft', $3, 'key-1')`,
+         (kind, member_id, account_id, amount, method, status, captured_by,
+          idempotency_key, idempotency_fingerprint)
+       values ('deposit', $1, $2, 5, 'cash', 'draft', $3, 'key-1', 'fp-1')`,
       [memberId, accountId, userId]
     );
     await expect(
       run(
         appUrl,
         `insert into transaction
-           (kind, member_id, account_id, amount, method, status, captured_by, idempotency_key)
-         values ('deposit', $1, $2, 5, 'cash', 'draft', $3, 'key-1')`,
+           (kind, member_id, account_id, amount, method, status, captured_by,
+            idempotency_key, idempotency_fingerprint)
+         values ('deposit', $1, $2, 5, 'cash', 'draft', $3, 'key-1', 'fp-1')`,
         [memberId, accountId, userId]
       )
     ).rejects.toThrowError(/transaction_idempotency_idx/);

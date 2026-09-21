@@ -3515,6 +3515,32 @@ reference API returns the offered methods for the mobile app. Deposits
 (S-1305, next) read the same table. Built first, ahead of the deposit
 itself, because the deposit form's cash and reference rules hang off it.
 
+**Shipped, fifth increment** (S-1305, S-1308; S-1306 in part): an officer
+records a deposit, and it is on the ledger with its receipt before they let
+go of the button. `recordDeposit()` (`ledger/deposits.ts`) decides in order
+— the idempotency key, the method, the cash controls, the destination — and
+refuses before writing, naming the rule: the holder or the account not
+active, the type's `allows_deposit` off, its `maximum_transaction_amount`
+exceeded. Then one database transaction: the `transaction` row,
+`post_transaction()`, the receipt issued; a failure inside abandons the
+number with the reason, as a payment does. The page is
+`/members/{id}/deposit`, reached from the person's own page, for a member
+or a customer alike; the endpoint is `POST /api/v1/deposits`. S-1308:
+`defineEndpoint` gained `idempotent: true`, which demands the
+`Idempotency-Key` header and documents it; the service keeps a fingerprint
+beside the key (0068), answers a repeat with the original and refuses a
+changed request with 409; the form issues its key on render, so a refresh
+after a success cannot post twice. S-1306: the ceiling and the threshold
+apply to a cash deposit through the very function a payment calls, reading
+the same three entries — one control, not two; the deposit records the
+officer's confirmation (`source_of_fund_form_confirmed`). **Not yet:** the
+Source of Fund form as a filed checklist document for a deposit, with its
+Missing → Verified lifecycle gating the post — that needs a document keyed
+to a transaction rather than an application, and comes with M16's receipt
+and statement work rather than here. `transaction.capture` (0068) is the
+permission, held by whoever holds `payment.record`; the rest of the
+transaction permissions are S-1311's.
+
 ### S-1301 · The account ledger ✅
 
 **As** the Society, **I need** every movement of money on an account to be
@@ -3601,7 +3627,7 @@ and the engine reads them. _(ACC-US-001, ACC-US-006, FRD 4.3, 9)_
   audited through the trigger every configuration table already carries
   (S-210), and a change takes effect on the next transaction with no release
 
-### S-1305 · One engine, one transaction type: deposit
+### S-1305 · One engine, one transaction type: deposit ✅
 
 **As** an officer, **I need** to record a deposit into any account a member
 holds, **so that** funds are added under full traceability — and so that
@@ -3631,7 +3657,7 @@ FRD 6.2)_
   `payment.recorded` does — and `financial_event.event_type`'s check is
   widened by a new migration, never by editing 0017
 
-### S-1306 · Cash controls apply to a deposit as they do to a payment
+### S-1306 · Cash controls apply to a deposit as they do to a payment ◐
 
 **As** the Society, **I need** the Source of Funds requirement and the cash
 cap to govern a cash deposit exactly as they govern a cash payment, **so
@@ -3670,7 +3696,7 @@ FRD 6.6, open point 4)_
   mandatory on the form and on the record — the Phase 1 rule "show the
   reference only for cheque, transfer and mobile money" becomes data
 
-### S-1308 · An idempotency key on every write
+### S-1308 · An idempotency key on every write ✅
 
 **As** the system, **I need** a retried submission to be the same
 transaction and not a second one, **so that** a double-click or a dropped

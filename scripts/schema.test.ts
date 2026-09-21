@@ -364,6 +364,25 @@ describe('S-1301, S-1302 the ledger', () => {
     expect(check.rowCount).toBe(0);
   });
 
+  // 0068: recording a deposit is the counter officer's act, as recording a
+  // payment is — whoever held payment.record holds it from the same
+  // migration.
+  it('gives transaction.capture to every role that records payments', async () => {
+    const result = await run(
+      appUrl,
+      `select r.code
+         from role r
+         join role_permission rp on rp.role_id = r.id
+         join permission p on p.id = rp.permission_id
+        where p.code = 'transaction.capture'
+        order by r.code`
+    );
+    expect(result.rows.map(r => r.code)).toEqual([
+      'regional_officer',
+      'system_administrator',
+    ]);
+  });
+
   it('has a service account for data migrations to post as', async () => {
     const result = await run(
       appUrl,
