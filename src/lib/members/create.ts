@@ -992,43 +992,16 @@ export async function listMembers(
               -- Officer feedback: what the member actually has in the
               -- Society — Shares, the MSA, and any HSA/Investment/other
               -- account — never Entrance, the processing fee or Takaful,
-              -- which are one-time charges with no account behind them and
-              -- so never appear in payment_line/payment_account_line under
-              -- these components. Netted against any refund the same way
-              -- transactionsForAccount (payments.ts) treats one account's
-              -- own history — a refund is its own payment row (kind =
-              -- 'refund') carrying the same application_id.
+              -- which are one-time charges with no account behind them.
+              -- The ledger's own balances (S-1309): every account of theirs,
+              -- whichever application opened it and whether it came with
+              -- them from the customer they used to be (S-614), summed from
+              -- the cache post_transaction() maintains (docs/ledger.md).
               coalesce(
-                (select sum(case when p.kind = 'payment' then pl.amount
-                                  else -pl.amount end)
-                   from payment_line pl
-                   join payment p on p.id = pl.payment_id
-                  where p.application_id = m.application_id
-                    and p.voided_at is null
-                    and pl.component_code in ('shares', 'msa_deposit')),
-                0
-              )
-              +
-              -- Each of the member's own accounts (Shares/MSA excluded —
-              -- summed above) joined straight to whichever application
-              -- opened IT, via account.opened_by_application_id (migration
-              -- 0037) — rather than re-deriving which applications belong to
-              -- this member (existing_member_id, or the founding one). That
-              -- derivation had no path back to a customer_account
-              -- application, so an account transferred to this member from
-              -- the non-member customer they used to be (S-614) summed to
-              -- nothing despite the money never having moved.
-              coalesce(
-                (select sum(case when p.kind = 'payment' then pal.amount
-                                  else -pal.amount end)
+                (select sum(b.balance)
                    from account acc
-                   join payment_account_line pal
-                     on pal.account_type_id = acc.account_type_id
-                   join payment p
-                     on p.id = pal.payment_id
-                    and p.application_id = acc.opened_by_application_id
-                  where acc.member_id = m.id
-                    and p.voided_at is null),
+                   join account_balance b on b.account_id = acc.id
+                  where acc.member_id = m.id),
                 0
               ) as total_funds
          from member m
@@ -1081,16 +1054,10 @@ export async function listMembers(
               -- money had not moved; only the application it was taken
               -- against was a different one (officer feedback).
               coalesce(
-                (select sum(case when p.kind = 'payment' then pal.amount
-                                  else -pal.amount end)
+                (select sum(b.balance)
                    from account acc
-                   join payment_account_line pal
-                     on pal.account_type_id = acc.account_type_id
-                   join payment p
-                     on p.id = pal.payment_id
-                    and p.application_id = acc.opened_by_application_id
-                  where acc.customer_id = c.id
-                    and p.voided_at is null),
+                   join account_balance b on b.account_id = acc.id
+                  where acc.customer_id = c.id),
                 0
               ) as total_funds
          from customer c

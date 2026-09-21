@@ -1421,6 +1421,12 @@ describe('transactionsForAccount', () => {
        values ($1, $2, true, $3) returning id`,
       [member.rows[0].id, sharesType.rows[0].id, application.id]
     );
+    // What opening the account on approval does (members/create.ts): the
+    // receipt's lines become the account's opening entries (S-1303).
+    await run(appUrl, `select post_opening_balances($1, $2, 'payments.test')`, [
+      application.id,
+      officer.userId,
+    ]);
 
     const transactions = await payments.transactionsForAccount(
       account.rows[0].id
@@ -1467,6 +1473,12 @@ describe('transactionsForAccount', () => {
        values ($1, $2, true, $3) returning id`,
       [member.rows[0].id, sharesType.rows[0].id, application.id]
     );
+    // What opening the account on approval does (members/create.ts): the
+    // receipt's lines become the account's opening entries (S-1303).
+    await run(appUrl, `select post_opening_balances($1, $2, 'payments.test')`, [
+      application.id,
+      officer.userId,
+    ]);
     const refund = await payments.refundPayment(
       {
         paymentId: payment.id,
@@ -1518,6 +1530,12 @@ describe('transactionsForAccount', () => {
        values ($1, $2, true, $3) returning id`,
       [member.rows[0].id, sharesType.rows[0].id, application.id]
     );
+    // What opening the account on approval does (members/create.ts): the
+    // receipt's lines become the account's opening entries (S-1303).
+    await run(appUrl, `select post_opening_balances($1, $2, 'payments.test')`, [
+      application.id,
+      officer.userId,
+    ]);
 
     expect(await payments.transactionsForAccount(account.rows[0].id)).toEqual(
       []

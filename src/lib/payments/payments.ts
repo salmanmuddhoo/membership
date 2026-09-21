@@ -15,7 +15,7 @@ import type { PoolClient } from 'pg';
 import { recordAudit } from '../access/audit';
 import { checkSegregation } from '../admin/segregation';
 import { query, withTransaction } from '../db/pool';
-import { postOpeningBalances } from '../ledger/ledger';
+import { accountEntries, postOpeningBalances } from '../ledger/ledger';
 import {
   cashMaximum,
   cashSourceOfFundThreshold,
@@ -496,17 +496,11 @@ export async function hasLivePayment(applicationId: string): Promise<boolean> {
 }
 
 // Officer feedback: what has actually moved through one account, credit and
-// debit — the Members page's own read, ahead of a real transaction ledger
-// ("later on we will have transaction where there will be deposit or
-// withdrawal or transfer"). Not a running balance built from a ledger,
-// because there is none yet: it is the opening payment, and any refund
-// against it, which today are the only two things that can have happened to
-// this account's money.
-//
-// Deliberately its own small queries rather than a reuse of
-// paymentsForMember/paymentsForApplication above: those load and assemble
-// every payment a member has, which is right for a page about the member —
-// here the caller already knows the one account it is asking about.
+// debit — the Members list's dialogue and the member app's statement. Once a
+// stand-in that read the opening payment and its refund, because there was
+// no ledger; now the ledger's own entries (S-1309), oldest first, which
+// carry those same two lines (S-1303) and everything since. The shape is
+// unchanged for its callers.
 export interface AccountTransaction {
   type: 'credit' | 'debit';
   amount: string;
@@ -518,94 +512,13 @@ export interface AccountTransaction {
 export async function transactionsForAccount(
   accountId: string
 ): Promise<AccountTransaction[]> {
-  const found = await query<{
-    account_type_id: string;
-    type_code: string;
-    is_membership_default: boolean;
-    opened_by_application_id: string | null;
-  }>(
-    `select a.account_type_id, t.code as type_code, a.is_membership_default,
-            a.opened_by_application_id
-       from account a
-       join account_type t on t.id = a.account_type_id
-      where a.id = $1`,
-    [accountId]
-  );
-  if (found.rows.length === 0) return [];
-  const account = found.rows[0];
-
-  // Which application's payment funded this account — set once, at
-  // creation, on the account row itself (opened_by_application_id,
-  // migration 0037), and never touched again: not by S-612's own
-  // additional_account flow, and not by S-614's customer-to-member transfer
-  // either, which is exactly why this column exists rather than re-deriving
-  // the answer from whatever the account's current owner shape happens to
-  // be.
-  const applicationId = account.opened_by_application_id;
-  if (!applicationId) return [];
-
-  // A refund inserts its own payment_line/payment_account_line row, on its
-  // own `payment` (kind = 'refund') — so one query already carries both the
-  // credit that opened the account and any debit paid back against it,
-  // ordered as they happened. A voided payment's money never moved, so it
-  // is excluded the same way it always has been.
-  if (account.is_membership_default) {
-    // The only two membership-default account types this schema seeds
-    // (migrations 0010, 0018); an administrator-added default account has
-    // no fee component to read a transaction from.
-    const componentCode =
-      account.type_code === 'shares'
-        ? 'shares'
-        : account.type_code === 'msa'
-          ? 'msa_deposit'
-          : null;
-    if (!componentCode) return [];
-
-    const rows = await query<{
-      kind: 'payment' | 'refund';
-      amount: string;
-      currency: string;
-      received_at: Date;
-    }>(
-      `select p.kind, pl.amount, p.currency, p.received_at
-         from payment_line pl
-         join payment p on p.id = pl.payment_id
-        where p.application_id = $1
-          and p.voided_at is null
-          and pl.component_code = $2
-        order by p.received_at`,
-      [applicationId, componentCode]
-    );
-    return rows.rows.map(r => ({
-      type: r.kind === 'refund' ? 'debit' : 'credit',
-      amount: r.amount,
-      currency: r.currency,
-      occurredAt: r.received_at,
-      description: r.kind === 'refund' ? 'Refund' : 'Opening deposit',
-    }));
-  }
-
-  const rows = await query<{
-    kind: 'payment' | 'refund';
-    amount: string;
-    currency: string;
-    received_at: Date;
-  }>(
-    `select p.kind, pal.amount, p.currency, p.received_at
-       from payment_account_line pal
-       join payment p on p.id = pal.payment_id
-      where p.application_id = $1
-        and pal.account_type_id = $2
-        and p.voided_at is null
-      order by p.received_at`,
-    [applicationId, account.account_type_id]
-  );
-  return rows.rows.map(r => ({
-    type: r.kind === 'refund' ? 'debit' : 'credit',
-    amount: r.amount,
-    currency: r.currency,
-    occurredAt: r.received_at,
-    description: r.kind === 'refund' ? 'Refund' : 'Opening deposit',
+  const entries = await accountEntries(accountId, { limit: 500 });
+  return entries.reverse().map(e => ({
+    type: e.direction,
+    amount: e.amount,
+    currency: e.currency,
+    occurredAt: e.occurredAt,
+    description: e.description,
   }));
 }
 
