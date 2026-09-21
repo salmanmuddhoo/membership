@@ -238,7 +238,7 @@ is why no password is ever committed to GitHub.
 Take the names exactly as they appear. They are matched letter for letter, and
 a typo produces a setting the app never reads — with no error to tell you.
 
-Three of them deserve attention before you start:
+Five of them deserve attention before you start:
 
 - **`DATABASE_URL`** is the whole connection in one line. Build it from what
   you wrote down in step 2:
@@ -258,6 +258,13 @@ Three of them deserve attention before you start:
   they sign in. It must match what is registered in Entra exactly — step 8
   covers both halves.
 
+- **`HOST`** tells the app which connections to accept. Left unset, it accepts
+  them only from inside its own container. Azure's own check arrives from
+  outside that container, gets no answer, and eventually gives up and reports
+  that the app failed to start — while the app's own log says it is listening,
+  which is what makes this one hard to spot. Set it to `0.0.0.0` before you
+  deploy.
+
 - **`WEBSITE_RUN_FROM_PACKAGE`**, set to `1`, is not one of the application's
   own settings — the app never reads it — but it goes in the same list, so add
   it now while you are here. GitHub builds and tests the code before it ever
@@ -275,6 +282,7 @@ Three of them deserve attention before you start:
 | `ENTRA_REDIRECT_URI`              | OIDC callback URL — must match the app registration exactly                                 | No      | `https://<production-domain>/auth/callback` — update in both places (step 4)                                                                                                              |
 | `ENTRA_POST_LOGOUT_REDIRECT_URI`  | Where Entra sends the user after sign-out                                                   | No      | `https://<production-domain>/login`                                                                                                                                                       |
 | `PUBLIC_SITE_URL`                 | The address this site is served at — Azure and Vercel each set their own                    | No      | `https://<production-domain>`; until the domain is live, the `.azurewebsites.net` address                                                                                                 |
+| `HOST`                            | Network interface the app listens on — without it, Azure can't reach the container          | No      | `0.0.0.0` — makes the app listen on every interface, not just inside its own container                                                                                                    |
 | `ENTRA_SCOPES`                    | OIDC scopes requested                                                                       | No      | `openid profile email offline_access` (the default if unset)                                                                                                                              |
 | `AUTH_SESSION_SECRET`             | Signs the staff session cookie                                                              | **Yes** | Key Vault reference; `openssl rand -base64 40`. Rotating it signs out every staff member at once (`docs/runbook.md`).                                                                     |
 | `DATABASE_URL`                    | Application's Postgres connection (least-privilege role, no DDL)                            | **Yes** | Key Vault reference; `postgresql://albarakah_app:<password>@<server>.postgres.database.azure.com:5432/albarakah?sslmode=verify-full`                                                      |
@@ -512,7 +520,22 @@ Open the site at the real domain and walk through this list:
 ### Watching it afterwards
 
 - **Log stream** in the web app's menu shows what the app is printing, live.
-  This is the first place to look when something is wrong.
+  This is the first place to look when something is wrong. Right after a
+  restart, a healthy startup shows two lines:
+
+  ```
+  [@astrojs/node] Server listening on
+    local: http://localhost:8080
+    network: http://10.0.0.4:8080
+  ```
+
+  The address on the `network:` line will not match the one above — it is
+  whatever internal address this instance happens to have. What matters is
+  that the line is there at all: it is what tells you Azure can reach the
+  app. A single `Server listening on http://localhost:8080` line with
+  nothing under it means the site looks like it started but cannot actually
+  be reached — see the troubleshooting table below.
+
 - **Application Insights** can be switched on for longer-term history and
   alerts. Useful, not urgent.
 - Do **not** point Azure's built-in health check at `/api/v1/health`. That
@@ -528,6 +551,7 @@ who to escalate to — are in `docs/runbook.md`.
 | What you see                                                                | Usually means                                                                                           | What to do                                                                                                                       |
 | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | Site shows an error page with no detail                                     | The startup command is wrong or missing                                                                 | Check it reads `node ./dist/server/entry.mjs` exactly (step 3), then look at the Log stream                                      |
+| 503 error; Azure reports `ContainerStartupFailure` (230s probe timeout)     | `HOST` is not set, so the server only listens on localhost inside its own container                     | Set `HOST` to `0.0.0.0` (step 4) and restart. Log stream showing no `network:` line under "Server listening" confirms this       |
 | Every page fails with a database error                                      | The firewall is not letting the app through, or `DATABASE_URL` is wrong                                 | Re-check the two firewall rules (step 2) and the connection string, including `?sslmode=require`                                 |
 | Sign-in fails, message mentions a redirect URI                              | The two halves of step 8 do not match                                                                   | Compare them character for character, including `https://` and any trailing slash                                                |
 | Sign-in loops back to the sign-in page                                      | `AUTH_SESSION_SECRET` is missing or changed                                                             | Check it is set; if you changed it, everyone is signed out once and that is expected                                             |
