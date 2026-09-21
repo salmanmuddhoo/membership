@@ -56,10 +56,38 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # PUBLIC_SITE_URL is a BUILD input here, not only a runtime setting: it
+      # is the host astro.config.mjs pins as the one whose X-Forwarded-Proto
+      # the app will trust, and that pin is baked into the bundle. Without it
+      # the site starts and serves pages, then refuses every form submission —
+      # sign-in included — so this fails here rather than at an officer's
+      # first click. Passed through env rather than interpolated into the
+      # script, like every other context value in these workflows.
+      - name: Check the site address is configured
+        env:
+          PUBLIC_SITE_URL: ${{ vars.PUBLIC_SITE_URL }}
+        run: |
+          if [ -z "$PUBLIC_SITE_URL" ]; then
+            echo "PUBLIC_SITE_URL is not set on the production environment." >&2
+            echo "Settings -> Environments -> production -> Variables: add it" >&2
+            echo "as the address the site is served at, scheme included." >&2
+            exit 1
+          fi
+          case "$PUBLIC_SITE_URL" in
+            https://*) ;;
+            *)
+              echo "PUBLIC_SITE_URL must start with https:// — it is parsed" >&2
+              echo "as a URL to pin the host, and '$PUBLIC_SITE_URL' is not one." >&2
+              exit 1
+              ;;
+          esac
+
       # astro.config.mjs's own default is the Azure (node) build — DEPLOY_
-      # TARGET is only what asks it for the Vercel one — so nothing needs
-      # setting here for this to come out right.
+      # TARGET is only what asks it for the Vercel one — so the target itself
+      # needs nothing set here.
       - name: Build
+        env:
+          PUBLIC_SITE_URL: ${{ vars.PUBLIC_SITE_URL }}
         run: pnpm build
 
       # Pruned to what the running app actually needs, after the build that
