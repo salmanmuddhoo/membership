@@ -87,6 +87,33 @@ const FIGURES: Figure[] = [
     sql: 'select coalesce(max(serial_no), 0)::text as value from receipt_number',
   },
   {
+    // S-1303: the ledger. The two balance totals are what the Treasurer
+    // reconciles against the receipts (docs/ledger.md), so a restore that
+    // lost a posting fails here by name rather than as "an entry".
+    label: 'ledger entries',
+    sql: 'select count(*)::text as value from account_entry',
+  },
+  {
+    label: 'highest transaction serial',
+    sql: 'select coalesce(max(serial_no), 0)::text as value from transaction',
+  },
+  {
+    label: 'shares balances total',
+    sql: `select coalesce(sum(b.balance), 0)::text as value
+            from account_balance b
+            join account a on a.id = b.account_id
+            join account_type t on t.id = a.account_type_id
+           where t.code = 'shares'`,
+  },
+  {
+    label: 'msa balances total',
+    sql: `select coalesce(sum(b.balance), 0)::text as value
+            from account_balance b
+            join account a on a.id = b.account_id
+            join account_type t on t.id = a.account_type_id
+           where t.code = 'msa'`,
+  },
+  {
     label: 'financial events',
     sql: 'select count(*)::text as value from financial_event',
   },

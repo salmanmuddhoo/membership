@@ -8,6 +8,7 @@
 import type { PoolClient } from 'pg';
 import { recordAudit } from '../access/audit';
 import { query } from '../db/pool';
+import { postOpeningBalances } from '../ledger/ledger';
 import type { Actor, Application } from '../applications/capture';
 
 export class MemberCreationError extends Error {
@@ -303,6 +304,16 @@ export async function createMemberFromApplication(
     );
   }
 
+  // S-1303: what the application's receipts paid into these accounts is
+  // their opening balance, posted through the engine now that the accounts
+  // exist. Nothing to carry — an import that records its balance after this
+  // returns, an application paid nothing — posts nothing, and the next
+  // caller with something to carry does it.
+  await postOpeningBalances(
+    application.id,
+    { userId: actor.userId, description: actor.email },
+    client
+  );
   return { id: memberId, memberNo, accounts };
 }
 
@@ -552,6 +563,16 @@ export async function openAccountsForApplication(
   }
 
   // Narrowed above: the customer branch returned early, so a member owns this.
+  // S-1303: what the application's receipts paid into these accounts is
+  // their opening balance, posted through the engine now that the accounts
+  // exist. Nothing to carry — an import that records its balance after this
+  // returns, an application paid nothing — posts nothing, and the next
+  // caller with something to carry does it.
+  await postOpeningBalances(
+    application.id,
+    { userId: actor.userId, description: actor.email },
+    client
+  );
   return { id: application.existingMemberId!, memberNo, accounts };
 }
 
@@ -692,6 +713,16 @@ async function openAccountsUnderCustomer(
     );
   }
 
+  // S-1303: what the application's receipts paid into these accounts is
+  // their opening balance, posted through the engine now that the accounts
+  // exist. Nothing to carry — an import that records its balance after this
+  // returns, an application paid nothing — posts nothing, and the next
+  // caller with something to carry does it.
+  await postOpeningBalances(
+    application.id,
+    { userId: actor.userId, description: actor.email },
+    client
+  );
   return { id: customerId, memberNo: label, accounts };
 }
 
@@ -818,6 +849,16 @@ export async function openAccountsForCustomerApplication(
     );
   }
 
+  // S-1303: what the application's receipts paid into these accounts is
+  // their opening balance, posted through the engine now that the accounts
+  // exist. Nothing to carry — an import that records its balance after this
+  // returns, an application paid nothing — posts nothing, and the next
+  // caller with something to carry does it.
+  await postOpeningBalances(
+    application.id,
+    { userId: actor.userId, description: actor.email },
+    client
+  );
   return { id: customerId, memberNo: '', accounts };
 }
 
