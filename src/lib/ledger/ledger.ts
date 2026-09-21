@@ -75,9 +75,23 @@ export interface AccountEntry {
   kind: string;
   direction: 'credit' | 'debit';
   amount: string;
+  currency: string;
   // What the account stood at once this entry had posted.
   runningBalance: string;
   postedAt: Date;
+  // When the money was taken — the transaction's capture time, which for an
+  // entry carried from a Phase 1 receipt is that receipt's date (S-1303).
+  occurredAt: Date;
+  // What a statement line says (S-1309): "Opening deposit" for a carried
+  // Phase 1 line, "Refund" for the reversal of one, "Deposit", or
+  // "Reversal of TX-…".
+  description: string;
+  methodName: string;
+  methodReference: string;
+  reason: string;
+  receiptNo: string | null;
+  reversesReference: string | null;
+  capturedByName: string;
 }
 
 export interface LedgerDrift {
@@ -167,8 +181,18 @@ export async function accountEntries(
     kind: string;
     direction: 'credit' | 'debit';
     amount: string;
+    currency: string;
     running_balance: string;
     posted_at: Date;
+    created_at: Date;
+    carried: boolean;
+    reverses_carried: boolean;
+    method_name: string;
+    method_reference: string;
+    reason: string;
+    receipt_no: string | null;
+    reverses_reference: string | null;
+    captured_by_name: string;
   }>(
     `with running as (
        select e.id, e.sequence_no, e.transaction_id, e.direction, e.amount,
@@ -179,9 +203,24 @@ export async function accountEntries(
         where e.account_id = $1
      )
      select r.id, r.sequence_no, r.transaction_id, t.reference, t.kind,
-            r.direction, r.amount, r.running_balance, r.posted_at
+            r.direction, r.amount, t.currency, r.running_balance, r.posted_at,
+            t.created_at,
+            (t.payment_line_id is not null
+             or t.payment_account_line_id is not null) as carried,
+            (o.payment_line_id is not null
+             or o.payment_account_line_id is not null) as reverses_carried,
+            pm.name as method_name,
+            coalesce(t.method_reference, '') as method_reference,
+            coalesce(t.reason, '') as reason,
+            rn.receipt_no,
+            o.reference as reverses_reference,
+            u.display_name as captured_by_name
        from running r
        join transaction t on t.id = r.transaction_id
+       join payment_method pm on pm.code = t.method
+       join app_user u on u.id = t.captured_by
+       left join transaction o on o.id = t.reverses_id
+       left join receipt_number rn on rn.id = t.receipt_number_id
       where ($2::bigint is null or r.sequence_no < $2)
       order by r.sequence_no desc
       limit $3`,
@@ -195,9 +234,33 @@ export async function accountEntries(
     kind: r.kind,
     direction: r.direction,
     amount: r.amount,
+    currency: r.currency,
     runningBalance: r.running_balance,
     postedAt: r.posted_at,
+    occurredAt: r.created_at,
+    description: describe(r),
+    methodName: r.method_name,
+    methodReference: r.method_reference,
+    reason: r.reason,
+    receiptNo: r.receipt_no,
+    reversesReference: r.reverses_reference,
+    capturedByName: r.captured_by_name,
   }));
+}
+
+function describe(r: {
+  kind: string;
+  carried: boolean;
+  reverses_carried: boolean;
+  reverses_reference: string | null;
+}): string {
+  if (r.kind === 'deposit') return r.carried ? 'Opening deposit' : 'Deposit';
+  if (r.kind === 'reversal') {
+    return r.reverses_carried && r.carried
+      ? 'Refund'
+      : `Reversal of ${r.reverses_reference ?? 'a transaction'}`;
+  }
+  return r.kind.charAt(0).toUpperCase() + r.kind.slice(1).replace(/_/g, ' ');
 }
 
 export async function ledgerDrift(): Promise<LedgerDrift[]> {

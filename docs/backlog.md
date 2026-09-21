@@ -3541,6 +3541,25 @@ and statement work rather than here. `transaction.capture` (0068) is the
 permission, held by whoever holds `payment.record`; the rest of the
 transaction permissions are S-1311's.
 
+**Shipped, sixth increment** (S-1309, S-1310): the balance is where an
+officer looks, and nothing derives one from payments any more. The
+member's page shows each account's balance from the cache, with a link to
+`/accounts/{id}`: every posted entry newest first, fifty a page, each with
+the balance after it computed from the entries in SQL, the method, the
+receipt, the note and who captured it — `accountEntries()` grew those
+columns and a one-line description ("Opening deposit", "Refund",
+"Deposit", "Reversal of TX-…"). `GET /api/v1/accounts/{id}/balance` and
+`GET /api/v1/accounts/{id}/history` (paged by `before`) join
+`POST /api/v1/deposits`, all through `defineEndpoint`, behind
+`payment.view` until S-1311 gives money its own permissions. The stand-in
+that read "opening payment less refund" is gone from everywhere it lived:
+`transactionsForAccount` (the Members list's dialogue and
+`/accounts/{id}/transactions`), the member app's `/me/accounts` balance
+and `/me/accounts/{id}/transactions`, and the Members list's Total funds —
+each now reads the ledger, and the payment tests that built an account by
+hand now carry its receipt the way approval does. The deposit page and the
+endpoint already shared one service function, as S-1310 asks.
+
 ### S-1301 · The account ledger ✅
 
 **As** the Society, **I need** every movement of money on an account to be
@@ -3712,7 +3731,7 @@ connection cannot move money twice. _(API-US-002, FRD 3, 16)_
   endpoint, so `/api/v1/deposits` and every later write endpoint gets it by
   declaration, and the OpenAPI document says so (S-110)
 
-### S-1309 · The balance, where an officer looks
+### S-1309 · The balance, where an officer looks ✅
 
 **As** an officer, **I need** to see a member's accounts with their balances
 on the member's page, **so that** I can answer the question they came in
@@ -3727,7 +3746,7 @@ with. _(ACC-US-004, TXN-US-007, FRD 6.9)_
 - Balance replaces "opening payment less refund" wherever the member app
   (Phase 4) and the member page showed it
 
-### S-1310 · A deposit is reachable from the API
+### S-1310 · A deposit is reachable from the API ✅
 
 **As** a developer, **I need** the deposit to be an endpoint like every other
 operation, **so that** the API is the product and the page is a client of

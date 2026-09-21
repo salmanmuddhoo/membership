@@ -19,8 +19,7 @@ import {
   documentsForMember,
   type ChecklistState,
 } from '../documents/documents';
-import { fromCents, toCents } from '../payments/money';
-import { transactionsForAccount } from '../payments/payments';
+import { accountEntries } from '../ledger/ledger';
 import type { MemberPrincipal, RequestOrigin } from './identity';
 import { maskMobile } from './otp';
 
@@ -148,10 +147,9 @@ export interface AccountSummary {
   category: string;
   status: string;
   openedAt: string;
-  // Decimal string. Null when nothing has been recorded against the
-  // account: there is no ledger yet (docs/payments.md), only the payment
-  // that opened it and any refund, so an account with neither has no
-  // figure this can honestly state.
+  // Decimal string, from the ledger's balance cache (docs/ledger.md,
+  // S-1309). Null for an account nothing has ever posted to — which is not
+  // the same as a balance of zero, and the app may say so.
   balance: string | null;
 }
 
@@ -169,39 +167,33 @@ export async function memberAccounts(
     category: string;
     status: string;
     opened_at: Date;
+    balance: string | null;
   }>(
     `select a.id, a.account_no, m.member_no, t.code as type_code,
-            t.name as type_name, t.category, a.status, a.opened_at
+            t.name as type_name, t.category, a.status, a.opened_at,
+            b.balance
        from account a
        join account_type t on t.id = a.account_type_id
        left join member m on m.id = a.member_id
+       left join account_balance b on b.account_id = a.id
       where ($1::uuid is not null and a.member_id = $1::uuid)
          or ($2::uuid is not null and a.customer_id = $2::uuid)
       order by t.sort_order, t.name`,
     [principal.memberId, principal.customerId]
   );
 
-  return Promise.all(
-    rows.rows.map(async r => {
-      const transactions = await transactionsForAccount(r.id);
-      const cents = transactions.reduce(
-        (sum, t) => sum + (t.type === 'debit' ? -1 : 1) * toCents(t.amount),
-        0
-      );
-      return {
-        id: r.id,
-        // A Shares or MSA account carries the member's own number
-        // (migration 0018); one carried over from a customer keeps its own.
-        accountNo: r.account_no ?? r.member_no ?? '',
-        typeCode: r.type_code,
-        typeName: r.type_name,
-        category: r.category,
-        status: r.status,
-        openedAt: r.opened_at.toISOString(),
-        balance: transactions.length > 0 ? fromCents(cents) : null,
-      };
-    })
-  );
+  return rows.rows.map(r => ({
+    id: r.id,
+    // A Shares or MSA account carries the member's own number
+    // (migration 0018); one carried over from a customer keeps its own.
+    accountNo: r.account_no ?? r.member_no ?? '',
+    typeCode: r.type_code,
+    typeName: r.type_name,
+    category: r.category,
+    status: r.status,
+    openedAt: r.opened_at.toISOString(),
+    balance: r.balance,
+  }));
 }
 
 export interface AccountTransaction {
@@ -230,13 +222,16 @@ export async function accountTransactions(
   );
   if (owned.rowCount === 0) throw new ApiError('not_found', 'No such account.');
 
-  return (await transactionsForAccount(accountId)).map((t, i) => ({
-    id: `${accountId}:${i}`,
-    occurredAt: t.occurredAt.toISOString(),
-    direction: t.type,
-    amount: t.amount,
-    description: t.description,
-    receiptNo: null,
+  // The ledger's own entries, oldest first (S-1309). Bounded: a statement
+  // in the app is the recent past; the full history is the officer's page.
+  const entries = await accountEntries(accountId, { limit: 500 });
+  return entries.reverse().map(e => ({
+    id: e.id,
+    occurredAt: e.occurredAt.toISOString(),
+    direction: e.direction,
+    amount: e.amount,
+    description: e.description,
+    receiptNo: e.receiptNo,
   }));
 }
 

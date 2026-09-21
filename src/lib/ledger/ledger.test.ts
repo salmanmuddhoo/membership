@@ -343,6 +343,79 @@ describe('what cannot change', () => {
   });
 });
 
+// S-1309: what a statement line carries, and paging backwards through it.
+describe('the history of an account', () => {
+  it('describes each entry, names its method and receipt, and pages by sequence', async () => {
+    const ledger = await load();
+    // A member of its own: the fixture member already holds one account of
+    // each type, and the schema allows no second (S-309).
+    const msa = (
+      await run(appUrl, `select id from account_type where code = 'msa'`)
+    ).rows[0].id;
+    const other = await run(
+      appUrl,
+      `with app as (
+         insert into membership_application (membership_type_id, captured_by, status)
+         select membership_type_id, $1, 'approved' from member where id = $2
+         returning id, membership_type_id
+       )
+       insert into member (application_id, membership_type_id)
+       select id, membership_type_id from app returning id`,
+      [userId, memberId]
+    );
+    const otherMemberId = other.rows[0].id;
+    const account = (
+      await run(
+        appUrl,
+        `insert into account (member_id, account_type_id, is_membership_default)
+         values ($1, $2, true) returning id`,
+        [otherMemberId, msa]
+      )
+    ).rows[0].id;
+
+    for (const amount of ['10.00', '20.00', '30.00']) {
+      const id = (
+        await run(
+          appUrl,
+          `insert into transaction
+             (kind, member_id, account_id, amount, method, status, captured_by)
+           values ('deposit', $1, $2, $3, 'cash', 'submitted', $4)
+           returning id`,
+          [otherMemberId, account, amount, userId]
+        )
+      ).rows[0].id;
+      await ledger.postTransaction(id, actor);
+    }
+
+    const page = await ledger.accountEntries(account, { limit: 2 });
+    expect(page.map(e => [e.amount, e.runningBalance])).toEqual([
+      ['30.00', '60.00'],
+      ['20.00', '30.00'],
+    ]);
+    expect(page[0]).toMatchObject({
+      kind: 'deposit',
+      description: 'Deposit',
+      direction: 'credit',
+      currency: 'MUR',
+      methodName: 'Cash',
+      methodReference: '',
+      reason: '',
+      receiptNo: null,
+      reversesReference: null,
+      capturedByName: 'Administrator',
+    });
+    expect(page[0].occurredAt).toBeInstanceOf(Date);
+
+    const older = await ledger.accountEntries(account, {
+      limit: 2,
+      beforeSequenceNo: page[1].sequenceNo,
+    });
+    expect(older.map(e => [e.amount, e.runningBalance])).toEqual([
+      ['10.00', '10.00'],
+    ]);
+  });
+});
+
 describe('the balance is the sum of the entries', () => {
   it('reads a running balance in posting order', async () => {
     const ledger = await load();

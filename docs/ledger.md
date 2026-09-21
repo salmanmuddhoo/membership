@@ -121,6 +121,31 @@ A deposit below the escalation threshold has no chain (FRD 6.2), so it posts
 on submit; M14 puts the threshold in front of this call. `transaction.capture`
 is the permission, held by whoever holds `payment.record`.
 
+## Where a balance is read
+
+- **The member's page** shows each account's balance from the cache, with a
+  link to its history; an account nothing has ever posted to shows a dash,
+  because a zero would read as a fact (S-1309).
+- **The history page** (`/accounts/{id}`) lists every posted entry, newest
+  first, fifty at a time, each with the balance the account stood at once it
+  had posted — computed from the entries in SQL, so it is exactly what the
+  ledger says whatever the cache does. `accountEntries()` is the one reader;
+  each line carries a description ("Opening deposit" for a carried Phase 1
+  line, "Refund" for its reversal, "Deposit", "Reversal of TX-…"), the
+  method, the receipt, the note and who captured it.
+- **The API**: `GET /api/v1/accounts/{id}/balance` and
+  `GET /api/v1/accounts/{id}/history` (paged by `before`), through
+  `defineEndpoint` (S-1310). The older `/accounts/{id}/transactions` keeps
+  its shape for the Members list's dialogue and now reads the same entries.
+- **The member app** reads the cache for `/me/accounts` and the entries for
+  `/me/accounts/{id}/transactions` (`docs/member-app.md`).
+- **The Members list's Total funds** is the sum of the cache over every
+  account the person holds, whichever application opened it.
+
+Nothing derives a balance from payments any more: the stand-in that read
+"opening payment less refund" is gone, because those two lines are now the
+account's first entries (S-1303).
+
 ## Reversal
 
 A `reversal` names the transaction it reverses (`reverses_id`) and posts the

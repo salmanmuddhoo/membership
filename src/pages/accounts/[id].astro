@@ -1,0 +1,168 @@
+---
+// One account's history (S-1309): every posted entry, newest first, with
+// the balance the account stood at after each — the statement S-1601 later
+// exports. Reached from the person's page; paged backwards by sequence.
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import { query } from '@lib/db/pool';
+import { accountBalance, accountEntries } from '@lib/ledger/ledger';
+import { formatMoney } from '@lib/payments/money';
+
+const { id } = Astro.params;
+const found = id
+  ? await query<{
+      account_no: string;
+      type_name: string;
+      status: string;
+      holder_id: string;
+      holder_name: string;
+      holder_kind: 'member' | 'customer';
+    }>(
+      `select coalesce(a.account_no, m.member_no) as account_no,
+              t.name as type_name, a.status,
+              coalesce(a.member_id, a.customer_id) as holder_id,
+              case when a.member_id is not null then 'member' else 'customer' end
+                as holder_kind,
+              trim(coalesce(p.values->>'name', '') || ' '
+                   || coalesce(p.values->>'surname', '')) as holder_name
+         from account a
+         join account_type t on t.id = a.account_type_id
+         left join member m on m.id = a.member_id
+         left join customer c on c.id = a.customer_id
+         left join application_party p
+           on p.application_id = coalesce(m.application_id, c.application_id)
+          and p.subject = 'applicant' and p.ordinal = 1
+        where a.id = $1`,
+      [id]
+    )
+  : null;
+const account = found?.rows[0];
+if (!account) return new Response('Not found', { status: 404 });
+
+const PAGE = 50;
+const beforeParam = Astro.url.searchParams.get('before');
+const before =
+  beforeParam && /^\d+$/.test(beforeParam) ? Number(beforeParam) : undefined;
+
+const [balance, entries] = await Promise.all([
+  accountBalance(id!),
+  accountEntries(id!, { limit: PAGE, beforeSequenceNo: before }),
+]);
+const oldest = entries[entries.length - 1];
+const nextBefore = entries.length === PAGE && oldest ? oldest.sequenceNo : null;
+
+const dateFormat = new Intl.DateTimeFormat('en-GB', {
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+});
+---
+
+<DashboardLayout
+  title={`${account.account_no} · Al Barakah MCSL`}
+  heading={`${account.account_no} · ${account.type_name}`}
+>
+  <div class="mx-auto max-w-5xl space-y-6">
+    <div class="flex flex-wrap items-baseline justify-between gap-3">
+      <p class="text-sm text-neutral-600 dark:text-neutral-300">
+        <a
+          href={`/members/${account.holder_id}`}
+          class="font-medium underline hover:text-neutral-900 dark:hover:text-neutral-100"
+        >
+          {account.holder_name || account.holder_kind}
+        </a>
+        {' · '}
+        {account.status}
+      </p>
+      <p class="text-sm text-neutral-600 dark:text-neutral-300">
+        Balance{' '}
+        <span class="text-lg font-semibold text-neutral-800 tabular-nums dark:text-neutral-100">
+          {balance ? formatMoney(balance.balance) : '—'}
+        </span>
+      </p>
+    </div>
+
+    <section class="overflow-x-auto rounded-2xl border border-neutral-200 bg-neutral-100 p-4 dark:border-neutral-800 dark:bg-neutral-950">
+      {entries.length === 0 ? (
+        <p class="text-sm text-neutral-500 dark:text-neutral-400">
+          {before
+            ? 'Nothing older.'
+            : 'Nothing has been posted to this account.'}
+        </p>
+      ) : (
+        <table class="w-full text-sm">
+          <thead class="text-left text-xs text-neutral-500 uppercase dark:text-neutral-400">
+            <tr>
+              <th class="px-2 py-2">Date</th>
+              <th class="px-2 py-2">Reference</th>
+              <th class="px-2 py-2">Description</th>
+              <th class="px-2 py-2">Method</th>
+              <th class="px-2 py-2">Receipt</th>
+              <th class="px-2 py-2 text-right">In</th>
+              <th class="px-2 py-2 text-right">Out</th>
+              <th class="px-2 py-2 text-right">Balance</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-neutral-200 dark:divide-neutral-800">
+            {entries.map(entry => (
+              <tr class="text-neutral-800 dark:text-neutral-100">
+                <td class="px-2 py-2 whitespace-nowrap">
+                  {dateFormat.format(entry.occurredAt)}
+                </td>
+                <td class="px-2 py-2">
+                  <code class="text-xs">{entry.transactionReference}</code>
+                </td>
+                <td class="px-2 py-2">
+                  {entry.description}
+                  {entry.reason && (
+                    <span class="text-xs text-neutral-500 dark:text-neutral-400">
+                      {' · '}
+                      {entry.reason}
+                    </span>
+                  )}
+                  <span class="block text-xs text-neutral-500 dark:text-neutral-400">
+                    by {entry.capturedByName}
+                  </span>
+                </td>
+                <td class="px-2 py-2">
+                  {entry.methodName}
+                  {entry.methodReference && ` · ${entry.methodReference}`}
+                </td>
+                <td class="px-2 py-2">
+                  <code class="text-xs">{entry.receiptNo ?? '—'}</code>
+                </td>
+                <td class="px-2 py-2 text-right tabular-nums">
+                  {entry.direction === 'credit' && formatMoney(entry.amount)}
+                </td>
+                <td class="px-2 py-2 text-right tabular-nums">
+                  {entry.direction === 'debit' && formatMoney(entry.amount)}
+                </td>
+                <td class="px-2 py-2 text-right font-medium tabular-nums">
+                  {formatMoney(entry.runningBalance)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+
+    <div class="flex flex-wrap gap-2">
+      {before && (
+        <a
+          href={`/accounts/${id}`}
+          class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+        >
+          Latest
+        </a>
+      )}
+      {nextBefore !== null && (
+        <a
+          href={`/accounts/${id}?before=${nextBefore}`}
+          class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+        >
+          Older
+        </a>
+      )}
+    </div>
+  </div>
+</DashboardLayout>

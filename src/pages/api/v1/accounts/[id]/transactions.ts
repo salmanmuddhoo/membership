@@ -1,11 +1,8 @@
 // What has moved through one account, credit and debit (Members page
-// feedback).
-//
-// A read-only stand-in for the transaction ledger this schema does not have
-// yet ("later on we will have transaction where there will be deposit or
-// withdrawal or transfer"): today the only things that can have happened to
-// an account are the payment that opened it and, if the application was
-// later refunded, the money paid back — so that is what this reports.
+// feedback), oldest first — the ledger's own entries (S-1309) in the shape
+// the Members list's dialogue has read since before there was a ledger.
+// /history is the fuller read: newest first, paginated, with the running
+// balance and the receipt.
 import type { APIRoute } from 'astro';
 import { defineEndpoint, apiSuccess, ApiError } from '@lib/api/endpoint';
 import { transactionsForAccount } from '@lib/payments/payments';
@@ -16,10 +13,9 @@ const endpoint = defineEndpoint(
     path: '/api/v1/accounts/{id}/transactions',
     summary: "Read one account's credits and debits",
     description:
-      'Every credit and debit recorded against this account, oldest ' +
-      'first — not a running balance, and not a transaction history in ' +
-      'the fuller sense: there is no ledger behind this account yet, only ' +
-      'the payment that opened it and any refund paid back against it.',
+      'Every posted entry on this account, oldest first, as a credit or a ' +
+      'debit with a one-line description. For the running balance, the ' +
+      'receipt and paging, use /accounts/{id}/history.',
     tag: 'Payments',
     permission: 'payment.view',
     responseSchema: {

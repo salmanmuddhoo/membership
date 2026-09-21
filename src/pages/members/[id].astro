@@ -1,6 +1,7 @@
 ---
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import { loadMember, loadCustomer } from '@lib/members/create';
+import { accountBalance } from '@lib/ledger/ledger';
 import {
   ApplicationError,
   findGuardian,
@@ -280,6 +281,16 @@ const canDeposit =
   principal.permissions.has('transaction.capture') &&
   person.status === 'active' &&
   person.accounts.some(a => a.status === 'active');
+// S-1309: each account's balance, from the ledger's cache. Null for one
+// nothing has ever posted to, which the page shows as a dash rather than
+// a zero that would read as a fact.
+const balances = new Map(
+  await Promise.all(
+    person.accounts.map(
+      async a => [a.id, (await accountBalance(a.id))?.balance ?? null] as const
+    )
+  )
+);
 const joinedAt = (member ?? customer)!.joinedAt;
 const applicationReference = (member ?? customer)!.applicationReference;
 // Officer feedback: what the Secretary and the President said on the way to
@@ -648,6 +659,17 @@ const pageTitle = member ? member.memberNo : name;
                   {account.openedViaMigration ? 'migrated' : 'opened'}{' '}
                   {dateFormat.format(account.openedAt)}
                 </span>
+                <span class="ml-auto font-medium text-neutral-800 tabular-nums dark:text-neutral-100">
+                  {balances.get(account.id) === null
+                    ? '—'
+                    : formatMoney(balances.get(account.id)!)}
+                </span>
+                <a
+                  href={`/accounts/${account.id}`}
+                  class="text-sm font-medium text-neutral-700 underline hover:text-neutral-900 dark:text-neutral-200 dark:hover:text-neutral-100"
+                >
+                  History
+                </a>
               </div>
             </li>
           ))}
