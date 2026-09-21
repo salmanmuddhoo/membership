@@ -59,6 +59,7 @@ const depositSchema = {
     capturedByName: { type: 'string' },
     createdAt: { type: 'string', format: 'date-time' },
     postedAt: { type: 'string', format: 'date-time', nullable: true },
+    workflowDefinitionId: { type: 'string', format: 'uuid', nullable: true },
     workflowName: {
       type: 'string',
       nullable: true,

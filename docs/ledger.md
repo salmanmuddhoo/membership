@@ -173,11 +173,49 @@ act and needs `transaction.post` as well as `transaction.capture`; above it,
 capture alone submits it for review, so a Clerk records a large deposit and
 the Secretary and President decide it.
 
+## Acting on what waits
+
+`src/lib/ledger/review.ts` (S-1403, S-1404). Where a transaction stands is
+read against the chain as it is now: `positionOf()` takes the step it was
+left at (`current_step_code`) and returns the first enabled step from there,
+so a step disabled under a queued transaction moves it on to the next role's
+queue with no code change (S-1402), and null means no enabled step remains
+and an administrator has to enable one. Every step but the last is a review
+(`transaction.review`: forward or return); the last is the decision
+(`transaction.approve`: approve or reject) — by position, not by step name,
+so a chain re-shaped at Configuration → Workflows needs no release. The
+comment is mandatory on return and reject, checked in the library so no
+caller skips it. Acting also needs the step's configured role, and the
+segregation rules refuse the officer who captured it (0069, 0071).
+
+`/transactions/pending` is one queue for every kind: what waits at a step the
+person's role owns, what is approved for them to post (`transaction.post`),
+and their own captures a reviewer returned. The sidebar badge on
+Transactions counts the same three, so a badge counts what its own link
+opens — the President's number on Applications stays the applications.
+
+Approval decides; posting moves the money. `postApprovedTransaction()` is a
+separate act by someone with `transaction.post` who did not capture it, and a
+deposit takes its receipt there, since a receipt is issued when money posts.
+
+A returned transaction is its captor's to correct, and nobody's while it
+sits at a step. `resubmitDeposit()` changes amount, method, reference, note
+or account (one of the same holder's), writes both versions to the audit
+trail, and hands the routing decision to `resubmitTransaction()`: the matrix
+is read again, and when it names the same chain and the returning step is
+still enabled the transaction re-enters there — an approval already given is
+not asked for twice. When the amount crossed a band, or the chain changed,
+the rule that would apply to a first submission applies now (decision 11):
+the first step of the new chain, or posted at once, which a Clerk without
+`transaction.post` is refused.
+
 ## Who may do what
 
 `transaction.capture` records; `transaction.post` posts directly below the
-escalation threshold, so a deposit — one act — needs both; `account.view`
-reads a balance or a history; `transaction.view` reads transactions;
+escalation threshold, so a deposit — one act — needs both, and posts an
+approved transaction off its chain; `transaction.review` and
+`transaction.approve` act at a chain's steps; `account.view` reads a
+balance or a history; `transaction.view` reads transactions and the queue;
 `receipt.void` voids a receipt. The default mapping and the segregation
 rules are in `docs/access-control.md` (S-1311). The capture path writes a
 `transaction.captured` audit row before `post_transaction()` writes

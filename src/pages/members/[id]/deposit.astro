@@ -197,6 +197,14 @@ const INPUT =
           >
             Back to {member ? 'member' : 'customer'}
           </a>
+          {deposit.status !== 'posted' && (
+            <a
+              href={`/transactions/${deposit.id}`}
+              class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+            >
+              Follow it
+            </a>
+          )}
           <a
             href={
               fromTransactions

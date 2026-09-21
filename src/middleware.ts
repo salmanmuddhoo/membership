@@ -5,6 +5,7 @@ import { authorise } from '@lib/access/authorise';
 import { resolvePrincipal, type Principal } from '@lib/access/principal';
 import { apiError, correlationIdFrom } from '@lib/api/envelope';
 import { pendingActionCount } from '@lib/applications/workflow';
+import { pendingTransactionCount } from '@lib/ledger/review';
 
 const LOGIN_PATH = '/login';
 const HOME_PATH = '/dashboard';
@@ -184,6 +185,14 @@ const guard = defineMiddleware(async (context, next) => {
         return 0;
       }
     );
+  }
+  if (principal.permissions.has('transaction.view')) {
+    context.locals.pendingTransactions = pendingTransactionCount(
+      principal
+    ).catch(error => {
+      console.error('[access] could not count pending transactions:', error);
+      return 0;
+    });
   }
 
   return next();

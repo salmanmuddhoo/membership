@@ -6,6 +6,7 @@ import EnvBadge from '@components/EnvBadge.astro';
 import Icon from '@components/ui/icons/Icon.astro';
 import { isProductionEnvironment } from '@lib/config';
 import { pendingActionCount } from '@lib/applications/workflow';
+import { pendingTransactionCount } from '@lib/ledger/review';
 
 interface Props {
   title?: string;
@@ -47,6 +48,14 @@ const applicationsBadge =
   principal && can('application.view')
     ? await (Astro.locals.pendingActions ?? pendingActionCount(principal))
     : 0;
+// S-1403: the same for transactions — a badge counts what its own link
+// opens, so the President's number on Transactions is the transactions
+// waiting on them, and the one on Applications stays the applications.
+const transactionsBadge =
+  principal && can('transaction.view')
+    ? await (Astro.locals.pendingTransactions ??
+        pendingTransactionCount(principal))
+    : 0;
 
 interface NavItem {
   label: string;
@@ -83,8 +92,15 @@ const navGroups: NavGroup[] = [
   {
     label: 'Money',
     items: [
-      ...(can('transaction.capture')
-        ? [{ label: 'Transactions', href: '/transactions', icon: 'reports' }]
+      ...(can('transaction.view')
+        ? [
+            {
+              label: 'Transactions',
+              href: '/transactions',
+              icon: 'reports',
+              badge: transactionsBadge > 0 ? transactionsBadge : undefined,
+            },
+          ]
         : []),
       ...(can('receipt.reconcile')
         ? [

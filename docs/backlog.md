@@ -3615,9 +3615,29 @@ above the threshold is now submitted, not posted: no receipt until it
 posts, the step it waits at on the confirmation, and a Clerk holding
 capture alone can record one. The tests prove a disabled Secretary step
 sends the next large deposit to the President (S-1402's live chain).
-**Not yet:** the queue and review screen that act on what waits (S-1403),
-the in-flight rule for a step disabled under a queued item (S-1402's last
-criterion, a test that needs the queue), and reading the trail (S-1406).
+**Shipped, second increment** (S-1403, S-1404; S-1402 complete): the
+queue and the screen that act on what waits. `/transactions/pending` lists,
+for any kind, what stands at a step the person's role owns, what is
+approved for them to post, and their own captures a reviewer returned;
+`/transactions/{id}` is one screen for all of it — details, Forward (Approve
+at the last step), Return and Reject with their mandatory comments, Post,
+and the correction form — with the trail underneath. Two permissions,
+`transaction.review` and `transaction.approve`, by position on the chain
+rather than by step name, so a re-shaped chain needs no release (0071);
+one more segregation rule, the captor may not review. Where a transaction
+stands is read against the live chain: a step disabled under a queued item
+moves it to the next role's queue, which is S-1402's last criterion, now a
+test. Approval decides and posting moves the money — a separate act, by
+someone with `transaction.post` who did not capture it, where a deposit
+takes its receipt. A returned deposit is its captor's to correct; it
+re-enters at the step that returned it, or, when the amount crossed a band,
+takes the route a first submission would (decision 11), posting at once
+included. **One departure from the story as written:** the sidebar badge on
+Transactions counts the transactions, and the one on Applications keeps
+counting applications — a badge counts what its own link opens, rather than
+one number that leads to only half of what it counts. **Not yet:** the
+chevron (S-1405) and the auditor's reading of the trail across screens
+(S-1406).
 
 ### S-1301 · The account ledger ✅
 
@@ -3880,7 +3900,7 @@ reviewed. _(APR-US-001, APR-US-002, APR-US-006, FRD 6.5, 17)_
 - Configuration → Approval matrix edits it, with the same "who changed what,
   when" every configuration screen has (S-210)
 
-### S-1402 · A chain per transaction kind, on `workflow_step`
+### S-1402 · A chain per transaction kind, on `workflow_step` ✅
 
 **As** an administrator, **I need** to define an ordered chain of role steps
 for withdrawals, transfers, closures, resignations and demised claims, **so
@@ -3905,7 +3925,7 @@ that** governance is a setting. _(APR-US-009, APR-US-010, APR-US-011, FRD
   and made so if it is not (APR-US-012 is the FRD's one explicit rule
   about in-flight work; it is a test before it is a feature)
 
-### S-1403 · Review and decision, one screen for every kind
+### S-1403 · Review and decision, one screen for every kind ✅
 
 **As** the Secretary and the President, **I need** one queue of everything
 waiting on me and one screen to act on any of it, **so that** I do not learn
@@ -3928,7 +3948,7 @@ six interfaces. _(APR-US-003, APR-US-004, UX-US-004, FRD 6.5, 8)_
 - `pendingActionCount` (the sidebar badge) counts transaction steps too,
   so the President sees one number
 
-### S-1404 · Return, edit, resubmit — at the step that returned it
+### S-1404 · Return, edit, resubmit — at the step that returned it ✅
 
 **As** the officer who captured it, **I need** to correct a returned
 transaction and send it back to the step that returned it, **so that** an

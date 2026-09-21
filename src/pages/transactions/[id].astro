@@ -1,0 +1,541 @@
+---
+// One transaction, whatever its kind (S-1403, S-1404, S-1406): what it is,
+// where it stands, what this person may do with it now — review, decide,
+// post, or correct and resubmit — and the trail of who did what.
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import {
+  cashMaximum,
+  cashSourceOfFundThreshold,
+  listAccountTypes,
+  offeredPaymentMethods,
+} from '@lib/config/reference';
+import {
+  DepositError,
+  PERMISSION_CAPTURE,
+  resubmitDeposit,
+} from '@lib/ledger/deposits';
+import {
+  IN_FLIGHT,
+  loadTransaction,
+  mayActAt,
+  PERMISSION_POST,
+  positionOf,
+  postApprovedTransaction,
+  ReviewError,
+  reviewTransaction,
+  transitionsFor,
+} from '@lib/ledger/review';
+import { loadCustomer, loadMember } from '@lib/members/create';
+import { formatMoney } from '@lib/payments/money';
+
+const principal = Astro.locals.principal!;
+const { id } = Astro.params;
+let transaction = id ? await loadTransaction(id) : null;
+if (!transaction) return new Response('Not found', { status: 404 });
+
+const KIND_LABELS: Record<string, string> = {
+  deposit: 'Deposit',
+  withdrawal: 'Withdrawal',
+  transfer: 'Transfer',
+  closure: 'Closure',
+  resignation: 'Resignation',
+  demise: 'Demise',
+};
+const STATUS_LABELS: Record<string, string> = {
+  submitted: 'Submitted',
+  under_review: 'Under review',
+  approved: 'Approved',
+  posted: 'Posted',
+  returned: 'Returned',
+  rejected: 'Rejected',
+  cancelled: 'Cancelled',
+};
+
+let error: string | null = null;
+let notice: string | null = null;
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const text = (name: string) => String(form.get(name) ?? '');
+  const intent = text('intent');
+  try {
+    if (intent === 'review') {
+      const outcome = text('outcome');
+      if (
+        outcome !== 'forward' &&
+        outcome !== 'return' &&
+        outcome !== 'reject'
+      ) {
+        throw new ReviewError('Choose what to do with it.');
+      }
+      const result = await reviewTransaction(
+        transaction.id,
+        { outcome, comment: text('comment') },
+        principal
+      );
+      notice = `${transaction.reference} ${STATUS_LABELS[result.status]?.toLowerCase() ?? result.status}.`;
+    } else if (intent === 'post') {
+      const posted = await postApprovedTransaction(transaction.id, principal);
+      notice = posted.receiptNo
+        ? `${transaction.reference} posted. Receipt ${posted.receiptNo}.`
+        : `${transaction.reference} posted.`;
+    } else if (intent === 'resubmit') {
+      const result = await resubmitDeposit(
+        transaction.id,
+        {
+          accountId: text('accountId'),
+          amount: text('amount'),
+          method: text('method'),
+          methodReference: text('methodReference'),
+          reason: text('reason'),
+          sourceOfFundFormConfirmed:
+            form.get('sourceOfFundFormConfirmed') === 'true',
+        },
+        principal
+      );
+      notice =
+        result.status === 'posted'
+          ? `${transaction.reference} posted. Receipt ${result.receiptNo}.`
+          : `${transaction.reference} sent back for ${result.currentStepName ?? 'review'}.`;
+    }
+  } catch (err) {
+    if (err instanceof ReviewError || err instanceof DepositError) {
+      error = err.message;
+    } else {
+      console.error('[transactions/review]', err);
+      error = 'Something went wrong. Please try again.';
+    }
+  }
+  transaction = (await loadTransaction(transaction.id))!;
+}
+
+const position = (IN_FLIGHT as readonly string[]).includes(transaction.status)
+  ? await positionOf(transaction)
+  : null;
+const canAct = position ? mayActAt(position, principal) : false;
+const canPost =
+  transaction.status === 'approved' &&
+  principal.permissions.has(PERMISSION_POST) &&
+  transaction.capturedById !== principal.userId;
+const canEdit =
+  transaction.status === 'returned' &&
+  transaction.capturedById === principal.userId &&
+  principal.permissions.has(PERMISSION_CAPTURE) &&
+  transaction.kind === 'deposit';
+const stalled =
+  (IN_FLIGHT as readonly string[]).includes(transaction.status) && !position;
+
+const trail = await transitionsFor(transaction.id);
+// The comment that sent it back, for the officer correcting it.
+const returnComment =
+  transaction.status === 'returned'
+    ? [...trail].reverse().find(t => t.toStatus === 'returned')?.comment
+    : null;
+
+// The correction form's choices, only when it is offered.
+const person = canEdit
+  ? transaction.holderKind === 'member'
+    ? await loadMember(transaction.holderId)
+    : await loadCustomer(transaction.holderId)
+  : null;
+const types = canEdit
+  ? new Map((await listAccountTypes()).map(t => [t.id, t]))
+  : new Map();
+const accounts = (person?.accounts ?? []).map(a => ({
+  ...a,
+  acceptsDeposits: types.get(a.accountTypeId)?.allowsDeposit ?? false,
+}));
+const paymentMethods = canEdit ? await offeredPaymentMethods() : [];
+const cashThreshold = canEdit ? await cashSourceOfFundThreshold() : '0';
+const cashMax = canEdit ? await cashMaximum() : '0';
+
+const dateFormat = new Intl.DateTimeFormat('en-GB', {
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+});
+const INPUT =
+  'mt-1 block w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100';
+const BUTTON =
+  'bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50';
+const DANGER =
+  'rounded-lg border border-red-300 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950';
+---
+
+<DashboardLayout
+  title={`${transaction.reference} · Al Barakah MCSL`}
+  heading={`${KIND_LABELS[transaction.kind] ?? transaction.kind} ${transaction.reference}`}
+>
+  <div class="mx-auto max-w-4xl space-y-6">
+    <div class="flex flex-wrap items-center justify-between gap-2 text-sm">
+      <a
+        href="/transactions/pending"
+        class="text-neutral-500 underline dark:text-neutral-400"
+      >
+        ← Waiting on you
+      </a>
+      <span class="rounded bg-neutral-200 px-2 py-0.5 text-xs font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
+        {STATUS_LABELS[transaction.status] ?? transaction.status}
+        {position && ` · ${position.step.name} (${position.step.roleName})`}
+      </span>
+    </div>
+
+    {error && (
+      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+        {error}
+      </div>
+    )}
+    {notice && (
+      <div class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-lg border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
+        {notice}
+      </div>
+    )}
+
+    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+      <dl class="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
+        <dt class="text-neutral-500 dark:text-neutral-400">Who</dt>
+        <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+          <a href={`/members/${transaction.holderId}`} class="underline">
+            {transaction.holderName || transaction.holderKind}
+          </a>
+          {transaction.memberNo && ` · ${transaction.memberNo}`}
+        </dd>
+        <dt class="text-neutral-500 dark:text-neutral-400">Account</dt>
+        <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+          <a href={`/accounts/${transaction.accountId}`} class="underline">
+            {transaction.accountNo}
+          </a>
+          {' · '}
+          {transaction.accountTypeName}
+        </dd>
+        <dt class="text-neutral-500 dark:text-neutral-400">Amount</dt>
+        <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+          {formatMoney(transaction.amount, transaction.currency)} by{' '}
+          {transaction.methodName}
+          {transaction.methodReference && ` · ${transaction.methodReference}`}
+        </dd>
+        {transaction.reason && (
+          <>
+            <dt class="text-neutral-500 dark:text-neutral-400">Note</dt>
+            <dd class="text-neutral-800 dark:text-neutral-100">
+              {transaction.reason}
+            </dd>
+          </>
+        )}
+        <dt class="text-neutral-500 dark:text-neutral-400">Recorded by</dt>
+        <dd class="text-neutral-800 dark:text-neutral-100">
+          {transaction.capturedByName} ·{' '}
+          {dateFormat.format(transaction.createdAt)}
+        </dd>
+        {transaction.receiptNo && (
+          <>
+            <dt class="text-neutral-500 dark:text-neutral-400">Receipt</dt>
+            <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+              {transaction.receiptNo}
+            </dd>
+          </>
+        )}
+        {transaction.workflowName && (
+          <>
+            <dt class="text-neutral-500 dark:text-neutral-400">Chain</dt>
+            <dd class="text-neutral-800 dark:text-neutral-100">
+              {transaction.workflowName}
+            </dd>
+          </>
+        )}
+      </dl>
+    </section>
+
+    {stalled && (
+      <p class="rounded-lg border border-amber-300 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200">
+        No enabled step remains on this chain. Ask an administrator to enable
+        one.
+      </p>
+    )}
+
+    {canAct && position && (
+      <form
+        method="post"
+        class="space-y-3 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
+      >
+        <h2 class="text-sm font-semibold text-neutral-700 uppercase dark:text-neutral-200">
+          {position.step.name}
+        </h2>
+        <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+          Comment
+          <textarea
+            name="comment"
+            rows="3"
+            class={INPUT}
+            placeholder={
+              position.isLast
+                ? 'Required if you reject it.'
+                : 'Required if you return or reject it.'
+            }
+          ></textarea>
+        </label>
+        <div class="flex flex-wrap gap-2">
+          <button type="submit" name="outcome" value="forward" class={BUTTON}>
+            {position.isLast ? 'Approve' : 'Forward'}
+          </button>
+          <button type="submit" name="outcome" value="return" class={DANGER}>
+            Return
+          </button>
+          <button type="submit" name="outcome" value="reject" class={DANGER}>
+            Reject
+          </button>
+        </div>
+        <input type="hidden" name="intent" value="review" />
+      </form>
+    )}
+
+    {canPost && (
+      <form
+        method="post"
+        class="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
+      >
+        <p class="text-sm text-neutral-700 dark:text-neutral-200">
+          Approved. Posting moves the money
+          {transaction.kind === 'deposit' && ' and issues the receipt'}.
+        </p>
+        <input type="hidden" name="intent" value="post" />
+        <button type="submit" class={BUTTON}>
+          Post
+        </button>
+      </form>
+    )}
+
+    {canEdit && person && (
+      <form
+        method="post"
+        data-deposit-form
+        data-cash-threshold={cashThreshold}
+        data-cash-maximum={cashMax}
+        class="space-y-4 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
+      >
+        <h2 class="text-sm font-semibold text-neutral-700 uppercase dark:text-neutral-200">
+          Correct and resubmit
+        </h2>
+        {returnComment && (
+          <p class="rounded-lg border border-amber-300 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200">
+            {returnComment}
+          </p>
+        )}
+        <input type="hidden" name="intent" value="resubmit" />
+        <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+          Account
+          <select name="accountId" class={INPUT}>
+            {accounts.map(account => (
+              <option
+                value={account.id}
+                selected={account.id === transaction!.accountId}
+                disabled={
+                  !(account.status === 'active' && account.acceptsDeposits)
+                }
+              >
+                {account.accountNo} · {account.accountTypeName}
+                {account.status !== 'active'
+                  ? ` · ${account.status}`
+                  : account.acceptsDeposits
+                    ? ''
+                    : ' · no deposits'}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            Amount (Rs)
+            <input
+              type="text"
+              inputmode="decimal"
+              name="amount"
+              required
+              value={transaction.amount}
+              data-amount
+              class={INPUT}
+            />
+          </label>
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            Method
+            <select name="method" class={INPUT}>
+              {paymentMethods.map(method => (
+                <option
+                  value={method.code}
+                  data-cash={method.isCash ? 'true' : 'false'}
+                  data-requires-reference={
+                    method.requiresReference ? 'true' : 'false'
+                  }
+                  selected={method.code === transaction!.method}
+                >
+                  {method.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label
+            data-method-reference-field
+            class="text-sm text-neutral-600 dark:text-neutral-300"
+          >
+            Reference (cheque number, transfer reference)
+            <input
+              type="text"
+              name="methodReference"
+              value={transaction.methodReference}
+              class={INPUT}
+            />
+          </label>
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            Note
+            <input
+              type="text"
+              name="reason"
+              value={transaction.reason}
+              maxlength="200"
+              class={INPUT}
+            />
+          </label>
+        </div>
+        <div
+          data-cash-reminder
+          hidden
+          class="space-y-2 rounded-lg border border-amber-300 px-3 py-3 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200"
+        >
+          <p class="font-medium">
+            Cash above {formatMoney(cashThreshold)} needs the Source of Fund
+            form.
+          </p>
+          <label class="flex items-start gap-x-2">
+            <input
+              type="checkbox"
+              name="sourceOfFundFormConfirmed"
+              value="true"
+              checked={transaction.sourceOfFundFormConfirmed}
+              data-cash-form-confirm
+              class="text-mint-500 focus:ring-mint-400 mt-0.5 rounded border-neutral-300 dark:border-neutral-600"
+            />
+            The depositor has completed and signed the Source of Fund form, and
+            it is filed.
+          </label>
+        </div>
+        <p
+          data-cash-maximum-warning
+          hidden
+          class="rounded-lg border border-red-300 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:text-red-200"
+        >
+          Cash deposits above {formatMoney(cashMax)} are not authorised. Use
+          another method, or split the deposit.
+        </p>
+        <div class="flex flex-wrap gap-2 pt-2">
+          <button type="submit" data-deposit-submit class={BUTTON}>
+            Resubmit
+          </button>
+        </div>
+      </form>
+    )}
+
+    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+      <h2 class="text-sm font-semibold text-neutral-700 uppercase dark:text-neutral-200">
+        Trail
+      </h2>
+      {trail.length === 0 ? (
+        <p class="mt-2 text-sm text-neutral-500 dark:text-neutral-400">
+          Nothing yet.
+        </p>
+      ) : (
+        <ol class="mt-3 space-y-3 text-sm">
+          {trail.map(entry => (
+            <li class="border-l-2 border-neutral-300 pl-3 dark:border-neutral-700">
+              <p class="text-neutral-800 dark:text-neutral-100">
+                <span class="font-medium">
+                  {STATUS_LABELS[entry.toStatus] ?? entry.toStatus}
+                </span>
+                {' · '}
+                {entry.actorName}
+                {entry.actorRole && ` (${entry.actorRole})`}
+                {' · '}
+                {dateFormat.format(entry.occurredAt)}
+              </p>
+              {(entry.ruleNote || entry.workflowName) &&
+                entry.fromStatus !== 'approved' && (
+                  <p class="text-xs text-neutral-500 dark:text-neutral-400">
+                    {[entry.ruleNote, entry.workflowName]
+                      .filter(Boolean)
+                      .join(' · ')}
+                  </p>
+                )}
+              {entry.comment && (
+                <p class="mt-1 rounded-lg bg-white px-3 py-2 text-neutral-700 dark:bg-neutral-900 dark:text-neutral-200">
+                  {entry.comment}
+                </p>
+              )}
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
+  </div>
+</DashboardLayout>
+
+<script>
+  // A visual nudge only — every rule is enforced server-side
+  // (ledger/deposits.ts) whether or not this script runs. The same script
+  // as the deposit form's.
+  const form = document.querySelector<HTMLFormElement>('[data-deposit-form]');
+  if (form) {
+    const toCents = (value: string | undefined): number | null => {
+      const trimmed = (value ?? '').trim();
+      if (!/^\d{1,12}(\.\d{1,2})?$/.test(trimmed)) return null;
+      const [whole, fraction = ''] = trimmed.split('.');
+      return Number(whole) * 100 + Number(fraction.padEnd(2, '0'));
+    };
+    const thresholdCents = toCents(form.dataset.cashThreshold);
+    const maximumCents = toCents(form.dataset.cashMaximum);
+    const amountInput = form.querySelector<HTMLInputElement>('[data-amount]');
+    const methodSelect =
+      form.querySelector<HTMLSelectElement>('[name="method"]');
+    const referenceField = form.querySelector<HTMLElement>(
+      '[data-method-reference-field]'
+    );
+    const reminder = form.querySelector<HTMLElement>('[data-cash-reminder]');
+    const confirm = form.querySelector<HTMLInputElement>(
+      '[data-cash-form-confirm]'
+    );
+    const maximumWarning = form.querySelector<HTMLElement>(
+      '[data-cash-maximum-warning]'
+    );
+    const submit = form.querySelector<HTMLButtonElement>(
+      '[data-deposit-submit]'
+    );
+    const recompute = () => {
+      const selected = methodSelect?.selectedOptions[0];
+      const isCash = selected?.dataset.cash === 'true';
+      const cents = toCents(amountInput?.value);
+      if (referenceField) {
+        referenceField.hidden = selected?.dataset.requiresReference !== 'true';
+      }
+      const overMaximum =
+        isCash &&
+        cents !== null &&
+        maximumCents !== null &&
+        cents > maximumCents;
+      if (maximumWarning) maximumWarning.hidden = !overMaximum;
+      const needsSourceOfFund =
+        !overMaximum &&
+        isCash &&
+        cents !== null &&
+        thresholdCents !== null &&
+        cents > thresholdCents;
+      if (reminder) reminder.hidden = !needsSourceOfFund;
+      const sourceOfFundMissing =
+        needsSourceOfFund && !(confirm?.checked ?? false);
+      if (submit) submit.disabled = overMaximum || sourceOfFundMissing;
+    };
+    amountInput?.addEventListener('input', recompute);
+    methodSelect?.addEventListener('change', recompute);
+    confirm?.addEventListener('change', recompute);
+    recompute();
+  }
+</script>

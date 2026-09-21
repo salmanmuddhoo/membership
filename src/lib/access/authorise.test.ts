@@ -145,7 +145,15 @@ describe('the live route map', () => {
     expect(requiredPermissionFor('/members/some-id/deposit')).toBe(
       'member.view'
     );
-    expect(requiredPermissionFor('/transactions')).toBe('transaction.capture');
+    // S-1403: seeing transactions and the queue is transaction.view; only
+    // starting one is transaction.capture.
+    expect(requiredPermissionFor('/transactions')).toBe('transaction.view');
+    expect(requiredPermissionFor('/transactions/pending')).toBe(
+      'transaction.view'
+    );
+    expect(requiredPermissionFor('/transactions/some-id')).toBe(
+      'transaction.view'
+    );
     expect(requiredPermissionFor('/transactions/deposit')).toBe(
       'transaction.capture'
     );
