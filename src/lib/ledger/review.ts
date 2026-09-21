@@ -23,7 +23,11 @@ import {
   markReceiptIssued,
 } from '../payments/receipts';
 import { LedgerError, postTransaction } from './ledger';
-import type { PaymentMethod, TransactionKind } from '../config/reference';
+import type {
+  PaymentMethod,
+  TransactionKind,
+  TransactionRowKind,
+} from '../config/reference';
 import { offeredMethod, PaymentError } from '../payments/payments';
 
 export const PERMISSION_REVIEW = 'transaction.review';
@@ -56,7 +60,7 @@ export class ReviewError extends Error {
 export interface TransactionSummary {
   id: string;
   reference: string;
-  kind: TransactionKind;
+  kind: TransactionRowKind;
   status: string;
   amount: string;
   currency: string;
@@ -90,6 +94,17 @@ export interface TransactionSummary {
   currentStepRole: string | null;
   approvalRuleId: string | null;
   sourceOfFundFormConfirmed: boolean;
+  // A transfer's leg (S-1504): which transfer, which side, and the other
+  // side — an account on the system, or a payee with none.
+  transferId: string | null;
+  transferReference: string | null;
+  legDirection: 'credit' | 'debit' | null;
+  payeeName: string | null;
+  counterpartAccountId: string | null;
+  counterpartAccountNo: string | null;
+  counterpartAccountTypeName: string | null;
+  counterpartHolderId: string | null;
+  counterpartHolderName: string | null;
 }
 
 const SELECT = `
@@ -111,7 +126,15 @@ const SELECT = `
          t.workflow_definition_id, wd.code as workflow_code,
          wd.name as workflow_name, t.current_step_code,
          ws.name as current_step_name, wr.name as current_step_role,
-         t.approval_rule_id, t.source_of_fund_form_confirmed
+         t.approval_rule_id, t.source_of_fund_form_confirmed,
+         t.transfer_id, tr.reference as transfer_reference, t.leg_direction,
+         t.payee_name,
+         l.account_id as counterpart_account_id,
+         coalesce(la.account_no, lm.member_no) as counterpart_account_no,
+         lt.name as counterpart_account_type_name,
+         coalesce(l.member_id, l.customer_id) as counterpart_holder_id,
+         trim(coalesce(lp.values->>'name', '') || ' '
+              || coalesce(lp.values->>'surname', '')) as counterpart_holder_name
     from transaction t
     join account a on a.id = t.account_id
     join account_type at on at.id = a.account_type_id
@@ -129,12 +152,21 @@ const SELECT = `
     left join workflow_step ws
       on ws.definition_id = wd.id and ws.code = t.current_step_code
     left join role wr on wr.id = ws.role_id
+    left join transfer tr on tr.id = t.transfer_id
+    left join transaction l on l.transfer_id = t.transfer_id and l.id <> t.id
+    left join account la on la.id = l.account_id
+    left join account_type lt on lt.id = la.account_type_id
+    left join member lm on lm.id = l.member_id
+    left join customer lc on lc.id = l.customer_id
+    left join application_party lp
+      on lp.application_id = coalesce(lm.application_id, lc.application_id)
+     and lp.subject = 'applicant' and lp.ordinal = 1
 `;
 
 interface Row {
   id: string;
   reference: string;
-  kind: TransactionKind;
+  kind: TransactionRowKind;
   status: string;
   amount: string;
   currency: string;
@@ -165,6 +197,15 @@ interface Row {
   current_step_role: string | null;
   approval_rule_id: string | null;
   source_of_fund_form_confirmed: boolean;
+  transfer_id: string | null;
+  transfer_reference: string | null;
+  leg_direction: 'credit' | 'debit' | null;
+  payee_name: string | null;
+  counterpart_account_id: string | null;
+  counterpart_account_no: string | null;
+  counterpart_account_type_name: string | null;
+  counterpart_holder_id: string | null;
+  counterpart_holder_name: string | null;
 }
 
 function assemble(r: Row): TransactionSummary {
@@ -202,6 +243,15 @@ function assemble(r: Row): TransactionSummary {
     currentStepRole: r.current_step_role,
     approvalRuleId: r.approval_rule_id,
     sourceOfFundFormConfirmed: r.source_of_fund_form_confirmed,
+    transferId: r.transfer_id,
+    transferReference: r.transfer_reference,
+    legDirection: r.leg_direction,
+    payeeName: r.payee_name,
+    counterpartAccountId: r.counterpart_account_id,
+    counterpartAccountNo: r.counterpart_account_no,
+    counterpartAccountTypeName: r.counterpart_account_type_name,
+    counterpartHolderId: r.counterpart_holder_id,
+    counterpartHolderName: r.counterpart_holder_name,
   };
 }
 
@@ -291,7 +341,8 @@ async function inFlight(
     `${SELECT}
       where t.workflow_definition_id is not null
         and t.current_step_code is not null
-        and t.status = any($1::text[])${filter}
+        and t.status = any($1::text[])
+        and t.leg_direction is distinct from 'credit'${filter}
       order by t.submitted_at, t.serial_no`,
     params
   );
@@ -349,6 +400,7 @@ export async function returnedTransactions(
   const result = await query<Row>(
     `${SELECT}
       where t.status = 'returned' and t.captured_by = $1
+        and t.leg_direction is distinct from 'credit'
       order by t.submitted_at, t.serial_no`,
     [principal.userId]
   );
@@ -378,7 +430,8 @@ export async function approvedTransactions(
   }
   const result = await query<Row>(
     `${SELECT}
-      where t.status = 'approved'${kindFilter}
+      where t.status = 'approved'
+        and t.leg_direction is distinct from 'credit'${kindFilter}
       order by t.submitted_at, t.serial_no`,
     params
   );
@@ -512,6 +565,21 @@ export async function reviewTransaction(
       `update transaction set status = $2, current_step_code = $3 where id = $1`,
       [transaction.id, status, nextStep]
     );
+    // A transfer's other leg goes with it (S-1504): a rejection ends both,
+    // and the transfer row reads whatever the debit leg reads.
+    if (transaction.transferId) {
+      if (status === 'rejected') {
+        await client.query(
+          `update transaction set status = 'rejected'
+            where transfer_id = $1 and id <> $2 and status <> 'posted'`,
+          [transaction.transferId, transaction.id]
+        );
+      }
+      await client.query(`update transfer set status = $2 where id = $1`, [
+        transaction.transferId,
+        status,
+      ]);
+    }
     await client.query(
       `insert into transaction_transition
          (transaction_id, from_status, to_status, step_code, actor_user_id,
@@ -558,8 +626,16 @@ export interface Disbursement {
   methodReference?: string;
 }
 
-// Money leaving needs to say how it left; money arriving already said.
-const DISBURSED_KINDS: ReadonlySet<TransactionKind> = new Set(['withdrawal']);
+// Money leaving the Society needs to say how it left; money arriving, or
+// moving between two accounts here, already said.
+export function needsDisbursement(
+  transaction: Pick<TransactionSummary, 'kind' | 'payeeName'>
+): boolean {
+  return (
+    transaction.kind === 'withdrawal' ||
+    (transaction.kind === 'transfer_leg' && transaction.payeeName !== null)
+  );
+}
 
 export function requireDisbursementReference(
   method: PaymentMethod,
@@ -603,7 +679,13 @@ export async function postApprovedTransaction(
     );
   }
   let paidBy: { code: string; reference: string | null } | null = null;
-  if (DISBURSED_KINDS.has(transaction.kind)) {
+  if (transaction.legDirection === 'credit') {
+    throw new ReviewError(
+      'A transfer posts from its debit leg; open the transfer instead.',
+      'conflict'
+    );
+  }
+  if (needsDisbursement(transaction)) {
     if (!disbursement) {
       throw new ReviewError('Say how it was paid out.');
     }

@@ -1,0 +1,532 @@
+---
+// Record a transfer out of one of a member's (or a customer's) accounts
+// (S-1504): to another of their own, to another person's account found by
+// type and number, or to a payee with no account here. The rules are
+// ledger/transfers.ts's; this page gathers the form and shows both legs.
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import { listAccountTypes, offeredPaymentMethods } from '@lib/config/reference';
+import { availableBalance } from '@lib/ledger/ledger';
+import { findAccountByNumber } from '@lib/ledger/lookup';
+import {
+  PERMISSION_CAPTURE,
+  recordTransfer,
+  TransferError,
+  type Transfer,
+  type TransferDestination,
+} from '@lib/ledger/transfers';
+import { loadCustomer, loadMember } from '@lib/members/create';
+import { formatMoney } from '@lib/payments/money';
+
+const principal = Astro.locals.principal!;
+if (!principal.permissions.has(PERMISSION_CAPTURE)) {
+  return Astro.redirect('/denied');
+}
+
+const { id } = Astro.params;
+const member = id ? await loadMember(id) : null;
+const customer = !member && id ? await loadCustomer(id) : null;
+if (!member && !customer) return new Response('Not found', { status: 404 });
+const person = (member ?? customer)!;
+const personLabel = member
+  ? `${member.name} · ${member.memberNo}`
+  : person.name;
+
+const allTypes = await listAccountTypes();
+const types = new Map(allTypes.map(t => [t.id, t]));
+const accounts = await Promise.all(
+  person.accounts.map(async account => {
+    const figures = await availableBalance(account.id);
+    const type = types.get(account.accountTypeId);
+    return {
+      ...account,
+      balance: figures.balance,
+      available: figures.available,
+      pendingDebits: figures.pendingDebits,
+      floor: type?.minimumBalance ?? '0.00',
+      allowsTransfer: type?.allowsTransfer ?? false,
+      allowsDeposit: type?.allowsDeposit ?? false,
+    };
+  })
+);
+const sources = accounts.filter(a => a.status === 'active' && a.allowsTransfer);
+const ownTargets = accounts.filter(
+  a => a.status === 'active' && a.allowsDeposit
+);
+// Another person's account is found the way the Transactions page finds
+// one: by type and number.
+const lookupTypes = allTypes.filter(t => t.isActive && t.allowsDeposit);
+const paymentMethods = await offeredPaymentMethods();
+const requestedAccount = Astro.url.searchParams.get('account') ?? '';
+const fromTransactions = Astro.url.searchParams.get('from') === 'transactions';
+
+let values: Record<
+  | 'sourceAccountId'
+  | 'amount'
+  | 'destinationKind'
+  | 'ownAccountId'
+  | 'otherTypeId'
+  | 'otherNumber'
+  | 'payeeName'
+  | 'method'
+  | 'methodReference'
+  | 'reason'
+  | 'idempotencyKey',
+  string
+> = {
+  sourceAccountId:
+    sources.find(a => a.id === requestedAccount)?.id ?? sources[0]?.id ?? '',
+  amount: '',
+  destinationKind: 'own',
+  ownAccountId: '',
+  otherTypeId: lookupTypes[0]?.id ?? '',
+  otherNumber: '',
+  payeeName: '',
+  method: paymentMethods[0]?.code ?? '',
+  methodReference: '',
+  reason: '',
+  idempotencyKey: crypto.randomUUID(),
+};
+let error: string | null = null;
+let transfer: Transfer | null = null;
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const text = (name: string) => String(form.get(name) ?? '');
+  values = {
+    sourceAccountId: text('sourceAccountId'),
+    amount: text('amount'),
+    destinationKind: text('destinationKind'),
+    ownAccountId: text('ownAccountId'),
+    otherTypeId: text('otherTypeId'),
+    otherNumber: text('otherNumber'),
+    payeeName: text('payeeName'),
+    method: text('method'),
+    methodReference: text('methodReference'),
+    reason: text('reason'),
+    idempotencyKey: text('idempotencyKey') || crypto.randomUUID(),
+  };
+  let destination: TransferDestination | null = null;
+  if (!person.accounts.some(a => a.id === values.sourceAccountId)) {
+    error = 'Choose which account the transfer comes from.';
+  } else if (values.destinationKind === 'own') {
+    if (!person.accounts.some(a => a.id === values.ownAccountId)) {
+      error = 'Choose which of their accounts it goes to.';
+    } else {
+      destination = { kind: 'account', accountId: values.ownAccountId };
+    }
+  } else if (values.destinationKind === 'other') {
+    const type = lookupTypes.find(t => t.id === values.otherTypeId);
+    const found = type
+      ? await findAccountByNumber(type.id, values.otherNumber)
+      : null;
+    if (!type) {
+      error = 'Choose the account type it goes to.';
+    } else if (!found) {
+      error = `No ${type.name} account ${values.otherNumber.trim().toUpperCase()}.`;
+    } else {
+      destination = { kind: 'account', accountId: found.accountId };
+    }
+  } else if (values.destinationKind === 'payee') {
+    destination = {
+      kind: 'payee',
+      payeeName: values.payeeName,
+      method: values.method,
+      methodReference: values.methodReference,
+    };
+  } else {
+    error = 'Choose where the money goes.';
+  }
+  if (!error && destination) {
+    try {
+      transfer = await recordTransfer(
+        {
+          sourceAccountId: values.sourceAccountId,
+          amount: values.amount,
+          destination,
+          reason: values.reason,
+          idempotencyKey: values.idempotencyKey,
+        },
+        principal
+      );
+    } catch (err) {
+      if (err instanceof TransferError) {
+        error = err.message;
+      } else {
+        console.error('[members/transfer]', err);
+        error = 'Something went wrong. Please try again.';
+      }
+    }
+  }
+}
+
+const INPUT =
+  'mt-1 block w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100';
+const RADIO =
+  'text-mint-500 focus:ring-mint-400 rounded-full border-neutral-300 dark:border-neutral-600';
+---
+
+<DashboardLayout title="Transfer · Al Barakah MCSL" heading="Record a transfer">
+  <div class="mx-auto max-w-3xl space-y-6">
+    <p class="flex flex-wrap items-center gap-x-3 text-sm text-neutral-600 dark:text-neutral-300">
+      {fromTransactions && (
+        <a
+          href="/transactions"
+          class="text-neutral-500 underline dark:text-neutral-400"
+        >
+          ← Transactions
+        </a>
+      )}
+      <a
+        href={`/members/${person.id}`}
+        class="font-medium underline hover:text-neutral-900 dark:hover:text-neutral-100"
+      >
+        {personLabel}
+      </a>
+    </p>
+
+    {error && (
+      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+        {error}
+      </div>
+    )}
+
+    {transfer ? (
+      <section class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-2xl border p-6">
+        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+          {transfer.status === 'posted'
+            ? `Transfer ${transfer.reference} posted`
+            : `Transfer ${transfer.reference} submitted for approval`}
+        </h2>
+        {transfer.status !== 'posted' && transfer.debitLeg.currentStepName && (
+          <p class="mt-1 text-sm text-neutral-600 dark:text-neutral-300">
+            Waiting for {transfer.debitLeg.currentStepName}
+            {transfer.debitLeg.currentStepRole &&
+              ` (${transfer.debitLeg.currentStepRole})`}
+            .
+          </p>
+        )}
+        <dl class="mt-4 grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
+          <dt class="text-neutral-500 dark:text-neutral-400">Amount</dt>
+          <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+            {formatMoney(transfer.debitLeg.amount, transfer.debitLeg.currency)}
+          </dd>
+          <dt class="text-neutral-500 dark:text-neutral-400">From</dt>
+          <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+            {transfer.debitLeg.accountNo} · {transfer.debitLeg.accountTypeName}
+            {transfer.debitLeg.balanceAfter &&
+              ` · now ${formatMoney(transfer.debitLeg.balanceAfter)}`}
+          </dd>
+          <dt class="text-neutral-500 dark:text-neutral-400">To</dt>
+          <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+            {transfer.creditLeg
+              ? `${transfer.creditLeg.holderName || transfer.creditLeg.holderKind} · ${transfer.creditLeg.accountNo} · ${transfer.creditLeg.accountTypeName}`
+              : `${transfer.debitLeg.payeeName} by ${transfer.debitLeg.methodName}${transfer.debitLeg.methodReference ? ` · ${transfer.debitLeg.methodReference}` : ''}`}
+          </dd>
+          {transfer.debitLeg.receiptNo && (
+            <>
+              <dt class="text-neutral-500 dark:text-neutral-400">Receipt</dt>
+              <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+                {transfer.debitLeg.receiptNo}
+              </dd>
+            </>
+          )}
+        </dl>
+        <div class="mt-5 flex flex-wrap gap-2">
+          <a
+            href={`/members/${person.id}`}
+            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+          >
+            Back to {member ? 'member' : 'customer'}
+          </a>
+          {transfer.status !== 'posted' && (
+            <a
+              href={`/transactions/${transfer.debitLeg.id}`}
+              class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+            >
+              Follow it
+            </a>
+          )}
+          <a
+            href={
+              fromTransactions
+                ? '/transactions/transfer'
+                : `/members/${person.id}/transfer`
+            }
+            class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+          >
+            Record another
+          </a>
+        </div>
+      </section>
+    ) : sources.length === 0 ? (
+      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-300">
+        {person.status !== 'active'
+          ? `This ${member ? 'member' : 'customer'} is ${person.status}, so nothing can be transferred.`
+          : 'None of these accounts allows a transfer out.'}
+      </section>
+    ) : (
+      <form
+        method="post"
+        data-transfer-form
+        class="space-y-4 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
+      >
+        <input
+          type="hidden"
+          name="idempotencyKey"
+          value={values.idempotencyKey}
+        />
+
+        <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+          From
+          <select name="sourceAccountId" class={INPUT}>
+            {accounts.map(account => (
+              <option
+                value={account.id}
+                selected={account.id === values.sourceAccountId}
+                disabled={
+                  !(account.status === 'active' && account.allowsTransfer)
+                }
+                data-available={account.available}
+                data-floor={account.floor}
+              >
+                {account.accountNo} · {account.accountTypeName} ·{' '}
+                {formatMoney(account.balance)}
+                {account.pendingDebits !== '0.00' &&
+                  ` · ${formatMoney(account.available)} available`}
+                {account.status !== 'active'
+                  ? ` · ${account.status}`
+                  : account.allowsTransfer
+                    ? ''
+                    : ' · no transfers'}
+              </option>
+            ))}
+          </select>
+        </label>
+        <p
+          data-available-note
+          class="text-xs text-neutral-500 dark:text-neutral-400"
+        ></p>
+
+        <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+          Amount (Rs)
+          <input
+            type="text"
+            inputmode="decimal"
+            name="amount"
+            required
+            value={values.amount}
+            class={INPUT}
+          />
+        </label>
+
+        <fieldset class="space-y-3">
+          <legend class="text-sm text-neutral-600 dark:text-neutral-300">
+            To
+          </legend>
+          <label class="flex items-center gap-2 text-sm text-neutral-800 dark:text-neutral-100">
+            <input
+              type="radio"
+              name="destinationKind"
+              value="own"
+              checked={values.destinationKind === 'own'}
+              class={RADIO}
+            />
+            Another of {member ? 'their' : 'the customer’s'} accounts
+          </label>
+          <div data-destination="own" class="pl-6">
+            <select name="ownAccountId" class={INPUT}>
+              {ownTargets.map(account => (
+                <option
+                  value={account.id}
+                  selected={account.id === values.ownAccountId}
+                >
+                  {account.accountNo} · {account.accountTypeName} ·{' '}
+                  {formatMoney(account.balance)}
+                </option>
+              ))}
+            </select>
+          </div>
+          <label class="flex items-center gap-2 text-sm text-neutral-800 dark:text-neutral-100">
+            <input
+              type="radio"
+              name="destinationKind"
+              value="other"
+              checked={values.destinationKind === 'other'}
+              class={RADIO}
+            />
+            Another member’s or customer’s account
+          </label>
+          <div data-destination="other" class="grid gap-3 pl-6 sm:grid-cols-2">
+            <label class="text-sm text-neutral-600 dark:text-neutral-300">
+              Account type
+              <select name="otherTypeId" class={INPUT}>
+                {lookupTypes.map(type => (
+                  <option
+                    value={type.id}
+                    selected={type.id === values.otherTypeId}
+                    data-membership-default={
+                      type.isMembershipDefault ? 'true' : 'false'
+                    }
+                    data-prefix={type.numberPrefix ?? ''}
+                  >
+                    {type.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label class="text-sm text-neutral-600 dark:text-neutral-300">
+              <span data-number-label>Member number</span>
+              <input
+                type="text"
+                name="otherNumber"
+                autocomplete="off"
+                value={values.otherNumber}
+                data-number
+                placeholder="AB0001"
+                class={INPUT}
+              />
+            </label>
+          </div>
+          <label class="flex items-center gap-2 text-sm text-neutral-800 dark:text-neutral-100">
+            <input
+              type="radio"
+              name="destinationKind"
+              value="payee"
+              checked={values.destinationKind === 'payee'}
+              class={RADIO}
+            />
+            Someone without an account here
+          </label>
+          <div data-destination="payee" class="grid gap-3 pl-6 sm:grid-cols-2">
+            <label class="text-sm text-neutral-600 dark:text-neutral-300 sm:col-span-2">
+              Paid to
+              <input
+                type="text"
+                name="payeeName"
+                value={values.payeeName}
+                maxlength="200"
+                class={INPUT}
+              />
+            </label>
+            <label class="text-sm text-neutral-600 dark:text-neutral-300">
+              Paid by
+              <select name="method" class={INPUT}>
+                {paymentMethods.map(method => (
+                  <option
+                    value={method.code}
+                    data-requires-reference={
+                      method.requiresReference || method.touchesBank
+                        ? 'true'
+                        : 'false'
+                    }
+                    selected={method.code === values.method}
+                  >
+                    {method.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label
+              data-method-reference-field
+              class="text-sm text-neutral-600 dark:text-neutral-300"
+            >
+              Reference (cheque number, transfer reference)
+              <input
+                type="text"
+                name="methodReference"
+                value={values.methodReference}
+                class={INPUT}
+              />
+            </label>
+          </div>
+        </fieldset>
+
+        <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+          Note
+          <input
+            type="text"
+            name="reason"
+            value={values.reason}
+            maxlength="200"
+            class={INPUT}
+          />
+        </label>
+
+        <div class="flex flex-wrap gap-2 pt-2">
+          <button
+            type="submit"
+            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+          >
+            Record transfer
+          </button>
+          <a
+            href={`/members/${person.id}`}
+            class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+          >
+            Cancel
+          </a>
+        </div>
+      </form>
+    )}
+  </div>
+</DashboardLayout>
+
+<script>
+  // A visual nudge only — every rule is enforced server-side
+  // (ledger/transfers.ts) whether or not this script runs: which
+  // destination's fields show, what is available on the source, and
+  // whether the pay-out method carries a reference.
+  const form = document.querySelector<HTMLFormElement>('[data-transfer-form]');
+  if (form) {
+    const sourceSelect = form.querySelector<HTMLSelectElement>(
+      '[name="sourceAccountId"]'
+    );
+    const note = form.querySelector<HTMLElement>('[data-available-note]');
+    const methodSelect =
+      form.querySelector<HTMLSelectElement>('[name="method"]');
+    const referenceField = form.querySelector<HTMLElement>(
+      '[data-method-reference-field]'
+    );
+    const typeSelect = form.querySelector<HTMLSelectElement>(
+      '[name="otherTypeId"]'
+    );
+    const numberLabel = form.querySelector<HTMLElement>('[data-number-label]');
+    const numberInput = form.querySelector<HTMLInputElement>('[data-number]');
+    const money = (value: string) =>
+      `Rs ${Number(value).toLocaleString('en-GB', { minimumFractionDigits: 2 })}`;
+    const recompute = () => {
+      const chosen = form.querySelector<HTMLInputElement>(
+        'input[name="destinationKind"]:checked'
+      )?.value;
+      for (const block of form.querySelectorAll<HTMLElement>(
+        '[data-destination]'
+      )) {
+        block.hidden = block.dataset.destination !== chosen;
+      }
+      const account = sourceSelect?.selectedOptions[0];
+      if (note && account) {
+        const available = account.dataset.available ?? '0';
+        const floor = account.dataset.floor ?? '0';
+        const room = Math.max(0, Number(available) - Number(floor));
+        note.textContent =
+          Number(floor) > 0
+            ? `${money(available)} available; the account keeps at least ${money(floor)}, so up to ${money(room.toFixed(2))} can be transferred.`
+            : `${money(available)} available.`;
+      }
+      const method = methodSelect?.selectedOptions[0];
+      if (referenceField) {
+        referenceField.hidden = method?.dataset.requiresReference !== 'true';
+      }
+      const type = typeSelect?.selectedOptions[0];
+      const own = type?.dataset.membershipDefault === 'true';
+      const prefix = type?.dataset.prefix || 'HSA';
+      if (numberLabel) {
+        numberLabel.textContent = own ? 'Member number' : 'Account number';
+      }
+      if (numberInput)
+        numberInput.placeholder = own ? 'AB0001' : `${prefix}0001`;
+    };
+    form.addEventListener('change', recompute);
+    recompute();
+  }
+</script>

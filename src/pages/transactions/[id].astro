@@ -15,12 +15,14 @@ import {
   PERMISSION_CAPTURE,
   resubmitDeposit,
 } from '@lib/ledger/deposits';
+import { resubmitTransfer, TransferError } from '@lib/ledger/transfers';
 import { resubmitWithdrawal, WithdrawalError } from '@lib/ledger/withdrawals';
 import {
   IN_FLIGHT,
   loadTransaction,
   loadTransactionByReference,
   mayActAt,
+  needsDisbursement,
   PERMISSION_POST,
   positionOf,
   postApprovedTransaction,
@@ -89,7 +91,7 @@ if (Astro.request.method === 'POST') {
       const posted = await postApprovedTransaction(
         transaction.id,
         principal,
-        transaction.kind === 'withdrawal'
+        needsDisbursement(transaction)
           ? { method: text('method'), methodReference: text('methodReference') }
           : undefined
       );
@@ -105,17 +107,19 @@ if (Astro.request.method === 'POST') {
         reason: text('reason'),
       };
       const result =
-        transaction.kind === 'withdrawal'
-          ? await resubmitWithdrawal(transaction.id, edit, principal)
-          : await resubmitDeposit(
-              transaction.id,
-              {
-                ...edit,
-                sourceOfFundFormConfirmed:
-                  form.get('sourceOfFundFormConfirmed') === 'true',
-              },
-              principal
-            );
+        transaction.kind === 'transfer_leg'
+          ? (await resubmitTransfer(transaction.id, edit, principal)).debitLeg
+          : transaction.kind === 'withdrawal'
+            ? await resubmitWithdrawal(transaction.id, edit, principal)
+            : await resubmitDeposit(
+                transaction.id,
+                {
+                  ...edit,
+                  sourceOfFundFormConfirmed:
+                    form.get('sourceOfFundFormConfirmed') === 'true',
+                },
+                principal
+              );
       notice =
         result.status === 'posted'
           ? `${transaction.reference} posted. Receipt ${result.receiptNo}.`
@@ -125,7 +129,8 @@ if (Astro.request.method === 'POST') {
     if (
       err instanceof ReviewError ||
       err instanceof DepositError ||
-      err instanceof WithdrawalError
+      err instanceof WithdrawalError ||
+      err instanceof TransferError
     ) {
       error = err.message;
     } else {
@@ -143,16 +148,24 @@ const canAct = position ? mayActAt(position, principal) : false;
 const canPost =
   transaction.status === 'approved' &&
   principal.permissions.has(PERMISSION_POST) &&
-  transaction.capturedById !== principal.userId;
+  transaction.capturedById !== principal.userId &&
+  transaction.legDirection !== 'credit';
+// A transfer is reviewed, posted and corrected from its debit leg; the
+// credit leg only follows (S-1504).
+const isCreditLeg = transaction.legDirection === 'credit';
+const isTransfer = transaction.kind === 'transfer_leg';
 const canEdit =
   transaction.status === 'returned' &&
   transaction.capturedById === principal.userId &&
   principal.permissions.has(PERMISSION_CAPTURE) &&
-  (transaction.kind === 'deposit' || transaction.kind === 'withdrawal');
+  !isCreditLeg &&
+  (transaction.kind === 'deposit' ||
+    transaction.kind === 'withdrawal' ||
+    isTransfer);
 const isDeposit = transaction.kind === 'deposit';
-// Posting a withdrawal is paying it out: the method and reference are
-// recorded then (S-1503).
-const disburses = transaction.kind === 'withdrawal';
+// Posting money that leaves the Society is paying it out: the method and
+// reference are recorded then (S-1503).
+const disburses = needsDisbursement(transaction);
 const stalled =
   (IN_FLIGHT as readonly string[]).includes(transaction.status) && !position;
 
@@ -167,11 +180,12 @@ const returnComment =
     : null;
 
 // The correction form's choices, only when it is offered.
-const person = canEdit
-  ? transaction.holderKind === 'member'
-    ? await loadMember(transaction.holderId)
-    : await loadCustomer(transaction.holderId)
-  : null;
+const person =
+  canEdit && !isTransfer
+    ? transaction.holderKind === 'member'
+      ? await loadMember(transaction.holderId)
+      : await loadCustomer(transaction.holderId)
+    : null;
 const types = canEdit
   ? new Map((await listAccountTypes()).map(t => [t.id, t]))
   : new Map();
@@ -183,6 +197,7 @@ const accounts = (person?.accounts ?? []).map(a => ({
 }));
 const paymentMethods =
   canEdit || (canPost && disburses) ? await offeredPaymentMethods() : [];
+
 const cashThreshold =
   canEdit && isDeposit ? await cashSourceOfFundThreshold() : '';
 const cashMax = canEdit && isDeposit ? await cashMaximum() : '';
@@ -263,11 +278,46 @@ const DANGER =
           {' · '}
           {transaction.accountTypeName}
         </dd>
+        {isTransfer && (
+          <>
+            <dt class="text-neutral-500 dark:text-neutral-400">
+              {isCreditLeg ? 'From' : 'To'}
+            </dt>
+            <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+              {transaction.counterpartAccountId ? (
+                <>
+                  <a
+                    href={`/members/${transaction.counterpartHolderId}`}
+                    class="underline"
+                  >
+                    {transaction.counterpartHolderName || 'account'}
+                  </a>
+                  {' · '}
+                  {transaction.counterpartAccountNo} ·{' '}
+                  {transaction.counterpartAccountTypeName}
+                </>
+              ) : (
+                transaction.payeeName
+              )}
+              {transaction.transferReference && (
+                <span class="block text-xs text-neutral-500 dark:text-neutral-400">
+                  Transfer {transaction.transferReference}
+                </span>
+              )}
+            </dd>
+          </>
+        )}
         <dt class="text-neutral-500 dark:text-neutral-400">Amount</dt>
         <dd class="font-medium text-neutral-800 dark:text-neutral-100">
-          {formatMoney(transaction.amount, transaction.currency)} by{' '}
-          {transaction.methodName}
-          {transaction.methodReference && ` · ${transaction.methodReference}`}
+          {formatMoney(transaction.amount, transaction.currency)}
+          {transaction.method !== 'internal_transfer' && (
+            <>
+              {' by '}
+              {transaction.methodName}
+              {transaction.methodReference &&
+                ` · ${transaction.methodReference}`}
+            </>
+          )}
         </dd>
         {transaction.reason && (
           <>
@@ -301,14 +351,20 @@ const DANGER =
       </dl>
     </section>
 
-    {stalled && (
+    {isCreditLeg && (
+      <p class="rounded-lg border border-neutral-300 px-4 py-3 text-sm text-neutral-700 dark:border-neutral-700 dark:text-neutral-200">
+        This is the receiving side of a transfer. It posts with the other side.
+      </p>
+    )}
+
+    {stalled && !isCreditLeg && (
       <p class="rounded-lg border border-amber-300 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200">
         No enabled step remains on this chain. Ask an administrator to enable
         one.
       </p>
     )}
 
-    {canAct && position && (
+    {canAct && position && !isCreditLeg && (
       <form
         method="post"
         class="space-y-3 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
@@ -393,6 +449,79 @@ const DANGER =
         <button type="submit" class={BUTTON}>
           {disburses ? 'Pay out and post' : 'Post'}
         </button>
+      </form>
+    )}
+
+    {canEdit && isTransfer && (
+      <form
+        method="post"
+        data-transfer-edit-form
+        class="space-y-4 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
+      >
+        <h2 class="text-sm font-semibold text-neutral-700 uppercase dark:text-neutral-200">
+          Correct and resubmit
+        </h2>
+        {returnComment && (
+          <p class="rounded-lg border border-amber-300 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200">
+            {returnComment}
+          </p>
+        )}
+        <input type="hidden" name="intent" value="resubmit" />
+        <input type="hidden" name="accountId" value={transaction.accountId} />
+        <div class="grid gap-3 sm:grid-cols-2">
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            Amount (Rs)
+            <input
+              type="text"
+              inputmode="decimal"
+              name="amount"
+              required
+              value={transaction.amount}
+              class={INPUT}
+            />
+          </label>
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            Note
+            <input
+              type="text"
+              name="reason"
+              value={transaction.reason}
+              maxlength="200"
+              class={INPUT}
+            />
+          </label>
+          {transaction.payeeName && (
+            <>
+              <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                Paid by
+                <select name="method" class={INPUT}>
+                  {paymentMethods.map(method => (
+                    <option
+                      value={method.code}
+                      selected={method.code === transaction!.method}
+                    >
+                      {method.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                Reference (cheque number, transfer reference)
+                <input
+                  type="text"
+                  name="methodReference"
+                  value={transaction.methodReference}
+                  class={INPUT}
+                />
+              </label>
+            </>
+          )}
+        </div>
+        <div class="flex flex-wrap gap-2 pt-2">
+          <button type="submit" class={BUTTON}>
+            Resubmit
+          </button>
+        </div>
       </form>
     )}
 

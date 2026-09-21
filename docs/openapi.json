@@ -6738,6 +6738,584 @@
         }
       }
     },
+    "/api/v1/transfers": {
+      "post": {
+        "summary": "Record a transfer out of an account",
+        "description": "Two legs under one id: a debit leg on the source, which meets every check a withdrawal does plus the type’s allows_transfer, and — when the destination is an account on the system — a credit leg on it, checked as a deposit is. Both post or neither. A destination with no account here (a payee) has no credit leg: the debit leg names the payee and how it is paid out, and is disbursed once approved. The approval matrix reads a transfer between the same holder’s accounts under its own kind and any other under a withdrawal’s. Below the band it posts at once, with a receipt; above it, it is submitted to its chain. Idempotent by the Idempotency-Key header.",
+        "tags": [
+          "Transactions"
+        ],
+        "operationId": "postTransfers",
+        "x-required-permission": "transaction.capture",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "transfer"
+                      ],
+                      "properties": {
+                        "transfer": {
+                          "type": "object",
+                          "required": [
+                            "id",
+                            "reference",
+                            "status",
+                            "debitLeg"
+                          ],
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "reference": {
+                              "type": "string",
+                              "description": "TR-000001-style."
+                            },
+                            "status": {
+                              "type": "string"
+                            },
+                            "reason": {
+                              "type": "string"
+                            },
+                            "debitLeg": {
+                              "type": "object",
+                              "required": [
+                                "id",
+                                "reference",
+                                "kind",
+                                "status",
+                                "accountId",
+                                "accountNo",
+                                "accountTypeName",
+                                "amount",
+                                "currency",
+                                "method",
+                                "methodName",
+                                "createdAt"
+                              ],
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "format": "uuid"
+                                },
+                                "reference": {
+                                  "type": "string",
+                                  "description": "TX-000001-style."
+                                },
+                                "kind": {
+                                  "type": "string"
+                                },
+                                "status": {
+                                  "type": "string"
+                                },
+                                "accountId": {
+                                  "type": "string",
+                                  "format": "uuid"
+                                },
+                                "accountNo": {
+                                  "type": "string"
+                                },
+                                "accountTypeId": {
+                                  "type": "string",
+                                  "format": "uuid"
+                                },
+                                "accountTypeName": {
+                                  "type": "string"
+                                },
+                                "holderId": {
+                                  "type": "string",
+                                  "format": "uuid"
+                                },
+                                "holderKind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "member",
+                                    "customer"
+                                  ]
+                                },
+                                "holderName": {
+                                  "type": "string"
+                                },
+                                "memberNo": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "amount": {
+                                  "type": "string"
+                                },
+                                "currency": {
+                                  "type": "string"
+                                },
+                                "method": {
+                                  "type": "string"
+                                },
+                                "methodName": {
+                                  "type": "string"
+                                },
+                                "methodReference": {
+                                  "type": "string"
+                                },
+                                "reason": {
+                                  "type": "string"
+                                },
+                                "receiptNo": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "balanceAfter": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "description": "What the account stood at once this posted."
+                                },
+                                "capturedById": {
+                                  "type": "string",
+                                  "format": "uuid"
+                                },
+                                "capturedByName": {
+                                  "type": "string"
+                                },
+                                "createdAt": {
+                                  "type": "string",
+                                  "format": "date-time"
+                                },
+                                "submittedAt": {
+                                  "type": "string",
+                                  "format": "date-time",
+                                  "nullable": true
+                                },
+                                "postedAt": {
+                                  "type": "string",
+                                  "format": "date-time",
+                                  "nullable": true
+                                },
+                                "workflowDefinitionId": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "nullable": true
+                                },
+                                "workflowCode": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "workflowName": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "description": "The approval chain it was routed to, if any."
+                                },
+                                "currentStepCode": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "currentStepName": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "currentStepRole": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "approvalRuleId": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "nullable": true
+                                },
+                                "sourceOfFundFormConfirmed": {
+                                  "type": "boolean"
+                                },
+                                "transferId": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "nullable": true
+                                },
+                                "transferReference": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "legDirection": {
+                                  "type": "string",
+                                  "enum": [
+                                    "credit",
+                                    "debit"
+                                  ],
+                                  "nullable": true
+                                },
+                                "payeeName": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "counterpartAccountId": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "nullable": true
+                                },
+                                "counterpartAccountNo": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "counterpartAccountTypeName": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "counterpartHolderId": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "nullable": true
+                                },
+                                "counterpartHolderName": {
+                                  "type": "string",
+                                  "nullable": true
+                                }
+                              }
+                            },
+                            "creditLeg": {
+                              "type": "object",
+                              "required": [
+                                "id",
+                                "reference",
+                                "kind",
+                                "status",
+                                "accountId",
+                                "accountNo",
+                                "accountTypeName",
+                                "amount",
+                                "currency",
+                                "method",
+                                "methodName",
+                                "createdAt"
+                              ],
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "format": "uuid"
+                                },
+                                "reference": {
+                                  "type": "string",
+                                  "description": "TX-000001-style."
+                                },
+                                "kind": {
+                                  "type": "string"
+                                },
+                                "status": {
+                                  "type": "string"
+                                },
+                                "accountId": {
+                                  "type": "string",
+                                  "format": "uuid"
+                                },
+                                "accountNo": {
+                                  "type": "string"
+                                },
+                                "accountTypeId": {
+                                  "type": "string",
+                                  "format": "uuid"
+                                },
+                                "accountTypeName": {
+                                  "type": "string"
+                                },
+                                "holderId": {
+                                  "type": "string",
+                                  "format": "uuid"
+                                },
+                                "holderKind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "member",
+                                    "customer"
+                                  ]
+                                },
+                                "holderName": {
+                                  "type": "string"
+                                },
+                                "memberNo": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "amount": {
+                                  "type": "string"
+                                },
+                                "currency": {
+                                  "type": "string"
+                                },
+                                "method": {
+                                  "type": "string"
+                                },
+                                "methodName": {
+                                  "type": "string"
+                                },
+                                "methodReference": {
+                                  "type": "string"
+                                },
+                                "reason": {
+                                  "type": "string"
+                                },
+                                "receiptNo": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "balanceAfter": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "description": "What the account stood at once this posted."
+                                },
+                                "capturedById": {
+                                  "type": "string",
+                                  "format": "uuid"
+                                },
+                                "capturedByName": {
+                                  "type": "string"
+                                },
+                                "createdAt": {
+                                  "type": "string",
+                                  "format": "date-time"
+                                },
+                                "submittedAt": {
+                                  "type": "string",
+                                  "format": "date-time",
+                                  "nullable": true
+                                },
+                                "postedAt": {
+                                  "type": "string",
+                                  "format": "date-time",
+                                  "nullable": true
+                                },
+                                "workflowDefinitionId": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "nullable": true
+                                },
+                                "workflowCode": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "workflowName": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "description": "The approval chain it was routed to, if any."
+                                },
+                                "currentStepCode": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "currentStepName": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "currentStepRole": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "approvalRuleId": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "nullable": true
+                                },
+                                "sourceOfFundFormConfirmed": {
+                                  "type": "boolean"
+                                },
+                                "transferId": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "nullable": true
+                                },
+                                "transferReference": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "legDirection": {
+                                  "type": "string",
+                                  "enum": [
+                                    "credit",
+                                    "debit"
+                                  ],
+                                  "nullable": true
+                                },
+                                "payeeName": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "counterpartAccountId": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "nullable": true
+                                },
+                                "counterpartAccountNo": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "counterpartAccountTypeName": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "counterpartHolderId": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "nullable": true
+                                },
+                                "counterpartHolderName": {
+                                  "type": "string",
+                                  "nullable": true
+                                }
+                              },
+                              "nullable": true
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The Idempotency-Key was already used with a different request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request could not be processed as submitted, or the Idempotency-Key header is missing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "description": "A unique key for this request, chosen by the caller (a UUID will do). Sending the same key with the same body again returns the original result and writes nothing; the same key with a different body is refused with 409.",
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "sourceAccountId",
+                  "amount",
+                  "destination"
+                ],
+                "properties": {
+                  "sourceAccountId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "amount": {
+                    "type": "string",
+                    "description": "Rupees with at most two decimals, e.g. \"500.00\"."
+                  },
+                  "destination": {
+                    "type": "object",
+                    "required": [
+                      "kind"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "account",
+                          "payee"
+                        ]
+                      },
+                      "accountId": {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "With kind \"account\"."
+                      },
+                      "payeeName": {
+                        "type": "string",
+                        "description": "With kind \"payee\"."
+                      },
+                      "method": {
+                        "type": "string",
+                        "description": "With kind \"payee\": how it is paid out, a payment_method code from /api/v1/config/reference."
+                      },
+                      "methodReference": {
+                        "type": "string",
+                        "description": "Required where the method says so, when it posts at once."
+                      }
+                    }
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/withdrawals": {
       "post": {
         "summary": "Record a withdrawal from an account",
@@ -6909,6 +7487,49 @@
                             },
                             "sourceOfFundFormConfirmed": {
                               "type": "boolean"
+                            },
+                            "transferId": {
+                              "type": "string",
+                              "format": "uuid",
+                              "nullable": true
+                            },
+                            "transferReference": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "legDirection": {
+                              "type": "string",
+                              "enum": [
+                                "credit",
+                                "debit"
+                              ],
+                              "nullable": true
+                            },
+                            "payeeName": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "counterpartAccountId": {
+                              "type": "string",
+                              "format": "uuid",
+                              "nullable": true
+                            },
+                            "counterpartAccountNo": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "counterpartAccountTypeName": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "counterpartHolderId": {
+                              "type": "string",
+                              "format": "uuid",
+                              "nullable": true
+                            },
+                            "counterpartHolderName": {
+                              "type": "string",
+                              "nullable": true
                             }
                           }
                         }

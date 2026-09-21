@@ -75,6 +75,19 @@ export const transactionSchema = {
     currentStepRole: { type: 'string', nullable: true },
     approvalRuleId: { type: 'string', format: 'uuid', nullable: true },
     sourceOfFundFormConfirmed: { type: 'boolean' },
+    transferId: { type: 'string', format: 'uuid', nullable: true },
+    transferReference: { type: 'string', nullable: true },
+    legDirection: {
+      type: 'string',
+      enum: ['credit', 'debit'],
+      nullable: true,
+    },
+    payeeName: { type: 'string', nullable: true },
+    counterpartAccountId: { type: 'string', format: 'uuid', nullable: true },
+    counterpartAccountNo: { type: 'string', nullable: true },
+    counterpartAccountTypeName: { type: 'string', nullable: true },
+    counterpartHolderId: { type: 'string', format: 'uuid', nullable: true },
+    counterpartHolderName: { type: 'string', nullable: true },
   },
 };
 

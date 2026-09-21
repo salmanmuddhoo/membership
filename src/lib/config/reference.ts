@@ -2320,6 +2320,10 @@ export const TRANSACTION_KINDS = [
   'demise',
 ] as const;
 export type TransactionKind = (typeof TRANSACTION_KINDS)[number];
+// What a `transaction` row may be: the matrix's kinds, plus the legs of a
+// transfer (S-1504) and reversals (S-1505), which the matrix never routes
+// by name — a transfer's debit leg goes by 'transfer' or 'withdrawal'.
+export type TransactionRowKind = TransactionKind | 'transfer_leg' | 'reversal';
 
 export interface ApprovalRule {
   id: string;

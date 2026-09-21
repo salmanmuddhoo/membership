@@ -169,6 +169,47 @@ Two ways in, as for a deposit: **Withdrawal** in the person's banner opens
 `/members/{id}/withdraw`; the **Transactions** card asks for the type and
 number and opens the same form. `POST /api/v1/withdrawals` is the endpoint.
 
+## Recording a transfer
+
+`recordTransfer()` in `src/lib/ledger/transfers.ts` (S-1504, FRD 6.4) is two
+legs under one id, never two transactions that happen to match: a `transfer`
+row (`TR-000001`, the source's holder, the reason, a status that mirrors the
+debit leg's) and `transaction` rows of kind `transfer_leg` — a debit leg on
+the source, and a credit leg on the destination when it is an account on the
+system. The debit leg meets every check a withdrawal does, with the type's
+`allows_transfer` in place of `allows_withdrawal`, and the credit leg meets a
+deposit's: the holder and the account active, the type's `allows_deposit`,
+its maximum. Both take the same amount, the same note, and the method
+`internal_transfer` (a system method, never offered on a form).
+
+The debit leg is the transaction: the matrix routes it, the chain reviews
+it, the queue lists it, the receipt is on it, and its captor corrects it. The
+credit leg follows — never in a queue, never posted on its own.
+`post_transaction()` posts a debit leg and then, in the same call, its credit
+leg and the transfer's status, so both post or neither (0073). A rejection
+of the debit leg ends the credit leg too.
+
+For the matrix, a transfer between the same holder's accounts is its own
+kind (`transfer`, seeded to post up to the threshold); one to another
+person's account, or to a payee, is a withdrawal — funds are leaving the
+source holder's control (FRD 6.4).
+
+A destination with no account here — a non-member, "Other" — has no credit
+leg (open point 5's default). The debit leg names the payee and how it is
+to be paid; below the band it is paid out and posted at once, the method's
+reference demanded now; above it, it is disbursed once approved through the
+same step as a withdrawal (S-1503).
+
+The available balance counts a transfer's debit leg in flight as money on
+its way out. A statement line reads "Transfer to AB0001 · Shares" on the
+source and "Transfer from …" on the destination, or "Transfer to <payee>".
+
+**Transfer** in the person's banner opens `/members/{id}/transfer`: another of
+their own accounts, another member's or customer's found by type and number,
+or a payee. The Transactions card asks for the source by type and number
+first. `POST /api/v1/transfers` takes one call and one idempotency key for
+the pair.
+
 ## Where a balance is read
 
 - **The member's page** shows each account's balance from the cache, with a

@@ -81,6 +81,7 @@ const ROUTE_PERMISSIONS: ReadonlyArray<readonly [string, string]> = [
   ['/transactions/', 'transaction.view'],
   ['/transactions/deposit', 'transaction.capture'],
   ['/transactions/withdrawal', 'transaction.capture'],
+  ['/transactions/transfer', 'transaction.capture'],
   // Details a member sent from the app (docs/member-app.md). Seeing the
   // queue is member.view like the rest of /members; acting on one needs
   // member.details_verify, which the page checks itself — the same split
