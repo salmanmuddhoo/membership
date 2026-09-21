@@ -1,6 +1,6 @@
 ---
 import { isEditableStatus } from '@lib/applications/capture';
-import ApplicationTimeline from '@components/ApplicationTimeline.astro';
+import ChainTimeline from '@components/ChainTimeline.astro';
 import CaptureFields from '@components/CaptureFields.astro';
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import {
@@ -855,7 +855,11 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
   heading={`Application ${application!.reference}`}
 >
   <div class="mx-auto max-w-5xl space-y-6">
-    <ApplicationTimeline steps={timeline} applicationId={application!.id} />
+    <ChainTimeline
+      steps={timeline}
+      applicationId={application!.id}
+      label="Application progress"
+    />
 
     <div
       id="application-nav"

@@ -171,6 +171,23 @@ function describeEntry(entry: AuditEventRow): string {
       return `Access denied for ${entry.actorName}`;
     case 'system.data_reset':
       return `Test data reset${by}`;
+    // A transaction's own trail (S-1406), under its reference.
+    case 'transaction.captured':
+      return `Transaction recorded${by}`;
+    case 'transaction.submitted':
+      return `Transaction submitted for approval${by}`;
+    case 'transaction.reviewed':
+      return `Transaction forwarded${by}`;
+    case 'transaction.returned':
+      return `Transaction returned${by}`;
+    case 'transaction.rejected':
+      return `Transaction rejected${by}`;
+    case 'transaction.approved':
+      return `Transaction approved${by}`;
+    case 'transaction.resubmitted':
+      return `Transaction corrected and resubmitted${by}`;
+    case 'transaction.posted':
+      return `Transaction posted${by}`;
     default:
       return entry.action.replace(/\./g, ' · ');
   }

@@ -13,7 +13,7 @@
 // phase 2), workflow.ts unchanged since S-612 — rather than duplicating
 // either.
 import { isEditableStatus } from '@lib/applications/capture';
-import ApplicationTimeline from '@components/ApplicationTimeline.astro';
+import ChainTimeline from '@components/ChainTimeline.astro';
 import CaptureFields from '@components/CaptureFields.astro';
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import {
@@ -739,8 +739,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
   heading={`Application ${application!.reference}`}
 >
   <div class="mx-auto max-w-5xl space-y-6">
-    <ApplicationTimeline
+    <ChainTimeline
       steps={timeline}
+      label="Application progress"
       applicationId={application!.id}
       basePath={`/applications/${application!.id}/customer`}
     />

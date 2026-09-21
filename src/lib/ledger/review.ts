@@ -193,6 +193,18 @@ export async function loadTransaction(
   return row ? assemble(row) : null;
 }
 
+// By its reference (TX-000123), which is what the audit log and a receipt
+// carry (S-1406).
+export async function loadTransactionByReference(
+  reference: string
+): Promise<TransactionSummary | null> {
+  const result = await query<Row>(`${SELECT} where t.reference = $1`, [
+    reference.trim().toUpperCase(),
+  ]);
+  const row = result.rows[0];
+  return row ? assemble(row) : null;
+}
+
 // Where on its chain a transaction stands, read against the chain as it is
 // now. The step it was left at may since have been disabled: then it stands
 // at the next enabled one (S-1402's in-flight rule), and null means no

@@ -61,6 +61,7 @@ async function load() {
     deposits: await import('./deposits'),
     review: await import('./review'),
     config: await import('../config/reference'),
+    timeline: await import('../workflow/timeline'),
   };
 }
 
@@ -765,5 +766,73 @@ describe('the chain is read live (S-1402)', () => {
     } finally {
       await config.setStepEnabled(step.id, true, admin);
     }
+  });
+});
+
+describe('the chevron reads the live chain (S-1405)', () => {
+  it('has no approval stage for a deposit routed nowhere, and the chain for one routed to it', async () => {
+    const { deposits, review, config, timeline } = await load();
+    const small = await deposits.recordDeposit(
+      { accountId: msa, amount: '50', method: 'cash' },
+      officer
+    );
+    const steps = (await timeline.chainTimeline('transaction', small.id))!;
+    expect(steps.map(s => [s.key, s.state])).toEqual([
+      ['capture', 'done'],
+      ['posted', 'done'],
+    ]);
+    expect(steps[1].detail).toBe(small.receiptNo);
+
+    const large = await deposits.recordDeposit(
+      {
+        accountId: shares,
+        amount: '600000',
+        method: 'bank_transfer',
+        methodReference: 'BT-10',
+      },
+      clerk
+    );
+    const waiting = (await timeline.chainTimeline('transaction', large.id))!;
+    expect(waiting.map(s => [s.key, s.state])).toEqual([
+      ['capture', 'done'],
+      ['secretary_review', 'current'],
+      ['president_decision', 'todo'],
+      ['posted', 'todo'],
+    ]);
+
+    // Disable the Secretary: the chevron omits the step and the President
+    // is next, with no front-end change.
+    const chain = (await config.listWorkflows()).find(
+      w => w.code === 'transaction_deposit'
+    )!;
+    const step = chain.steps.find(s => s.code === 'secretary_review')!;
+    await config.setStepEnabled(step.id, false, admin);
+    try {
+      const now = (await timeline.chainTimeline('transaction', large.id))!;
+      expect(now.map(s => [s.key, s.state])).toEqual([
+        ['capture', 'done'],
+        ['president_decision', 'current'],
+        ['posted', 'todo'],
+      ]);
+    } finally {
+      await config.setStepEnabled(step.id, true, admin);
+    }
+
+    await review.reviewTransaction(
+      large.id,
+      { outcome: 'return', comment: 'Slip missing' },
+      secretary
+    );
+    const returned = (await timeline.chainTimeline('transaction', large.id))!;
+    expect(returned[0]).toMatchObject({
+      key: 'capture',
+      state: 'current',
+      problem: true,
+      detail: 'Returned by Secretary',
+    });
+    // And by reference, the way the audit log names it.
+    expect((await review.loadTransactionByReference(large.reference))?.id).toBe(
+      large.id
+    );
   });
 });
