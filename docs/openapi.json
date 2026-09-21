@@ -1531,6 +1531,256 @@
         }
       }
     },
+    "/api/v1/deposits": {
+      "post": {
+        "summary": "Record a deposit into an account",
+        "description": "Posts a deposit to the account through the ledger and issues its receipt, in one step. Refused, naming the rule, when the account or its holder is not active, the account type does not accept deposits, the amount exceeds the type’s per-transaction maximum, the method is not offered or needs a reference that is missing, or a cash amount breaches the cash controls. Idempotent by the Idempotency-Key header.",
+        "tags": [
+          "Transactions"
+        ],
+        "operationId": "postDeposits",
+        "x-required-permission": "transaction.capture",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "deposit"
+                      ],
+                      "properties": {
+                        "deposit": {
+                          "type": "object",
+                          "required": [
+                            "id",
+                            "reference",
+                            "status",
+                            "accountId",
+                            "accountNo",
+                            "accountTypeName",
+                            "amount",
+                            "currency",
+                            "method",
+                            "methodName",
+                            "createdAt"
+                          ],
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "reference": {
+                              "type": "string",
+                              "description": "TX-000001-style."
+                            },
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "deposit"
+                              ]
+                            },
+                            "status": {
+                              "type": "string"
+                            },
+                            "accountId": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "accountNo": {
+                              "type": "string"
+                            },
+                            "accountTypeName": {
+                              "type": "string"
+                            },
+                            "memberId": {
+                              "type": "string",
+                              "format": "uuid",
+                              "nullable": true
+                            },
+                            "customerId": {
+                              "type": "string",
+                              "format": "uuid",
+                              "nullable": true
+                            },
+                            "amount": {
+                              "type": "string"
+                            },
+                            "currency": {
+                              "type": "string"
+                            },
+                            "method": {
+                              "type": "string"
+                            },
+                            "methodName": {
+                              "type": "string"
+                            },
+                            "methodReference": {
+                              "type": "string"
+                            },
+                            "reason": {
+                              "type": "string"
+                            },
+                            "receiptNo": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "balanceAfter": {
+                              "type": "string",
+                              "nullable": true,
+                              "description": "What the account stood at once this posted."
+                            },
+                            "capturedById": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "capturedByName": {
+                              "type": "string"
+                            },
+                            "createdAt": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "postedAt": {
+                              "type": "string",
+                              "format": "date-time",
+                              "nullable": true
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The Idempotency-Key was already used with a different request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request could not be processed as submitted, or the Idempotency-Key header is missing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "description": "A unique key for this request, chosen by the caller (a UUID will do). Sending the same key with the same body again returns the original result and writes nothing; the same key with a different body is refused with 409.",
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "accountId",
+                  "amount",
+                  "method"
+                ],
+                "properties": {
+                  "accountId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "amount": {
+                    "type": "string",
+                    "description": "Rupees with at most two decimals, e.g. \"500.00\"."
+                  },
+                  "method": {
+                    "type": "string",
+                    "description": "A payment_method code from /api/v1/config/reference."
+                  },
+                  "methodReference": {
+                    "type": "string",
+                    "description": "Required where the method says so."
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "sourceOfFundFormConfirmed": {
+                    "type": "boolean",
+                    "description": "Required true for a cash deposit above the Source of Fund threshold."
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/documents/begin-upload": {
       "post": {
         "summary": "Start filing a document",

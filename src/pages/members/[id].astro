@@ -273,6 +273,13 @@ const canOpenAnotherAccount =
     person.membershipTypeId,
     new Set(person.accounts.map(a => a.accountTypeId))
   ).length > 0;
+// S-1305: a deposit into one of their accounts. Gated on transaction.capture
+// (the counter officer's, like payment.record) and on there being an active
+// account to take it — the deposit page itself decides the rest.
+const canDeposit =
+  principal.permissions.has('transaction.capture') &&
+  person.status === 'active' &&
+  person.accounts.some(a => a.status === 'active');
 const joinedAt = (member ?? customer)!.joinedAt;
 const applicationReference = (member ?? customer)!.applicationReference;
 // Officer feedback: what the Secretary and the President said on the way to
@@ -596,9 +603,19 @@ const pageTitle = member ? member.memberNo : name;
     )}
 
     <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-      <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-        Accounts
-      </h2>
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+          Accounts
+        </h2>
+        {canDeposit && (
+          <a
+            href={`/members/${recordId}/deposit`}
+            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+          >
+            Record a deposit
+          </a>
+        )}
+      </div>
       {(member ?? customer)!.accounts.length === 0 ? (
         <p class="mt-1 text-sm text-red-700 dark:text-red-300">
           {member

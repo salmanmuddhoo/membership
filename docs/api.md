@@ -92,6 +92,21 @@ unprotected by forgetting something.
 Throw `ApiError` for an expected failure. Anything else that escapes becomes
 `internal_error`, so a forgotten `throw` cannot leak internals.
 
+A handler reads a JSON body with `body<T>()`, which fails as
+`validation_failed` when there is none.
+
+### Idempotent writes
+
+A write that must not happen twice declares `idempotent: true` (S-1308). The
+wrapper then refuses a request without an `Idempotency-Key` header
+(`validation_failed`), hands the key to the handler as `idempotencyKey`, and
+the generated document states the header and the 409. What the key means is
+the service's: `recordDeposit` answers the same key with the same request by
+returning the original and refuses the same key with a different request as
+a `conflict`, so a double-click or a dropped connection cannot move money
+twice. The key is unique per acting user (`transaction_idempotency_idx`),
+bounded to 128 characters, and stored on the row it protects.
+
 ## Documentation is generated, not written
 
 `docs/openapi.json` is produced from the descriptors:
