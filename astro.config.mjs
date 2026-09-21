@@ -18,6 +18,20 @@ import vercel from '@astrojs/vercel';
 const buildsForVercel =
   !!process.env.VERCEL || process.env.DEPLOY_TARGET === 'vercel';
 
+// Azure App Service terminates TLS in front of the app, so the Node server
+// sees plain HTTP and would rebuild every request URL as `http://…`. Astro's
+// cross-origin check then compares that against the browser's `https://…`
+// Origin header, finds them different, and refuses every form submission with
+// "Cross-site POST form submissions are forbidden" — sign-in included.
+//
+// Astro trusts `X-Forwarded-Proto` only when a host is pinned here, precisely
+// so a crafted `X-Forwarded-Host` cannot rewrite `Astro.url`. Pinning the one
+// host this deployment answers on buys the forwarded protocol without
+// reopening that. Vercel hands the adapter a real HTTPS request and never
+// needs it.
+const siteUrl = process.env.PUBLIC_SITE_URL;
+const proxiedHost = siteUrl ? new URL(siteUrl).hostname : undefined;
+
 // https://astro.build/config
 export default defineConfig({
   // Server-rendered so authentication can be enforced in middleware.
@@ -26,7 +40,12 @@ export default defineConfig({
   // Public site URL, per environment: Azure and Vercel each serve their own
   // domain. PUBLIC_SITE_URL is set in the host's own configuration; the
   // fallback only ever applies to a local build.
-  site: process.env.PUBLIC_SITE_URL ?? 'https://al-barakah.example.com',
+  site: siteUrl ?? 'https://al-barakah.example.com',
+  security: {
+    allowedDomains: proxiedHost
+      ? [{ hostname: proxiedHost, protocol: 'https' }]
+      : [],
+  },
   // Every same-origin link becomes prefetchable with no per-link markup
   // (prefetchAll) — `prefetch: true` alone only makes the data-astro-prefetch
   // attribute available, it does not turn it on anywhere, and nothing in
