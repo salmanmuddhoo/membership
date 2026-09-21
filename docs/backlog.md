@@ -3494,6 +3494,27 @@ void of a receipt already on a balance is refused in favour of a refund.
 backfill test asserts they equal the issued, unrefunded lines. The backfill
 posts as a fourth service account, `migration@system.albarakah.mu`.
 
+**Shipped, fourth increment** (S-1307): payment methods are configuration.
+Migration 0067 adds `payment_method` — code, name, `is_cash`,
+`requires_reference`, `touches_bank`, `is_system`, `is_active`, sort order —
+audited by the trigger every configuration table carries, seeded with
+today's five under their existing codes, the FRD's six additions and the
+import's own `migration` (system: never offered, not editable), and turns
+`payment.method` and `transaction.method` into foreign keys to it, dropping
+0017's check constraint. The constant and the label map in `payments.ts`
+are gone: a `Payment` carries `methodName` beside its code, so a receipt by
+a method since retired still says how it was paid. The three payment forms
+and the refund form render their options from `offeredPaymentMethods()`,
+each option carrying `is_cash` and `requires_reference`, and the page
+script reads those instead of a list of codes — so a new method with a
+reference gets the field, and the cash controls, with no release. The
+server holds the same line: a method that is not offered is refused, and a
+method that requires a reference is refused without one, on a payment and
+on a refund alike (refunds had never validated their method at all). The
+reference API returns the offered methods for the mobile app. Deposits
+(S-1305, next) read the same table. Built first, ahead of the deposit
+itself, because the deposit form's cash and reference rules hang off it.
+
 ### S-1301 · The account ledger ✅
 
 **As** the Society, **I need** every movement of money on an account to be
@@ -3628,7 +3649,7 @@ that** there is one control, not two. _(TXN-US-003, TXN-US-011, FRD 6.7)_
 - The three configuration entries are reused, not duplicated: a deposit is
   a payment, and an administrator sets each number once
 
-### S-1307 · Payment methods become configuration
+### S-1307 · Payment methods become configuration ✅
 
 **As** an administrator, **I need** to add a payment method without a
 release, **so that** the list matches how members actually pay. _(TXN-US-002,

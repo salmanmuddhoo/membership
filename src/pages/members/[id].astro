@@ -12,7 +12,6 @@ import { otherPartyGroups } from '@lib/applications/parties';
 import {
   paymentsForApplication,
   paymentsForMember,
-  METHOD_LABELS,
   type Payment,
 } from '@lib/payments/payments';
 import { formatMoney } from '@lib/payments/money';
@@ -749,7 +748,7 @@ const pageTitle = member ? member.memberNo : name;
                     </span>
                   )}
                   <span class="text-xs text-neutral-500 dark:text-neutral-400">
-                    {METHOD_LABELS[payment.method]} ·{' '}
+                    {payment.methodName} ·{' '}
                     {dateFormat.format(payment.receivedAt)} · taken by{' '}
                     {payment.recordedByName}
                   </span>

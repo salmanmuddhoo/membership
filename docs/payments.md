@@ -230,13 +230,16 @@ client-side work with no server equivalent — so a `<noscript>` block falls
 back to the plain confirmation checkbox this replaces, which still satisfies
 the same server-side rule if the paper form is completed the old way.
 
-**A reference is asked for only where there is one.** Cheque, bank transfer
-and mobile money each settle with a number worth recording; cash and card do
-not, and a box labelled "Cheque or transfer reference" under a cash payment
-is a question with no answer (officer feedback). The field appears for those
-three methods and is hidden for the other two, recomputed as the method
-changes. Without scripting it simply stays visible, which is what it was
-before.
+**A reference is asked for only where there is one.** A cheque, a bank
+transfer, mobile money each settle with a number worth recording; cash and
+card do not, and a box for a reference under a cash payment is a question
+with no answer (officer feedback). Which methods is configuration
+(`payment_method.requires_reference`, S-1307, `docs/configuration.md`): each
+option on the form carries the flag, the field shows for a method that has
+it and is mandatory on the server for the same one, recomputed as the method
+changes. Without scripting it simply stays visible. The same table's
+`is_cash` is what makes the cash controls above apply — on the method, not
+on a list of names in code.
 
 ## Refunds
 

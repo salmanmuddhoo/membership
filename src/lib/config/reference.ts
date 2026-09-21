@@ -2145,3 +2145,161 @@ export async function setCashSourceOfFundChecklist(
     );
   });
 }
+
+// ---------------------------------------------------------------------------
+// S-1307 · Payment methods
+// ---------------------------------------------------------------------------
+// How money moves, as configuration (migration 0067). A method carries what
+// the rest of the system asks of one: whether the cash controls apply
+// (isCash), whether the form demands a reference (requiresReference),
+// whether the money reaches a bank (touchesBank), and whether it is the
+// system's own — 'migration', the legacy import's mark — which is never
+// offered on a form and not an administrator's to change (isSystem).
+export interface PaymentMethod {
+  id: string;
+  code: string;
+  name: string;
+  isCash: boolean;
+  requiresReference: boolean;
+  touchesBank: boolean;
+  isSystem: boolean;
+  isActive: boolean;
+  sortOrder: number;
+}
+
+async function readPaymentMethods(): Promise<PaymentMethod[]> {
+  const result = await query<{
+    id: string;
+    code: string;
+    name: string;
+    is_cash: boolean;
+    requires_reference: boolean;
+    touches_bank: boolean;
+    is_system: boolean;
+    is_active: boolean;
+    sort_order: number;
+  }>(
+    `select id, code, name, is_cash, requires_reference, touches_bank,
+            is_system, is_active, sort_order
+       from payment_method
+      order by sort_order, name`
+  );
+  return result.rows.map(r => ({
+    id: r.id,
+    code: r.code,
+    name: r.name,
+    isCash: r.is_cash,
+    requiresReference: r.requires_reference,
+    touchesBank: r.touches_bank,
+    isSystem: r.is_system,
+    isActive: r.is_active,
+    sortOrder: r.sort_order,
+  }));
+}
+
+export function listPaymentMethods(): Promise<PaymentMethod[]> {
+  return cached('payment-methods', readPaymentMethods);
+}
+
+// What an officer's form offers: active, and not the system's own.
+export async function offeredPaymentMethods(): Promise<PaymentMethod[]> {
+  return (await listPaymentMethods()).filter(m => m.isActive && !m.isSystem);
+}
+
+// The method a record names, offered or not — a receipt taken by a method
+// since retired still has to say how it was paid.
+export async function paymentMethodByCode(
+  code: string
+): Promise<PaymentMethod | null> {
+  return (await listPaymentMethods()).find(m => m.code === code) ?? null;
+}
+
+export interface PaymentMethodInput {
+  name: string;
+  isCash: boolean;
+  requiresReference: boolean;
+  touchesBank: boolean;
+  isActive: boolean;
+}
+
+export async function createPaymentMethod(
+  input: PaymentMethodInput & { code: string },
+  actor: Actor
+): Promise<string> {
+  const code = input.code.trim().toLowerCase();
+  if (!CODE_PATTERN.test(code)) {
+    throw new ConfigError(
+      'A code must start with a letter and contain only lowercase letters, ' +
+        'digits and underscores.'
+    );
+  }
+  if (!input.name.trim()) throw new ConfigError('A name is required.');
+
+  return withConfigurationActor(actorFor(actor), async client => {
+    const existing = await client.query(
+      'select 1 from payment_method where code = $1',
+      [code]
+    );
+    if (existing.rowCount) {
+      throw new ConfigError(
+        `A payment method with code ${code} already exists.`,
+        'conflict'
+      );
+    }
+    const result = await client.query<{ id: string }>(
+      `insert into payment_method
+         (code, name, is_cash, requires_reference, touches_bank, is_active,
+          sort_order)
+       values ($1, $2, $3, $4, $5, $6,
+               coalesce((select max(sort_order) + 10 from payment_method
+                          where not is_system), 10))
+       returning id`,
+      [
+        code,
+        input.name.trim(),
+        input.isCash,
+        input.requiresReference,
+        input.touchesBank,
+        input.isActive,
+      ]
+    );
+    return result.rows[0].id;
+  });
+}
+
+export async function updatePaymentMethod(
+  id: string,
+  input: PaymentMethodInput,
+  actor: Actor
+): Promise<void> {
+  if (!input.name.trim()) throw new ConfigError('A name is required.');
+
+  await withConfigurationActor(actorFor(actor), async client => {
+    const result = await client.query(
+      `update payment_method
+          set name = $2, is_cash = $3, requires_reference = $4,
+              touches_bank = $5, is_active = $6
+        where id = $1 and not is_system`,
+      [
+        id,
+        input.name.trim(),
+        input.isCash,
+        input.requiresReference,
+        input.touchesBank,
+        input.isActive,
+      ]
+    );
+    if (result.rowCount === 0) {
+      const system = await client.query(
+        'select 1 from payment_method where id = $1 and is_system',
+        [id]
+      );
+      throw system.rowCount
+        ? new ConfigError(
+            'This method is written by the system and cannot be changed.',
+            'conflict'
+          )
+        : new ConfigError('That payment method no longer exists.', 'not_found');
+    }
+  });
+}

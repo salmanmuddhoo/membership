@@ -341,6 +341,29 @@ describe('S-1301, S-1302 the ledger', () => {
     ).rejects.toThrowError(/transaction_reversal_names_its_original/);
   });
 
+  // 0067: a method is a payment_method row, on a payment and on a
+  // transaction alike — asserted from the catalogue, because a bare insert
+  // trips the row's other foreign keys before it reaches this one.
+  it('references the configured payment methods from a payment and a transaction', async () => {
+    const result = await run(
+      appUrl,
+      `select conrelid::regclass::text as on_table, confrelid::regclass::text as to_table
+         from pg_constraint
+        where conname in ('payment_method_fkey', 'transaction_method_fkey')
+        order by conname`
+    );
+    expect(result.rows).toEqual([
+      { on_table: 'payment', to_table: 'payment_method' },
+      { on_table: 'transaction', to_table: 'payment_method' },
+    ]);
+    // And the check constraint the reference replaced is gone.
+    const check = await run(
+      appUrl,
+      `select 1 from pg_constraint where conname = 'payment_method_check'`
+    );
+    expect(check.rowCount).toBe(0);
+  });
+
   it('has a service account for data migrations to post as', async () => {
     const result = await run(
       appUrl,
