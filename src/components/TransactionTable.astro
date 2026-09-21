@@ -1,0 +1,138 @@
+---
+// A list of transactions, whatever kind, wherever it is shown (S-1506): a
+// person's across every account, or the Society's day. One row per
+// transaction; a transfer once, naming the other side.
+import type { TransactionSummary } from '@lib/ledger/review';
+import { formatMoney } from '@lib/payments/money';
+
+interface Props {
+  transactions: TransactionSummary[];
+  // Shown when the list is not one person's, so the row says whose it is.
+  showHolder?: boolean;
+  empty: string;
+}
+
+const { transactions, showHolder = false, empty } = Astro.props;
+
+const KIND_LABELS: Record<string, string> = {
+  deposit: 'Deposit',
+  withdrawal: 'Withdrawal',
+  transfer_leg: 'Transfer',
+  reversal: 'Reversal',
+};
+const STATUS_LABELS: Record<string, string> = {
+  submitted: 'Submitted',
+  under_review: 'Under review',
+  approved: 'Approved',
+  posted: 'Posted',
+  returned: 'Returned',
+  rejected: 'Rejected',
+  cancelled: 'Cancelled',
+};
+const dateFormat = new Intl.DateTimeFormat('en-GB', {
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+});
+// Which way the money went, from the account's side.
+function direction(t: TransactionSummary): 'in' | 'out' | '' {
+  if (t.kind === 'deposit') return 'in';
+  if (t.kind === 'withdrawal') return 'out';
+  if (t.kind === 'transfer_leg')
+    return t.legDirection === 'credit' ? 'in' : 'out';
+  return '';
+}
+function otherSide(t: TransactionSummary): string | null {
+  if (t.kind !== 'transfer_leg') return null;
+  if (t.payeeName) return `to ${t.payeeName}`;
+  if (!t.counterpartAccountNo) return null;
+  const who = t.counterpartHolderName ? `${t.counterpartHolderName} · ` : '';
+  return `${t.legDirection === 'credit' ? 'from' : 'to'} ${who}${t.counterpartAccountNo} · ${t.counterpartAccountTypeName}`;
+}
+const CELL = 'px-2 py-2';
+---
+
+<div class="overflow-x-auto rounded-2xl border border-neutral-200 bg-neutral-100 p-4 dark:border-neutral-800 dark:bg-neutral-950">
+  {transactions.length === 0 ? (
+    <p class="text-sm text-neutral-500 dark:text-neutral-400">{empty}</p>
+  ) : (
+    <table class="w-full text-sm">
+      <thead class="text-left text-xs text-neutral-500 uppercase dark:text-neutral-400">
+        <tr>
+          <th class={CELL}>Date</th>
+          <th class={CELL}>Reference</th>
+          <th class={CELL}>Kind</th>
+          {showHolder && <th class={CELL}>Who</th>}
+          <th class={CELL}>Account</th>
+          <th class={`${CELL} text-right`}>In</th>
+          <th class={`${CELL} text-right`}>Out</th>
+          <th class={CELL}>Status</th>
+          <th class={CELL}>Recorded by</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-neutral-200 dark:divide-neutral-800">
+        {transactions.map(t => (
+          <tr class="text-neutral-800 dark:text-neutral-100">
+            <td class={`${CELL} whitespace-nowrap`}>
+              {dateFormat.format(t.createdAt)}
+            </td>
+            <td class={CELL}>
+              <a href={`/transactions/${t.id}`} class="font-medium underline">
+                <code class="text-xs">{t.reference}</code>
+              </a>
+              {t.receiptNo && (
+                <span class="block text-xs text-neutral-500 dark:text-neutral-400">
+                  {t.receiptNo}
+                </span>
+              )}
+            </td>
+            <td class={CELL}>
+              {KIND_LABELS[t.kind] ?? t.kind}
+              {otherSide(t) && (
+                <span class="block text-xs text-neutral-500 dark:text-neutral-400">
+                  {otherSide(t)}
+                </span>
+              )}
+              {t.reason && (
+                <span class="block text-xs text-neutral-500 dark:text-neutral-400">
+                  {t.reason}
+                </span>
+              )}
+            </td>
+            {showHolder && (
+              <td class={CELL}>
+                <a href={`/members/${t.holderId}`} class="underline">
+                  {t.holderName || t.holderKind}
+                </a>
+                {t.memberNo && (
+                  <span class="block text-xs text-neutral-500 dark:text-neutral-400">
+                    {t.memberNo}
+                  </span>
+                )}
+              </td>
+            )}
+            <td class={CELL}>
+              <a href={`/accounts/${t.accountId}`} class="underline">
+                {t.accountNo}
+              </a>
+              {' · '}
+              {t.accountTypeName}
+            </td>
+            <td class={`${CELL} text-right tabular-nums`}>
+              {direction(t) === 'in' && formatMoney(t.amount, t.currency)}
+              {t.kind === 'reversal' &&
+                `(${formatMoney(t.amount, t.currency)})`}
+            </td>
+            <td class={`${CELL} text-right tabular-nums`}>
+              {direction(t) === 'out' && formatMoney(t.amount, t.currency)}
+            </td>
+            <td class={CELL}>{STATUS_LABELS[t.status] ?? t.status}</td>
+            <td class={CELL}>{t.capturedByName}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )}
+</div>

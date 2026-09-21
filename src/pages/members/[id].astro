@@ -648,9 +648,19 @@ const pageTitle = member ? member.memberNo : name;
     )}
 
     <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-      <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-        Accounts
-      </h2>
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+          Accounts
+        </h2>
+        {principal.permissions.has('transaction.view') && (
+          <a
+            href={`/members/${recordId}/transactions`}
+            class="text-sm font-medium text-neutral-700 underline hover:text-neutral-900 dark:text-neutral-200 dark:hover:text-neutral-100"
+          >
+            All transactions
+          </a>
+        )}
+      </div>
       {(member ?? customer)!.accounts.length === 0 ? (
         <p class="mt-1 text-sm text-red-700 dark:text-red-300">
           {member

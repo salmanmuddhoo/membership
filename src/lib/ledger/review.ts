@@ -107,7 +107,8 @@ export interface TransactionSummary {
   counterpartHolderName: string | null;
 }
 
-const SELECT = `
+// Exported for the listings (history.ts) that read the same shape.
+export const TRANSACTION_SELECT = `
   select t.id, t.reference, t.kind, t.status, t.amount, t.currency,
          t.method, pm.name as method_name,
          coalesce(t.method_reference, '') as method_reference,
@@ -163,7 +164,7 @@ const SELECT = `
      and lp.subject = 'applicant' and lp.ordinal = 1
 `;
 
-interface Row {
+export interface TransactionRow {
   id: string;
   reference: string;
   kind: TransactionRowKind;
@@ -208,7 +209,7 @@ interface Row {
   counterpart_holder_name: string | null;
 }
 
-function assemble(r: Row): TransactionSummary {
+export function assembleTransaction(r: TransactionRow): TransactionSummary {
   return {
     id: r.id,
     reference: r.reference,
@@ -258,9 +259,12 @@ function assemble(r: Row): TransactionSummary {
 export async function loadTransaction(
   id: string
 ): Promise<TransactionSummary | null> {
-  const result = await query<Row>(`${SELECT} where t.id = $1`, [id]);
+  const result = await query<TransactionRow>(
+    `${TRANSACTION_SELECT} where t.id = $1`,
+    [id]
+  );
   const row = result.rows[0];
-  return row ? assemble(row) : null;
+  return row ? assembleTransaction(row) : null;
 }
 
 // By its reference (TX-000123), which is what the audit log and a receipt
@@ -268,11 +272,12 @@ export async function loadTransaction(
 export async function loadTransactionByReference(
   reference: string
 ): Promise<TransactionSummary | null> {
-  const result = await query<Row>(`${SELECT} where t.reference = $1`, [
-    reference.trim().toUpperCase(),
-  ]);
+  const result = await query<TransactionRow>(
+    `${TRANSACTION_SELECT} where t.reference = $1`,
+    [reference.trim().toUpperCase()]
+  );
   const row = result.rows[0];
-  return row ? assemble(row) : null;
+  return row ? assembleTransaction(row) : null;
 }
 
 // Where on its chain a transaction stands, read against the chain as it is
@@ -337,8 +342,8 @@ async function inFlight(
     params.push(kind);
     filter = ` and t.kind = $${params.length}`;
   }
-  const result = await query<Row & { waiting_since: Date }>(
-    `${SELECT}
+  const result = await query<TransactionRow & { waiting_since: Date }>(
+    `${TRANSACTION_SELECT}
       where t.workflow_definition_id is not null
         and t.current_step_code is not null
         and t.status = any($1::text[])
@@ -348,7 +353,7 @@ async function inFlight(
   );
   return Promise.all(
     result.rows.map(async row => ({
-      ...assemble(row),
+      ...assembleTransaction(row),
       waitingSince: await arrivedAt(row.id, row.submitted_at ?? row.created_at),
     }))
   );
@@ -397,8 +402,8 @@ export async function pendingTransactions(
 export async function returnedTransactions(
   principal: Principal
 ): Promise<(TransactionSummary & { waitingSince: Date })[]> {
-  const result = await query<Row>(
-    `${SELECT}
+  const result = await query<TransactionRow>(
+    `${TRANSACTION_SELECT}
       where t.status = 'returned' and t.captured_by = $1
         and t.leg_direction is distinct from 'credit'
       order by t.submitted_at, t.serial_no`,
@@ -406,7 +411,7 @@ export async function returnedTransactions(
   );
   return Promise.all(
     result.rows.map(async row => ({
-      ...assemble(row),
+      ...assembleTransaction(row),
       waitingSince: await arrivedAt(row.id, row.submitted_at ?? row.created_at),
     }))
   );
@@ -428,8 +433,8 @@ export async function approvedTransactions(
     params.push(filter.kind);
     kindFilter = ` and t.kind = $${params.length}`;
   }
-  const result = await query<Row>(
-    `${SELECT}
+  const result = await query<TransactionRow>(
+    `${TRANSACTION_SELECT}
       where t.status = 'approved'
         and t.leg_direction is distinct from 'credit'${kindFilter}
       order by t.submitted_at, t.serial_no`,
@@ -437,7 +442,7 @@ export async function approvedTransactions(
   );
   return Promise.all(
     result.rows.map(async row => ({
-      ...assemble(row),
+      ...assembleTransaction(row),
       waitingSince: await arrivedAt(row.id, row.submitted_at ?? row.created_at),
     }))
   );

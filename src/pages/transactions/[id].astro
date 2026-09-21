@@ -15,6 +15,11 @@ import {
   PERMISSION_CAPTURE,
   resubmitDeposit,
 } from '@lib/ledger/deposits';
+import {
+  PERMISSION_REVERSE,
+  ReversalError,
+  reverseTransaction,
+} from '@lib/ledger/reversals';
 import { resubmitTransfer, TransferError } from '@lib/ledger/transfers';
 import { resubmitWithdrawal, WithdrawalError } from '@lib/ledger/withdrawals';
 import {
@@ -98,6 +103,14 @@ if (Astro.request.method === 'POST') {
       notice = posted.receiptNo
         ? `${transaction.reference} posted. Receipt ${posted.receiptNo}.`
         : `${transaction.reference} posted.`;
+    } else if (intent === 'reverse') {
+      const result = await reverseTransaction(
+        transaction.id,
+        { reason: text('reason') },
+        principal
+      );
+      const refs = result.reversals.map(r => r.reference).join(' and ');
+      notice = `${transaction.reference} reversed by ${refs}. Receipt ${result.reversals[0]?.receiptNo ?? ''}.`;
     } else if (intent === 'resubmit') {
       const edit = {
         accountId: text('accountId'),
@@ -130,7 +143,8 @@ if (Astro.request.method === 'POST') {
       err instanceof ReviewError ||
       err instanceof DepositError ||
       err instanceof WithdrawalError ||
-      err instanceof TransferError
+      err instanceof TransferError ||
+      err instanceof ReversalError
     ) {
       error = err.message;
     } else {
@@ -145,6 +159,13 @@ const position = (IN_FLIGHT as readonly string[]).includes(transaction.status)
   ? await positionOf(transaction)
   : null;
 const canAct = position ? mayActAt(position, principal) : false;
+// A posted mistake is undone by a reversal, never an edit (S-1505). A
+// transfer is reversed from its debit leg, whole.
+const canReverse =
+  transaction.status === 'posted' &&
+  transaction.kind !== 'reversal' &&
+  transaction.legDirection !== 'credit' &&
+  principal.permissions.has(PERMISSION_REVERSE);
 const canPost =
   transaction.status === 'approved' &&
   principal.permissions.has(PERMISSION_POST) &&
@@ -658,6 +679,36 @@ const DANGER =
             Resubmit
           </button>
         </div>
+      </form>
+    )}
+
+    {canReverse && (
+      <form
+        method="post"
+        class="space-y-3 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
+      >
+        <h2 class="text-sm font-semibold text-neutral-700 uppercase dark:text-neutral-200">
+          Reverse
+        </h2>
+        <p class="text-sm text-neutral-600 dark:text-neutral-300">
+          A reversal posts the opposite entry on the same account
+          {isTransfer && ', on both sides of the transfer,'} with its own
+          receipt. This one stays as it is.
+        </p>
+        <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+          Reason
+          <textarea
+            name="reason"
+            rows="2"
+            required
+            class={INPUT}
+            placeholder="Required."
+          ></textarea>
+        </label>
+        <input type="hidden" name="intent" value="reverse" />
+        <button type="submit" class={DANGER}>
+          Reverse
+        </button>
       </form>
     )}
 
