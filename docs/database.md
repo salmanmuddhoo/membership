@@ -151,6 +151,17 @@ CREATE DATABASE albarakah;
 
 -- Nothing is granted to PUBLIC by default.
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
+
+-- On Azure specifically, the admin account is a member of azure_pg_admin,
+-- not a true superuser — it does not bypass permission checks, and the
+-- REVOKE above takes away a default right it was otherwise relying on to
+-- create anything in `public` at all. Put it back explicitly, for this
+-- account and not for PUBLIC again, or the first migration fails with
+-- "permission denied for schema public" before it creates a single table.
+-- A real superuser (the local `postgres` role, say) already has this right
+-- unconditionally and does not need the line.
+GRANT ALL ON SCHEMA public TO "<admin-username>";
+
 GRANT CONNECT ON DATABASE albarakah TO albarakah_app;
 GRANT USAGE ON SCHEMA public TO albarakah_app;
 ```

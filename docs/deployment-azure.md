@@ -159,14 +159,26 @@ server is fresh in your mind, rather than after a migration fails on it.
     while you do; that is normal for a password prompt, not a fault.
 
 21. **You should see** a prompt reading `albarakah=>`. Paste this, making up
-    a **new** password where marked — never the admin's own:
+    a **new** password where marked — never the admin's own — and putting
+    your own admin username in place of the one placeholder that needs it:
 
     ```sql
     CREATE ROLE albarakah_app WITH LOGIN PASSWORD '<make one up>';
     REVOKE ALL ON SCHEMA public FROM PUBLIC;
+    GRANT ALL ON SCHEMA public TO "<admin-username>";
     GRANT CONNECT ON DATABASE albarakah TO albarakah_app;
     GRANT USAGE ON SCHEMA public TO albarakah_app;
     ```
+
+    That third line is easy to think unnecessary — surely the admin account
+    can already do everything? On Azure specifically, no: this admin is a
+    member of a powerful group role, not a true Postgres superuser the way
+    the `postgres` account is on your own machine, and it does not bypass
+    permission checks the way a real superuser does. It could create things
+    in `public` only because of a default right every account starts with,
+    and the line above it — a real hardening step, not a mistake — just took
+    that default away from every account, admin included. This puts it back,
+    for the admin specifically, without reopening it to everyone.
 
 22. **Write that password down now.** It is `albarakah_app`'s own, and it is
     what `DATABASE_URL` in step 4 is built from — not the admin's password,
@@ -526,6 +538,8 @@ who to escalate to — are in `docs/runbook.md`.
 | The run succeeds but the site still shows the placeholder or an old version | `WEBSITE_RUN_FROM_PACKAGE` is not set to `1` (step 4), so Azure is trying to rebuild the code itself    | Add or fix that setting, then re-run the workflow from the Actions tab                                                           |
 | Migrations fail: "password authentication failed for user ..."              | `DATABASE_MIGRATION_URL` holds the wrong account, or `albarakah_app` was never created                  | See step 6's note directly below its instructions                                                                                |
 | The first migration fails mentioning `pgcrypto` or `citext`                 | The two extensions were never allow-listed on the server                                                | Step 2, item 18 — `azure.extensions` under Server parameters                                                                     |
+| Migrations fail: "database ... does not exist"                              | The database was created under a different name than `albarakah`                                        | Rename it to match — `ALTER DATABASE <what-you-called-it> RENAME TO albarakah;`, connected to a different database               |
+| Migrations fail: "permission denied for schema public"                      | The admin account lost its own rights on `public` when step 2's `REVOKE ALL ... FROM PUBLIC` ran        | Step 2, item 21 — the `GRANT ALL ON SCHEMA public TO "<admin-username>"` line restores it                                        |
 
 ## What stays on Vercel
 
