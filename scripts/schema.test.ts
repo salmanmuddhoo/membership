@@ -442,6 +442,10 @@ describe('S-1301, S-1302 the ledger', () => {
       },
       {
         earlier_action: 'transaction.captured',
+        later_action: 'transaction.reversed',
+      },
+      {
+        earlier_action: 'transaction.captured',
         later_action: 'transaction.reviewed',
       },
       {

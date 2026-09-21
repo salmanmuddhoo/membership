@@ -1,0 +1,152 @@
+---
+// The Society's day (S-1506): every transaction recorded, newest first,
+// today by default, filterable by kind, status and date, and paged. The
+// same query as a person's list, unfiltered by person.
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import TransactionTable from '@components/TransactionTable.astro';
+import { listTransactions } from '@lib/ledger/history';
+import type { TransactionRowKind } from '@lib/config/reference';
+
+const KINDS: [TransactionRowKind, string][] = [
+  ['deposit', 'Deposit'],
+  ['withdrawal', 'Withdrawal'],
+  ['transfer_leg', 'Transfer'],
+  ['reversal', 'Reversal'],
+];
+const STATUSES = [
+  'submitted',
+  'under_review',
+  'approved',
+  'posted',
+  'returned',
+  'rejected',
+];
+const params = Astro.url.searchParams;
+const today = new Date().toISOString().slice(0, 10);
+const kind = params.get('kind') ?? '';
+const status = params.get('status') ?? '';
+const from = params.has('from') ? (params.get('from') ?? '') : today;
+const to = params.has('to') ? (params.get('to') ?? '') : today;
+const page = Math.max(1, Number(params.get('page') ?? '1') || 1);
+const asDate = (value: string, endOfDay: boolean) => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
+  return new Date(`${value}T${endOfDay ? '23:59:59.999' : '00:00:00'}`);
+};
+const result = await listTransactions({
+  kind: KINDS.some(([k]) => k === kind)
+    ? (kind as TransactionRowKind)
+    : undefined,
+  status: STATUSES.includes(status) ? status : undefined,
+  from: asDate(from, false),
+  to: asDate(to, true),
+  page,
+  pageSize: 50,
+});
+const pages = Math.max(1, Math.ceil(result.total / result.pageSize));
+const pageHref = (n: number) => {
+  const next = new URLSearchParams(params);
+  next.set('from', from);
+  next.set('to', to);
+  next.set('page', String(n));
+  return `?${next.toString()}`;
+};
+const INPUT =
+  'mt-1 block w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100';
+---
+
+<DashboardLayout
+  title="All transactions · Al Barakah MCSL"
+  heading="All transactions"
+>
+  <div class="mx-auto max-w-6xl space-y-6">
+    <a
+      href="/transactions"
+      class="inline-block text-sm text-neutral-500 underline dark:text-neutral-400"
+    >
+      ← Transactions
+    </a>
+
+    <form
+      method="get"
+      class="grid gap-3 rounded-2xl border border-neutral-200 bg-neutral-100 p-4 text-sm sm:grid-cols-4 dark:border-neutral-800 dark:bg-neutral-950"
+    >
+      <label class="text-neutral-600 dark:text-neutral-300">
+        Kind
+        <select name="kind" class={INPUT}>
+          <option value="">All</option>
+          {KINDS.map(([code, label]) => (
+            <option value={code} selected={code === kind}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label class="text-neutral-600 dark:text-neutral-300">
+        Status
+        <select name="status" class={INPUT}>
+          <option value="">All</option>
+          {STATUSES.map(s => (
+            <option value={s} selected={s === status}>
+              {s.replace('_', ' ')}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label class="text-neutral-600 dark:text-neutral-300">
+        From
+        <input type="date" name="from" value={from} class={INPUT} />
+      </label>
+      <label class="text-neutral-600 dark:text-neutral-300">
+        To
+        <input type="date" name="to" value={to} class={INPUT} />
+      </label>
+      <div class="flex items-end gap-2 sm:col-span-4">
+        <button
+          type="submit"
+          class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+        >
+          Filter
+        </button>
+        <a
+          href="/transactions/all?from=&to="
+          class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+        >
+          Every date
+        </a>
+        <span class="ml-auto text-neutral-500 dark:text-neutral-400">
+          {result.total} transaction{result.total === 1 ? '' : 's'}
+        </span>
+      </div>
+    </form>
+
+    <TransactionTable
+      transactions={result.transactions}
+      showHolder
+      empty="Nothing recorded for these dates."
+    />
+
+    {pages > 1 && (
+      <div class="flex flex-wrap items-center gap-2 text-sm">
+        {page > 1 && (
+          <a
+            href={pageHref(page - 1)}
+            class="rounded-lg border border-neutral-300 px-3 py-1.5 font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+          >
+            Newer
+          </a>
+        )}
+        <span class="text-neutral-500 dark:text-neutral-400">
+          Page {page} of {pages}
+        </span>
+        {page < pages && (
+          <a
+            href={pageHref(page + 1)}
+            class="rounded-lg border border-neutral-300 px-3 py-1.5 font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+          >
+            Older
+          </a>
+        )}
+      </div>
+    )}
+  </div>
+</DashboardLayout>

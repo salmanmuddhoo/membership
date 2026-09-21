@@ -61,6 +61,17 @@ const KINDS: { label: string; href: string | null; blurb: string }[] = [
         {' →'}
       </span>
     </a>
+    <a
+      href="/transactions/all"
+      class="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-neutral-200 bg-neutral-100 px-6 py-4 transition hover:border-mint-400 hover:bg-white dark:border-neutral-800 dark:bg-neutral-950 dark:hover:border-mint-700 dark:hover:bg-neutral-900"
+    >
+      <span class="font-semibold text-neutral-800 dark:text-neutral-100">
+        Today’s transactions
+      </span>
+      <span class="text-sm text-neutral-600 dark:text-neutral-300">
+        Every kind, every status →
+      </span>
+    </a>
     <ul class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {KINDS.map(kind =>
         kind.href ? (

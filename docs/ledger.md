@@ -318,9 +318,40 @@ rules are in `docs/access-control.md` (S-1311). The capture path writes a
 
 A `reversal` names the transaction it reverses (`reverses_id`) and posts the
 opposite direction on the same account, for no more than the original moved.
-The original is never touched. It is the shape S-1505 asks for (decision 13),
+The original is never touched. It is the shape S-1505 asks for (decision 12),
 and refunds of carried lines use it now. `post_transaction()` reads the
 direction from the original's own entry, so reversing a reversal restores it.
+
+`reverseTransaction()` in `src/lib/ledger/reversals.ts` is the correction of
+a posted mistake: `receipt.void` (the Treasurer's, as voiding a payment is),
+a reason that is required, a transaction that is posted and not already
+reversed, and never the officer who captured it (0074's segregation rule).
+It inserts the reversal, posts it through the engine and issues it a receipt
+of its own, in one database transaction; a transfer is reversed whole, both
+legs, the receipt on the reversal of the leg named. The trail on the
+original records `transaction.reversed` with the reversal's reference. The
+review page offers Reverse on a posted transaction to whoever holds the
+permission, and `POST /api/v1/transactions/{id}/reversals` is the endpoint.
+
+**Drafts** (S-1505's first criterion) are not persisted for transactions: a
+form abandoned before Submit records nothing — no reference, no receipt, no
+ledger effect — which is the same outcome the story asks of a draft without
+a `draft` row whose generated reference would burn a number in the
+sequence. The `draft` status stays in the vocabulary for a later capture
+path that saves as it goes. Recorded as decision 17.
+
+## History, across accounts
+
+`listTransactions()` in `src/lib/ledger/history.ts` (S-1506) is one query
+for every kind and every status, newest first, paged, filterable by member
+or customer (across all their accounts), account, kind, status and the dates
+recorded between. A transfer shows once: its credit leg is left out wherever
+its debit leg is in the same list — the same holder, or no holder filter at
+all — and shows on its own only for the person who received it. The person's
+page links to `/members/{id}/transactions`; the Transactions page links to
+`/transactions/all`, the Society's day by default (there is no region on a
+transaction or a principal yet, so the day is everyone's); and
+`GET /api/v1/transactions` takes the same filters.
 
 ## Direction
 

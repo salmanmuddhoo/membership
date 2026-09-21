@@ -4046,8 +4046,19 @@ never posted alone, and rejected with it. A payee transfer has one leg and
 is paid out at disbursement (S-1503). Transfer in the person's banner, the
 Transactions card, the review screen showing the other side and a
 correction form for the amount and note, and `POST /api/v1/transfers` with
-one key for the pair. **Not yet:** drafts and reversals (S-1505), the
-history across accounts (S-1506).
+one key for the pair.
+
+**Shipped, third increment** (S-1505, S-1506) — M15 complete. A posted
+mistake is corrected by `reverseTransaction()`: a reversal that names it,
+posted through the engine on its own receipt, a transfer whole; the
+Treasurer's act (`receipt.void`), with a reason, never the captor's (0074).
+Nothing past submission is ever deleted — the guard from 0064 already
+refused it — and every state is on the trail. Drafts are not persisted:
+a form abandoned before Submit records nothing, which is what the story
+asks of a draft, without a row whose generated reference would burn a
+number (decision 17). `listTransactions()` is one list across every
+account, filterable and paged, a transfer once, on the person's page, on
+`/transactions/all` for the day, and at `GET /api/v1/transactions`.
 
 ### S-1501 · Withdrawal ✅
 
@@ -4126,7 +4137,7 @@ _(TXN-US-006, FRD 6.4, open point 5)_
   has its own kind in the matrix and posts by default
 - `POST /api/v1/transfers`, one call, one idempotency key for the pair
 
-### S-1505 · Drafts, and what a submitted transaction can and cannot become
+### S-1505 · Drafts, and what a submitted transaction can and cannot become ✅
 
 **As** an officer, **I need** to abandon a mistake before it is submitted and
 to know that after submission nothing disappears, **so that** the record is
@@ -4141,7 +4152,7 @@ honest. _(TXN-US-008, FRD 6.5.1, 12)_
   reversing transaction that references it (`reverses_id`), through the
   engine, on its own receipt — never an edit. Recorded as decision 13
 
-### S-1506 · Transaction history, across accounts
+### S-1506 · Transaction history, across accounts ✅
 
 **As** an officer, **I need** a member's transactions across every account
 in one list, **so that** a query is answered from one screen. _(TXN-US-009,
@@ -4591,24 +4602,25 @@ The FRD closes its own open points. These are the ones the code raises. Each
 has a default the stories are written to, so none blocks the start of M13;
 each should be confirmed before the milestone that consumes it.
 
-| #   | Point                                                       | Needed by    | Default the backlog assumes                                                                               |
-| --- | ----------------------------------------------------------- | ------------ | --------------------------------------------------------------------------------------------------------- |
-| 1   | Which Phase 1 fee components open which balance             | M13 · S-1303 | `shares` → Shares, `msa_deposit` → MSA; entrance, processing, Takaful open nothing                        |
-| 2   | The full `member.status` vocabulary                         | M17 · S-1701 | What the code writes today plus `dormant`, `resigned`, `demised`                                          |
-| 3   | Dormancy: detection and reactivation (M8's S-804 to S-806)  | M15 · S-1501 | The status exists and blocks; nothing sets it. Detection stays deferred until it is scheduled             |
-| 4   | Payment method list and which need a reference              | M13 · S-1307 | FRD 6.6's list; cheque, transfers and bank methods require a reference                                    |
-| 5   | HSA / Investment as multi-instance per member               | M13          | One of each type per member (0018) stands; multi-instance is a later migration if wanted                  |
-| 6   | Receipt by email: link or attachment                        | M16 · S-1602 | A link; WhatsApp media is Should                                                                          |
-| 7   | Whether a pending withdrawal reserves balance               | M15 · S-1502 | Yes: available = balance − pending debits, as a query                                                     |
-| 8   | Transfer to a non-member: where the credit goes             | M15 · S-1504 | Nowhere: debit leg plus disbursement out, no credit leg                                                   |
-| 9   | One API surface for staff and member (API-US-003)           | M21          | Two surfaces on one framework and one engine, as Phase 4 built; the rules are identical, the paths differ |
-| 10  | Withdrawing from Shares below the holding minimum           | M15 · S-1501 | Refused; resignation is the only way below it                                                             |
-| 11  | A returned transaction whose amount crosses a matrix band   | M14 · S-1404 | Re-routed by the rule that now applies                                                                    |
-| 12  | Correcting a posted transaction                             | M15 · S-1505 | A reversing transaction, never an edit                                                                    |
-| 13  | Receipt number format and yearly reset (FRD shows RC-2026-) | M16 · S-1601 | `RCT-` continuous, as 0017; prefix becomes configuration; no yearly reset                                 |
-| 14  | Takaful / funeral benefit amount                            | M17 · S-1704 | Rs 15,000, configuration                                                                                  |
-| 15  | Minimum balance floors and approval thresholds per type     | M13 · S-1304 | Shares: the holding minimum; others 0; escalation threshold a single configured amount                    |
-| 16  | Board quorum on President's step for large disbursements    | M14          | 1 — `quorum_count` exists (0022) and can be raised without a release                                      |
+| #   | Point                                                       | Needed by    | Default the backlog assumes                                                                                      |
+| --- | ----------------------------------------------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------- |
+| 1   | Which Phase 1 fee components open which balance             | M13 · S-1303 | `shares` → Shares, `msa_deposit` → MSA; entrance, processing, Takaful open nothing                               |
+| 2   | The full `member.status` vocabulary                         | M17 · S-1701 | What the code writes today plus `dormant`, `resigned`, `demised`                                                 |
+| 3   | Dormancy: detection and reactivation (M8's S-804 to S-806)  | M15 · S-1501 | The status exists and blocks; nothing sets it. Detection stays deferred until it is scheduled                    |
+| 4   | Payment method list and which need a reference              | M13 · S-1307 | FRD 6.6's list; cheque, transfers and bank methods require a reference                                           |
+| 5   | HSA / Investment as multi-instance per member               | M13          | One of each type per member (0018) stands; multi-instance is a later migration if wanted                         |
+| 6   | Receipt by email: link or attachment                        | M16 · S-1602 | A link; WhatsApp media is Should                                                                                 |
+| 7   | Whether a pending withdrawal reserves balance               | M15 · S-1502 | Yes: available = balance − pending debits, as a query                                                            |
+| 8   | Transfer to a non-member: where the credit goes             | M15 · S-1504 | Nowhere: debit leg plus disbursement out, no credit leg                                                          |
+| 9   | One API surface for staff and member (API-US-003)           | M21          | Two surfaces on one framework and one engine, as Phase 4 built; the rules are identical, the paths differ        |
+| 10  | Withdrawing from Shares below the holding minimum           | M15 · S-1501 | Refused; resignation is the only way below it                                                                    |
+| 11  | A returned transaction whose amount crosses a matrix band   | M14 · S-1404 | Re-routed by the rule that now applies                                                                           |
+| 12  | Correcting a posted transaction                             | M15 · S-1505 | A reversing transaction, never an edit                                                                           |
+| 13  | Receipt number format and yearly reset (FRD shows RC-2026-) | M16 · S-1601 | `RCT-` continuous, as 0017; prefix becomes configuration; no yearly reset                                        |
+| 14  | Takaful / funeral benefit amount                            | M17 · S-1704 | Rs 15,000, configuration                                                                                         |
+| 15  | Minimum balance floors and approval thresholds per type     | M13 · S-1304 | Shares: the holding minimum; others 0; escalation threshold a single configured amount                           |
+| 16  | Board quorum on President's step for large disbursements    | M14          | 1 — `quorum_count` exists (0022) and can be raised without a release                                             |
+| 17  | Transaction drafts                                          | M15 · S-1505 | Not persisted: a form abandoned before Submit records nothing; the `draft` status stays for a later capture path |
 
 # Phase 4 — Member mobile app (AD-03) ✅ first slice
 

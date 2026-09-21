@@ -1,0 +1,184 @@
+---
+// A person's transactions across every account, one list (S-1506): every
+// kind, every status, newest first, filterable by account, kind, status and
+// date, and paged.
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import TransactionTable from '@components/TransactionTable.astro';
+import { listTransactions } from '@lib/ledger/history';
+import type { TransactionRowKind } from '@lib/config/reference';
+import { loadCustomer, loadMember } from '@lib/members/create';
+
+const principal = Astro.locals.principal!;
+if (!principal.permissions.has('transaction.view')) {
+  return Astro.redirect('/denied');
+}
+
+const { id } = Astro.params;
+const member = id ? await loadMember(id) : null;
+const customer = !member && id ? await loadCustomer(id) : null;
+if (!member && !customer) return new Response('Not found', { status: 404 });
+const person = (member ?? customer)!;
+const personLabel = member
+  ? `${member.name} · ${member.memberNo}`
+  : person.name;
+
+const KINDS: [TransactionRowKind, string][] = [
+  ['deposit', 'Deposit'],
+  ['withdrawal', 'Withdrawal'],
+  ['transfer_leg', 'Transfer'],
+  ['reversal', 'Reversal'],
+];
+const STATUSES = [
+  'submitted',
+  'under_review',
+  'approved',
+  'posted',
+  'returned',
+  'rejected',
+];
+const params = Astro.url.searchParams;
+const accountId = params.get('account') ?? '';
+const kind = params.get('kind') ?? '';
+const status = params.get('status') ?? '';
+const from = params.get('from') ?? '';
+const to = params.get('to') ?? '';
+const page = Math.max(1, Number(params.get('page') ?? '1') || 1);
+
+const asDate = (value: string, endOfDay: boolean) => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
+  return new Date(`${value}T${endOfDay ? '23:59:59.999' : '00:00:00'}`);
+};
+
+const result = await listTransactions({
+  memberId: member ? person.id : undefined,
+  customerId: customer ? person.id : undefined,
+  accountId: person.accounts.some(a => a.id === accountId)
+    ? accountId
+    : undefined,
+  kind: KINDS.some(([k]) => k === kind)
+    ? (kind as TransactionRowKind)
+    : undefined,
+  status: STATUSES.includes(status) ? status : undefined,
+  from: asDate(from, false),
+  to: asDate(to, true),
+  page,
+  pageSize: 25,
+});
+const pages = Math.max(1, Math.ceil(result.total / result.pageSize));
+const pageHref = (n: number) => {
+  const next = new URLSearchParams(params);
+  next.set('page', String(n));
+  return `?${next.toString()}`;
+};
+const INPUT =
+  'mt-1 block w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100';
+---
+
+<DashboardLayout
+  title={`Transactions · ${personLabel} · Al Barakah MCSL`}
+  heading="Transactions"
+>
+  <div class="mx-auto max-w-6xl space-y-6">
+    <p class="text-sm text-neutral-600 dark:text-neutral-300">
+      <a
+        href={`/members/${person.id}`}
+        class="font-medium underline hover:text-neutral-900 dark:hover:text-neutral-100"
+      >
+        ← {personLabel}
+      </a>
+    </p>
+
+    <form
+      method="get"
+      class="grid gap-3 rounded-2xl border border-neutral-200 bg-neutral-100 p-4 text-sm sm:grid-cols-5 dark:border-neutral-800 dark:bg-neutral-950"
+    >
+      <label class="text-neutral-600 dark:text-neutral-300">
+        Account
+        <select name="account" class={INPUT}>
+          <option value="">All</option>
+          {person.accounts.map(a => (
+            <option value={a.id} selected={a.id === accountId}>
+              {a.accountNo} · {a.accountTypeName}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label class="text-neutral-600 dark:text-neutral-300">
+        Kind
+        <select name="kind" class={INPUT}>
+          <option value="">All</option>
+          {KINDS.map(([code, label]) => (
+            <option value={code} selected={code === kind}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label class="text-neutral-600 dark:text-neutral-300">
+        Status
+        <select name="status" class={INPUT}>
+          <option value="">All</option>
+          {STATUSES.map(s => (
+            <option value={s} selected={s === status}>
+              {s.replace('_', ' ')}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label class="text-neutral-600 dark:text-neutral-300">
+        From
+        <input type="date" name="from" value={from} class={INPUT} />
+      </label>
+      <label class="text-neutral-600 dark:text-neutral-300">
+        To
+        <input type="date" name="to" value={to} class={INPUT} />
+      </label>
+      <div class="flex items-end gap-2 sm:col-span-5">
+        <button
+          type="submit"
+          class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+        >
+          Filter
+        </button>
+        <a
+          href={`/members/${person.id}/transactions`}
+          class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+        >
+          Clear
+        </a>
+        <span class="ml-auto text-neutral-500 dark:text-neutral-400">
+          {result.total} transaction{result.total === 1 ? '' : 's'}
+        </span>
+      </div>
+    </form>
+
+    <TransactionTable
+      transactions={result.transactions}
+      empty="No transactions match."
+    />
+
+    {pages > 1 && (
+      <div class="flex flex-wrap items-center gap-2 text-sm">
+        {page > 1 && (
+          <a
+            href={pageHref(page - 1)}
+            class="rounded-lg border border-neutral-300 px-3 py-1.5 font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+          >
+            Newer
+          </a>
+        )}
+        <span class="text-neutral-500 dark:text-neutral-400">
+          Page {page} of {pages}
+        </span>
+        {page < pages && (
+          <a
+            href={pageHref(page + 1)}
+            class="rounded-lg border border-neutral-300 px-3 py-1.5 font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+          >
+            Older
+          </a>
+        )}
+      </div>
+    )}
+  </div>
+</DashboardLayout>
