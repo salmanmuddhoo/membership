@@ -3407,7 +3407,47 @@ balance, `msa_deposit` lines open the MSA balance, everything else (entrance,
 processing, Takaful) is income and opens nothing. The backfill is written to
 that default and its control total will say whether the Society agrees.
 
-### S-1301 · The account ledger
+**Shipped, first increment** (S-1301, S-1302): the ledger exists, and the
+database is the thing that says how money moves on it.
+
+Migration 0064 adds `transaction` (one kind so far, `deposit`; each later
+milestone widens the check as it adds one), `account_entry` (immutable — the
+trigger and grant shape `audit_event` has had since 0004) and
+`account_balance`, a cache of the entries' sum maintained inside
+`post_transaction()` in the same database transaction, so the two cannot
+disagree by a crash between them. `ledger_drift()` finds any other
+disagreement and `rebuild_account_balance()` resolves it from the entries;
+the nightly `ledger-verify` job asks and audits each repair as
+`ledger.repaired`, naming both figures, because a cache that drifted once is
+a bug somewhere. Direction is the account holder's: a credit raises the
+balance, a debit lowers it. `docs/ledger.md` has the rest.
+
+**The grant is the architecture.** `albarakah_app` holds no insert, update
+or delete on `account_entry` or `account_balance` at all; `post_transaction()`
+is `security definer`, owned by the schema owner, and is the only road in.
+`scripts/schema.test.ts` asserts every one of those denials, so FRD 6.1's
+"no transaction type may be implemented as a one-off balance update outside
+this engine" fails the build, not a review. Everything atomic about posting —
+entries, cache, status, one `transaction.posted` on `financial_event`, one
+audit row — is in that function, so "half posted" is not a state that can
+exist. `financial_event` gained a second subject: `payment_id` nullable,
+`transaction_id` added, exactly one set, by a new migration rather than an
+edit to 0017.
+
+**Found while building it:** `pool.query()` hides every driver error behind
+"the database is unavailable", which is right for a page and wrong for a
+function whose refusals are the caller's business — a draft, a closed
+account, an unnamed actor. The ledger's writes go through a client instead,
+and `restrict_violation` and `no_data_found` come back as a `LedgerError`
+carrying PostgreSQL's own message; nothing else is caught. Every guard
+honours the test-data reset's flag, and the reset test proves it reaches all
+three tables.
+
+Nothing creates a transaction row yet. This increment changes the behaviour
+of nothing on its own; the deposit that first uses it is S-1305's own change,
+as M11's schema-first phase was.
+
+### S-1301 · The account ledger ✅
 
 **As** the Society, **I need** every movement of money on an account to be
 one immutable row, **so that** a balance is something the history proves
@@ -3430,7 +3470,7 @@ rather than a number a program keeps. _(ENG-US-001, ENG-US-002, FRD 3, 6.1)_
   cents and floating point does not
 - **Depends on:** nothing. This is the foundation
 
-### S-1302 · No other road to a balance
+### S-1302 · No other road to a balance ✅
 
 **As** a technical lead, **I need** the database itself to refuse a balance
 change that did not come through the engine, **so that** FRD 6.1 is enforced

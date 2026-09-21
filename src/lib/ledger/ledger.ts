@@ -1,0 +1,269 @@
+// The account ledger (S-1301, S-1302). Schema: migrations/0064_ledger.sql.
+//
+// A balance is the sum of an account's entries; account_balance is a cache of
+// that sum, maintained by post_transaction() in the same database transaction
+// as the entries. This module reads the cache, posts through the function, and
+// gives the ledger-verify job what it needs to find and resolve any
+// disagreement — always from the entries.
+//
+// Amounts cross this boundary as decimal strings, as every payment figure
+// does (docs/payments.md): numeric(14, 2) through a JavaScript float is a
+// rounding error waiting for a large enough figure.
+import type { PoolClient } from 'pg';
+import { query, withTransaction } from '../db/pool';
+import { recordAudit } from '../access/audit';
+
+export interface LedgerActor {
+  userId: string | null;
+  description: string;
+}
+
+// A refusal the database itself raised — a transaction that is not in a
+// postable state, an account that is closed, an unnamed actor. The message
+// is PostgreSQL's own, because the function names what was wrong and there
+// is nothing to add. Anything else that goes wrong is not a LedgerError and
+// propagates as the driver raised it.
+export class LedgerError extends Error {
+  constructor(
+    message: string,
+    readonly reason: 'refused' | 'not_found'
+  ) {
+    super(message);
+    this.name = 'LedgerError';
+  }
+}
+
+const REFUSED = '23001'; // restrict_violation, raised by post_transaction()
+const NOT_FOUND = 'P0002'; // no_data_found
+
+function translate(err: unknown): never {
+  const code = (err as { code?: string })?.code;
+  const message = (err as { message?: string })?.message ?? 'ledger refused';
+  if (code === REFUSED) throw new LedgerError(message, 'refused');
+  if (code === NOT_FOUND) throw new LedgerError(message, 'not_found');
+  throw err;
+}
+
+// pool.query() deliberately hides every driver error behind "the database is
+// unavailable", which is right for a page and wrong here: the function's
+// refusals are the caller's business. So the ledger's writes go through a
+// client, whose errors arrive as PostgreSQL raised them.
+async function onClient<T>(
+  client: PoolClient | undefined,
+  fn: (client: PoolClient) => Promise<T>
+): Promise<T> {
+  try {
+    return client ? await fn(client) : await withTransaction(fn);
+  } catch (err) {
+    return translate(err);
+  }
+}
+
+export interface AccountBalance {
+  accountId: string;
+  balance: string;
+  entryCount: number;
+  asOfSequenceNo: number | null;
+  updatedAt: Date;
+}
+
+export interface AccountEntry {
+  id: string;
+  sequenceNo: number;
+  transactionId: string;
+  transactionReference: string;
+  kind: string;
+  direction: 'credit' | 'debit';
+  amount: string;
+  // What the account stood at once this entry had posted.
+  runningBalance: string;
+  postedAt: Date;
+}
+
+export interface LedgerDrift {
+  accountId: string;
+  cached: string;
+  computed: string;
+  cachedEntries: number;
+  actualEntries: number;
+}
+
+// Post a submitted or approved transaction. The caller has already decided it
+// may — the account type's rules, the approval chain — and this is the one
+// call that moves money. It runs inside the caller's transaction when one is
+// given, so a service can post and do its own bookkeeping atomically.
+export async function postTransaction(
+  transactionId: string,
+  actor: LedgerActor,
+  client?: PoolClient
+): Promise<void> {
+  await onClient(client, async c => {
+    await c.query('select post_transaction($1, $2, $3)', [
+      transactionId,
+      actor.userId,
+      actor.description,
+    ]);
+  });
+}
+
+// The cached figure. Null for an account nothing has ever posted to — which
+// is different from a balance of zero, and a caller may want to say so.
+export async function accountBalance(
+  accountId: string
+): Promise<AccountBalance | null> {
+  const result = await query<{
+    account_id: string;
+    balance: string;
+    entry_count: string;
+    as_of_sequence_no: string | null;
+    updated_at: Date;
+  }>(
+    `select account_id, balance, entry_count, as_of_sequence_no, updated_at
+       from account_balance
+      where account_id = $1`,
+    [accountId]
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+  return {
+    accountId: row.account_id,
+    balance: row.balance,
+    entryCount: Number(row.entry_count),
+    asOfSequenceNo:
+      row.as_of_sequence_no === null ? null : Number(row.as_of_sequence_no),
+    updatedAt: row.updated_at,
+  };
+}
+
+// Balances for every account a member holds, in one query, for the member
+// page. An account with no entries reads as '0.00' here: on a list, a blank
+// would look like a fault rather than a fact.
+export async function memberBalances(
+  memberId: string
+): Promise<Map<string, string>> {
+  const result = await query<{ account_id: string; balance: string | null }>(
+    `select a.id as account_id, b.balance
+       from account a
+       left join account_balance b on b.account_id = a.id
+      where a.member_id = $1`,
+    [memberId]
+  );
+  return new Map(result.rows.map(r => [r.account_id, r.balance ?? '0.00']));
+}
+
+// Newest first, with the running balance computed from the entries themselves
+// — not from the cache — so a statement built from this is exactly what the
+// ledger says, whatever the cache does.
+export async function accountEntries(
+  accountId: string,
+  options: { limit?: number; beforeSequenceNo?: number } = {}
+): Promise<AccountEntry[]> {
+  const limit = Math.min(Math.max(options.limit ?? 50, 1), 500);
+  const result = await query<{
+    id: string;
+    sequence_no: string;
+    transaction_id: string;
+    reference: string;
+    kind: string;
+    direction: 'credit' | 'debit';
+    amount: string;
+    running_balance: string;
+    posted_at: Date;
+  }>(
+    `with running as (
+       select e.id, e.sequence_no, e.transaction_id, e.direction, e.amount,
+              e.posted_at,
+              sum(case e.direction when 'credit' then e.amount else -e.amount end)
+                over (order by e.sequence_no) as running_balance
+         from account_entry e
+        where e.account_id = $1
+     )
+     select r.id, r.sequence_no, r.transaction_id, t.reference, t.kind,
+            r.direction, r.amount, r.running_balance, r.posted_at
+       from running r
+       join transaction t on t.id = r.transaction_id
+      where ($2::bigint is null or r.sequence_no < $2)
+      order by r.sequence_no desc
+      limit $3`,
+    [accountId, options.beforeSequenceNo ?? null, limit]
+  );
+  return result.rows.map(r => ({
+    id: r.id,
+    sequenceNo: Number(r.sequence_no),
+    transactionId: r.transaction_id,
+    transactionReference: r.reference,
+    kind: r.kind,
+    direction: r.direction,
+    amount: r.amount,
+    runningBalance: r.running_balance,
+    postedAt: r.posted_at,
+  }));
+}
+
+export async function ledgerDrift(): Promise<LedgerDrift[]> {
+  const result = await query<{
+    account_id: string;
+    cached: string;
+    computed: string;
+    cached_entries: string;
+    actual_entries: string;
+  }>('select * from ledger_drift()');
+  return result.rows.map(r => ({
+    accountId: r.account_id,
+    cached: r.cached,
+    computed: r.computed,
+    cachedEntries: Number(r.cached_entries),
+    actualEntries: Number(r.actual_entries),
+  }));
+}
+
+export async function rebuildAccountBalance(
+  accountId: string,
+  client?: PoolClient
+): Promise<string> {
+  return onClient(client, async c => {
+    const r = await c.query<{ balance: string }>(
+      'select rebuild_account_balance($1) as balance',
+      [accountId]
+    );
+    return r.rows[0].balance;
+  });
+}
+
+export interface VerificationOutcome {
+  drifted: LedgerDrift[];
+  repaired: number;
+}
+
+// What the ledger-verify job does. A disagreement between the cache and the
+// entries is repaired from the entries and recorded — one audit row per
+// account, naming both figures — because a cache that drifted once is a bug
+// somewhere, and the trail is how it gets found.
+export async function verifyLedger(
+  actor: LedgerActor
+): Promise<VerificationOutcome> {
+  const drifted = await ledgerDrift();
+  let repaired = 0;
+  for (const drift of drifted) {
+    await withTransaction(async client => {
+      const balance = await rebuildAccountBalance(drift.accountId, client);
+      await recordAudit(
+        {
+          actorUserId: actor.userId,
+          actorDescription: actor.description,
+          action: 'ledger.repaired',
+          entityType: 'account',
+          entityId: drift.accountId,
+          previousValue: {
+            balance: drift.cached,
+            entry_count: drift.cachedEntries,
+          },
+          newValue: { balance, entry_count: drift.actualEntries },
+        },
+        client
+      );
+    });
+    repaired += 1;
+  }
+  return { drifted, repaired };
+}

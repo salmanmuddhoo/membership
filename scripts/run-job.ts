@@ -14,6 +14,7 @@ import {
 import { runJob, JobAlreadyRunning } from '../src/lib/jobs/runner';
 import { expireDocuments } from '../src/lib/documents/documents';
 import { transitionMinorsAtMajority } from '../src/lib/members/majority';
+import { verifyLedger } from '../src/lib/ledger/ledger';
 import { retryDueNotifications } from '../src/lib/notifications/retry';
 import {
   disposeDueRecords,
@@ -156,6 +157,40 @@ const JOBS: Record<string, () => Promise<unknown>> = {
 
           context.log('disposed', { ...outcome });
         }
+      },
+    }),
+
+  // S-1301. The balance cache is maintained in the same database transaction
+  // as the entries it summarises, so on a healthy database this finds
+  // nothing. If it ever finds something, the entries win: each account is
+  // rebuilt from them and the disagreement is written to the audit trail,
+  // because a cache that drifted once is a bug somewhere and the row is how
+  // it gets found. Run nightly.
+  'ledger-verify': () =>
+    runJob<{ checkedAt: string }>({
+      name: 'ledger-verify',
+      run: async context => {
+        const outcome = await verifyLedger({
+          userId: null,
+          description: 'ledger-verify job',
+        });
+        await context.save(
+          { checkedAt: new Date().toISOString() },
+          outcome.repaired
+        );
+        if (outcome.drifted.length === 0) {
+          context.log('cache agrees with the entries');
+          return;
+        }
+        // Loud on purpose: this should never happen, and a quiet repair
+        // would let whatever caused it keep happening.
+        console.error(
+          `[ledger-verify] ${outcome.drifted.length} account(s) drifted and were rebuilt from their entries`,
+          outcome.drifted
+        );
+        context.log('repaired', {
+          accounts: outcome.drifted.map(d => d.accountId),
+        });
       },
     }),
 };
