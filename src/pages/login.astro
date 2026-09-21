@@ -1,6 +1,7 @@
 ---
 import AuthLayout from '@layouts/AuthLayout.astro';
 import BrandLogo from '@components/BrandLogo.astro';
+import EnvBadge from '@components/EnvBadge.astro';
 
 // Friendly messages for the two failure cases the /auth routes redirect back with.
 const errorCode = Astro.url.searchParams.get('error');
@@ -17,39 +18,30 @@ const errorMessage =
   description="Sign in to the Al Barakah MCSL operations platform."
 >
   <div class="relative z-10 w-full max-w-md">
-    {
-      /* Full-page background photo, dimmed to ~50% so the card stays readable */
-    }
+    {/* Full-page background photo, dimmed to ~50% so the card stays readable */}
     <div
       class="fixed inset-0 -z-10 bg-cover bg-center bg-no-repeat"
-      style="background-image: url('/background.jpg');"
+      style="background-image: url('/Background.jpg');"
       aria-hidden="true"
-    >
-    </div>
+    ></div>
     <div
       class="fixed inset-0 -z-10 bg-neutral-200/50 dark:bg-neutral-900/50"
       aria-hidden="true"
-    >
-    </div>
+    ></div>
 
     <div class="mb-6 flex flex-col items-center text-center">
-      <BrandLogo class="size-12" />
-      <h1 class="mt-4 text-xl font-bold text-neutral-800 dark:text-neutral-100">
-        Al Barakah MCSL
-      </h1>
-      <p class="text-sm text-neutral-500 dark:text-neutral-400">
+      <h1 class="sr-only">Al Barakah MCSL — Internal Operations Platform</h1>
+      <BrandLogo class="size-24" />
+      <p class="mt-4 text-sm text-neutral-500 dark:text-neutral-400">
         Internal Operations Platform
       </p>
+      <EnvBadge class="mt-3" />
     </div>
 
-    <div
-      class="rounded-2xl border border-neutral-200 bg-neutral-100 shadow-sm dark:border-neutral-800 dark:bg-neutral-950"
-    >
+    <div class="rounded-2xl border border-neutral-200 bg-neutral-100 shadow-sm dark:border-neutral-800 dark:bg-neutral-950">
       <div class="p-6 sm:p-8">
         <div class="mb-6">
-          <h2
-            class="text-lg font-semibold text-neutral-800 dark:text-neutral-100"
-          >
+          <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
             Sign in
           </h2>
           <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
@@ -57,19 +49,18 @@ const errorMessage =
           </p>
         </div>
 
-        {
-          errorMessage && (
-            <div
-              class="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-900/20 dark:text-red-300"
-              role="alert"
-            >
-              {errorMessage}
-            </div>
-          )
-        }
+        {errorMessage && (
+          <div
+            class="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-900/20 dark:text-red-300"
+            role="alert"
+          >
+            {errorMessage}
+          </div>
+        )}
 
         <a
           href="/auth/login"
+          data-astro-prefetch="false"
           class="bg-mint-300 hover:bg-mint-400 focus-visible:ring-mint-400/50 inline-flex w-full items-center justify-center gap-x-2 rounded-lg border border-transparent px-4 py-3 text-sm font-bold text-neutral-800 transition duration-300 focus:outline-hidden focus-visible:ring-3"
         >
           Sign in

@@ -1,0 +1,2552 @@
+// Filing documents and driving the checklist (M4, S-405 to S-410).
+//
+// Graph is faked. What is under test is the state machine and the rule that a
+// document is not filed until SharePoint says so — the network behaviour of
+// the upload session was proved separately in M1 (upload.test.ts).
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import pg from 'pg';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
+import { migrate } from '../../../scripts/migrate';
+
+const ADMIN_URL = 'postgresql://postgres@127.0.0.1:5433/postgres';
+const MIGRATIONS_DIR = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..',
+  '..',
+  '..',
+  'migrations'
+);
+
+const dbName = `documents_test_${Date.now()}`;
+const ownerUrl = `postgresql://postgres@127.0.0.1:5433/${dbName}`;
+const appUrl = `postgresql://albarakah_app:devpassword@127.0.0.1:5433/${dbName}`;
+
+async function run(url: string, sql: string, params: unknown[] = []) {
+  const client = new pg.Client({ connectionString: url, ssl: false });
+  await client.connect();
+  try {
+    return await client.query(sql, params);
+  } finally {
+    await client.end();
+  }
+}
+
+// Configuration tables refuse a write that cannot be attributed (S-210), so a
+// fixture that touches one has to say who it is, exactly as the application
+// does through withConfigurationActor.
+async function runAsConfigurator(url: string, sql: string) {
+  const client = new pg.Client({ connectionString: url, ssl: false });
+  await client.connect();
+  try {
+    await client.query('begin');
+    await client.query(
+      `select set_config('albarakah.actor_description', 'test fixture', true)`
+    );
+    const result = await client.query(sql);
+    await client.query('commit');
+    return result;
+  } finally {
+    await client.end();
+  }
+}
+
+// A fixture that seeds an application by inserting into membership_application
+// directly, rather than through capture.ts's own startApplication/
+// startAdditionalAccountApplication/startCustomerAccountApplication, gets none
+// of the checklist snapshot those take at capture time (application_checklist_
+// item, migration 0041) — this gives it the same one, from whichever
+// checklist(s) are configured right now, so checklistFor reads what the test
+// expects instead of nothing. Mirrors the union-with-required-winning merge
+// insertApplication and its siblings each already do (capture.ts).
+async function snapshotChecklist(
+  applicationId: string,
+  checklistIds: string[]
+) {
+  const ids = checklistIds.filter((id): id is string => id !== null);
+  if (ids.length === 0) return;
+  await run(
+    appUrl,
+    `insert into application_checklist_item
+       (application_id, document_type_id, subject, requirement, sort_order)
+     select $1, u.document_type_id, u.subject,
+            case when bool_or(u.requirement = 'required')
+                 then 'required' else 'optional' end,
+            min(u.sort_order)
+       from document_checklist_item u
+      where u.checklist_id = any($2::uuid[])
+      group by u.document_type_id, u.subject`,
+    [applicationId, ids]
+  );
+}
+
+// A stand-in drive. Records what was created so the tests can assert on
+// folders, and lets a test make a file arrive truncated or not at all.
+interface FakeDrive {
+  folders: string[];
+  files: Map<string, { id: string; size: number }>;
+}
+
+let drive: FakeDrive;
+
+function resetDrive() {
+  drive = { folders: [], files: new Map() };
+}
+
+// The pool the last load() built.
+//
+// Each load() calls vi.resetModules(), which builds a NEW pool on the next
+// import. The one it replaces has to be given back: an abandoned pool holds
+// its connections until they idle out, and a suite that loads this often then
+// exhausts the server's connection slots — which fails as
+// "remaining connection slots are reserved", far from the test that caused it.
+let openPool: { closePool: () => Promise<void> } | undefined;
+
+async function closeOpenPool() {
+  const previous = openPool;
+  openPool = undefined;
+  await previous?.closePool();
+}
+
+async function load(graphOverrides: Record<string, unknown> = {}) {
+  await closeOpenPool();
+  vi.resetModules();
+  process.env.DATABASE_URL = appUrl;
+  process.env.DATABASE_ALLOW_INSECURE = 'true';
+  process.env.PUBLIC_APP_ENV = 'test';
+  openPool = await import('../db/pool');
+
+  vi.doMock('./graph', async () => {
+    const actual = await vi.importActual<typeof import('./graph')>('./graph');
+    return {
+      ...actual,
+      ensureFolder: async (parent: string, name: string) => {
+        drive.folders.push(parent ? `${parent}/${name}` : name);
+      },
+      getItemByPath: async (itemPath: string) => {
+        const file = drive.files.get(itemPath);
+        return file
+          ? {
+              ...file,
+              name: itemPath,
+              webUrl: 'https://x',
+              downloadUrl: `https://download.invalid/${encodeURIComponent(itemPath)}`,
+            }
+          : null;
+      },
+      deleteItemByPath: async (itemPath: string) => {
+        drive.files.delete(itemPath);
+      },
+      ...graphOverrides,
+    };
+  });
+
+  vi.doMock('./upload', async () => {
+    const actual = await vi.importActual<typeof import('./upload')>('./upload');
+    return {
+      ...actual,
+      createUploadTicket: async (request: {
+        folderPath: string;
+        fileName: string;
+      }) => ({
+        uploadUrl: 'https://upload.invalid/session',
+        expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+        chunkSize: 327_680,
+        itemPath: `${request.folderPath}/${request.fileName}`,
+      }),
+    };
+  });
+
+  return {
+    documents: await import('./documents'),
+    config: await import('../config/reference'),
+    capture: await import('../applications/capture'),
+  };
+}
+
+const saved = { ...process.env };
+afterEach(() => {
+  process.env = { ...saved };
+  vi.doUnmock('./graph');
+  vi.doUnmock('./upload');
+});
+
+let officer: { userId: string; email: string };
+let secretary: {
+  userId: string;
+  email: string;
+  permissions: ReadonlySet<string>;
+};
+let applicationId: string;
+let idCardTypeId: string;
+
+beforeAll(async () => {
+  resetDrive();
+  await run(ADMIN_URL, `create database ${dbName}`);
+  await run(ownerUrl, 'revoke all on schema public from public');
+  await run(ownerUrl, `grant connect on database ${dbName} to albarakah_app`);
+  await migrate(ownerUrl, MIGRATIONS_DIR);
+
+  const users = await run(
+    appUrl,
+    `insert into app_user (email, display_name)
+     values ('officer@albarakah.mu', 'Officer'),
+            ('secretary@albarakah.mu', 'Secretary')
+     returning id, email::text as email`
+  );
+  const id = (email: string) => users.rows.find(r => r.email === email).id;
+  officer = {
+    userId: id('officer@albarakah.mu'),
+    email: 'officer@albarakah.mu',
+  };
+  secretary = {
+    userId: id('secretary@albarakah.mu'),
+    email: 'secretary@albarakah.mu',
+    permissions: new Set(['document.view', 'document.verify']),
+  };
+
+  const type = await run(
+    appUrl,
+    `select id, checklist_id from membership_type where code = 'individual'`
+  );
+  const application = await run(
+    appUrl,
+    `insert into membership_application (membership_type_id, captured_by)
+     values ($1, $2) returning id`,
+    [type.rows[0].id, officer.userId]
+  );
+  applicationId = application.rows[0].id;
+  await snapshotChecklist(applicationId, [type.rows[0].checklist_id]);
+
+  const docType = await run(
+    appUrl,
+    `select id from document_type where code = 'id_card'`
+  );
+  idCardTypeId = docType.rows[0].id;
+}, 60_000);
+
+afterAll(async () => {
+  // Before the drop, so the last pool's connections are handed back rather
+  // than terminated out from under it.
+  await closeOpenPool();
+  await run(ADMIN_URL, `drop database if exists ${dbName} with (force)`);
+});
+
+describe('S-407: the checklist comes from the configuration', () => {
+  it('lists what an Individual application requires, all missing', async () => {
+    const { documents } = await load();
+    const checklist = await documents.checklistFor({ applicationId });
+
+    expect(checklist.length).toBeGreaterThan(0);
+    expect(checklist.every(e => e.state === 'missing')).toBe(true);
+    // The applicant's ID card and the signed form, and an ID card for the
+    // nominee — nothing in this module knows that; the configuration does.
+    expect(
+      checklist.filter(e => e.subject === 'applicant').map(e => e.documentCode)
+    ).toEqual(
+      expect.arrayContaining(['id_card', 'utility_bill', 'signed_form'])
+    );
+    expect(
+      checklist.some(
+        e => e.subject === 'nominee' && e.documentCode === 'id_card'
+      )
+    ).toBe(true);
+  });
+
+  it('is not complete while anything required is missing', async () => {
+    const { documents } = await load();
+    const checklist = await documents.checklistFor({ applicationId });
+    expect(documents.isDocumentComplete(checklist)).toBe(false);
+  });
+});
+
+// Officer feedback: a document checklist change reached backwards into
+// every application already in flight the moment it was saved. What an
+// application requires is frozen at capture (application_checklist_item,
+// migration 0041) — a later change to document_checklist_item must reach
+// only applications captured after it.
+describe('a document checklist change applies to new applications only', () => {
+  async function individualChecklistIds() {
+    const type = await run(
+      appUrl,
+      `select checklist_id from membership_type where code = 'individual'`
+    );
+    return type.rows[0].checklist_id as string;
+  }
+
+  it('does not add a newly required document to an application already captured', async () => {
+    const { capture, documents, config } = await load();
+    const { id: before } = await capture.startApplication(
+      'individual',
+      officer
+    );
+
+    const checklistId = await individualChecklistIds();
+    const birthCertificate = await run(
+      appUrl,
+      `select id from document_type where code = 'birth_certificate'`
+    );
+    await config.addChecklistItem(
+      checklistId,
+      {
+        documentTypeId: birthCertificate.rows[0].id,
+        subject: 'applicant',
+        requirement: 'required',
+      },
+      officer
+    );
+
+    try {
+      const { id: after } = await capture.startApplication(
+        'individual',
+        officer
+      );
+
+      const beforeCodes = (
+        await documents.checklistFor({ applicationId: before })
+      ).map(e => e.documentCode);
+      const afterCodes = (
+        await documents.checklistFor({ applicationId: after })
+      ).map(e => e.documentCode);
+
+      expect(beforeCodes).not.toContain('birth_certificate');
+      expect(afterCodes).toContain('birth_certificate');
+    } finally {
+      // Every other test in this file assumes individual_kyc's shipped
+      // default — undo the addition so a test order change elsewhere never
+      // inherits it.
+      const item = await run(
+        appUrl,
+        `select id from document_checklist_item
+          where checklist_id = $1 and document_type_id = $2
+            and subject = 'applicant'`,
+        [checklistId, birthCertificate.rows[0].id]
+      );
+      await config.removeChecklistItem(item.rows[0].id, officer);
+    }
+  });
+
+  it('does not drop a document an application already had once it is removed from the checklist', async () => {
+    const { capture, documents, config } = await load();
+    const { id: before } = await capture.startApplication(
+      'individual',
+      officer
+    );
+
+    const beforeItems = await documents.checklistFor({ applicationId: before });
+    expect(beforeItems.map(e => e.documentCode)).toContain(
+      'marriage_certificate'
+    );
+
+    const checklistId = await individualChecklistIds();
+    const marriageCertificate = await run(
+      appUrl,
+      `select id from document_checklist_item
+        where checklist_id = $1
+          and document_type_id = (
+            select id from document_type where code = 'marriage_certificate'
+          )
+          and subject = 'applicant'`,
+      [checklistId]
+    );
+    await config.removeChecklistItem(marriageCertificate.rows[0].id, officer);
+
+    try {
+      const { id: after } = await capture.startApplication(
+        'individual',
+        officer
+      );
+
+      const afterStillHas = (
+        await documents.checklistFor({ applicationId: before })
+      ).map(e => e.documentCode);
+      const newDoesNotHave = (
+        await documents.checklistFor({ applicationId: after })
+      ).map(e => e.documentCode);
+
+      expect(afterStillHas).toContain('marriage_certificate');
+      expect(newDoesNotHave).not.toContain('marriage_certificate');
+    } finally {
+      const docType = await run(
+        appUrl,
+        `select id from document_type where code = 'marriage_certificate'`
+      );
+      await config.addChecklistItem(
+        checklistId,
+        {
+          documentTypeId: docType.rows[0].id,
+          subject: 'applicant',
+          requirement: 'optional',
+        },
+        officer
+      );
+    }
+  });
+
+  it('does not change what an application already captured requires when a requirement is flipped', async () => {
+    const { capture, documents, config } = await load();
+    const { id: before } = await capture.startApplication(
+      'individual',
+      officer
+    );
+
+    const beforeEntry = (
+      await documents.checklistFor({ applicationId: before })
+    ).find(e => e.documentCode === 'marriage_certificate')!;
+    expect(beforeEntry.requirement).toBe('optional');
+
+    const checklistId = await individualChecklistIds();
+    const marriageCertificate = await run(
+      appUrl,
+      `select id from document_checklist_item
+        where checklist_id = $1
+          and document_type_id = (
+            select id from document_type where code = 'marriage_certificate'
+          )
+          and subject = 'applicant'`,
+      [checklistId]
+    );
+    await config.setChecklistItemRequirement(
+      marriageCertificate.rows[0].id,
+      'required',
+      officer
+    );
+
+    try {
+      const { id: after } = await capture.startApplication(
+        'individual',
+        officer
+      );
+
+      const stillOptional = (
+        await documents.checklistFor({ applicationId: before })
+      ).find(e => e.documentCode === 'marriage_certificate')!;
+      const nowRequired = (
+        await documents.checklistFor({ applicationId: after })
+      ).find(e => e.documentCode === 'marriage_certificate')!;
+
+      expect(stillOptional.requirement).toBe('optional');
+      expect(nowRequired.requirement).toBe('required');
+    } finally {
+      await config.setChecklistItemRequirement(
+        marriageCertificate.rows[0].id,
+        'optional',
+        officer
+      );
+    }
+  });
+
+  it('carries the same frozen checklist onto the member the application becomes', async () => {
+    const { capture, documents, config } = await load();
+    const { id: applicationId } = await capture.startApplication(
+      'individual',
+      officer
+    );
+    await capture.saveDraft(
+      applicationId,
+      [
+        {
+          subject: 'applicant',
+          ordinal: 1,
+          values: {
+            surname: 'Bissessur',
+            name: 'Kavita',
+            nic: 'B1234567890123',
+            gender: 'Female',
+            address: '1 Royal Road, Curepipe',
+            mobile: '5123 4567',
+          },
+        },
+        {
+          subject: 'nominee',
+          ordinal: 1,
+          values: {
+            surname: 'Bissessur',
+            name: 'Ravi',
+            nic: 'B9876543210987',
+            address: '1 Royal Road, Curepipe',
+          },
+        },
+      ],
+      officer
+    );
+
+    // The checklist changes after capture, while the application is still
+    // being worked — a member approved from it should read exactly what
+    // the application itself does, not whatever configuration says by then.
+    const checklistId = await individualChecklistIds();
+    const birthCertificate = await run(
+      appUrl,
+      `select id from document_type where code = 'birth_certificate'`
+    );
+    await config.addChecklistItem(
+      checklistId,
+      {
+        documentTypeId: birthCertificate.rows[0].id,
+        subject: 'applicant',
+        requirement: 'required',
+      },
+      officer
+    );
+
+    try {
+      const codesFor = async (opts: {
+        applicationId?: string;
+        memberId?: string;
+      }) => (await documents.checklistFor(opts)).map(e => e.documentCode);
+
+      const applicationCodes = await codesFor({ applicationId });
+      expect(applicationCodes).not.toContain('birth_certificate');
+      expect(applicationCodes).toContain('id_card');
+
+      const member = await run(
+        appUrl,
+        `insert into member (application_id, membership_type_id, status)
+         values ($1, (select id from membership_type where code = 'individual'),
+                 'active')
+         returning id`,
+        [applicationId]
+      );
+
+      const memberCodes = await codesFor({ memberId: member.rows[0].id });
+      expect(memberCodes).not.toContain('birth_certificate');
+      expect(memberCodes).toEqual(applicationCodes);
+    } finally {
+      const item = await run(
+        appUrl,
+        `select id from document_checklist_item
+          where checklist_id = $1 and document_type_id = $2
+            and subject = 'applicant'`,
+        [checklistId, birthCertificate.rows[0].id]
+      );
+      await config.removeChecklistItem(item.rows[0].id, officer);
+    }
+  });
+});
+
+// Officer feedback: a new application for someone who already had one — an
+// existing member opening another account (S-613), or a non-member customer
+// applying to become a member (S-614) — used to get its own SharePoint
+// folder, named after its own reference. folder_application_id (migration
+// 0042) redirects those to whichever application's own folder they actually
+// belong in, so a real person reads as one folder in the drive, not one per
+// application.
+describe('officer feedback: one SharePoint folder per person, not per application', () => {
+  it("files a member's additional-account application documents in their founding application's folder", async () => {
+    const { capture, documents } = await load();
+
+    const type = await run(
+      appUrl,
+      `select id from membership_type where code = 'individual'`
+    );
+    const founding = await run(
+      appUrl,
+      `insert into membership_application (membership_type_id, captured_by)
+       values ($1, $2) returning id, reference`,
+      [type.rows[0].id, officer.userId]
+    );
+    const member = await run(
+      appUrl,
+      `insert into member (membership_type_id, application_id, status)
+       values ($1, $2, 'active') returning id`,
+      [type.rows[0].id, founding.rows[0].id]
+    );
+
+    const checklist = await run(
+      appUrl,
+      `select id from document_checklist where code = 'msa_opening'`
+    );
+    const accountType = await runAsConfigurator(
+      appUrl,
+      `insert into account_type
+         (code, name, category, minimum_opening_amount, checklist_id,
+          is_membership_default)
+       values ('inv_folder_test', 'Investment (folder test)', 'investment',
+               1000, '${checklist.rows[0].id}', false)
+       returning id`
+    );
+
+    const { id: additionalId } =
+      await capture.startAdditionalAccountApplication(
+        member.rows[0].id,
+        [accountType.rows[0].id],
+        officer
+      );
+
+    const begun = await documents.beginUpload(
+      {
+        applicationId: additionalId,
+        documentTypeId: idCardTypeId,
+        subject: 'applicant',
+        fileName: 'id-folder-test.jpg',
+        contentType: 'image/jpeg',
+        sizeBytes: 100,
+      },
+      officer
+    );
+
+    expect(begun.ticket.itemPath).toContain(
+      documents.applicationFolderPath(founding.rows[0].reference)
+    );
+    expect(begun.ticket.itemPath).not.toContain(additionalId);
+  });
+
+  it("files a customer's new membership application documents in their original application's folder", async () => {
+    const { capture, documents } = await load();
+
+    const checklist = await run(
+      appUrl,
+      `select id from document_checklist where code = 'msa_opening'`
+    );
+    const accountType = await runAsConfigurator(
+      appUrl,
+      `insert into account_type
+         (code, name, category, minimum_opening_amount, checklist_id,
+          is_membership_default)
+       values ('inv_folder_test_2', 'Investment (folder test 2)', 'investment',
+               1000, '${checklist.rows[0].id}', false)
+       returning id`
+    );
+
+    const customerApp = await capture.startCustomerAccountApplication(
+      [accountType.rows[0].id],
+      officer
+    );
+    const customer = await run(
+      appUrl,
+      `insert into customer (application_id, status)
+       values ($1, 'active') returning id`,
+      [customerApp.id]
+    );
+
+    const { id: membershipId } =
+      await capture.startMembershipApplicationFromCustomer(
+        customer.rows[0].id,
+        officer
+      );
+
+    const begun = await documents.beginUpload(
+      {
+        applicationId: membershipId,
+        documentTypeId: idCardTypeId,
+        subject: 'applicant',
+        fileName: 'id-folder-test-2.jpg',
+        contentType: 'image/jpeg',
+        sizeBytes: 100,
+      },
+      officer
+    );
+
+    expect(begun.ticket.itemPath).toContain(
+      documents.applicationFolderPath(customerApp.reference)
+    );
+    expect(begun.ticket.itemPath).not.toContain(membershipId);
+  });
+
+  // The two paths above chained: a customer becomes a member (redirects to
+  // the customer's own application), then that member opens yet another
+  // account (S-613) — the redirect must resolve all the way to the
+  // ORIGINAL customer application, not stop one hop short at the
+  // membership application in between.
+  it('resolves a chain of applications to the one original folder', async () => {
+    const { capture, documents } = await load();
+
+    const checklist = await run(
+      appUrl,
+      `select id from document_checklist where code = 'msa_opening'`
+    );
+    const investment = await runAsConfigurator(
+      appUrl,
+      `insert into account_type
+         (code, name, category, minimum_opening_amount, checklist_id,
+          is_membership_default)
+       values ('inv_folder_test_3', 'Investment (folder test 3)', 'investment',
+               1000, '${checklist.rows[0].id}', false)
+       returning id`
+    );
+    const savings = await runAsConfigurator(
+      appUrl,
+      `insert into account_type
+         (code, name, category, minimum_opening_amount, checklist_id,
+          is_membership_default)
+       values ('hsa_folder_test_3', 'Hajj Savings (folder test 3)', 'savings',
+               1000, '${checklist.rows[0].id}', false)
+       returning id`
+    );
+
+    const customerApp = await capture.startCustomerAccountApplication(
+      [investment.rows[0].id],
+      officer
+    );
+    const customer = await run(
+      appUrl,
+      `insert into customer (application_id, status)
+       values ($1, 'active') returning id`,
+      [customerApp.id]
+    );
+    const { id: membershipId } =
+      await capture.startMembershipApplicationFromCustomer(
+        customer.rows[0].id,
+        officer
+      );
+
+    // Approved by hand, the same shortcut other tests take — what is under
+    // test here is the folder chain, not the approval workflow itself.
+    const membershipType = await run(
+      appUrl,
+      `select membership_type_id from membership_application where id = $1`,
+      [membershipId]
+    );
+    const member = await run(
+      appUrl,
+      `insert into member (application_id, membership_type_id, status)
+       values ($1, $2, 'active') returning id`,
+      [membershipId, membershipType.rows[0].membership_type_id]
+    );
+
+    const { id: additionalId } =
+      await capture.startAdditionalAccountApplication(
+        member.rows[0].id,
+        [savings.rows[0].id],
+        officer
+      );
+
+    const begun = await documents.beginUpload(
+      {
+        applicationId: additionalId,
+        documentTypeId: idCardTypeId,
+        subject: 'applicant',
+        fileName: 'id-folder-test-3.jpg',
+        contentType: 'image/jpeg',
+        sizeBytes: 100,
+      },
+      officer
+    );
+
+    expect(begun.ticket.itemPath).toContain(
+      documents.applicationFolderPath(customerApp.reference)
+    );
+    expect(begun.ticket.itemPath).not.toContain(membershipId);
+    expect(begun.ticket.itemPath).not.toContain(additionalId);
+  });
+
+  // Officer feedback: the shared folder itself is named after the founding
+  // applicant, not whichever application happens to be filing into it —
+  // resolveOwner has to read the name from the root of the chain even when
+  // the application actually filing is a later one with no applicant of its
+  // own (an additional account).
+  it('names the shared folder after the founding applicant, not the additional account filing into it', async () => {
+    const { capture, documents } = await load();
+
+    const type = await run(
+      appUrl,
+      `select id from membership_type where code = 'individual'`
+    );
+    const founding = await run(
+      appUrl,
+      `insert into membership_application (membership_type_id, captured_by)
+       values ($1, $2) returning id, reference`,
+      [type.rows[0].id, officer.userId]
+    );
+    await run(
+      appUrl,
+      `insert into application_party (application_id, subject, ordinal, values)
+       values ($1, 'applicant', 1, '{"name": "Yusuf", "surname": "Ramtoola"}')`,
+      [founding.rows[0].id]
+    );
+    const member = await run(
+      appUrl,
+      `insert into member (membership_type_id, application_id, status)
+       values ($1, $2, 'active') returning id`,
+      [type.rows[0].id, founding.rows[0].id]
+    );
+
+    const checklist = await run(
+      appUrl,
+      `select id from document_checklist where code = 'msa_opening'`
+    );
+    const accountType = await runAsConfigurator(
+      appUrl,
+      `insert into account_type
+         (code, name, category, minimum_opening_amount, checklist_id,
+          is_membership_default)
+       values ('inv_folder_test_named', 'Investment (named folder test)',
+               'investment', 1000, '${checklist.rows[0].id}', false)
+       returning id`
+    );
+    const { id: additionalId } =
+      await capture.startAdditionalAccountApplication(
+        member.rows[0].id,
+        [accountType.rows[0].id],
+        officer
+      );
+
+    const begun = await documents.beginUpload(
+      {
+        applicationId: additionalId,
+        documentTypeId: idCardTypeId,
+        subject: 'applicant',
+        fileName: 'id-named-folder-test.jpg',
+        contentType: 'image/jpeg',
+        sizeBytes: 100,
+      },
+      officer
+    );
+
+    expect(begun.ticket.itemPath).toContain(
+      documents.applicationFolderPath(
+        founding.rows[0].reference,
+        'Ramtoola',
+        'Yusuf'
+      )
+    );
+  });
+});
+
+// S-612: an additional-account application has no membership_type_id — the
+// bug this closes is resolveOwner's old inner join to membership_type
+// silently returning zero rows for one of these, which checklistFor then
+// misreported as "That application no longer exists." The application was
+// never missing; the checklist source was just the wrong table.
+describe('S-612: the checklist for an additional-account application comes from its account types', () => {
+  let additionalAccountApplicationId: string;
+
+  beforeAll(async () => {
+    const member = await run(
+      appUrl,
+      `select id from membership_type where code = 'individual'`
+    );
+    const holder = await run(
+      appUrl,
+      `insert into member (membership_type_id, status) values ($1, 'active')
+       returning id`,
+      [member.rows[0].id]
+    );
+
+    // Reuses the seeded 'msa_opening' checklist rather than inventing a new
+    // one — what is under test is that an additional_account application
+    // reads its checklist from account_type at all, not which checklist.
+    const checklist = await run(
+      appUrl,
+      `select id from document_checklist where code = 'msa_opening'`
+    );
+    const accountType = await runAsConfigurator(
+      appUrl,
+      `insert into account_type
+         (code, name, category, minimum_opening_amount, checklist_id,
+          is_membership_default)
+       values ('hsa_docs_test', 'HSA (documents test)', 'savings', 1000,
+               '${checklist.rows[0].id}', false)
+       returning id`
+    );
+
+    const application = await run(
+      appUrl,
+      `insert into membership_application
+         (application_kind, existing_member_id, captured_by)
+       values ('additional_account', $1, $2)
+       returning id`,
+      [holder.rows[0].id, officer.userId]
+    );
+    additionalAccountApplicationId = application.rows[0].id;
+
+    await run(
+      appUrl,
+      `insert into application_account_selection
+         (application_id, account_type_id)
+       values ($1, $2)`,
+      [additionalAccountApplicationId, accountType.rows[0].id]
+    );
+    await snapshotChecklist(additionalAccountApplicationId, [
+      checklist.rows[0].id,
+    ]);
+  });
+
+  it('lists what the selected account type requires, not "not found"', async () => {
+    const { documents } = await load();
+    const checklist = await documents.checklistFor({
+      applicationId: additionalAccountApplicationId,
+    });
+
+    expect(checklist.length).toBeGreaterThan(0);
+    expect(checklist.every(e => e.state === 'missing')).toBe(true);
+    expect(checklist.map(e => e.documentCode)).toEqual(
+      expect.arrayContaining(['id_card'])
+    );
+  });
+
+  it('requires the signed application form even when the account type has no checklist', async () => {
+    const { capture, documents } = await load();
+
+    const memberType = await run(
+      appUrl,
+      `select id from membership_type where code = 'individual'`
+    );
+    const holder = await run(
+      appUrl,
+      `insert into member (membership_type_id, status) values ($1, 'active')
+       returning id`,
+      [memberType.rows[0].id]
+    );
+    // An account type with no checklist of its own — the only required item
+    // on the additional-account checklist should be the signed form, added by
+    // startAdditionalAccountApplication so the member is always asked to sign.
+    const accountType = await runAsConfigurator(
+      appUrl,
+      `insert into account_type
+         (code, name, category, minimum_opening_amount, is_membership_default)
+       values ('signed_form_only', 'No-checklist account', 'investment', 1000,
+               false)
+       returning id`
+    );
+
+    const { id } = await capture.startAdditionalAccountApplication(
+      holder.rows[0].id,
+      [accountType.rows[0].id],
+      officer
+    );
+
+    const checklist = await documents.checklistFor({ applicationId: id });
+    const signedForm = checklist.find(e => e.documentCode === 'signed_form');
+    expect(signedForm).toBeDefined();
+    expect(signedForm!.requirement).toBe('required');
+    expect(signedForm!.subject).toBe('applicant');
+    expect(signedForm!.state).toBe('missing');
+  });
+});
+
+// Officer feedback: the Members page's own member detail page had nowhere
+// to see what had been filed for that member — every document lived only
+// on whichever application filed it, and a member can have more than one
+// (the founding membership application, plus any additional_account
+// application approved since, S-612).
+describe('documentsForMember: everything filed for a member, grouped by application', () => {
+  it('groups by application, only what was actually filed, and excludes a draft application entirely', async () => {
+    const { documents } = await load();
+
+    const type = await run(
+      appUrl,
+      `select id, checklist_id from membership_type where code = 'individual'`
+    );
+    const founding = await run(
+      appUrl,
+      `insert into membership_application (membership_type_id, captured_by)
+       values ($1, $2) returning id`,
+      [type.rows[0].id, officer.userId]
+    );
+    const foundingId = founding.rows[0].id;
+    await snapshotChecklist(foundingId, [type.rows[0].checklist_id]);
+    const member = await run(
+      appUrl,
+      `insert into member (membership_type_id, application_id, status)
+       values ($1, $2, 'active') returning id`,
+      [type.rows[0].id, foundingId]
+    );
+    const memberId = member.rows[0].id;
+
+    // Filed against the founding application, and against it alone so far.
+    const foundingUpload = await documents.beginUpload(
+      {
+        applicationId: foundingId,
+        documentTypeId: idCardTypeId,
+        subject: 'applicant',
+        fileName: 'id-founding.jpg',
+        contentType: 'image/jpeg',
+        sizeBytes: 100,
+      },
+      officer
+    );
+    drive.files.set(foundingUpload.ticket.itemPath, {
+      id: 'graph-founding',
+      size: 100,
+    });
+    await documents.commitUpload(foundingUpload.versionId, officer);
+
+    const noGroups = await documents.documentsForMember(memberId, null);
+    expect(noGroups).toEqual([]);
+
+    const oneGroup = await documents.documentsForMember(memberId, foundingId);
+    expect(oneGroup).toHaveLength(1);
+    expect(oneGroup[0].applicationId).toBe(foundingId);
+    expect(oneGroup[0].entries.map(e => e.documentCode)).toContain('id_card');
+    // Missing rows are what the application page itself shows — not this.
+    expect(oneGroup[0].entries.every(e => e.state !== 'missing')).toBe(true);
+
+    // A second application for the same member, still a draft: what it has
+    // filed must not appear yet — a draft is the capturing officer's own
+    // work in progress, not something the member's own page hands to every
+    // other officer who can view documents.
+    const additional = await run(
+      appUrl,
+      `insert into membership_application
+         (application_kind, existing_member_id, captured_by, status)
+       values ('additional_account', $1, $2, 'draft')
+       returning id`,
+      [memberId, officer.userId]
+    );
+    const additionalId = additional.rows[0].id;
+
+    const checklist = await run(
+      appUrl,
+      `select id from document_checklist where code = 'msa_opening'`
+    );
+    const accountType = await runAsConfigurator(
+      appUrl,
+      `insert into account_type
+         (code, name, category, minimum_opening_amount, checklist_id,
+          is_membership_default)
+       values ('hsa_member_docs_test', 'HSA (member documents test)',
+               'savings', 1000, '${checklist.rows[0].id}', false)
+       returning id`
+    );
+    await run(
+      appUrl,
+      `insert into application_account_selection
+         (application_id, account_type_id)
+       values ($1, $2)`,
+      [additionalId, accountType.rows[0].id]
+    );
+    await snapshotChecklist(additionalId, [checklist.rows[0].id]);
+
+    const additionalUpload = await documents.beginUpload(
+      {
+        applicationId: additionalId,
+        documentTypeId: idCardTypeId,
+        subject: 'applicant',
+        fileName: 'id-additional.jpg',
+        contentType: 'image/jpeg',
+        sizeBytes: 100,
+      },
+      officer
+    );
+    drive.files.set(additionalUpload.ticket.itemPath, {
+      id: 'graph-additional',
+      size: 100,
+    });
+    await documents.commitUpload(additionalUpload.versionId, officer);
+
+    const stillOneGroup = await documents.documentsForMember(
+      memberId,
+      foundingId
+    );
+    expect(stillOneGroup).toHaveLength(1);
+
+    // Submitted — out of the officer's hands, on the member's page too.
+    await run(
+      appUrl,
+      `update membership_application set status = 'new' where id = $1`,
+      [additionalId]
+    );
+
+    const twoGroups = await documents.documentsForMember(memberId, foundingId);
+    expect(twoGroups.map(g => g.applicationId).sort()).toEqual(
+      [foundingId, additionalId].sort()
+    );
+    const additionalGroup = twoGroups.find(
+      g => g.applicationId === additionalId
+    )!;
+    expect(additionalGroup.entries.map(e => e.documentCode)).toContain(
+      'id_card'
+    );
+  });
+});
+
+// S-614: a customer_account application reuses the Individual type's own
+// field configuration to capture an applicant (S-614 phase 2), but its
+// checklist reads Individual's non_member_checklist_id (migration 0028) —
+// deliberately not checklist_id, which is what a MEMBER of that type must
+// provide and is not all asked of a non-member — unioned with whatever the
+// selected account type asks for.
+describe('S-614: the checklist for a customer_account application unions the non-member checklist with the account type’s', () => {
+  it('lists the non-member checklist and what the selected account type requires, not the member’s own', async () => {
+    const { capture, documents } = await load();
+
+    const accountChecklist = await runAsConfigurator(
+      appUrl,
+      `insert into document_checklist (code, name, description)
+       values ('s614_docs_account_test', 'S-614 docs account test', '')
+       returning id`
+    );
+    const certRegistration = await run(
+      appUrl,
+      `select id from document_type where code = 'cert_registration'`
+    );
+    await runAsConfigurator(
+      appUrl,
+      `insert into document_checklist_item
+         (checklist_id, document_type_id, subject, requirement, sort_order)
+       values ('${accountChecklist.rows[0].id}',
+               '${certRegistration.rows[0].id}', 'applicant', 'optional', 1)`
+    );
+    const accountType = await runAsConfigurator(
+      appUrl,
+      `insert into account_type
+         (code, name, category, minimum_opening_amount, checklist_id,
+          is_membership_default)
+       values ('hsa_customer_docs_test', 'HSA (customer documents test)',
+               'savings', 1000, '${accountChecklist.rows[0].id}', false)
+       returning id`
+    );
+
+    const application = await capture.startCustomerAccountApplication(
+      [accountType.rows[0].id],
+      { userId: officer.userId, email: officer.email }
+    );
+
+    const entries = await documents.checklistFor({
+      applicationId: application.id,
+    });
+    const codes = entries.map(e => e.documentCode);
+
+    // Migration 0028's own seed for Individual's non-member checklist
+    // (id_card, utility_bill, and — since migration 0030, S-614 phase 8 —
+    // signed_form, once the flow gained a print step of its own) union
+    // the selected account type's own (cert_registration).
+    expect(codes).toEqual(
+      expect.arrayContaining([
+        'id_card',
+        'utility_bill',
+        'signed_form',
+        'cert_registration',
+      ])
+    );
+  });
+});
+
+describe('S-408: a document is filed only when SharePoint says so', () => {
+  it('still reads Missing after begin, before the bytes arrive', async () => {
+    const { documents } = await load();
+
+    await documents.beginUpload(
+      {
+        applicationId,
+        documentTypeId: idCardTypeId,
+        subject: 'applicant',
+        fileName: 'id.jpg',
+        contentType: 'image/jpeg',
+        sizeBytes: 1024,
+        expiresAt: new Date('2030-01-01'),
+      },
+      officer
+    );
+
+    // The row exists; the file does not. An officer whose tablet died here
+    // must not come back to a checklist claiming the card is filed.
+    const checklist = await documents.checklistFor({ applicationId });
+    const entry = checklist.find(
+      e => e.subject === 'applicant' && e.documentCode === 'id_card'
+    )!;
+    expect(entry.state).toBe('missing');
+  });
+
+  it('refuses to commit when the file is not in the drive', async () => {
+    const { documents } = await load();
+    const begun = await documents.beginUpload(
+      {
+        applicationId,
+        documentTypeId: idCardTypeId,
+        subject: 'applicant',
+        fileName: 'id.jpg',
+        contentType: 'image/jpeg',
+        sizeBytes: 1024,
+        expiresAt: new Date('2030-01-01'),
+      },
+      officer
+    );
+
+    // The browser claims success. Graph disagrees, and Graph is the authority
+    // because the bytes never came through us. No retry delay — the drive
+    // never gets the file, so this would only wait out the retry window for
+    // nothing.
+    await expect(
+      documents.commitUpload(begun.versionId, officer, {}, undefined, [])
+    ).rejects.toThrowError(/not in SharePoint/);
+
+    const state = await run(
+      appUrl,
+      'select state from document_version where id = $1',
+      [begun.versionId]
+    );
+    expect(state.rows[0].state).toBe('failed');
+    const checklist = await documents.checklistFor({ applicationId });
+    expect(
+      checklist.find(
+        e => e.subject === 'applicant' && e.documentCode === 'id_card'
+      )!.state
+    ).toBe('missing');
+  });
+
+  it('refuses a truncated file', async () => {
+    const { documents } = await load();
+    const begun = await documents.beginUpload(
+      {
+        applicationId,
+        documentTypeId: idCardTypeId,
+        subject: 'applicant',
+        fileName: 'id.jpg',
+        contentType: 'image/jpeg',
+        sizeBytes: 4096,
+        expiresAt: new Date('2030-01-01'),
+      },
+      officer
+    );
+
+    // Half the bytes arrived. A Verified tick over half a document is worse
+    // than no document. No retry delay here — this genuinely never
+    // resolves, so retrying it would only make the test slow for nothing.
+    drive.files.set(begun.ticket.itemPath, { id: 'graph-1', size: 2048 });
+
+    await expect(
+      documents.commitUpload(begun.versionId, officer, {}, undefined, [])
+    ).rejects.toThrowError(/incomplete/);
+
+    drive.files.delete(begun.ticket.itemPath);
+  });
+
+  it('does not mistake a moment of SharePoint lag for a truncated file', async () => {
+    const { documents } = await load();
+
+    // Its own application — a commit that succeeds, unlike its neighbours
+    // in this block, would otherwise add an extra filed version to the
+    // shared applicant's id_card document and throw off version/audit
+    // counts other tests elsewhere in this file assume.
+    const type = await run(
+      appUrl,
+      `select id from membership_type where code = 'individual'`
+    );
+    const fresh = await run(
+      appUrl,
+      `insert into membership_application (membership_type_id, captured_by)
+       values ($1, $2) returning id`,
+      [type.rows[0].id, officer.userId]
+    );
+
+    const begun = await documents.beginUpload(
+      {
+        applicationId: fresh.rows[0].id,
+        documentTypeId: idCardTypeId,
+        subject: 'applicant',
+        fileName: 'id.jpg',
+        contentType: 'image/jpeg',
+        sizeBytes: 4096,
+        expiresAt: new Date('2030-01-01'),
+      },
+      officer
+    );
+
+    // The path lookup right after the upload session finished still reports
+    // the wrong size — SharePoint's own indexing catching up with bytes
+    // that already arrived — then reports the real, complete file a moment
+    // later, well within the retry window.
+    drive.files.set(begun.ticket.itemPath, { id: 'graph-lag', size: 2048 });
+    setTimeout(() => {
+      drive.files.set(begun.ticket.itemPath, { id: 'graph-lag', size: 4096 });
+    }, 10);
+
+    const result = await documents.commitUpload(
+      begun.versionId,
+      officer,
+      {},
+      undefined,
+      [20]
+    );
+    expect(result.state).toBe('committed');
+
+    drive.files.delete(begun.ticket.itemPath);
+  });
+
+  it('files it once the bytes are really there', async () => {
+    const { documents } = await load();
+    const begun = await documents.beginUpload(
+      {
+        applicationId,
+        documentTypeId: idCardTypeId,
+        subject: 'applicant',
+        fileName: 'id.jpg',
+        contentType: 'image/jpeg',
+        sizeBytes: 4096,
+        expiresAt: new Date('2030-01-01'),
+      },
+      officer
+    );
+    drive.files.set(begun.ticket.itemPath, { id: 'graph-ok', size: 4096 });
+
+    await documents.commitUpload(begun.versionId, officer, {
+      checksumSha256: 'abc123',
+    });
+
+    const entry = (await documents.checklistFor({ applicationId })).find(
+      e => e.subject === 'applicant' && e.documentCode === 'id_card'
+    )!;
+    expect(entry.state).toBe('under_review');
+    expect(entry.uploadedByName).toBe('Officer');
+    expect(entry.versionCount).toBe(1);
+  });
+
+  it('is idempotent, so a retried commit does not double-file', async () => {
+    const { documents } = await load();
+    const entry = (await documents.checklistFor({ applicationId })).find(
+      e => e.subject === 'applicant' && e.documentCode === 'id_card'
+    )!;
+    const versions = await documents.versionsOf(entry.documentId!);
+
+    await expect(
+      documents.commitUpload(versions[0].id, officer)
+    ).resolves.toEqual({ state: 'committed' });
+
+    expect(await documents.versionsOf(entry.documentId!)).toHaveLength(
+      versions.length
+    );
+  });
+
+  // The commit is what writes document.filed to the audit trail, and
+  // segregation of duties reads that trail. If anyone could commit anyone's
+  // upload, the wrong name would be recorded as having filed the document.
+  it('refuses a commit from someone other than the person who began it', async () => {
+    const { documents } = await load();
+    const begun = await documents.beginUpload(
+      {
+        applicationId,
+        documentTypeId: idCardTypeId,
+        subject: 'nominee',
+        fileName: 'nominee-id.jpg',
+        contentType: 'image/jpeg',
+        sizeBytes: 2048,
+        expiresAt: new Date('2030-01-01'),
+      },
+      officer
+    );
+    drive.files.set(begun.ticket.itemPath, { id: 'graph-other', size: 2048 });
+
+    await expect(
+      documents.commitUpload(begun.versionId, secretary)
+    ).rejects.toThrow(/started by someone else/i);
+
+    // Still not filed, and no filing recorded against the wrong person.
+    const entry = (await documents.checklistFor({ applicationId })).find(
+      e => e.subject === 'nominee' && e.documentCode === 'id_card'
+    )!;
+    expect(entry.state).toBe('missing');
+    const audited = await run(
+      appUrl,
+      `select count(*)::int as n from audit_event
+        where action = 'document.filed' and actor_user_id = $1`,
+      [secretary.userId]
+    );
+    expect(audited.rows[0].n).toBe(0);
+
+    // And the person who did begin it can still finish it.
+    await expect(
+      documents.commitUpload(begun.versionId, officer)
+    ).resolves.toEqual({ state: 'committed' });
+  });
+
+  it('records the filing against the person who did it', async () => {
+    const { documents } = await load();
+    const entry = (await documents.checklistFor({ applicationId })).find(
+      e => e.subject === 'applicant' && e.documentCode === 'id_card'
+    )!;
+
+    const audited = await run(
+      appUrl,
+      `select actor_description from audit_event
+        where action = 'document.filed' and entity_id = $1`,
+      [entry.documentId]
+    );
+    expect(audited.rowCount).toBe(1);
+    expect(audited.rows[0].actor_description).toBe(officer.email);
+  });
+});
+
+describe('a file the service will not take', () => {
+  it('is refused before a folder is created for it', async () => {
+    const { documents } = await load();
+
+    // A brand new application, so its folder has never been created. Against
+    // the application the other tests use, the folder already exists and
+    // ensureFolderPath would short-circuit — the assertion below would then
+    // hold whatever the order of operations was, and prove nothing.
+    const type = await run(
+      appUrl,
+      `select id from membership_type where code = 'individual'`
+    );
+    const fresh = await run(
+      appUrl,
+      `insert into membership_application (membership_type_id, captured_by)
+       values ($1, $2) returning id`,
+      [type.rows[0].id, officer.userId]
+    );
+
+    // Snapshot rather than reset: the drive is shared with the tests around
+    // this one, and what matters is that this call adds nothing to it.
+    const foldersBefore = [...drive.folders];
+
+    await expect(
+      documents.beginUpload(
+        {
+          applicationId: fresh.rows[0].id,
+          documentTypeId: idCardTypeId,
+          subject: 'applicant',
+          fileName: 'notes.docx',
+          contentType:
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          sizeBytes: 4096,
+          expiresAt: new Date('2030-01-01'),
+        },
+        officer
+      )
+    ).rejects.toThrow(/photograph or a PDF/i);
+
+    // Nothing was created in the drive on the way to refusing it.
+    expect(drive.folders).toEqual(foldersBefore);
+  });
+});
+
+describe('S-405: folders are created once', () => {
+  it('creates the application folder path, and not again', async () => {
+    const { documents } = await load();
+    const created = [...drive.folders];
+
+    expect(created).toEqual(
+      expect.arrayContaining([expect.stringContaining('Applications')])
+    );
+
+    // A second document for the same application must not re-walk the path.
+    const before = drive.folders.length;
+    const begun = await documents.beginUpload(
+      {
+        applicationId,
+        documentTypeId: idCardTypeId,
+        subject: 'nominee',
+        fileName: 'nominee-id.jpg',
+        contentType: 'image/jpeg',
+        sizeBytes: 512,
+        expiresAt: new Date('2030-01-01'),
+      },
+      officer
+    );
+    expect(drive.folders.length).toBe(before);
+
+    drive.files.set(begun.ticket.itemPath, { id: 'graph-nominee', size: 512 });
+    await documents.commitUpload(begun.versionId, officer);
+  });
+
+  it('names a member folder by identifier first', async () => {
+    const { documents } = await load();
+    expect(documents.memberFolderName('ABM-000125', 'Ahmed Mohamed')).toBe(
+      'ABM-000125 – Ahmed Mohamed'
+    );
+    // A name with characters SharePoint refuses must not produce a broken path.
+    expect(documents.memberFolderName('ABM-000126', 'A/B:C*D')).toBe(
+      'ABM-000126 – ABCD'
+    );
+    // And a member with no name yet still gets a folder.
+    expect(documents.memberFolderName('ABM-000127', '   ')).toBe('ABM-000127');
+  });
+
+  // Officer feedback: an application folder named only by its reference gave
+  // no way to recognise whose documents were inside without opening it.
+  it('names an application folder by surname and first name, reference trailing', async () => {
+    const { documents } = await load();
+    expect(
+      documents.applicationFolderPath('AB-000042', 'Ramtoola', 'Yusuf')
+    ).toBe(`${documents.ROOT_FOLDER}/Applications/Ramtoola Yusuf – AB-000042`);
+    // Characters SharePoint refuses must not produce a broken path.
+    expect(documents.applicationFolderPath('AB-000043', 'A/B:C*D', 'X')).toBe(
+      `${documents.ROOT_FOLDER}/Applications/ABCD X – AB-000043`
+    );
+    // No name captured yet still gets a folder, named by reference alone —
+    // the same fallback discardApplicationFiles relies on to match a draft
+    // deleted before its applicant details were ever saved.
+    expect(documents.applicationFolderPath('AB-000044')).toBe(
+      `${documents.ROOT_FOLDER}/Applications/AB-000044`
+    );
+  });
+
+  // Officer feedback: the test deployment and production were writing into
+  // the exact same SharePoint tree, with nothing to tell a preview upload
+  // apart from a real member's identity documents.
+  it('keeps the test and production document trees apart', async () => {
+    const { documents } = await load();
+    expect(documents.ROOT_FOLDER).toBe(
+      'Test/Al Barakah MCSL – Member Documents'
+    );
+
+    // A second, independent module instance standing in for what the
+    // production deployment computes — the same low-level steps load()
+    // itself takes to isolate one environment's config from the next test's.
+    await closeOpenPool();
+    vi.resetModules();
+    process.env.DATABASE_URL = appUrl;
+    process.env.DATABASE_ALLOW_INSECURE = 'true';
+    process.env.PUBLIC_APP_ENV = 'production';
+    openPool = await import('../db/pool');
+    const production = await import('./documents');
+    expect(production.ROOT_FOLDER).toBe(
+      'Production/Al Barakah MCSL – Member Documents'
+    );
+  });
+});
+
+describe('S-407: verifying, and who may', () => {
+  it('refuses the officer who captured the application, even with the permission', async () => {
+    const { documents } = await load();
+    const entry = (await documents.checklistFor({ applicationId })).find(
+      e => e.subject === 'applicant' && e.documentCode === 'id_card'
+    )!;
+
+    // Entitled to verify documents in general; captured this application.
+    const officerWhoCanVerify = {
+      ...officer,
+      permissions: new Set(['document.verify']) as ReadonlySet<string>,
+    };
+
+    await expect(
+      documents.reviewDocument(
+        entry.documentId!,
+        { outcome: 'verify' },
+        officerWhoCanVerify
+      )
+    ).rejects.toThrowError(/captured this application/);
+  });
+
+  // The narrower rule underneath, on an application the filer did not
+  // capture: the author check above would otherwise mask it, since the
+  // officer who captures an application usually files against it too.
+  it('refuses whoever filed the document, on an application they did not capture', async () => {
+    const { documents } = await load();
+    const type = await run(
+      appUrl,
+      `select id, checklist_id from membership_type where code = 'individual'`
+    );
+    const other = await run(
+      appUrl,
+      `insert into membership_application (membership_type_id, captured_by)
+       values ($1, $2) returning id`,
+      [type.rows[0].id, secretary.userId]
+    );
+    const otherApplicationId = other.rows[0].id;
+    await snapshotChecklist(otherApplicationId, [type.rows[0].checklist_id]);
+
+    const begun = await documents.beginUpload(
+      {
+        applicationId: otherApplicationId,
+        documentTypeId: idCardTypeId,
+        subject: 'applicant',
+        fileName: 'id.jpg',
+        contentType: 'image/jpeg',
+        sizeBytes: 1024,
+        expiresAt: new Date('2030-01-01'),
+      },
+      officer
+    );
+    drive.files.set(begun.ticket.itemPath, { id: 'graph-other', size: 1024 });
+    await documents.commitUpload(begun.versionId, officer);
+
+    const officerWhoCanVerify = {
+      ...officer,
+      permissions: new Set(['document.verify']) as ReadonlySet<string>,
+    };
+
+    await expect(
+      documents.reviewDocument(
+        begun.documentId,
+        { outcome: 'verify' },
+        officerWhoCanVerify
+      )
+    ).rejects.toThrowError(/may not verify it/);
+  });
+
+  it('refuses someone without the permission at all', async () => {
+    const { documents } = await load();
+    const entry = (await documents.checklistFor({ applicationId })).find(
+      e => e.subject === 'applicant' && e.documentCode === 'id_card'
+    )!;
+
+    await expect(
+      documents.reviewDocument(
+        entry.documentId!,
+        { outcome: 'verify' },
+        { ...officer, permissions: new Set() }
+      )
+    ).rejects.toThrowError(/permission/);
+  });
+
+  it('lets the Secretary verify it', async () => {
+    const { documents } = await load();
+    const entry = (await documents.checklistFor({ applicationId })).find(
+      e => e.subject === 'applicant' && e.documentCode === 'id_card'
+    )!;
+
+    await documents.reviewDocument(
+      entry.documentId!,
+      { outcome: 'verify' },
+      secretary
+    );
+
+    const after = (await documents.checklistFor({ applicationId })).find(
+      e => e.subject === 'applicant' && e.documentCode === 'id_card'
+    )!;
+    expect(after.state).toBe('verified');
+    expect(after.verifiedByName).toBe('Secretary');
+  });
+
+  it('requires a reason to reject', async () => {
+    const { documents } = await load();
+    const entry = (await documents.checklistFor({ applicationId })).find(
+      e => e.subject === 'nominee' && e.documentCode === 'id_card'
+    )!;
+
+    await expect(
+      documents.reviewDocument(
+        entry.documentId!,
+        { outcome: 'reject', reason: '  ' },
+        secretary
+      )
+    ).rejects.toThrowError(/requires a reason/);
+
+    await documents.reviewDocument(
+      entry.documentId!,
+      { outcome: 'reject', reason: 'The photograph is out of focus.' },
+      secretary
+    );
+
+    const after = (await documents.checklistFor({ applicationId })).find(
+      e => e.subject === 'nominee' && e.documentCode === 'id_card'
+    )!;
+    expect(after.state).toBe('rejected');
+    expect(after.rejectionReason).toBe('The photograph is out of focus.');
+  });
+
+  it('refuses to verify a document with nothing filed against it', async () => {
+    const { documents } = await load();
+    const begun = await documents.beginUpload(
+      {
+        applicationId,
+        documentTypeId: idCardTypeId,
+        subject: 'guardian',
+        fileName: 'guardian.jpg',
+        contentType: 'image/jpeg',
+        sizeBytes: 100,
+        expiresAt: new Date('2030-01-01'),
+      },
+      officer
+    );
+
+    await expect(
+      documents.reviewDocument(
+        begun.documentId,
+        { outcome: 'verify' },
+        secretary
+      )
+    ).rejects.toThrowError(/no filed version/);
+  });
+});
+
+describe('S-603: all four signatures before the signed form can be Verified', () => {
+  async function fileSignedForm() {
+    const { documents } = await load();
+    const typeId = (
+      await run(
+        appUrl,
+        `select id from document_type where code = 'signed_form'`
+      )
+    ).rows[0].id;
+    const begun = await documents.beginUpload(
+      {
+        applicationId,
+        documentTypeId: typeId,
+        subject: 'applicant',
+        fileName: 'signed.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 2048,
+      },
+      officer
+    );
+    drive.files.set(begun.ticket.itemPath, { id: 'graph-signed', size: 2048 });
+    await documents.commitUpload(begun.versionId, officer);
+    return { documents, documentId: begun.documentId };
+  }
+
+  it('refuses to verify with none confirmed', async () => {
+    const { documents, documentId } = await fileSignedForm();
+
+    await expect(
+      documents.reviewDocument(documentId, { outcome: 'verify' }, secretary)
+    ).rejects.toThrowError(/All four signatures/);
+  });
+
+  it('names exactly which are still missing', async () => {
+    const { documents, documentId } = await fileSignedForm();
+
+    await expect(
+      documents.reviewDocument(
+        documentId,
+        { outcome: 'verify', confirmedSignatures: ['Applicant', 'Nominee'] },
+        secretary
+      )
+    ).rejects.toThrowError(/Witness 1, Witness 2/);
+  });
+
+  it('verifies once all four are confirmed', async () => {
+    const { documents, documentId } = await fileSignedForm();
+
+    const result = await documents.reviewDocument(
+      documentId,
+      { outcome: 'verify', confirmedSignatures: [...documents.SIGNATURES] },
+      secretary
+    );
+    expect(result.state).toBe('verified');
+
+    const entry = (await documents.checklistFor({ applicationId })).find(
+      e => e.documentId === documentId
+    )!;
+    expect(entry.confirmedSignatures.sort()).toEqual(
+      [...documents.SIGNATURES].sort()
+    );
+  });
+
+  it('does not gate any other document type — only signed_form carries this rule', async () => {
+    const { documents } = await load();
+    const begun = await documents.beginUpload(
+      {
+        applicationId,
+        documentTypeId: idCardTypeId,
+        subject: 'nominee',
+        fileName: 'nominee2.jpg',
+        contentType: 'image/jpeg',
+        sizeBytes: 100,
+        expiresAt: new Date('2030-01-01'),
+      },
+      officer
+    );
+    drive.files.set(begun.ticket.itemPath, { id: 'graph-nominee2', size: 100 });
+    await documents.commitUpload(begun.versionId, officer);
+
+    const result = await documents.reviewDocument(
+      begun.documentId,
+      { outcome: 'verify' },
+      secretary
+    );
+    expect(result.state).toBe('verified');
+  });
+
+  it('lets a rejection keep whatever signatures were already confirmed', async () => {
+    const { documents, documentId } = await fileSignedForm();
+
+    await documents.reviewDocument(
+      documentId,
+      {
+        outcome: 'reject',
+        reason: 'Scan is too blurry to read the second witness.',
+        confirmedSignatures: ['Applicant', 'Nominee', 'Witness 1'],
+      },
+      secretary
+    );
+
+    const entry = (await documents.checklistFor({ applicationId })).find(
+      e => e.documentId === documentId
+    )!;
+    expect(entry.state).toBe('rejected');
+    expect(entry.confirmedSignatures.sort()).toEqual(
+      ['Applicant', 'Nominee', 'Witness 1'].sort()
+    );
+  });
+});
+
+describe('S-409: replacing a document keeps the original', () => {
+  it('supersedes the old version rather than deleting it', async () => {
+    const { documents } = await load();
+    const entry = (await documents.checklistFor({ applicationId })).find(
+      e => e.subject === 'nominee' && e.documentCode === 'id_card'
+    )!;
+    const before = await documents.versionsOf(entry.documentId!);
+
+    const begun = await documents.beginUpload(
+      {
+        applicationId,
+        documentTypeId: idCardTypeId,
+        subject: 'nominee',
+        fileName: 'nominee-id.jpg',
+        contentType: 'image/jpeg',
+        sizeBytes: 999,
+        expiresAt: new Date('2030-01-01'),
+      },
+      officer
+    );
+    drive.files.set(begun.ticket.itemPath, { id: 'graph-v2', size: 999 });
+    await documents.commitUpload(begun.versionId, officer);
+
+    const after = await documents.versionsOf(entry.documentId!);
+    expect(after).toHaveLength(before.length + 1);
+    // The earlier file is still there, marked superseded — for the signed
+    // form that is the whole point: what was signed stays retrievable.
+    expect(after.filter(v => v.supersededAt !== null).length).toBe(
+      before.length
+    );
+    expect(after[0].supersededAt).toBeNull();
+  });
+
+  it('returns a replaced document to review, losing the old verdict', async () => {
+    const { documents } = await load();
+    const entry = (await documents.checklistFor({ applicationId })).find(
+      e => e.subject === 'nominee' && e.documentCode === 'id_card'
+    )!;
+    // It was rejected; the replacement that COMMITTED cleared that, because
+    // the verdict was about a file that is no longer the live one.
+    expect(entry.state).toBe('under_review');
+    expect(entry.rejectionReason).toBeNull();
+  });
+
+  it('leaves the verdict alone when the replacement never arrives', async () => {
+    const { documents } = await load();
+    const entry = (await documents.checklistFor({ applicationId })).find(
+      e => e.subject === 'applicant' && e.documentCode === 'signed_form'
+    )!;
+
+    // File it, and have the Secretary verify it.
+    const first = await documents.beginUpload(
+      {
+        applicationId,
+        documentTypeId: (
+          await run(
+            appUrl,
+            `select id from document_type where code = 'signed_form'`
+          )
+        ).rows[0].id,
+        subject: 'applicant',
+        fileName: 'signed.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 2048,
+      },
+      officer
+    );
+    drive.files.set(first.ticket.itemPath, { id: 'graph-signed', size: 2048 });
+    await documents.commitUpload(first.versionId, officer);
+    await documents.reviewDocument(
+      first.documentId,
+      { outcome: 'verify', confirmedSignatures: [...documents.SIGNATURES] },
+      secretary
+    );
+
+    // Now start a replacement that never lands.
+    const failed = await documents.beginUpload(
+      {
+        applicationId,
+        documentTypeId: (
+          await run(
+            appUrl,
+            `select id from document_type where code = 'signed_form'`
+          )
+        ).rows[0].id,
+        subject: 'applicant',
+        fileName: 'signed.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 4096,
+      },
+      officer
+    );
+    await expect(
+      documents.commitUpload(failed.versionId, officer, {}, undefined, [])
+    ).rejects.toThrowError(/not in SharePoint/);
+
+    // The verified document is untouched. Downgrading it here would discard a
+    // verdict about a file that is still the live one.
+    const after = (await documents.checklistFor({ applicationId })).find(
+      e => e.subject === 'applicant' && e.documentCode === 'signed_form'
+    )!;
+    expect(after.state).toBe('verified');
+    expect(after.verifiedByName).toBe('Secretary');
+    expect(entry).toBeDefined();
+  });
+
+  it('does not remove the good version when a replacement fails', async () => {
+    const { documents } = await load();
+    const entry = (await documents.checklistFor({ applicationId })).find(
+      e => e.subject === 'nominee' && e.documentCode === 'id_card'
+    )!;
+    const live = (await documents.versionsOf(entry.documentId!)).find(
+      v => v.supersededAt === null
+    )!;
+
+    const begun = await documents.beginUpload(
+      {
+        applicationId,
+        documentTypeId: idCardTypeId,
+        subject: 'nominee',
+        fileName: 'nominee-id.jpg',
+        contentType: 'image/jpeg',
+        sizeBytes: 777,
+        expiresAt: new Date('2030-01-01'),
+      },
+      officer
+    );
+    // The replacement never arrives.
+    await expect(
+      documents.commitUpload(begun.versionId, officer)
+    ).rejects.toThrowError(/not in SharePoint/);
+
+    const stillLive = (await documents.versionsOf(entry.documentId!)).find(
+      v => v.supersededAt === null
+    )!;
+    expect(stillLive.id).toBe(live.id);
+  });
+});
+
+describe('S-410: expiry', () => {
+  // Created here rather than taken from the seeds: no document the Society
+  // currently accepts expires, so pinning this to one would make it fail the
+  // day that changes. What is under test is the rule, not the catalogue.
+  it('requires an expiry date for a type that tracks one', async () => {
+    const { documents } = await load();
+    const expiring = await runAsConfigurator(
+      appUrl,
+      `insert into document_type (code, name, description, tracks_expiry)
+       values ('passport', 'Passport', 'Expires, unlike the NIC', true)
+       on conflict (code) do update set tracks_expiry = true
+       returning id`
+    );
+
+    await expect(
+      documents.beginUpload(
+        {
+          applicationId,
+          documentTypeId: expiring.rows[0].id,
+          subject: 'beneficiary',
+          fileName: 'x.jpg',
+          contentType: 'image/jpeg',
+          sizeBytes: 10,
+        },
+        officer
+      )
+    ).rejects.toThrowError(/expiry date is required/);
+  });
+
+  it('expires a verified document whose date has passed, and no other', async () => {
+    const { documents } = await load();
+    const entry = (await documents.checklistFor({ applicationId })).find(
+      e => e.subject === 'applicant' && e.documentCode === 'id_card'
+    )!;
+    expect(entry.state).toBe('verified');
+
+    await run(
+      appUrl,
+      `update document set expires_at = now() - interval '1 day' where id = $1`,
+      [entry.documentId]
+    );
+    // A document still under review also has a past date. It has a more
+    // pressing problem than expiry, and moving it to Expired would hide that.
+    const underReview = (await documents.checklistFor({ applicationId })).find(
+      e => e.subject === 'nominee' && e.documentCode === 'id_card'
+    )!;
+    await run(
+      appUrl,
+      `update document set expires_at = now() - interval '1 day' where id = $1`,
+      [underReview.documentId]
+    );
+
+    const { expired } = await documents.expireDocuments();
+    expect(expired).toBe(1);
+
+    const after = await documents.checklistFor({ applicationId });
+    expect(
+      after.find(
+        e => e.subject === 'applicant' && e.documentCode === 'id_card'
+      )!.state
+    ).toBe('expired');
+    expect(
+      after.find(e => e.subject === 'nominee' && e.documentCode === 'id_card')!
+        .state
+    ).toBe('under_review');
+  });
+
+  it('records the expiry as the system, not as a person', async () => {
+    const { documents } = await load();
+    const audited = await run(
+      appUrl,
+      `select actor_user_id, actor_description from audit_event
+        where action = 'document.expired' limit 1`
+    );
+    expect(audited.rowCount).toBe(1);
+    expect(audited.rows[0].actor_user_id).toBeNull();
+    expect(audited.rows[0].actor_description).toContain('scheduled job');
+  });
+
+  it('no longer counts an expired document as complete', async () => {
+    const { documents } = await load();
+    const checklist = await documents.checklistFor({ applicationId });
+    expect(documents.isDocumentComplete(checklist)).toBe(false);
+  });
+});
+
+// Uses the 'utility_bill' document type seeded in migration 0010 — configured
+// for 'guardian' on Minor, not for anything on Individual — against a
+// subject/type combination the Individual checklist does not configure.
+// beginUpload does not check that: any active document type may be filed
+// against any subject, and what is under test here is the view/remove
+// behaviour, not the checklist configuration.
+describe('S-403: viewing a filed document', () => {
+  it('returns a URL good for opening the current version, named for what it is and whose it is', async () => {
+    const { documents } = await load();
+    const type = await run(
+      appUrl,
+      `select id from document_type where code = 'utility_bill'`
+    );
+    const application = await run(
+      appUrl,
+      `select reference from membership_application where id = $1`,
+      [applicationId]
+    );
+
+    const begun = await documents.beginUpload(
+      {
+        applicationId,
+        documentTypeId: type.rows[0].id,
+        subject: 'applicant',
+        fileName: 'IMG_20260101_random-phone-name.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 200,
+      },
+      officer
+    );
+    drive.files.set(begun.ticket.itemPath, { id: 'graph-bill', size: 200 });
+    await documents.commitUpload(begun.versionId, officer);
+
+    const result = await documents.getDocumentViewUrl(begun.documentId);
+    // Named "Utility Bill - <reference>", not whatever the phone called it —
+    // only the original extension survives from the uploaded file's own name.
+    expect(result.fileName).toBe(
+      `Utility Bill - ${application.rows[0].reference}.pdf`
+    );
+    expect(result.contentType).toBe('application/pdf');
+    expect(result.url).toContain(encodeURIComponent(begun.ticket.itemPath));
+  });
+
+  it('refuses when nothing has been committed yet', async () => {
+    const { documents } = await load();
+    const type = await run(
+      appUrl,
+      `select id from document_type where code = 'utility_bill'`
+    );
+    const begun = await documents.beginUpload(
+      {
+        applicationId,
+        documentTypeId: type.rows[0].id,
+        subject: 'nominee',
+        fileName: 'unfinished.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 200,
+      },
+      officer
+    );
+    // Never committed — no live version exists to view.
+    await expect(
+      documents.getDocumentViewUrl(begun.documentId)
+    ).rejects.toThrowError(/no filed version/);
+  });
+});
+
+describe('undoing a mistaken upload, so it can be filed again', () => {
+  // Built inside each test, not here: describe bodies run at collection
+  // time, before beforeAll has populated `officer` — spreading it here would
+  // silently carry no userId or email at all.
+  const asUploader = () => ({
+    ...officer,
+    permissions: new Set(['document.upload']),
+  });
+  const asViewerOnly = () => ({
+    ...officer,
+    permissions: new Set(['document.view']),
+  });
+
+  it('supersedes the live version, and deletes the file from SharePoint', async () => {
+    const { documents } = await load();
+    const type = await run(
+      appUrl,
+      `select id from document_type where code = 'utility_bill'`
+    );
+    const begun = await documents.beginUpload(
+      {
+        applicationId,
+        documentTypeId: type.rows[0].id,
+        subject: 'guardian',
+        fileName: 'bill2.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 300,
+      },
+      officer
+    );
+    drive.files.set(begun.ticket.itemPath, { id: 'graph-bill2', size: 300 });
+    await documents.commitUpload(begun.versionId, officer);
+
+    const before = await documents.versionsOf(begun.documentId);
+    expect(before.filter(v => v.supersededAt === null)).toHaveLength(1);
+
+    const result = await documents.removeFiledDocument(
+      begun.documentId,
+      asUploader()
+    );
+    expect(result.state).toBe('missing');
+
+    const after = await documents.versionsOf(begun.documentId);
+    // Nothing live — but the *row* is kept, exactly as a replacement keeps
+    // the version it supersedes (S-409): the audit trail still shows this
+    // was filed and then removed. The file itself, unlike a genuine
+    // replacement's, is gone — a mistaken upload was never a record worth
+    // keeping in SharePoint.
+    expect(after.filter(v => v.supersededAt === null)).toHaveLength(0);
+    expect(after).toHaveLength(before.length);
+    expect(drive.files.has(begun.ticket.itemPath)).toBe(false);
+
+    const audited = await run(
+      appUrl,
+      `select previous_value->>'state' as was, new_value->>'state' as now
+         from audit_event
+        where action = 'document.removed' and entity_id = $1`,
+      [begun.documentId]
+    );
+    expect(audited.rowCount).toBe(1);
+    expect(audited.rows[0].now).toBe('missing');
+  });
+
+  it('can be filed again afterwards, as a new version', async () => {
+    const { documents } = await load();
+    const type = await run(
+      appUrl,
+      `select id from document_type where code = 'utility_bill'`
+    );
+    const documentId = (
+      await run(
+        appUrl,
+        `select id from document
+          where application_id = $1 and subject = 'guardian'
+            and document_type_id = $2`,
+        [applicationId, type.rows[0].id]
+      )
+    ).rows[0].id;
+
+    const begun = await documents.beginUpload(
+      {
+        applicationId,
+        documentTypeId: type.rows[0].id,
+        subject: 'guardian',
+        fileName: 'bill3.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 150,
+      },
+      officer
+    );
+    expect(begun.documentId).toBe(documentId);
+    drive.files.set(begun.ticket.itemPath, { id: 'graph-bill3', size: 150 });
+    await documents.commitUpload(begun.versionId, officer);
+
+    const versions = await documents.versionsOf(documentId);
+    const live = versions.find(v => v.supersededAt === null)!;
+    expect(versions.filter(v => v.supersededAt === null)).toHaveLength(1);
+    // Carries a version suffix once it is not the first — the removed
+    // version above still counts (S-409), so this is version 2 — and the
+    // original file's own extension, not its name (bill3.pdf), which the
+    // stored name never carries at all.
+    expect(live.fileName).toMatch(/^Utility Bill - .+ v2\.pdf$/);
+  });
+
+  it('still returns Missing when the SharePoint delete itself fails', async () => {
+    // The database row is the source of truth for the checklist; a Graph
+    // outage on the way out must not leave the checklist stuck on a document
+    // that is, as far as this application's own records are concerned,
+    // already gone.
+    const { documents } = await load({
+      deleteItemByPath: async () => {
+        throw new Error('SharePoint is unreachable');
+      },
+    });
+    const type = await run(
+      appUrl,
+      `select id from document_type where code = 'utility_bill'`
+    );
+    const membershipType = await run(
+      appUrl,
+      `select id from membership_type where code = 'individual'`
+    );
+    // A dedicated draft, rather than the subjects reused elsewhere on the
+    // shared `applicationId` — this test does not want to depend on what
+    // another describe block already filed against that document.
+    const draft = await run(
+      appUrl,
+      `insert into membership_application
+         (membership_type_id, captured_by, status)
+       values ($1, $2, 'draft') returning id`,
+      [membershipType.rows[0].id, officer.userId]
+    );
+    const begun = await documents.beginUpload(
+      {
+        applicationId: draft.rows[0].id,
+        documentTypeId: type.rows[0].id,
+        subject: 'applicant',
+        fileName: 'bill4.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 200,
+      },
+      officer
+    );
+    drive.files.set(begun.ticket.itemPath, { id: 'graph-bill4', size: 200 });
+    await documents.commitUpload(begun.versionId, officer);
+
+    const originalError = console.error;
+    console.error = () => {};
+    try {
+      const result = await documents.removeFiledDocument(
+        begun.documentId,
+        asUploader()
+      );
+      expect(result.state).toBe('missing');
+
+      const after = await documents.versionsOf(begun.documentId);
+      expect(after.filter(v => v.supersededAt === null)).toHaveLength(0);
+    } finally {
+      console.error = originalError;
+    }
+  });
+
+  it('refuses when there is nothing filed to remove', async () => {
+    const { documents } = await load();
+    const type = await run(
+      appUrl,
+      `select id from document_type where code = 'utility_bill'`
+    );
+    const begun = await documents.beginUpload(
+      {
+        applicationId,
+        documentTypeId: type.rows[0].id,
+        subject: 'beneficiary',
+        fileName: 'still-pending.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 100,
+      },
+      officer
+    );
+    // Never committed — nothing live to remove.
+    await expect(
+      documents.removeFiledDocument(begun.documentId, asUploader())
+    ).rejects.toThrowError(/no filed version/);
+  });
+
+  it('refuses someone without document.upload', async () => {
+    const { documents } = await load();
+    const type = await run(
+      appUrl,
+      `select id from document_type where code = 'utility_bill'`
+    );
+    const documentId = (
+      await run(
+        appUrl,
+        `select id from document
+          where application_id = $1 and subject = 'guardian'
+            and document_type_id = $2`,
+        [applicationId, type.rows[0].id]
+      )
+    ).rows[0].id;
+
+    await expect(
+      documents.removeFiledDocument(documentId, asViewerOnly())
+    ).rejects.toThrowError(/permission/);
+  });
+
+  // Officer feedback: once an application is out of the originating
+  // officer's hands, a filed document is a record of what was submitted —
+  // only 'draft' and 'returned' still allow removing one.
+  it('refuses once the application is no longer draft or returned', async () => {
+    const { documents } = await load();
+    const type = await run(
+      appUrl,
+      `select id from membership_type where code = 'individual'`
+    );
+    // Filed while still a draft — the only status beginUpload itself allows
+    // — then submitted, so what's being tested is removeFiledDocument's own
+    // refusal on a document that was already legitimately on file.
+    const submitted = await run(
+      appUrl,
+      `insert into membership_application
+         (membership_type_id, captured_by, status)
+       values ($1, $2, 'draft') returning id`,
+      [type.rows[0].id, officer.userId]
+    );
+    const docType = await run(
+      appUrl,
+      `select id from document_type where code = 'utility_bill'`
+    );
+    const begun = await documents.beginUpload(
+      {
+        applicationId: submitted.rows[0].id,
+        documentTypeId: docType.rows[0].id,
+        subject: 'applicant',
+        fileName: 'bill-submitted.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 100,
+      },
+      officer
+    );
+    drive.files.set(begun.ticket.itemPath, {
+      id: 'graph-bill-submitted',
+      size: 100,
+    });
+    await documents.commitUpload(begun.versionId, officer);
+
+    await run(
+      appUrl,
+      `update membership_application set status = 'new' where id = $1`,
+      [submitted.rows[0].id]
+    );
+
+    await expect(
+      documents.removeFiledDocument(begun.documentId, asUploader())
+    ).rejects.toThrowError(/submitted/);
+
+    // Returned to the officer for correction — deletable again.
+    await run(
+      appUrl,
+      `update membership_application set status = 'returned' where id = $1`,
+      [submitted.rows[0].id]
+    );
+    const result = await documents.removeFiledDocument(
+      begun.documentId,
+      asUploader()
+    );
+    expect(result.state).toBe('missing');
+  });
+});
+
+// Officer feedback: "no details should be possible to edit" on a submitted
+// application turned out not to cover documents — removeFiledDocument had
+// this guard (S-614 above), but filing a fresh document, or replacing one
+// via begin/commit-upload, did not, so a document missing at submission time
+// (the signed form among them) stayed uploadable indefinitely after.
+describe('filing a document is restricted to draft and returned applications, the same as removing one', () => {
+  async function submittedApplication(): Promise<string> {
+    const type = await run(
+      appUrl,
+      `select id from membership_type where code = 'individual'`
+    );
+    const application = await run(
+      appUrl,
+      `insert into membership_application
+         (membership_type_id, captured_by, status)
+       values ($1, $2, 'new') returning id`,
+      [type.rows[0].id, officer.userId]
+    );
+    return application.rows[0].id;
+  }
+
+  it('refuses to begin an upload once the application is submitted', async () => {
+    const { documents } = await load();
+    const submittedId = await submittedApplication();
+    const docType = await run(
+      appUrl,
+      `select id from document_type where code = 'utility_bill'`
+    );
+
+    await expect(
+      documents.beginUpload(
+        {
+          applicationId: submittedId,
+          documentTypeId: docType.rows[0].id,
+          subject: 'applicant',
+          fileName: 'bill-late.pdf',
+          contentType: 'application/pdf',
+          sizeBytes: 100,
+        },
+        officer
+      )
+    ).rejects.toThrowError(/submitted/);
+
+    // Nothing was created for the refused upload to leave behind.
+    const documentRows = await run(
+      appUrl,
+      `select count(*)::int as n from document where application_id = $1`,
+      [submittedId]
+    );
+    expect(documentRows.rows[0].n).toBe(0);
+  });
+
+  it('refuses to begin an upload once returned goes back to submitted mid-flight, at commit', async () => {
+    const { documents } = await load();
+    const type = await run(
+      appUrl,
+      `select id from membership_type where code = 'individual'`
+    );
+    const application = await run(
+      appUrl,
+      `insert into membership_application
+         (membership_type_id, captured_by, status)
+       values ($1, $2, 'returned') returning id`,
+      [type.rows[0].id, officer.userId]
+    );
+    const returnedId = application.rows[0].id;
+    const docType = await run(
+      appUrl,
+      `select id from document_type where code = 'utility_bill'`
+    );
+
+    // Begun while still returned, so it is allowed to start...
+    const begun = await documents.beginUpload(
+      {
+        applicationId: returnedId,
+        documentTypeId: docType.rows[0].id,
+        subject: 'applicant',
+        fileName: 'bill-race.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 100,
+      },
+      officer
+    );
+    drive.files.set(begun.ticket.itemPath, {
+      id: 'graph-bill-race',
+      size: 100,
+    });
+
+    // ...but resubmitted by the time the transfer finishes.
+    await run(
+      appUrl,
+      `update membership_application set status = 'new' where id = $1`,
+      [returnedId]
+    );
+
+    await expect(
+      documents.commitUpload(begun.versionId, officer)
+    ).rejects.toThrowError(/submitted/);
+  });
+});
+
+describe("officer feedback: a member's documents carry onto a new account opening", () => {
+  it('carries other documents forward under review, leaves the signed form fresh, and shares the file', async () => {
+    const { capture, documents } = await load();
+
+    const type = await run(
+      appUrl,
+      `select id from membership_type where code = 'individual'`
+    );
+    const founding = await run(
+      appUrl,
+      `insert into membership_application (membership_type_id, captured_by)
+       values ($1, $2) returning id, reference`,
+      [type.rows[0].id, officer.userId]
+    );
+    const member = await run(
+      appUrl,
+      `insert into member (membership_type_id, application_id, status)
+       values ($1, $2, 'active') returning id`,
+      [type.rows[0].id, founding.rows[0].id]
+    );
+    const signedForm = await run(
+      appUrl,
+      `select id from document_type where code = 'signed_form'`
+    );
+
+    // An account type whose checklist asks for both an id card and the
+    // signed form — the first should carry, the second never should.
+    const checklist = await runAsConfigurator(
+      appUrl,
+      `insert into document_checklist (code, name)
+       values ('carry_fwd_test', 'Carry-forward test') returning id`
+    );
+    const clId = checklist.rows[0].id;
+    await runAsConfigurator(
+      appUrl,
+      `insert into document_checklist_item
+         (checklist_id, document_type_id, subject, requirement, sort_order)
+       values ('${clId}', '${idCardTypeId}', 'applicant', 'required', 1),
+              ('${clId}', '${signedForm.rows[0].id}', 'applicant', 'required', 2)`
+    );
+    const accountType = await runAsConfigurator(
+      appUrl,
+      `insert into account_type
+         (code, name, category, minimum_opening_amount, checklist_id,
+          is_membership_default)
+       values ('carry_fwd_acct', 'Carry-forward account', 'investment', 1000,
+               '${clId}', false)
+       returning id`
+    );
+
+    // The member already filed both on their founding application.
+    const idBegun = await documents.beginUpload(
+      {
+        applicationId: founding.rows[0].id,
+        documentTypeId: idCardTypeId,
+        subject: 'applicant',
+        fileName: 'id-existing.jpg',
+        contentType: 'image/jpeg',
+        sizeBytes: 120,
+      },
+      officer
+    );
+    drive.files.set(idBegun.ticket.itemPath, {
+      id: 'graph-id-existing',
+      size: 120,
+    });
+    await documents.commitUpload(idBegun.versionId, officer);
+
+    const formBegun = await documents.beginUpload(
+      {
+        applicationId: founding.rows[0].id,
+        documentTypeId: signedForm.rows[0].id,
+        subject: 'applicant',
+        fileName: 'form-existing.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 120,
+      },
+      officer
+    );
+    drive.files.set(formBegun.ticket.itemPath, {
+      id: 'graph-form-existing',
+      size: 120,
+    });
+    await documents.commitUpload(formBegun.versionId, officer);
+
+    const { id: additionalId } =
+      await capture.startAdditionalAccountApplication(
+        member.rows[0].id,
+        [accountType.rows[0].id],
+        officer
+      );
+
+    const entries = await documents.checklistFor({
+      applicationId: additionalId,
+    });
+    const idEntry = entries.find(e => e.documentCode === 'id_card');
+    const formEntry = entries.find(e => e.documentCode === 'signed_form');
+
+    // The id card carried — filed, but under review so this opening's
+    // reviewer checks it again — reusing the very same file.
+    expect(idEntry?.state).toBe('under_review');
+    expect(idEntry?.documentId).not.toBeNull();
+    const carriedVersions = await documents.versionsOf(idEntry!.documentId!);
+    expect(carriedVersions[0].sharepointPath).toBe(idBegun.ticket.itemPath);
+
+    // The signed form did not — it is specific to this account opening and
+    // must be filed fresh.
+    expect(formEntry?.state).toBe('missing');
+    expect(formEntry?.documentId).toBeNull();
+
+    // Removing the carried document must not delete the shared file out from
+    // under the founding application that still holds it.
+    await documents.removeFiledDocument(idEntry!.documentId!, {
+      ...officer,
+      permissions: new Set(['document.upload']),
+    });
+    expect(drive.files.has(idBegun.ticket.itemPath)).toBe(true);
+
+    const foundingEntries = await documents.checklistFor({
+      applicationId: founding.rows[0].id,
+    });
+    const foundingId = foundingEntries.find(e => e.documentCode === 'id_card');
+    expect(foundingId?.state).not.toBe('missing');
+  });
+});

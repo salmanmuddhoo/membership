@@ -4,27 +4,59 @@
   "version": "0.1.0",
   "scripts": {
     "dev": "astro dev",
-    "start": "astro dev",
+    "start": "node ./dist/server/entry.mjs",
     "build": "astro check && astro build",
     "preview": "astro preview",
     "astro": "astro",
     "format:check": "prettier --check .",
-    "format:fix": "prettier --write ."
+    "format:fix": "prettier --write .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "migrate": "tsx scripts/migrate-cli.ts up",
+    "migrate:status": "tsx scripts/migrate-cli.ts status",
+    "access:grant": "tsx scripts/grant-access.ts",
+    "openapi:generate": "tsx scripts/generate-openapi.ts",
+    "verify:routes": "tsx scripts/verify-routes.ts",
+    "verify:migrations": "bash scripts/verify-migrations.sh",
+    "figures:capture": "tsx scripts/control-figures.ts capture",
+    "figures:verify": "tsx scripts/control-figures.ts verify",
+    "openapi:check": "tsx scripts/generate-openapi.ts --check",
+    "job": "tsx scripts/run-job.ts",
+    "e2e": "playwright test",
+    "e2e:report": "playwright show-report e2e-report",
+    "e2e:login": "tsx scripts/e2e-login.ts"
   },
   "dependencies": {
     "@astrojs/check": "^0.9.10",
-    "@astrojs/vercel": "^11.0.6",
+    "@astrojs/node": "^11.1.6",
+    "@astrojs/vercel": "^11.0.10",
     "@tailwindcss/forms": "^0.5.11",
     "@tailwindcss/vite": "^4.3.3",
-    "astro": "^7.2.2",
-    "jose": "^6.2.10",
-    "preline": "^4.2.0",
+    "astro": "^7.3.2",
+    "exceljs": "^4.4.0",
+    "html2canvas-pro": "^2.4.3",
+    "jose": "^6.2.12",
+    "jspdf": "^4.2.1",
+    "pg": "^8.23.0",
+    "preline": "^5.0.0",
     "tailwindcss": "^4.3.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@types/pg": "^8.23.1",
     "prettier": "^3.9.6",
-    "prettier-plugin-astro": "^0.14.1",
+    "prettier-plugin-astro": "^1.0.0",
     "prettier-plugin-tailwindcss": "^0.8.1",
-    "typescript": "^6.0.3"
+    "tsx": "^4.23.13",
+    "typescript": "^6.0.3",
+    "vitest": "^5.0.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "fast-uri": ">=3.1.5",
+      "path-to-regexp": ">=6.3.0",
+      "uuid": "11.1.1",
+      "@types/node": "^25.0.3"
+    }
   }
 }

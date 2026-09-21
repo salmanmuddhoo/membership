@@ -1,0 +1,297 @@
+---
+// Starting an application (S-301, S-302).
+//
+// This page has no application behind it, and that is the point. Opening the
+// capture form is not starting an application: an officer who taps Capture,
+// realises it is the wrong applicant and closes the tab leaves nothing behind
+// — no reference spent, no row in the list, no draft for somebody to delete.
+//
+// The application comes into existence on the first save that carries a value,
+// and from then on the officer is working on /applications/<id> without having
+// been interrupted to get there.
+import ApplicationTimeline from '@components/ApplicationTimeline.astro';
+import CaptureFields from '@components/CaptureFields.astro';
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import {
+  ApplicationError,
+  startApplicationWithValues,
+  visibleFields,
+  type PartyValues,
+} from '@lib/applications/capture';
+import { applicationTimeline } from '@lib/applications/timeline';
+import {
+  checklistForMembershipType,
+  listMembershipTypes,
+} from '@lib/config/reference';
+
+const principal = Astro.locals.principal!;
+if (!principal.permissions.has('application.capture')) {
+  return Astro.redirect('/denied');
+}
+
+const requested = Astro.url.searchParams.get('type') ?? '';
+const types = await listMembershipTypes();
+const type = types.find(t => t.code === requested && t.isActive);
+if (!type) {
+  // Nothing to capture into. Back to the list, where the choice is made.
+  return Astro.redirect('/applications');
+}
+
+const fields = visibleFields(type);
+const subjects = [...fields.keys()];
+
+// Nothing is captured yet, so this is the timeline's opening position rather
+// than a read of a real record: every mandatory field counts as outstanding,
+// and — since no document row exists until something is filed against it —
+// so does every required document the configuration asks for. Getting the
+// documents count right matters: 0 would read as "nothing outstanding",
+// which is done, not empty, and would tick that step off before capture is
+// even finished. It does not update as the officer types — the id page they
+// reach on Next is where the live version lives — but it is the same roadmap
+// from the first keystroke.
+const mandatoryFieldsTotal = [...fields.values()]
+  .flat()
+  .filter(f => f.isMandatory).length;
+const requiredDocumentsTotal = [
+  ...(await checklistForMembershipType(type.code)).values(),
+]
+  .flat()
+  .filter(item => item.requirement === 'required').length;
+// Every field and document reads as outstanding here (see above), which
+// would otherwise mark Applicant details red before the officer has typed a
+// single character — nothing has actually been attempted yet, so nothing
+// here is a problem yet either. That only becomes true once there is a real
+// application to fall short on, which is what the id page's own read of
+// `applicationTimeline` is for.
+const timeline = applicationTimeline({
+  status: 'draft',
+  mandatoryFieldsOutstanding: mandatoryFieldsTotal,
+  signedFormFiled: false,
+  requiredDocumentsOutstanding: requiredDocumentsTotal,
+  paymentRecorded: false,
+}).map(({ problem: _problem, ...step }) => step);
+
+let error: string | null = null;
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const isAutosave = String(form.get('intent') ?? '') === 'autosave';
+
+  const parties: PartyValues[] = subjects.flatMap(subject => {
+    const ordinals = subject === 'nominee' ? type.nomineeCount : 1;
+    return Array.from({ length: ordinals }, (_, i) => i + 1).map(ordinal => {
+      const values: Record<string, string> = {};
+      for (const field of fields.get(subject) ?? []) {
+        values[field.fieldKey] = String(
+          form.get(`field.${subject}.${ordinal}.${field.fieldKey}`) ?? ''
+        );
+      }
+      return { subject, ordinal, values };
+    });
+  });
+
+  try {
+    const created = await startApplicationWithValues(type.code, parties, {
+      userId: principal.userId,
+      email: principal.email,
+    });
+
+    if (!created) {
+      // Nothing was typed, so nothing was created. The autosave is told as
+      // much and stops reporting a save that did not happen.
+      if (isAutosave) {
+        return new Response(JSON.stringify({ created: false }), {
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      error = 'Fill in at least one detail before saving.';
+    } else if (isAutosave) {
+      // The officer keeps typing. The client moves the address bar to the
+      // application that now exists, so a refresh — or a dropped connection
+      // — lands on the real thing rather than back here.
+      return new Response(
+        JSON.stringify({
+          created: true,
+          id: created.id,
+          reference: created.reference,
+          savedAt: created.savedAt.toISOString(),
+          problems: created.problems,
+        }),
+        { headers: { 'content-type': 'application/json' } }
+      );
+    } else {
+      return Astro.redirect(`/applications/${created.id}`);
+    }
+  } catch (err) {
+    if (err instanceof ApplicationError) {
+      error = err.message;
+    } else {
+      console.error('[applications/new]', err);
+      error = 'Something went wrong. Please try again.';
+    }
+    if (isAutosave) {
+      return new Response(JSON.stringify({ error }), {
+        status: 500,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+  }
+}
+---
+
+<DashboardLayout
+  title={`New ${type.name} application · Al Barakah MCSL`}
+  heading={`New ${type.name} application`}
+>
+  <div class="mx-auto max-w-5xl space-y-6">
+    <ApplicationTimeline steps={timeline} />
+
+    <div
+      id="application-nav"
+      class="sticky z-20 -mx-4 flex flex-wrap items-center gap-2 border-t border-neutral-200/80 bg-neutral-100/95 px-4 py-3 backdrop-blur-md sm:mx-0 sm:rounded-b-2xl sm:px-3 sm:py-1.5 dark:border-neutral-800/80 dark:bg-neutral-950/95"
+      style="top: calc(var(--app-header-height, 3.75rem) + var(--app-timeline-height, 0px))"
+    >
+      <a
+        href="/applications"
+        class="inline-block text-sm text-neutral-500 underline dark:text-neutral-400"
+      >
+        ← All applications
+      </a>
+    </div>
+
+    {error && (
+      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+        {error}
+      </div>
+    )}
+
+    <form method="post" id="capture-form" class="space-y-6">
+      <CaptureFields
+        fields={fields}
+        parties={[]}
+        nomineeCount={type.nomineeCount}
+      />
+
+      <div class="flex flex-wrap items-center gap-3">
+        {/* Hidden until the script below un-hides it, so a reader with
+            scripting off never sees an inert button — they get the noscript
+            one, which works by being a real form submission. */}
+        <button
+          type="button"
+          id="next-button"
+          hidden
+          class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Next
+        </button>
+        <span
+          id="autosave-status"
+          class="text-xs text-neutral-500 dark:text-neutral-400"
+          aria-live="polite"
+        ></span>
+        {/* Next is driven by the script below. Without it, submitting this
+            button the ordinary way saves and moves on in one step, which is
+            the same thing Next does with scripting on. */}
+        <noscript>
+          <button
+            type="submit"
+            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
+          >
+            Next
+          </button>
+        </noscript>
+      </div>
+    </form>
+  </div>
+</DashboardLayout>
+
+<script>
+  // S-614: saves once, when the officer clicks Next, rather than continuously
+  // while typing — a network call on every keystroke read as the app being
+  // slow. (Replaces the continuous background saving from S-302, decision
+  // 14.)
+  //
+  // Until the first value is entered this posts nothing at all: an empty form
+  // must not create an application, and a request that would create nothing is
+  // a request not worth making.
+  const form = document.getElementById(
+    'capture-form'
+  ) as HTMLFormElement | null;
+  const status = document.getElementById('autosave-status');
+  const nextButton = document.getElementById(
+    'next-button'
+  ) as HTMLButtonElement | null;
+
+  if (form && status) {
+    // Set once the save creates the application, so a later response is
+    // judged only by whether the request succeeded — not by re-checking
+    // `created`/`reference`, which this same endpoint stops returning after
+    // the application exists.
+    let applicationId: string | null = null;
+
+    const anythingEntered = () =>
+      [...new FormData(form).entries()].some(
+        ([key, value]) =>
+          key.startsWith('field.') && String(value).trim() !== ''
+      );
+
+    const save = async (): Promise<void> => {
+      const body = new FormData(form);
+      body.set('intent', 'autosave');
+
+      try {
+        const response = await fetch(
+          window.location.pathname + window.location.search,
+          {
+            method: 'POST',
+            body,
+            headers: { 'x-requested-with': 'autosave' },
+          }
+        );
+        if (!response.ok) throw new Error(String(response.status));
+
+        const result = await response.json();
+        if (!result.created) return;
+        applicationId = result.id;
+
+        // From here on this IS an application. replaceState rather than a
+        // navigation: the page is about to navigate away for real in a
+        // moment anyway.
+        window.history.replaceState({}, '', `/applications/${result.id}`);
+        status.textContent = `${result.reference} saved.`;
+      } catch {
+        // Saying "saved" when nothing was saved is the one thing this must
+        // never do: the officer would close the tablet trusting it.
+        status.textContent = 'Not saved — check your connection.';
+      }
+    };
+
+    if (nextButton) {
+      nextButton.hidden = false;
+
+      nextButton.addEventListener('click', async () => {
+        if (!anythingEntered()) {
+          status.textContent = 'Add at least one detail before continuing.';
+          return;
+        }
+
+        nextButton.disabled = true;
+        await save();
+
+        if (applicationId) {
+          // A real navigation, not replaceState: the officer asked to move
+          // on, and /applications/<id> is a different page — documents,
+          // submission, the timeline — that this one was never going to grow
+          // into.
+          window.location.assign(`/applications/${applicationId}`);
+          return;
+        }
+
+        nextButton.disabled = false;
+        // Otherwise save() already explained itself (e.g. a dropped
+        // connection), and that message should stand rather than being
+        // overwritten here.
+      });
+    }
+  }
+</script>

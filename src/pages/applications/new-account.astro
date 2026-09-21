@@ -1,0 +1,286 @@
+---
+// Starting an application to open an account outside a membership (S-613,
+// phase 5; S-614, phase 3).
+//
+// Three people can want this, and each arrives already named:
+//  - an existing member opening a further account, from the button on their
+//    own detail page (?member=<id>);
+//  - an existing non-member customer opening a further one of their own,
+//    from the button on their detail page (?customer=<id>);
+//  - someone not on the system at all, opening one as a new non-member
+//    (no parameter — the plain "Open other account" on the Applications
+//    page).
+// A member or customer holder is already known, so there is nothing to
+// search or capture here, only the account type(s) to pick; the held-holder
+// modes carry the same experience forward from their detail page. Searching
+// for an existing member is gone — a member opens a further account from
+// their own page now, never from here.
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import {
+  ApplicationError,
+  startAdditionalAccountApplication,
+  startCustomerAccountApplication,
+  startCustomerAdditionalAccountApplication,
+} from '@lib/applications/capture';
+import { loadCustomer, loadMember } from '@lib/members/create';
+import { listAccountTypes, openableAccountTypes } from '@lib/config/reference';
+
+const principal = Astro.locals.principal!;
+if (!principal.permissions.has('application.capture')) {
+  return Astro.redirect('/denied');
+}
+
+// The two "already known" holders. A page is one or the other or neither,
+// never both — the button that links here sets exactly one parameter.
+const memberParam = Astro.url.searchParams.get('member');
+const customerParam = Astro.url.searchParams.get('customer');
+const memberHolder = memberParam ? await loadMember(memberParam) : null;
+const customerHolder = customerParam ? await loadCustomer(customerParam) : null;
+if (
+  (memberParam && !memberHolder) ||
+  (customerParam && !customerHolder) ||
+  (memberHolder && customerHolder)
+) {
+  return new Response('Not found', { status: 404 });
+}
+const holder = memberHolder ?? customerHolder;
+const holderName = holder?.name ?? null;
+
+// Any active, non-membership-default account type (S-612) — nothing here
+// names HSA or Investment specifically. Shares and the MSA open only on a
+// membership's own approval and never appear here.
+//
+// For a known holder, this narrows to the type(s) they may still open —
+// eligible for their membership type and not one they already hold (a
+// holder keeps at most one of each). The same openableAccountTypes the
+// holder's detail-page button is shown for, so what the button promised is
+// exactly what this page offers. For a brand-new non-member there is no
+// holder yet, so every openable type is on the table.
+const allAccountTypes = await listAccountTypes();
+const accountTypes = holder
+  ? openableAccountTypes(
+      allAccountTypes,
+      holder.membershipTypeId,
+      new Set(holder.accounts.map(a => a.accountTypeId))
+    )
+  : allAccountTypes.filter(t => t.isActive && !t.isMembershipDefault);
+
+let error: string | null = null;
+// Echoed back on a failed submission so the officer is not made to reselect
+// account types they already picked.
+let selected = new Set<string>();
+// Officer feedback: Corporate had no way in here at all — only Individual
+// (the default) or Minor, via what used to be a single "Minor" checkbox.
+// A select generalises that same choice to the three customer types a
+// non-member application already knows how to be captured against
+// (startCustomerAccountApplication takes any membership type code).
+const CUSTOMER_TYPES = ['individual', 'minor', 'corporate'] as const;
+type CustomerType = (typeof CUSTOMER_TYPES)[number];
+let customerType: CustomerType = 'individual';
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  selected = new Set(form.getAll('accountTypeId').map(String));
+  const postedType = String(form.get('customerType') ?? 'individual');
+  customerType = (CUSTOMER_TYPES as readonly string[]).includes(postedType)
+    ? (postedType as CustomerType)
+    : 'individual';
+  const actor = { userId: principal.userId, email: principal.email };
+
+  if (selected.size === 0) {
+    error = 'Select at least one account type to open.';
+  } else if (memberHolder) {
+    try {
+      // Officer feedback: landed on the signature step, because nothing is
+      // filed yet on a just-started application and that is where the step
+      // defaulting sends an unsigned one. An application opened this second
+      // begins at its first step — the holder's own details, which is what
+      // the officer came to check.
+      const created = await startAdditionalAccountApplication(
+        memberHolder.id,
+        [...selected],
+        actor
+      );
+      return Astro.redirect(`/applications/${created.id}/account?step=1`);
+    } catch (err) {
+      if (err instanceof ApplicationError) {
+        error = err.message;
+      } else {
+        console.error('[applications/new-account/member]', err);
+        error = 'Something went wrong. Please try again.';
+      }
+    }
+  } else if (customerHolder) {
+    try {
+      const created = await startCustomerAdditionalAccountApplication(
+        customerHolder.id,
+        [...selected],
+        actor
+      );
+      // Straight into the new application's own workflow — its applicant
+      // details (the customer's own), the signed form, documents, payment
+      // and the review chain, the same as the member flow.
+      return Astro.redirect(`/applications/${created.id}/account?step=1`);
+    } catch (err) {
+      if (err instanceof ApplicationError) {
+        error = err.message;
+      } else {
+        console.error('[applications/new-account/customer]', err);
+        error = 'Something went wrong. Please try again.';
+      }
+    }
+  } else {
+    try {
+      const created = await startCustomerAccountApplication(
+        [...selected],
+        actor,
+        customerType
+      );
+      // Nothing about the applicant is captured yet — the officer fills that
+      // in on the application itself, the same way a membership
+      // application's capture form works.
+      return Astro.redirect(`/applications/${created.id}/customer?step=1`);
+    } catch (err) {
+      if (err instanceof ApplicationError) {
+        error = err.message;
+      } else {
+        console.error('[applications/new-account]', err);
+        error = 'Something went wrong. Please try again.';
+      }
+    }
+  }
+}
+---
+
+<DashboardLayout
+  title="Open an account · Al Barakah MCSL"
+  heading="Open an account"
+>
+  <div class="mx-auto max-w-5xl space-y-6">
+    <div
+      id="application-nav"
+      class="sticky z-20 -mx-4 flex flex-wrap items-center gap-2 border-b border-neutral-200/80 bg-neutral-200/95 px-4 py-3 backdrop-blur-md sm:mx-0 sm:rounded-xl sm:border-b-0 sm:px-3 sm:py-1.5 dark:border-neutral-800/80 dark:bg-neutral-900/95"
+      style="top: calc(var(--app-header-height, 3.75rem) + var(--app-timeline-height, 0px) + 1.5rem)"
+    >
+      <a
+        href="/applications"
+        class="inline-block text-sm text-neutral-500 underline dark:text-neutral-400"
+      >
+        ← All applications
+      </a>
+    </div>
+
+    {error && (
+      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+        {error}
+      </div>
+    )}
+
+    {accountTypes.length === 0 ? (
+      <p class="text-sm text-neutral-500 dark:text-neutral-400">
+        {holder
+          ? `${holderName} already holds every account type available to open.`
+          : 'No account type is configured for this yet. Add one under Configuration → Account types.'}
+      </p>
+    ) : (
+      <form
+        method="post"
+        class="space-y-6 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
+      >
+        {holder && (
+          <div class="rounded-lg border border-neutral-200 bg-white px-4 py-3 text-sm dark:border-neutral-800 dark:bg-neutral-900">
+            <p class="text-neutral-800 dark:text-neutral-100">
+              Opening another account for{' '}
+              <span class="font-medium">{holderName}</span>
+            </p>
+            <p class="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+              Their own details carry over from their record — pick the account
+              type(s) to open.
+              {customerHolder && ' They stay a non-member.'}
+            </p>
+          </div>
+        )}
+
+        {!holder && (
+          <div>
+            <p class="text-sm text-neutral-500 dark:text-neutral-400">
+              Their own details are filled in on the next screen — the same
+              information a membership application asks for.
+            </p>
+            <label class="mt-2 block text-sm text-neutral-600 dark:text-neutral-300">
+              Applicant type
+              <select
+                name="customerType"
+                data-customer-type
+                class="mt-1 block w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+              >
+                <option
+                  value="individual"
+                  selected={customerType === 'individual'}
+                >
+                  Individual
+                </option>
+                <option value="minor" selected={customerType === 'minor'}>
+                  Minor
+                </option>
+                <option
+                  value="corporate"
+                  selected={customerType === 'corporate'}
+                >
+                  Corporate
+                </option>
+              </select>
+            </label>
+            <p
+              data-minor-note
+              hidden={customerType !== 'minor'}
+              class="mt-2 text-xs text-neutral-500 dark:text-neutral-400"
+            >
+              A parent or guardian's details are asked for too.
+            </p>
+          </div>
+        )}
+
+        <fieldset>
+          <legend class="text-sm text-neutral-600 dark:text-neutral-300">
+            Account type(s) to open
+          </legend>
+          <div class="mt-2 space-y-2">
+            {accountTypes.map(t => (
+              <label class="flex items-center gap-2 text-sm text-neutral-800 dark:text-neutral-100">
+                <input
+                  type="checkbox"
+                  name="accountTypeId"
+                  value={t.id}
+                  checked={selected.has(t.id)}
+                  class="rounded border-neutral-300 dark:border-neutral-600"
+                />
+                {t.name}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+
+        <button
+          type="submit"
+          class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
+        >
+          Open account
+        </button>
+      </form>
+    )}
+  </div>
+</DashboardLayout>
+
+<script>
+  // The guardian note only means something once Minor is actually picked.
+  // (Only present for a brand-new non-member; a known holder has no type
+  // select.)
+  const customerTypeSelect = document.querySelector<HTMLSelectElement>(
+    '[data-customer-type]'
+  );
+  const minorNote = document.querySelector<HTMLElement>('[data-minor-note]');
+  customerTypeSelect?.addEventListener('change', () => {
+    if (minorNote) minorNote.hidden = customerTypeSelect.value !== 'minor';
+  });
+</script>

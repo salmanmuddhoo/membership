@@ -25,3 +25,8 @@ pnpm-debug.log*
 
 # vercel
 .vercel/
+
+# Functional test output (docs/functional-testing.md)
+e2e-report/
+test-results/
+e2e/.auth/

@@ -1,0 +1,188 @@
+---
+// The six-step journey from capture to a decision (S-301 to S-308), drawn as
+// a row of connected, arrow-shaped boxes rather than a list.
+//
+// Deliberately the first thing on both pages that work an application — the
+// capture form and the full application page — so an officer orients before
+// they read anything else: where this one has got to, and what happens next.
+// It is a picture of `applicationTimeline`'s output, not a second copy of the
+// logic that produced it.
+import type { TimelineStep } from '@lib/applications/timeline';
+
+interface Props {
+  steps: TimelineStep[];
+  // Omitted on the capture page (`/applications/new`), which has no
+  // application yet for a step to link to. When present, every step becomes
+  // a real link — including one not yet reached, which lands back on the
+  // furthest step actually unlocked (the same redirect the wizard page
+  // already does for a hand-typed `?step=`), not a dead end.
+  applicationId?: string;
+  // Officer feedback: a customer_account application's wizard lives at
+  // `/applications/<id>/customer`, not `/applications/<id>` — that base
+  // path 302s straight to it (S-614), but drops the `?step=` query doing
+  // so, so a chevron built from the membership URL always landed back on
+  // whatever step the redirect's target defaulted to, not the one clicked.
+  // Defaults to the membership page's own path, so [id].astro need not pass
+  // this at all.
+  basePath?: string;
+}
+
+const { steps, applicationId, basePath } = Astro.props;
+const base =
+  basePath ?? (applicationId ? `/applications/${applicationId}` : '');
+
+const BOX: Record<string, string> = {
+  done: 'bg-mint-300 text-neutral-800 dark:bg-mint-700 dark:text-neutral-100',
+  current:
+    'bg-neutral-800 text-white ring-2 ring-mint-400 dark:bg-neutral-100 dark:text-neutral-900',
+  todo: 'bg-neutral-200 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400',
+};
+
+// A problem overrides the state colour for the label and detail text only —
+// the box itself still reads current/todo/done at a glance, but the words
+// turn red wherever something is actually missing, on top of whichever box
+// colour it lands on.
+const PROBLEM_TEXT = 'text-red-600 dark:text-red-400';
+
+const DETAIL: Record<string, string> = {
+  done: 'text-neutral-700/80 dark:text-neutral-100/70',
+  current: 'text-neutral-200 dark:text-neutral-600',
+  todo: 'text-neutral-500 dark:text-neutral-400',
+};
+
+// The colour and the box carry the state for someone looking at it; this
+// carries the same thing for someone who is not.
+const READS: Record<string, string> = {
+  done: '(done)',
+  current: '(next)',
+  todo: '(to come)',
+};
+
+// Where clicking a step goes. Step 6, Approval Stage, is the Secretary's and
+// the President's, not a page an officer steps through — it lands on the
+// application as a whole, which is everything once it is no longer editable.
+// Print is the one step that is not part of a kind's own wizard base path —
+// print.astro serves every application kind at the same `/applications/<id>/
+// print`, so it reads the raw id rather than `base`.
+const STEP_HREF: Record<string, (base: string, id: string) => string> = {
+  capture: base => `${base}?step=1`,
+  sign: (_base, id) => `/applications/${id}/print`,
+  documents: base => `${base}?step=3`,
+  payment: base => `${base}?step=4`,
+  submit: base => `${base}?step=5`,
+  decision: base => base,
+};
+---
+
+{/* Flat on the bottom, not `rounded-2xl` all round: every page that renders
+     this docks the "Back / All applications" bar directly
+     beneath it (officer feedback — the two used to read as separate cards,
+     one white and one grey, rather than one). That bar supplies the matching
+     bottom half — same background, a border where the two meet instead of a
+     gap — so together they read as a single card. `mb-0` cancels the parent
+     `space-y-6`'s own margin (Tailwind wraps that rule in `:where()`
+     specifically so an ordinary class here can always override it) — a
+     wrapping element that held just this pair once seemed the more obvious
+     way to close the gap, but that shrinks the containing block sticky
+     positioning sticks within to only these two elements' own combined
+     height, so both stopped sticking a moment after the page started
+     scrolling instead of for the whole page. */}
+<section
+  id="application-timeline"
+  class="sticky z-30 -mx-4 mb-0 rounded-t-2xl border border-neutral-200 bg-neutral-100 p-4 sm:mx-0 sm:p-6 dark:border-neutral-800 dark:bg-neutral-950"
+  style="top: var(--app-header-height, 3.75rem)"
+  aria-label="Application progress"
+>
+  <ol class="flex flex-wrap items-stretch gap-3 sm:flex-nowrap">
+    {steps.map(step => {
+      const href = applicationId
+        ? STEP_HREF[step.key]?.(base, applicationId)
+        : undefined;
+      const Tag = href ? 'a' : 'div';
+      return (
+        <li class="flex min-w-[8rem] flex-1 items-stretch sm:min-w-0">
+          <Tag
+            href={href}
+            class:list={[
+              'step-arrow flex w-full flex-col justify-center py-2 pr-6 pl-6 text-center transition',
+              BOX[step.state],
+              href && 'cursor-pointer hover:brightness-95',
+            ]}
+          >
+            <span
+              class:list={[
+                'block text-sm leading-tight font-semibold',
+                step.problem && PROBLEM_TEXT,
+              ]}
+            >
+              {step.label}
+            </span>
+            {step.detail && (
+              <span
+                class:list={[
+                  'mt-0.5 block text-[0.7rem] leading-tight',
+                  step.problem ? PROBLEM_TEXT : DETAIL[step.state],
+                ]}
+              >
+                {step.detail}
+              </span>
+            )}
+            <span class="sr-only">{READS[step.state]}</span>
+          </Tag>
+        </li>
+      );
+    })}
+  </ol>
+</section>
+
+<style>
+  /* A full chevron, not a rectangle with a point tacked onto one side: the
+     right edge comes to a point and the left edge is notched to match, so
+     the box's own outline is the arrow rather than a separate shape drawn
+     over a square back. Applied to every step alike, including the first
+     and last — it is what makes the row read as a sequence rather than
+     seven unrelated tiles. */
+  .step-arrow {
+    clip-path: polygon(
+      0 0,
+      calc(100% - 14px) 0,
+      100% 50%,
+      calc(100% - 14px) 100%,
+      0 100%,
+      14px 50%
+    );
+  }
+</style>
+
+<script>
+  // Sticks below the app header rather than under it — the header is
+  // `sticky top-0` with a height this component cannot know in advance (it
+  // wraps differently at different widths), so it is measured once the page
+  // has laid out and written to a custom property this section's `top` reads.
+  // A resize can change that wrap, so it is re-measured then too.
+  //
+  // This section's own height is published the same way, for whatever sticks
+  // below it in turn (the id page's "All applications" nav row) — that
+  // wraps differently by width too, and neither side should have to guess
+  // the other's height.
+  const header = document.getElementById('app-header');
+  const timeline = document.getElementById('application-timeline');
+  if (header || timeline) {
+    const sync = () => {
+      if (header) {
+        document.documentElement.style.setProperty(
+          '--app-header-height',
+          `${header.offsetHeight}px`
+        );
+      }
+      if (timeline) {
+        document.documentElement.style.setProperty(
+          '--app-timeline-height',
+          `${timeline.offsetHeight}px`
+        );
+      }
+    };
+    sync();
+    window.addEventListener('resize', sync);
+  }
+</script>

@@ -1,16 +1,27 @@
 ---
 interface Props {
   description?: string;
+  viewport?: string;
 }
 
-const { description = 'Al Barakah MCSL internal operations platform.' } =
-  Astro.props;
+const {
+  description = 'Al Barakah MCSL internal operations platform.',
+  viewport = 'width=device-width, initial-scale=1.0',
+} = Astro.props;
 ---
 
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="viewport" content={viewport} />
 <meta name="description" content={description} />
 {/* Internal application — keep out of search engines. */}
 <meta name="robots" content="noindex, nofollow" />
-<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<link rel="icon" type="image/png" href="/favicon.png" />
+<link rel="apple-touch-icon" href="/favicon.png" />
 <meta name="theme-color" content="#6ee7b7" />
+{/* Installable on a phone — an icon on the home screen and a browser-free
+     window, the same "app" the officer already opens all day rather than a
+     page they have to go find in a pile of browser tabs. */}
+<link rel="manifest" href="/manifest.webmanifest" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-title" content="Al Barakah" />

@@ -1,0 +1,1697 @@
+// Filing documents, and knowing whether the file is complete
+// (M4, S-405 to S-410).
+//
+// SharePoint holds the files; this module is the system of record for what a
+// document IS — which requirement it satisfies, who filed it, whether anyone
+// has checked it (FRD 8.3). The two are kept apart on purpose: a file moved in
+// SharePoint must not cost us the knowledge that the Secretary verified it.
+//
+// The checklist itself is not defined here. It comes from the M2 configuration
+// (S-208), so what an Individual application requires is a matter of
+// configuration, and this module only reports what has and has not been filed
+// against it.
+import { isEditableStatus } from '../applications/capture';
+import type { PoolClient } from 'pg';
+import { recordAudit } from '../access/audit';
+import { checkSegregation } from '../admin/segregation';
+import { isProductionEnvironment } from '../config';
+import {
+  checklistForMembershipType,
+  type ChecklistItem,
+  type FieldSubject,
+} from '../config/reference';
+import { query, withTransaction } from '../db/pool';
+import {
+  deleteItemByPath,
+  ensureFolder,
+  getItemByPath,
+  type GraphConfig,
+} from './graph';
+import {
+  createUploadTicket,
+  sanitiseFileName,
+  validateUploadRequest,
+  type UploadTicket,
+} from './upload';
+
+export class DocumentError extends Error {
+  constructor(
+    message: string,
+    readonly reason:
+      'not_found' | 'invalid' | 'conflict' | 'refused' = 'invalid'
+  ) {
+    super(message);
+    this.name = 'DocumentError';
+  }
+}
+
+export interface Actor {
+  userId: string;
+  email: string;
+}
+
+export const ENTITY_TYPE = 'document';
+// The segregation rule seeded in migration 0013 keys on these. Named once, so
+// renaming one cannot silently disable the control.
+export const ACTION_FILED = 'document.filed';
+export const ACTION_VERIFIED = 'document.verified';
+
+// FRD 8.4's states, plus Missing — which is the absence of a document rather
+// than a stored value, so it can never disagree with what is actually there.
+export type ChecklistState =
+  'missing' | 'uploaded' | 'under_review' | 'verified' | 'rejected' | 'expired';
+
+// S-603, FRD 5.4. The printed form always carries these four signature
+// blocks — print.astro — regardless of membership type, so this is a fixed,
+// universal check rather than something configuration decides. Shared here
+// so the print page and the verification gate below can never disagree
+// about what "all four" means.
+export const SIGNATURES = [
+  'Applicant',
+  'Nominee',
+  'Witness 1',
+  'Witness 2',
+] as const;
+
+export interface ChecklistEntry {
+  documentTypeId: string;
+  documentCode: string;
+  documentName: string;
+  subject: FieldSubject;
+  requirement: 'required' | 'optional';
+  tracksExpiry: boolean;
+  state: ChecklistState;
+  documentId: string | null;
+  fileName: string | null;
+  webPath: string | null;
+  uploadedByName: string | null;
+  uploadedAt: Date | null;
+  verifiedByName: string | null;
+  rejectionReason: string | null;
+  expiresAt: Date | null;
+  versionCount: number;
+  // Only meaningful for documentCode === 'signed_form' (S-603): which of
+  // SIGNATURES the Secretary has confirmed are present on the scan. Empty
+  // for every other document type.
+  confirmedSignatures: string[];
+}
+
+/**
+ * The folder a member's documents live in (FRD 8.1).
+ *
+ * The name carries the Member ID first so the folder sorts and searches by the
+ * identifier that never changes, with the name after it for a human scanning
+ * the library.
+ *
+ * Officer feedback: the test deployment and the production one were writing
+ * into this exact same tree — a preview upload sat right next to a real
+ * member's identity documents, with nothing to tell them apart. Led by the
+ * same PUBLIC_APP_ENV signal the TEST badge already reads (isProductionEnvironment,
+ * unset treated as production the same way it is everywhere else that
+ * signal gates something), so the two never share a root, and each side
+ * creates its own on the next document filed there — nothing to provision
+ * by hand.
+ */
+export const ROOT_FOLDER = isProductionEnvironment()
+  ? 'Production/Al Barakah MCSL – Member Documents'
+  : 'Test/Al Barakah MCSL – Member Documents';
+
+export const MEMBER_SUBFOLDERS = [
+  '01 – Membership',
+  '02 – Accounts',
+  '03 – Financing',
+  '04 – Other',
+] as const;
+
+// Strips the characters SharePoint refuses in a folder name, so a name that
+// contains one never produces a broken path. Shared by every folder name
+// built from something a person typed, rather than from a code the system
+// assigned.
+function sanitiseFolderName(name: string): string {
+  return name
+    .trim()
+    .replace(/[\\/:*?"<>|]/g, '')
+    .trim();
+}
+
+export function memberFolderName(memberNo: string, name: string): string {
+  const cleaned = sanitiseFolderName(name);
+  return cleaned ? `${memberNo} – ${cleaned}` : memberNo;
+}
+
+/**
+ * The folder segment naming whoever an application's own folder belongs to.
+ *
+ * Officer feedback: a flat Applications/<reference> folder gave no way to
+ * recognise whose documents were inside without opening it. Surname leads,
+ * first name after — the order asked for, and the reverse of
+ * memberFolderName's own (identifier, then name) on purpose: there is no
+ * member number yet at this stage to lead with, so the reference plays that
+ * role instead, trailing rather than leading, the way a name is actually
+ * said. Two applicants can share a name; a reference cannot collide, so it
+ * always carries the folder even when the name does not — the same
+ * reasoning as memberFolderName, applied in the other order.
+ */
+function applicationFolderName(
+  reference: string,
+  surname: string,
+  firstName: string
+): string {
+  const cleaned = sanitiseFolderName(`${surname} ${firstName}`);
+  return cleaned ? `${cleaned} – ${reference}` : reference;
+}
+
+/**
+ * Where a document is filed before the applicant is a member.
+ *
+ * Applications get their own area rather than a member folder, because most of
+ * them are not members yet and some never will be. On approval the documents
+ * are already filed; M4 does not move them, and the metadata points at the
+ * path either way.
+ *
+ * Officer feedback: this reorganised from a flat Applications/<reference> to
+ * Applications/<name> — going forward only. A document already filed under
+ * the old path is not moved or renamed; only what gets filed from here on
+ * uses the new one. An application whose documents straddle the change (one
+ * filed before, another filed after) ends up with its documents split across
+ * both folders until it is closed out — the accepted cost of not touching
+ * what is already in the drive.
+ */
+export function applicationFolderPath(
+  reference: string,
+  surname = '',
+  firstName = ''
+): string {
+  return `${ROOT_FOLDER}/Applications/${applicationFolderName(reference, surname, firstName)}`;
+}
+
+export function memberFolderPath(memberNo: string, name: string): string {
+  return `${ROOT_FOLDER}/${memberFolderName(memberNo, name)}`;
+}
+
+/**
+ * Create a folder path, one segment at a time, skipping what exists (S-405).
+ *
+ * Recorded in sharepoint_folder so a path created once is not asked about
+ * again — the common case is a second document for the same application, and
+ * that should not cost four Graph round trips.
+ */
+export async function ensureFolderPath(
+  path: string,
+  config?: GraphConfig
+): Promise<void> {
+  const known = await query('select 1 from sharepoint_folder where path = $1', [
+    path,
+  ]);
+  if (known.rowCount) return;
+
+  const segments = path.split('/').filter(Boolean);
+  let parent = '';
+  for (const segment of segments) {
+    await ensureFolder(parent, segment, config);
+    parent = parent ? `${parent}/${segment}` : segment;
+  }
+
+  // on conflict: two requests can reach here at once for the same application,
+  // and both creating the folder is fine — both recording it must be too.
+  await query(
+    'insert into sharepoint_folder (path) values ($1) on conflict (path) do nothing',
+    [path]
+  );
+}
+
+interface OwnerRow {
+  application_id: string | null;
+  member_id: string | null;
+  application_status: string | null;
+  // The application whose checklist was frozen at capture (officer
+  // feedback: a later change to document_checklist_item must not reach an
+  // application already in flight — see application_checklist_item,
+  // migration 0041). For an application this is its own id; for a member
+  // it is the application they came from, so a member's own documents
+  // still ask for exactly what their application asked for, not whatever
+  // configuration says today. Null only for a legacy member imported
+  // without an application (M7) — membership_type_code below is what
+  // checklistFor falls back to reading live for those, since there was
+  // never an application to have frozen one against.
+  checklist_application_id: string | null;
+  membership_type_code: string | null;
+  folder_path: string;
+  // The application's own reference, or the member's number once one
+  // exists (S-308: the application's reference becomes that number on
+  // approval, so the two are never a mismatched pair to choose between).
+  // Used to name a filed document after what it is and whose it is,
+  // rather than whatever name a camera or a phone gave the file.
+  reference: string;
+}
+
+async function resolveOwner(
+  applicationId: string | null,
+  memberId: string | null
+): Promise<OwnerRow> {
+  if (applicationId) {
+    // Officer feedback: a new application for someone who already had one
+    // (an existing member opening another account, S-613; a non-member
+    // customer applying to become a member, S-614) used to get its own
+    // SharePoint folder, named after its own reference — several separate
+    // folders for the one person. folder_application_id (migration 0042)
+    // redirects those to whichever application's own folder they actually
+    // belong in, set once at capture and always the ultimate root, so this
+    // join is always one hop.
+    const result = await query<{
+      reference: string;
+      status: string;
+      folder_reference: string;
+      folder_surname: string | null;
+      folder_first_name: string | null;
+    }>(
+      `select a.reference, a.status,
+              coalesce(root.reference, a.reference) as folder_reference,
+              p.values->>'surname' as folder_surname,
+              p.values->>'name' as folder_first_name
+         from membership_application a
+         left join membership_application root
+           on root.id = a.folder_application_id
+         left join application_party p
+           on p.application_id = coalesce(root.id, a.id)
+          and p.subject = 'applicant' and p.ordinal = 1
+        where a.id = $1`,
+      [applicationId]
+    );
+    if (result.rowCount === 0) {
+      throw new DocumentError(
+        'That application no longer exists.',
+        'not_found'
+      );
+    }
+    const row = result.rows[0];
+
+    return {
+      application_id: applicationId,
+      member_id: null,
+      application_status: row.status,
+      checklist_application_id: applicationId,
+      membership_type_code: null,
+      folder_path: applicationFolderPath(
+        row.folder_reference,
+        row.folder_surname ?? '',
+        row.folder_first_name ?? ''
+      ),
+      reference: row.reference,
+    };
+  }
+
+  if (!memberId) {
+    throw new DocumentError(
+      'A document must belong to an application or a member.'
+    );
+  }
+
+  const result = await query<{
+    member_no: string;
+    application_id: string | null;
+    membership_type_code: string;
+    name: string;
+  }>(
+    `select m.member_no, m.application_id, t.code as membership_type_code,
+            trim(coalesce(p.values->>'name', '') || ' '
+                 || coalesce(p.values->>'surname', '')) as name
+       from member m
+       join membership_type t on t.id = m.membership_type_id
+       left join application_party p
+         on p.application_id = m.application_id
+        and p.subject = 'applicant' and p.ordinal = 1
+      where m.id = $1`,
+    [memberId]
+  );
+  if (result.rowCount === 0) {
+    throw new DocumentError('That member no longer exists.', 'not_found');
+  }
+
+  return {
+    application_id: null,
+    member_id: memberId,
+    application_status: null,
+    checklist_application_id: result.rows[0].application_id,
+    membership_type_code: result.rows[0].membership_type_code,
+    folder_path: memberFolderPath(
+      result.rows[0].member_no,
+      result.rows[0].name ?? ''
+    ),
+    reference: result.rows[0].member_no,
+  };
+}
+
+// The checklist an application actually captured (application_checklist_item,
+// migration 0041) — a copy taken at the moment the application was created,
+// not a live read of document_checklist_item. Grouped by subject the same
+// way checklistForMembershipType and its siblings already are, so
+// checklistFor's own merge loop below reads either source identically.
+// `is_active` is deliberately not checked here the way the live readers
+// check it: a document type deactivated after this application captured its
+// checklist is not "no longer required" for THIS application — that
+// question was already answered at capture time, once, and stays answered.
+async function readFrozenChecklist(
+  applicationId: string
+): Promise<Map<FieldSubject, ChecklistItem[]>> {
+  const result = await query<{
+    id: string;
+    document_type_id: string;
+    document_code: string;
+    document_name: string;
+    tracks_expiry: boolean;
+    subject: FieldSubject;
+    requirement: 'required' | 'optional';
+    sort_order: number;
+  }>(
+    `select i.id, i.document_type_id, d.code as document_code,
+            d.name as document_name, d.tracks_expiry,
+            i.subject, i.requirement, i.sort_order
+       from application_checklist_item i
+       join document_type d on d.id = i.document_type_id
+      where i.application_id = $1
+      order by i.subject, i.sort_order`,
+    [applicationId]
+  );
+
+  const bySubject = new Map<FieldSubject, ChecklistItem[]>();
+  for (const r of result.rows) {
+    const list = bySubject.get(r.subject) ?? [];
+    list.push({
+      id: r.id,
+      documentTypeId: r.document_type_id,
+      documentCode: r.document_code,
+      documentName: r.document_name,
+      tracksExpiry: r.tracks_expiry,
+      subject: r.subject,
+      requirement: r.requirement,
+      sortOrder: r.sort_order,
+    });
+    bySubject.set(r.subject, list);
+  }
+  return bySubject;
+}
+
+/**
+ * S-407 · The checklist, as the Secretary reads it.
+ *
+ * Every item the configuration required when this application (or the one
+ * the member came from) was captured, with what has been filed against it.
+ * An item with no committed document reads Missing — computed, so it cannot
+ * drift from what is actually in the drive.
+ */
+export async function checklistFor(options: {
+  applicationId?: string;
+  memberId?: string;
+}): Promise<ChecklistEntry[]> {
+  const owner = await resolveOwner(
+    options.applicationId ?? null,
+    options.memberId ?? null
+  );
+
+  // Neither depends on the other's result, only on `owner` — one round trip
+  // rather than two in sequence.
+  const [configured, filed] = await Promise.all([
+    owner.checklist_application_id
+      ? readFrozenChecklist(owner.checklist_application_id)
+      : checklistForMembershipType(owner.membership_type_code!),
+    query<{
+      id: string;
+      document_type_id: string;
+      subject: FieldSubject;
+      state: ChecklistState;
+      rejection_reason: string | null;
+      expires_at: Date | null;
+      file_name: string | null;
+      sharepoint_path: string | null;
+      uploaded_by_name: string | null;
+      committed_at: Date | null;
+      verified_by_name: string | null;
+      version_count: string;
+      confirmed_signatures: string[];
+    }>(
+      `select d.id, d.document_type_id, d.subject, d.state, d.rejection_reason,
+              d.expires_at, d.confirmed_signatures,
+              v.file_name, v.sharepoint_path, v.committed_at,
+              up.display_name as uploaded_by_name,
+              vp.display_name as verified_by_name,
+              (select count(*) from document_version dv
+                where dv.document_id = d.id and dv.state = 'committed')
+                as version_count
+         from document d
+         left join document_version v
+           on v.document_id = d.id
+          and v.state = 'committed' and v.superseded_at is null
+         left join app_user up on up.id = v.uploaded_by
+         left join app_user vp on vp.id = d.verified_by
+        where ($1::uuid is not null and d.application_id = $1::uuid)
+           or ($2::uuid is not null and d.member_id = $2::uuid)`,
+      [owner.application_id, owner.member_id]
+    ),
+  ]);
+
+  const byKey = new Map(
+    filed.rows.map(r => [`${r.document_type_id}:${r.subject}`, r])
+  );
+
+  const entries: ChecklistEntry[] = [];
+  for (const [subject, items] of configured) {
+    for (const item of items) {
+      const found = byKey.get(`${item.documentTypeId}:${subject}`);
+      entries.push({
+        documentTypeId: item.documentTypeId,
+        documentCode: item.documentCode,
+        documentName: item.documentName,
+        subject,
+        requirement: item.requirement,
+        tracksExpiry: item.tracksExpiry,
+        // A document row with no committed version is an upload that never
+        // finished, and reads Missing (S-408).
+        state: found
+          ? found.committed_at
+            ? found.state
+            : 'missing'
+          : 'missing',
+        documentId: found?.id ?? null,
+        fileName: found?.file_name ?? null,
+        webPath: found?.sharepoint_path ?? null,
+        uploadedByName: found?.uploaded_by_name ?? null,
+        uploadedAt: found?.committed_at ?? null,
+        verifiedByName: found?.verified_by_name ?? null,
+        rejectionReason: found?.rejection_reason ?? null,
+        expiresAt: found?.expires_at ?? null,
+        versionCount: Number(found?.version_count ?? 0),
+        confirmedSignatures: found?.confirmed_signatures ?? [],
+      });
+    }
+  }
+
+  return entries;
+}
+
+// Officer feedback: a member's own page had nowhere to see what had been
+// filed for them — every document lived only on whichever application filed
+// it. A member can have more than one: the founding membership application
+// (S-308) files the bulk of it, and each additional_account application
+// approved since (S-612) carries its own checklist for whatever it opened —
+// mirrors how transactionsForAccount (payments.ts) already traces an
+// account back to the application that opened it, the same reason.
+//
+// Grouped by application rather than flattened, so two applications that
+// both happened to require, say, a utility bill are never shown as if one
+// had two. Draft applications are excluded even though existing_member_id
+// is set as soon as one starts: a draft is the capturing officer's own work
+// in progress (S-614's own privacy rule), not yet something the member's own
+// page should surface to every other officer who can view documents.
+export interface MemberDocumentGroup {
+  applicationId: string;
+  applicationReference: string;
+  entries: ChecklistEntry[];
+}
+
+export async function documentsForMember(
+  memberId: string,
+  foundingApplicationId: string | null
+): Promise<MemberDocumentGroup[]> {
+  const additional = await query<{ id: string; reference: string }>(
+    `select id, reference from membership_application
+      where existing_member_id = $1 and application_kind = 'additional_account'
+        and status <> 'draft'
+      order by created_at`,
+    [memberId]
+  );
+
+  const applications: { id: string; reference: string }[] = [];
+  if (foundingApplicationId) {
+    const founding = await query<{ reference: string }>(
+      `select reference from membership_application where id = $1`,
+      [foundingApplicationId]
+    );
+    if (founding.rowCount) {
+      applications.push({
+        id: foundingApplicationId,
+        reference: founding.rows[0].reference,
+      });
+    }
+  }
+  applications.push(...additional.rows);
+
+  const groups = await Promise.all(
+    applications.map(async application => ({
+      applicationId: application.id,
+      applicationReference: application.reference,
+      // Only what has actually been filed — the checklist's Missing rows
+      // are what the application page itself is for, not this summary.
+      entries: (await checklistFor({ applicationId: application.id })).filter(
+        entry => entry.uploadedAt !== null
+      ),
+    }))
+  );
+
+  return groups.filter(g => g.entries.length > 0);
+}
+
+/**
+ * The live filing of one document type/subject against an application, for a
+ * document that is NOT part of any checklist — S-1003's retention job has
+ * its own reason to bypass the checklist machinery, and the on-screen
+ * Source of Fund form (payment.cash_maximum's own migration, 0062) is
+ * another: it is filed from the Payments step, not Documents, and asking
+ * `checklistFor` for it would mean adding it to a checklist an applicant's
+ * KYC pack was never meant to carry.
+ */
+export async function filedDocumentFor(
+  applicationId: string,
+  documentTypeId: string,
+  subject: FieldSubject
+): Promise<{ documentId: string; fileName: string } | null> {
+  const result = await query<{ document_id: string; file_name: string }>(
+    `select d.id as document_id, v.file_name
+       from document d
+       join document_version v
+         on v.document_id = d.id
+        and v.state = 'committed' and v.superseded_at is null
+      where d.application_id = $1
+        and d.document_type_id = $2
+        and d.subject = $3
+      limit 1`,
+    [applicationId, documentTypeId, subject]
+  );
+  const row = result.rows[0];
+  return row ? { documentId: row.document_id, fileName: row.file_name } : null;
+}
+
+/** Whether every required item is Verified — and nothing else may assert it. */
+export function isDocumentComplete(entries: ChecklistEntry[]): boolean {
+  return entries
+    .filter(e => e.requirement === 'required')
+    .every(e => e.state === 'verified');
+}
+
+/**
+ * Carry an existing member's documents onto a new additional-account
+ * application (officer feedback).
+ *
+ * A member opening a further account has already given their identity card,
+ * proof of address and the like when they joined — asking for them again is
+ * the double filing officers complained about. So for every item this new
+ * application's checklist requires that the member already has on file, the
+ * file itself is reused in place: a new `document` row is created against the
+ * new application that points at the very same SharePoint file its source
+ * version holds (no re-upload, no second copy in the drive). The person's
+ * documents behave as one store shared across their applications.
+ *
+ * Two deliberate departures from a plain copy, matching what was asked for:
+ *
+ *  - The signed application form is NOT carried. It is specific to the
+ *    account opening it was signed for, so a fresh one is filed for this
+ *    application exactly as for any other (by document_type.code).
+ *  - A carried document lands `under_review`, never `verified`, whatever its
+ *    source's verdict was — this account opening's reviewer checks it again
+ *    here. The officer can replace it (a renewed card) or remove it the same
+ *    way as any freshly filed document.
+ *
+ * Because the file is shared rather than duplicated, removing a carried
+ * document must not delete the underlying file out from under the source
+ * application — see removeFiledDocument's reference check.
+ *
+ * Runs inside the caller's capture transaction, so the application and its
+ * documents are created as one unit. Sourced from the member's store and
+ * every application already tied to them (founding and any earlier
+ * additional account), taking the most recently filed file per item so a
+ * card renewed on a later application is the one that carries.
+ */
+export async function carryForwardMemberDocuments(
+  client: PoolClient,
+  input: {
+    applicationId: string;
+    // The member's own document store, if the holder is a member; null for a
+    // customer, who has no member-owned documents.
+    memberId: string | null;
+    // Every other application belonging to the holder — a member's founding
+    // application plus any earlier additional account, or a customer's
+    // originating application plus the same. The applications this new one
+    // carries files from.
+    sourceApplicationIds: string[];
+    actor: Actor;
+  }
+): Promise<{ carried: number }> {
+  const sources = await client.query<{
+    document_type_id: string;
+    subject: FieldSubject;
+    expires_at: Date | null;
+    file_name: string;
+    content_type: string;
+    size_bytes: string;
+    sharepoint_path: string;
+    sharepoint_item_id: string | null;
+    checksum_sha256: string | null;
+  }>(
+    // One row per checklist item this application asks for that the holder
+    // already has a live file for, newest filing winning (distinct on +
+    // committed_at desc). signed_form is excluded here, not carried and
+    // filed fresh. The source is the member's own store (members only) plus
+    // every application already tied to the holder — never this new one.
+    `select distinct on (ci.document_type_id, ci.subject)
+            ci.document_type_id, ci.subject, d.expires_at,
+            v.file_name, v.content_type, v.size_bytes,
+            v.sharepoint_path, v.sharepoint_item_id, v.checksum_sha256
+       from application_checklist_item ci
+       join document_type dt on dt.id = ci.document_type_id
+       join document d
+         on d.document_type_id = ci.document_type_id
+        and d.subject = ci.subject
+        and d.id is not null
+        and (
+              ($2::uuid is not null and d.member_id = $2::uuid)
+              or d.application_id = any($3::uuid[])
+            )
+       join document_version v
+         on v.document_id = d.id
+        and v.state = 'committed' and v.superseded_at is null
+      where ci.application_id = $1::uuid
+        and dt.code <> 'signed_form'
+      order by ci.document_type_id, ci.subject, v.committed_at desc`,
+    [input.applicationId, input.memberId, input.sourceApplicationIds]
+  );
+
+  for (const source of sources.rows) {
+    const document = await client.query<{ id: string }>(
+      `insert into document
+         (document_type_id, subject, application_id, member_id, state, expires_at)
+       values ($1, $2, $3, null, 'under_review', $4) returning id`,
+      [
+        source.document_type_id,
+        source.subject,
+        input.applicationId,
+        source.expires_at,
+      ]
+    );
+    const documentId = document.rows[0].id;
+
+    // version_no 1, committed straight away: the bytes are already in
+    // SharePoint at this path — they were committed once, for the source
+    // application — so there is nothing to confirm and nothing to re-upload.
+    await client.query(
+      `insert into document_version
+         (document_id, version_no, state, file_name, content_type, size_bytes,
+          sharepoint_item_id, sharepoint_path, checksum_sha256, uploaded_by,
+          committed_at)
+       values ($1, 1, 'committed', $2, $3, $4, $5, $6, $7, $8, now())`,
+      [
+        documentId,
+        source.file_name,
+        source.content_type,
+        source.size_bytes,
+        source.sharepoint_item_id,
+        source.sharepoint_path,
+        source.checksum_sha256,
+        input.actor.userId,
+      ]
+    );
+
+    // Written as `document.filed` by the capturing officer so segregation of
+    // duties still bars them from verifying it here (S-203) — carrying a
+    // document onto this application is the act of filing it here, even
+    // though no new bytes were sent.
+    await recordAudit(
+      {
+        actorUserId: input.actor.userId,
+        actorDescription: input.actor.email,
+        action: ACTION_FILED,
+        entityType: ENTITY_TYPE,
+        entityId: documentId,
+        newValue: {
+          fileName: source.file_name,
+          sharePointItemId: source.sharepoint_item_id,
+          sizeBytes: Number(source.size_bytes),
+          carriedForward: true,
+        },
+      },
+      client
+    );
+  }
+
+  return { carried: sources.rows.length };
+}
+
+export interface BeginUploadResult {
+  documentId: string;
+  versionId: string;
+  ticket: UploadTicket;
+}
+
+/**
+ * Phase one: authorise an upload and record the intent (S-403, S-404, S-408).
+ *
+ * Nothing is on the checklist yet. The version is `pending`, so until commit
+ * confirms the bytes are in SharePoint the item still reads Missing — which is
+ * exactly what should happen if the tablet loses signal halfway.
+ */
+export async function beginUpload(
+  input: {
+    applicationId?: string;
+    memberId?: string;
+    documentTypeId: string;
+    subject: FieldSubject;
+    fileName: string;
+    contentType: string;
+    sizeBytes: number;
+    expiresAt?: Date | null;
+  },
+  actor: Actor,
+  config?: GraphConfig
+): Promise<BeginUploadResult> {
+  const owner = await resolveOwner(
+    input.applicationId ?? null,
+    input.memberId ?? null
+  );
+
+  // Officer feedback: once an application has left the originating officer's
+  // hands (status 'new' and beyond), nothing about it — the signature
+  // included — is editable, and a document is not an exception. Filing a new
+  // version is how the signed form gets edited, so it needs the same guard
+  // `removeFiledDocument` already has, applied earlier: before a folder is
+  // touched or a ticket is issued, not just at commit.
+  if (owner.application_status && !isEditableStatus(owner.application_status)) {
+    throw new DocumentError(
+      'This application has been submitted. Its documents can only be ' +
+        'replaced if it is returned for correction.',
+      'conflict'
+    );
+  }
+
+  const type = await query<{
+    code: string;
+    name: string;
+    tracks_expiry: boolean;
+  }>(
+    'select code, name, tracks_expiry from document_type where id = $1 and is_active',
+    [input.documentTypeId]
+  );
+  if (type.rowCount === 0) {
+    throw new DocumentError(
+      'That document type is not available.',
+      'not_found'
+    );
+  }
+  if (type.rows[0].tracks_expiry && !input.expiresAt) {
+    throw new DocumentError(
+      `${type.rows[0].code} expires, so an expiry date is required. Without ` +
+        'one nothing can tell you when it lapses.'
+    );
+  }
+
+  // Checked before anything is created. createUploadTicket checks again — it
+  // is the function that talks to Graph and must not trust its caller — but
+  // doing it here as well means a file of the wrong type or size is refused
+  // without first creating a SharePoint folder for an upload that is never
+  // going to happen, and without the officer waiting on a round trip to be
+  // told something we already knew.
+  validateUploadRequest({
+    folderPath: owner.folder_path,
+    fileName: input.fileName,
+    contentType: input.contentType,
+    sizeBytes: input.sizeBytes,
+  });
+
+  // Created before the ticket, so a folder failure refuses the upload rather
+  // than producing a ticket that points nowhere.
+  await ensureFolderPath(owner.folder_path, config);
+
+  const { documentId, versionId, itemName } = await withTransaction(
+    async client => {
+      const existing = await client.query<{ id: string }>(
+        `select id from document
+          where document_type_id = $1 and subject = $2
+            and (($3::uuid is not null and application_id = $3::uuid)
+              or ($4::uuid is not null and member_id = $4::uuid))`,
+        [
+          input.documentTypeId,
+          input.subject,
+          owner.application_id,
+          owner.member_id,
+        ]
+      );
+
+      let id: string;
+      if (existing.rowCount) {
+        // Deliberately unchanged here. Re-filing over a verified or rejected
+        // document must not alter it until the replacement actually arrives:
+        // an upload that fails would otherwise downgrade a perfectly good
+        // filed document to "uploaded" and discard the Secretary's verdict on
+        // a file that is still the live one. The reset happens at commit.
+        id = existing.rows[0].id;
+      } else {
+        const created = await client.query<{ id: string }>(
+          `insert into document
+             (document_type_id, subject, application_id, member_id, expires_at)
+           values ($1, $2, $3, $4, $5) returning id`,
+          [
+            input.documentTypeId,
+            input.subject,
+            owner.application_id,
+            owner.member_id,
+            input.expiresAt ?? null,
+          ]
+        );
+        id = created.rows[0].id;
+      }
+
+      // The stored name carries the version, so two versions never collide in
+      // the drive and a human can see which is which.
+      const nextVersion = await client.query<{ next: number }>(
+        `select coalesce(max(version_no), 0) + 1 as next
+           from document_version where document_id = $1`,
+        [id]
+      );
+      const versionNo = nextVersion.rows[0].next;
+
+      // Officer feedback: a filed document should be named for what it is
+      // and whose it is — "Utility Bill - AB0001" — not whatever a phone or
+      // a scanner called the file before it was chosen for this checklist
+      // item. The original name's own extension is kept (it is what tells
+      // SharePoint and every OS how to open the file); everything else
+      // about the original name is discarded.
+      const extensionMatch = /\.[^./\\]+$/.exec(input.fileName);
+      const extension = extensionMatch ? extensionMatch[0] : '';
+      const base = sanitiseFileName(
+        `${type.rows[0].name} - ${owner.reference}`
+      );
+      const name =
+        (versionNo === 1 ? base : `${base} v${versionNo}`) + extension;
+
+      const version = await client.query<{ id: string }>(
+        `insert into document_version
+           (document_id, version_no, file_name, content_type, size_bytes,
+            sharepoint_path, intended_expires_at, uploaded_by)
+         values ($1, $2, $3, $4, $5, $6, $7, $8) returning id`,
+        [
+          id,
+          versionNo,
+          name,
+          input.contentType,
+          input.sizeBytes,
+          `${owner.folder_path}/${name}`,
+          input.expiresAt ?? null,
+          actor.userId,
+        ]
+      );
+
+      return { documentId: id, versionId: version.rows[0].id, itemName: name };
+    }
+  );
+
+  const ticket = await createUploadTicket(
+    {
+      folderPath: owner.folder_path,
+      fileName: itemName,
+      contentType: input.contentType,
+      sizeBytes: input.sizeBytes,
+    },
+    config
+  );
+
+  return { documentId, versionId, ticket };
+}
+
+/**
+ * Phase two: confirm with SharePoint, not with the browser (S-408).
+ *
+ * The bytes never pass through this application, so the client's word that an
+ * upload finished is not evidence. Graph is asked whether the file is there
+ * and how big it is; only then does the version commit and the checklist item
+ * stop reading Missing.
+ */
+// Officer feedback: right after a chunked upload session finishes, a
+// path-based lookup against Graph occasionally still 404s or reports a size
+// short of the whole file for a moment — SharePoint's own indexing catching
+// up with bytes that are already durably written, not evidence the upload
+// actually failed. Retried a few times, briefly, before commitUpload
+// concludes it did. Overridable so a test exercising the genuine-failure
+// path is not stuck waiting through it for nothing.
+const COMMIT_UPLOAD_RETRY_DELAYS_MS = [250, 500, 1000];
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+export async function commitUpload(
+  versionId: string,
+  actor: Actor,
+  options: { checksumSha256?: string } = {},
+  config?: GraphConfig,
+  retryDelaysMs: number[] = COMMIT_UPLOAD_RETRY_DELAYS_MS
+): Promise<{ state: 'committed' }> {
+  const version = await query<{
+    id: string;
+    document_id: string;
+    state: string;
+    sharepoint_path: string;
+    size_bytes: string;
+    file_name: string;
+    intended_expires_at: Date | null;
+    uploaded_by: string;
+    application_status: string | null;
+  }>(
+    `select v.id, v.document_id, v.state, v.sharepoint_path, v.size_bytes,
+            v.file_name, v.intended_expires_at, v.uploaded_by,
+            a.status as application_status
+       from document_version v
+       join document d on d.id = v.document_id
+       left join membership_application a on a.id = d.application_id
+      where v.id = $1`,
+    [versionId]
+  );
+  if (version.rowCount === 0) {
+    throw new DocumentError('That upload no longer exists.', 'not_found');
+  }
+  const row = version.rows[0];
+  if (row.state === 'committed') return { state: 'committed' };
+
+  // Same guard as begin-upload, checked again here: the application could
+  // have been submitted in the time between a tablet starting this upload and
+  // finishing it. Without this, a slow upload would be the one way past the
+  // guard above.
+  if (row.application_status && !isEditableStatus(row.application_status)) {
+    throw new DocumentError(
+      'This application has been submitted. Its documents can only be ' +
+        'replaced if it is returned for correction.',
+      'conflict'
+    );
+  }
+
+  // Only the person who started this upload may finish it. Not a theft
+  // concern — the bytes are whatever they are, and Graph is what confirms
+  // them. It is that the commit is what writes `document.filed` to the audit
+  // trail, and segregation of duties reads that trail to decide who may not
+  // verify this document (S-203). Letting anyone commit anyone's upload would
+  // put the wrong name against the filing, barring a person who did nothing
+  // and clearing the person who actually did it.
+  if (row.uploaded_by !== actor.userId) {
+    throw new DocumentError(
+      'This upload was started by someone else, so only they can complete it.',
+      'refused'
+    );
+  }
+
+  let item = await getItemByPath(row.sharepoint_path, config);
+  for (
+    let attempt = 0;
+    (!item || Number(item.size) !== Number(row.size_bytes)) &&
+    attempt < retryDelaysMs.length;
+    attempt++
+  ) {
+    await sleep(retryDelaysMs[attempt]);
+    item = await getItemByPath(row.sharepoint_path, config);
+  }
+
+  if (!item) {
+    await markVersionFailed(versionId, 'SharePoint has no file at that path.');
+    throw new DocumentError(
+      'The file is not in SharePoint, so it has not been filed. Please try ' +
+        'the upload again.',
+      'refused'
+    );
+  }
+
+  // A size mismatch means the transfer was truncated. Recording it as filed
+  // would put a half a document behind a Verified tick.
+  if (Number(item.size) !== Number(row.size_bytes)) {
+    await markVersionFailed(
+      versionId,
+      `Expected ${row.size_bytes} bytes, SharePoint holds ${item.size}.`
+    );
+    throw new DocumentError(
+      'The uploaded file is incomplete, so it has not been filed. Please try ' +
+        'again.',
+      'refused'
+    );
+  }
+
+  await withTransaction(async client => {
+    // Supersede whatever was live before this version (S-409). Done here
+    // rather than at begin, so a failed replacement never removes the document
+    // that was already good.
+    await client.query(
+      `update document_version
+          set superseded_at = now()
+        where document_id = $1 and id <> $2
+          and state = 'committed' and superseded_at is null`,
+      [row.document_id, versionId]
+    );
+
+    await client.query(
+      `update document_version
+          set state = 'committed', committed_at = now(),
+              sharepoint_item_id = $2, checksum_sha256 = $3
+        where id = $1`,
+      [versionId, item.id, options.checksumSha256 ?? null]
+    );
+
+    // Now — and only now — the document takes on this upload. A rejection or
+    // an expiry applied to the file this one replaces is cleared, because the
+    // verdict was about a file that is no longer the live one.
+    await client.query(
+      `update document
+          set state = 'under_review', rejection_reason = null,
+              verified_by = null, verified_at = null,
+              expires_at = coalesce($2, expires_at)
+        where id = $1`,
+      [row.document_id, row.intended_expires_at]
+    );
+
+    await recordAudit(
+      {
+        actorUserId: actor.userId,
+        actorDescription: actor.email,
+        action: ACTION_FILED,
+        entityType: ENTITY_TYPE,
+        entityId: row.document_id,
+        newValue: {
+          fileName: row.file_name,
+          sharePointItemId: item.id,
+          sizeBytes: Number(row.size_bytes),
+        },
+      },
+      client
+    );
+  });
+
+  return { state: 'committed' };
+}
+
+async function markVersionFailed(
+  versionId: string,
+  reason: string
+): Promise<void> {
+  await query(
+    `update document_version set state = 'failed' where id = $1 and state = 'pending'`,
+    [versionId]
+  );
+  console.warn(`[documents] upload ${versionId} failed: ${reason}`);
+}
+
+/**
+ * S-407 · Verify or reject a filed document.
+ *
+ * The person who filed it may not be the one who verifies it — the same
+ * per-record segregation the approval chain uses (S-203), so an officer cannot
+ * sign off their own scan.
+ */
+export async function reviewDocument(
+  documentId: string,
+  decision: {
+    outcome: 'verify' | 'reject';
+    reason?: string;
+    // S-603: which of SIGNATURES the reviewer confirmed are present on the
+    // scan. Stored whichever way the review goes — a Secretary who rejects
+    // for an unrelated reason (a blurry scan) should not lose the signatures
+    // they had already checked. Ignored for any document type but
+    // signed_form, which is the only one the printed form's four blocks
+    // apply to.
+    confirmedSignatures?: string[];
+  },
+  principal: { userId: string; email: string; permissions: ReadonlySet<string> }
+): Promise<{ state: ChecklistState }> {
+  if (!principal.permissions.has('document.verify')) {
+    throw new DocumentError(
+      'You do not have permission to verify documents.',
+      'refused'
+    );
+  }
+
+  const reason = (decision.reason ?? '').trim();
+  if (decision.outcome === 'reject' && reason === '') {
+    throw new DocumentError(
+      'Rejecting a document requires a reason. The person who has to replace ' +
+        'it needs to know what is wrong with it.'
+    );
+  }
+
+  const document = await query<{
+    id: string;
+    state: string;
+    document_code: string;
+    captured_by: string | null;
+  }>(
+    `select d.id, d.state, t.code as document_code, a.captured_by
+       from document d
+       join document_type t on t.id = d.document_type_id
+       left join membership_application a on a.id = d.application_id
+      where d.id = $1`,
+    [documentId]
+  );
+  if (document.rowCount === 0) {
+    throw new DocumentError('That document no longer exists.', 'not_found');
+  }
+
+  const committed = await query(
+    `select 1 from document_version
+      where document_id = $1 and state = 'committed' and superseded_at is null`,
+    [documentId]
+  );
+  if (committed.rowCount === 0) {
+    throw new DocumentError(
+      'There is no filed version of that document to verify.',
+      'conflict'
+    );
+  }
+
+  // Officer feedback: segregation below asks who filed this one document,
+  // which leaves the officer who captured the application free to verify a
+  // scan a colleague happened to upload against it. Checking their own
+  // application's papers is the same conflict one step out, so the author is
+  // refused whatever the permission says and whoever did the filing.
+  //
+  // Only for a document that belongs to an application. One filed against a
+  // member directly has no author to be in conflict with.
+  if (
+    document.rows[0].captured_by &&
+    document.rows[0].captured_by === principal.userId
+  ) {
+    throw new DocumentError(
+      'You captured this application, so someone else must check its ' +
+        'documents.',
+      'refused'
+    );
+  }
+
+  const verdict = await checkSegregation(
+    principal.userId,
+    ENTITY_TYPE,
+    documentId,
+    ACTION_VERIFIED
+  );
+  if (!verdict.allowed) {
+    throw new DocumentError(
+      `${verdict.conflict!.description} You filed this document, so someone ` +
+        'else must check it.',
+      'refused'
+    );
+  }
+
+  // S-603: fewer than all four signatures confirmed present means this is
+  // not what "Verified" says it is, whatever the scan otherwise looks like.
+  const confirmedSignatures = (decision.confirmedSignatures ?? []).filter(
+    (s): s is (typeof SIGNATURES)[number] =>
+      (SIGNATURES as readonly string[]).includes(s)
+  );
+  if (
+    document.rows[0].document_code === 'signed_form' &&
+    decision.outcome === 'verify' &&
+    confirmedSignatures.length < SIGNATURES.length
+  ) {
+    const missing = SIGNATURES.filter(s => !confirmedSignatures.includes(s));
+    throw new DocumentError(
+      `All four signatures must be confirmed present before this can be ` +
+        `Verified. Still missing: ${missing.join(', ')}.`
+    );
+  }
+
+  const state: ChecklistState =
+    decision.outcome === 'verify' ? 'verified' : 'rejected';
+
+  await withTransaction(async client => {
+    await client.query(
+      `update document
+          set state = $2, rejection_reason = $3,
+              verified_by = $4, verified_at = now(),
+              confirmed_signatures = $5
+        where id = $1`,
+      [
+        documentId,
+        state,
+        decision.outcome === 'reject' ? reason : null,
+        principal.userId,
+        confirmedSignatures,
+      ]
+    );
+
+    await recordAudit(
+      {
+        actorUserId: principal.userId,
+        actorDescription: principal.email,
+        action: ACTION_VERIFIED,
+        entityType: ENTITY_TYPE,
+        entityId: documentId,
+        previousValue: { state: document.rows[0].state },
+        newValue: { state, reason: reason || null, confirmedSignatures },
+      },
+      client
+    );
+  });
+
+  return { state };
+}
+
+/**
+ * A short-lived URL to open the current filed version of a document.
+ *
+ * The bytes never pass through this application on the way in (S-112); they
+ * do not on the way out either. Graph hands back a pre-authenticated URL
+ * scoped to this one file, which is what lets an officer open it at all —
+ * they have no SharePoint account of their own to view webUrl with (see
+ * graph.ts).
+ */
+export async function getDocumentViewUrl(
+  documentId: string,
+  config?: GraphConfig
+): Promise<{ url: string; fileName: string; contentType: string }> {
+  const row = await query<{
+    sharepoint_path: string;
+    file_name: string;
+    content_type: string;
+  }>(
+    `select sharepoint_path, file_name, content_type
+       from document_version
+      where document_id = $1 and state = 'committed' and superseded_at is null`,
+    [documentId]
+  );
+  if (row.rowCount === 0) {
+    throw new DocumentError(
+      'There is no filed version of that document to view.',
+      'not_found'
+    );
+  }
+
+  const item = await getItemByPath(row.rows[0].sharepoint_path, config);
+  if (!item?.downloadUrl) {
+    throw new DocumentError(
+      'SharePoint did not offer a way to open this file. Please try again.',
+      'refused'
+    );
+  }
+
+  return {
+    url: item.downloadUrl,
+    fileName: row.rows[0].file_name,
+    contentType: row.rows[0].content_type,
+  };
+}
+
+/**
+ * The bytes of a filed document, read through this server rather than
+ * handed to the browser as a SharePoint link.
+ *
+ * Printing is what needs this. The viewer opens `getDocumentViewUrl`'s
+ * pre-authenticated URL directly, which is cheaper and renders fine — but a
+ * cross-origin frame cannot be told to print, and SharePoint's own URLs
+ * carry no CORS headers for a script to fetch them either. Serving the same
+ * bytes from this origin is what makes the print frame scriptable, for a PDF
+ * and an image alike.
+ */
+export async function getDocumentContent(
+  documentId: string,
+  config?: GraphConfig
+): Promise<{
+  body: ReadableStream<Uint8Array>;
+  fileName: string;
+  contentType: string;
+}> {
+  const { url, fileName, contentType } = await getDocumentViewUrl(
+    documentId,
+    config
+  );
+
+  const response = await fetch(url);
+  if (!response.ok || !response.body) {
+    throw new DocumentError(
+      'The file could not be read from SharePoint. Please try again.',
+      'refused'
+    );
+  }
+
+  return { body: response.body, fileName, contentType };
+}
+
+/**
+ * Undo a mistaken upload, so the checklist reads Missing again and the item
+ * can be filed afresh.
+ *
+ * This is Replace without the replacement: the live version is superseded
+ * exactly as it would be if a new file had landed (S-409), only nothing takes
+ * its place — and, unlike a genuine replacement, the file was never wanted in
+ * the first place, so it is deleted from SharePoint too (officer feedback).
+ * That is a deliberate departure from Replace's "versions are never deleted"
+ * guarantee: that guarantee exists to keep a *superseded* filing retrievable,
+ * which presumes the earlier filing was real. A mistaken upload was never a
+ * record of anything, so there is nothing there worth keeping.
+ *
+ * The database row is updated first and the SharePoint delete happens after
+ * it commits: if the delete fails (or the process dies before running it),
+ * the checklist has still correctly gone back to Missing and can be filed
+ * afresh — a file orphaned in SharePoint is a cleanup problem, not a data
+ * problem, whereas the reverse ordering would risk deleting a file the
+ * database still calls "filed".
+ *
+ * Gated on document.upload rather than a separate permission: anyone who may
+ * file a document may equally well decide the one they just filed was wrong.
+ * Available on any state Replace is (S-409 already lets an officer replace a
+ * verified document without restriction; this is not a new door).
+ */
+export async function removeFiledDocument(
+  documentId: string,
+  principal: {
+    userId: string;
+    email: string;
+    permissions: ReadonlySet<string>;
+  },
+  config?: GraphConfig
+): Promise<{ state: 'missing' }> {
+  if (!principal.permissions.has('document.upload')) {
+    throw new DocumentError(
+      'You do not have permission to file documents.',
+      'refused'
+    );
+  }
+
+  const { path: sharepointPath, shared } = await withTransaction(
+    async client => {
+      const row = await client.query<{
+        version_id: string;
+        file_name: string;
+        sharepoint_path: string;
+        sharepoint_item_id: string | null;
+        document_state: string;
+        application_status: string | null;
+      }>(
+        `select v.id as version_id, v.file_name, v.sharepoint_path,
+              v.sharepoint_item_id,
+              d.state as document_state, a.status as application_status
+         from document_version v
+         join document d on d.id = v.document_id
+         left join membership_application a on a.id = d.application_id
+        where v.document_id = $1 and v.state = 'committed'
+          and v.superseded_at is null
+        for update of v`,
+        [documentId]
+      );
+      if (row.rowCount === 0) {
+        throw new DocumentError(
+          'There is no filed version of that document to remove.',
+          'not_found'
+        );
+      }
+      const {
+        version_id: versionId,
+        file_name: fileName,
+        sharepoint_path: path,
+        sharepoint_item_id: itemId,
+        document_state,
+        application_status: applicationStatus,
+      } = row.rows[0];
+
+      // Officer feedback: once an application has left the originating
+      // officer's hands (status 'new' and beyond), a filed document is a
+      // record of what was submitted — removable again only if the
+      // application comes back as 'returned', the same reason it was
+      // removable while still a 'draft'. A document filed against a member
+      // (application_status null — the application is long since decided)
+      // is unaffected: this guard only narrows what an in-flight application
+      // allows.
+      if (applicationStatus && !isEditableStatus(applicationStatus)) {
+        throw new DocumentError(
+          'This application has been submitted. Its documents can only be ' +
+            'removed if it is returned for correction.',
+          'refused'
+        );
+      }
+
+      await client.query(
+        `update document_version set superseded_at = now() where id = $1`,
+        [versionId]
+      );
+
+      // Another live version at the same SharePoint file means this file is
+      // shared — a document carried onto a later application reuses the
+      // source's file in place (carryForwardMemberDocuments), copying its
+      // Graph item id, rather than copying the file. Removing this filing must
+      // not delete a file the source application still holds, so the SharePoint
+      // delete below is skipped while any such version remains. Matched on the
+      // Graph item id, not the path: two documents of one type for different
+      // subjects share a filename (and so a path) without sharing a file, but a
+      // genuine carry-forward shares the exact item. A version with no item id
+      // recorded (nothing to match) is treated as not shared.
+      const shared = itemId
+        ? await client.query(
+            `select 1 from document_version
+            where sharepoint_item_id = $1 and state = 'committed'
+              and superseded_at is null and document_id <> $2
+            limit 1`,
+            [itemId, documentId]
+          )
+        : { rowCount: 0 };
+
+      await recordAudit(
+        {
+          actorUserId: principal.userId,
+          actorDescription: principal.email,
+          action: 'document.removed',
+          entityType: ENTITY_TYPE,
+          entityId: documentId,
+          previousValue: { state: document_state, fileName },
+          newValue: { state: 'missing' },
+        },
+        client
+      );
+
+      return { path, shared: (shared.rowCount ?? 0) > 0 };
+    }
+  );
+
+  // Best-effort: the checklist has already gone back to Missing regardless of
+  // whether this succeeds, per the ordering note above. A 404 (already gone)
+  // is success as far as deleteItemByPath is concerned. Skipped entirely when
+  // the file is still referenced by another application's filing.
+  if (!shared) {
+    try {
+      await deleteItemByPath(sharepointPath, config);
+    } catch (err) {
+      console.error('[documents/remove] SharePoint delete failed', err);
+    }
+  }
+
+  return { state: 'missing' };
+}
+
+export interface DocumentVersionSummary {
+  id: string;
+  versionNo: number;
+  fileName: string;
+  sizeBytes: number;
+  sharepointPath: string;
+  checksumSha256: string | null;
+  uploadedByName: string;
+  committedAt: Date | null;
+  supersededAt: Date | null;
+}
+
+/**
+ * S-402, S-409 · Every version of a document, newest first.
+ *
+ * Superseded versions are kept, not deleted. For the signed application form
+ * that is the point: what the applicant signed must remain retrievable and
+ * provably unchanged, whatever is filed over it afterwards.
+ */
+export async function versionsOf(
+  documentId: string
+): Promise<DocumentVersionSummary[]> {
+  const result = await query<{
+    id: string;
+    version_no: number;
+    file_name: string;
+    size_bytes: string;
+    sharepoint_path: string;
+    checksum_sha256: string | null;
+    uploaded_by_name: string;
+    committed_at: Date | null;
+    superseded_at: Date | null;
+  }>(
+    `select v.id, v.version_no, v.file_name, v.size_bytes, v.sharepoint_path,
+            v.checksum_sha256, u.display_name as uploaded_by_name,
+            v.committed_at, v.superseded_at
+       from document_version v
+       join app_user u on u.id = v.uploaded_by
+      where v.document_id = $1 and v.state = 'committed'
+      order by v.version_no desc`,
+    [documentId]
+  );
+
+  return result.rows.map(r => ({
+    id: r.id,
+    versionNo: r.version_no,
+    fileName: r.file_name,
+    sizeBytes: Number(r.size_bytes),
+    sharepointPath: r.sharepoint_path,
+    checksumSha256: r.checksum_sha256,
+    uploadedByName: r.uploaded_by_name,
+    committedAt: r.committed_at,
+    supersededAt: r.superseded_at,
+  }));
+}
+
+/**
+ * S-410 · Expire documents whose date has passed.
+ *
+ * Run as a scheduled job. Only verified documents expire: one still awaiting
+ * review has a more pressing problem than its date, and moving it to Expired
+ * would hide that.
+ */
+export async function expireDocuments(
+  now: Date = new Date()
+): Promise<{ expired: number }> {
+  const result = await withTransaction(async client => {
+    const due = await client.query<{ id: string }>(
+      `select id from document
+        where state = 'verified'
+          and expires_at is not null
+          and expires_at <= $1
+        for update`,
+      [now]
+    );
+
+    for (const row of due.rows) {
+      await client.query(
+        `update document set state = 'expired' where id = $1`,
+        [row.id]
+      );
+      await recordAudit(
+        {
+          actorUserId: null,
+          actorDescription: 'scheduled job: document expiry',
+          action: 'document.expired',
+          entityType: ENTITY_TYPE,
+          entityId: row.id,
+          previousValue: { state: 'verified' },
+          newValue: { state: 'expired' },
+        },
+        client
+      );
+    }
+
+    return due.rowCount ?? 0;
+  });
+
+  return { expired: result };
+}
+
+/**
+ * Remove everything filed against an application (used when a draft is
+ * abandoned).
+ *
+ * The document rows cascade away with the application. The files would not:
+ * they would sit in SharePoint as an applicant's identity papers with nothing
+ * in this system saying whose they are or why they are held. So the
+ * application's folder goes too, and the record that it was created with it —
+ * otherwise ensureFolderPath would later believe a folder exists that does
+ * not.
+ *
+ * surname/firstName must match whatever the draft's own applicant party held
+ * at the time its documents were filed (deleteDraftApplication reads them
+ * fresh, under the same lock) — applicationFolderPath has to be given the
+ * same name it was given when the folder was created, or this targets a
+ * folder that was never the real one and leaves the actual files behind,
+ * uncounted for.
+ */
+/**
+ * Remove the files an application filed, without assuming it owns the folder
+ * they are in (S-1003).
+ *
+ * discardApplicationFiles below deletes a folder derived from the
+ * application's own reference and applicant name. That is right for a draft an
+ * officer abandons, and not enough for retention disposal, which reaches
+ * applications draft deletion never can. Since migration 0043 an application
+ * captured for someone who already had one files into THAT application's
+ * folder, so an existing member's refused request to open another account has
+ * its documents in the member's folder — and a path derived from the refused
+ * application's own reference names a folder that was never created. Disposal
+ * would delete nothing and leave the papers where they are.
+ *
+ * So this works from what was actually recorded rather than from a
+ * reconstruction of it: the paths on this application's own document versions,
+ * skipping any file another document still holds — the same carry-forward case
+ * removeFiledDocument guards against, and for the same reason.
+ *
+ * The folder goes only when this application owns it. That guard is defensive
+ * rather than a fix: a borrowed folder always belongs to an approved
+ * application (capture.ts resolves folder_application_id through the member's
+ * or customer's own founding one), and an approved application is never
+ * disposed of — so the derived path cannot currently name a folder in use. It
+ * is cheap to be sure of that here rather than to depend on it.
+ */
+export async function discardApplicationDocuments(
+  applicationId: string,
+  config?: GraphConfig
+): Promise<void> {
+  const application = await query<{
+    reference: string;
+    folder_application_id: string | null;
+    surname: string | null;
+    first_name: string | null;
+  }>(
+    `select a.reference, a.folder_application_id,
+            p.values->>'surname' as surname,
+            p.values->>'name'    as first_name
+       from membership_application a
+       left join application_party p
+         on p.application_id = a.id
+        and p.subject = 'applicant' and p.ordinal = 1
+      where a.id = $1`,
+    [applicationId]
+  );
+  if (application.rowCount === 0) return;
+  const row = application.rows[0];
+
+  // Every path this application put a file at, live or superseded — disposal
+  // is meant to leave nothing behind, not only the current version. Excluded
+  // is any path or Graph item that a document belonging to something else
+  // still holds a live version of: that file is theirs, not this
+  // application's, however it came to be shared.
+  const files = await query<{ sharepoint_path: string }>(
+    `select distinct v.sharepoint_path
+       from document_version v
+       join document d on d.id = v.document_id
+      where d.application_id = $1
+        and v.sharepoint_path is not null
+        and not exists (
+          select 1
+            from document_version o
+            join document od on od.id = o.document_id
+           where od.application_id is distinct from $1
+             and o.state = 'committed'
+             and o.superseded_at is null
+             and (o.sharepoint_path = v.sharepoint_path
+                  or (o.sharepoint_item_id is not null
+                      and o.sharepoint_item_id = v.sharepoint_item_id))
+        )`,
+    [applicationId]
+  );
+
+  for (const file of files.rows) {
+    await deleteItemByPath(file.sharepoint_path, config);
+  }
+
+  // Null means this application owns its own folder (migration 0043). Set
+  // means it borrows another's, and that one is somebody else's to keep.
+  if (row.folder_application_id === null) {
+    await discardApplicationFiles(
+      row.reference,
+      row.surname ?? '',
+      row.first_name ?? '',
+      config
+    );
+  }
+}
+
+export async function discardApplicationFiles(
+  reference: string,
+  surname = '',
+  firstName = '',
+  config?: GraphConfig
+): Promise<void> {
+  const folder = applicationFolderPath(reference, surname, firstName);
+  await deleteItemByPath(folder, config);
+  await query(
+    `delete from sharepoint_folder
+      where path = $1 or starts_with(path, $1 || '/')`,
+    [folder]
+  );
+}

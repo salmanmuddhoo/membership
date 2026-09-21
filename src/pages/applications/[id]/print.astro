@@ -1,0 +1,1245 @@
+---
+// The printable application form (S-401).
+//
+// Rendered from the membership type's field configuration, not from a fixed
+// template — so a field an administrator adds in M2 appears on the printed
+// form without a release, which is the whole reason the configuration exists.
+//
+// A field with no value prints as a ruled blank rather than being left out.
+// The applicant is sitting there with a pen: a form that silently omits what
+// was not captured gives them nothing to complete.
+import { isEditableStatus } from '@lib/applications/capture';
+import BaseLayout from '@layouts/BaseLayout.astro';
+import {
+  loadApplication,
+  visibleFields,
+  type Application,
+} from '@lib/applications/capture';
+import {
+  listAccountTypes,
+  listDocumentTypes,
+  listMembershipTypes,
+  type FieldSubject,
+} from '@lib/config/reference';
+import { filedDocumentFor, SIGNATURES } from '@lib/documents/documents';
+
+const principal = Astro.locals.principal!;
+const { id } = Astro.params;
+const application = id ? await loadApplication(id) : null;
+if (!application) return new Response('Not found', { status: 404 });
+// A draft is the capturing officer's own work in progress — not something a
+// colleague browsing by URL should be able to open before it is submitted.
+if (
+  application.status === 'draft' &&
+  application.capturedBy !== principal.userId
+) {
+  return new Response('Not found', { status: 404 });
+}
+// A membership application and a customer_account application (S-614: a
+// non-member opening an account of their own) each capture their own
+// applicant against a membership type's field configuration, so each prints
+// straight from itself. An additional-account application (S-613: an existing
+// member opening a further account) captures no applicant of its own — but it
+// must still be signed, so it prints the member's founding application
+// details (the same person) with the same signature blocks. This page used to
+// refuse both account kinds; it serves all three now.
+const isAdditionalAccount =
+  application.applicationKind === 'additional_account';
+if (
+  application.applicationKind !== 'membership' &&
+  application.applicationKind !== 'customer_account' &&
+  !isAdditionalAccount
+) {
+  return new Response('Not found', { status: 404 });
+}
+
+// The application this form's applicant/nominee values and field configuration
+// are read from. For an additional account that is the holder's own
+// application — a member's founding membership application, or a customer's
+// originating customer_account one (this kind carries no parties or membership
+// type of its own); for the other two kinds it is the application itself.
+let formSource: Application = application;
+if (isAdditionalAccount) {
+  const holderApplication = application.existingHolderApplicationId
+    ? await loadApplication(application.existingHolderApplicationId)
+    : null;
+  // A legacy member imported without an application (M7) has none to print
+  // from — nothing this page can render for them.
+  if (!holderApplication) {
+    return new Response('Not found', { status: 404 });
+  }
+  formSource = holderApplication;
+}
+// The founding application is always a membership application; narrowed here
+// so its membership type and parties can be read below.
+if (formSource.applicationKind === 'additional_account') {
+  return new Response('Not found', { status: 404 });
+}
+
+// Every kind but a plain membership application is an account opening.
+const isAccountApplication = application.applicationKind !== 'membership';
+// Where Back and Next lead: each kind's own wizard mirrors this page's step
+// numbering exactly (capture=1, print=2, documents=3), so only the base path
+// differs between them.
+const basePath = isAdditionalAccount
+  ? `/applications/${application.id}/account`
+  : isAccountApplication
+    ? `/applications/${application.id}/customer`
+    : `/applications/${application.id}`;
+
+const type = (await listMembershipTypes()).find(
+  t => t.id === formSource.membershipTypeId
+)!;
+const fields = visibleFields(type);
+// The band across the top of the sheet. A Minor's form is worked differently
+// (a guardian signs alongside) and a Corporate one is a different form
+// altogether — whoever picks either up should read which before anything
+// else. Named from the type's own code rather than its label, which an
+// administrator may rename.
+const KIND_BANDS: Record<string, string> = {
+  minor: 'MINOR',
+  corporate: 'CORPORATE',
+};
+const kindBand = KIND_BANDS[type.code];
+
+// So the officer can file the signed form straight off this page once the
+// applicant has signed on screen, instead of printing, saving a PDF by hand
+// and uploading it as a separate step (officer feedback). Looked up once
+// here rather than assumed: the id is a database value, not something the
+// client can be trusted to already know.
+const signedFormType = (await listDocumentTypes()).find(
+  t => t.code === 'signed_form'
+);
+// Whether one is on file already, which decides whether filing again is a
+// first filing or a replacement — and a replacement takes the previous one
+// out of SharePoint rather than leaving both there (officer feedback: a
+// re-signature must not accumulate copies; only the last version is the
+// signed form).
+const filedSignedForm =
+  signedFormType && isEditableStatus(application.status)
+    ? await filedDocumentFor(application.id, signedFormType.id, 'applicant')
+    : null;
+
+// Officer feedback: the form gave no clue which account it was for — every
+// membership type prints as one generic-sounding heading, and an account
+// opening read no differently from a membership application. Named after
+// what is actually being opened rather than the applicant's classification:
+// a plain membership application always opens both of the configured
+// membership-default accounts (S-206, S-308 — Shares and the MSA today, but
+// this reads whichever accounts are marked as the default, not those two by
+// name); an account application already carries the specific type(s) chosen
+// when it was started.
+const accountsLabel = (
+  application.applicationKind === 'membership'
+    ? (await listAccountTypes())
+        .filter(t => t.isMembershipDefault)
+        .map(t => t.name)
+    : application.selectedAccountTypes.map(t => t.name)
+).join(' and ');
+
+const valuesFor = (subject: FieldSubject) =>
+  formSource.parties.find(p => p.subject === subject && p.ordinal === 1)
+    ?.values ?? {};
+
+const SUBJECT_LABELS: Record<string, string> = {
+  applicant: 'Applicant',
+  nominee: 'Nominee',
+  guardian: 'Parent / Guardian',
+  beneficiary: 'Takaful beneficiary',
+  employment: 'Employment Details',
+};
+
+const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
+
+// Officer feedback: the ruled line under "Applicant" and "Nominee" asked the
+// signatory to write in a name the system already captured on the page
+// above. Witness 1 and Witness 2 sign for the society, not for anyone this
+// form has a record of, so there is no name to fill in for them — the line
+// stays theirs to write on, same as always.
+const fullName = (subject: FieldSubject) => {
+  const values = valuesFor(subject);
+  return [values.name, values.surname]
+    .map(v => (v ?? '').trim())
+    .filter(Boolean)
+    .join(' ');
+};
+const signedOn = dateFormat.format(new Date());
+const SIGNATORY_DETAIL: Partial<Record<(typeof SIGNATURES)[number], string>> = {
+  Applicant: fullName('applicant'),
+  Nominee: fullName('nominee'),
+};
+
+// Step 2 of the capture wizard (docs/applications.md): this page IS that
+// step, not a separate one that mirrors it — the officer lands here on Next
+// from capture and leaves on Next here, straight to filing documents. Only
+// while the application is still the officer's to work on; once submitted,
+// this is just the print view again; whoever opens it, the printed page
+// itself carries no wizard chrome.
+const isEditable = isEditableStatus(application.status);
+
+// The rest of the app allows pinch-zoom; this page turns it off. The
+// signature box below is `position: fixed` to the real viewport, and mobile
+// browsers keep a fixed element pinned to the LAYOUT viewport during a
+// pinch-zoom, not the zoomed-in visual one — so a page left pinched-in
+// showed only the left slice of the box, with "Use this signature" run off
+// the right edge and reachable only by dragging the whole page sideways.
+// There is nothing on this form worth zooming into that pinch-zoom would
+// help with, so the fix is to not allow the state that broke the box in the
+// first place.
+const fixedViewport =
+  'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no';
+---
+
+<BaseLayout
+  title={`${application.reference} · Application form`}
+  viewport={fixedViewport}
+>
+  <div class="print-page">
+    {kindBand && <p class="kind-band">{kindBand}</p>}
+
+    <header class="head">
+      <div>
+        <h1>Al Barakah MCSL</h1>
+        <p class="sub">
+          {isAccountApplication
+            ? `Application form — ${accountsLabel}`
+            : `Application for Membership — ${accountsLabel}`}
+        </p>
+      </div>
+      <div class="ref">
+        {/* In the flow rather than floated over the corner: absolutely
+            positioned, it covered the reference beside it. It carries
+            no-print, so the printed form and the captured PDF are unchanged
+            by its being here. */}
+        <p class="no-print">
+          <button type="button" id="print">
+            Print
+          </button>
+        </p>
+        <p>
+          <strong>{application.reference}</strong>
+        </p>
+        <p>{dateFormat.format(application.updatedAt)}</p>
+      </div>
+    </header>
+
+    {
+      // Employment describes the applicant, not a separate person — its rows
+      // print inside the Applicant block, not as a section of their own.
+      [...fields]
+        .filter(([subject]) => subject !== 'employment')
+        .map(([subject, subjectFields]) => {
+          const values = valuesFor(subject);
+          const employmentFields =
+            subject === 'applicant' ? (fields.get('employment') ?? []) : [];
+          const employmentValues =
+            employmentFields.length > 0 ? valuesFor('employment') : {};
+          return (
+            <section class="block">
+              <h2>{SUBJECT_LABELS[subject] ?? subject}</h2>
+              <dl>
+                {subjectFields.map(field => {
+                  const value = (values[field.fieldKey] ?? '').trim();
+                  return (
+                    <div class="row">
+                      <dt>
+                        {field.label}
+                        {field.isMandatory && <span class="req">*</span>}
+                      </dt>
+                      <dd class={value ? '' : 'blank'}>{value}</dd>
+                    </div>
+                  );
+                })}
+              </dl>
+              {employmentFields.length > 0 && (
+                <>
+                  <h3>{SUBJECT_LABELS.employment}</h3>
+                  <dl>
+                    {employmentFields.map(field => {
+                      const value = (
+                        employmentValues[field.fieldKey] ?? ''
+                      ).trim();
+                      return (
+                        <div class="row">
+                          <dt>
+                            {field.label}
+                            {field.isMandatory && <span class="req">*</span>}
+                          </dt>
+                          <dd class={value ? '' : 'blank'}>{value}</dd>
+                        </div>
+                      );
+                    })}
+                  </dl>
+                </>
+              )}
+            </section>
+          );
+        })
+    }
+
+    <section class="declaration block">
+      <h2>Declaration</h2>
+      <p>
+        {isAccountApplication
+          ? 'I declare that the information given above is true and complete to the best of my knowledge. I have read and accept the terms governing this account and the rules and by-laws of Al Barakah Multipurpose Co-operative Society Limited, and I undertake to abide by them. I understand that any information found to be false may result in my application being refused or the account being closed.'
+          : 'I declare that the information given above is true and complete to the best of my knowledge. I have read and accept the rules and by-laws of Al Barakah Multipurpose Co-operative Society Limited, and I undertake to abide by them. I understand that any information found to be false may result in my application being refused or my membership terminated.'}
+      </p>
+    </section>
+
+    <section class="block">
+      {isEditable && (
+        <p class="sig-help no-print">
+          Tap Sign under each name, or print and sign by hand.
+        </p>
+      )}
+      <div
+        class="signatures"
+        data-application-id={application.id}
+        data-reference={application.reference}
+        data-signed-form-type-id={signedFormType?.id ?? ''}
+      >
+        {SIGNATURES.map(who => (
+          <div class="sig">
+            <div class="sig-pad" data-sig-pad data-sig-who={who}>
+              <div class="sig-line" />
+              <img class="sig-image" data-sig-image alt="" hidden />
+            </div>
+            {isEditable && (
+              <div class="sig-controls no-print">
+                <button type="button" data-sig-open>
+                  Sign
+                </button>
+                <button type="button" data-sig-clear-image hidden>
+                  Clear
+                </button>
+              </div>
+            )}
+            <p class="sig-name">{who}</p>
+            {SIGNATORY_DETAIL[who] ? (
+              <p class="sig-date">{`${SIGNATORY_DETAIL[who]} · ${signedOn}`}</p>
+            ) : (
+              // No record of who a witness is exists anywhere in this
+              // system — unlike Applicant and Nominee, there is nothing to
+              // fill this in from, so the officer types it here instead of
+              // on a hand-drawn line. Kept client-side only, exactly like
+              // the signature images above: it only has to survive long
+              // enough to reach Print (or Save as PDF), which is what
+              // actually carries it forward once uploaded.
+              <p class="sig-date witness-date">
+                <input
+                  type="text"
+                  data-witness-name-input={who}
+                  placeholder="Name and date"
+                  disabled={!isEditable}
+                  class="witness-name-input"
+                />
+                <span data-witness-date-suffix hidden>
+                  {` · ${signedOn}`}
+                </span>
+              </p>
+            )}
+            <div class="sig-line short" />
+          </div>
+        ))}
+      </div>
+    </section>
+
+    {isEditable && (
+      // Fixed to the actual screen, not to anything in this page's own
+      // millimetre-based layout — that layout is built for the paper this
+      // becomes, not a phone, and does not fit one, which is exactly why
+      // signing directly inside it used to drag the whole page around
+      // under a finger instead of drawing. A modal sized to the real
+      // viewport cannot inherit a scroll or a pinch-zoom state that isn't
+      // its own.
+      <div id="sig-modal" class="sig-modal no-print" hidden>
+        <div class="sig-modal-bar">
+          <span data-sig-modal-title>Sign</span>
+          <button type="button" data-sig-modal-close>
+            Cancel
+          </button>
+        </div>
+        <canvas class="sig-modal-canvas" data-sig-modal-canvas />
+        <div class="sig-modal-bar">
+          <button type="button" data-sig-modal-clear>
+            Clear
+          </button>
+          <button type="button" data-sig-modal-done class="primary">
+            Use this signature
+          </button>
+        </div>
+      </div>
+    )}
+
+    {/* Three columns rather than a row of gaps, so the upload button sits
+        centred on the page whatever the two links either side of it are
+        called — and stays centred when one of them is not there at all. */}
+    <div class="actions">
+      <div class="actions-start">
+        {isEditable ? (
+          <a href={`${basePath}?step=1`}>← Back</a>
+        ) : (
+          <a href={basePath}>Back to the application</a>
+        )}
+      </div>
+      <div class="actions-centre">
+        {isEditable && signedFormType && (
+          <button
+            type="button"
+            id="file-signed-form"
+            data-filed-document-id={filedSignedForm?.documentId ?? ''}
+          >
+            Upload to sharepoint
+          </button>
+        )}
+      </div>
+      <div class="actions-end">
+        {isEditable && (
+          <a href={`${basePath}?step=3`} class="next">
+            Next: upload documents →
+          </a>
+        )}
+      </div>
+    </div>
+    {isEditable && signedFormType && (
+      <p data-sign-file-status class="no-print status-line" aria-live="polite">
+        {filedSignedForm
+          ? `On file: ${filedSignedForm.fileName}`
+          : 'Sign above, then file the form. It replaces the copy on file, so only the last signature is kept.'}
+      </p>
+    )}
+  </div>
+</BaseLayout>
+
+<style>
+  /* Deliberately plain and self-contained. This sheet is printed, handed to a
+     person and signed, so it is set in absolute units against white — not in
+     the application's theme, which follows the reader's dark mode and would
+     print an unreadable page. */
+  .kind-band {
+    margin: 0 0 4mm;
+    text-align: center;
+    font-family: system-ui, sans-serif;
+    font-size: 12pt;
+    font-weight: 700;
+    letter-spacing: 2px;
+    border: 1px solid #111;
+    padding: 1.5mm 0;
+  }
+
+  .print-page {
+    position: relative;
+    max-width: 190mm;
+    margin: 0 auto;
+    padding: 12mm 10mm;
+    background: #fff;
+    color: #111;
+    font-family: Georgia, 'Times New Roman', serif;
+    font-size: 11pt;
+    line-height: 1.45;
+  }
+
+  .head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 10mm;
+    border-bottom: 2px solid #111;
+    padding-bottom: 4mm;
+  }
+  h1 {
+    margin: 0;
+    font-size: 16pt;
+    letter-spacing: 0.02em;
+  }
+  .sub {
+    margin: 1mm 0 0;
+    font-size: 11pt;
+  }
+  .ref {
+    text-align: right;
+    font-size: 10pt;
+  }
+  .ref p {
+    margin: 0;
+  }
+
+  .block {
+    margin-top: 7mm;
+    break-inside: avoid;
+  }
+  h2 {
+    margin: 0 0 3mm;
+    font-size: 11pt;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    border-bottom: 1px solid #999;
+    padding-bottom: 1mm;
+  }
+  h3 {
+    margin: 4mm 0 2mm;
+    font-size: 10pt;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #333;
+  }
+
+  dl {
+    margin: 0;
+  }
+  .row {
+    display: flex;
+    align-items: baseline;
+    gap: 4mm;
+    padding: 1.6mm 0;
+  }
+  dt {
+    flex: 0 0 55mm;
+    font-size: 10pt;
+    color: #333;
+  }
+  .req {
+    color: #333;
+  }
+  dd {
+    flex: 1;
+    margin: 0;
+    min-height: 6mm;
+    border-bottom: 1px solid #bbb;
+  }
+  /* An empty field prints as a ruled line to write on, never as nothing. */
+  .blank {
+    border-bottom: 1px solid #444;
+  }
+
+  .declaration p {
+    margin: 0;
+    text-align: justify;
+  }
+
+  .signatures {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10mm 12mm;
+    margin-top: 4mm;
+  }
+  .sig {
+    break-inside: avoid;
+  }
+  .sig-line {
+    /* Officer feedback: a captured signature read too small on the printed
+       form — doubled from 14mm so the drawn stroke actually fills the box
+       instead of sitting thin inside it. */
+    height: 28mm;
+    border-bottom: 1px solid #444;
+  }
+  .sig-line.short {
+    height: 8mm;
+  }
+  .sig-name {
+    margin: 1mm 0 0;
+    font-size: 10pt;
+    font-weight: bold;
+  }
+  .sig-date {
+    margin: 3mm 0 0;
+    font-size: 9pt;
+    color: #555;
+  }
+  /* Made to disappear into the plain text either side of it — the box a
+     name gets typed into on screen is not itself part of what a witness's
+     line is meant to show, on paper or in the PDF this becomes. */
+  .witness-name-input {
+    width: 45mm;
+    max-width: 60%;
+    border: none;
+    border-bottom: 1px solid #999;
+    padding: 0;
+    background: transparent;
+    font: inherit;
+    color: inherit;
+  }
+  .witness-name-input:disabled {
+    color: inherit;
+    opacity: 1;
+  }
+  .witness-name-input:focus {
+    outline: none;
+    border-bottom-color: #111;
+  }
+
+  .sig-help {
+    margin: 0 0 3mm;
+    font-family: system-ui, sans-serif;
+    font-size: 9pt;
+    color: #666;
+  }
+  /* The line stays underneath as the fallback a pen can still use — without
+     scripting, or once the box below carries a signature, this is what
+     Print (and Save as PDF) actually sees. */
+  .sig-pad {
+    position: relative;
+    /* Matches .sig-line's own doubled height — this is what the absolutely
+       positioned .sig-image actually sizes against. */
+    height: 28mm;
+  }
+  .sig-image {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    /* Whatever aspect ratio the signing box drew at, contained rather than
+       stretched — a squashed signature is a strange thing to hand someone. */
+    object-fit: contain;
+    object-position: left center;
+  }
+  .sig-controls {
+    margin-top: 1mm;
+    display: flex;
+    gap: 2mm;
+  }
+  .sig-controls button {
+    padding: 0.5mm 2mm;
+    border: 1px solid #999;
+    background: #f5f5f5;
+    font: inherit;
+    font-size: 8pt;
+    cursor: pointer;
+  }
+
+  /* Fixed to the real viewport (see the comment above the markup), not to
+     this page's own layout — sized in ordinary CSS units, not the
+     millimetres the rest of this sheet uses for paper.
+     Officer feedback: `height: 100vh`/`100dvh` here used to run the bottom
+     bar ("Use this signature") below the visible screen on a phone whose
+     browser chrome (address bar, home indicator) was showing — `100vh` on
+     mobile Safari means the viewport with the chrome HIDDEN, taller than
+     what is actually visible, and an embedded/older browser with no `dvh`
+     support fell back to exactly that oversized figure. The officer's own
+     workaround was to pinch-zoom the whole page out until the box shrank
+     enough to reveal the button underneath it.
+     `inset: 0` alone (top/right/bottom/left all 0) sizes a `position: fixed`
+     element to the real, current fixed-positioning viewport on every
+     browser without naming a height at all — no vh/dvh guess to get wrong,
+     and it already tracks the chrome showing or hiding on its own. */
+  .sig-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    background: #fff;
+    color: #111;
+    font-family: system-ui, sans-serif;
+    /* Scrollable, not clipped: belt and braces in case anything above still
+       runs long on some browser — the officer can reach it by scrolling the
+       box itself rather than being unable to reach it at all. Only the
+       canvas below blocks touch, and only there, since a drag meant for
+       the pen reaching past it and moving the page is what this guards
+       against — the bars need every tap to reach the button underneath it,
+       plainly, the first time. */
+    overflow-y: auto;
+    /* A scroll that runs past the top or bottom of this box must not chain
+       into the page sitting behind it — that reads as the form showing
+       through the "full screen" popup, the opposite of what a full-screen
+       takeover is for. */
+    overscroll-behavior: contain;
+  }
+  .sig-modal[hidden] {
+    display: none;
+  }
+  .sig-modal-bar {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 3mm;
+    padding: 3mm 4mm;
+    font-size: 11pt;
+    border-bottom: 1px solid #ddd;
+  }
+  .sig-modal-bar:last-child {
+    border-bottom: none;
+    border-top: 1px solid #ddd;
+  }
+  .sig-modal-canvas {
+    /* flex: 1 1 0, not the shorthand 1 (which defaults its flex-basis to
+       auto, not 0) — paired with min-height: 0 so the canvas is the one
+       thing that shrinks first if the two bars above and below it ever
+       need more room than a short viewport has to spare. A canvas that
+       cannot shrink is exactly how the bottom bar ran off-screen before:
+       a `min-height` on a flex child is a floor flex-shrink may not cross,
+       so 40vh on a short phone viewport pushed the bar after it out past
+       the bottom whether or not the modal itself was sized correctly. */
+    flex: 1 1 0;
+    min-height: 0;
+    width: 100%;
+    touch-action: none;
+    cursor: crosshair;
+  }
+  .sig-modal button {
+    padding: 2mm 4mm;
+    border: 1px solid #333;
+    background: #eee;
+    font: inherit;
+    cursor: pointer;
+    color: #111;
+  }
+  .sig-modal button.primary {
+    background: #cdeedb;
+    font-weight: bold;
+  }
+
+  .ref button#print {
+    margin-bottom: 2mm;
+    padding: 2mm 5mm;
+    border: 1px solid #333;
+    background: #eee;
+    cursor: pointer;
+    font-family: system-ui, sans-serif;
+    font-size: 10pt;
+    color: #111;
+  }
+
+  .actions {
+    margin-top: 8mm;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    gap: 4mm;
+    align-items: center;
+    font-family: system-ui, sans-serif;
+    font-size: 10pt;
+  }
+  /* Each column stretches; the control inside it is what gets aligned.
+     justify-self would align the column box, which leaves an inline link
+     sitting at its left edge whatever the box does. */
+  .actions-start {
+    text-align: left;
+  }
+  .actions-centre {
+    text-align: center;
+  }
+  .actions-end {
+    text-align: right;
+  }
+  .actions button,
+  .actions a.next {
+    /* The arrow belongs on the label's own line, not wrapped below it. */
+    white-space: nowrap;
+    padding: 2mm 5mm;
+    border: 1px solid #333;
+    background: #eee;
+    cursor: pointer;
+    font: inherit;
+    text-decoration: none;
+    color: #111;
+  }
+  .actions button:disabled {
+    cursor: wait;
+    opacity: 0.6;
+  }
+
+  .status-line {
+    margin-top: 3mm;
+    font-family: system-ui, sans-serif;
+    font-size: 9pt;
+    color: #444;
+    min-height: 1em;
+  }
+  .status-line[data-tone='error'] {
+    color: #9a1c1c;
+  }
+
+  /* Applied for the instant html2canvas is rasterising the form (pdf.ts),
+     so the generated PDF shows the form the way it prints — not the Sign
+     buttons, the witness hint, or the action bar underneath it, none of
+     which are part of what was actually signed. The @media print rule below
+     achieves the same thing for an ACTUAL print; this is the screen-time
+     equivalent, needed because html2canvas captures the screen stylesheet,
+     not the print one. */
+  .capturing .actions,
+  .capturing .no-print {
+    display: none !important;
+  }
+
+  @media print {
+    /* The controls are for the screen; the paper carries the form. */
+    .actions,
+    .no-print {
+      display: none;
+    }
+    .print-page {
+      max-width: none;
+      padding: 0;
+    }
+    @page {
+      size: A4;
+      margin: 14mm;
+    }
+  }
+
+  /* The sheet above is built in millimetres for the A4 page it becomes,
+     which is wider than a phone screen — left alone, the whole page would
+     sit wider than the viewport and pan under a finger the same way signing
+     used to. Screen-only: none of this touches what actually prints. */
+  @media screen and (max-width: 700px) {
+    .print-page {
+      max-width: 100%;
+      padding: 6mm 4mm;
+    }
+    .head {
+      flex-direction: column;
+      gap: 2mm;
+    }
+    .ref {
+      text-align: left;
+    }
+    .row {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 0.5mm;
+    }
+    dt {
+      flex: none;
+    }
+    .signatures {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+
+<script>
+  import { renderElementToPdf } from '@lib/client/pdf';
+  import { trimmedSignature } from '@lib/client/signature';
+  import { uploadDocumentBlob } from '@lib/client/document-upload';
+
+  document.getElementById('print')?.addEventListener('click', () => {
+    window.print();
+  });
+
+  // Lets whoever is holding the phone or tablet sign on screen instead of
+  // only on paper afterward, in one shared full-screen box rather than a
+  // canvas living inside this page's own millimetre-wide layout — that
+  // layout does not fit a phone, and a drawing surface inside it inherited
+  // the same instability: the page panned under a finger trying to sign.
+  // Fixed to the viewport, the box cannot inherit a scroll or zoom state
+  // that isn't its own. Print (choose "Save as PDF" in the print dialog)
+  // carries the result straight into the file the officer uploads on the
+  // documents step. The ruled line stays the fallback for an actual pen,
+  // which is also what a reader without scripting gets by default.
+  const modal = document.getElementById('sig-modal');
+  const modalCanvas = document.querySelector<HTMLCanvasElement>(
+    '[data-sig-modal-canvas]'
+  );
+  const modalTitle = document.querySelector('[data-sig-modal-title]');
+  const modalClose = document.querySelector('[data-sig-modal-close]');
+  const modalClear = document.querySelector('[data-sig-modal-clear]');
+  const modalDone = document.querySelector('[data-sig-modal-done]');
+
+  // A signature drawn here is otherwise just pixels on this page — gone the
+  // moment the officer taps Back to fix something on capture and returns.
+  // sessionStorage survives that round trip (same tab, Back/Next, a
+  // re-visit via Next from capture) without turning a still-unsigned draft
+  // into something the server has to store: it clears with the tab, the
+  // same lifetime the signature already had before today.
+  const signaturesEl = document.querySelector('[data-application-id]');
+  const applicationId = signaturesEl?.getAttribute('data-application-id') ?? '';
+  const sigStorageKey = (who: string) => `sig:${applicationId}:${who}`;
+  const storeSignature = (who: string, dataUrl: string) => {
+    try {
+      sessionStorage.setItem(sigStorageKey(who), dataUrl);
+    } catch {
+      // Private browsing or a full quota — the signature still works for
+      // this visit, it just won't survive a navigation. Not worth failing
+      // the signing over.
+    }
+  };
+  const forgetSignature = (who: string) => {
+    try {
+      sessionStorage.removeItem(sigStorageKey(who));
+    } catch {
+      // See storeSignature.
+    }
+  };
+  const recallSignature = (who: string): string | null => {
+    try {
+      return sessionStorage.getItem(sigStorageKey(who));
+    } catch {
+      return null;
+    }
+  };
+
+  // A witness's name, same lifetime as their signature above and for the
+  // same reason: nothing in this system has a record of who a witness is,
+  // so there is nothing to reload this from beyond what this tab already
+  // typed — it only has to last until Print (or Save as PDF) carries it
+  // into the file the officer uploads.
+  const witnessNameKey = (who: string) => `sig-name:${applicationId}:${who}`;
+  for (const nameInput of document.querySelectorAll<HTMLInputElement>(
+    '[data-witness-name-input]'
+  )) {
+    const who = nameInput.dataset.witnessNameInput ?? '';
+    const suffix = nameInput.parentElement?.querySelector<HTMLElement>(
+      '[data-witness-date-suffix]'
+    );
+    const sync = () => {
+      if (suffix) suffix.hidden = nameInput.value.trim() === '';
+    };
+    let recalled: string | null = null;
+    try {
+      recalled = sessionStorage.getItem(witnessNameKey(who));
+    } catch {
+      // Private browsing or a full quota — typing still works for this
+      // visit, it just starts blank rather than where a prior visit left it.
+    }
+    if (recalled) nameInput.value = recalled;
+    sync();
+    nameInput.addEventListener('input', () => {
+      sync();
+      try {
+        sessionStorage.setItem(witnessNameKey(who), nameInput.value);
+      } catch {
+        // See above — not worth failing the typing over.
+      }
+    });
+  }
+
+  if (
+    modal &&
+    modalCanvas &&
+    modalTitle &&
+    modalClose &&
+    modalClear &&
+    modalDone
+  ) {
+    const ctx = modalCanvas.getContext('2d');
+    let activePad: HTMLElement | null = null;
+
+    // Sized from the box actually on screen, at the device's pixel density
+    // so the line does not look soft. Done on open rather than at page
+    // load: a [hidden] element measures as zero, so there is nothing to
+    // size against before then.
+    const sizeCanvas = () => {
+      if (!ctx) return;
+      const rect = modalCanvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      modalCanvas.width = Math.max(1, Math.round(rect.width * dpr));
+      modalCanvas.height = Math.max(1, Math.round(rect.height * dpr));
+      ctx.scale(dpr, dpr);
+      ctx.lineWidth = 2.5;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = '#1a1a2e';
+    };
+
+    // Rotating the device mid-signature used to leave the canvas stretched
+    // to whatever size it had at the last orientation — the flex layout
+    // reflows around it either way, but a canvas's own bitmap does not
+    // resize itself, so portrait dimensions stayed pinned inside a now-
+    // landscape box (or the reverse) until the modal was closed and
+    // reopened. Re-measuring on resize/orientationchange keeps the drawing
+    // surface matched to whichever orientation the officer is actually
+    // signing in; the stroke already on it is carried over rather than
+    // lost, since a resize otherwise clears the bitmap outright.
+    let orientationTimer: ReturnType<typeof setTimeout> | undefined;
+    const resizeForOrientation = () => {
+      if (modal.hidden || !ctx) return;
+      let priorDrawing: string | null = null;
+      try {
+        priorDrawing = modalCanvas.toDataURL('image/png');
+      } catch {
+        priorDrawing = null;
+      }
+      sizeCanvas();
+      if (!priorDrawing) return;
+      const rect = modalCanvas.getBoundingClientRect();
+      const restored = new Image();
+      restored.onload = () => {
+        ctx.drawImage(restored, 0, 0, rect.width, rect.height);
+      };
+      restored.src = priorDrawing;
+    };
+    const scheduleOrientationResize = () => {
+      clearTimeout(orientationTimer);
+      orientationTimer = setTimeout(resizeForOrientation, 150);
+    };
+    window.addEventListener('resize', scheduleOrientationResize);
+    window.addEventListener('orientationchange', scheduleOrientationResize);
+
+    const clearCanvas = () => {
+      if (!ctx) return;
+      // Reset the transform first: clearRect is drawn in the CURRENT
+      // coordinate space, and that space is scaled by dpr above.
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, modalCanvas.width, modalCanvas.height);
+      ctx.restore();
+    };
+
+    let drawing = false;
+    let last: { x: number; y: number } | null = null;
+    const pointFrom = (e: PointerEvent) => {
+      const box = modalCanvas.getBoundingClientRect();
+      return { x: e.clientX - box.left, y: e.clientY - box.top };
+    };
+    modalCanvas.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      modalCanvas.setPointerCapture(e.pointerId);
+      drawing = true;
+      last = pointFrom(e);
+    });
+    modalCanvas.addEventListener('pointermove', e => {
+      if (!drawing || !last || !ctx) return;
+      const point = pointFrom(e);
+      ctx.beginPath();
+      ctx.moveTo(last.x, last.y);
+      ctx.lineTo(point.x, point.y);
+      ctx.stroke();
+      last = point;
+    });
+    const stopDrawing = () => {
+      drawing = false;
+      last = null;
+    };
+    modalCanvas.addEventListener('pointerup', stopDrawing);
+    modalCanvas.addEventListener('pointercancel', stopDrawing);
+    modalCanvas.addEventListener('pointerleave', stopDrawing);
+
+    const closeModal = () => {
+      modal.hidden = true;
+      activePad = null;
+    };
+
+    for (const pad of document.querySelectorAll<HTMLElement>(
+      '[data-sig-pad]'
+    )) {
+      const controls = pad.closest('.sig');
+      const openButton =
+        controls?.querySelector<HTMLButtonElement>('[data-sig-open]');
+      const clearImageButton = controls?.querySelector<HTMLButtonElement>(
+        '[data-sig-clear-image]'
+      );
+      const image = pad.querySelector<HTMLImageElement>('[data-sig-image]');
+      if (!openButton || !image) continue;
+
+      const who = pad.dataset.sigWho ?? '';
+      const recalled = recallSignature(who);
+      if (recalled) {
+        image.src = recalled;
+        image.hidden = false;
+        openButton.textContent = 'Re-sign';
+        if (clearImageButton) clearImageButton.hidden = false;
+      }
+
+      openButton.addEventListener('click', () => {
+        activePad = pad;
+        modalTitle.textContent = `Sign — ${pad.dataset.sigWho ?? ''}`;
+        modal.hidden = false;
+        requestAnimationFrame(() => {
+          sizeCanvas();
+          clearCanvas();
+        });
+      });
+
+      clearImageButton?.addEventListener('click', () => {
+        image.hidden = true;
+        image.removeAttribute('src');
+        openButton.textContent = 'Sign';
+        clearImageButton.hidden = true;
+        forgetSignature(who);
+      });
+    }
+
+    modalClose.addEventListener('click', closeModal);
+    modalClear.addEventListener('click', clearCanvas);
+    modalDone.addEventListener('click', () => {
+      if (!activePad) {
+        closeModal();
+        return;
+      }
+      const image =
+        activePad.querySelector<HTMLImageElement>('[data-sig-image]');
+      const controls = activePad.closest('.sig');
+      const openButton =
+        controls?.querySelector<HTMLButtonElement>('[data-sig-open]');
+      const clearImageButton = controls?.querySelector<HTMLButtonElement>(
+        '[data-sig-clear-image]'
+      );
+      // Nothing drawn is treated as nothing meant: the pad closes with the
+      // block left as it was, rather than storing a blank image that reads
+      // on screen as a signature nobody can see.
+      const trimmed = trimmedSignature(modalCanvas);
+      if (image && trimmed) {
+        image.src = trimmed;
+        image.hidden = false;
+        storeSignature(activePad.dataset.sigWho ?? '', image.src);
+      }
+      if (trimmed) {
+        if (openButton) openButton.textContent = 'Re-sign';
+        if (clearImageButton) clearImageButton.hidden = false;
+      }
+      closeModal();
+    });
+  }
+
+  // Officer feedback: printing, saving as a PDF and then uploading that same
+  // file on the Documents step was three separate actions to get one
+  // document filed. Once the applicant has signed on screen, this button
+  // does the filing itself: render the page exactly as it stands into a PDF
+  // and file it as the Signed Application Form, so step 3 opens with
+  // nothing left to upload for it.
+  //
+  // Its own button, not Next. Filing used to ride on "Next: upload
+  // documents", which meant simply passing back through this step filed a
+  // second copy nobody asked for (officer feedback). Next is a plain link
+  // again, and filing happens when — and only when — the officer says so.
+  //
+  // Deliberately not a hard gate either. The applicant may still be signing
+  // on paper instead (the ruled line under each name is the fallback that
+  // was always there), and a SharePoint hiccup must not strand the officer
+  // here: the manual upload on step 3 is still open to them.
+  const fileButton =
+    document.querySelector<HTMLButtonElement>('#file-signed-form');
+  const statusLine = document.querySelector<HTMLElement>(
+    '[data-sign-file-status]'
+  );
+
+  if (fileButton && signaturesEl) {
+    const reference = signaturesEl.getAttribute('data-reference') ?? '';
+    const signedFormTypeId =
+      signaturesEl.getAttribute('data-signed-form-type-id') ?? '';
+
+    const say = (message: string, tone: 'info' | 'error' = 'info') => {
+      if (!statusLine) return;
+      statusLine.textContent = message;
+      statusLine.dataset.tone = tone;
+    };
+
+    const applicantSigned = (): boolean => {
+      const image = document.querySelector<HTMLImageElement>(
+        '[data-sig-who="Applicant"] [data-sig-image]'
+      );
+      return !!image && !image.hidden;
+    };
+
+    let busy = false;
+
+    fileButton.addEventListener('click', () => {
+      if (busy) return;
+
+      if (!applicantSigned()) {
+        say(
+          'There is no signature on screen to file. Sign above first, or ' +
+            'print the form and upload the signed copy on the next step.',
+          'error'
+        );
+        return;
+      }
+
+      busy = true;
+      fileButton.disabled = true;
+      say('Preparing the signed form…');
+
+      void (async () => {
+        const printPage = document.querySelector<HTMLElement>('.print-page');
+        if (!printPage) {
+          say(
+            'Could not prepare the PDF: the form is not on this page.',
+            'error'
+          );
+          busy = false;
+          fileButton.disabled = false;
+          return;
+        }
+
+        // Applied to .print-page itself, not <body> — this stylesheet is
+        // scoped by Astro to elements this component renders, and toggling
+        // the class outside that tree would add it to an element the rule
+        // below can never match. The controls close/hide for the capture
+        // only, and are restored whatever happens next: a failure here must
+        // not leave the page looking different from how the officer left it.
+        printPage.classList.add('capturing');
+        let blob: Blob;
+        try {
+          blob = await renderElementToPdf(printPage);
+        } catch (error) {
+          printPage.classList.remove('capturing');
+          say(
+            error instanceof Error
+              ? `Could not prepare the PDF: ${error.message}`
+              : 'Could not prepare the PDF.',
+            'error'
+          );
+          busy = false;
+          fileButton.disabled = false;
+          return;
+        }
+        printPage.classList.remove('capturing');
+
+        // A re-signature replaces what is on file rather than joining it:
+        // SharePoint would otherwise keep both, under names a digit apart,
+        // and "the signed form" would stop naming one thing. Removed before
+        // the upload rather than after, so a failure here stops the second
+        // copy being created at all; the checklist reads Missing in the
+        // meantime, which is what it genuinely is.
+        const filedDocumentId = fileButton.dataset.filedDocumentId ?? '';
+        if (filedDocumentId) {
+          say('Removing the copy on file…');
+          try {
+            const response = await fetch('/api/v1/documents/remove', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ documentId: filedDocumentId }),
+            });
+            if (!response.ok) {
+              const body = await response.json().catch(() => null);
+              throw new Error(
+                body?.error?.message ??
+                  'The copy already on file could not be removed.'
+              );
+            }
+            fileButton.dataset.filedDocumentId = '';
+          } catch (error) {
+            say(
+              error instanceof Error
+                ? error.message
+                : 'The copy already on file could not be removed.',
+              'error'
+            );
+            busy = false;
+            fileButton.disabled = false;
+            return;
+          }
+        }
+
+        try {
+          const { documentId } = await uploadDocumentBlob({
+            applicationId,
+            documentTypeId: signedFormTypeId,
+            subject: 'applicant',
+            fileName: `${reference} - Signed application form.pdf`,
+            blob,
+            onStatus: message => say(message),
+          });
+          fileButton.dataset.filedDocumentId = documentId;
+          // No file name here: the server names what it files (document type
+          // and reference, plus a version), and naming the one this page sent
+          // would tell the officer a name that is not on the drive. The name
+          // that is appears on the next load of this page, from the server.
+          say('Signed form filed. Filing again replaces it.');
+        } catch (error) {
+          say(
+            (error instanceof Error
+              ? error.message
+              : 'The signed form could not be filed.') +
+              ' Upload it by hand on the next step instead.',
+            'error'
+          );
+        } finally {
+          busy = false;
+          fileButton.disabled = false;
+        }
+      })();
+    });
+  }
+</script>

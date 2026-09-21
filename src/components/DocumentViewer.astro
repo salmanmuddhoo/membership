@@ -1,0 +1,328 @@
+---
+// The dialog every "View" button on a document opens, and its Print.
+//
+// One component rather than the copy that used to sit on each of the four
+// pages that file or show documents: an application of each kind, and a
+// member. They had already drifted apart in their comments, and Print would
+// have been a fourth divergence waiting to happen.
+//
+// Include it once per page, anywhere inside the layout; the View buttons
+// find it by id.
+---
+
+<dialog
+  id="document-viewer-dialog"
+  class="fixed top-1/2 left-1/2 m-0 h-[85vh] w-[95vw] max-w-3xl -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-neutral-200 bg-white p-0 text-neutral-800 backdrop:bg-neutral-900/50 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100"
+>
+  <div class="flex items-center justify-between gap-3 border-b border-neutral-200 px-5 py-3 dark:border-neutral-800">
+    <p
+      data-viewer-name
+      class="truncate text-sm font-semibold text-neutral-800 dark:text-neutral-100"
+    />
+    <div class="flex shrink-0 items-center gap-2">
+      <button
+        type="button"
+        data-viewer-print
+        class="rounded-lg border border-neutral-300 px-2.5 py-1 text-xs font-medium text-neutral-600 transition hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-600 dark:text-neutral-300 dark:hover:bg-neutral-800"
+      >
+        Print
+      </button>
+      <button
+        type="button"
+        data-viewer-close
+        class="rounded-lg border border-neutral-300 px-2.5 py-1 text-xs font-medium text-neutral-600 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-300 dark:hover:bg-neutral-800"
+      >
+        Close
+      </button>
+    </div>
+  </div>
+  <div
+    data-viewer-body
+    class="flex h-[calc(85vh-3rem)] items-center justify-center overflow-auto p-4 text-sm"
+  >
+    Loading…
+  </div>
+</dialog>
+
+<script>
+  // Opening a filed document (S-403). The URL comes from a round trip on
+  // click rather than from the page, because the one Graph hands back is
+  // pre-authenticated — a secret in the same sense an upload ticket is one,
+  // and belongs in a short-lived response rather than in HTML that sits in
+  // the page for as long as the tab is open.
+  //
+  // Officer feedback: this used to be window.open(url), which handed the
+  // browser a SharePoint download link — a save-to-disk prompt on some
+  // devices before the file could even be looked at. An <img> or a PDF's own
+  // <iframe> viewer renders the same URL in place instead, closed with an
+  // explicit Close rather than left to guess when a new tab was done with it.
+  const viewerDialog = document.getElementById(
+    'document-viewer-dialog'
+  ) as HTMLDialogElement | null;
+  const viewerName =
+    viewerDialog?.querySelector<HTMLElement>('[data-viewer-name]');
+  const viewerBody =
+    viewerDialog?.querySelector<HTMLElement>('[data-viewer-body]');
+  const viewerClose = viewerDialog?.querySelector<HTMLButtonElement>(
+    '[data-viewer-close]'
+  );
+  const viewerPrint = viewerDialog?.querySelector<HTMLButtonElement>(
+    '[data-viewer-print]'
+  );
+
+  // Whether this browser draws a PDF itself, or only offers to download one.
+  //
+  // Officer feedback: on a phone or a tablet, View on a filed PDF — the
+  // signed application form, the Cash Deposit Form — opened an empty box.
+  // Neither mobile Safari nor Chrome on Android has a built-in PDF viewer to
+  // put inside a frame; they hand the file to the operating system instead,
+  // and a frame pointed at one simply renders nothing. Nothing about the
+  // bytes or the headers is wrong, so there is no version of the frame that
+  // works there.
+  //
+  // navigator.pdfViewerEnabled is the browser's own answer to this question
+  // and is exactly false on those two. Where it is missing the answer is
+  // yes: the property postdates every desktop browser that renders PDFs in
+  // a frame, and being wrong here costs a frame that would have worked, not
+  // a document that cannot be read.
+  const pdfRendersInline = () =>
+    typeof navigator.pdfViewerEnabled === 'boolean'
+      ? navigator.pdfViewerEnabled
+      : true;
+
+  if (viewerDialog && viewerName && viewerBody && viewerClose && viewerPrint) {
+    // Which document is on screen, for Print to ask for its bytes, and what
+    // kind it is — an image and a PDF are printed differently.
+    let openDocumentId: string | null = null;
+    let openContentType = '';
+    let openFileName = '';
+    // The frame the last print built, kept only so the next print can take
+    // it out of the page first.
+    let printFrame: HTMLIFrameElement | null = null;
+
+    const discardPrintFrame = () => {
+      printFrame?.remove();
+      printFrame = null;
+    };
+
+    viewerClose.addEventListener('click', () => viewerDialog.close());
+    // Emptying the body on close, not just on the next open: a filled
+    // <iframe> or <img> left behind keeps loading, or keeps playing, in a
+    // dialog that is supposedly shut.
+    viewerDialog.addEventListener('close', () => {
+      viewerBody.replaceChildren();
+      openDocumentId = null;
+      openContentType = '';
+      openFileName = '';
+      discardPrintFrame();
+    });
+
+    // Printed from a frame served by this origin rather than from what the
+    // dialog is showing: the dialog renders SharePoint's own URL, and a
+    // cross-origin frame cannot be told to print. /api/v1/documents/content
+    // streams the same bytes from here, which can be.
+    viewerPrint.addEventListener('click', () => {
+      if (!openDocumentId) return;
+
+      discardPrintFrame();
+      viewerPrint.disabled = true;
+      viewerPrint.textContent = 'Preparing…';
+
+      const frame = document.createElement('iframe');
+      frame.setAttribute('aria-hidden', 'true');
+      frame.style.position = 'fixed';
+      frame.style.width = '0';
+      frame.style.height = '0';
+      frame.style.border = '0';
+      frame.style.visibility = 'hidden';
+
+      const done = () => {
+        viewerPrint.disabled = false;
+        viewerPrint.textContent = 'Print';
+      };
+      const send = () => {
+        done();
+        try {
+          frame.contentWindow?.focus();
+          frame.contentWindow?.print();
+        } catch {
+          void window.appAlert(
+            'This file could not be sent to the printer. Open it in a new ' +
+              'tab and print from there.'
+          );
+          discardPrintFrame();
+        }
+      };
+      const failed = () => {
+        done();
+        discardPrintFrame();
+        void window.appAlert('The file could not be prepared for printing.');
+      };
+
+      const bytes = `/api/v1/documents/content?documentId=${encodeURIComponent(
+        openDocumentId
+      )}`;
+
+      if (openContentType.startsWith('image/')) {
+        // Officer feedback: printing a photographed document sent the raw
+        // image to the printer at its natural size, so a phone camera's
+        // 4000px-tall scan came out split over three or four sheets. A page
+        // of our own around it, with the image told to fit inside it, puts
+        // the whole document on one sheet whatever it was captured at.
+        //
+        // Built with DOM calls into the frame's own empty document rather
+        // than from a string of HTML: a frame appended with no src is
+        // already a same-origin about:blank, so it can be filled this way
+        // and still be told to print — and nothing here is ever parsed as
+        // markup, which is the rule html-sinks.test.ts holds this codebase
+        // to.
+        document.body.appendChild(frame);
+        printFrame = frame;
+        const sheet = frame.contentDocument;
+        if (!sheet) {
+          failed();
+          return;
+        }
+        sheet.title = openFileName;
+        const style = sheet.createElement('style');
+        style.textContent = [
+          '@page { margin: 10mm; }',
+          'html, body { height: 100%; margin: 0; padding: 0; }',
+          'body { display: flex; align-items: center; justify-content: center; }',
+          'img { max-width: 100%; max-height: 100%; object-fit: contain; }',
+        ].join('\n');
+        sheet.head.appendChild(style);
+        const image = sheet.createElement('img');
+        image.alt = '';
+        // Printed once the bytes are actually there — an image still
+        // loading prints as a blank sheet.
+        image.addEventListener('load', send);
+        image.addEventListener('error', failed);
+        image.src = bytes;
+        sheet.body.appendChild(image);
+        return;
+      }
+
+      // A PDF already carries its own page boundaries; the browser's own
+      // viewer honours them, and wrapping it would only fight that.
+      frame.addEventListener('load', send);
+      frame.addEventListener('error', failed);
+      frame.src = bytes;
+      document.body.appendChild(frame);
+      printFrame = frame;
+    });
+
+    for (const viewButton of document.querySelectorAll<HTMLButtonElement>(
+      '[data-view-document]'
+    )) {
+      viewButton.addEventListener('click', async () => {
+        const documentId = viewButton.dataset.documentId;
+        if (!documentId) return;
+
+        const original = viewButton.textContent;
+        viewButton.disabled = true;
+        viewButton.textContent = 'Opening…';
+
+        try {
+          const response = await fetch('/api/v1/documents/view-url', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ documentId }),
+          });
+          const body = await response.json();
+          if (!response.ok) {
+            throw new Error(
+              body?.error?.message ?? 'The file could not be opened.'
+            );
+          }
+          const {
+            url,
+            fileName,
+            contentType,
+          }: { url: string; fileName: string; contentType: string } = body.data;
+
+          viewerName.textContent = fileName;
+          viewerBody.replaceChildren();
+          openDocumentId = documentId;
+          openContentType = contentType;
+          openFileName = fileName;
+          discardPrintFrame();
+          if (
+            contentType.startsWith('image/') &&
+            contentType !== 'image/heic'
+          ) {
+            const img = document.createElement('img');
+            img.src = url;
+            img.alt = fileName;
+            img.className = 'max-h-full max-w-full object-contain';
+            viewerBody.appendChild(img);
+          } else if (contentType === 'application/pdf') {
+            // Served from this origin, not from SharePoint's own URL: that
+            // one comes back as Content-Disposition: attachment, which makes
+            // a frame download the file instead of showing it — the officer
+            // clicked View and got a save prompt and an empty box. The same
+            // endpoint Print already uses sends it inline.
+            const bytes = `/api/v1/documents/content?documentId=${encodeURIComponent(
+              documentId
+            )}`;
+            if (pdfRendersInline()) {
+              const frame = document.createElement('iframe');
+              frame.src = bytes;
+              frame.title = fileName;
+              frame.className = 'h-full w-full';
+              viewerBody.appendChild(frame);
+            } else {
+              // Handed to the device's own full-screen reader instead, which
+              // is where a phone shows a PDF at all — and a better place to
+              // read an A4 form than a box inside a dialog.
+              const open = document.createElement('a');
+              open.href = bytes;
+              open.target = '_blank';
+              open.rel = 'noopener';
+              open.className =
+                'rounded-lg bg-neutral-800 px-4 py-2 text-sm font-semibold ' +
+                'text-white dark:bg-neutral-100 dark:text-neutral-900';
+              open.textContent = 'Open document';
+              viewerBody.appendChild(open);
+            }
+          } else {
+            // HEIC (no browser renders it inline) and anything unforeseen:
+            // still openable, just not previewable here.
+            const p = document.createElement('p');
+            p.className = 'text-center text-neutral-600 dark:text-neutral-300';
+            p.textContent = "This file type can't be previewed here.";
+            const link = document.createElement('a');
+            link.href = url;
+            link.target = '_blank';
+            link.rel = 'noopener';
+            link.className = 'mt-2 inline-block underline';
+            link.textContent = 'Open in a new tab';
+            const wrap = document.createElement('div');
+            wrap.className = 'text-center';
+            wrap.append(p, link);
+            viewerBody.appendChild(wrap);
+          }
+          // Nothing the browser will not render is anything it will print
+          // either, so Print goes away with the preview — including a PDF on
+          // a device that has no viewer to print from. The reader it opens
+          // in carries its own print and share.
+          viewerPrint.hidden = !(
+            (contentType.startsWith('image/') &&
+              contentType !== 'image/heic') ||
+            (contentType === 'application/pdf' && pdfRendersInline())
+          );
+          viewerDialog.showModal();
+        } catch (error) {
+          await window.appAlert(
+            error instanceof Error
+              ? error.message
+              : 'The file could not be opened.'
+          );
+        } finally {
+          viewButton.disabled = false;
+          viewButton.textContent = original;
+        }
+      });
+    }
+  }
+</script>

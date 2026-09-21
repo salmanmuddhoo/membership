@@ -5,8 +5,16 @@
 // available via process.env at request time (not inlined at build); in local
 // dev Astro loads .env into import.meta.env. We check both so it works in both
 // places.
-function readEnv(key: string): string | undefined {
-  const viteVal = (import.meta.env as Record<string, string | undefined>)[key];
+//
+// import.meta.env only EXISTS under Vite — the Astro app and the test runner.
+// The job runner and the CLI scripts run under plain Node, where it is
+// undefined and indexing it throws. So it is probed rather than assumed; every
+// caller outside the web app depends on that.
+export function readEnv(key: string): string | undefined {
+  const viteEnv = (
+    import.meta as unknown as { env?: Record<string, string | undefined> }
+  ).env;
+  const viteVal = viteEnv?.[key];
   if (viteVal !== undefined && viteVal !== '') return viteVal;
   const proc = (
     globalThis as { process?: { env?: Record<string, string | undefined> } }
@@ -73,5 +81,314 @@ export function getEntraConfig(): EntraConfig {
     postLogoutRedirectUri,
     scopes,
     sessionSecret,
+  };
+}
+
+export interface DatabaseConfig {
+  connectionString: string;
+  // Per-instance pool ceiling. Serverless scales by process, so the effective
+  // connection count is this number times the number of warm instances — which
+  // is why the default is deliberately tiny. See docs/database.md.
+  poolMax: number;
+  idleTimeoutMillis: number;
+  connectionTimeoutMillis: number;
+  // 'verify' negotiates TLS and requires the server certificate to chain to a
+  // trusted CA. 'disable' opens a plaintext connection and exists only for a
+  // local development cluster, which has no TLS at all — note that these are
+  // genuinely different things, and that an unverified TLS handshake is not
+  // offered as an option.
+  sslMode: 'verify' | 'disable';
+}
+
+function readIntEnv(key: string, fallback: number): number {
+  const raw = readEnv(key);
+  if (raw === undefined || raw === '') return fallback;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(
+      `${key} must be a positive integer; received ${JSON.stringify(raw)}.`
+    );
+  }
+  return parsed;
+}
+
+// TLS modes that actually verify the server's certificate chain. node-postgres
+// currently treats all three as verify-full; libpq does not, and pg v9 will
+// adopt libpq's weaker semantics, so they are normalised rather than trusted.
+const VERIFYING_SSL_MODES = new Set(['require', 'verify-ca', 'verify-full']);
+
+// Make the application's TLS decision authoritative.
+//
+// node-postgres gives the connection string's sslmode precedence over the
+// explicit `ssl` option: given `?sslmode=disable`, a client constructed with
+// `ssl: { rejectUnauthorized: true }` still connects in PLAINTEXT, silently.
+// A deployment could therefore run unencrypted while this code believed it was
+// verifying. So the mode is rewritten here to match the environment's policy
+// instead of being left to whoever wrote the URL.
+//
+// Rewriting only ever strengthens: a mode that already verifies becomes the
+// explicit `verify-full` (which is what node-postgres does today, so behaviour
+// is unchanged and survives the pg v9 change), and a mode that would weaken TLS
+// in a deployed environment is refused rather than quietly upgraded — asking
+// for plaintext in production is a misconfiguration someone must see.
+export function normaliseSslMode(
+  connectionString: string,
+  allowInsecure: boolean
+): string {
+  let url: URL;
+  try {
+    url = new URL(connectionString);
+  } catch {
+    // libpq key=value form ("host=... sslmode=..."). We cannot rewrite it
+    // safely, so refuse it rather than let an unchecked sslmode through.
+    if (/sslmode/i.test(connectionString)) {
+      throw new Error(
+        'DATABASE_URL must be a postgresql:// URL when it specifies sslmode, ' +
+          'so the TLS mode can be verified (see docs/database.md).'
+      );
+    }
+    return connectionString;
+  }
+
+  const requested = url.searchParams.get('sslmode')?.toLowerCase();
+
+  if (allowInsecure) {
+    // Local plaintext development. An explicit sslmode is meaningless here and
+    // would fail against a cluster with no TLS, so it is replaced outright.
+    url.searchParams.set('sslmode', 'disable');
+    return url.toString();
+  }
+
+  if (requested && !VERIFYING_SSL_MODES.has(requested)) {
+    throw new Error(
+      `DATABASE_URL requests sslmode=${requested}, which does not verify the ` +
+        'server certificate. A deployed environment must use ' +
+        'sslmode=verify-full. Refusing to connect.'
+    );
+  }
+
+  url.searchParams.set('sslmode', 'verify-full');
+  return url.toString();
+}
+
+// Whether this deployment is production, on the one signal the app is given
+// for it (PUBLIC_APP_ENV: unset on a developer's machine, "test" on the
+// staging deployment, "production" in front of real members). Unset reads as
+// production — the safe default for every caller that gates something
+// dangerous on this, from a plaintext database connection to a full data
+// wipe, is to refuse rather than to assume a value was simply forgotten.
+export function isProductionEnvironment(): boolean {
+  const appEnv = readEnv('PUBLIC_APP_ENV');
+  return appEnv === undefined || appEnv === 'production';
+}
+
+// PostgreSQL configuration. Throws with an actionable message when the
+// database has not been configured, so a missing variable surfaces as a
+// deployment problem rather than an obscure driver error (S-101).
+export function getDatabaseConfig(): DatabaseConfig {
+  const connectionString = readEnv('DATABASE_URL');
+
+  if (!connectionString) {
+    throw new Error(
+      'DATABASE_URL is not set. Provide the PostgreSQL connection string for ' +
+        'this environment (see .env.example and docs/database.md).'
+    );
+  }
+
+  // TLS is mandatory in a deployed environment. Local development against a
+  // plaintext instance is the one exception, and it has to be asked for
+  // explicitly rather than being inferred from the host name.
+  const allowInsecure = readEnv('DATABASE_ALLOW_INSECURE') === 'true';
+
+  if (allowInsecure && isProductionEnvironment()) {
+    throw new Error(
+      'DATABASE_ALLOW_INSECURE must never be enabled outside local ' +
+        'development. Unset it, or set PUBLIC_APP_ENV to a non-production value.'
+    );
+  }
+
+  return {
+    connectionString: normaliseSslMode(connectionString, allowInsecure),
+    poolMax: readIntEnv('DATABASE_POOL_MAX', 3),
+    idleTimeoutMillis: readIntEnv('DATABASE_IDLE_TIMEOUT_MS', 60_000),
+    connectionTimeoutMillis: readIntEnv('DATABASE_CONNECT_TIMEOUT_MS', 10_000),
+    sslMode: allowInsecure ? 'disable' : 'verify',
+  };
+}
+
+export interface MemberConfig {
+  // Signs the member app's access tokens. Its own secret, not
+  // AUTH_SESSION_SECRET: a staff cookie and a member token must never be
+  // interchangeable, and separate keys make that a property of the
+  // cryptography rather than of a claim check.
+  sessionSecret: string;
+  accessTokenSeconds: number;
+  refreshTokenDays: number;
+  // How one-time codes leave the system. 'http' posts { to, message } to
+  // MEMBER_OTP_WEBHOOK_URL, which is whatever SMS or WhatsApp gateway the
+  // Society uses; 'log' writes the code to the server log and exists for a
+  // developer's machine and the test environment only.
+  otpDelivery: 'http' | 'log' | 'unconfigured';
+  otpWebhookUrl?: string;
+  otpWebhookToken?: string;
+  // A code every challenge accepts, for exercising the app against the test
+  // environment without an SMS gateway. Refused outside non-production.
+  otpFixedCode?: string;
+}
+
+export class MemberConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'MemberConfigError';
+  }
+}
+
+export function getMemberConfig(): MemberConfig {
+  const sessionSecret = readEnv('MEMBER_SESSION_SECRET');
+  if (!sessionSecret || sessionSecret.length < 32) {
+    throw new MemberConfigError(
+      'MEMBER_SESSION_SECRET is not set (or is shorter than 32 characters). ' +
+        "It signs the member app's access tokens; see .env.example."
+    );
+  }
+
+  const production = isProductionEnvironment();
+  const delivery = readEnv('MEMBER_OTP_DELIVERY');
+  const otpWebhookUrl = readEnv('MEMBER_OTP_WEBHOOK_URL');
+  const otpFixedCode = readEnv('MEMBER_OTP_FIXED_CODE');
+
+  if (production && (delivery === 'log' || otpFixedCode)) {
+    throw new MemberConfigError(
+      'MEMBER_OTP_DELIVERY=log and MEMBER_OTP_FIXED_CODE are for ' +
+        'non-production environments only. Unset them, or set PUBLIC_APP_ENV ' +
+        'to a non-production value.'
+    );
+  }
+  if (otpFixedCode && !/^\d{6}$/.test(otpFixedCode)) {
+    throw new MemberConfigError('MEMBER_OTP_FIXED_CODE must be six digits.');
+  }
+
+  let otpDelivery: MemberConfig['otpDelivery'] = 'unconfigured';
+  if (delivery === 'http' && otpWebhookUrl) otpDelivery = 'http';
+  else if (delivery === 'log') otpDelivery = 'log';
+
+  return {
+    sessionSecret,
+    accessTokenSeconds: readIntEnv('MEMBER_ACCESS_TOKEN_SECONDS', 3600),
+    refreshTokenDays: readIntEnv('MEMBER_REFRESH_TOKEN_DAYS', 90),
+    otpDelivery,
+    otpWebhookUrl,
+    otpWebhookToken: readEnv('MEMBER_OTP_WEBHOOK_TOKEN'),
+    otpFixedCode,
+  };
+}
+
+// How notifications actually leave the system (S-902, S-903).
+//
+// The template says what to send and the channel says how; this says through
+// whom — and it is the only place a provider is named. Changing provider is
+// changing these variables, which is what decision 11 asked for.
+export interface ChannelDelivery {
+  // 'graph' sends email through the Society's Microsoft 365 mailbox, reusing
+  // the GRAPH_* registration documents already use. 'cloud_api' sends
+  // WhatsApp through Meta's own WhatsApp Business Platform. 'http' posts
+  // { to, subject, message } to whichever gateway the Society has — the same
+  // shape the member app's one-time codes already use, so one gateway can
+  // carry both. 'log' writes to the server log and is non-production only.
+  kind: 'graph' | 'cloud_api' | 'http' | 'log' | 'unconfigured';
+  // The mailbox mail is sent as, for 'graph'.
+  from?: string;
+  webhookUrl?: string;
+  webhookToken?: string;
+  // For 'cloud_api': the WhatsApp Business phone number the Society sends as,
+  // named by the id Meta gives it rather than by the number itself, and a
+  // token with permission to send from it.
+  phoneNumberId?: string;
+  token?: string;
+  // Overridable so a test can point the sender at a stub, and so a pinned
+  // Graph API version can be moved without a release.
+  baseUrl?: string;
+  apiVersion?: string;
+}
+
+export interface NotificationConfig {
+  email: ChannelDelivery;
+  whatsapp: ChannelDelivery;
+}
+
+export class NotificationConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'NotificationConfigError';
+  }
+}
+
+// Read one channel's settings. Anything incomplete reads as 'unconfigured'
+// rather than half-configured: a channel that cannot say who it sends as, or
+// where it posts to, has no way to deliver, and saying so here is what makes
+// the delivery log (S-904) show a configuration problem instead of a silent
+// success.
+function channelDelivery(
+  prefix: string,
+  allowed: ReadonlySet<ChannelDelivery['kind']>
+): ChannelDelivery {
+  const requested = readEnv(`${prefix}_DELIVERY`);
+  const from = readEnv(`${prefix}_FROM`);
+  const webhookUrl = readEnv(`${prefix}_WEBHOOK_URL`);
+  const webhookToken = readEnv(`${prefix}_WEBHOOK_TOKEN`);
+  const phoneNumberId = readEnv(`${prefix}_PHONE_NUMBER_ID`);
+  const token = readEnv(`${prefix}_TOKEN`);
+
+  let kind: ChannelDelivery['kind'] = 'unconfigured';
+  if (requested === 'graph' && allowed.has('graph') && from) kind = 'graph';
+  else if (
+    requested === 'cloud_api' &&
+    allowed.has('cloud_api') &&
+    phoneNumberId &&
+    token
+  ) {
+    kind = 'cloud_api';
+  } else if (requested === 'http' && webhookUrl) kind = 'http';
+  else if (requested === 'log') kind = 'log';
+
+  return {
+    kind,
+    from,
+    webhookUrl,
+    webhookToken,
+    phoneNumberId,
+    token,
+    baseUrl: readEnv(`${prefix}_BASE_URL`),
+    apiVersion: readEnv(`${prefix}_API_VERSION`),
+  };
+}
+
+/**
+ * Where each channel sends.
+ *
+ * Unlike getMemberConfig this never throws: a notification must not be able to
+ * break the approval that caused it, so a channel with nothing configured is
+ * reported as such and refused at send time — where the refusal is recorded
+ * against the notification and visible in the delivery log.
+ */
+export function getNotificationConfig(): NotificationConfig {
+  const production = isProductionEnvironment();
+
+  // 'log' is a developer's channel: it reports success while telling the
+  // member nothing. In production that is the worst possible failure mode, so
+  // it is not an available kind there at all.
+  const demote = (channel: ChannelDelivery): ChannelDelivery =>
+    production && channel.kind === 'log'
+      ? { ...channel, kind: 'unconfigured' }
+      : channel;
+
+  return {
+    email: demote(
+      channelDelivery('NOTIFY_EMAIL', new Set(['graph', 'http', 'log']))
+    ),
+    // No 'graph': Microsoft 365 sends mail, not WhatsApp.
+    whatsapp: demote(
+      channelDelivery('NOTIFY_WHATSAPP', new Set(['cloud_api', 'http', 'log']))
+    ),
   };
 }

@@ -31,33 +31,41 @@ tenant (see below); until then the login page shows a "not configured" notice.
 
 ## Environment variables
 
-All are **server-side secrets** (no `PUBLIC_` prefix — never sent to the browser).
+The Entra values are **server-side secrets** (no `PUBLIC_` prefix — never sent
+to the browser). The only browser-exposed one is `PUBLIC_APP_ENV` (a label).
 
 Provide the OIDC endpoints **either** as `ENTRA_METADATA_URL` **or** as
 `ENTRA_AUTHORITY` + `ENTRA_TENANT_ID`.
 
-| Variable                         | Description                                                                                                                |
-| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `ENTRA_METADATA_URL`             | Exact "OpenID Connect metadata document" URL (App reg → Endpoints)                                                         |
-| `ENTRA_AUTHORITY`                | `https://<subdomain>.ciamlogin.com/` — `<subdomain>` is the onmicrosoft prefix (a single label), **not** a business domain |
-| `ENTRA_TENANT_ID`                | Directory (tenant) ID                                                                                                      |
-| `ENTRA_CLIENT_ID`                | App registration (client) ID                                                                                               |
-| `ENTRA_CLIENT_SECRET`            | App registration client secret                                                                                             |
-| `ENTRA_REDIRECT_URI`             | `<app-url>/auth/callback`                                                                                                  |
-| `ENTRA_POST_LOGOUT_REDIRECT_URI` | `<app-url>/login`                                                                                                          |
-| `ENTRA_SCOPES`                   | `openid profile email offline_access` (default)                                                                            |
-| `AUTH_SESSION_SECRET`            | Random string used to sign the session cookie                                                                              |
+| Variable                         | Description                                                                                                                  |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `ENTRA_METADATA_URL`             | Exact "OpenID Connect metadata document" URL (App reg → Endpoints)                                                           |
+| `ENTRA_AUTHORITY`                | `https://<subdomain>.ciamlogin.com/` — `<subdomain>` is the onmicrosoft prefix (a single label), **not** a business domain   |
+| `ENTRA_TENANT_ID`                | Directory (tenant) ID                                                                                                        |
+| `ENTRA_CLIENT_ID`                | App registration (client) ID                                                                                                 |
+| `ENTRA_CLIENT_SECRET`            | App registration client secret                                                                                               |
+| `ENTRA_REDIRECT_URI`             | `<app-url>/auth/callback`                                                                                                    |
+| `ENTRA_POST_LOGOUT_REDIRECT_URI` | `<app-url>/login`                                                                                                            |
+| `ENTRA_SCOPES`                   | `openid profile email offline_access` (default)                                                                              |
+| `AUTH_SESSION_SECRET`            | Random string used to sign the session cookie                                                                                |
+| `PUBLIC_APP_ENV`                 | Optional UI label; set `test` on the test env to show a "TEST" badge                                                         |
+| `MEMBER_SESSION_SECRET`          | Signs the member app's access tokens (`docs/member-app.md`); at least 32 characters, never the same as `AUTH_SESSION_SECRET` |
+| `MEMBER_OTP_DELIVERY`            | How one-time codes are sent: `http` to `MEMBER_OTP_WEBHOOK_URL`, or `log` on a non-production environment                    |
 
 ### Environments (test vs production)
 
-Deployment is **Vercel only**. Test and production run the same code and are
-separated by environment variables set per Vercel scope, each pointing at its
-own Entra app registration (and, later, its own Postgres database):
+Deployment is **Vercel only**, one project, two long-lived environments that
+run the same code with their own env vars and their own Entra app registration
+(and, later, their own Postgres database):
 
-| Environment | Vercel scope | Entra app registration |
-| ----------- | ------------ | ---------------------- |
-| Test        | Preview      | test tenant/app        |
-| Production  | Production   | production tenant/app  |
+| Environment | Git branch   | Vercel environment | Promotion             |
+| ----------- | ------------ | ------------------ | --------------------- |
+| Test        | `main`       | custom env `test`  | auto on every merge   |
+| Production  | `production` | Production         | promoted occasionally |
+
+Promote by updating `production` from `main` (a PR `main → production` gives an
+audit trail). Full setup and promotion steps:
+[`docs/environments.md`](docs/environments.md).
 
 ## Authentication flow
 
@@ -119,9 +127,45 @@ Flexible Server. Full checklist in the
 
 ## Deployment
 
-**Vercel**, automatically on merge to `main` (Git integration + the
-`@astrojs/vercel` adapter). Set the environment variables above per scope
-(Preview = test, Production = production), and update `site` in
-`astro.config.mjs` to the production domain. Because Entra secrets are read at
-runtime, they take effect without a rebuild — though a redeploy is the simplest
-way to apply them.
+**Vercel** (Git integration + the `@astrojs/vercel` adapter), one project with
+two environments:
+
+- **Test** deploys automatically on every merge to `main`.
+- **Production** deploys when `production` is updated — see
+  [`docs/environments.md`](docs/environments.md) for the environment setup and
+  the `main → production` promotion steps.
+
+Set the environment variables above once per environment (test values on the
+`test` custom env, production values on Production). Because Entra secrets are
+read at runtime, they take effect on the next deploy.
+
+## Planning
+
+- [`docs/backlog.md`](docs/backlog.md) — the Phase 1 product backlog: 16 epics
+  decomposed into features and user stories, with full acceptance criteria for
+  the next three milestones.
+- [`docs/adr/0001-azure-native-backend.md`](docs/adr/0001-azure-native-backend.md)
+  — the backend architecture decision.
+- [`docs/environments.md`](docs/environments.md) — test and production
+  environments, and how a release is promoted.
+- [`docs/database.md`](docs/database.md) — the two database roles, TLS, pooling
+  and how migrations are applied.
+- [`docs/access-control.md`](docs/access-control.md) — how a signed-in person is
+  resolved to an account, how permissions are decided, and how to provision
+  staff accounts.
+- [`docs/api.md`](docs/api.md) — the `/api/v1` contract, how an endpoint is
+  defined, and how the OpenAPI document stays current.
+- [`docs/member-app.md`](docs/member-app.md) — the member mobile app's
+  surface: NIC + AB Number linking, one-time codes, sessions, applications
+  submitted from the phone.
+- [`docs/documents.md`](docs/documents.md) — SharePoint as the document
+  repository, how a large upload is brokered, and the M365 tenant setup.
+- [`docs/jobs.md`](docs/jobs.md) — scheduled and long-running jobs on Azure
+  Container Apps Jobs, and how they resume rather than restart.
+
+## Security & contributions
+
+Every pull request into `main` or `production` must pass an automated security
+audit (secrets, SAST, dependency and misconfiguration scanning) and a human
+review before it can merge. See [`SECURITY.md`](SECURITY.md) for the policy and
+[`docs/security-gate.md`](docs/security-gate.md) for how the gate is configured.

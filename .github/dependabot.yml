@@ -1,8 +1,5 @@
-# To get started with Dependabot version updates, you'll need to specify which
-# package ecosystems to update and where the package manifests are located.
-# Please see the documentation for all configuration options:
-# https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
-
+# Dependabot keeps dependencies and workflow actions patched. Its pull requests
+# pass through the same security gate as any other change.
 version: 2
 updates:
   - package-ecosystem: 'npm'
@@ -10,9 +7,15 @@ updates:
     schedule:
       interval: 'weekly'
     groups:
-      # Prettier bumps often change formatting across the repo; keep them together
-      # so one format pass (via dependabot-format.yml) covers the whole change.
+      # Prettier bumps often reformat the repo; group them so a single
+      # formatting pass covers the whole change.
       prettier:
         patterns:
           - 'prettier'
           - 'prettier-*'
+
+  # The security gate is only as current as the actions it runs.
+  - package-ecosystem: 'github-actions'
+    directory: '/'
+    schedule:
+      interval: 'weekly'

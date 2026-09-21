@@ -1,0 +1,8 @@
+# Every change requires review by a code owner.
+#
+# NOTE: GitHub does not let an author approve their own pull request. While
+# there is a single maintainer, enabling "Require review from Code Owners" in
+# branch protection would block that maintainer's own work. Add a second
+# reviewer before turning that rule on — see docs/security-gate.md.
+
+* @salmanmuddhoo

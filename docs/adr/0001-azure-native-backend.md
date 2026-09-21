@@ -63,23 +63,35 @@ far larger and riskier. This is the cheapest possible moment to migrate.
 
 ## Migration plan (phased, no downtime)
 
-1. **Config seam** _(this change)_ — provider values become `supabase | entra`;
-   Entra + Postgres env vars documented. Default stays `supabase` so the live
-   app is untouched until Entra is verified.
-2. **Provision Azure** _(you)_ — create an Entra External ID tenant, a user
-   flow, and an app registration (client id/secret, redirect URIs) per
-   environment; create Azure Database for PostgreSQL Flexible Server per
-   environment. See the checklist below.
-3. **Entra auth provider** _(next PR)_ — implement `providers/entra.ts` +
-   `/auth/login`, `/auth/callback`, `/auth/logout` routes (OIDC + PKCE, signed
-   cookie session). Verify the redirect end-to-end against the real tenant in
-   Preview before touching Production.
-4. **Flip test → prod** — set `PUBLIC_AUTH_PROVIDER=entra` on Preview, verify,
-   then on Production.
-5. **Data layer** — introduce the Postgres client + migrations when the first
-   FRD module is built (replaces the Supabase migration workflow).
-6. **Retire Supabase** — remove the Supabase provider, `create-user` script,
-   and `supabase/` workflow once Entra + Postgres are the sole backend.
+The migration is complete apart from the data layer. Steps are kept here as the
+record of how it was carried out; the status column reflects where we are.
+
+| #   | Step                                                                                                                                                                            | Status                                    |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| 1   | **Config seam** — a provider seam so auth could be swapped without touching pages                                                                                               | Done                                      |
+| 2   | **Provision Azure** — Entra External ID tenant, user flow and app registration per environment; Azure Database for PostgreSQL Flexible Server per environment (checklist below) | Entra done; **Postgres outstanding**      |
+| 3   | **Entra auth provider** — `providers/entra.ts` plus `/auth/login`, `/auth/callback`, `/auth/logout` (OIDC + PKCE, signed cookie session)                                        | Done                                      |
+| 4   | **Flip test → prod** — verified against the real tenant on test, then production                                                                                                | Done                                      |
+| 5   | **Data layer** — Postgres client + migrations, introduced with the first FRD module                                                                                             | **M1** — blocked on the Postgres instance |
+| 6   | **Retire Supabase** — remove the Supabase provider, the `create-user` script and the deploy workflow                                                                            | Done                                      |
+
+Entra is now the only auth provider: there is no `PUBLIC_AUTH_PROVIDER` switch
+and no Supabase code path. Step 5 is the sole remaining item, tracked as
+milestone M1 in [`../backlog.md`](../backlog.md).
+
+## Open: where the API runs
+
+This ADR places the frontend on Vercel and assumes the API runs there too. That
+assumption is **explicitly held open**.
+
+Jobs already run on Azure Container Apps (see `docs/jobs.md`), and the direction
+set on 26 August 2026 is to keep open the option of moving the API there as
+well, with VNet integration and a private-endpoint PostgreSQL — which would also
+close the firewall question in `docs/database.md`.
+
+Nothing should be written that would make that move a rewrite rather than a
+deployment change. The constraints that follow from it are listed in
+`docs/database.md`.
 
 ## Azure/Entra provisioning checklist (per environment)
 

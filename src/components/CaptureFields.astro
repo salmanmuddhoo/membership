@@ -1,0 +1,492 @@
+---
+// The capture form's fields, as the membership type configures them (S-301).
+//
+// Shared by the page that starts an application and the page that edits one,
+// so an officer typing into a form that has no application yet sees exactly
+// the form they will keep typing into once it does.
+import type { MissingField, PartyValues } from '@lib/applications/capture';
+import type { FieldSubject, MembershipTypeField } from '@lib/config/reference';
+
+interface Props {
+  fields: Map<FieldSubject, MembershipTypeField[]>;
+  parties: PartyValues[];
+  // Mandatory fields still empty, so the ones holding submission up are
+  // outlined rather than only listed somewhere else on the page.
+  blocking?: MissingField[];
+  isEditable?: boolean;
+  // How many nominee blocks to render (S-602). Every other subject always
+  // renders exactly one — only nominee is ever more than one instance.
+  nomineeCount?: number;
+}
+
+const {
+  fields,
+  parties,
+  blocking = [],
+  isEditable = true,
+  nomineeCount = 1,
+} = Astro.props;
+
+const SUBJECT_LABELS: Record<string, string> = {
+  applicant: 'Applicant',
+  nominee: 'Nominee',
+  guardian: 'Parent / Guardian',
+  beneficiary: 'Takaful beneficiary',
+  employment: 'Employment Details',
+};
+
+// The configured data type decides the keyboard a tablet shows, which matters
+// more here than anywhere: capture happens on a tablet in a regional office.
+const INPUT_TYPES = {
+  text: 'text',
+  number: 'number',
+  date: 'date',
+  email: 'email',
+  phone: 'tel',
+} as const satisfies Record<string, astroHTML.JSX.HTMLInputTypeAttribute>;
+
+type InputType = (typeof INPUT_TYPES)[keyof typeof INPUT_TYPES];
+
+const inputTypeFor = (dataType: string): InputType =>
+  (INPUT_TYPES as Record<string, InputType>)[dataType] ?? 'text';
+
+const valuesFor = (subject: FieldSubject, ordinal: number) =>
+  parties.find(p => p.subject === subject && p.ordinal === ordinal)?.values ??
+  {};
+
+// Every subject is one instance except nominee, which is as many as the
+// type configures (S-602: "one or more Nominees where configured").
+const ordinalsFor = (subject: FieldSubject) =>
+  Array.from(
+    { length: subject === 'nominee' ? Math.max(nomineeCount, 1) : 1 },
+    (_, i) => i + 1
+  );
+
+// S-602, relaxed on officer feedback: "one or more Nominees where
+// configured" means at least one, not every slot a type happens to allow.
+// The first nominee is still mandatory the same as any other subject; a
+// second or third is there for a family that wants to name one, so nothing
+// here marks it required — matches problemsBlockingSubmission in capture.ts.
+const isMandatoryHere = (
+  subject: FieldSubject,
+  ordinal: number,
+  field: MembershipTypeField
+) => field.isMandatory && !(subject === 'nominee' && ordinal !== 1);
+
+// The guardian's own details come from a record that already exists — the
+// point of the search above is that the officer never types them, only
+// picks the right person. So once a type asks for both Member No. and NIC
+// (isGuardianSearch), every field the search fills in is read-only: surname,
+// name, NIC and Member No. straight from the pick, mobile from the same
+// record, and relationship worked out from the minor's own gender rather
+// than typed at all. A type with a guardian block but no search (missing
+// either field) is untouched — nothing here to auto-fill it from.
+const AUTO_FILLED_GUARDIAN_FIELDS = new Set([
+  'surname',
+  'name',
+  'nic',
+  'member_id',
+  'mobile',
+  'relationship',
+]);
+---
+
+{
+  // Employment describes the applicant, not a separate person — it renders
+  // inside the Applicant section below rather than getting a heading of its
+  // own that reads like another party on the application.
+  [...fields.keys()]
+    .filter(subject => subject !== 'employment')
+    .flatMap(subject =>
+      ordinalsFor(subject).map(ordinal => {
+        const values = valuesFor(subject, ordinal);
+        const missing = new Set(
+          blocking
+            .filter(b => b.subject === subject && b.ordinal === ordinal)
+            .map(b => b.fieldKey)
+        );
+        const subjectFields = fields.get(subject) ?? [];
+        // A guardian is identified by Member No. and NIC (S-604) — where a type
+        // asks for both, search helps the officer find the parent rather than
+        // typing those in blind. Not every type that could have a `guardian`
+        // subject need configure it this way, so this checks for the fields
+        // rather than the subject's name.
+        const isGuardianSearch =
+          subject === 'guardian' &&
+          ordinal === 1 &&
+          isEditable &&
+          subjectFields.some(f => f.fieldKey === 'member_id') &&
+          subjectFields.some(f => f.fieldKey === 'nic');
+        const heading =
+          subject === 'nominee' && nomineeCount > 1
+            ? `${SUBJECT_LABELS[subject] ?? subject} ${ordinal} of ${nomineeCount}`
+            : (SUBJECT_LABELS[subject] ?? subject);
+        // Only the first nominee is required (S-602, relaxed) — said once on
+        // the heading rather than repeated on every field's label.
+        const isOptionalNominee = subject === 'nominee' && ordinal !== 1;
+
+        // Only the applicant's own section carries employment along —
+        // there is exactly one applicant, so no ordinal to match beyond 1.
+        const employmentFields =
+          subject === 'applicant' && ordinal === 1
+            ? (fields.get('employment') ?? [])
+            : [];
+        const employmentValues =
+          employmentFields.length > 0 ? valuesFor('employment', 1) : {};
+        const employmentMissing = new Set(
+          blocking
+            .filter(b => b.subject === 'employment' && b.ordinal === 1)
+            .map(b => b.fieldKey)
+        );
+
+        return (
+          <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+            <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+              {heading}
+              {isOptionalNominee && (
+                <span class="ml-2 text-sm font-normal text-neutral-500 dark:text-neutral-400">
+                  (optional)
+                </span>
+              )}
+            </h2>
+            {isGuardianSearch && (
+              <div class="relative mt-3" data-guardian-search>
+                <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+                  Search for the parent
+                  <input
+                    type="text"
+                    autocomplete="off"
+                    placeholder="Name, NIC or Member No."
+                    data-guardian-search-input
+                    class="mt-1 block w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                  />
+                </label>
+                <p
+                  data-guardian-search-status
+                  class="mt-1 text-xs text-neutral-500 dark:text-neutral-400"
+                />
+                <ul
+                  data-guardian-search-results
+                  hidden
+                  class="absolute z-10 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-neutral-300 bg-white text-sm shadow-lg dark:border-neutral-600 dark:bg-neutral-900"
+                />
+              </div>
+            )}
+            <div class="mt-4 grid gap-4 sm:grid-cols-2">
+              {subjectFields.map(field => {
+                const name = `field.${subject}.${ordinal}.${field.fieldKey}`;
+                const value = values[field.fieldKey] ?? '';
+                const isAutoFilled =
+                  isGuardianSearch &&
+                  AUTO_FILLED_GUARDIAN_FIELDS.has(field.fieldKey);
+                const mandatoryHere = isMandatoryHere(subject, ordinal, field);
+                return (
+                  <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                    <span>
+                      {field.label}
+                      {mandatoryHere && (
+                        <span
+                          class="text-red-600 dark:text-red-400"
+                          aria-hidden="true"
+                        >
+                          {' '}
+                          *
+                        </span>
+                      )}
+                    </span>
+                    {field.dataType === 'choice' ? (
+                      <select
+                        name={name}
+                        disabled={!isEditable}
+                        data-mandatory={mandatoryHere ? 'yes' : undefined}
+                        class:list={[
+                          'mt-1 w-full rounded-lg border bg-white px-3 py-1.5 text-sm dark:bg-neutral-900 dark:text-neutral-100',
+                          missing.has(field.fieldKey)
+                            ? 'border-red-400 dark:border-red-700'
+                            : 'border-neutral-300 dark:border-neutral-600',
+                        ]}
+                      >
+                        <option value="">—</option>
+                        {field.choices.map(choice => (
+                          <option value={choice} selected={choice === value}>
+                            {choice}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        type={inputTypeFor(field.dataType)}
+                        name={name}
+                        value={value}
+                        disabled={!isEditable}
+                        readonly={isAutoFilled || undefined}
+                        placeholder={
+                          isAutoFilled
+                            ? 'Picked up from the search above'
+                            : field.dataType === 'phone'
+                              ? '5789 1234'
+                              : undefined
+                        }
+                        data-mandatory={mandatoryHere ? 'yes' : undefined}
+                        class:list={[
+                          'mt-1 w-full rounded-lg border px-3 py-1.5 text-sm',
+                          isAutoFilled
+                            ? 'bg-neutral-100 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400'
+                            : 'bg-white dark:bg-neutral-900 dark:text-neutral-100',
+                          missing.has(field.fieldKey)
+                            ? 'border-red-400 dark:border-red-700'
+                            : 'border-neutral-300 dark:border-neutral-600',
+                        ]}
+                      />
+                    )}
+                  </label>
+                );
+              })}
+            </div>
+            {employmentFields.length > 0 && (
+              <div class="mt-6 border-t border-neutral-200 pt-4 dark:border-neutral-800">
+                <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-200">
+                  {SUBJECT_LABELS.employment}
+                </h3>
+                <div class="mt-3 grid gap-4 sm:grid-cols-2">
+                  {employmentFields.map(field => {
+                    const name = `field.employment.1.${field.fieldKey}`;
+                    const value = employmentValues[field.fieldKey] ?? '';
+                    const mandatoryHere = isMandatoryHere(
+                      'employment',
+                      1,
+                      field
+                    );
+                    return (
+                      <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                        <span>
+                          {field.label}
+                          {mandatoryHere && (
+                            <span
+                              class="text-red-600 dark:text-red-400"
+                              aria-hidden="true"
+                            >
+                              {' '}
+                              *
+                            </span>
+                          )}
+                        </span>
+                        {field.dataType === 'choice' ? (
+                          <select
+                            name={name}
+                            disabled={!isEditable}
+                            data-mandatory={mandatoryHere ? 'yes' : undefined}
+                            class:list={[
+                              'mt-1 w-full rounded-lg border bg-white px-3 py-1.5 text-sm dark:bg-neutral-900 dark:text-neutral-100',
+                              employmentMissing.has(field.fieldKey)
+                                ? 'border-red-400 dark:border-red-700'
+                                : 'border-neutral-300 dark:border-neutral-600',
+                            ]}
+                          >
+                            <option value="">—</option>
+                            {field.choices.map(choice => (
+                              <option
+                                value={choice}
+                                selected={choice === value}
+                              >
+                                {choice}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <input
+                            type={inputTypeFor(field.dataType)}
+                            name={name}
+                            value={value}
+                            disabled={!isEditable}
+                            placeholder={
+                              field.dataType === 'phone'
+                                ? '5789 1234'
+                                : undefined
+                            }
+                            data-mandatory={mandatoryHere ? 'yes' : undefined}
+                            class:list={[
+                              'mt-1 w-full rounded-lg border bg-white px-3 py-1.5 text-sm dark:bg-neutral-900 dark:text-neutral-100',
+                              employmentMissing.has(field.fieldKey)
+                                ? 'border-red-400 dark:border-red-700'
+                                : 'border-neutral-300 dark:border-neutral-600',
+                            ]}
+                          />
+                        )}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </section>
+        );
+      })
+    )
+}
+
+<script>
+  // S-604: the parent has to be findable before they are a member — a
+  // Corporate/Individual applicant registering at the same visit as their
+  // minor is exactly the case this exists for. Picking a result fills in
+  // the surname/name/NIC/Member No./mobile fields the same way typing them
+  // would; it is a shortcut to what was already a valid form, not a new
+  // kind of field — and since it is the only way these fields are meant to
+  // be filled, CaptureFields.astro renders them readonly, so nothing here
+  // needs to guard against the officer overwriting a real record by hand.
+  // Submission accepts an active member or an Individual application still
+  // in progress (capture.ts, problemsBlockingSubmission) — this only helps
+  // the officer name who they mean, whichever of those they turn out to be.
+  const wrapper = document.querySelector<HTMLElement>('[data-guardian-search]');
+  const input = wrapper?.querySelector<HTMLInputElement>(
+    '[data-guardian-search-input]'
+  );
+  const results = wrapper?.querySelector<HTMLUListElement>(
+    '[data-guardian-search-results]'
+  );
+  const status = wrapper?.querySelector<HTMLElement>(
+    '[data-guardian-search-status]'
+  );
+
+  if (wrapper && input && results && status) {
+    interface Candidate {
+      kind: 'member' | 'application';
+      reference: string;
+      status: string;
+      surname: string;
+      name: string;
+      nic: string;
+      mobile: string;
+    }
+
+    const STATUS_TEXT: Record<string, string> = {
+      active: 'active member',
+      draft: 'application in progress',
+      returned: 'application in progress',
+      new: 'application submitted',
+      submitted_for_review: 'with the Secretary',
+      submitted_for_approval: 'with the President',
+      abeyance: 'application in progress',
+    };
+
+    const field = (key: string) =>
+      document.querySelector<HTMLInputElement>(
+        `[name="field.guardian.1.${key}"]`
+      );
+
+    // Fires the same events the live mandatory-field sync on the id page
+    // already listens for, so a red border clears the instant a result is
+    // picked rather than waiting for a reload.
+    const setField = (key: string, value: string) => {
+      const el = field(key);
+      if (!el) return;
+      el.value = value;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+
+    // The minor's own applicant block, not the guardian's — relationship
+    // reads *their* gender ("Male" files as Son, "Female" as Daughter),
+    // not anything about the person just picked. Kept in sync live too: a
+    // guardian picked before the minor's gender is filled in still ends up
+    // correct once it is.
+    const applicantGender = () =>
+      document.querySelector<HTMLSelectElement>(
+        '[name="field.applicant.1.gender"]'
+      );
+    const syncRelationship = () => {
+      const gender = applicantGender()?.value;
+      setField(
+        'relationship',
+        gender === 'Male' ? 'Son' : gender === 'Female' ? 'Daughter' : ''
+      );
+    };
+    applicantGender()?.addEventListener('change', syncRelationship);
+
+    const close = () => {
+      results.hidden = true;
+      results.replaceChildren();
+    };
+
+    const render = (candidates: Candidate[]) => {
+      results.replaceChildren();
+      if (candidates.length === 0) {
+        results.hidden = true;
+        return;
+      }
+      for (const candidate of candidates) {
+        const item = document.createElement('li');
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className =
+          'block w-full px-3 py-2 text-left hover:bg-neutral-100 dark:hover:bg-neutral-800';
+        const name = `${candidate.name} ${candidate.surname}`.trim();
+
+        // Built as elements with textContent, never as an HTML string. Every
+        // value here is an applicant's own typed name or reference, and
+        // anyone who can start an application can type one — including a
+        // member of the public through the app's own sign-up, and the
+        // website through the public API. Interpolating them into innerHTML
+        // made that a script running in the officer's session, with the
+        // officer's access, the moment they searched.
+        const nameLine = document.createElement('span');
+        nameLine.className =
+          'block font-medium text-neutral-800 dark:text-neutral-100';
+        nameLine.textContent = name || '(no name yet)';
+
+        const detailLine = document.createElement('span');
+        detailLine.className =
+          'block text-xs text-neutral-500 dark:text-neutral-400';
+        detailLine.textContent =
+          `${candidate.reference} · ` +
+          `${STATUS_TEXT[candidate.status] ?? candidate.status}`;
+
+        button.replaceChildren(nameLine, detailLine);
+        button.addEventListener('click', () => {
+          setField('surname', candidate.surname);
+          setField('name', candidate.name);
+          setField('nic', candidate.nic);
+          setField('member_id', candidate.reference);
+          setField('mobile', candidate.mobile);
+          syncRelationship();
+          input.value = name;
+          status.textContent = `Linked ${name || candidate.reference}.`;
+          close();
+        });
+        item.appendChild(button);
+        results.appendChild(item);
+      }
+      results.hidden = false;
+    };
+
+    let pending: number | undefined;
+    input.addEventListener('input', () => {
+      window.clearTimeout(pending);
+      const term = input.value.trim();
+      if (term.length < 2) {
+        close();
+        status.textContent = '';
+        return;
+      }
+      pending = window.setTimeout(async () => {
+        status.textContent = 'Searching…';
+        try {
+          const response = await fetch(
+            `/api/v1/applications/guardian-search?q=${encodeURIComponent(term)}`
+          );
+          const body = await response.json();
+          if (!response.ok) throw new Error(body?.error?.message);
+          const candidates = body.data.candidates as Candidate[];
+          render(candidates);
+          status.textContent = candidates.length === 0 ? 'No match found.' : '';
+        } catch {
+          status.textContent = 'Search failed — check your connection.';
+        }
+      }, 300);
+    });
+
+    document.addEventListener('click', event => {
+      if (!wrapper.contains(event.target as Node)) close();
+    });
+  }
+</script>

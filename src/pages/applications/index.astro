@@ -1,0 +1,582 @@
+---
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import {
+  ApplicationError,
+  countApplications,
+  deleteDraftApplication,
+  listApplications,
+} from '@lib/applications/capture';
+import { listMembershipTypes } from '@lib/config/reference';
+import {
+  pendingApplicationIds,
+  returnedByLabelsFor,
+  reviewStageLabelsFor,
+} from '@lib/applications/workflow';
+
+const principal = Astro.locals.principal!;
+const canCapture = principal.permissions.has('application.capture');
+
+let error: string | null = null;
+
+if (Astro.request.method === 'POST') {
+  if (!canCapture) {
+    error = 'You do not have permission to capture applications.';
+  } else {
+    const form = await Astro.request.formData();
+    const intent = String(form.get('intent') ?? 'start');
+
+    if (intent === 'delete') {
+      // One checkbox or many — a bulk delete is this same intent with more
+      // than one applicationId, not a separate action with its own rules.
+      const ids = form.getAll('applicationId').map(String).filter(Boolean);
+
+      // Each deletion is its own business transaction — its own lock, its
+      // own checks (not submitted, no receipt, no filed documents) — not
+      // rows to delete in one statement. A batch of five separate drafts
+      // failing or succeeding independently is the correct behaviour, not
+      // something to optimise away.
+      const deletedReferences: string[] = [];
+      const failures: { reference: string; message: string }[] = [];
+      for (const id of ids) {
+        try {
+          const { reference } = await deleteDraftApplication(id, principal);
+          deletedReferences.push(reference);
+        } catch (err) {
+          const reference = String(form.get(`reference:${id}`) ?? id);
+          if (err instanceof ApplicationError) {
+            failures.push({ reference, message: err.message });
+          } else {
+            console.error('[applications/delete]', err);
+            failures.push({
+              reference,
+              message: 'Something went wrong — nothing was removed.',
+            });
+          }
+        }
+      }
+
+      if (failures.length === 0 && deletedReferences.length > 0) {
+        return Astro.redirect(
+          `/applications?deleted=${encodeURIComponent(String(deletedReferences.length))}`
+        );
+      }
+      if (failures.length > 0) {
+        error =
+          (deletedReferences.length > 0
+            ? `${deletedReferences.length} draft${deletedReferences.length === 1 ? '' : 's'} deleted. `
+            : '') +
+          `Could not delete: ${failures.map(f => `${f.reference} (${f.message})`).join('; ')}`;
+      }
+    }
+  }
+}
+
+// Set by the redirect after one or more drafts are deleted: a count, not a
+// reference — a bulk delete can span drafts with nothing else in common to
+// name them by.
+const deletedCount = Number(Astro.url.searchParams.get('deleted') ?? '');
+
+// Set by the redirect after an additional-account application is started
+// (S-613, new-account.astro): there is no detail page to land on yet, so the
+// officer is sent back here with a reference to confirm against.
+const created = Astro.url.searchParams.get('created');
+
+const filter = Astro.url.searchParams.get('status') ?? '';
+const search = Astro.url.searchParams.get('q') ?? '';
+// Officer feedback: 'received' (submitted from the mobile app) used to be
+// visible to any officer who could submit at all — the business wants it
+// handled by specific staff instead (S-303, application.submit_online).
+const canHandleReceived = principal.permissions.has(
+  'application.submit_online'
+);
+
+const [unsortedApplications, types, nonDraftCount, attentionIds] =
+  await Promise.all([
+    listApplications({
+      ...(filter ? { statuses: [filter] } : {}),
+      viewerUserId: principal.userId,
+      search,
+      canHandleReceived,
+    }),
+    listMembershipTypes(),
+    // Meaningless filtered to Draft specifically — countApplications excludes
+    // every draft regardless, so that combination would always read 0 beside
+    // a table that is, in fact, showing rows.
+    filter === 'draft'
+      ? null
+      : countApplications({
+          ...(filter ? { statuses: [filter] } : {}),
+          canHandleReceived,
+        }),
+    pendingApplicationIds(principal),
+  ]);
+
+// Officer feedback: an application waiting on this person specifically —
+// theirs to review, approve, or correct — reads as a row to scroll past
+// like any other otherwise, easy to miss on a list sorted only by when it
+// last changed. Array.prototype.sort is stable, so this only moves those
+// rows ahead of everything else; within each group, still newest first.
+const applications = [...unsortedApplications].sort(
+  (a, b) => Number(attentionIds.has(b.id)) - Number(attentionIds.has(a.id))
+);
+
+// S-611 follow-up: a status names a stage, never the person holding it.
+// 'new' means as many different things as the configured chain has steps
+// waiting on it — still with the Regional Manager, past them and with the
+// Secretary, or (Secretary review disabled) straight with the President —
+// and "Submit for Approval" says no more about the President holding it.
+// One batched read for the whole page, driven entirely by the configured
+// chain (`reviewStageLabelsFor`, workflow.ts) rather than assuming which
+// roles those could be. The same principle applies to 'returned' rows: the
+// status badge alone does not say who sent it back, so a second batched
+// read adds "Returned by the X" for those.
+const [reviewStageLabels, returnedStageLabels] = await Promise.all([
+  reviewStageLabelsFor(applications.map(a => ({ id: a.id, status: a.status }))),
+  returnedByLabelsFor(
+    applications.filter(a => a.status === 'returned').map(a => a.id)
+  ),
+]);
+
+// No 'approved' entry: an approved application no longer appears in this
+// list at all (listApplications excludes it — it lives on the Members page
+// from then on), so offering it as a filter would only ever show "no
+// applications match."
+const STATUS_LABELS: Record<string, string> = {
+  draft: 'Draft',
+  // Submitted from the member app and with the branch — worked exactly as a
+  // draft (docs/member-app.md). Named for what an officer has to do with it
+  // rather than for where it came from.
+  received: 'Received online',
+  new: 'New',
+  submitted_for_review: 'Submit for Review',
+  submitted_for_approval: 'Submit for Approval',
+  rejected: 'Rejected',
+  returned: 'Returned for Correction',
+  abeyance: 'Abeyance',
+};
+
+const STATUS_CLASSES: Record<string, string> = {
+  draft:
+    'bg-neutral-200 text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200',
+  // Amber like 'returned': both are work sitting with the branch.
+  received: 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200',
+  new: 'bg-mint-200 text-neutral-800 dark:bg-mint-900 dark:text-neutral-100',
+  submitted_for_approval:
+    'bg-mint-200 text-neutral-800 dark:bg-mint-900 dark:text-neutral-100',
+  rejected: 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200',
+  returned: 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200',
+};
+
+const dateFormat = new Intl.DateTimeFormat('en-GB', {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+});
+---
+
+<DashboardLayout title="Applications · Al Barakah MCSL" heading="Applications">
+  <div class="mx-auto max-w-5xl space-y-6">
+    {error && (
+      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+        {error}
+      </div>
+    )}
+
+    {deletedCount > 0 && (
+      <div class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-lg border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
+        {deletedCount === 1
+          ? '1 draft was deleted.'
+          : `${deletedCount} drafts were deleted.`}
+      </div>
+    )}
+
+    {created && (
+      <div class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-lg border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
+        Application {created} started.
+      </div>
+    )}
+
+    {canCapture && (
+      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+          Start an application
+        </h2>
+        <div class="mt-4 flex flex-wrap items-end justify-between gap-4">
+          {/* A GET, deliberately. Opening the form creates nothing — the
+                application exists once a detail is entered. */}
+          <form
+            method="get"
+            action="/applications/new"
+            class="flex flex-wrap items-end gap-2"
+          >
+            <label class="text-sm text-neutral-600 dark:text-neutral-300">
+              Applicant status
+              <select
+                name="type"
+                class="mt-1 block rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+              >
+                {types
+                  .filter(t => t.isActive)
+                  .map(t => (
+                    <option value={t.code}>{t.name}</option>
+                  ))}
+              </select>
+            </label>
+            <button
+              type="submit"
+              class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+            >
+              Member Registration
+            </button>
+          </form>
+
+          <a
+            href="/applications/new-account"
+            class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+          >
+            Open other account
+          </a>
+        </div>
+      </section>
+    )}
+
+    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <h2 class="flex items-center gap-2 text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+          Applications
+          {nonDraftCount !== null && (
+            <span class="rounded-full bg-neutral-200 px-2 py-0.5 text-xs font-medium text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
+              {nonDraftCount}
+            </span>
+          )}
+        </h2>
+        <form method="get" class="flex flex-wrap items-center gap-2">
+          <label for="q" class="sr-only">
+            Search by applicant or reference
+          </label>
+          <input
+            id="q"
+            type="search"
+            name="q"
+            value={search}
+            placeholder="Search applicant or reference"
+            class="rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+          />
+          <label for="status" class="sr-only">
+            Filter by status
+          </label>
+          <select
+            id="status"
+            name="status"
+            class="rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+          >
+            <option value="">All statuses</option>
+            {Object.entries(STATUS_LABELS).map(([code, label]) => (
+              <option value={code} selected={code === filter}>
+                {label}
+              </option>
+            ))}
+          </select>
+          <button
+            type="submit"
+            class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+          >
+            Filter
+          </button>
+          {(search || filter) && (
+            <a
+              href="/applications"
+              class="text-sm text-neutral-500 underline dark:text-neutral-400"
+            >
+              Clear
+            </a>
+          )}
+        </form>
+      </div>
+
+      {applications.length === 0 ? (
+        <p class="mt-4 text-sm text-neutral-500 dark:text-neutral-400">
+          {search
+            ? `Nothing matches "${search}".`
+            : filter
+              ? `No applications with status ${STATUS_LABELS[filter] ?? filter}.`
+              : 'No applications yet.'}
+        </p>
+      ) : (
+        <form method="post" id="applications-form" data-confirm-delete>
+          {canCapture && (
+            <div class="mt-4 flex flex-wrap items-center gap-3 text-sm">
+              <span
+                data-selected-count
+                class="text-neutral-600 dark:text-neutral-300"
+              >
+                0 selected
+              </span>
+              <button
+                type="submit"
+                name="intent"
+                value="delete"
+                data-bulk-delete
+                disabled
+                class="rounded-lg border border-red-300 px-3 py-1.5 text-xs font-medium text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
+              >
+                Delete selected
+              </button>
+            </div>
+          )}
+          <div class="mt-2 overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="text-left text-xs text-neutral-500 dark:text-neutral-400">
+                  {canCapture && (
+                    <th class="py-2 pr-2 font-medium">
+                      <input
+                        type="checkbox"
+                        data-select-all
+                        aria-label="Select all drafts"
+                        class="text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600"
+                      />
+                    </th>
+                  )}
+                  {[
+                    ['Reference', 'reference'],
+                    ['Applicant', 'applicant'],
+                    ['Type', 'type'],
+                    ['Status', 'status'],
+                    ['Captured by', 'capturedBy'],
+                    ['Updated', 'updated'],
+                  ].map(([label, key]) => (
+                    <th class="py-2 pr-4 font-medium">
+                      <button
+                        type="button"
+                        data-sort-key={key}
+                        class="inline-flex items-center gap-1 hover:text-neutral-700 dark:hover:text-neutral-200"
+                      >
+                        {label}
+                        <span data-sort-indicator class="text-[10px]" />
+                      </button>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {applications.map(a => (
+                  <tr class="border-t border-neutral-200 dark:border-neutral-800">
+                    {canCapture && (
+                      <td class="py-2 pr-2">
+                        {a.status === 'draft' && (
+                          <>
+                            <input
+                              type="checkbox"
+                              name="applicationId"
+                              value={a.id}
+                              data-row-select
+                              aria-label={`Select ${a.reference}`}
+                              class="text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600"
+                            />
+                            <input
+                              type="hidden"
+                              name={`reference:${a.id}`}
+                              value={a.reference}
+                            />
+                          </>
+                        )}
+                      </td>
+                    )}
+                    <td class="py-2 pr-4" data-sort-value={a.reference}>
+                      <a
+                        href={
+                          a.applicationKind === 'membership'
+                            ? `/applications/${a.id}`
+                            : a.applicationKind === 'additional_account'
+                              ? `/applications/${a.id}/account`
+                              : `/applications/${a.id}/customer`
+                        }
+                        class="text-mint-700 dark:text-mint-300 font-medium underline"
+                      >
+                        {a.reference}
+                      </a>
+                    </td>
+                    <td
+                      class="py-2 pr-4 text-neutral-700 dark:text-neutral-200"
+                      data-sort-value={a.applicantName}
+                    >
+                      {a.applicantName}
+                    </td>
+                    <td
+                      class="py-2 pr-4 text-neutral-600 dark:text-neutral-300"
+                      data-sort-value={a.membershipTypeName}
+                    >
+                      {a.membershipTypeName}
+                    </td>
+                    <td
+                      class="py-2 pr-4"
+                      data-sort-value={STATUS_LABELS[a.status] ?? a.status}
+                    >
+                      <span
+                        class:list={[
+                          'rounded px-1.5 py-0.5 text-xs',
+                          STATUS_CLASSES[a.status] ??
+                            'bg-neutral-200 text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200',
+                        ]}
+                      >
+                        {STATUS_LABELS[a.status] ?? a.status}
+                      </span>
+                      {reviewStageLabels.has(a.id) && (
+                        <span
+                          class:list={[
+                            'mt-1 block text-xs',
+                            // Gold and bold only for the person whose own
+                            // role is the one holding it up: a Secretary
+                            // scanning this list needs the rows waiting on
+                            // them to stand out from the rows waiting on
+                            // somebody else, which read the same otherwise.
+                            attentionIds.has(a.id)
+                              ? 'font-semibold text-amber-700 dark:text-amber-400'
+                              : 'text-neutral-500 dark:text-neutral-400',
+                          ]}
+                        >
+                          {reviewStageLabels.get(a.id)}
+                        </span>
+                      )}
+                      {a.status === 'returned' &&
+                        returnedStageLabels.has(a.id) && (
+                          <span class="mt-1 block text-xs text-neutral-500 dark:text-neutral-400">
+                            {returnedStageLabels.get(a.id)}
+                          </span>
+                        )}
+                    </td>
+                    <td
+                      class="py-2 pr-4 text-xs text-neutral-500 dark:text-neutral-400"
+                      data-sort-value={a.capturedByName}
+                    >
+                      {a.capturedByName}
+                    </td>
+                    <td
+                      class="py-2 pr-4 text-xs text-neutral-500 dark:text-neutral-400"
+                      data-sort-value={a.updatedAt.toISOString()}
+                    >
+                      {dateFormat.format(a.updatedAt)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </form>
+      )}
+    </section>
+  </div>
+</DashboardLayout>
+
+<script>
+  const form = document.getElementById(
+    'applications-form'
+  ) as HTMLFormElement | null;
+
+  if (form) {
+    const rowCheckboxes = [
+      ...form.querySelectorAll<HTMLInputElement>('[data-row-select]'),
+    ];
+    const selectAll = form.querySelector<HTMLInputElement>('[data-select-all]');
+    const countLabel = form.querySelector('[data-selected-count]');
+    const bulkDeleteButton =
+      form.querySelector<HTMLButtonElement>('[data-bulk-delete]');
+
+    const selectedCount = () => rowCheckboxes.filter(cb => cb.checked).length;
+
+    const refresh = () => {
+      const count = selectedCount();
+      if (countLabel) {
+        countLabel.textContent = `${count} selected`;
+      }
+      if (bulkDeleteButton) bulkDeleteButton.disabled = count === 0;
+      if (selectAll) {
+        selectAll.checked = count > 0 && count === rowCheckboxes.length;
+        selectAll.indeterminate = count > 0 && count < rowCheckboxes.length;
+      }
+    };
+
+    selectAll?.addEventListener('change', () => {
+      for (const cb of rowCheckboxes) cb.checked = selectAll.checked;
+      refresh();
+    });
+    for (const cb of rowCheckboxes) {
+      cb.addEventListener('change', refresh);
+    }
+    refresh();
+
+    // Deleting cannot be undone, so ask — naming how many, since a bulk
+    // delete is not one draft an officer will remember choosing a moment
+    // ago. Without JavaScript the button simply deletes: a confirmation is
+    // a courtesy, and a control that only works with scripting would not
+    // be. The count is only known at submit time, so this can't use
+    // confirmedSubmit's fixed message — same bypass-and-resubmit shape,
+    // built fresh here instead.
+    let bypassBulkDeleteConfirm = false;
+    form.addEventListener('submit', event => {
+      if (bypassBulkDeleteConfirm) {
+        bypassBulkDeleteConfirm = false;
+        return;
+      }
+      event.preventDefault();
+      const count = selectedCount();
+      const message =
+        count === 1
+          ? 'Delete 1 draft? This cannot be undone.'
+          : `Delete ${count} drafts? This cannot be undone.`;
+      const submitter =
+        event.submitter instanceof HTMLElement ? event.submitter : undefined;
+      window.appConfirm(message).then(ok => {
+        if (!ok) return;
+        bypassBulkDeleteConfirm = true;
+        form.requestSubmit(submitter);
+      });
+    });
+  }
+
+  // Client-side, against the rows already on the page — the list is capped
+  // at 100 and already loaded, so re-asking the server for the same rows in
+  // a different order would be a round trip spent on nothing new.
+  const table = document.querySelector('table');
+  const tbody = table?.querySelector('tbody');
+  if (table && tbody) {
+    const headerRow = table.querySelector('thead tr');
+    let activeKey: string | null = null;
+    let ascending = true;
+
+    for (const button of table.querySelectorAll<HTMLButtonElement>(
+      '[data-sort-key]'
+    )) {
+      button.addEventListener('click', () => {
+        const key = button.dataset.sortKey ?? '';
+        const th = button.closest('th');
+        const cellIndex = th
+          ? [...(headerRow?.children ?? [])].indexOf(th)
+          : -1;
+        if (cellIndex < 0) return;
+
+        ascending = activeKey === key ? !ascending : true;
+        activeKey = key;
+
+        const rows = [...tbody.querySelectorAll('tr')];
+        rows.sort((a, b) => {
+          const av =
+            a.children[cellIndex]?.getAttribute('data-sort-value') ?? '';
+          const bv =
+            b.children[cellIndex]?.getAttribute('data-sort-value') ?? '';
+          const cmp = av.localeCompare(bv, undefined, { numeric: true });
+          return ascending ? cmp : -cmp;
+        });
+        for (const row of rows) tbody.appendChild(row);
+
+        for (const indicator of table.querySelectorAll(
+          '[data-sort-indicator]'
+        )) {
+          indicator.textContent = '';
+        }
+        const ownIndicator = button.querySelector('[data-sort-indicator]');
+        if (ownIndicator) ownIndicator.textContent = ascending ? '▲' : '▼';
+      });
+    }
+  }
+</script>

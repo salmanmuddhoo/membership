@@ -1,0 +1,2209 @@
+---
+import { isEditableStatus } from '@lib/applications/capture';
+import ApplicationTimeline from '@components/ApplicationTimeline.astro';
+import CaptureFields from '@components/CaptureFields.astro';
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import {
+  ApplicationError,
+  deleteDraftApplication,
+  loadApplication,
+  problemsBlockingSubmission,
+  RECEIVED_STATUS,
+  saveDraft,
+  visibleFields,
+  type MembershipApplication,
+  type PartyValues,
+} from '@lib/applications/capture';
+import {
+  cashMaximum,
+  cashSourceOfFundThreshold,
+  listDocumentTypes,
+  listMembershipTypes,
+  type FieldSubject,
+} from '@lib/config/reference';
+import { createMemberFromApplication } from '@lib/members/create';
+import {
+  availableActions,
+  boardReadiness,
+  boardReadinessReasons,
+  decideApplication,
+  reopenRejectedApplication,
+  returnedByLabel,
+  reviewApplication,
+  reviewStageLabel,
+  signoffsFor,
+  submitApplication,
+  transitionsFor,
+} from '@lib/applications/workflow';
+import {
+  checklistFor,
+  filedDocumentFor,
+  isDocumentComplete,
+  removeFiledDocument,
+  reviewDocument,
+  DocumentError,
+  SIGNATURES,
+} from '@lib/documents/documents';
+import CashSourceOfFundForm from '@components/CashSourceOfFundForm.astro';
+import { applicationTimeline } from '@lib/applications/timeline';
+import {
+  amountDueForApplication,
+  paymentsForApplication,
+  recordPayment,
+  FIXED_FEE_COMPONENTS,
+  FLOOR_FEE_COMPONENTS,
+  METHOD_LABELS,
+  PAYMENT_METHODS,
+  PaymentError,
+  type AmountDue,
+  type Payment,
+  type PaymentMethod,
+} from '@lib/payments/payments';
+import { formatMoney, fromCents, sumCents } from '@lib/payments/money';
+import type { FeeComponentCode } from '@lib/config/reference';
+import DocumentViewer from '@components/DocumentViewer.astro';
+import DocumentReviewForm from '@components/DocumentReviewForm.astro';
+
+const principal = Astro.locals.principal!;
+const canCapture = principal.permissions.has('application.capture');
+const canSeeDocuments = principal.permissions.has('document.view');
+const canUpload = principal.permissions.has('document.upload');
+const canVerify = principal.permissions.has('document.verify');
+const canSeePayments = principal.permissions.has('payment.view');
+const canRecordPayment = principal.permissions.has('payment.record');
+const { id } = Astro.params;
+
+// This page is built for the membership capture/review flow only — an
+// additional-account application has its own, at /applications/<id>/account
+// (S-613 phase 8), and a customer_account application (someone not yet on
+// the system, S-614) has its own at /applications/<id>/customer. Reloading
+// after a POST below always returns the same application this narrowed on
+// the way in, since applicationKind is not a field any action here can
+// change — asserted rather than re-checked there, so a mismatch on a RELOAD
+// fails loudly as the bug it would be. The initial load is different: a
+// stale bookmark or a hand-edited URL is not a bug, so it is sent to the
+// page that actually knows this kind, below.
+async function loadMembershipApplication(
+  applicationId: string
+): Promise<MembershipApplication | null> {
+  const found = await loadApplication(applicationId);
+  if (!found) return null;
+  if (found.applicationKind !== 'membership') {
+    throw new Error(
+      `Application ${applicationId} is not a membership application.`
+    );
+  }
+  return found;
+}
+
+const initial = id ? await loadApplication(id) : null;
+if (!initial) return new Response('Not found', { status: 404 });
+// A draft is the capturing officer's own work in progress — not something a
+// colleague browsing by URL should be able to open before it is submitted.
+if (initial.status === 'draft' && initial.capturedBy !== principal.userId) {
+  return new Response('Not found', { status: 404 });
+}
+// Officer feedback: 'received' (submitted from the mobile app) is handled by
+// specific staff, not every officer who can submit (application.submit_
+// online, migration 0044) — the same reason a colleague's draft is hidden
+// by direct URL, applied here so the list-page gate cannot be worked around
+// by opening the link straight.
+if (
+  initial.status === RECEIVED_STATUS &&
+  !principal.permissions.has('application.submit_online')
+) {
+  return new Response('Not found', { status: 404 });
+}
+if (initial.applicationKind === 'additional_account') {
+  return Astro.redirect(`/applications/${initial.id}/account`);
+}
+if (initial.applicationKind === 'customer_account') {
+  return Astro.redirect(`/applications/${initial.id}/customer`);
+}
+let application: MembershipApplication | null = initial;
+
+// Officer feedback: holding document.verify does not make an officer a
+// second pair of eyes on their own application. The author never sees the
+// control — reviewDocument refuses them regardless, this only keeps a button
+// off the screen that could never work.
+const canVerifyHere = canVerify && application?.capturedBy !== principal.userId;
+
+const type = (await listMembershipTypes()).find(
+  t => t.id === application!.membershipTypeId
+)!;
+const fields = visibleFields(type);
+const subjects = [...fields.keys()];
+
+// Read what the form posted back, for every subject the type configures. The
+// whole form is posted every time, so a value the officer cleared arrives as
+// an empty string and is removed — a partial post would make deleting a wrong
+// entry impossible.
+async function partiesFromForm(form: FormData): Promise<PartyValues[]> {
+  return subjects.flatMap(subject => {
+    const ordinals = subject === 'nominee' ? type.nomineeCount : 1;
+    return Array.from({ length: ordinals }, (_, i) => i + 1).map(ordinal => {
+      const values: Record<string, string> = {};
+      for (const field of fields.get(subject) ?? []) {
+        values[field.fieldKey] = String(
+          form.get(`field.${subject}.${ordinal}.${field.fieldKey}`) ?? ''
+        );
+      }
+      return { subject, ordinal, values };
+    });
+  });
+}
+
+let error: string | null = null;
+let notice: string | null = null;
+let formatProblems: { fieldKey: string; label: string }[] = [];
+let blockingOnSubmit: { label: string; subject: string }[] = [];
+let createdMember: {
+  id: string;
+  memberNo: string;
+  accounts: { id: string; typeCode: string; typeName: string }[];
+} | null = null;
+// Officer feedback: a payment-step error must not reset what was already
+// typed. Set only when record-payment fails; the form falls back to the fee
+// schedule's own defaults otherwise.
+let paymentFormValues: {
+  amounts: Partial<Record<FeeComponentCode, string>>;
+  method: string;
+  methodReference: string;
+  varianceReason: string;
+  sourceOfFund: string;
+  sourceOfFundFormConfirmed: boolean;
+} | null = null;
+
+let isEditable = isEditableStatus(application.status);
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = String(form.get('intent') ?? 'save');
+  const isAutosave = intent === 'autosave';
+
+  // Every refusal below has to reach the autosave caller as a failure status.
+  // A refusal that renders the page instead answers 200, and the client — which
+  // can only look at response.ok — would report "Saved" for work that was
+  // thrown away. The officer then closes the tablet trusting it.
+  const refuse = (message: string, status: number): Response | null => {
+    error = message;
+    return isAutosave
+      ? new Response(JSON.stringify({ error: message }), {
+          status,
+          headers: { 'content-type': 'application/json' },
+        })
+      : null;
+  };
+
+  // Deleting leaves no page to come back to, so it redirects rather than
+  // re-rendering an application that is no longer there.
+  if (intent === 'delete') {
+    try {
+      const deleted = await deleteDraftApplication(application.id, principal);
+      return Astro.redirect(
+        `/applications?deleted=${encodeURIComponent(deleted.reference)}`
+      );
+    } catch (err) {
+      if (err instanceof ApplicationError) {
+        error = err.message;
+      } else {
+        console.error('[applications/delete]', err);
+        error =
+          'The draft could not be deleted. Nothing has been removed — ' +
+          'please try again.';
+      }
+      application = await loadMembershipApplication(application.id);
+      if (!application) return Astro.redirect('/applications');
+    }
+  } else if (intent === 'record-payment') {
+    const amounts: Partial<Record<FeeComponentCode, string>> = {};
+    for (const [key, value] of form.entries()) {
+      if (key.startsWith('amount.')) {
+        amounts[key.slice('amount.'.length) as FeeComponentCode] =
+          String(value);
+      }
+    }
+    const method = String(form.get('method') ?? '') as PaymentMethod;
+    const methodReference = String(form.get('methodReference') ?? '');
+    const varianceReason = String(form.get('varianceReason') ?? '');
+    // Officer feedback: the free-text source-of-fund note is gone from the
+    // form — the filed Source of Fund form is the only evidence required —
+    // but recordPayment still takes the parameter, so it goes through empty
+    // rather than the receipt's own source_of_fund column changing meaning.
+    const sourceOfFund = '';
+    // Unchecked checkboxes are absent from the posted form entirely, not
+    // present with some falsy value.
+    const sourceOfFundFormConfirmed =
+      form.get('sourceOfFundFormConfirmed') === 'true';
+
+    try {
+      const payment = await recordPayment(
+        {
+          applicationId: application.id,
+          method,
+          methodReference,
+          varianceReason,
+          sourceOfFund,
+          sourceOfFundFormConfirmed,
+          amounts,
+        },
+        principal
+      );
+      notice = `Receipt ${payment.receiptNo} recorded.`;
+    } catch (err) {
+      if (err instanceof PaymentError) {
+        error = err.message;
+      } else {
+        console.error('[payments/record]', err);
+        error =
+          'The payment could not be recorded. Nothing has been taken — ' +
+          'please try again.';
+      }
+      // Officer feedback: an error here must not throw away what was
+      // already typed — re-render the form with the submitted values
+      // rather than the fee schedule's defaults.
+      paymentFormValues = {
+        amounts,
+        method,
+        methodReference,
+        varianceReason,
+        sourceOfFund,
+        sourceOfFundFormConfirmed,
+      };
+    }
+  } else if (intent === 'delete-document') {
+    try {
+      await removeFiledDocument(
+        String(form.get('documentId') ?? ''),
+        principal
+      );
+      notice = 'Document removed. It can be filed again.';
+    } catch (err) {
+      if (err instanceof DocumentError) {
+        error = err.message;
+      } else {
+        console.error('[documents/delete]', err);
+        error = 'The document could not be removed. Please try again.';
+      }
+    }
+  } else if (intent === 'verify-document' || intent === 'reject-document') {
+    try {
+      const outcome = intent === 'verify-document' ? 'verify' : 'reject';
+      const result = await reviewDocument(
+        String(form.get('documentId') ?? ''),
+        {
+          outcome,
+          reason: String(form.get('reason') ?? ''),
+          // Officer feedback: one checkbox, not four — the reviewer either
+          // confirms every signature block is present on the scan, or
+          // confirms none; there is no case where checking three of four
+          // means anything (reviewDocument refuses to Verify short of all
+          // four either way).
+          confirmedSignatures:
+            form.get('allSignaturesConfirmed') === 'yes' ? [...SIGNATURES] : [],
+        },
+        principal
+      );
+      notice =
+        result.state === 'verified'
+          ? 'Document verified.'
+          : 'Document rejected. The officer who filed it can replace it.';
+    } catch (err) {
+      if (err instanceof DocumentError) {
+        error = err.message;
+      } else {
+        console.error('[documents/review]', err);
+        error = 'The document could not be reviewed. Please try again.';
+      }
+    }
+  } else if (intent === 'reopen') {
+    try {
+      await reopenRejectedApplication(application.id, principal);
+      notice =
+        'Reopened for correction. Fix what the rejection noted and submit ' +
+        'again — the payment already recorded still stands.';
+      application = await loadMembershipApplication(application.id);
+    } catch (err) {
+      if (err instanceof ApplicationError || err instanceof Error) {
+        error = err.message;
+      }
+      if (!(err instanceof ApplicationError)) {
+        console.error('[applications/reopen]', err);
+      }
+    }
+  } else if (
+    intent === 'submit' ||
+    intent === 'review' ||
+    intent === 'decide'
+  ) {
+    try {
+      if (intent === 'submit') {
+        const result = await submitApplication(application.id, principal);
+        if ('problems' in result) {
+          blockingOnSubmit = result.problems;
+          error =
+            `This application cannot be submitted yet: ${result.problems.length} ` +
+            `item${result.problems.length === 1 ? '' : 's'} still need attention.`;
+        } else {
+          notice = 'Submitted for central processing.';
+        }
+      } else if (intent === 'review') {
+        // S-611: which step this is reviewing — Regional oversight or
+        // Secretary review — travels with the form as a hidden field, since
+        // a signed-in person only ever sees the one their own role covers
+        // (availableActions filters by role), but the server still has to be
+        // told which so it checks the right one.
+        const stepCode = String(form.get('stepCode') ?? 'secretary_review');
+        const result = await reviewApplication(
+          application.id,
+          {
+            outcome:
+              String(form.get('outcome')) === 'return' ? 'return' : 'forward',
+            comment: String(form.get('comment') ?? ''),
+          },
+          principal,
+          stepCode
+        );
+        notice =
+          result.status === 'returned'
+            ? 'Returned to the originating staff.'
+            : stepCode === 'regional_review'
+              ? 'Forwarded for central review.'
+              : 'Forwarded to the President.';
+      } else {
+        const result = await decideApplication(
+          application.id,
+          {
+            outcome:
+              String(form.get('outcome')) === 'reject' ? 'reject' : 'approve',
+            comment: String(form.get('comment') ?? ''),
+          },
+          principal,
+          createMemberFromApplication
+        );
+        if (result.signoff) {
+          // S-609: this sign-off did not by itself complete the step —
+          // nothing about the application has changed yet, only who has
+          // acted so far.
+          const remaining = result.signoff.required - result.signoff.recorded;
+          notice =
+            `Sign-off recorded (${result.signoff.recorded} of ` +
+            `${result.signoff.required}). Waiting for ${remaining} more ` +
+            `${remaining === 1 ? 'decision' : 'decisions'} before this ` +
+            `completes.`;
+        } else {
+          notice = result.member
+            ? `Approved. Member ${result.member.memberNo} created with ` +
+              `${result.member.accounts.map(a => a.typeName).join(' and ')}.`
+            : 'Rejected and returned to the originating staff.';
+          createdMember = result.member ?? null;
+        }
+      }
+      application = await loadMembershipApplication(application.id);
+    } catch (err) {
+      if (err instanceof ApplicationError || err instanceof Error) {
+        error = err.message;
+      }
+      if (!(err instanceof ApplicationError)) {
+        console.error('[applications/workflow]', err);
+      }
+    }
+  } else if (!canCapture) {
+    const response = refuse(
+      'You do not have permission to edit applications.',
+      403
+    );
+    if (response) return response;
+  } else if (!isEditable) {
+    const response = refuse(
+      'This application has been submitted and can no longer be edited.',
+      409
+    );
+    if (response) return response;
+  } else {
+    try {
+      const { problems } = await saveDraft(
+        application.id,
+        await partiesFromForm(form),
+        { userId: principal.userId, email: principal.email }
+      );
+      formatProblems = problems;
+
+      // The autosave posts the same form and wants no page of its own.
+      if (isAutosave) {
+        return new Response(
+          JSON.stringify({ savedAt: new Date().toISOString(), problems }),
+          { headers: { 'content-type': 'application/json' } }
+        );
+      }
+
+      notice =
+        problems.length > 0
+          ? 'Draft saved, but some entries need attention.'
+          : 'Draft saved.';
+      application = await loadMembershipApplication(application.id);
+    } catch (err) {
+      if (err instanceof ApplicationError) {
+        const response = refuse(
+          err.message,
+          err.reason === 'locked' ? 409 : 400
+        );
+        if (response) return response;
+      } else {
+        console.error('[applications/capture]', err);
+        const response = refuse('Something went wrong. Please try again.', 500);
+        if (response) return response;
+      }
+    }
+  }
+}
+
+// Recomputed after the POST: a submit that just succeeded leaves an
+// application that is no longer editable, and the page below is describing it
+// as it is now, not as it was when the request arrived.
+isEditable = isEditableStatus(application!.status);
+
+// Read for everyone who can reach this page, not only those who may see
+// scans: the progress timeline reports how many documents are outstanding
+// regardless of document.view, and that count is not itself sensitive. The
+// Documents section below still shows nothing — file names, uploaders — to
+// someone without canSeeDocuments.
+// A terminal application is not one to take money on: an approved member pays
+// through their account, and a rejected one is owed a refund, not a receipt.
+const isDecided =
+  application!.status === 'approved' || application!.status === 'rejected';
+
+// Everything here depends only on the application itself, so it is read in
+// one round of parallel queries rather than one after another — and the
+// Board-readiness check below reuses three of these reads instead of
+// repeating them.
+const [
+  checklist,
+  blocking,
+  actions,
+  history,
+  stageLabel,
+  payments,
+  dueRead,
+  returnedLabel,
+] = await Promise.all([
+  checklistFor({ applicationId: application!.id }),
+  problemsBlockingSubmission(application!),
+  availableActions(application!, principal),
+  transitionsFor(application!.id),
+  reviewStageLabel(application!),
+  paymentsForApplication(application!.id),
+  canRecordPayment && !isDecided
+    ? amountDueForApplication(application!.id).then(
+        due => ({ due, problem: null as string | null }),
+        (err: unknown) => ({
+          due: null as AmountDue | null,
+          problem:
+            err instanceof PaymentError
+              ? err.message
+              : 'The fee schedule could not be read.',
+        })
+      )
+    : Promise.resolve(null),
+  application!.status === 'returned'
+    ? returnedByLabel(application!.id)
+    : Promise.resolve(null as string | null),
+]);
+const documentsComplete = checklist.length > 0 && isDocumentComplete(checklist);
+
+// Officer feedback: this used to read "Next: submit for review" no matter
+// what the workflow was configured to do next — misleading once Regional
+// oversight and Secretary review are both disabled and capture leads
+// straight to the President. Named after whatever the capture step's own
+// button actually says (STEP_META, workflow.ts) rather than assuming a
+// review is coming.
+const nextStepLabel = (
+  actions.find(a => a.stepCode === 'capture')?.label ?? 'Submit for processing'
+).toLowerCase();
+
+// S-608: named up front, the same way a missing mandatory field is, rather
+// than only after the Secretary tries and is refused.
+const forwardAction = actions.find(a => a.stepCode === 'secretary_review');
+const boardReasons = forwardAction
+  ? boardReadinessReasons(
+      await boardReadiness(application!, {
+        checklist,
+        payments,
+        problems: blocking,
+      })
+    )
+  : [];
+
+// Officer feedback: a document either reviewer has rejected must stop right
+// there — Regional oversight and Secretary review alike, not only the
+// Board-readiness check above, which is secretary_review's own and never
+// runs for Regional oversight. Named up front the same way boardReasons is,
+// so Forward reads disabled instead of failing only once tried.
+const rejectedDocuments = checklist.filter(e => e.state === 'rejected');
+
+// S-611: what a review-type step's own buttons say and post — the "forward"
+// verb, the "return"/"reject" verb, and the comment's placeholder — kept as
+// one small table instead of a chain of stepCode comparisons repeated in the
+// markup below, so a step's wording lives in exactly one place. Regional
+// oversight is a gate (S-209): "forward" records that it happened without
+// moving the record on its own, the same reviewApplication call as Secretary
+// review's, just with a different stepCode (see the POST handler above).
+const REVIEW_STEP_META: Record<
+  string,
+  {
+    intent: 'review' | 'decide';
+    forwardOutcome: string;
+    forwardLabel: string;
+    returnOutcome: string;
+    returnLabel: string;
+    commentPlaceholder: string;
+  }
+> = {
+  regional_review: {
+    intent: 'review',
+    forwardOutcome: 'forward',
+    forwardLabel: 'Forward for central review',
+    returnOutcome: 'return',
+    returnLabel: 'Return for correction',
+    commentPlaceholder: 'Required if you return this application.',
+  },
+  secretary_review: {
+    intent: 'review',
+    forwardOutcome: 'forward',
+    forwardLabel: 'Forward to the President',
+    returnOutcome: 'return',
+    returnLabel: 'Return for correction',
+    commentPlaceholder: 'Required if you return this application.',
+  },
+  president_decision: {
+    intent: 'decide',
+    forwardOutcome: 'approve',
+    forwardLabel: 'Approve',
+    returnOutcome: 'reject',
+    returnLabel: 'Reject',
+    commentPlaceholder: 'Required if you reject this application.',
+  },
+};
+
+// S-609: only worth a round trip when this step actually asks for more than
+// one sign-off, or already has one recorded from a quorum that has since
+// changed — the common case (quorum 1) never shows this at all.
+const decideAction = actions.find(a => a.stepCode === 'president_decision');
+const signoffs =
+  decideAction && decideAction.quorumCount > 1
+    ? await signoffsFor(application!.id)
+    : [];
+
+// Most of `blocking` is a field left empty, which the red border and the
+// field's own asterisk already explain — a list repeating "Surname" back at
+// an officer who has not typed anything yet is noise. What is worth spelling
+// out is the other kind: a value that IS there but does not stand up (a
+// guardian's Member No. nobody can find, S-604/S-605). That one needs saying,
+// because a red border alone does not explain why a filled-in field is red.
+const explainedProblems = blocking.filter(b => {
+  const party = application!.parties.find(
+    p => p.subject === b.subject && p.ordinal === b.ordinal
+  );
+  return (party?.values[b.fieldKey] ?? '').trim() !== '';
+});
+const DOCUMENT_STATE_LABELS: Record<string, string> = {
+  missing: 'Missing',
+  uploaded: 'Uploaded',
+  under_review: 'Under review',
+  verified: 'Verified',
+  rejected: 'Rejected',
+  expired: 'Expired',
+};
+
+const DOCUMENT_STATE_CLASSES: Record<string, string> = {
+  missing:
+    'bg-neutral-200 text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200',
+  uploaded:
+    'bg-mint-200 text-neutral-800 dark:bg-mint-900 dark:text-neutral-100',
+  under_review:
+    'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200',
+  verified:
+    'bg-mint-300 text-neutral-800 dark:bg-mint-800 dark:text-neutral-100',
+  rejected: 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200',
+  expired: 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200',
+};
+
+// What the file picker offers, matching what the upload service accepts. A
+// device that offers a file the backend will refuse wastes the officer's time
+// and their data allowance.
+const ACCEPTED_FILES =
+  'image/jpeg,image/png,image/heic,image/webp,application/pdf';
+
+const documentsBySubject = new Map<string, typeof checklist>();
+for (const entry of checklist) {
+  const list = documentsBySubject.get(entry.subject) ?? [];
+  list.push(entry);
+  documentsBySubject.set(entry.subject, list);
+}
+
+const requiredOutstanding = checklist.filter(
+  e => e.requirement === 'required' && e.state !== 'verified'
+).length;
+
+// The officer's job is to FILE the documents; verifying them is the
+// Secretary's. So the timeline counts what has nothing against it at all —
+// but that includes a document a reviewer rejected, not only one never
+// filed: a rejected document is exactly as outstanding as a missing one,
+// since the officer has to file a replacement either way. Without this, a
+// rejected document did not count as "outstanding" (it is not literally
+// Missing), so furthestStep/defaultStep below routed a returned application
+// straight past the Documents step — an officer landed on Submit with no
+// way to see the rejection or replace the file short of hand-editing the
+// URL's ?step= — and the Next button on this same step let them move on to
+// Payment with a rejected document still on the record.
+const requiredDocumentsMissing = checklist.filter(
+  e =>
+    e.requirement === 'required' &&
+    (e.state === 'missing' || e.state === 'rejected')
+).length;
+
+// What has been taken against this application (M5). Read for everyone who
+// can see the application: the timeline has to say whether the payment step is
+// done, and a receipt number is not a figure. The amounts below are what
+// payment.view gates.
+const livePayment: Payment | null =
+  payments.find(p => p.kind === 'payment' && !p.voidedAt) ?? null;
+const refunds = payments.filter(p => p.kind === 'refund' && !p.voidedAt);
+
+// A returned application is editable in exactly the same way as a draft but
+// has been through the Secretary, and that history is not anyone's to
+// discard. deleteDraftApplication refuses one a receipt was ever issued
+// against (voided or not — the applicant is holding it either way)
+// regardless of this check, but offering Delete only for it to fail is its
+// own kind of broken control, so the option itself is withheld here too.
+const isDeletableDraft =
+  canCapture &&
+  application!.status === 'draft' &&
+  !payments.some(p => p.kind === 'payment');
+
+// Read above alongside everything else; only shown while nothing has been
+// taken yet — once a payment stands, the figure has been settled.
+const due: AmountDue | null = livePayment ? null : (dueRead?.due ?? null);
+const dueProblem: string | null = livePayment
+  ? null
+  : (dueRead?.problem ?? null);
+const cashThreshold = due ? await cashSourceOfFundThreshold() : null;
+const cashMax = due ? await cashMaximum() : null;
+
+// The Source of Fund form's own state, read only when there is a payment
+// still to take — an approved or rejected application has nothing left to
+// sign for. Not part of any checklist (documents.ts's own filedDocumentFor
+// exists for exactly this: a document type this application's KYC pack was
+// never meant to carry).
+const sourceOfFundDocumentType = (await listDocumentTypes()).find(
+  t => t.code === 'source_of_fund_form'
+);
+// Read whether or not there is a payment still to take. It used to be
+// looked up only while the Payments step was live, which meant the one
+// person who most needs it — whoever the application goes to next in the
+// chain — opened it and saw nothing (officer feedback). A form signed for a
+// cash deposit is part of what the Regional Manager, the Secretary and the
+// President are deciding on.
+const sourceOfFundFiling = sourceOfFundDocumentType
+  ? await filedDocumentFor(
+      application!.id,
+      sourceOfFundDocumentType.id,
+      'applicant'
+    )
+  : null;
+
+// What Total reads on load — every component's default, required and
+// optional alike, not just the required ones due.expectedTotal sums (that
+// figure exists to test a payment against the schedule, not to be shown as a
+// total that ignores what the optional row already carries). The script
+// below recomputes this live as the optional amount changes; this is only
+// its starting value.
+const initialTotal = due
+  ? fromCents(sumCents(due.components.map(c => c.amount)))
+  : '0';
+
+// The only evidence a signature exists is the signed form coming back.
+const signedFormFiled = checklist.some(
+  e => e.documentCode === 'signed_form' && e.state !== 'missing'
+);
+
+const timeline = applicationTimeline({
+  status: application!.status,
+  mandatoryFieldsOutstanding: blocking.length,
+  signedFormFiled,
+  requiredDocumentsOutstanding: requiredDocumentsMissing,
+  paymentRecorded: livePayment !== null,
+  paymentReceiptNo: livePayment?.receiptNo ?? null,
+  reviewStageLabel: stageLabel,
+  returnedByLabel: returnedLabel,
+});
+
+// The wizard steps an officer walks while the application is still theirs to
+// work on — narrower than the seven the timeline shows, which also cover what
+// the Secretary and President do afterwards. Paginating them is what makes
+// "payment only once documents are filed" true on the screen and not just in
+// the service: each step is unreachable until the one before it actually is
+// done, on the SAME evidence the timeline reads, so the two can never
+// disagree about what is unlocked.
+//
+// Step 2 (print and sign) has no section of its own here — it already has a
+// page, `/applications/<id>/print` — but it still has a place in defaultStep
+// below: officer feedback, a draft with capture finished but not yet signed
+// (reopened from the Applications list, which links here with no `?step=`)
+// landed straight on Documents, having skipped print and signing entirely.
+// `signedFormFiled` is the same "has this actually been signed" evidence
+// the timeline above already reads, not a new gate of its own — using
+// anything less specific (e.g. any document at all) would send an officer
+// who filed an ID card first, before ever printing the form, straight past
+// print same as before. It is not part of furthestStep itself: that value
+// also caps what an explicit `?step=` may reach, and the signed form only
+// gets filed BY reaching the documents step, so it cannot gate the door to
+// that same step.
+const CAPTURE_STEP = 1;
+const PRINT_STEP = 2;
+const DOCUMENTS_STEP = 3;
+const PAYMENT_STEP = 4;
+const SUBMIT_STEP = 5;
+
+const furthestStep = !isEditable
+  ? SUBMIT_STEP
+  : blocking.length > 0
+    ? CAPTURE_STEP
+    : requiredDocumentsMissing > 0
+      ? DOCUMENTS_STEP
+      : livePayment === null
+        ? PAYMENT_STEP
+        : SUBMIT_STEP;
+
+// Where an officer lands when reopening a draft with no `?step=` in the
+// URL — "wherever I left off", which for capture already finished but not
+// yet signed is the print step, not documents (see furthestStep's own
+// comment above). This is deliberately separate from furthestStep: signed
+// form only becomes filed BY reaching the documents step and uploading it
+// there, so using it as a ceiling on furthestStep would trap the officer —
+// clicking "Next: upload documents" on the print page would bounce them
+// straight back to print, forever, since it can never become true from print
+// alone.
+//
+// Officer feedback: a 'received' application arrives with every mandatory
+// applicant field already filled in by the member themselves — blocking is
+// empty from the start, so furthestStep skips capture entirely and this
+// would otherwise land the officer straight on the signature form, never
+// having actually looked at what the member typed. Until it is signed,
+// capture is where a 'received' application opens instead — the same
+// print-step carve-out above, one step earlier.
+const defaultStep =
+  application!.status === RECEIVED_STATUS && !signedFormFiled
+    ? CAPTURE_STEP
+    : furthestStep > CAPTURE_STEP && !signedFormFiled
+      ? PRINT_STEP
+      : furthestStep;
+
+// Once submitted this application is read entirely, not stepped through — the
+// Secretary and President need the whole picture, and only an editable
+// application has an officer working through it in order.
+let currentStep = SUBMIT_STEP;
+if (isEditable) {
+  const stepParam = Astro.url.searchParams.get('step');
+  // No step in the URL means "wherever I left off", not "back to the start":
+  // an officer re-opening a draft they already finished capturing should not
+  // have to click through it again to reach where they actually are.
+  const requested = stepParam ? Number(stepParam) : defaultStep;
+  const clamped = Math.min(
+    Math.max(
+      Number.isFinite(requested) ? requested : CAPTURE_STEP,
+      CAPTURE_STEP
+    ),
+    SUBMIT_STEP
+  );
+
+  // Defensive only — nothing in this page links to ?step=2, since Next and
+  // Back go straight to and from the print page. A hand-edited URL still
+  // lands somewhere real rather than rendering an empty step.
+  if (clamped === PRINT_STEP) {
+    return Astro.redirect(`/applications/${application!.id}/print`);
+  }
+  if (clamped > furthestStep) {
+    return Astro.redirect(
+      `/applications/${application!.id}?step=${furthestStep}`
+    );
+  }
+  currentStep = clamped;
+}
+
+// For the documents section. The capture form carries its own, in the
+// component that renders it.
+const SUBJECT_LABELS: Record<string, string> = {
+  applicant: 'Applicant',
+  nominee: 'Nominee',
+  guardian: 'Parent / Guardian',
+  beneficiary: 'Takaful beneficiary',
+  employment: 'Employment Details',
+};
+
+const dateFormat = new Intl.DateTimeFormat('en-GB', {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+});
+---
+
+<DashboardLayout
+  title={`${application!.reference} · Al Barakah MCSL`}
+  heading={`Application ${application!.reference}`}
+>
+  <div class="mx-auto max-w-5xl space-y-6">
+    <ApplicationTimeline steps={timeline} applicationId={application!.id} />
+
+    <div
+      id="application-nav"
+      class="sticky z-20 -mx-4 flex flex-wrap items-center justify-between gap-2 border-t border-neutral-200/80 bg-neutral-100/95 px-4 py-3 backdrop-blur-md sm:mx-0 sm:rounded-b-2xl sm:px-3 sm:py-1.5 dark:border-neutral-800/80 dark:bg-neutral-950/95"
+      style="top: calc(var(--app-header-height, 3.75rem) + var(--app-timeline-height, 0px))"
+    >
+      <div class="flex flex-wrap items-center gap-x-4 gap-y-1">
+        {/* A real navigation, not history-dependent JavaScript: the officer
+             may have arrived here from a link, a bookmark or Next, and every
+             one of those has "the list" as a safe place to land. Where the
+             browser actually does have somewhere to go back to, the script
+             below prefers that instead — closer to what "Back" means after
+             clicking Next. */}
+        <a
+          href="/applications"
+          id="back-link"
+          class="inline-block text-sm text-neutral-500 underline dark:text-neutral-400"
+        >
+          ← Back
+        </a>
+        <a
+          href="/applications"
+          class="inline-block text-sm text-neutral-500 underline dark:text-neutral-400"
+        >
+          All applications
+        </a>
+      </div>
+    </div>
+
+    {error && (
+      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+        {error}
+      </div>
+    )}
+    {notice && (
+      <div class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-lg border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
+        {notice}
+      </div>
+    )}
+    {formatProblems.length > 0 && (
+      <div class="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+        <p class="font-medium">These entries could not be understood:</p>
+        <ul class="mt-1 list-inside list-disc">
+          {formatProblems.map(p => (
+            <li>{p.label}</li>
+          ))}
+        </ul>
+      </div>
+    )}
+
+    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span class="font-medium text-neutral-800 dark:text-neutral-100">
+          {application!.membershipTypeName}
+        </span>
+        <span class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200">
+          {application!.status}
+        </span>
+        <span class="text-xs text-neutral-500 dark:text-neutral-400">
+          captured by {application!.capturedByName} · updated{' '}
+          {dateFormat.format(application!.updatedAt)}
+        </span>
+      </div>
+
+      {blocking.length > 0 && isEditable && (
+        <div class="mt-3 rounded-lg border border-neutral-300 px-3 py-2 text-sm text-neutral-600 dark:border-neutral-700 dark:text-neutral-300">
+          <p class="font-medium">
+            {blocking.length} item{blocking.length === 1 ? '' : 's'} still need
+            {blocking.length === 1 ? 's' : ''} attention.
+          </p>
+        </div>
+      )}
+
+      {application!.status === 'rejected' && canCapture && (
+        <form method="post" class="mt-4">
+          <p class="mb-3 text-sm text-neutral-600 dark:text-neutral-300">
+            This application was rejected. Reopen it to correct what the
+            decision noted and submit again — the payment already recorded still
+            stands, so there is nothing to take again.
+          </p>
+          <button
+            type="submit"
+            name="intent"
+            value="reopen"
+            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
+          >
+            Reopen for correction
+          </button>
+        </form>
+      )}
+    </section>
+
+    {createdMember && (
+      <section class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-2xl border p-6">
+        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+          Member created
+        </h2>
+        <p class="mt-1 text-sm text-neutral-700 dark:text-neutral-200">
+          <a
+            href={`/members/${createdMember.id}`}
+            class="font-medium underline"
+          >
+            {createdMember.memberNo}
+          </a>{' '}
+          with {createdMember.accounts.map(a => a.typeName).join(' and ')},
+          opened automatically because the membership was approved. Both carry
+          the member's number.
+        </p>
+      </section>
+    )}
+
+    {explainedProblems.length > 0 && isEditable && (
+      <section class="rounded-2xl border border-red-300 bg-red-50 p-6 dark:border-red-900 dark:bg-red-950">
+        <h2 class="text-sm font-medium text-red-900 dark:text-red-200">
+          Needs attention
+        </h2>
+        <ul class="mt-2 list-inside list-disc text-sm text-red-800 dark:text-red-200">
+          {explainedProblems.map(p => (
+            <li>{p.label}</li>
+          ))}
+        </ul>
+      </section>
+    )}
+
+    {blockingOnSubmit.length > 0 && (
+      <section class="rounded-2xl border border-red-300 bg-red-50 p-6 dark:border-red-900 dark:bg-red-950">
+        <h2 class="text-sm font-medium text-red-900 dark:text-red-200">
+          Still required before this can be submitted
+        </h2>
+        <ul class="mt-2 list-inside list-disc text-sm text-red-800 dark:text-red-200">
+          {blockingOnSubmit.map(b => (
+            <li>
+              {b.label} <span class="text-xs">({b.subject})</span>
+            </li>
+          ))}
+        </ul>
+      </section>
+    )}
+
+    {(!isEditable || currentStep === CAPTURE_STEP) && (
+      <form method="post" id="capture-form" class="space-y-6">
+        <CaptureFields
+          fields={fields}
+          parties={application!.parties}
+          blocking={blocking}
+          isEditable={isEditable}
+          nomineeCount={type.nomineeCount}
+        />
+
+        {isEditable && (
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div class="flex flex-wrap items-center gap-3">
+              <span
+                id="autosave-status"
+                class="text-xs text-neutral-500 dark:text-neutral-400"
+                aria-live="polite"
+              />
+              {/* Saving happens when Next is clicked, which is scripted.
+                      Without scripting neither Next nor autosave can run, so
+                      this button is the fallback for that one reader. */}
+              <noscript>
+                <button
+                  type="submit"
+                  name="intent"
+                  value="save"
+                  class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
+                >
+                  Save draft
+                </button>
+              </noscript>
+            </div>
+            {/* Disabled to start with whatever the page already knows;
+                    kept honest as the officer types by the script below,
+                    which is the same fix the red-bordered fields below get —
+                    autosave has no reload to refresh either of them with. */}
+            <button
+              type="button"
+              id="capture-next-button"
+              disabled={blocking.length > 0}
+              class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {blocking.length > 0 ? 'Next' : 'Next: print the form'}
+            </button>
+          </div>
+        )}
+      </form>
+    )}
+
+    {(!isEditable || currentStep === DOCUMENTS_STEP) &&
+      canSeeDocuments &&
+      checklist.length > 0 && (
+        <section
+          class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
+          id="documents"
+        >
+          <div class="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+              Documents
+            </h2>
+            <p class="text-sm text-neutral-500 dark:text-neutral-400">
+              {documentsComplete
+                ? 'Every required document has been verified.'
+                : `${requiredOutstanding} required ${
+                    requiredOutstanding === 1 ? 'document is' : 'documents are'
+                  } not yet verified.`}
+            </p>
+          </div>
+
+          {[...documentsBySubject].map(([subject, entries]) => (
+            <div class="mt-5">
+              <h3 class="text-sm font-medium text-neutral-700 dark:text-neutral-200">
+                {SUBJECT_LABELS[subject] ?? subject}
+              </h3>
+              <ul class="mt-2 space-y-3">
+                {entries.map(entry => (
+                  <li
+                    id={
+                      entry.documentId ? `doc-${entry.documentId}` : undefined
+                    }
+                    class="scroll-mt-24 rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900"
+                  >
+                    <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+                      <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span class="font-medium text-neutral-800 dark:text-neutral-100">
+                          {entry.documentName}
+                        </span>
+                        <span
+                          class={`rounded px-1.5 py-0.5 text-xs ${DOCUMENT_STATE_CLASSES[entry.state]}`}
+                        >
+                          {DOCUMENT_STATE_LABELS[entry.state]}
+                        </span>
+                        {entry.requirement === 'required' ? (
+                          <span class="text-xs text-neutral-500 dark:text-neutral-400">
+                            required
+                          </span>
+                        ) : (
+                          <span class="text-xs text-neutral-500 dark:text-neutral-400">
+                            optional
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Upload when there is nothing filed, or the small ×
+                           when there is — never both, so there is exactly one
+                           thing to do with a document at a time. Replacing
+                           directly is gone: delete, then upload, is the same
+                           two steps made visible instead of hidden behind one
+                           button that quietly did both. */}
+                      {canUpload && isEditable && entry.state === 'missing' && (
+                        <div
+                          class="flex flex-wrap items-center gap-3"
+                          data-upload
+                          data-application-id={application!.id}
+                          data-document-type-id={entry.documentTypeId}
+                          data-subject={entry.subject}
+                          data-tracks-expiry={entry.tracksExpiry ? 'yes' : 'no'}
+                        >
+                          {entry.tracksExpiry && (
+                            <label class="text-xs text-neutral-600 dark:text-neutral-300">
+                              Expires on
+                              <input
+                                type="date"
+                                data-expires
+                                class="mt-1 block rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                              />
+                            </label>
+                          )}
+                          <label class="cursor-pointer rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-200 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800">
+                            Upload
+                            {/* The native control writes its own "no file
+                                chosen" text in the browser's language, which
+                                on a French-locale device puts French in an
+                                English app. Hidden, and driven by this label
+                                instead. */}
+                            <input
+                              type="file"
+                              data-file
+                              accept={ACCEPTED_FILES}
+                              capture="environment"
+                              disabled
+                              class="sr-only"
+                            />
+                          </label>
+                          <p
+                            data-status
+                            class="text-xs text-neutral-500 dark:text-neutral-400"
+                          >
+                            Uploading requires JavaScript.
+                          </p>
+                        </div>
+                      )}
+
+                      {canUpload && isEditable && entry.state !== 'missing' && (
+                        <form method="post" data-confirm-delete-document>
+                          <input
+                            type="hidden"
+                            name="documentId"
+                            value={entry.documentId}
+                          />
+                          <button
+                            type="submit"
+                            name="intent"
+                            value="delete-document"
+                            title="Delete this document"
+                            aria-label="Delete this document"
+                            class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-red-600 transition hover:bg-red-100 dark:text-red-400 dark:hover:bg-red-950"
+                          >
+                            <svg
+                              class="size-4"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="2"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              aria-hidden="true"
+                            >
+                              <path d="M18 6 6 18M6 6l12 12" />
+                            </svg>
+                          </button>
+                        </form>
+                      )}
+                    </div>
+
+                    {entry.uploadedAt && (
+                      <p class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-neutral-500 dark:text-neutral-400">
+                        <span>
+                          {entry.fileName} · filed by {entry.uploadedByName} on{' '}
+                          {dateFormat.format(entry.uploadedAt)}
+                          {entry.versionCount > 1 &&
+                            ` · version ${entry.versionCount}`}
+                          {entry.verifiedByName &&
+                            ` · verified by ${entry.verifiedByName}`}
+                          {entry.expiresAt &&
+                            ` · expires ${dateFormat.format(entry.expiresAt)}`}
+                        </span>
+                        <button
+                          type="button"
+                          data-view-document
+                          data-document-id={entry.documentId}
+                          class="font-medium text-neutral-700 underline hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-neutral-100"
+                        >
+                          View
+                        </button>
+                      </p>
+                    )}
+
+                    {entry.rejectionReason && (
+                      <p class="mt-2 rounded-lg border border-red-300 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:text-red-200">
+                        Rejected: {entry.rejectionReason}
+                      </p>
+                    )}
+
+                    {canVerifyHere &&
+                      (entry.state === 'under_review' ||
+                        entry.state === 'uploaded') && (
+                        <DocumentReviewForm
+                          documentId={entry.documentId!}
+                          documentCode={entry.documentCode}
+                          confirmedSignatures={entry.confirmedSignatures}
+                        />
+                      )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+
+          {/* Not a checklist item — it is triggered by the amount and the
+              method, not by the applicant's KYC pack — so it has no group of
+              its own above. It still belongs on this page: it is part of
+              what the chain is deciding on, and whoever the application goes
+              to next used to have no way to read it (officer feedback). */}
+          {sourceOfFundFiling && (
+            <div class="mt-5">
+              <h3 class="text-sm font-medium text-neutral-700 dark:text-neutral-200">
+                Source of Fund
+              </h3>
+              <ul class="mt-2 space-y-2">
+                <li class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-neutral-200 bg-white px-4 py-3 dark:border-neutral-800 dark:bg-neutral-900">
+                  <span class="text-sm text-neutral-800 dark:text-neutral-100">
+                    {sourceOfFundFiling.fileName}
+                  </span>
+                  <button
+                    type="button"
+                    data-view-document
+                    data-document-id={sourceOfFundFiling.documentId}
+                    class="rounded-lg border border-neutral-300 px-2.5 py-1 text-xs font-medium text-neutral-600 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                  >
+                    View
+                  </button>
+                </li>
+              </ul>
+            </div>
+          )}
+
+          {isEditable && currentStep === DOCUMENTS_STEP && (
+            <div class="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800">
+              <a
+                href={`/applications/${application!.id}/print`}
+                class="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+              >
+                ← Back
+              </a>
+              <a
+                href={
+                  requiredDocumentsMissing === 0
+                    ? `/applications/${application!.id}?step=${PAYMENT_STEP}`
+                    : undefined
+                }
+                aria-disabled={requiredDocumentsMissing > 0}
+                class:list={[
+                  'rounded-lg px-4 py-2 text-sm font-bold transition',
+                  requiredDocumentsMissing > 0
+                    ? 'cursor-not-allowed bg-neutral-300 text-neutral-500 dark:bg-neutral-700 dark:text-neutral-400'
+                    : 'bg-mint-300 hover:bg-mint-400 text-neutral-800',
+                ]}
+              >
+                {requiredDocumentsMissing > 0
+                  ? 'Next'
+                  : 'Next: record the payment'}
+              </a>
+            </div>
+          )}
+        </section>
+      )}
+
+    {(!isEditable || currentStep === PAYMENT_STEP) &&
+      (livePayment || due || dueProblem) && (
+        <section
+          class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
+          id="payment"
+        >
+          <div class="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+              Payment
+            </h2>
+            {livePayment &&
+              (canSeePayments ? (
+                <a
+                  href={`/receipts/${livePayment.id}`}
+                  class="text-sm text-neutral-600 underline dark:text-neutral-300"
+                >
+                  Receipt {livePayment.receiptNo}
+                </a>
+              ) : (
+                /* Not a link: the receipt page needs payment.view, and
+                   offering a link that refuses is how someone ends up
+                   clicking through to a denial. */
+                <span class="text-sm text-neutral-600 dark:text-neutral-300">
+                  Receipt {livePayment.receiptNo}
+                </span>
+              ))}
+          </div>
+
+          {dueProblem && (
+            <p class="mt-3 rounded-lg border border-amber-300 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200">
+              {dueProblem}
+            </p>
+          )}
+
+          {livePayment && (
+            <div class="mt-4">
+              {/* Everyone who can see the application sees that it was paid,
+                  and by whom — the timeline says as much already. The figures
+                  are what payment.view gates. */}
+              <p class="text-sm text-neutral-600 dark:text-neutral-300">
+                {canSeePayments
+                  ? `${formatMoney(livePayment.totalAmount, livePayment.currency)} · ${METHOD_LABELS[livePayment.method]}`
+                  : 'Recorded'}{' '}
+                · taken by {livePayment.recordedByName} on{' '}
+                {dateFormat.format(livePayment.receivedAt)}
+              </p>
+
+              {canSeePayments && (
+                <table class="mt-3 w-full text-sm">
+                  <tbody>
+                    {livePayment.lines.map(line => (
+                      <tr class="border-t border-neutral-200 dark:border-neutral-800">
+                        <td class="py-1.5 text-neutral-600 dark:text-neutral-300">
+                          {line.label}
+                        </td>
+                        <td class="py-1.5 text-right text-neutral-800 tabular-nums dark:text-neutral-100">
+                          {formatMoney(line.amount, livePayment.currency)}
+                        </td>
+                      </tr>
+                    ))}
+                    <tr class="border-t-2 border-neutral-300 dark:border-neutral-700">
+                      <td class="py-1.5 font-medium text-neutral-800 dark:text-neutral-100">
+                        Total
+                      </td>
+                      <td class="py-1.5 text-right font-bold text-neutral-800 tabular-nums dark:text-neutral-100">
+                        {formatMoney(
+                          livePayment.totalAmount,
+                          livePayment.currency
+                        )}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              )}
+
+              {livePayment.varianceReason && canSeePayments && (
+                <p class="mt-3 rounded-lg border border-amber-300 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200">
+                  {livePayment.varianceReason}
+                </p>
+              )}
+
+              {refunds.length > 0 && canSeePayments && (
+                <ul class="mt-3 space-y-1 text-sm text-neutral-600 dark:text-neutral-300">
+                  {refunds.map(refund => (
+                    <li>
+                      Refunded{' '}
+                      {formatMoney(refund.totalAmount, refund.currency)} on{' '}
+                      {dateFormat.format(refund.receivedAt)} ·{' '}
+                      <a href={`/receipts/${refund.id}`} class="underline">
+                        {refund.receiptNo}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
+          {due && (
+            <form
+              method="post"
+              class="mt-4 space-y-4"
+              data-payment-form
+              data-application-id={application!.id}
+              data-cash-threshold={cashThreshold}
+              data-cash-maximum={cashMax}
+            >
+              <table class="w-full text-sm">
+                <tbody>
+                  {due.components.map(component => {
+                    // Officer feedback: Entrance and Takaful are the
+                    // Society's own charge, fixed by the fee schedule —
+                    // not a starting point to type over. Shares and the
+                    // MSA deposit are the payer's own money; the schedule
+                    // sets a floor, but they may put in more, so those
+                    // stay editable even though Shares is required.
+                    const fixed = FIXED_FEE_COMPONENTS.has(component.code);
+                    const isFloor = FLOOR_FEE_COMPONENTS.has(component.code);
+                    return (
+                      <tr class="border-t border-neutral-200 dark:border-neutral-800">
+                        <td class="py-2 text-neutral-600 dark:text-neutral-300">
+                          <label for={`amount-${component.code}`}>
+                            {component.label}
+                          </label>
+                          {component.requirement === 'optional' ? (
+                            <span class="ml-2 text-xs text-neutral-500 dark:text-neutral-400">
+                              optional
+                              {isFloor && `, at least ${component.amount}`}
+                            </span>
+                          ) : fixed ? (
+                            <span class="ml-2 text-xs text-neutral-500 dark:text-neutral-400">
+                              set by Configuration
+                            </span>
+                          ) : (
+                            <span class="ml-2 text-xs text-neutral-500 dark:text-neutral-400">
+                              at least {component.amount}
+                            </span>
+                          )}
+                        </td>
+                        <td class="w-40 py-2 text-right">
+                          <input
+                            id={`amount-${component.code}`}
+                            type="text"
+                            inputmode="decimal"
+                            name={`amount.${component.code}`}
+                            value={
+                              paymentFormValues?.amounts[component.code] ??
+                              component.amount
+                            }
+                            readonly={fixed}
+                            data-amount-input
+                            class:list={[
+                              'w-full rounded-lg border px-3 py-1.5 text-right text-sm tabular-nums',
+                              fixed
+                                ? 'cursor-not-allowed border-neutral-200 bg-neutral-100 text-neutral-600 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-300'
+                                : 'border-neutral-300 bg-white dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100',
+                            ]}
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  <tr class="border-t-2 border-neutral-300 dark:border-neutral-700">
+                    <td class="py-2 font-medium text-neutral-800 dark:text-neutral-100">
+                      Total
+                    </td>
+                    <td
+                      data-payment-total
+                      class="py-2 text-right font-bold text-neutral-800 tabular-nums dark:text-neutral-100"
+                    >
+                      {formatMoney(initialTotal)}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <div class="flex flex-wrap gap-3">
+                <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                  Method
+                  <select
+                    name="method"
+                    class="mt-1 block rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                  >
+                    {PAYMENT_METHODS.map(method => (
+                      <option
+                        value={method}
+                        selected={paymentFormValues?.method === method}
+                      >
+                        {METHOD_LABELS[method]}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label
+                  data-method-reference-field
+                  class="flex-1 text-sm text-neutral-600 dark:text-neutral-300"
+                >
+                  Cheque or transfer reference
+                  <input
+                    type="text"
+                    name="methodReference"
+                    value={paymentFormValues?.methodReference ?? ''}
+                    class="mt-1 block w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                  />
+                </label>
+              </div>
+
+              <CashSourceOfFundForm
+                applicationId={application!.id}
+                cashThreshold={cashThreshold ? formatMoney(cashThreshold) : ''}
+                formPath={`/applications/${application!.id}/source-of-fund`}
+                alreadyFiled={sourceOfFundFiling}
+              />
+
+              {/* Entrance, Takaful, Shares and the MSA deposit are each
+                    governed by their own rule above — this only still
+                    applies to some other required component the fee
+                    schedule might one day carry (none does today). */}
+              {due.components.some(
+                c =>
+                  c.requirement === 'required' &&
+                  !FIXED_FEE_COMPONENTS.has(c.code) &&
+                  !FLOOR_FEE_COMPONENTS.has(c.code)
+              ) && (
+                <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+                  Reason, if the amount differs from the fee schedule
+                  <input
+                    type="text"
+                    name="varianceReason"
+                    value={paymentFormValues?.varianceReason ?? ''}
+                    class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                  />
+                </label>
+              )}
+
+              <p
+                data-cash-maximum-warning
+                hidden
+                class="rounded-lg border border-red-300 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:text-red-200"
+              >
+                Cash payments above {cashMax && formatMoney(cashMax)} are not
+                authorised. Use another payment method, or split the payment.
+              </p>
+
+              <button
+                type="submit"
+                name="intent"
+                value="record-payment"
+                data-payment-submit
+                class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Record payment and issue receipt
+              </button>
+            </form>
+          )}
+
+          {isEditable && currentStep === PAYMENT_STEP && (
+            <div class="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800">
+              <a
+                href={`/applications/${application!.id}?step=${DOCUMENTS_STEP}`}
+                class="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+              >
+                ← Back
+              </a>
+              <a
+                href={
+                  livePayment
+                    ? `/applications/${application!.id}?step=${SUBMIT_STEP}`
+                    : undefined
+                }
+                aria-disabled={livePayment === null}
+                class:list={[
+                  'rounded-lg px-4 py-2 text-sm font-bold transition',
+                  livePayment === null
+                    ? 'cursor-not-allowed bg-neutral-300 text-neutral-500 dark:bg-neutral-700 dark:text-neutral-400'
+                    : 'bg-mint-300 hover:bg-mint-400 text-neutral-800',
+                ]}
+              >
+                {livePayment === null ? 'Next' : `Next: ${nextStepLabel}`}
+              </a>
+            </div>
+          )}
+        </section>
+      )}
+
+    {(!isEditable || currentStep === SUBMIT_STEP) && actions.length > 0 && (
+      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+          Your next step
+        </h2>
+
+        {actions.map(action => {
+          const reviewMeta = REVIEW_STEP_META[action.stepCode];
+          return (
+            <form method="post" class="mt-4 space-y-3">
+              {action.stepCode === 'capture' && (
+                <button
+                  type="submit"
+                  name="intent"
+                  value="submit"
+                  disabled={blocking.length > 0}
+                  class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {blocking.length > 0
+                    ? `Submit (${blocking.length} item${blocking.length === 1 ? '' : 's'} still need attention)`
+                    : 'Submit for Processing'}
+                </button>
+              )}
+
+              {action.stepCode === 'secretary_review' &&
+                boardReasons.length > 0 && (
+                  <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+                    <p class="font-medium">Not ready for the Board yet:</p>
+                    <ul class="mt-1 list-disc pl-5">
+                      {boardReasons.map(reason => (
+                        <li>{reason}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+              {/* Secretary review already reads this off boardReasons above
+                   (documentsUnverified covers a rejection too, worded as "not
+                   yet Verified"); Regional oversight has no readiness check of
+                   its own, so this is the only place it hears about it. */}
+              {action.stepCode === 'regional_review' &&
+                rejectedDocuments.length > 0 && (
+                  <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+                    <p class="font-medium">
+                      {rejectedDocuments.length} document
+                      {rejectedDocuments.length === 1 ? '' : 's'} rejected —
+                      return this application for correction. It cannot be
+                      forwarded until the officer replaces{' '}
+                      {rejectedDocuments.length === 1 ? 'it' : 'them'}.
+                    </p>
+                  </div>
+                )}
+
+              {action.stepCode === 'president_decision' &&
+                signoffs.length > 0 && (
+                  <div class="rounded-lg border border-neutral-300 bg-white px-4 py-3 text-sm dark:border-neutral-700 dark:bg-neutral-900">
+                    <p class="font-medium text-neutral-700 dark:text-neutral-200">
+                      {signoffs.filter(s => s.outcome === 'approve').length} of{' '}
+                      {action.quorumCount} sign-off
+                      {action.quorumCount === 1 ? '' : 's'} recorded
+                    </p>
+                    <ul class="mt-1 space-y-0.5 text-neutral-600 dark:text-neutral-300">
+                      {signoffs.map(s => (
+                        <li>
+                          {s.outcome === 'approve' ? 'Approved' : 'Rejected'} by{' '}
+                          {s.actorName}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+              {reviewMeta && (
+                <>
+                  <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+                    Comment
+                    <textarea
+                      name="comment"
+                      rows="3"
+                      class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                      placeholder={reviewMeta.commentPlaceholder}
+                    ></textarea>
+                  </label>
+                  <div class="flex flex-wrap gap-2">
+                    <button
+                      type="submit"
+                      name="outcome"
+                      value={reviewMeta.forwardOutcome}
+                      disabled={
+                        (action.stepCode === 'secretary_review' &&
+                          boardReasons.length > 0) ||
+                        rejectedDocuments.length > 0
+                      }
+                      class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {reviewMeta.forwardLabel}
+                    </button>
+                    <button
+                      type="submit"
+                      name="outcome"
+                      value={reviewMeta.returnOutcome}
+                      class="rounded-lg border border-red-300 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
+                    >
+                      {reviewMeta.returnLabel}
+                    </button>
+                  </div>
+                  <input
+                    type="hidden"
+                    name="intent"
+                    value={reviewMeta.intent}
+                  />
+                  {reviewMeta.intent === 'review' && (
+                    <input
+                      type="hidden"
+                      name="stepCode"
+                      value={action.stepCode}
+                    />
+                  )}
+                </>
+              )}
+            </form>
+          );
+        })}
+      </section>
+    )}
+
+    {isEditable && currentStep === SUBMIT_STEP && (
+      <div class="flex">
+        <a
+          href={`/applications/${application!.id}?step=${PAYMENT_STEP}`}
+          class="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+        >
+          ← Back
+        </a>
+      </div>
+    )}
+
+    {(!isEditable || currentStep === SUBMIT_STEP) && history.length > 0 && (
+      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+          History
+        </h2>
+        <ol class="mt-4 space-y-3">
+          {history.map(entry => (
+            <li class="border-l-2 border-neutral-300 pl-3 text-sm dark:border-neutral-700">
+              <div class="flex flex-wrap items-center gap-x-2">
+                <span class="font-medium text-neutral-800 dark:text-neutral-100">
+                  {entry.fromStatus ?? 'created'} → {entry.toStatus}
+                </span>
+                {entry.actorRole && (
+                  <span class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
+                    {entry.actorRole}
+                  </span>
+                )}
+                <span class="text-xs text-neutral-500 dark:text-neutral-400">
+                  {entry.actorName} · {dateFormat.format(entry.occurredAt)}
+                </span>
+              </div>
+              {entry.comment && (
+                <p class="mt-1 text-neutral-600 dark:text-neutral-300">
+                  {entry.comment}
+                </p>
+              )}
+            </li>
+          ))}
+        </ol>
+      </section>
+    )}
+
+    {isDeletableDraft && (
+      <section class="rounded-2xl border border-neutral-200 p-6 dark:border-neutral-800">
+        <h2 class="text-sm font-medium text-neutral-800 dark:text-neutral-100">
+          Delete this draft
+        </h2>
+        <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+          Removes everything captured on it and any documents filed against it.
+          This cannot be undone.
+        </p>
+        <form method="post" class="mt-4" data-confirm-delete>
+          <button
+            type="submit"
+            name="intent"
+            value="delete"
+            class="rounded-lg border border-red-300 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
+          >
+            Delete draft {application!.reference}
+          </button>
+        </form>
+      </section>
+    )}
+
+    {canSeeDocuments && <DocumentViewer />}
+  </div>
+</DashboardLayout>
+
+<script>
+  import {
+    compressImageForUpload,
+    formatBytes,
+  } from '@lib/client/image-compression';
+  import { keepPaymentDraft } from '@lib/client/payment-draft';
+  // "Back", after Next brought the officer here from capture. A plain link to
+  // the list is the safe default (it works whichever page sent them here, or
+  // if they arrived on a fresh tab with no history at all) — but where the
+  // browser actually has somewhere to go back to, that is closer to what
+  // "Back" means right after clicking Next, so it is preferred when available.
+  const backLink = document.getElementById(
+    'back-link'
+  ) as HTMLAnchorElement | null;
+  if (backLink && window.history.length > 1) {
+    backLink.addEventListener('click', event => {
+      event.preventDefault();
+      window.history.back();
+    });
+  }
+
+  // A mandatory field's red border is drawn once, from what was still empty
+  // when the page rendered — but autosave keeps saving in the background with
+  // no reload, so a field the officer just filled in would otherwise stay red
+  // until they reloaded, looking like data that never saved when it did. Kept
+  // honest here instead: as the officer types, each mandatory field's own
+  // border reacts to its own current value, and the Next button's label and
+  // disabled state react to how many are still empty overall.
+  //
+  // This only tracks emptiness, which is not quite everything `blocking`
+  // covers server-side — a guardian's Member No. that resolves to nobody
+  // (S-604/S-605) is a field that is not empty, so filling every other
+  // mandatory field can re-enable Next here a beat before the next reload
+  // confirms it. The reload is what actually gates Submit either way
+  // (`blocking` is recomputed fresh on every request), so nothing is
+  // submitted on the strength of this button alone; it is just not as live
+  // for that one case as it is for an empty field.
+  const mandatoryFields = [
+    ...document.querySelectorAll<HTMLInputElement | HTMLSelectElement>(
+      '#capture-form [data-mandatory]'
+    ),
+  ];
+  const captureNextButton = document.getElementById(
+    'capture-next-button'
+  ) as HTMLButtonElement | null;
+
+  const syncMandatoryField = (el: HTMLInputElement | HTMLSelectElement) => {
+    const empty = el.value.trim() === '';
+    el.classList.toggle('border-red-400', empty);
+    el.classList.toggle('dark:border-red-700', empty);
+    el.classList.toggle('border-neutral-300', !empty);
+    el.classList.toggle('dark:border-neutral-600', !empty);
+  };
+
+  const syncCaptureNextButton = () => {
+    if (!captureNextButton) return;
+    const remaining = mandatoryFields.filter(
+      el => el.value.trim() === ''
+    ).length;
+    captureNextButton.disabled = remaining > 0;
+    captureNextButton.textContent =
+      remaining > 0 ? 'Next' : 'Next: print the form';
+  };
+
+  for (const el of mandatoryFields) {
+    el.addEventListener('input', () => {
+      syncMandatoryField(el);
+      syncCaptureNextButton();
+    });
+    // A select's value can change without an 'input' event in some browsers;
+    // 'change' is the one every browser fires for it.
+    el.addEventListener('change', () => {
+      syncMandatoryField(el);
+      syncCaptureNextButton();
+    });
+  }
+
+  // S-614: saving happens once, when the officer clicks Next, rather than
+  // continuously while typing — a network call on every keystroke read as
+  // the app being slow. (Replaces the continuous background saving from
+  // S-302, decision 14; the noscript button above is still the fallback for
+  // a reader without scripting, since Next itself needs it.)
+  // S-403, S-404 · Filing a document from the device.
+  //
+  // The bytes go from here straight to Microsoft, over a short-lived URL the
+  // backend obtained for this one file in this one folder (see
+  // docs/documents.md, decision of 26 August 2026). They never pass through
+  // this application, which is what makes a 12 MB photograph of an identity
+  // card possible at all: the platform's request body limit is about 4.5 MB.
+  //
+  // The upload therefore cannot work without scripting, which is why the file
+  // input starts disabled with an explanation, and is enabled here.
+  // Officer feedback: filing an identity card and a utility bill at the same
+  // time only kept one of them. Each box below runs its own upload
+  // independently — correctly — but the FIRST one to finish reloaded the
+  // page immediately, which aborted every other upload still in flight
+  // rather than waiting for it. Counted here instead, so the reload this
+  // page still wants (the checklist state is the server's to say, not a
+  // guess made here) waits for every upload that was running to finish
+  // first.
+  let uploadsInFlight = 0;
+
+  for (const panel of document.querySelectorAll<HTMLElement>('[data-upload]')) {
+    const file = panel.querySelector<HTMLInputElement>('[data-file]');
+    const expiry = panel.querySelector<HTMLInputElement>('[data-expires]');
+    const status = panel.querySelector<HTMLElement>('[data-status]');
+    if (!file || !status) continue;
+
+    file.disabled = false;
+    status.textContent = '';
+
+    const say = (message: string) => {
+      status.textContent = message;
+    };
+
+    file.addEventListener('change', async () => {
+      const picked = file.files?.[0];
+      if (!picked) return;
+
+      if (panel.dataset.tracksExpiry === 'yes' && !expiry?.value) {
+        say('Enter the expiry date first — this document type expires.');
+        file.value = '';
+        return;
+      }
+
+      uploadsInFlight++;
+      file.disabled = true;
+      say('Preparing…');
+
+      // A photographed document arrives at several megabytes and none of
+      // that resolution is readable on the page. Shrunk here, before it
+      // crosses the branch connection — and left alone where there is
+      // nothing to gain, which is what compressImageForUpload decides.
+      let chosen = picked;
+      try {
+        chosen = await compressImageForUpload(picked);
+        if (chosen.size < picked.size) {
+          say(
+            `Compressed ${formatBytes(picked.size)} to ${formatBytes(chosen.size)}…`
+          );
+        }
+      } catch {
+        // Nothing here is worth failing an upload over.
+      }
+
+      try {
+        // Phase one. The backend decides where this goes and whether it is
+        // allowed at all; all this sends is what the file is.
+        const begun = await fetch('/api/v1/documents/begin-upload', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            applicationId: panel.dataset.applicationId,
+            documentTypeId: panel.dataset.documentTypeId,
+            subject: panel.dataset.subject,
+            fileName: chosen.name,
+            contentType: chosen.type,
+            sizeBytes: chosen.size,
+            ...(expiry?.value ? { expiresAt: expiry.value } : {}),
+          }),
+        });
+        const begunBody = await begun.json();
+        if (!begun.ok) {
+          throw new Error(
+            begunBody?.error?.message ?? 'The upload was refused.'
+          );
+        }
+        const { versionId, uploadUrl, chunkSize } = begunBody.data;
+
+        // Phase two: the transfer. In chunks, because the connection in a
+        // regional office is the least reliable part of this, and a chunk that
+        // fails costs one chunk rather than the whole photograph.
+        // fetch() gives no signal until a whole chunk has landed — for an
+        // 8 MB photo in one chunk, that is several seconds of "Sending… 0%"
+        // on a weak connection, which reads as stuck even when it is not.
+        // XMLHttpRequest's own upload.progress event reports as the bytes
+        // actually go, so the number on screen moves the whole time.
+        const putChunk = (
+          start: number,
+          end: number
+        ): Promise<{ ok: boolean; status: number }> =>
+          new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open('PUT', uploadUrl);
+            xhr.setRequestHeader(
+              'content-range',
+              `bytes ${start}-${end - 1}/${chosen.size}`
+            );
+            xhr.upload.addEventListener('progress', e => {
+              if (!e.lengthComputable) return;
+              const sent = start + e.loaded;
+              say(`Sending… ${Math.round((sent / chosen.size) * 100)}%`);
+            });
+            xhr.addEventListener('load', () =>
+              resolve({
+                ok: xhr.status >= 200 && xhr.status < 300,
+                status: xhr.status,
+              })
+            );
+            xhr.addEventListener('error', () =>
+              reject(new Error('The transfer failed — check your connection.'))
+            );
+            xhr.send(chosen.slice(start, end));
+          });
+
+        for (let start = 0; start < chosen.size; start += chunkSize) {
+          const end = Math.min(start + chunkSize, chosen.size);
+          const result = await putChunk(start, end);
+          if (!result.ok && result.status !== 202) {
+            throw new Error(`The transfer failed (${result.status}).`);
+          }
+        }
+
+        // Phase three. Our word that the transfer finished is not what files
+        // the document — the backend asks SharePoint.
+        say('Confirming…');
+        const committed = await fetch('/api/v1/documents/commit-upload', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ versionId }),
+        });
+        const commitBody = await committed.json();
+        if (!committed.ok) {
+          throw new Error(
+            commitBody?.error?.message ?? 'The file could not be confirmed.'
+          );
+        }
+
+        // Reload rather than patch the row: the checklist state, the version
+        // count and whether the Secretary may now act all come from the
+        // server, and guessing them here is how a screen starts disagreeing
+        // with the record. Held back until every other upload started
+        // alongside this one has also finished, so none of them gets cut off
+        // mid-transfer by a reload that was never theirs.
+        //
+        // Officer feedback: deleting a rejected document, then uploading its
+        // replacement, left the page showing the delete as if it had just
+        // happened again — no Upload widget, "outstanding" still counting
+        // it, Next still disabled. The delete button above is a plain form
+        // POST with no redirect after it (the page re-renders in the same
+        // response), so the browser's current entry is that POST. reload()
+        // replays the entry it is called on verbatim, method and body
+        // included — so it silently resubmitted the delete, taking the file
+        // straight back out. Navigating to the same URL instead of replaying
+        // the last request always issues a fresh GET, whatever the previous
+        // request was.
+        say('Filed.');
+        uploadsInFlight--;
+        if (uploadsInFlight === 0)
+          window.location.replace(window.location.href);
+      } catch (error) {
+        uploadsInFlight--;
+        say(error instanceof Error ? error.message : 'The upload failed.');
+        file.disabled = false;
+        file.value = '';
+      }
+    });
+  }
+
+  // Deleting a draft cannot be undone, so ask. Without JavaScript the button
+  // simply deletes: a confirmation is a courtesy, and a control that only
+  // works with scripting would not be.
+  const deleteDraftForm = document.querySelector<HTMLFormElement>(
+    'form[data-confirm-delete]'
+  );
+  if (deleteDraftForm) {
+    window.confirmedSubmit(
+      deleteDraftForm,
+      'Delete this draft? Everything captured on it, and any documents ' +
+        'filed against it, will be removed. This cannot be undone.'
+    );
+  }
+
+  // Removing a filed document is reversible in the sense that it can always
+  // be filed again — but the officer does not know that mid-click, so this
+  // asks first exactly as deleting the draft does.
+  for (const deleteForm of document.querySelectorAll<HTMLFormElement>(
+    'form[data-confirm-delete-document]'
+  )) {
+    window.confirmedSubmit(
+      deleteForm,
+      'Remove this document? You can file it again after.'
+    );
+  }
+  // The mandatory component's amount is fixed and its input is readonly, so
+  // only the optional one ever changes here — but Total sums every amount
+  // input, mandatory included, so it stays right without caring which field
+  // moved. Mirrors money.ts's own cents arithmetic rather than importing it:
+  // this is a plain script tag, and the server re-derives the real total from
+  // the posted amounts regardless of what this shows.
+  const paymentForm = document.querySelector<HTMLFormElement>(
+    '[data-payment-form]'
+  );
+  if (paymentForm) {
+    const totalCell = paymentForm.querySelector<HTMLElement>(
+      '[data-payment-total]'
+    );
+    const amountInputs = paymentForm.querySelectorAll<HTMLInputElement>(
+      '[data-amount-input]'
+    );
+
+    const parseCents = (raw: string): number => {
+      const trimmed = raw.trim();
+      if (!/^-?\d+(\.\d{1,2})?$/.test(trimmed)) return 0;
+      const negative = trimmed.startsWith('-');
+      const [whole, fraction = ''] = trimmed.replace('-', '').split('.');
+      return (
+        (negative ? -1 : 1) *
+        (Number(whole) * 100 + Number(fraction.padEnd(2, '0')))
+      );
+    };
+
+    const formatCents = (cents: number): string => {
+      const sign = cents < 0 ? '-' : '';
+      const absolute = Math.abs(cents);
+      const rupees = new Intl.NumberFormat('en-GB').format(
+        Math.trunc(absolute / 100)
+      );
+      return `${sign}MUR ${rupees}.${String(absolute % 100).padStart(2, '0')}`;
+    };
+
+    // A visual nudge only — the same rule is enforced server-side
+    // regardless of whether this script ever runs.
+    const methodSelect =
+      paymentForm.querySelector<HTMLSelectElement>('[name="method"]');
+    const cashReminder = paymentForm.querySelector<HTMLElement>(
+      '[data-cash-reminder]'
+    );
+    // Required only while the reminder itself is showing — otherwise a
+    // payment nowhere near the threshold would be blocked by a checkbox for
+    // a form it was never asked to confirm.
+    const cashFormConfirm = paymentForm.querySelector<HTMLInputElement>(
+      '[data-cash-form-confirm]'
+    );
+    const cashThresholdCents = paymentForm.dataset.cashThreshold
+      ? parseCents(paymentForm.dataset.cashThreshold)
+      : null;
+    const cashMaximumCents = paymentForm.dataset.cashMaximum
+      ? parseCents(paymentForm.dataset.cashMaximum)
+      : null;
+    const cashMaximumWarning = paymentForm.querySelector<HTMLElement>(
+      '[data-cash-maximum-warning]'
+    );
+    const submitButton = paymentForm.querySelector<HTMLButtonElement>(
+      '[data-payment-submit]'
+    );
+    const methodReferenceField = paymentForm.querySelector<HTMLElement>(
+      '[data-method-reference-field]'
+    );
+    // Officer feedback: only these methods carry a reference to record —
+    // cash and card settle with nothing to write down.
+    const REFERENCED_METHODS = new Set(['cheque', 'bank_transfer', 'mobile']);
+
+    // Restored before the first recalculation below, so the total and the
+    // cash rules are computed against what the officer actually typed
+    // rather than against the defaults it replaces.
+    keepPaymentDraft(paymentForm, paymentForm.dataset.applicationId ?? '');
+
+    const recomputeTotal = () => {
+      let total = 0;
+      for (const input of amountInputs) total += parseCents(input.value);
+      if (totalCell) totalCell.textContent = formatCents(total);
+
+      const isCash = methodSelect?.value === 'cash';
+
+      // Refused server-side regardless (payments.ts's own
+      // applyCashPaymentRules runs first, ahead of every other check) — this
+      // only stops the officer typing a figure that can never be recorded
+      // and finding out after the round trip.
+      const overMaximum =
+        cashMaximumCents !== null && isCash && total > cashMaximumCents;
+      if (cashMaximumWarning) cashMaximumWarning.hidden = !overMaximum;
+
+      // Officer feedback: above the ceiling the refusal is the only thing
+      // worth saying. Asking for a Source of Fund form, or for where the
+      // money came from, is asking the officer to prepare a payment that
+      // cannot be taken however well they answer.
+      const needsSourceOfFund =
+        !overMaximum &&
+        cashThresholdCents !== null &&
+        isCash &&
+        total > cashThresholdCents;
+      if (cashReminder) cashReminder.hidden = !needsSourceOfFund;
+      const sourceOfFundMissing =
+        needsSourceOfFund && !(cashFormConfirm?.checked ?? false);
+
+      // One place decides it, so the two reasons cannot re-enable each
+      // other's refusal.
+      if (submitButton) {
+        submitButton.disabled = overMaximum || sourceOfFundMissing;
+      }
+
+      if (methodReferenceField)
+        methodReferenceField.hidden = !REFERENCED_METHODS.has(
+          methodSelect?.value ?? ''
+        );
+    };
+
+    for (const input of amountInputs) {
+      if (!input.readOnly) input.addEventListener('input', recomputeTotal);
+    }
+    methodSelect?.addEventListener('change', recomputeTotal);
+    recomputeTotal();
+  }
+
+  const form = document.getElementById(
+    'capture-form'
+  ) as HTMLFormElement | null;
+  const status = document.getElementById('autosave-status');
+
+  if (form && status) {
+    const save = async (): Promise<boolean> => {
+      const body = new FormData(form);
+      body.set('intent', 'autosave');
+
+      try {
+        const response = await fetch(window.location.pathname, {
+          method: 'POST',
+          body,
+          headers: { 'x-requested-with': 'autosave' },
+        });
+        if (!response.ok) throw new Error(String(response.status));
+        status.textContent = `Saved at ${new Date().toLocaleTimeString('en-GB')}`;
+        return true;
+      } catch {
+        // Saying "saved" when nothing was saved is the one thing this must
+        // never do: the officer would close the tablet trusting it.
+        status.textContent = 'Not saved — check your connection.';
+        return false;
+      }
+    };
+
+    if (captureNextButton) {
+      captureNextButton.addEventListener('click', async () => {
+        captureNextButton.disabled = true;
+        const saved = await save();
+        if (!saved) {
+          captureNextButton.disabled = false;
+          return;
+        }
+        window.location.assign(
+          window.location.pathname.replace(/\/$/, '') + '/print'
+        );
+      });
+    }
+  }
+</script>

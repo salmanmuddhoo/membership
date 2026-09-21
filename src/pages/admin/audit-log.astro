@@ -1,0 +1,328 @@
+---
+// The audit trail (FRD Section 10), as a filterable page rather than a raw
+// table dump — gated by its own permission (audit.view, migration 0036) so
+// who may see it is Configuration -> Roles' decision, not this page's own.
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import {
+  AUDIT_PAGE_LIMIT,
+  distinctAuditActions,
+  distinctAuditEntityTypes,
+  listAuditEvents,
+  type AuditEventRow,
+} from '@lib/access/audit';
+
+const params = Astro.url.searchParams;
+const actor = params.get('actor')?.trim() || '';
+const action = params.get('action') || '';
+const entityType = params.get('entityType') || '';
+const entityId = params.get('entityId')?.trim() || '';
+const fromRaw = params.get('from') || '';
+const toRaw = params.get('to') || '';
+const page = Math.max(Number(params.get('page') ?? '1') || 1, 1);
+
+// A day picked in "To" means through the end of that day, not midnight at
+// its start — the one point a straight `<=` on the typed date would miss.
+const from = fromRaw ? new Date(`${fromRaw}T00:00:00`) : undefined;
+const to = toRaw ? new Date(`${toRaw}T23:59:59.999`) : undefined;
+
+const offset = (page - 1) * AUDIT_PAGE_LIMIT;
+
+const [{ events, total }, actions, entityTypes] = await Promise.all([
+  listAuditEvents({
+    actor: actor || undefined,
+    action: action || undefined,
+    entityType: entityType || undefined,
+    entityId: entityId || undefined,
+    from,
+    to,
+    offset,
+  }),
+  distinctAuditActions(),
+  distinctAuditEntityTypes(),
+]);
+
+const totalPages = Math.max(Math.ceil(total / AUDIT_PAGE_LIMIT), 1);
+
+const dateTimeFormat = new Intl.DateTimeFormat('en-GB', {
+  dateStyle: 'medium',
+  timeStyle: 'medium',
+});
+
+// Carries every filter across a page-number link — a next/previous click
+// changes only `page`, not what was being looked for.
+const pageHref = (target: number) => {
+  const next = new URLSearchParams(params);
+  next.set('page', String(target));
+  return `/admin/audit-log?${next.toString()}`;
+};
+
+function describeEntry(entry: AuditEventRow): string {
+  const v = (entry.newValue as Record<string, unknown>) ?? {};
+  const by = ` by ${entry.actorName}`;
+  const ref = v.reference ? ` ${v.reference}` : '';
+  const memberNo = v.memberNo ? ` ${v.memberNo}` : '';
+
+  switch (entry.action) {
+    case 'membership.application.started':
+    case 'membership.application.started_from_customer':
+    case 'membership.application.started_online':
+      return `Application started${by}`;
+    case 'membership.application.captured':
+      return `Application${ref} submitted${by}`;
+    case 'membership.application.reviewed':
+      return v.outcome === 'return'
+        ? `Application${ref} returned for correction${by}`
+        : `Application${ref} forwarded to the Secretary${by}`;
+    case 'membership.application.regional_reviewed':
+      return v.outcome === 'return'
+        ? `Application${ref} returned for correction${by}`
+        : `Application${ref} forwarded by Regional Manager${by.slice(3)}`;
+    case 'membership.application.approved':
+      if (v.signoffsRecorded !== undefined)
+        return `Application decision recorded${by} (${v.signoffsRecorded}/${v.signoffsRequired} votes)`;
+      return v.outcome === 'reject'
+        ? `Application${ref} declined${by}`
+        : `Application${ref} approved${by}`;
+    case 'membership.application.reopened':
+      return `Application${ref} reopened${by}`;
+    case 'membership.application.renumbered':
+      return `Application reference updated to ${v.reference ?? ''}${by}`;
+    case 'membership.application.deleted':
+      return `Application deleted${by}`;
+    case 'membership.application.received':
+      return `Application received`;
+    case 'member.created':
+      return `Member${memberNo} created${by}`;
+    case 'member.contact.updated':
+      return `Contact details updated${by}`;
+    case 'member.majority_transition':
+      return `Member${memberNo} reached majority age`;
+    case 'member.migration.imported':
+      return `Member${memberNo} imported via migration${by}`;
+    case 'member.migration.updated':
+      return `Migrated member updated${by}`;
+    case 'member.details.applied':
+      return `Details change applied${by}`;
+    case 'member.details.declined':
+      return `Details change declined${by}`;
+    case 'member.details.requested':
+      return `Details change requested`;
+    case 'member.link.refused':
+      return `Member portal link refused for ${entry.actorName}`;
+    case 'member.link.requested':
+      return `Member portal link requested`;
+    case 'member.signup.requested':
+      return `Member portal signup requested`;
+    case 'member.otp.resent':
+      return `OTP resent`;
+    case 'member.otp.rejected':
+      return `OTP rejected`;
+    case 'member.session.revoked':
+      return `Member session revoked${by}`;
+    case 'customer.created':
+      return `Customer record created${by}`;
+    case 'customer.converted':
+      return `Customer converted to member${memberNo}${by}`;
+    case 'customer.migration.imported':
+      return `Customer imported via migration${by}`;
+    case 'customer.migration.updated':
+      return `Migrated customer updated${by}`;
+    case 'account.opened': {
+      const acctType = String(v.accountType ?? '');
+      const forMember = v.memberNo ? ` for ${v.memberNo}` : '';
+      return `${acctType} account opened${forMember}${by}`;
+    }
+    case 'account.transferred':
+      return `Account transferred to member${memberNo}${by}`;
+    case 'document.filed':
+      return `Document filed${by}`;
+    case 'document.verified':
+      return v.state === 'rejected'
+        ? `Document rejected${by}`
+        : `Document verified${by}`;
+    case 'document.removed':
+      return `Document removed${by}`;
+    case 'document.expired':
+      return `Document expired`;
+    case 'membership.payment.recorded': {
+      const receipt = v.receiptNo ? ` (receipt ${v.receiptNo})` : '';
+      const amount = v.totalAmount ? ` — Rs ${v.totalAmount}` : '';
+      return `Payment recorded${receipt}${amount}${by}`;
+    }
+    case 'membership.payment.refunded':
+      return `Payment refunded${by}`;
+    case 'membership.payment.voided':
+      return `Payment voided${by}`;
+    case 'role.created':
+      return `Role created${by}`;
+    case 'role.permissions_changed':
+      return `Role permissions updated${by}`;
+    case 'role.deleted':
+      return `Role deleted${by}`;
+    case 'user.created':
+      return `Staff account created${by}`;
+    case 'user.roles_changed':
+      return `Staff roles updated${by}`;
+    case 'user.deleted':
+      return `Staff account deleted${by}`;
+    case 'access.session_rejected':
+      return `Session rejected for ${entry.actorName}`;
+    case 'access.denied':
+      return `Access denied for ${entry.actorName}`;
+    case 'system.data_reset':
+      return `Test data reset${by}`;
+    default:
+      return entry.action.replace(/\./g, ' · ');
+  }
+}
+---
+
+<DashboardLayout title="Audit log · Al Barakah MCSL" heading="Audit log">
+  <div class="mx-auto max-w-6xl space-y-6">
+    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+      <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+        Filter
+      </h2>
+      <form method="get" class="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          Actor
+          <input
+            type="text"
+            name="actor"
+            value={actor}
+            placeholder="Name or email"
+            class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+          />
+        </label>
+        <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          Action
+          <select
+            name="action"
+            class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+          >
+            <option value="">All actions</option>
+            {actions.map(a => (
+              <option value={a} selected={a === action}>
+                {a}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          Record type
+          <select
+            name="entityType"
+            class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+          >
+            <option value="">All record types</option>
+            {entityTypes.map(t => (
+              <option value={t} selected={t === entityType}>
+                {t}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          Record ID
+          <input
+            type="text"
+            name="entityId"
+            value={entityId}
+            placeholder="Exact ID"
+            class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+          />
+        </label>
+        <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          From
+          <input
+            type="date"
+            name="from"
+            value={fromRaw}
+            class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+          />
+        </label>
+        <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          To
+          <input
+            type="date"
+            name="to"
+            value={toRaw}
+            class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+          />
+        </label>
+        <div class="flex items-end gap-2 lg:col-span-3">
+          <button
+            type="submit"
+            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
+          >
+            Filter
+          </button>
+          {(actor || action || entityType || entityId || fromRaw || toRaw) && (
+            <a
+              href="/admin/audit-log"
+              class="text-sm text-neutral-500 underline dark:text-neutral-400"
+            >
+              Clear
+            </a>
+          )}
+        </div>
+      </form>
+    </section>
+
+    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+          {total} entr{total === 1 ? 'y' : 'ies'}
+        </h2>
+        {totalPages > 1 && (
+          <p class="text-sm text-neutral-500 dark:text-neutral-400">
+            Page {page} of {totalPages}
+          </p>
+        )}
+      </div>
+
+      {events.length === 0 ? (
+        <p class="mt-4 text-sm text-neutral-500 dark:text-neutral-400">
+          Nothing matches those filters.
+        </p>
+      ) : (
+        <ul class="mt-4 space-y-2">
+          {events.map(entry => (
+            <li class="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+              <p class="text-sm font-medium text-neutral-800 dark:text-neutral-100">
+                {describeEntry(entry)}
+              </p>
+              <p class="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                {dateTimeFormat.format(entry.occurredAt)}
+                {entry.ipAddress && ` · ${entry.ipAddress}`}
+              </p>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {totalPages > 1 && (
+        <div class="mt-4 flex items-center justify-between gap-2 text-sm">
+          {page > 1 ? (
+            <a
+              href={pageHref(page - 1)}
+              class="rounded-lg border border-neutral-300 px-3 py-1.5 font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+            >
+              ← Newer
+            </a>
+          ) : (
+            <span />
+          )}
+          {page < totalPages && (
+            <a
+              href={pageHref(page + 1)}
+              class="rounded-lg border border-neutral-300 px-3 py-1.5 font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+            >
+              Older →
+            </a>
+          )}
+        </div>
+      )}
+    </section>
+  </div>
+</DashboardLayout>

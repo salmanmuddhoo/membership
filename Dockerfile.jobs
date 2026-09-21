@@ -1,0 +1,37 @@
+# Container image for Azure Container Apps Jobs (S-113).
+#
+# Jobs run here rather than on Vercel because a sweep over the full membership
+# will exceed a serverless function's execution ceiling. This image contains the
+# job runner only; it serves no HTTP traffic and exposes no port.
+
+FROM node:22-alpine AS base
+ENV PNPM_HOME=/pnpm
+ENV PATH="$PNPM_HOME:$PATH"
+RUN corepack enable
+
+WORKDIR /app
+
+# Dependencies first, so a source change does not re-resolve the whole tree.
+COPY package.json pnpm-lock.yaml ./
+# Dev dependencies are included deliberately: the job is executed with tsx, so
+# the container runs exactly the TypeScript that is tested, with no separate
+# build output to drift from the source. The cost is a larger image, which for a
+# job that runs on a schedule matters far less than the two staying identical.
+RUN pnpm install --frozen-lockfile --ignore-scripts
+
+COPY scripts ./scripts
+COPY src ./src
+COPY migrations ./migrations
+COPY tsconfig.json ./
+
+# Never run as root: a job holding database credentials should have no more of
+# the container than it needs.
+USER node
+
+# Container Apps sends SIGTERM before eviction. Node must receive it directly —
+# under a shell it would not, and the job would be killed mid-chunk instead of
+# checkpointing and exiting cleanly.
+ENTRYPOINT ["node", "--import", "tsx", "scripts/run-job.ts"]
+
+# Overridden per job by the Container Apps job definition.
+CMD ["chunked-sweep-demo"]

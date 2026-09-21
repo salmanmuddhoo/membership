@@ -1,0 +1,395 @@
+---
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import { listMembers, type MemberListAccount } from '@lib/members/create';
+import { countPendingDetailsRequests } from '@lib/members/details-requests';
+import { listAccountTypes } from '@lib/config/reference';
+import { formatMoney } from '@lib/payments/money';
+
+const principal = Astro.locals.principal!;
+const canSeePayments = principal.permissions.has('payment.view');
+
+// Members correcting their own details from the app queue up for
+// verification (docs/member-app.md). Surfaced here rather than only on its
+// own page: nobody visits a page they have no reason to think has anything
+// on it, and a member waiting on a verification is waiting on someone
+// noticing.
+const pendingDetailsUpdates = await countPendingDetailsRequests();
+
+const search = Astro.url.searchParams.get('q') ?? '';
+// Officer feedback: every account button lines up under the others of its
+// own type across every row — Investment never under Shares — rather than
+// packing left to right per row. A fixed table column per active account
+// type, in the same sort_order/name order listMembers' own query returns
+// them in, gets that alignment from the browser's own table layout, no
+// per-row logic needed.
+const [
+  { members, total, memberCount, nonMemberCount, truncated },
+  accountTypeColumns,
+] = await Promise.all([listMembers({ search }), listAccountTypes()]);
+const activeAccountTypeColumns = accountTypeColumns.filter(t => t.isActive);
+
+const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium' });
+
+// Officer feedback: the account's own number, styled by what kind of
+// account it is, is the identity a colleague reads off this list — not a
+// plain id column up front. Matched on the account type's code and name
+// rather than a fixed set this schema knows by name (Configuration ->
+// Account types is where HSA and Investment, like every other account
+// type, are actually defined — migrations 0025/0027) so a type added later
+// still gets a button, just the same neutral one an unrecognised name
+// falls back to.
+// Officer feedback: the hover highlight had square corners and the row's
+// own text overflowed it. A <tr>'s background does not respect
+// border-radius (table row backgrounds paint as one rectangle behind every
+// cell, corners included), so the highlight lives on each <td> instead,
+// tied to the row via Tailwind's group/group-hover rather than :hover on
+// the <tr> directly. `first:`/`last:` rounds whichever cell actually ends
+// up first or last — the first is always Name, but the last is either an
+// Accounts cell or Total funds depending on canSeePayments and how many
+// account types are active, never hardcoded here — and adds the padding
+// that keeps the row's own text clear of that curve instead of running
+// into it.
+const ROW_HOVER =
+  'group-hover:bg-neutral-200/60 dark:group-hover:bg-neutral-900 first:rounded-l-lg first:pl-4 last:rounded-r-lg last:pr-4';
+
+function accountButtonClasses(account: MemberListAccount): string {
+  const key = `${account.code} ${account.name}`.toLowerCase();
+  if (key.includes('hsa')) {
+    return 'bg-blue-600 text-white dark:bg-blue-500';
+  }
+  if (key.includes('invest')) {
+    return 'bg-rose-200 text-rose-900 dark:bg-rose-300 dark:text-rose-950';
+  }
+  if (key.includes('shares')) {
+    return 'bg-amber-400 text-neutral-900 dark:bg-amber-500 dark:text-neutral-900';
+  }
+  if (key.includes('msa')) {
+    return 'bg-indigo-500 text-white dark:bg-indigo-400 dark:text-neutral-950';
+  }
+  return 'bg-slate-500 text-white dark:bg-slate-600';
+}
+---
+
+<DashboardLayout title="Members · Al Barakah MCSL" heading="Members">
+  <div class="mx-auto max-w-5xl space-y-6">
+    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+      <div class="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+          Members
+        </h2>
+        {pendingDetailsUpdates > 0 && (
+          <a
+            href="/members/details-updates"
+            class="rounded-lg bg-amber-100 px-3 py-1.5 text-sm font-medium text-amber-900 transition hover:bg-amber-200 dark:bg-amber-950 dark:text-amber-200 dark:hover:bg-amber-900"
+          >
+            {pendingDetailsUpdates} details update
+            {pendingDetailsUpdates === 1 ? '' : 's'} to verify
+          </a>
+        )}
+      </div>
+
+      <form method="get" class="mt-5 flex flex-wrap items-center gap-2">
+        <label for="q" class="sr-only">
+          Search members
+        </label>
+        <input
+          id="q"
+          type="search"
+          name="q"
+          value={search}
+          placeholder="Search by ID or name"
+          class="focus:border-mint-400 focus:ring-mint-400 min-w-64 flex-1 rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm text-neutral-800 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+        />
+        <button
+          type="submit"
+          class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+        >
+          Search
+        </button>
+        {search && (
+          <a
+            href="/members"
+            class="px-2 py-1.5 text-sm text-neutral-500 underline dark:text-neutral-400"
+          >
+            Clear
+          </a>
+        )}
+      </form>
+
+      <p class="mt-3 text-sm text-neutral-500 dark:text-neutral-400">
+        {total === 0
+          ? search
+            ? `No members match “${search}”.`
+            : 'No members yet. One is created when an application is approved.'
+          : (() => {
+              // Officer feedback: split the count into members (they hold
+              // Shares/MSA) and non-members (only an additional account).
+              const breakdown =
+                `${memberCount} member${memberCount === 1 ? '' : 's'}, ` +
+                `${nonMemberCount} non-member${nonMemberCount === 1 ? '' : 's'}`;
+              return truncated
+                ? `Showing the first ${members.length} of ${total} — ${breakdown}. Search to narrow the list.`
+                : `${breakdown}.`;
+            })()}
+      </p>
+
+      {members.length > 0 && (
+        <div class="mt-4 overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-left text-xs text-neutral-500 dark:text-neutral-400">
+                <th class="py-2 pr-4 pl-4 font-medium">Name</th>
+                <th class="py-2 pr-4 font-medium">Status</th>
+                <th class="py-2 pr-4 font-medium">Joined</th>
+                <th
+                  class="py-2 pr-4 font-medium"
+                  colspan={Math.max(1, activeAccountTypeColumns.length)}
+                >
+                  Accounts
+                </th>
+                {canSeePayments && (
+                  <th class="py-2 pr-4 text-right font-medium">Total funds</th>
+                )}
+              </tr>
+            </thead>
+            <tbody>
+              {members.map(m => (
+                <tr
+                  data-href={`/members/${m.id}`}
+                  class="group cursor-pointer border-t border-neutral-200 dark:border-neutral-800"
+                >
+                  <td
+                    class={`py-2 pr-4 text-neutral-700 dark:text-neutral-200 ${ROW_HOVER}`}
+                  >
+                    <span class="flex flex-wrap items-center gap-x-2">
+                      {m.name}
+                      {m.kind === 'customer' && (
+                        <span class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
+                          Non-member
+                        </span>
+                      )}
+                    </span>
+                  </td>
+                  <td
+                    class={`py-2 pr-4 text-neutral-600 dark:text-neutral-300 ${ROW_HOVER}`}
+                  >
+                    {m.status}
+                  </td>
+                  <td
+                    class={`py-2 pr-4 text-xs text-neutral-500 dark:text-neutral-400 ${ROW_HOVER}`}
+                  >
+                    {dateFormat.format(m.joinedAt)}
+                  </td>
+                  {activeAccountTypeColumns.length === 0 ? (
+                    <td class={`py-2 pr-4 ${ROW_HOVER}`}>
+                      {m.accountBadges.length === 0 && (
+                        <span class="text-xs text-neutral-400 dark:text-neutral-500">
+                          —
+                        </span>
+                      )}
+                    </td>
+                  ) : (
+                    activeAccountTypeColumns.map(type => {
+                      const account = m.accountBadges.find(
+                        a => a.code === type.code
+                      );
+                      return (
+                        <td class={`py-2 pr-4 ${ROW_HOVER}`}>
+                          {account &&
+                            (canSeePayments ? (
+                              <button
+                                type="button"
+                                data-account-id={account.id}
+                                data-account-name={account.name}
+                                data-account-no={account.no}
+                                class:list={[
+                                  'cursor-pointer rounded-md px-2 py-1 text-xs font-semibold whitespace-nowrap',
+                                  accountButtonClasses(account),
+                                ]}
+                                title={account.name}
+                              >
+                                {account.no}
+                              </button>
+                            ) : (
+                              <span
+                                class:list={[
+                                  'rounded-md px-2 py-1 text-xs font-semibold whitespace-nowrap',
+                                  accountButtonClasses(account),
+                                ]}
+                                title={account.name}
+                              >
+                                {account.no}
+                              </span>
+                            ))}
+                        </td>
+                      );
+                    })
+                  )}
+                  {canSeePayments && (
+                    <td
+                      class={`py-2 text-right font-medium text-neutral-800 tabular-nums dark:text-neutral-100 ${ROW_HOVER}`}
+                    >
+                      {formatMoney(m.totalFunds)}
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+
+    {canSeePayments && (
+      <dialog
+        id="account-transactions-dialog"
+        class="fixed top-1/2 left-1/2 m-0 w-[calc(100vw-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-neutral-200 bg-neutral-100 p-0 text-neutral-800 backdrop:bg-neutral-900/50 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-100"
+      >
+        <div class="flex items-center justify-between gap-3 border-b border-neutral-200 px-5 py-3 dark:border-neutral-800">
+          <div>
+            <p
+              data-dialog-name
+              class="text-sm font-semibold text-neutral-800 dark:text-neutral-100"
+            />
+            <code
+              data-dialog-no
+              class="text-xs text-neutral-500 dark:text-neutral-400"
+            />
+          </div>
+          <button
+            type="button"
+            data-dialog-close
+            class="rounded-lg border border-neutral-300 px-2.5 py-1 text-xs font-medium text-neutral-600 transition hover:bg-neutral-200 dark:border-neutral-600 dark:text-neutral-300 dark:hover:bg-neutral-800"
+          >
+            Close
+          </button>
+        </div>
+        <div
+          data-dialog-body
+          class="max-h-[60vh] overflow-y-auto px-5 py-4 text-sm"
+        >
+          Loading…
+        </div>
+      </dialog>
+    )}
+  </div>
+</DashboardLayout>
+
+<script>
+  // Officer feedback: the row itself opens the member's full record — the
+  // account buttons inside it are their own click target (see below), so a
+  // click landing on one of those must not also navigate the row.
+  for (const row of document.querySelectorAll<HTMLTableRowElement>(
+    'tr[data-href]'
+  )) {
+    row.addEventListener('click', e => {
+      const target = e.target as HTMLElement;
+      if (target.closest('a, button')) return;
+      const href = row.dataset.href;
+      if (href) window.location.assign(href);
+    });
+  }
+
+  // Officer feedback: clicking an HSA/Investment/etc. button opens a popup
+  // with every credit and debit recorded against that account — read only,
+  // and closed explicitly rather than dismissed by clicking elsewhere, so a
+  // stray tap on the backdrop cannot be mistaken for reading it.
+  const dialog = document.getElementById(
+    'account-transactions-dialog'
+  ) as HTMLDialogElement | null;
+  const dialogName = dialog?.querySelector<HTMLElement>('[data-dialog-name]');
+  const dialogNo = dialog?.querySelector<HTMLElement>('[data-dialog-no]');
+  const dialogBody = dialog?.querySelector<HTMLElement>('[data-dialog-body]');
+  const dialogClose = dialog?.querySelector<HTMLButtonElement>(
+    '[data-dialog-close]'
+  );
+
+  if (dialog && dialogName && dialogNo && dialogBody && dialogClose) {
+    dialogClose.addEventListener('click', () => dialog.close());
+
+    const amountFormat = (amount: string) =>
+      Number(amount).toLocaleString('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
+    const dateFormat = (iso: string) =>
+      new Date(iso).toLocaleDateString('en-GB', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+      });
+
+    for (const button of document.querySelectorAll<HTMLButtonElement>(
+      '[data-account-id]'
+    )) {
+      button.addEventListener('click', () => {
+        const accountId = button.dataset.accountId;
+        if (!accountId) return;
+
+        dialogName.textContent = button.dataset.accountName ?? '';
+        dialogNo.textContent = button.dataset.accountNo ?? '';
+        dialogBody.textContent = 'Loading…';
+        dialog.showModal();
+
+        fetch(`/api/v1/accounts/${accountId}/transactions`)
+          .then(response => {
+            if (!response.ok) throw new Error(String(response.status));
+            return response.json();
+          })
+          .then(
+            (body: {
+              data?: {
+                transactions: {
+                  type: 'credit' | 'debit';
+                  amount: string;
+                  currency: string;
+                  occurredAt: string;
+                  description: string;
+                }[];
+              };
+            }) => {
+              const transactions = body.data?.transactions ?? [];
+              if (transactions.length === 0) {
+                dialogBody.textContent =
+                  'Nothing recorded against this account.';
+                return;
+              }
+
+              dialogBody.innerHTML = '';
+              const list = document.createElement('ul');
+              list.className = 'space-y-2';
+              for (const t of transactions) {
+                const item = document.createElement('li');
+                item.className =
+                  'flex items-center justify-between gap-3 rounded-lg border border-neutral-200 bg-white px-3 py-2 dark:border-neutral-800 dark:bg-neutral-900';
+                const left = document.createElement('div');
+                const description = document.createElement('p');
+                description.className =
+                  'font-medium text-neutral-800 dark:text-neutral-100';
+                description.textContent = t.description;
+                const date = document.createElement('p');
+                date.className =
+                  'text-xs text-neutral-500 dark:text-neutral-400';
+                date.textContent = dateFormat(t.occurredAt);
+                left.append(description, date);
+
+                const amount = document.createElement('span');
+                amount.className =
+                  t.type === 'debit'
+                    ? 'font-semibold tabular-nums text-red-700 dark:text-red-300'
+                    : 'font-semibold tabular-nums text-emerald-700 dark:text-emerald-300';
+                amount.textContent = `${t.type === 'debit' ? '−' : '+'}${t.currency} ${amountFormat(t.amount)}`;
+
+                item.append(left, amount);
+                list.appendChild(item);
+              }
+              dialogBody.appendChild(list);
+            }
+          )
+          .catch(() => {
+            dialogBody.textContent = 'Could not load this account.';
+          });
+      });
+    }
+  }
+</script>
