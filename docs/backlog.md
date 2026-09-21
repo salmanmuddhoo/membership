@@ -3592,6 +3592,33 @@ page opens, with that account chosen. On the person's page the button is
 now **Deposit**, in the top banner beside "← All members", where the other
 kinds will join it; it is no longer in the Accounts section.
 
+---
+
+# M14 — The approval matrix, on the chain that already exists
+
+**Shipped, first increment** (S-1401; S-1402 and S-1406 in part): the
+matrix exists and deposits obey it. Migration 0070 adds the transaction
+status vocabulary to `workflow_status`, one Secretary → President
+`workflow_definition` per kind — deposit, withdrawal, transfer, closure,
+resignation, demise — on the tables applications already use, so
+Configuration → Workflows edits them with no new screen; `approval_rule`,
+ordered within a kind, first match wins, a rule with no chain meaning "post
+at once", seeded to FRD 6.5's table with a 100,000 threshold that is the
+band on the rule (FRD 9's configurable value, edited on Configuration →
+Approval matrix rather than kept in step from somewhere else — a placeholder
+for the Society to confirm, open point 15); and `transaction_transition`,
+`application_transition`'s shape plus the rule and chain that routed it.
+`resolveRoute()` reads the matrix and falls back to the most demanding
+chain for the kind when nothing fits; `submitTransaction()` posts at once
+or leaves the transaction at the first enabled step, recorded. A deposit
+above the threshold is now submitted, not posted: no receipt until it
+posts, the step it waits at on the confirmation, and a Clerk holding
+capture alone can record one. The tests prove a disabled Secretary step
+sends the next large deposit to the President (S-1402's live chain).
+**Not yet:** the queue and review screen that act on what waits (S-1403),
+the in-flight rule for a step disabled under a queued item (S-1402's last
+criterion, a test that needs the queue), and reading the trail (S-1406).
+
 ### S-1301 · The account ledger ✅
 
 **As** the Society, **I need** every movement of money on an account to be
@@ -3827,7 +3854,7 @@ none — a given transaction falls under, keyed on kind, amount, account type
 and the initiating role. That is one table and one function, and the rest is
 giving transactions a status vocabulary the existing steps can name.
 
-### S-1401 · The approval matrix
+### S-1401 · The approval matrix ✅
 
 **As** an administrator, **I need** to say which transactions escalate and
 to which chain, **so that** routine transactions post and the rest are

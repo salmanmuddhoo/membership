@@ -155,6 +155,24 @@ Nothing derives a balance from payments any more: the stand-in that read
 "opening payment less refund" is gone, because those two lines are now the
 account's first entries (S-1303).
 
+## The matrix decides where a transaction goes
+
+Before a submitted transaction is posted, `resolveRoute()` reads the approval
+matrix (`docs/configuration.md`, S-1401): by kind, amount band, account type
+and the role submitting, the first matching rule names a chain or none.
+`submitTransaction()` applies it — posting through the engine at once, or
+leaving the transaction at the first enabled step of its chain
+(`transaction.current_step_code`) for the review screens — and writes a
+`transaction_transition` row naming the rule and the chain (S-1406), so two
+withdrawals either side of a matrix edit show different trails and both are
+right. A transaction routed to a chain takes no receipt yet: the receipt is
+issued when it posts.
+
+For a deposit this means: up to the threshold it is captured and posted in one
+act and needs `transaction.post` as well as `transaction.capture`; above it,
+capture alone submits it for review, so a Clerk records a large deposit and
+the Secretary and President decide it.
+
 ## Who may do what
 
 `transaction.capture` records; `transaction.post` posts directly below the

@@ -24,7 +24,8 @@ import {
   allocateReceiptNumber,
   markReceiptIssued,
 } from '../payments/receipts';
-import { LedgerError, postTransaction } from './ledger';
+import { LedgerError } from './ledger';
+import { resolveRoute, submitTransaction } from './routing';
 
 export class DepositError extends Error {
   constructor(
@@ -38,11 +39,12 @@ export class DepositError extends Error {
 }
 
 export const PERMISSION_CAPTURE = 'transaction.capture';
-// Posting directly, below the escalation threshold (FRD 6.3). A deposit has
-// no chain (FRD 6.2), so recording one is capturing and posting in one act,
-// and needs both. Someone who may only capture — a Clerk — records for an
-// Account Officer to post, which is M14's chain; until it lands, they are
-// told so rather than left with a deposit nobody can post (S-1311).
+// Posting directly, below the escalation threshold (FRD 6.3). A deposit the
+// matrix routes nowhere (S-1401) is captured and posted in one act, and
+// needs both permissions; one the matrix sends to a chain is only captured,
+// and posting is the chain's last act (S-1403). So a Clerk can record a
+// large deposit for review, and is told to fetch an Account Officer for a
+// small one that would post at once.
 export const PERMISSION_POST = 'transaction.post';
 
 export interface DepositInput {
@@ -83,6 +85,12 @@ export interface Deposit {
   capturedByName: string;
   createdAt: Date;
   postedAt: Date | null;
+  // Where it waits on its chain (S-1401), null once posted or when the
+  // matrix routed it nowhere.
+  workflowName: string | null;
+  currentStepCode: string | null;
+  currentStepName: string | null;
+  currentStepRole: string | null;
 }
 
 // What the key is checked against. Amount in cents so "5000" and "5000.00"
@@ -112,7 +120,9 @@ const DEPOSIT_SELECT = `
          rn.receipt_no,
          fe.payload->>'balance_after' as balance_after,
          t.captured_by, u.display_name as captured_by_name,
-         t.created_at, t.posted_at
+         t.created_at, t.posted_at,
+         wd.name as workflow_name, t.current_step_code,
+         ws.name as current_step_name, wr.name as current_step_role
     from transaction t
     join account a on a.id = t.account_id
     join account_type at on at.id = a.account_type_id
@@ -122,6 +132,10 @@ const DEPOSIT_SELECT = `
     left join receipt_number rn on rn.id = t.receipt_number_id
     left join financial_event fe
       on fe.transaction_id = t.id and fe.event_type = 'transaction.posted'
+    left join workflow_definition wd on wd.id = t.workflow_definition_id
+    left join workflow_step ws
+      on ws.definition_id = wd.id and ws.code = t.current_step_code
+    left join role wr on wr.id = ws.role_id
 `;
 
 interface DepositRow {
@@ -146,6 +160,10 @@ interface DepositRow {
   captured_by_name: string;
   created_at: Date;
   posted_at: Date | null;
+  workflow_name: string | null;
+  current_step_code: string | null;
+  current_step_name: string | null;
+  current_step_role: string | null;
 }
 
 function assemble(r: DepositRow): Deposit {
@@ -171,6 +189,10 @@ function assemble(r: DepositRow): Deposit {
     capturedByName: r.captured_by_name,
     createdAt: r.created_at,
     postedAt: r.posted_at,
+    workflowName: r.workflow_name,
+    currentStepCode: r.current_step_code,
+    currentStepName: r.current_step_name,
+    currentStepRole: r.current_step_role,
   };
 }
 
@@ -185,6 +207,7 @@ export async function loadDeposit(id: string): Promise<Deposit | null> {
 // switches and cap (S-1304).
 interface Destination {
   id: string;
+  accountTypeId: string;
   status: string;
   memberId: string | null;
   customerId: string | null;
@@ -197,6 +220,7 @@ interface Destination {
 async function destination(accountId: string): Promise<Destination> {
   const result = await query<{
     id: string;
+    account_type_id: string;
     status: string;
     member_id: string | null;
     customer_id: string | null;
@@ -205,7 +229,7 @@ async function destination(accountId: string): Promise<Destination> {
     allows_deposit: boolean;
     maximum_transaction_amount: string | null;
   }>(
-    `select a.id, a.status, a.member_id, a.customer_id,
+    `select a.id, a.account_type_id, a.status, a.member_id, a.customer_id,
             coalesce(m.status, c.status) as holder_status,
             at.name as type_name, at.allows_deposit,
             at.maximum_transaction_amount
@@ -220,6 +244,7 @@ async function destination(accountId: string): Promise<Destination> {
   if (!r) throw new DepositError('That account no longer exists.', 'not_found');
   return {
     id: r.id,
+    accountTypeId: r.account_type_id,
     status: r.status,
     memberId: r.member_id,
     customerId: r.customer_id,
@@ -280,14 +305,6 @@ export async function recordDeposit(
       'forbidden'
     );
   }
-  if (!principal.permissions.has(PERMISSION_POST)) {
-    throw new DepositError(
-      'You may record a deposit but not post it. Ask an Account Officer to ' +
-        'record it.',
-      'forbidden'
-    );
-  }
-
   let amountCents: number;
   try {
     amountCents = toCents(input.amount);
@@ -337,11 +354,29 @@ export async function recordDeposit(
   const to = await destination(input.accountId);
   refuseUnlessDepositable(to, amountCents);
 
-  // Committed on its own, before the deposit's transaction, so a number
-  // that never became a receipt is visible in the sequence rather than
-  // silently reused (S-502, docs/payments.md).
-  const receipt = await allocateReceiptNumber(principal.userId);
-  const actor = { userId: principal.userId, description: principal.email };
+  // The matrix decides before anything is written (S-1401): post at once,
+  // or wait at the first step of a chain.
+  const route = await resolveRoute({
+    kind: 'deposit',
+    accountTypeId: to.accountTypeId,
+    amountCents,
+    roleCodes: principal.roles,
+  });
+  if (!route.definition && !principal.permissions.has(PERMISSION_POST)) {
+    throw new DepositError(
+      'You may record a deposit but not post it. Ask an Account Officer to ' +
+        'record it.',
+      'forbidden'
+    );
+  }
+
+  // A receipt is issued when the money posts. Allocated on its own, before
+  // the deposit's transaction, so a number that never became a receipt is
+  // visible in the sequence rather than silently reused (S-502,
+  // docs/payments.md). A deposit going to a chain takes none yet.
+  const receipt = route.definition
+    ? null
+    : await allocateReceiptNumber(principal.userId);
 
   try {
     const id = await withTransaction(async client => {
@@ -364,7 +399,7 @@ export async function recordDeposit(
             method.code,
             (input.methodReference ?? '').trim() || null,
             (input.reason ?? '').trim() || null,
-            receipt.id,
+            receipt?.id ?? null,
             key,
             key ? print : null,
             principal.userId,
@@ -403,18 +438,27 @@ export async function recordDeposit(
         },
         client
       );
-      await postTransaction(id, actor, client);
-      await markReceiptIssued(receipt.id, client);
+      const submission = await submitTransaction(
+        client,
+        { id, reference, kind: 'deposit' },
+        route,
+        principal
+      );
+      if (submission.posted && receipt) {
+        await markReceiptIssued(receipt.id, client);
+      }
       return id;
     });
     return (await loadDeposit(id))!;
   } catch (err) {
-    await abandonReceiptNumber(
-      receipt.id,
-      err instanceof DepositError || err instanceof LedgerError
-        ? err.message
-        : 'The deposit failed while being recorded.'
-    );
+    if (receipt) {
+      await abandonReceiptNumber(
+        receipt.id,
+        err instanceof DepositError || err instanceof LedgerError
+          ? err.message
+          : 'The deposit failed while being recorded.'
+      );
+    }
     if (err instanceof LedgerError) {
       throw new DepositError(err.message, 'conflict');
     }

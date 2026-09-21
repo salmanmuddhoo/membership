@@ -137,6 +137,31 @@ foreign keys to `code`. A record carries the method's name beside its code
 (`Payment.methodName`) so a retired method still reads on the receipt that
 used it. Configuration → Payment methods.
 
+### Approval matrix (S-1401, FRD 6.5, 9, 17)
+
+`approval_rule`. Which chain — or none — a transaction falls under: by kind
+(deposit, withdrawal, transfer, closure, resignation, demise), an amount band
+(inclusive at both ends; `amount_to` null for "and above"), optionally an
+account type and the role that started it, routing to a `workflow_definition`
+with `entity_type = 'transaction'` or to nothing, which means "post at once".
+Ordered within a kind; the first match wins (`resolveRoute`,
+`src/lib/ledger/routing.ts`). No match sends the transaction to the most
+demanding chain configured for its kind — an administrator who forgot a band
+gets a review, never a silent post.
+
+The threshold FRD 9 wants configurable **is** the band on the rule, edited
+here, not a second number the rule would have to be kept in step with. The
+defaults are FRD 6.5's table: deposits, withdrawals and transfers post up to
+100,000 and go Secretary → President above it; closures, resignations and
+demised claims always go Secretary → President. The 100,000 is a placeholder
+for the Society to confirm (open point 15).
+
+The chains themselves are ordinary workflow definitions — one per kind,
+seeded — and Configuration → Workflows edits their steps with no new screen;
+`activeChain` reads them live, so a disabled Secretary step means the next
+large deposit waits at the President. A rule that has routed a transaction
+cannot be deleted, because the trail names it; deactivate it instead.
+
 ### Document checklists (S-208, FRD 8.4.1, 7.10.5)
 
 `document_type`, `document_checklist`, `document_checklist_item`. An item is a

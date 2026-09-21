@@ -344,6 +344,106 @@ describe('recording a deposit', () => {
     );
   });
 
+  // S-1401: above the matrix threshold a deposit is submitted to its chain —
+  // no receipt, no entry, the step it waits at recorded, and a Clerk who
+  // may only capture can do exactly that.
+  it('submits a deposit above the threshold to its chain instead of posting it', async () => {
+    const deposits = await load();
+    const clerk = principalFor(onlooker.userId, 'viewer@albarakah.mu', [
+      'transaction.capture',
+    ]);
+    const before = await run(
+      appUrl,
+      `select coalesce(balance, 0) as balance from account_balance where account_id = $1`,
+      [shares]
+    );
+    const large = await deposits.recordDeposit(
+      {
+        accountId: shares,
+        amount: '250000',
+        method: 'bank_transfer',
+        methodReference: 'TRF-L',
+      },
+      clerk
+    );
+    expect(large.status).toBe('submitted');
+    expect(large.receiptNo).toBeNull();
+    expect(large.balanceAfter).toBeNull();
+    expect(large).toMatchObject({
+      workflowName: 'Deposit approval',
+      currentStepCode: 'secretary_review',
+      currentStepName: 'Secretary review',
+      currentStepRole: 'Secretary',
+    });
+    const after = await run(
+      appUrl,
+      `select coalesce(balance, 0) as balance from account_balance where account_id = $1`,
+      [shares]
+    );
+    expect(after.rows[0]?.balance).toEqual(before.rows[0]?.balance);
+
+    const trail = await run(
+      appUrl,
+      `select tt.from_status, tt.to_status, r.amount_from, d.code as chain
+         from transaction_transition tt
+         left join approval_rule r on r.id = tt.approval_rule_id
+         left join workflow_definition d on d.id = tt.workflow_definition_id
+        where tt.transaction_id = $1
+        order by tt.id`,
+      [large.id]
+    );
+    expect(trail.rows).toEqual([
+      {
+        from_status: null,
+        to_status: 'submitted',
+        amount_from: '100000.01',
+        chain: 'transaction_deposit',
+      },
+    ]);
+    const entries = await run(
+      appUrl,
+      `select count(*)::int as n from account_entry where transaction_id = $1`,
+      [large.id]
+    );
+    expect(entries.rows[0].n).toBe(0);
+  });
+
+  it('records why a posted deposit posted: the rule, on the trail', async () => {
+    const deposits = await load();
+    const deposit = await deposits.recordDeposit(
+      { accountId: msa, amount: '40', method: 'cash' },
+      officer
+    );
+    const trail = await run(
+      appUrl,
+      `select tt.from_status, tt.to_status, r.note
+         from transaction_transition tt
+         left join approval_rule r on r.id = tt.approval_rule_id
+        where tt.transaction_id = $1
+        order by tt.id`,
+      [deposit.id]
+    );
+    expect(trail.rows).toEqual([
+      { from_status: null, to_status: 'submitted', note: 'Posts at once' },
+      { from_status: 'submitted', to_status: 'posted', note: 'Posts at once' },
+    ]);
+    // And nobody rewrites the trail, the owner included.
+    await expect(
+      run(
+        ownerUrl,
+        `delete from transaction_transition where transaction_id = $1`,
+        [deposit.id]
+      )
+    ).rejects.toThrowError(/append-only/);
+    await expect(
+      run(
+        ownerUrl,
+        `update transaction_transition set comment = 'x' where transaction_id = $1`,
+        [deposit.id]
+      )
+    ).rejects.toThrowError(/append-only/);
+  });
+
   // S-1311: who captured is on the trail before who posted, and the rules
   // key on it wherever posting or voiding is someone else's act.
   it('records who captured it, and the segregation rules read that row', async () => {
@@ -458,6 +558,8 @@ describe('recording a deposit', () => {
     );
     expect(flag.rows[0].source_of_fund_form_confirmed).toBe(true);
 
+    // Not cash, so no cash rule; above the matrix threshold, so it goes for
+    // review rather than posting (S-1401).
     const transfer = await deposits.recordDeposit(
       {
         accountId: shares,
@@ -467,6 +569,6 @@ describe('recording a deposit', () => {
       },
       officer
     );
-    expect(transfer.status).toBe('posted');
+    expect(transfer.status).toBe('submitted');
   });
 });

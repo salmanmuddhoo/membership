@@ -1842,7 +1842,7 @@
     "/api/v1/deposits": {
       "post": {
         "summary": "Record a deposit into an account",
-        "description": "Posts a deposit to the account through the ledger and issues its receipt, in one step. Refused, naming the rule, when the account or its holder is not active, the account type does not accept deposits, the amount exceeds the type’s per-transaction maximum, the method is not offered or needs a reference that is missing, or a cash amount breaches the cash controls. Idempotent by the Idempotency-Key header.",
+        "description": "Posts a deposit to the account through the ledger and issues its receipt, in one step. Refused, naming the rule, when the account or its holder is not active, the account type does not accept deposits, the amount exceeds the type’s per-transaction maximum, the method is not offered or needs a reference that is missing, or a cash amount breaches the cash controls. A deposit the approval matrix routes to a chain is submitted, not posted: status \"submitted\", no receipt yet, and the step it waits at. Idempotent by the Idempotency-Key header.",
         "tags": [
           "Transactions"
         ],
@@ -1960,6 +1960,23 @@
                             "postedAt": {
                               "type": "string",
                               "format": "date-time",
+                              "nullable": true
+                            },
+                            "workflowName": {
+                              "type": "string",
+                              "nullable": true,
+                              "description": "The approval chain it was routed to, if any."
+                            },
+                            "currentStepCode": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "currentStepName": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "currentStepRole": {
+                              "type": "string",
                               "nullable": true
                             }
                           }

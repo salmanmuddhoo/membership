@@ -443,6 +443,122 @@ describe('S-1301, S-1302 the ledger', () => {
     ]);
   });
 
+  // 0070: a chain per kind on the tables applications already use, a
+  // status vocabulary for a step to name, and the matrix seeded to FRD 6.5.
+  it('seeds a Secretary → President chain per transaction kind and the matrix', async () => {
+    const chains = await run(
+      appUrl,
+      `select d.code, array_agg(s.code order by s.step_no) as steps
+         from workflow_definition d
+         join workflow_step s on s.definition_id = d.id
+        where d.entity_type = 'transaction'
+        group by d.code order by d.code`
+    );
+    expect(chains.rows.map(r => r.code)).toEqual([
+      'transaction_closure',
+      'transaction_demise',
+      'transaction_deposit',
+      'transaction_resignation',
+      'transaction_transfer',
+      'transaction_withdrawal',
+    ]);
+    for (const row of chains.rows) {
+      expect(row.steps).toEqual(['secretary_review', 'president_decision']);
+    }
+    const statuses = await run(
+      appUrl,
+      `select code from workflow_status where entity_type = 'transaction'
+        order by sort_order`
+    );
+    expect(statuses.rows.map(r => r.code)).toEqual([
+      'draft',
+      'submitted',
+      'under_review',
+      'approved',
+      'posted',
+      'returned',
+      'rejected',
+      'cancelled',
+    ]);
+    const rules = await run(
+      appUrl,
+      `select kind, amount_from, amount_to,
+              (workflow_definition_id is not null) as reviewed
+         from approval_rule order by kind, sort_order`
+    );
+    expect(rules.rows).toEqual([
+      { kind: 'closure', amount_from: '0.00', amount_to: null, reviewed: true },
+      { kind: 'demise', amount_from: '0.00', amount_to: null, reviewed: true },
+      {
+        kind: 'deposit',
+        amount_from: '0.00',
+        amount_to: '100000.00',
+        reviewed: false,
+      },
+      {
+        kind: 'deposit',
+        amount_from: '100000.01',
+        amount_to: null,
+        reviewed: true,
+      },
+      {
+        kind: 'resignation',
+        amount_from: '0.00',
+        amount_to: null,
+        reviewed: true,
+      },
+      {
+        kind: 'transfer',
+        amount_from: '0.00',
+        amount_to: '100000.00',
+        reviewed: false,
+      },
+      {
+        kind: 'transfer',
+        amount_from: '100000.01',
+        amount_to: null,
+        reviewed: true,
+      },
+      {
+        kind: 'withdrawal',
+        amount_from: '0.00',
+        amount_to: '100000.00',
+        reviewed: false,
+      },
+      {
+        kind: 'withdrawal',
+        amount_from: '100000.01',
+        amount_to: null,
+        reviewed: true,
+      },
+    ]);
+  });
+
+  // Row-level guards refuse any update or delete of a row (exercised on a
+  // real trail in deposits.test); the truncate guard and the revoke are
+  // asserted here.
+  it('keeps the transaction trail append-only', async () => {
+    await expect(
+      run(ownerUrl, `truncate transaction_transition`)
+    ).rejects.toThrowError(/append-only/);
+    await expect(
+      run(appUrl, `update transaction_transition set comment = 'x'`)
+    ).rejects.toThrowError(/permission denied/);
+    await expect(
+      run(appUrl, `delete from transaction_transition`)
+    ).rejects.toThrowError(/permission denied/);
+    const guards = await run(
+      ownerUrl,
+      `select tgname from pg_trigger
+        where tgrelid = 'transaction_transition'::regclass and not tgisinternal
+        order by tgname`
+    );
+    expect(guards.rows.map(r => r.tgname)).toEqual([
+      'transaction_transition_append_only',
+      'transaction_transition_no_truncate',
+    ]);
+  });
+
   it('has a service account for data migrations to post as', async () => {
     const result = await run(
       appUrl,
