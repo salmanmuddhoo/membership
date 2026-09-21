@@ -3635,9 +3635,19 @@ takes the route a first submission would (decision 11), posting at once
 included. **One departure from the story as written:** the sidebar badge on
 Transactions counts the transactions, and the one on Applications keeps
 counting applications — a badge counts what its own link opens, rather than
-one number that leads to only half of what it counts. **Not yet:** the
-chevron (S-1405) and the auditor's reading of the trail across screens
-(S-1406).
+one number that leads to only half of what it counts.
+
+**Shipped, third increment** (S-1405, S-1406) — M14 complete: the chevron
+on a transaction is its chain as configured now. `src/lib/workflow/timeline.ts`
+holds the step shape and the one-current rule both timelines use;
+`applicationTimeline` is one caller of it and `transactionTimeline` the
+other, reading Recorded → the enabled steps → Posted off the live chain and
+the trail, so a deposit routed nowhere shows no approval stage and a step
+disabled today leaves every chevron from then on. `ApplicationTimeline.astro`
+became `ChainTimeline.astro`, unchanged but for a screen-reader label. The
+trail on the transaction page is the log, not the chain — a disabled step
+it passed is still there — and the audit log labels the same acts under the
+transaction's reference, which the transaction page answers to directly.
 
 ### S-1301 · The account ledger ✅
 
@@ -3969,7 +3979,7 @@ approval already given is not asked for twice. _(APR-US-005, APR-US-008, FRD
   a changed transaction, and the rule that would have applied on first
   submission applies now. Recorded as decision 11
 
-### S-1405 · The chevron reads the live chain
+### S-1405 · The chevron reads the live chain ✅
 
 **As** an officer, **I need** the strip at the top of every transaction to
 show the steps this one will actually go through, **so that** the screen
@@ -3987,7 +3997,7 @@ FRD 8)_
   stages at all; **given** a step is disabled **Then** every chevron
   rendered from then on omits it, with no front-end change
 
-### S-1406 · The trail an auditor reads
+### S-1406 · The trail an auditor reads ✅
 
 **As** an auditor, **I need** the actual sequence of steps a transaction went
 through and who acted at each, **so that** governance can be verified after

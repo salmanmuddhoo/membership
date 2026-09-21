@@ -15,30 +15,18 @@
 // Every step is derived from state that is recorded elsewhere. Nothing here is
 // stored, so nothing here can disagree with the record.
 
-export type StepState =
-  // Finished, on the evidence.
-  | 'done'
-  // The next thing to do.
-  | 'current'
-  // Ahead of the current step.
-  | 'todo';
+//
+// The step shape and the one-current rule are shared with every other record
+// that has a chain (src/lib/workflow/timeline.ts, S-1405); what is this
+// module's own is the six stages an application goes through.
+import {
+  assignStates,
+  type PlannedStep,
+  type StepState,
+  type TimelineStep,
+} from '../workflow/timeline';
 
-export interface TimelineStep {
-  key: string;
-  label: string;
-  state: StepState;
-  // One short phrase, only where it tells the officer something the label
-  // does not.
-  detail?: string;
-  // True when this step's own detail describes something missing rather than
-  // merely upcoming — fields still empty, documents still outstanding, a
-  // return for correction. Distinct from `state`: `current` just means "the
-  // next thing to do," which is a normal thing for an untouched step ahead in
-  // the chain to be. This is for the screen to say "something here needs
-  // attention" specifically, which is not true of every current step (being
-  // next in line to record a payment is not a problem).
-  problem?: boolean;
-}
+export type { StepState, TimelineStep };
 
 export interface TimelineInput {
   status: string;
@@ -91,13 +79,7 @@ export function applicationTimeline(input: TimelineInput): TimelineStep[] {
   const returned = input.status === 'returned';
 
   // Each step's own test for being finished, in process order.
-  const planned: Array<{
-    key: string;
-    label: string;
-    done: boolean;
-    detail?: string;
-    problem?: boolean;
-  }> = [
+  const planned: PlannedStep[] = [
     {
       key: 'capture',
       label: 'Applicant details',
@@ -167,35 +149,5 @@ export function applicationTimeline(input: TimelineInput): TimelineStep[] {
     },
   ];
 
-  // Exactly one step reads as current: the first that is not finished.
-  // Marking several would leave the officer choosing, which is the question
-  // the timeline exists to answer.
-  let currentTaken = false;
-
-  return planned.map(step => {
-    let state: StepState;
-
-    if (step.done) {
-      state = 'done';
-    } else if (!currentTaken) {
-      state = 'current';
-      currentTaken = true;
-    } else {
-      state = 'todo';
-    }
-
-    return {
-      key: step.key,
-      label: step.label,
-      state,
-      ...(step.detail ? { detail: step.detail } : {}),
-      // Never on a step still ahead in the chain: a step's own data can be
-      // "wrong" (no documents filed yet, nothing paid) purely because
-      // nothing has happened there YET, which is not the same as something
-      // being missing that should already be there. Only a step that is
-      // current or already done — one the officer has actually reached —
-      // can be a problem.
-      ...(step.problem && state !== 'todo' ? { problem: true } : {}),
-    };
-  });
+  return assignStates(planned);
 }

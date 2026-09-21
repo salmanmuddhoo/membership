@@ -2,6 +2,7 @@
 // One transaction, whatever its kind (S-1403, S-1404, S-1406): what it is,
 // where it stands, what this person may do with it now — review, decide,
 // post, or correct and resubmit — and the trail of who did what.
+import ChainTimeline from '@components/ChainTimeline.astro';
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import {
   cashMaximum,
@@ -17,6 +18,7 @@ import {
 import {
   IN_FLIGHT,
   loadTransaction,
+  loadTransactionByReference,
   mayActAt,
   PERMISSION_POST,
   positionOf,
@@ -27,10 +29,16 @@ import {
 } from '@lib/ledger/review';
 import { loadCustomer, loadMember } from '@lib/members/create';
 import { formatMoney } from '@lib/payments/money';
+import { chainTimeline } from '@lib/workflow/timeline';
 
 const principal = Astro.locals.principal!;
 const { id } = Astro.params;
-let transaction = id ? await loadTransaction(id) : null;
+// By id, or by the reference an auditor reads off the audit log (S-1406).
+let transaction = !id
+  ? null
+  : /^tx-\d+$/i.test(id)
+    ? await loadTransactionByReference(id)
+    : await loadTransaction(id);
 if (!transaction) return new Response('Not found', { status: 404 });
 
 const KIND_LABELS: Record<string, string> = {
@@ -126,6 +134,9 @@ const stalled =
   (IN_FLIGHT as readonly string[]).includes(transaction.status) && !position;
 
 const trail = await transitionsFor(transaction.id);
+// The chevron, from the chain as it is now (S-1405).
+const timeline = (await chainTimeline('transaction', transaction.id)) ?? [];
+const canReadAudit = principal.permissions.has('audit.view');
 // The comment that sent it back, for the officer correcting it.
 const returnComment =
   transaction.status === 'returned'
@@ -169,16 +180,31 @@ const DANGER =
   heading={`${KIND_LABELS[transaction.kind] ?? transaction.kind} ${transaction.reference}`}
 >
   <div class="mx-auto max-w-4xl space-y-6">
-    <div class="flex flex-wrap items-center justify-between gap-2 text-sm">
+    <ChainTimeline steps={timeline} label="Transaction progress" />
+
+    <div
+      class="sticky z-20 -mx-4 flex flex-wrap items-center justify-between gap-2 border-t border-neutral-200/80 bg-neutral-100/95 px-4 py-3 text-sm backdrop-blur-md sm:mx-0 sm:rounded-b-2xl sm:px-3 sm:py-1.5 dark:border-neutral-800/80 dark:bg-neutral-950/95"
+      style="top: calc(var(--app-header-height, 3.75rem) + var(--app-timeline-height, 0px))"
+    >
       <a
         href="/transactions/pending"
         class="text-neutral-500 underline dark:text-neutral-400"
       >
         ← Waiting on you
       </a>
-      <span class="rounded bg-neutral-200 px-2 py-0.5 text-xs font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
-        {STATUS_LABELS[transaction.status] ?? transaction.status}
-        {position && ` · ${position.step.name} (${position.step.roleName})`}
+      <span class="flex flex-wrap items-center gap-2">
+        {canReadAudit && (
+          <a
+            href={`/admin/audit-log?entityType=transaction&entityId=${encodeURIComponent(transaction.reference)}`}
+            class="text-neutral-500 underline dark:text-neutral-400"
+          >
+            Audit log
+          </a>
+        )}
+        <span class="rounded bg-neutral-200 px-2 py-0.5 text-xs font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
+          {STATUS_LABELS[transaction.status] ?? transaction.status}
+          {position && ` · ${position.step.name} (${position.step.roleName})`}
+        </span>
       </span>
     </div>
 

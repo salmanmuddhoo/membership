@@ -1,16 +1,20 @@
 ---
-// The six-step journey from capture to a decision (S-301 to S-308), drawn as
-// a row of connected, arrow-shaped boxes rather than a list.
+// The journey a record takes, drawn as a row of connected, arrow-shaped
+// boxes rather than a list: an application's six steps from capture to a
+// decision (S-301 to S-308), or a transaction's chain as it is configured
+// now (S-1405).
 //
-// Deliberately the first thing on both pages that work an application — the
-// capture form and the full application page — so an officer orients before
-// they read anything else: where this one has got to, and what happens next.
-// It is a picture of `applicationTimeline`'s output, not a second copy of the
-// logic that produced it.
-import type { TimelineStep } from '@lib/applications/timeline';
+// Deliberately the first thing on every page that works the record, so an
+// officer orients before they read anything else: where this one has got
+// to, and what happens next. It is a picture of a timeline function's
+// output — `applicationTimeline`, `transactionTimeline` — not a second copy
+// of the logic that produced it; it never knew what an application was.
+import type { TimelineStep } from '@lib/workflow/timeline';
 
 interface Props {
   steps: TimelineStep[];
+  // For a screen reader, since the boxes carry their state by colour.
+  label?: string;
   // Omitted on the capture page (`/applications/new`), which has no
   // application yet for a step to link to. When present, every step becomes
   // a real link — including one not yet reached, which lands back on the
@@ -27,7 +31,7 @@ interface Props {
   basePath?: string;
 }
 
-const { steps, applicationId, basePath } = Astro.props;
+const { steps, applicationId, basePath, label = 'Progress' } = Astro.props;
 const base =
   basePath ?? (applicationId ? `/applications/${applicationId}` : '');
 
@@ -88,10 +92,10 @@ const STEP_HREF: Record<string, (base: string, id: string) => string> = {
      height, so both stopped sticking a moment after the page started
      scrolling instead of for the whole page. */}
 <section
-  id="application-timeline"
+  id="chain-timeline"
   class="sticky z-30 -mx-4 mb-0 rounded-t-2xl border border-neutral-200 bg-neutral-100 p-4 sm:mx-0 sm:p-6 dark:border-neutral-800 dark:bg-neutral-950"
   style="top: var(--app-header-height, 3.75rem)"
-  aria-label="Application progress"
+  aria-label={label}
 >
   <ol class="flex flex-wrap items-stretch gap-3 sm:flex-nowrap">
     {steps.map(step => {
@@ -166,7 +170,7 @@ const STEP_HREF: Record<string, (base: string, id: string) => string> = {
   // wraps differently by width too, and neither side should have to guess
   // the other's height.
   const header = document.getElementById('app-header');
-  const timeline = document.getElementById('application-timeline');
+  const timeline = document.getElementById('chain-timeline');
   if (header || timeline) {
     const sync = () => {
       if (header) {

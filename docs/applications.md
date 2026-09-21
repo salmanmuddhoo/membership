@@ -70,7 +70,10 @@ Submit, Approval Stage** — and how far a status/checklist/payment combination
 has got through them. Submission and Secretary review read as the one
 "Submit" step: an officer has exactly one thing left to do at that point, and
 everything from there through the Secretary forwarding it on is out of their
-hands. `ApplicationTimeline.astro` draws the six as a row of arrow-shaped
+hands. The step shape and the one-current rule are
+`src/lib/workflow/timeline.ts`'s, shared with a transaction's chevron
+(`transactionTimeline`, S-1405), which reads its stages off the live chain
+instead of a fixed list. `ChainTimeline.astro` draws the six as a row of arrow-shaped
 boxes — a `clip-path` chevron on both the right edge (pointed) and the left
 (notched to match), so the box's own outline is the arrow rather than a
 rectangle with a point tacked onto one side, with real spacing between them
@@ -104,7 +107,7 @@ is what greets the officer on the id page once Next has actually created the
 application.
 
 On `[id].astro` every step is a real link — `applicationId` is passed in, and
-each step's `href` (`ApplicationTimeline.astro`'s `STEP_HREF` map) goes
+each step's `href` (`ChainTimeline.astro`'s `STEP_HREF` map) goes
 straight to that step: Applicant details, KYC Documents and Payments land on
 their `?step=N`, Application signature lands on the print page, and Submit
 and Approval Stage land on the application as a whole, since neither is a
@@ -117,7 +120,7 @@ its boxes render as plain `<div>`s instead.
 
 The section is `sticky`, positioned just under the app header rather than
 under it: the header's own height varies with viewport and content wrap, so a
-small script in `ApplicationTimeline.astro` measures `#app-header` (added on
+small script in `ChainTimeline.astro` measures `#app-header` (added on
 `DashboardLayout.astro`'s `<header>`) after layout and on resize, and writes
 it to a `--app-header-height` custom property the timeline's `top` reads.
 Scrolling the page never scrolls the timeline out of view.

@@ -13,7 +13,7 @@
 // phase 7).
 import { isEditableStatus } from '@lib/applications/capture';
 import DashboardLayout from '@layouts/DashboardLayout.astro';
-import ApplicationTimeline from '@components/ApplicationTimeline.astro';
+import ChainTimeline from '@components/ChainTimeline.astro';
 import { applicationTimeline } from '@lib/applications/timeline';
 import {
   ApplicationError,
@@ -653,8 +653,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
   heading={application.reference}
 >
   <div class="mx-auto max-w-5xl space-y-6">
-    <ApplicationTimeline
+    <ChainTimeline
       steps={timeline}
+      label="Application progress"
       applicationId={application!.id}
       basePath={`/applications/${application!.id}/account`}
     />

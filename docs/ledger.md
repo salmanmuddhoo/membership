@@ -198,6 +198,19 @@ Approval decides; posting moves the money. `postApprovedTransaction()` is a
 separate act by someone with `transaction.post` who did not capture it, and a
 deposit takes its receipt there, since a receipt is issued when money posts.
 
+The strip at the top of the transaction page is the chain as it is now
+(S-1405): `chainTimeline('transaction', id)` in `src/lib/workflow/timeline.ts`
+puts Recorded and Posted either side of the enabled steps of the
+transaction's chain, done where the trail says it passed, current where
+`positionOf` says it stands, so a deposit routed nowhere shows no approval
+stage at all and a step disabled today is gone from every chevron rendered
+from now on. A returned transaction reads as back at Recorded, red, naming
+who returned it; a rejected one marks the step that rejected it. The trail
+underneath is the log, not the chain (S-1406): it still names a step that
+has since been disabled, and the audit log lists the same acts under the
+transaction's reference, which the transaction page also answers to
+(`/transactions/TX-000123`).
+
 A returned transaction is its captor's to correct, and nobody's while it
 sits at a step. `resubmitDeposit()` changes amount, method, reference, note
 or account (one of the same holder's), writes both versions to the audit
