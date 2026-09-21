@@ -318,6 +318,45 @@ describe('S-1301, S-1302 the ledger', () => {
     ).rejects.toThrowError(/maintained by the ledger/);
   });
 
+  // 0066: a transaction is a member's or a customer's, never both or
+  // neither; a reversal names what it reverses; and the actor a data
+  // migration posts as exists and can never sign in.
+  it('requires exactly one holder, and a reversal to name its original', async () => {
+    await expect(
+      run(
+        ownerUrl,
+        `insert into transaction (kind, account_id, amount, method, captured_by)
+         values ('deposit', gen_random_uuid(), 1, 'cash',
+                 (select id from app_user limit 1))`
+      )
+    ).rejects.toThrowError(/transaction_has_one_holder/);
+    await expect(
+      run(
+        ownerUrl,
+        `insert into transaction
+           (kind, member_id, account_id, amount, method, captured_by)
+         values ('reversal', gen_random_uuid(), gen_random_uuid(), 1, 'cash',
+                 (select id from app_user limit 1))`
+      )
+    ).rejects.toThrowError(/transaction_reversal_names_its_original/);
+  });
+
+  it('has a service account for data migrations to post as', async () => {
+    const result = await run(
+      appUrl,
+      `select entra_subject, display_name,
+              not exists (select 1 from user_role where user_id = u.id) as roleless
+         from app_user u where email = 'migration@system.albarakah.mu'`
+    );
+    expect(result.rows).toEqual([
+      {
+        entra_subject: 'system:migration',
+        display_name: 'Data migration',
+        roleless: true,
+      },
+    ]);
+  });
+
   it('refuses a financial event with no subject, or two', async () => {
     await expect(
       run(

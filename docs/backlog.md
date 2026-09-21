@@ -3465,6 +3465,35 @@ means cleared. Enforcement is deliberately not here — a floor is read by a
 withdrawal (M14) and a transfer (M15), a cap and the switches by every
 kind, and each arrives with the kind that needs it.
 
+**Shipped, third increment** (S-1303): Phase 1's money is on the ledger.
+Migration 0066 carries every unvoided receipt over — a `shares` fee line
+becomes a deposit on the Shares account the application opened, an
+`msa_deposit` line on the MSA, and (wider than the story's wording, because
+that is what the data holds) a `payment_account_line` on the account of its
+type, which is how an HSA or Investment opening deposit and an imported
+balance of any other type were recorded. Entrance, processing and Takaful
+open nothing. A refund line becomes a **reversal** of the deposit its
+original became: `reverses_id` and the `reversal` kind are S-1505's
+mechanism (decision 13), arrived early because a refunded Shares line has
+no other honest way onto a balance. The carried transaction references the
+receipt it came from — 0064's one-receipt-one-transaction rule is narrowed
+to receipts issued at posting, since one membership receipt pays into two
+accounts — names who took the money and when, and posts whatever the
+account's status, because the money is already there. One function,
+`post_opening_balances()`, does it for one application at a time; the
+backfill calls it for every application with accounts in the order the
+money arrived, and every live path that might give an account something to
+carry — the four account-opening paths, the legacy-balance import, a refund
+— calls the same function, so it is one-time only in the sense that the
+second call finds nothing. A migrated legacy balance is already a payment
+with lines, so "never both" needed no rule. Found on the way: 0064 gave a
+transaction a member and only a member; a customer's HSA had nowhere to
+land, so a transaction is now a member's or a customer's, exactly one. A
+void of a receipt already on a balance is refused in favour of a refund.
+`pnpm figures:capture` carries the Shares and MSA balance totals, and the
+backfill test asserts they equal the issued, unrefunded lines. The backfill
+posts as a fourth service account, `migration@system.albarakah.mu`.
+
 ### S-1301 · The account ledger ✅
 
 **As** the Society, **I need** every movement of money on an account to be
@@ -3509,7 +3538,7 @@ rather than promised. _(ENG-US-001, ENG-US-003, FRD 6.1, 16)_
   issue — one function, one transaction, so "half posted" is not a state that
   can exist
 
-### S-1303 · Phase 1's money becomes Phase 2's opening balances
+### S-1303 · Phase 1's money becomes Phase 2's opening balances ✅
 
 **As** the Treasurer, **I need** every member's Shares and MSA to open with
 the amounts they actually paid at membership, **so that** the first balance

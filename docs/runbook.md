@@ -222,6 +222,8 @@ a pilot round. Nobody runs this without being asked to.
      through the public API from the Society's website
    - `retention@system.albarakah.mu` — the actor the retention and disposal
      job acts as
+   - `migration@system.albarakah.mu` — the actor a data migration posts
+     ledger entries as (the Phase 2 opening-balance backfill, 0066)
 
    Each has an `entra_subject` beginning `system:`, a value no real sign-in
    token can carry, and holds no role. **Deleting them breaks the member app,

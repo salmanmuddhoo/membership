@@ -230,6 +230,27 @@ export async function rebuildAccountBalance(
   });
 }
 
+// Phase 1's money becomes an account's opening balance (S-1303). Carries
+// every unvoided receipt against an application into the ledger — fee lines
+// and account lines as deposits, refund lines as reversals — and returns how
+// many it posted. Each line is carried once, by a unique constraint, so the
+// call is free to repeat: whoever opens an account, records a migrated
+// balance or a refund calls it, and the first caller with an account to land
+// on does the work. Schema: migrations/0066_opening_balances.sql.
+export async function postOpeningBalances(
+  applicationId: string,
+  actor: LedgerActor,
+  client?: PoolClient
+): Promise<number> {
+  return onClient(client, async c => {
+    const r = await c.query<{ n: number }>(
+      'select post_opening_balances($1, $2, $3) as n',
+      [applicationId, actor.userId, actor.description]
+    );
+    return r.rows[0].n;
+  });
+}
+
 export interface VerificationOutcome {
   drifted: LedgerDrift[];
   repaired: number;

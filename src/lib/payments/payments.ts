@@ -15,6 +15,7 @@ import type { PoolClient } from 'pg';
 import { recordAudit } from '../access/audit';
 import { checkSegregation } from '../admin/segregation';
 import { query, withTransaction } from '../db/pool';
+import { postOpeningBalances } from '../ledger/ledger';
 import {
   cashMaximum,
   cashSourceOfFundThreshold,
@@ -1530,6 +1531,14 @@ export async function recordMigrationOpeningBalances(
     },
     client
   );
+
+  // S-1303: the accounts were opened before this was called (see the input's
+  // own comment), so the balance this receipt records lands on them now.
+  await postOpeningBalances(
+    input.applicationId,
+    { userId: input.actorUserId, description: input.actorEmail },
+    client
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1833,6 +1842,18 @@ export async function refundPayment(
         client
       );
 
+      // S-1303: a refund of a line already carried into the ledger reverses
+      // its deposit, through the engine (a `reversal` naming the original).
+      // Before approval there is no account and nothing happens; the
+      // approval that opens one carries the refund along with the payment.
+      if (original.applicationId) {
+        await postOpeningBalances(
+          original.applicationId,
+          { userId: principal.userId, description: principal.email },
+          client
+        );
+      }
+
       return refundId;
     });
 
@@ -1902,6 +1923,26 @@ export async function voidPayment(
       throw new PaymentError(
         `Receipt ${payment.receiptNo} has been refunded. Void the refund ` +
           'first.',
+        'conflict'
+      );
+    }
+
+    // S-1303: once a receipt's lines have become entries on an account, the
+    // money is on a balance and a void — "this was never taken" — would be
+    // untrue. The correction with a trail is a refund, which reverses the
+    // entries on its own receipt.
+    const carried = await client.query(
+      `select 1 from transaction t
+         left join payment_line l on l.id = t.payment_line_id
+         left join payment_account_line al on al.id = t.payment_account_line_id
+        where coalesce(l.payment_id, al.payment_id) = $1
+        limit 1`,
+      [payment.id]
+    );
+    if ((carried.rowCount ?? 0) > 0) {
+      throw new PaymentError(
+        `Receipt ${payment.receiptNo} has been posted to the account. ` +
+          'Refund it instead.',
         'conflict'
       );
     }

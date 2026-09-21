@@ -247,6 +247,15 @@ earned: **once the application is approved, the entrance fee and the Takaful
 contribution are not returned** (FRD 7.10.6). Shares and the MSA deposit are the
 member's money and always come back.
 
+Once the application is approved and its Shares and MSA lines are on the
+member's accounts (`docs/ledger.md`, S-1303), a refund of either line also
+posts a **reversal** on that account, through the engine, in the same
+database transaction as the refund. Before approval there is no account and
+the refund is only a receipt; the approval carries both the payment and the
+refund. A **void** of a receipt whose lines are already on a balance is
+refused: the money is on an account, so "this was never taken" would be
+untrue, and the correction is a refund.
+
 ## Who does what
 
 | Permission          | Held by                          |
