@@ -15,6 +15,7 @@ import {
   listMembershipTypes,
   listWorkflows,
   listWorkflowStatuses,
+  offeredPaymentMethods,
 } from '@lib/config/reference';
 
 const stringArray = { type: 'array', items: { type: 'string' } };
@@ -125,9 +126,35 @@ const read = defineEndpoint(
         'checklists',
         'workflows',
         'statuses',
+        'paymentMethods',
       ],
       properties: {
         membershipTypes: { type: 'array', items: membershipTypeSchema },
+        paymentMethods: {
+          type: 'array',
+          description:
+            'How a payment may be made today: the active, officer-choosable ' +
+            'methods, in display order.',
+          items: {
+            type: 'object',
+            required: ['code', 'name', 'isCash', 'requiresReference'],
+            properties: {
+              code: { type: 'string' },
+              name: { type: 'string' },
+              isCash: {
+                type: 'boolean',
+                description: 'The cash controls apply.',
+              },
+              requiresReference: {
+                type: 'boolean',
+                description:
+                  'A reference (cheque number, transfer reference) is ' +
+                  'mandatory.',
+              },
+              touchesBank: { type: 'boolean' },
+            },
+          },
+        },
         accountTypes: {
           type: 'array',
           items: {
@@ -290,6 +317,7 @@ const read = defineEndpoint(
       checklists,
       workflows,
       statuses,
+      paymentMethods,
     ] = await Promise.all([
       listMembershipTypes(),
       listAccountTypes(),
@@ -298,6 +326,7 @@ const read = defineEndpoint(
       listChecklists(),
       listWorkflows(),
       listWorkflowStatuses(),
+      offeredPaymentMethods(),
     ]);
 
     return apiSuccess(
@@ -313,6 +342,13 @@ const read = defineEndpoint(
         checklists,
         workflows,
         statuses,
+        paymentMethods: paymentMethods.map(m => ({
+          code: m.code,
+          name: m.name,
+          isCash: m.isCash,
+          requiresReference: m.requiresReference,
+          touchesBank: m.touchesBank,
+        })),
       },
       correlationId
     );

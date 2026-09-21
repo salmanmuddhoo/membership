@@ -605,6 +605,7 @@ describe('S-501: recording a payment', () => {
         {
           applicationId: application.id,
           method: 'bank_transfer',
+          methodReference: 'TRF-1',
           amounts: FULL,
         },
         principalFor(officer)
@@ -676,6 +677,7 @@ describe('S-501: recording a payment', () => {
         {
           applicationId: application.id,
           method: 'bank_transfer',
+          methodReference: 'TRF-1',
           amounts: FULL,
         },
         principalFor(officer)
@@ -877,11 +879,40 @@ describe('a recorded payment is a record, not a row', () => {
 });
 
 describe('S-504: a structured event per payment', () => {
+  // S-1307: whether a method needs a reference is configuration, and the
+  // server holds the line whether or not the form's script hid the field.
+  it('refuses a method that needs a reference without one, and one that is not offered', async () => {
+    const { payments } = await load();
+    const application = await newApplication();
+    await expect(
+      payments.recordPayment(
+        { applicationId: application.id, method: 'cheque', amounts: FULL },
+        principalFor(officer)
+      )
+    ).rejects.toThrowError(/Enter the cheque reference/);
+    await expect(
+      payments.recordPayment(
+        { applicationId: application.id, method: 'migration', amounts: FULL },
+        principalFor(officer)
+      )
+    ).rejects.toThrowError(/Choose how the payment was made/);
+    const payment = await payments.recordPayment(
+      { applicationId: application.id, method: 'card', amounts: FULL },
+      principalFor(officer)
+    );
+    expect(payment.methodName).toBe('Card');
+  });
+
   it('emits one with the fee version, the components and the receipt', async () => {
     const { payments } = await load();
     const application = await newApplication();
     const payment = await payments.recordPayment(
-      { applicationId: application.id, method: 'cheque', amounts: FULL },
+      {
+        applicationId: application.id,
+        method: 'cheque',
+        methodReference: '000123',
+        amounts: FULL,
+      },
       principalFor(officer)
     );
 

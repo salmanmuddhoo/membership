@@ -116,6 +116,27 @@ Amounts are `numeric` in the database and decimal **strings** in TypeScript and
 JSON. Money through a float is a rounding error waiting for a reconciliation to
 find it.
 
+### Payment methods (S-1307, FRD 6.6)
+
+`payment_method`. How money moves, as a row rather than a check constraint
+and a constant (migration 0067 replaced both, mapping every existing code).
+Each carries what the rest of the system asks of a method:
+
+| Column               | Drives                                                                        |
+| -------------------- | ----------------------------------------------------------------------------- |
+| `is_cash`            | The cash controls: the Source of Fund threshold and the ceiling (below)       |
+| `requires_reference` | The reference field: shown and mandatory for this method, absent otherwise    |
+| `touches_bank`       | Bank reconciliation (M19) — the money reaches a bank account                  |
+| `is_system`          | Written only by the system, never offered, not editable: `migration` (0048)   |
+| `is_active`          | Offered on a form. Retiring a method keeps every receipt it was used on whole |
+
+Seeded with today's five under their existing codes, the FRD's six additions
+(Juice, salary deduction, standing order, deposit at bank, internet banking,
+other) and the import's own. `payment.method` and `transaction.method` are
+foreign keys to `code`. A record carries the method's name beside its code
+(`Payment.methodName`) so a retired method still reads on the receipt that
+used it. Configuration → Payment methods.
+
 ### Document checklists (S-208, FRD 8.4.1, 7.10.5)
 
 `document_type`, `document_checklist`, `document_checklist_item`. An item is a

@@ -970,7 +970,8 @@
                         "documentTypes",
                         "checklists",
                         "workflows",
-                        "statuses"
+                        "statuses",
+                        "paymentMethods"
                       ],
                       "properties": {
                         "membershipTypes": {
@@ -1062,6 +1063,38 @@
                                     }
                                   }
                                 }
+                              }
+                            }
+                          }
+                        },
+                        "paymentMethods": {
+                          "type": "array",
+                          "description": "How a payment may be made today: the active, officer-choosable methods, in display order.",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "code",
+                              "name",
+                              "isCash",
+                              "requiresReference"
+                            ],
+                            "properties": {
+                              "code": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "isCash": {
+                                "type": "boolean",
+                                "description": "The cash controls apply."
+                              },
+                              "requiresReference": {
+                                "type": "boolean",
+                                "description": "A reference (cheque number, transfer reference) is mandatory."
+                              },
+                              "touchesBank": {
+                                "type": "boolean"
                               }
                             }
                           }

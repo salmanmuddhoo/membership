@@ -47,8 +47,6 @@ import {
   amountDueForAdditionalAccount,
   paymentsForApplication,
   recordAccountOpeningPayment,
-  METHOD_LABELS,
-  PAYMENT_METHODS,
   PaymentError,
   type AccountAmountDue,
   type Payment,
@@ -67,6 +65,7 @@ import {
   cashMaximum,
   cashSourceOfFundThreshold,
   listDocumentTypes,
+  offeredPaymentMethods,
 } from '@lib/config/reference';
 import DocumentViewer from '@components/DocumentViewer.astro';
 import DocumentReviewForm from '@components/DocumentReviewForm.astro';
@@ -514,6 +513,10 @@ const dueProblem: string | null = livePayment
   : (dueRead?.problem ?? null);
 const cashThreshold = due ? await cashSourceOfFundThreshold() : null;
 const cashMax = due ? await cashMaximum() : null;
+// What the method select offers (S-1307): each option carries whether the
+// cash controls apply and whether a reference is demanded, so the script
+// below reads configuration rather than a list of codes.
+const paymentMethods = await offeredPaymentMethods();
 const sourceOfFundDocumentType = (await listDocumentTypes()).find(
   t => t.code === 'source_of_fund_form'
 );
@@ -1178,7 +1181,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             <div class="mt-4">
               <p class="text-sm text-neutral-600 dark:text-neutral-300">
                 {canSeePayments
-                  ? `${formatMoney(livePayment.totalAmount, livePayment.currency)} · ${METHOD_LABELS[livePayment.method]}`
+                  ? `${formatMoney(livePayment.totalAmount, livePayment.currency)} · ${livePayment.methodName}`
                   : 'Recorded'}{' '}
                 · taken by {livePayment.recordedByName} on{' '}
                 {dateFormat.format(livePayment.receivedAt)}
@@ -1282,12 +1285,16 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                     name="method"
                     class="mt-1 block rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
                   >
-                    {PAYMENT_METHODS.map(method => (
+                    {paymentMethods.map(method => (
                       <option
-                        value={method}
-                        selected={paymentFormValues?.method === method}
+                        value={method.code}
+                        data-cash={method.isCash ? 'true' : 'false'}
+                        data-requires-reference={
+                          method.requiresReference ? 'true' : 'false'
+                        }
+                        selected={paymentFormValues?.method === method.code}
                       >
-                        {METHOD_LABELS[method]}
+                        {method.name}
                       </option>
                     ))}
                   </select>
@@ -1296,7 +1303,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                   data-method-reference-field
                   class="flex-1 text-sm text-neutral-600 dark:text-neutral-300"
                 >
-                  Cheque or transfer reference
+                  Reference (cheque number, transfer reference)
                   <input
                     type="text"
                     name="methodReference"
@@ -1755,9 +1762,8 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     const methodReferenceField = paymentForm.querySelector<HTMLElement>(
       '[data-method-reference-field]'
     );
-    // Officer feedback: only these methods carry a reference to record —
-    // cash and card settle with nothing to write down.
-    const REFERENCED_METHODS = new Set(['cheque', 'bank_transfer', 'mobile']);
+    // Whether a method is cash, and whether it carries a reference, is
+    // configuration (S-1307), read off the selected option.
 
     // Restored before the first recalculation below, so the total and the
     // cash rules are computed against what the officer actually typed
@@ -1769,7 +1775,8 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       for (const input of amountInputs) total += parseCents(input.value);
       if (totalCell) totalCell.textContent = formatCents(total);
 
-      const isCash = methodSelect?.value === 'cash';
+      const selectedMethod = methodSelect?.selectedOptions[0];
+      const isCash = selectedMethod?.dataset.cash === 'true';
 
       // Refused server-side regardless (payments.ts's own
       // applyCashPaymentRules runs first, ahead of every other check) — this
@@ -1799,9 +1806,8 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       }
 
       if (methodReferenceField)
-        methodReferenceField.hidden = !REFERENCED_METHODS.has(
-          methodSelect?.value ?? ''
-        );
+        methodReferenceField.hidden =
+          selectedMethod?.dataset.requiresReference !== 'true';
     };
 
     for (const input of amountInputs) {

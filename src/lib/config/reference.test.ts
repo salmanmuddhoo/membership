@@ -943,6 +943,145 @@ describe('S-1304: an account type carries its limits', () => {
   });
 });
 
+// S-1307: how money moves is configuration (migration 0067).
+describe('S-1307: payment methods', () => {
+  const flags = {
+    isCash: false,
+    requiresReference: true,
+    touchesBank: true,
+    isActive: true,
+  };
+
+  it("ships today's methods under their codes, the FRD's additions, and the import's own", async () => {
+    const { config } = await load();
+    const methods = await config.listPaymentMethods();
+    const byCode = new Map(methods.map(m => [m.code, m]));
+
+    expect(byCode.get('cash')).toMatchObject({
+      name: 'Cash',
+      isCash: true,
+      requiresReference: false,
+      touchesBank: false,
+      isSystem: false,
+      isActive: true,
+    });
+    expect(byCode.get('cheque')).toMatchObject({
+      isCash: false,
+      requiresReference: true,
+      touchesBank: true,
+    });
+    for (const code of [
+      'bank_transfer',
+      'card',
+      'mobile',
+      'juice',
+      'salary_deduction',
+      'standing_order',
+      'deposit_at_bank',
+      'internet_banking',
+      'other',
+    ]) {
+      expect(byCode.get(code)?.isActive, code).toBe(true);
+    }
+    expect(byCode.get('migration')).toMatchObject({
+      isSystem: true,
+      isActive: true,
+    });
+
+    // The form never offers the import's own mark.
+    const offered = await config.offeredPaymentMethods();
+    expect(offered.map(m => m.code)).not.toContain('migration');
+    expect(offered.map(m => m.code)).toContain('cash');
+  });
+
+  it('adds a method without a release, and retires one without losing it', async () => {
+    const { config } = await load();
+    const id = await config.createPaymentMethod(
+      { code: 'direct_debit', name: 'Direct debit', ...flags },
+      actor
+    );
+    let method = (await config.listPaymentMethods()).find(m => m.id === id)!;
+    expect(method).toMatchObject({
+      code: 'direct_debit',
+      name: 'Direct debit',
+      requiresReference: true,
+      isActive: true,
+    });
+    expect((await config.offeredPaymentMethods()).map(m => m.code)).toContain(
+      'direct_debit'
+    );
+
+    await config.updatePaymentMethod(
+      id,
+      { ...flags, name: 'Direct debit', isActive: false },
+      actor
+    );
+    method = (await config.listPaymentMethods()).find(m => m.id === id)!;
+    expect(method.isActive).toBe(false);
+    expect(
+      (await config.offeredPaymentMethods()).map(m => m.code)
+    ).not.toContain('direct_debit');
+    // Still readable by code: a receipt taken by it must keep its name.
+    expect((await config.paymentMethodByCode('direct_debit'))?.name).toBe(
+      'Direct debit'
+    );
+  });
+
+  it("refuses a duplicate code, a bad code, and a change to the system's own", async () => {
+    const { config } = await load();
+    await expect(
+      config.createPaymentMethod(
+        { code: 'cash', name: 'Cash again', ...flags },
+        actor
+      )
+    ).rejects.toThrowError(/already exists/);
+    await expect(
+      config.createPaymentMethod(
+        { code: 'Not Code', name: 'x', ...flags },
+        actor
+      )
+    ).rejects.toThrowError(/lowercase letters/);
+
+    const migration = (await config.listPaymentMethods()).find(
+      m => m.code === 'migration'
+    )!;
+    await expect(
+      config.updatePaymentMethod(
+        migration.id,
+        { ...flags, name: 'Renamed', isActive: false },
+        actor
+      )
+    ).rejects.toThrowError(/written by the system/);
+  });
+
+  it('audits a change like any other configuration table', async () => {
+    const { config } = await load();
+    const cheque = (await config.listPaymentMethods()).find(
+      m => m.code === 'cheque'
+    )!;
+    await config.updatePaymentMethod(
+      cheque.id,
+      { ...flags, name: 'Cheque', touchesBank: false },
+      actor
+    );
+    const audited = await run(
+      appUrl,
+      `select previous_value->>'touches_bank' as before,
+              new_value->>'touches_bank' as after
+         from audit_event
+        where action = 'config.payment_method.update' and entity_id = $1
+        order by occurred_at desc limit 1`,
+      [cheque.id]
+    );
+    expect(audited.rows[0]).toEqual({ before: 'true', after: 'false' });
+    await config.updatePaymentMethod(
+      cheque.id,
+      { ...flags, name: 'Cheque', touchesBank: true },
+      actor
+    );
+  });
+});
+
 describe('S-207: fee schedules', () => {
   // Shares is what makes someone a member and is mandatory. The MSA deposit is
   // optional: the account opens either way, and whether money goes into it at

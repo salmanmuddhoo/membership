@@ -13,8 +13,6 @@ import {
   refundableComponents,
   refundPayment,
   voidPayment,
-  METHOD_LABELS,
-  PAYMENT_METHODS,
   PaymentError,
   type Payment,
   type PaymentMethod,
@@ -22,6 +20,7 @@ import {
 } from '@lib/payments/payments';
 import { formatMoney } from '@lib/payments/money';
 import { depositorForApplication } from '@lib/applications/depositor';
+import { offeredPaymentMethods } from '@lib/config/reference';
 import type { FeeComponentCode } from '@lib/config/reference';
 
 const principal = Astro.locals.principal!;
@@ -138,6 +137,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
   dateStyle: 'long',
   timeStyle: 'short',
 });
+
+// The methods a refund may go back by (S-1307).
+const paymentMethods = await offeredPaymentMethods();
 ---
 
 <BaseLayout title={`${payment.receiptNo} · Receipt`}>
@@ -193,7 +195,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       <div class="row">
         <dt>Method</dt>
         <dd>
-          {METHOD_LABELS[payment.method]}
+          {payment.methodName}
           {payment.methodReference && ` · ${payment.methodReference}`}
         </dd>
       </div>
@@ -307,13 +309,13 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         <label>
           Method
           <select name="method">
-            {PAYMENT_METHODS.map(method => (
-              <option value={method}>{METHOD_LABELS[method]}</option>
+            {paymentMethods.map(method => (
+              <option value={method.code}>{method.name}</option>
             ))}
           </select>
         </label>
         <label>
-          Cheque or transfer reference
+          Reference (cheque number, transfer reference)
           <input type="text" name="methodReference" />
         </label>
         <label>
