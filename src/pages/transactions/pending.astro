@@ -1,0 +1,184 @@
+---
+// What waits on this person (S-1403, S-1404): transactions at a step their
+// role owns, approved ones they may post, and their own captures a reviewer
+// returned. One queue for every kind, oldest first, filterable by kind.
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import { TRANSACTION_KINDS, type TransactionKind } from '@lib/config/reference';
+import {
+  approvedTransactions,
+  pendingTransactions,
+  returnedTransactions,
+} from '@lib/ledger/review';
+import { formatMoney } from '@lib/payments/money';
+
+const principal = Astro.locals.principal!;
+
+const KIND_LABELS: Record<TransactionKind, string> = {
+  deposit: 'Deposit',
+  withdrawal: 'Withdrawal',
+  transfer: 'Transfer',
+  closure: 'Closure',
+  resignation: 'Resignation',
+  demise: 'Demise',
+};
+const requested = Astro.url.searchParams.get('kind') ?? '';
+const kind = (TRANSACTION_KINDS as readonly string[]).includes(requested)
+  ? (requested as TransactionKind)
+  : undefined;
+
+const [pending, approved, returned] = await Promise.all([
+  pendingTransactions(principal, { kind }),
+  approvedTransactions(principal, { kind }),
+  returnedTransactions(principal).then(rows =>
+    kind ? rows.filter(r => r.kind === kind) : rows
+  ),
+]);
+
+const dateFormat = new Intl.DateTimeFormat('en-GB', {
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+});
+// How long it has waited, in the coarsest unit that is not zero.
+function waited(since: Date): string {
+  const minutes = Math.max(
+    0,
+    Math.round((Date.now() - since.getTime()) / 60000)
+  );
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours} h`;
+  return `${Math.round(hours / 24)} days`;
+}
+
+const CELL = 'px-2 py-2';
+---
+
+<DashboardLayout
+  title="Waiting on you · Al Barakah MCSL"
+  heading="Waiting on you"
+>
+  <div class="mx-auto max-w-5xl space-y-6">
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <a
+        href="/transactions"
+        class="text-sm text-neutral-500 underline dark:text-neutral-400"
+      >
+        ← Transactions
+      </a>
+      <form method="get" class="flex items-center gap-2 text-sm">
+        <label class="text-neutral-600 dark:text-neutral-300">
+          Kind
+          <select
+            name="kind"
+            class="ml-1 rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+            onchange="this.form.submit()"
+          >
+            <option value="" selected={!kind}>
+              All
+            </option>
+            {TRANSACTION_KINDS.map(k => (
+              <option value={k} selected={k === kind}>
+                {KIND_LABELS[k]}
+              </option>
+            ))}
+          </select>
+        </label>
+      </form>
+    </div>
+
+    {[
+      {
+        title: 'For your review',
+        rows: pending.map(t => ({ ...t, note: `${t.stepName}` })),
+        empty: 'Nothing is waiting for you.',
+      },
+      {
+        title: 'Approved, to post',
+        rows: approved.map(t => ({ ...t, note: 'Approved' })),
+        empty: null,
+      },
+      {
+        title: 'Returned to you',
+        rows: returned.map(t => ({ ...t, note: 'Returned' })),
+        empty: null,
+      },
+    ].map(
+      group =>
+        (group.rows.length > 0 || group.empty) && (
+          <section class="space-y-2">
+            <h2 class="text-sm font-semibold text-neutral-700 uppercase dark:text-neutral-200">
+              {group.title}
+              {group.rows.length > 0 && (
+                <span class="ml-2 rounded-full bg-neutral-200 px-2 py-0.5 text-xs font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
+                  {group.rows.length}
+                </span>
+              )}
+            </h2>
+            <div class="overflow-x-auto rounded-2xl border border-neutral-200 bg-neutral-100 p-4 dark:border-neutral-800 dark:bg-neutral-950">
+              {group.rows.length === 0 ? (
+                <p class="text-sm text-neutral-500 dark:text-neutral-400">
+                  {group.empty}
+                </p>
+              ) : (
+                <table class="w-full text-sm">
+                  <thead class="text-left text-xs text-neutral-500 uppercase dark:text-neutral-400">
+                    <tr>
+                      <th class={CELL}>Reference</th>
+                      <th class={CELL}>Kind</th>
+                      <th class={CELL}>Who</th>
+                      <th class={CELL}>Account</th>
+                      <th class={`${CELL} text-right`}>Amount</th>
+                      <th class={CELL}>Recorded by</th>
+                      <th class={CELL}>Waiting</th>
+                      <th class={CELL}>Step</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-neutral-200 dark:divide-neutral-800">
+                    {group.rows.map(t => (
+                      <tr class="text-neutral-800 dark:text-neutral-100">
+                        <td class={CELL}>
+                          <a
+                            href={`/transactions/${t.id}`}
+                            class="font-medium underline"
+                          >
+                            <code class="text-xs">{t.reference}</code>
+                          </a>
+                        </td>
+                        <td class={CELL}>{KIND_LABELS[t.kind]}</td>
+                        <td class={CELL}>
+                          {t.holderName || t.holderKind}
+                          {t.memberNo && (
+                            <span class="block text-xs text-neutral-500 dark:text-neutral-400">
+                              {t.memberNo}
+                            </span>
+                          )}
+                        </td>
+                        <td class={CELL}>
+                          {t.accountNo} · {t.accountTypeName}
+                        </td>
+                        <td
+                          class={`${CELL} text-right font-medium tabular-nums`}
+                        >
+                          {formatMoney(t.amount, t.currency)}
+                        </td>
+                        <td class={CELL}>{t.capturedByName}</td>
+                        <td class={`${CELL} whitespace-nowrap`}>
+                          <span title={dateFormat.format(t.waitingSince)}>
+                            {waited(t.waitingSince)}
+                          </span>
+                        </td>
+                        <td class={CELL}>{t.note}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </section>
+        )
+    )}
+  </div>
+</DashboardLayout>

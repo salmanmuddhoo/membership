@@ -72,5 +72,9 @@ declare namespace App {
     // page's own reads so the two overlap; DashboardLayout awaits it. Absent
     // for API requests and for anyone without application.view.
     pendingActions?: Promise<number>;
+    // The "Transactions" badge, the same way (S-1403): what waits on this
+    // person at a chain step, to post, or to correct. Absent for anyone
+    // without transaction.view.
+    pendingTransactions?: Promise<number>;
   }
 }

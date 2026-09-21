@@ -73,10 +73,13 @@ const ROUTE_PERMISSIONS: ReadonlyArray<readonly [string, string]> = [
   // permission, held by default by everyone who may see a member, and
   // removable from a role without taking the member's page away.
   ['/accounts/', 'account.view'],
-  // Starting a transaction from a number rather than a person (officer
-  // feedback). The deposit form it lands on is under /members/ and checks
-  // the same permission itself.
-  ['/transactions/', 'transaction.capture'],
+  // Transactions (M13, M14). Seeing one, or the queue of what waits, is
+  // transaction.view; starting one from a number rather than a person
+  // (officer feedback) is transaction.capture, on the exact pages that do
+  // it. Acting at a step is checked by the review page itself
+  // (transaction.review, transaction.approve, transaction.post).
+  ['/transactions/', 'transaction.view'],
+  ['/transactions/deposit', 'transaction.capture'],
   // Details a member sent from the app (docs/member-app.md). Seeing the
   // queue is member.view like the rest of /members; acting on one needs
   // member.details_verify, which the page checks itself — the same split

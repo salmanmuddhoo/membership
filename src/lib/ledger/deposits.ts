@@ -25,7 +25,11 @@ import {
   markReceiptIssued,
 } from '../payments/receipts';
 import { LedgerError } from './ledger';
-import { resolveRoute, submitTransaction } from './routing';
+import {
+  resolveRoute,
+  resubmitTransaction,
+  submitTransaction,
+} from './routing';
 
 export class DepositError extends Error {
   constructor(
@@ -87,6 +91,7 @@ export interface Deposit {
   postedAt: Date | null;
   // Where it waits on its chain (S-1401), null once posted or when the
   // matrix routed it nowhere.
+  workflowDefinitionId: string | null;
   workflowName: string | null;
   currentStepCode: string | null;
   currentStepName: string | null;
@@ -121,7 +126,7 @@ const DEPOSIT_SELECT = `
          fe.payload->>'balance_after' as balance_after,
          t.captured_by, u.display_name as captured_by_name,
          t.created_at, t.posted_at,
-         wd.name as workflow_name, t.current_step_code,
+         t.workflow_definition_id, wd.name as workflow_name, t.current_step_code,
          ws.name as current_step_name, wr.name as current_step_role
     from transaction t
     join account a on a.id = t.account_id
@@ -160,6 +165,7 @@ interface DepositRow {
   captured_by_name: string;
   created_at: Date;
   posted_at: Date | null;
+  workflow_definition_id: string | null;
   workflow_name: string | null;
   current_step_code: string | null;
   current_step_name: string | null;
@@ -189,6 +195,7 @@ function assemble(r: DepositRow): Deposit {
     capturedByName: r.captured_by_name,
     createdAt: r.created_at,
     postedAt: r.posted_at,
+    workflowDefinitionId: r.workflow_definition_id,
     workflowName: r.workflow_name,
     currentStepCode: r.current_step_code,
     currentStepName: r.current_step_name,
@@ -295,6 +302,42 @@ async function existingForKey(
   return row ? { id: row.id, fingerprint: row.idempotency_fingerprint } : null;
 }
 
+function parseAmount(amount: string): number {
+  let amountCents: number;
+  try {
+    amountCents = toCents(amount);
+  } catch (err) {
+    if (err instanceof MoneyError) {
+      throw new DepositError('Enter the amount in rupees, e.g. 500.00.');
+    }
+    throw err;
+  }
+  if (amountCents <= 0) {
+    throw new DepositError('The amount must be more than zero.');
+  }
+  return amountCents;
+}
+
+// The method and the cash controls (S-1306, S-1307), refused in the
+// deposit's own words.
+async function checkedMethod(input: DepositInput, amountCents: number) {
+  try {
+    const method = await offeredMethod(input.method);
+    requireReference(method, input.methodReference);
+    await applyCashPaymentRules(
+      method,
+      amountCents,
+      input.sourceOfFundFormConfirmed ?? false
+    );
+    return method;
+  } catch (err) {
+    if (err instanceof PaymentError) {
+      throw new DepositError(err.message, err.reason);
+    }
+    throw err;
+  }
+}
+
 export async function recordDeposit(
   input: DepositInput,
   principal: Principal
@@ -305,18 +348,7 @@ export async function recordDeposit(
       'forbidden'
     );
   }
-  let amountCents: number;
-  try {
-    amountCents = toCents(input.amount);
-  } catch (err) {
-    if (err instanceof MoneyError) {
-      throw new DepositError('Enter the amount in rupees, e.g. 500.00.');
-    }
-    throw err;
-  }
-  if (amountCents <= 0) {
-    throw new DepositError('The amount must be more than zero.');
-  }
+  const amountCents = parseAmount(input.amount);
 
   // A retry is answered before it is judged: the original either posted or
   // it did not, and nothing about it is re-decided.
@@ -335,21 +367,7 @@ export async function recordDeposit(
     }
   }
 
-  let method;
-  try {
-    method = await offeredMethod(input.method);
-    requireReference(method, input.methodReference);
-    await applyCashPaymentRules(
-      method,
-      amountCents,
-      input.sourceOfFundFormConfirmed ?? false
-    );
-  } catch (err) {
-    if (err instanceof PaymentError) {
-      throw new DepositError(err.message, err.reason);
-    }
-    throw err;
-  }
+  const method = await checkedMethod(input, amountCents);
 
   const to = await destination(input.accountId);
   refuseUnlessDepositable(to, amountCents);
@@ -448,6 +466,149 @@ export async function recordDeposit(
         await markReceiptIssued(receipt.id, client);
       }
       return id;
+    });
+    return (await loadDeposit(id))!;
+  } catch (err) {
+    if (receipt) {
+      await abandonReceiptNumber(
+        receipt.id,
+        err instanceof DepositError || err instanceof LedgerError
+          ? err.message
+          : 'The deposit failed while being recorded.'
+      );
+    }
+    if (err instanceof LedgerError) {
+      throw new DepositError(err.message, 'conflict');
+    }
+    throw err;
+  }
+}
+
+export type DepositEdit = Omit<DepositInput, 'idempotencyKey'>;
+
+/**
+ * S-1404 · Correct a returned deposit and send it back. Its captor alone,
+ * and only while it is `returned`: amount, method, reference, reason and
+ * the account (one of the same holder's) may change; who captured it, and
+ * its reference, never do. The old and new values go on the audit trail so
+ * both versions are readable next to the comment that prompted the change.
+ * Where it goes next is routing's decision (resubmitTransaction): back to
+ * the step that returned it, or — the amount having crossed a band — the
+ * route a first submission would take now, including posting at once.
+ */
+export async function resubmitDeposit(
+  id: string,
+  input: DepositEdit,
+  principal: Principal
+): Promise<Deposit> {
+  const deposit = await loadDeposit(id);
+  if (!deposit) {
+    throw new DepositError('That deposit no longer exists.', 'not_found');
+  }
+  if (deposit.status !== 'returned') {
+    throw new DepositError(
+      `${deposit.reference} is ${deposit.status}, so it cannot be changed.`,
+      'conflict'
+    );
+  }
+  if (deposit.capturedById !== principal.userId) {
+    throw new DepositError(
+      'Only the officer who recorded this deposit can change it.',
+      'forbidden'
+    );
+  }
+  if (!principal.permissions.has(PERMISSION_CAPTURE)) {
+    throw new DepositError(
+      'You do not have permission to record deposits.',
+      'forbidden'
+    );
+  }
+  const amountCents = parseAmount(input.amount);
+  const method = await checkedMethod(input, amountCents);
+  const to = await destination(input.accountId);
+  if (
+    to.memberId !== deposit.memberId ||
+    to.customerId !== deposit.customerId
+  ) {
+    throw new DepositError('Choose one of this person’s accounts.');
+  }
+  refuseUnlessDepositable(to, amountCents);
+
+  const route = await resolveRoute({
+    kind: 'deposit',
+    accountTypeId: to.accountTypeId,
+    amountCents,
+    roleCodes: principal.roles,
+  });
+  if (!route.definition && !principal.permissions.has(PERMISSION_POST)) {
+    throw new DepositError(
+      'At this amount the deposit would post at once, which you may not do. ' +
+        'Ask an Account Officer to record it.',
+      'forbidden'
+    );
+  }
+  const receipt = route.definition
+    ? null
+    : await allocateReceiptNumber(principal.userId);
+
+  try {
+    await withTransaction(async client => {
+      await client.query(
+        `update transaction
+            set account_id = $2, amount = $3, method = $4,
+                method_reference = $5, reason = $6,
+                source_of_fund_form_confirmed = $7, receipt_number_id = $8
+          where id = $1`,
+        [
+          deposit.id,
+          to.id,
+          fromCents(amountCents),
+          method.code,
+          (input.methodReference ?? '').trim() || null,
+          (input.reason ?? '').trim() || null,
+          input.sourceOfFundFormConfirmed ?? false,
+          receipt?.id ?? null,
+        ]
+      );
+      await recordAudit(
+        {
+          actorUserId: principal.userId,
+          actorDescription: principal.email,
+          action: 'transaction.resubmitted',
+          entityType: 'transaction',
+          entityId: deposit.reference,
+          previousValue: {
+            account_id: deposit.accountId,
+            amount: deposit.amount,
+            method: deposit.method,
+            method_reference: deposit.methodReference || null,
+            reason: deposit.reason || null,
+          },
+          newValue: {
+            account_id: to.id,
+            amount: fromCents(amountCents),
+            method: method.code,
+            method_reference: (input.methodReference ?? '').trim() || null,
+            reason: (input.reason ?? '').trim() || null,
+          },
+        },
+        client
+      );
+      const submission = await resubmitTransaction(
+        client,
+        {
+          id: deposit.id,
+          reference: deposit.reference,
+          kind: 'deposit',
+          workflowDefinitionId: deposit.workflowDefinitionId,
+          currentStepCode: deposit.currentStepCode,
+        },
+        route,
+        principal
+      );
+      if (submission.posted && receipt) {
+        await markReceiptIssued(receipt.id, client);
+      }
     });
     return (await loadDeposit(id))!;
   } catch (err) {

@@ -119,15 +119,18 @@ export interface Submission {
   posted: boolean;
 }
 
-// Apply a route to a transaction that is `submitted`, inside the caller's
-// database transaction. Immediate: post through the engine now. Chain: leave
-// it at the first step, recorded. Either way the transition log says which
-// rule and chain decided, and the transaction row carries them.
+// Apply a route to a transaction, inside the caller's database transaction.
+// Immediate: post through the engine now. Chain: leave it at the first step,
+// recorded. Either way the transition log says which rule and chain decided,
+// and the transaction row carries them. `fromStatus` is null for a first
+// submission and 'returned' when a corrected transaction starts over
+// (resubmitTransaction).
 export async function submitTransaction(
   client: PoolClient,
   transaction: { id: string; reference: string; kind: TransactionKind },
   route: Route,
-  principal: Principal
+  principal: Principal,
+  fromStatus: string | null = null
 ): Promise<Submission> {
   const actor: LedgerActor = {
     userId: principal.userId,
@@ -136,7 +139,7 @@ export async function submitTransaction(
   await client.query(
     `update transaction
         set approval_rule_id = $2, workflow_definition_id = $3,
-            current_step_code = $4, submitted_at = now()
+            current_step_code = $4, submitted_at = now(), status = 'submitted'
       where id = $1`,
     [
       transaction.id,
@@ -149,13 +152,14 @@ export async function submitTransaction(
     `insert into transaction_transition
        (transaction_id, from_status, to_status, step_code, actor_user_id,
         actor_role, comment, approval_rule_id, workflow_definition_id)
-     values ($1, null, 'submitted', null, $2, $3, null, $4, $5)`,
+     values ($1, $6, 'submitted', null, $2, $3, null, $4, $5)`,
     [
       transaction.id,
       principal.userId,
       principal.roleNames.join(', ') || null,
       route.rule?.id ?? null,
       route.definition?.id ?? null,
+      fromStatus,
     ]
   );
 
@@ -193,4 +197,90 @@ export async function submitTransaction(
     client
   );
   return { route, posted: false };
+}
+
+export interface Resubmission extends Submission {
+  // True when it re-entered the chain at the step that returned it; false
+  // when the matrix sent it somewhere else and it started over.
+  reentered: boolean;
+}
+
+// Send a corrected transaction back (S-1404). It re-enters at the step that
+// returned it when the matrix still names the same chain and that step is
+// still enabled, so an approval already given is not asked for twice.
+// Otherwise — the amount crossed a band, the chain was re-shaped — the rule
+// that would apply to a first submission applies now (decision 11), and it
+// starts over: at the first step of the new chain, or posted at once.
+export async function resubmitTransaction(
+  client: PoolClient,
+  transaction: {
+    id: string;
+    reference: string;
+    kind: TransactionKind;
+    workflowDefinitionId: string | null;
+    currentStepCode: string | null;
+  },
+  route: Route,
+  principal: Principal
+): Promise<Resubmission> {
+  const sameChain =
+    route.definition !== null &&
+    route.definition.id === transaction.workflowDefinitionId;
+  const returningStep = sameChain
+    ? ((await activeChain(route.definition!.code)).find(
+        s => s.code === transaction.currentStepCode
+      ) ?? null)
+    : null;
+
+  if (!returningStep) {
+    const submission = await submitTransaction(
+      client,
+      transaction,
+      route,
+      principal,
+      'returned'
+    );
+    return { ...submission, reentered: false };
+  }
+
+  // The bridged fromStatus is what the step now acts on: 'submitted' for the
+  // first enabled step, the previous step's toStatus after that.
+  await client.query(
+    `update transaction
+        set approval_rule_id = $2, status = $3, submitted_at = now()
+      where id = $1`,
+    [transaction.id, route.rule?.id ?? null, returningStep.fromStatus]
+  );
+  await client.query(
+    `insert into transaction_transition
+       (transaction_id, from_status, to_status, step_code, actor_user_id,
+        actor_role, comment, approval_rule_id, workflow_definition_id)
+     values ($1, 'returned', $2, null, $3, $4, null, $5, $6)`,
+    [
+      transaction.id,
+      returningStep.fromStatus,
+      principal.userId,
+      principal.roleNames.join(', ') || null,
+      route.rule?.id ?? null,
+      route.definition!.id,
+    ]
+  );
+  await recordAudit(
+    {
+      actorUserId: principal.userId,
+      actorDescription: principal.email,
+      action: 'transaction.submitted',
+      entityType: 'transaction',
+      entityId: transaction.reference,
+      newValue: {
+        kind: transaction.kind,
+        rule_id: route.rule?.id ?? null,
+        workflow: route.definition!.code,
+        step: returningStep.code,
+        reentered: true,
+      },
+    },
+    client
+  );
+  return { route, posted: false, reentered: true };
 }

@@ -438,9 +438,30 @@ describe('S-1301, S-1302 the ledger', () => {
       },
       {
         earlier_action: 'transaction.captured',
+        later_action: 'transaction.reviewed',
+      },
+      {
+        earlier_action: 'transaction.captured',
         later_action: 'transaction.voided',
       },
     ]);
+
+    // 0071: the chain's own permissions — the Secretary reviews, the
+    // President decides, and both can see what they act on.
+    expect(await holders('transaction.review')).toEqual([
+      'secretary',
+      'system_administrator',
+    ]);
+    expect(await holders('transaction.approve')).toEqual([
+      'president',
+      'system_administrator',
+    ]);
+    expect(await holders('transaction.view')).toEqual(
+      expect.arrayContaining(['president', 'secretary'])
+    );
+    expect(await holders('account.view')).toEqual(
+      expect.arrayContaining(['president', 'secretary'])
+    );
   });
 
   // 0070: a chain per kind on the tables applications already use, a

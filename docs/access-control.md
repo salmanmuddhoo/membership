@@ -59,15 +59,23 @@ onto FRD Section 5's roles — Clerk captures, Account Officer posts,
 Treasurer voids, Auditor views — creating those three roles with no members,
 and gives `account.view` to every role that had `member.view` and
 `transaction.view` to every role that had `payment.view`, so nobody lost a
-figure they could see the day before. A deposit has no chain, so recording
-one is capturing and posting in one act and needs both permissions; a Clerk
-is told so until M14's chain hands their capture on.
+figure they could see the day before. A deposit the matrix routes nowhere
+(S-1401) is captured and posted in one act and needs both permissions; one
+it sends to a chain needs capture alone, and posting is the chain's last
+act.
+
+The chain's own permissions arrived with migration 0071 (S-1403):
+`transaction.review` acts at every step but the last (forward, return) and
+`transaction.approve` at the last (approve, reject) — by position on the
+chain, not by step name. The Secretary holds the first and the President
+the second, with `transaction.view` and `account.view` so each can see what
+they act on. Posting an approved transaction stays `transaction.post`.
 
 The segregation rules (`entity_type = 'transaction'`) say the officer who
-captured a transaction may not approve it, post it through a chain, or void
-its receipt. They key on the `transaction.captured` audit row the capture
-path writes, and are consulted wherever that later act is someone else's;
-the one-act deposit consults none.
+captured a transaction may not review it, approve it, post it through a
+chain, or void its receipt. They key on the `transaction.captured` audit row
+the capture path writes, and are consulted wherever that later act is
+someone else's; the one-act deposit consults none.
 
 ## Provisioning an account
 

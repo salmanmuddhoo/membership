@@ -1962,6 +1962,11 @@
                               "format": "date-time",
                               "nullable": true
                             },
+                            "workflowDefinitionId": {
+                              "type": "string",
+                              "format": "uuid",
+                              "nullable": true
+                            },
                             "workflowName": {
                               "type": "string",
                               "nullable": true,
