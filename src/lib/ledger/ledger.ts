@@ -351,3 +351,40 @@ export async function verifyLedger(
   }
   return { drifted, repaired };
 }
+
+// S-1502 · Available, not merely current: the balance less what is already
+// on its way out — every withdrawal (and, from S-1504, transfer-out leg)
+// on the account that is submitted, under review or approved. A query, not
+// an entry, so a rejection releases it by doing nothing.
+export interface AvailableBalance {
+  balance: string;
+  pendingDebits: string;
+  available: string;
+}
+
+export async function availableBalance(
+  accountId: string
+): Promise<AvailableBalance> {
+  const result = await query<{
+    balance: string;
+    pending: string;
+    available: string;
+  }>(
+    `select coalesce(b.balance, 0)::numeric(14, 2)::text as balance,
+            p.pending::numeric(14, 2)::text as pending,
+            (coalesce(b.balance, 0) - p.pending)::numeric(14, 2)::text as available
+       from (select coalesce(sum(amount), 0) as pending
+               from transaction
+              where account_id = $1
+                and kind = 'withdrawal'
+                and status in ('submitted', 'under_review', 'approved')) p
+       left join account_balance b on b.account_id = $1`,
+    [accountId]
+  );
+  const r = result.rows[0];
+  return {
+    balance: r.balance,
+    pendingDebits: r.pending,
+    available: r.available,
+  };
+}

@@ -1,7 +1,7 @@
 // One account's balance, from the ledger's cache (S-1309, S-1310).
 import type { APIRoute } from 'astro';
 import { defineEndpoint, apiSuccess, ApiError } from '@lib/api/endpoint';
-import { accountBalance } from '@lib/ledger/ledger';
+import { accountBalance, availableBalance } from '@lib/ledger/ledger';
 import { query } from '@lib/db/pool';
 
 const endpoint = defineEndpoint(
@@ -13,18 +13,32 @@ const endpoint = defineEndpoint(
       'The balance the ledger holds for the account: the sum of every ' +
       'posted entry, maintained by the engine as each one posts ' +
       '(docs/ledger.md). An account nothing has ever posted to reads as ' +
-      '"0.00" with no entries.',
+      '"0.00" with no entries. "available" is the balance less every ' +
+      'withdrawal already submitted, under review or approved but not yet ' +
+      'paid out — what a further withdrawal can draw on.',
     tag: 'Transactions',
     permission: 'account.view',
     responseSchema: {
       type: 'object',
-      required: ['accountId', 'accountNo', 'balance', 'currency', 'entryCount'],
+      required: [
+        'accountId',
+        'accountNo',
+        'balance',
+        'available',
+        'currency',
+        'entryCount',
+      ],
       properties: {
         accountId: { type: 'string', format: 'uuid' },
         accountNo: { type: 'string' },
         accountTypeName: { type: 'string' },
         status: { type: 'string' },
         balance: { type: 'string' },
+        pendingDebits: {
+          type: 'string',
+          description: 'Withdrawals on their way out, not yet posted.',
+        },
+        available: { type: 'string' },
         currency: { type: 'string' },
         entryCount: { type: 'integer' },
         asOfSequenceNo: { type: 'integer', nullable: true },
@@ -46,7 +60,10 @@ const endpoint = defineEndpoint(
         )
       : null;
     if (!account?.rows[0]) throw new ApiError('not_found');
-    const balance = await accountBalance(id!);
+    const [balance, available] = await Promise.all([
+      accountBalance(id!),
+      availableBalance(id!),
+    ]);
     return apiSuccess(
       {
         accountId: id,
@@ -54,6 +71,8 @@ const endpoint = defineEndpoint(
         accountTypeName: account.rows[0].type_name,
         status: account.rows[0].status,
         balance: balance?.balance ?? '0.00',
+        pendingDebits: available.pendingDebits,
+        available: available.available,
         currency: 'MUR',
         entryCount: balance?.entryCount ?? 0,
         asOfSequenceNo: balance?.asOfSequenceNo ?? null,

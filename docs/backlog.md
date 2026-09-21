@@ -4019,7 +4019,23 @@ the chain has changed. _(APR-US-007, FRD 12)_
 and the trail — and a transfer is two legs under one id, never two
 transactions that happen to match.
 
-### S-1501 · Withdrawal
+**Shipped, first increment** (S-1501, S-1502, S-1503): a withdrawal, end to
+end. Migration 0072 widens the kind check, teaches `post_transaction()` a
+debit that refuses to breach the type's floor, and adds the rule that the
+approver may not disburse. `recordWithdrawal()` checks in FRD 6.3's order and
+names the first failure — the type, the holder, the available balance, the
+floor, the maximum — then the matrix: below the band it is paid out and
+posted at once with its receipt, the method's reference demanded now; above
+it, capture alone submits it and paying out is `postApprovedTransaction()`'s
+separate act once approved, recording the method and reference and dating
+the entry the disbursement. `availableBalance()` is the balance less what is
+already on its way out, on the form and on the balance endpoint. Withdrawal
+in the person's banner, the Transactions card by type and number, the
+review screen's pay-out form and correction form, and
+`POST /api/v1/withdrawals`. **Not yet:** transfers (S-1504), drafts and
+reversals (S-1505), the history across accounts (S-1506).
+
+### S-1501 · Withdrawal ✅
 
 **As** an officer, **I need** to record a withdrawal that the engine
 validates before anyone approves it, **so that** a request that cannot
@@ -4041,7 +4057,7 @@ succeed is refused at the counter. _(TXN-US-004, TXN-US-005, FRD 6.3)_
   by mistake — resignation (M17) is the way out. Recorded as decision 12
 - `kind = 'withdrawal'` is added to `transaction`; `POST /api/v1/withdrawals`
 
-### S-1502 · Available, not merely current
+### S-1502 · Available, not merely current ✅
 
 **As** an officer, **I need** the balance I quote to allow for what is
 already on its way out, **so that** two withdrawals in one afternoon do not
@@ -4055,7 +4071,7 @@ both pass. _(TXN-US-007, open point 7)_
 - Shown beside the current balance on the withdrawal and transfer screens,
   and returned by the balance endpoint as a second figure
 
-### S-1503 · Disbursing an approved withdrawal
+### S-1503 · Disbursing an approved withdrawal ✅
 
 **As** the Treasurer, **I need** to record how an approved withdrawal was
 paid out, **so that** the money moves when it is paid, not when it is

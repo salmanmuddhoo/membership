@@ -130,6 +130,45 @@ and the MSA, the account's own for an HSA or Investment;
 `findAccountByNumber`, `src/lib/ledger/lookup.ts`), then opens the same form
 with that account chosen.
 
+## Recording a withdrawal
+
+`recordWithdrawal()` in `src/lib/ledger/withdrawals.ts` (S-1501) is the same
+shape as a deposit, with the checks money leaving needs, in FRD 6.3's order
+and naming the first failure: the account is active and its type allows
+withdrawals (`allows_withdrawal`, S-1304); the holder is active — not
+dormant, resigned or demised; the **available** balance covers it; the
+balance after would not fall below the type's `minimum_balance` (hard, FRD
+4.3 — a Shares account cannot be drawn below membership by mistake, and
+resignation is the way out, decision 12); the amount is within the type's
+maximum. Then the matrix (S-1401): below its band the withdrawal is paid out
+and posted at once by the officer recording it, who needs `transaction.post`
+and gives the reference the method requires; above it, capture alone submits
+it to its chain, and paying it out is a separate act once approved.
+
+**Available, not merely current** (S-1502): `availableBalance()` in
+`ledger.ts` is the balance less every withdrawal on the account that is
+submitted, under review or approved — what is already on its way out. A
+query over `transaction`, not a ledger entry, so a rejection releases it by
+doing nothing. The withdrawal form shows it beside the balance, and
+`GET /api/v1/accounts/{id}/balance` returns it as `available` with
+`pendingDebits`.
+
+**Disbursement** (S-1503): `postApprovedTransaction()` in `review.ts` takes,
+for a withdrawal, how it was actually paid — the method, and the reference
+where the method requires one or touches the Society's bank — records it on
+the transaction, then posts. The entry is dated the disbursement, not the
+decision, and the receipt is issued then. The person who approved it may not
+be the one who pays it out (0072's segregation rule), on top of the captor
+not being either.
+
+`post_transaction()` is the last line: a withdrawal posts as a debit and is
+refused there if it would take the account below its type's floor, because
+the balance may have moved between the decision and the disbursement (0072).
+
+Two ways in, as for a deposit: **Withdrawal** in the person's banner opens
+`/members/{id}/withdraw`; the **Transactions** card asks for the type and
+number and opens the same form. `POST /api/v1/withdrawals` is the endpoint.
+
 ## Where a balance is read
 
 - **The member's page** shows each account's balance from the cache, with a
@@ -253,7 +292,7 @@ statement:
 | `debit`   | Money out — a withdrawal, a payout  | falls   |
 
 `balance = sum(credits) − sum(debits)`. A deposit is one credit entry. A
-reversal of one is one debit entry. A transfer (M15) is a debit on the source
+reversal of one is one debit entry; a withdrawal is one debit entry (M15). A transfer (M15) is a debit on the source
 and a credit on the destination, both under one transaction pair.
 
 A transaction is held by a member **or** a customer (0027's non-member

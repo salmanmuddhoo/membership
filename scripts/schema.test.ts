@@ -425,12 +425,16 @@ describe('S-1301, S-1302 the ledger', () => {
       appUrl,
       `select earlier_action, later_action from segregation_rule
         where entity_type = 'transaction' and is_enabled
-        order by later_action`
+        order by later_action, earlier_action`
     );
     expect(rules.rows).toEqual([
       {
         earlier_action: 'transaction.captured',
         later_action: 'transaction.approved',
+      },
+      {
+        earlier_action: 'transaction.approved',
+        later_action: 'transaction.posted',
       },
       {
         earlier_action: 'transaction.captured',

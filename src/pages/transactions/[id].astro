@@ -15,6 +15,7 @@ import {
   PERMISSION_CAPTURE,
   resubmitDeposit,
 } from '@lib/ledger/deposits';
+import { resubmitWithdrawal, WithdrawalError } from '@lib/ledger/withdrawals';
 import {
   IN_FLIGHT,
   loadTransaction,
@@ -83,31 +84,49 @@ if (Astro.request.method === 'POST') {
       );
       notice = `${transaction.reference} ${STATUS_LABELS[result.status]?.toLowerCase() ?? result.status}.`;
     } else if (intent === 'post') {
-      const posted = await postApprovedTransaction(transaction.id, principal);
+      // A withdrawal says how it was paid out (S-1503); a deposit already
+      // said how it arrived.
+      const posted = await postApprovedTransaction(
+        transaction.id,
+        principal,
+        transaction.kind === 'withdrawal'
+          ? { method: text('method'), methodReference: text('methodReference') }
+          : undefined
+      );
       notice = posted.receiptNo
         ? `${transaction.reference} posted. Receipt ${posted.receiptNo}.`
         : `${transaction.reference} posted.`;
     } else if (intent === 'resubmit') {
-      const result = await resubmitDeposit(
-        transaction.id,
-        {
-          accountId: text('accountId'),
-          amount: text('amount'),
-          method: text('method'),
-          methodReference: text('methodReference'),
-          reason: text('reason'),
-          sourceOfFundFormConfirmed:
-            form.get('sourceOfFundFormConfirmed') === 'true',
-        },
-        principal
-      );
+      const edit = {
+        accountId: text('accountId'),
+        amount: text('amount'),
+        method: text('method'),
+        methodReference: text('methodReference'),
+        reason: text('reason'),
+      };
+      const result =
+        transaction.kind === 'withdrawal'
+          ? await resubmitWithdrawal(transaction.id, edit, principal)
+          : await resubmitDeposit(
+              transaction.id,
+              {
+                ...edit,
+                sourceOfFundFormConfirmed:
+                  form.get('sourceOfFundFormConfirmed') === 'true',
+              },
+              principal
+            );
       notice =
         result.status === 'posted'
           ? `${transaction.reference} posted. Receipt ${result.receiptNo}.`
           : `${transaction.reference} sent back for ${result.currentStepName ?? 'review'}.`;
     }
   } catch (err) {
-    if (err instanceof ReviewError || err instanceof DepositError) {
+    if (
+      err instanceof ReviewError ||
+      err instanceof DepositError ||
+      err instanceof WithdrawalError
+    ) {
       error = err.message;
     } else {
       console.error('[transactions/review]', err);
@@ -129,7 +148,11 @@ const canEdit =
   transaction.status === 'returned' &&
   transaction.capturedById === principal.userId &&
   principal.permissions.has(PERMISSION_CAPTURE) &&
-  transaction.kind === 'deposit';
+  (transaction.kind === 'deposit' || transaction.kind === 'withdrawal');
+const isDeposit = transaction.kind === 'deposit';
+// Posting a withdrawal is paying it out: the method and reference are
+// recorded then (S-1503).
+const disburses = transaction.kind === 'withdrawal';
 const stalled =
   (IN_FLIGHT as readonly string[]).includes(transaction.status) && !position;
 
@@ -154,11 +177,15 @@ const types = canEdit
   : new Map();
 const accounts = (person?.accounts ?? []).map(a => ({
   ...a,
-  acceptsDeposits: types.get(a.accountTypeId)?.allowsDeposit ?? false,
+  allowed: isDeposit
+    ? (types.get(a.accountTypeId)?.allowsDeposit ?? false)
+    : (types.get(a.accountTypeId)?.allowsWithdrawal ?? false),
 }));
-const paymentMethods = canEdit ? await offeredPaymentMethods() : [];
-const cashThreshold = canEdit ? await cashSourceOfFundThreshold() : '0';
-const cashMax = canEdit ? await cashMaximum() : '0';
+const paymentMethods =
+  canEdit || (canPost && disburses) ? await offeredPaymentMethods() : [];
+const cashThreshold =
+  canEdit && isDeposit ? await cashSourceOfFundThreshold() : '';
+const cashMax = canEdit && isDeposit ? await cashMaximum() : '';
 
 const dateFormat = new Intl.DateTimeFormat('en-GB', {
   day: 'numeric',
@@ -320,15 +347,51 @@ const DANGER =
     {canPost && (
       <form
         method="post"
-        class="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
+        data-disbursement-form
+        class="space-y-3 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
       >
         <p class="text-sm text-neutral-700 dark:text-neutral-200">
-          Approved. Posting moves the money
-          {transaction.kind === 'deposit' && ' and issues the receipt'}.
+          {disburses
+            ? 'Approved. Record how it was paid out; the money moves and the receipt is issued now.'
+            : 'Approved. Posting moves the money and issues the receipt.'}
         </p>
+        {disburses && (
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label class="text-sm text-neutral-600 dark:text-neutral-300">
+              Paid by
+              <select name="method" class={INPUT}>
+                {paymentMethods.map(method => (
+                  <option
+                    value={method.code}
+                    data-requires-reference={
+                      method.requiresReference || method.touchesBank
+                        ? 'true'
+                        : 'false'
+                    }
+                    selected={method.code === transaction!.method}
+                  >
+                    {method.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label
+              data-method-reference-field
+              class="text-sm text-neutral-600 dark:text-neutral-300"
+            >
+              Reference (cheque number, transfer reference)
+              <input
+                type="text"
+                name="methodReference"
+                value={transaction.methodReference}
+                class={INPUT}
+              />
+            </label>
+          </div>
+        )}
         <input type="hidden" name="intent" value="post" />
         <button type="submit" class={BUTTON}>
-          Post
+          {disburses ? 'Pay out and post' : 'Post'}
         </button>
       </form>
     )}
@@ -357,16 +420,16 @@ const DANGER =
               <option
                 value={account.id}
                 selected={account.id === transaction!.accountId}
-                disabled={
-                  !(account.status === 'active' && account.acceptsDeposits)
-                }
+                disabled={!(account.status === 'active' && account.allowed)}
               >
                 {account.accountNo} · {account.accountTypeName}
                 {account.status !== 'active'
                   ? ` · ${account.status}`
-                  : account.acceptsDeposits
+                  : account.allowed
                     ? ''
-                    : ' · no deposits'}
+                    : isDeposit
+                      ? ' · no deposits'
+                      : ' · no withdrawals'}
               </option>
             ))}
           </select>
@@ -385,14 +448,17 @@ const DANGER =
             />
           </label>
           <label class="text-sm text-neutral-600 dark:text-neutral-300">
-            Method
+            {isDeposit ? 'Method' : 'Paid by'}
             <select name="method" class={INPUT}>
               {paymentMethods.map(method => (
                 <option
                   value={method.code}
-                  data-cash={method.isCash ? 'true' : 'false'}
+                  data-cash={isDeposit && method.isCash ? 'true' : 'false'}
                   data-requires-reference={
-                    method.requiresReference ? 'true' : 'false'
+                    method.requiresReference ||
+                    (!isDeposit && method.touchesBank)
+                      ? 'true'
+                      : 'false'
                   }
                   selected={method.code === transaction!.method}
                 >
@@ -424,36 +490,40 @@ const DANGER =
             />
           </label>
         </div>
-        <div
-          data-cash-reminder
-          hidden
-          class="space-y-2 rounded-lg border border-amber-300 px-3 py-3 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200"
-        >
-          <p class="font-medium">
-            Cash above {formatMoney(cashThreshold)} needs the Source of Fund
-            form.
-          </p>
-          <label class="flex items-start gap-x-2">
-            <input
-              type="checkbox"
-              name="sourceOfFundFormConfirmed"
-              value="true"
-              checked={transaction.sourceOfFundFormConfirmed}
-              data-cash-form-confirm
-              class="text-mint-500 focus:ring-mint-400 mt-0.5 rounded border-neutral-300 dark:border-neutral-600"
-            />
-            The depositor has completed and signed the Source of Fund form, and
-            it is filed.
-          </label>
-        </div>
-        <p
-          data-cash-maximum-warning
-          hidden
-          class="rounded-lg border border-red-300 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:text-red-200"
-        >
-          Cash deposits above {formatMoney(cashMax)} are not authorised. Use
-          another method, or split the deposit.
-        </p>
+        {isDeposit && (
+          <>
+            <div
+              data-cash-reminder
+              hidden
+              class="space-y-2 rounded-lg border border-amber-300 px-3 py-3 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200"
+            >
+              <p class="font-medium">
+                Cash above {formatMoney(cashThreshold)} needs the Source of Fund
+                form.
+              </p>
+              <label class="flex items-start gap-x-2">
+                <input
+                  type="checkbox"
+                  name="sourceOfFundFormConfirmed"
+                  value="true"
+                  checked={transaction.sourceOfFundFormConfirmed}
+                  data-cash-form-confirm
+                  class="text-mint-500 focus:ring-mint-400 mt-0.5 rounded border-neutral-300 dark:border-neutral-600"
+                />
+                The depositor has completed and signed the Source of Fund form,
+                and it is filed.
+              </label>
+            </div>
+            <p
+              data-cash-maximum-warning
+              hidden
+              class="rounded-lg border border-red-300 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:text-red-200"
+            >
+              Cash deposits above {formatMoney(cashMax)} are not authorised. Use
+              another method, or split the deposit.
+            </p>
+          </>
+        )}
         <div class="flex flex-wrap gap-2 pt-2">
           <button type="submit" data-deposit-submit class={BUTTON}>
             Resubmit
@@ -509,6 +579,25 @@ const DANGER =
   // A visual nudge only — every rule is enforced server-side
   // (ledger/deposits.ts) whether or not this script runs. The same script
   // as the deposit form's.
+  const disbursement = document.querySelector<HTMLFormElement>(
+    '[data-disbursement-form]'
+  );
+  if (disbursement) {
+    const select =
+      disbursement.querySelector<HTMLSelectElement>('[name="method"]');
+    const field = disbursement.querySelector<HTMLElement>(
+      '[data-method-reference-field]'
+    );
+    const sync = () => {
+      if (field) {
+        field.hidden =
+          select?.selectedOptions[0]?.dataset.requiresReference !== 'true';
+      }
+    };
+    select?.addEventListener('change', sync);
+    sync();
+  }
+
   const form = document.querySelector<HTMLFormElement>('[data-deposit-form]');
   if (form) {
     const toCents = (value: string | undefined): number | null => {
