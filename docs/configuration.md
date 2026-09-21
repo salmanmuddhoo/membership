@@ -70,13 +70,32 @@ since one without the other is not something the scheduled job could act on.
 Both null by default: the transition exists but does nothing until an
 administrator sets both. See `docs/jobs.md`.
 
-### Account types (S-206, FRD 7.6)
+### Account types (S-206, S-1304, FRD 7.6, 4.3)
 
-`account_type`. Exactly one row is `is_membership_default` — the product a
-membership approval opens, the MSA today. A partial unique index allows only
-one, and the service refuses to deactivate whichever one it is. Changing the
-default affects approvals from that moment on; accounts already opened are
+`account_type`. Every row with `is_membership_default` is a product a
+membership approval opens — Shares and the MSA since migration 0018, one
+number, two accounts. The service refuses to clear or deactivate the last one,
+because an approval that opens nothing is a half-created member. Changing the
+set affects approvals from that moment on; accounts already opened are
 untouched.
+
+Each type also carries what the transaction engine reads before it moves
+money on an account of that type (migration 0065):
+
+| Column                       | Means                                                                                                              | Seeded                                       |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------ | -------------------------------------------- |
+| `minimum_balance`            | The floor. One figure, read identically by a withdrawal and a transfer out — FRD 4.3 is explicit there are not two | Shares: its opening minimum (5000); others 0 |
+| `allows_deposit`             | Whether a deposit may be posted to it                                                                              | true                                         |
+| `allows_withdrawal`          | Whether a withdrawal may                                                                                           | true                                         |
+| `allows_transfer`            | Whether a transfer, in or out, may                                                                                 | true                                         |
+| `maximum_transaction_amount` | The most one transaction may carry; null is no limit, and zero is refused (that is what the switches are for)      | null                                         |
+
+All five are edited on Configuration → Account types and audited by the same
+trigger as the rest of the row; a change applies to the next transaction, with
+no release. In `AccountTypeInput` they are optional: a caller that omits one
+gets the column default on create and leaves the current value alone on
+update, so a test or an import with no opinion on limits need not hold one.
+The configuration screen always sends all five.
 
 ### Fee schedules (S-207, FRD 7.8.1)
 

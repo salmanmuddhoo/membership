@@ -19,6 +19,19 @@ const canManage = principal.permissions.has('config.manage');
 let error: string | null = null;
 let notice: string | null = null;
 
+// Both forms carry all five limits (S-1304), so an unticked box is a "no"
+// and a blank cap is "no limit" — never "leave it alone".
+function limitsFrom(form: FormData) {
+  return {
+    minimumBalance: String(form.get('minimumBalance') ?? '0'),
+    allowsDeposit: form.get('allowsDeposit') === 'on',
+    allowsWithdrawal: form.get('allowsWithdrawal') === 'on',
+    allowsTransfer: form.get('allowsTransfer') === 'on',
+    maximumTransactionAmount:
+      String(form.get('maximumTransactionAmount') ?? '') || null,
+  };
+}
+
 if (Astro.request.method === 'POST') {
   if (!canManage) {
     error = 'You do not have permission to change configuration.';
@@ -41,6 +54,7 @@ if (Astro.request.method === 'POST') {
             requiresApproval: form.get('requiresApproval') === 'on',
             defaultStatus: String(form.get('defaultStatus') ?? 'active'),
             numberPrefix: String(form.get('numberPrefix') ?? '') || null,
+            ...limitsFrom(form),
           },
           actor
         );
@@ -59,6 +73,7 @@ if (Astro.request.method === 'POST') {
             defaultStatus: String(form.get('defaultStatus') ?? 'active'),
             isActive: form.get('isActive') === 'on',
             numberPrefix: String(form.get('numberPrefix') ?? '') || null,
+            ...limitsFrom(form),
           },
           actor
         );
@@ -150,6 +165,9 @@ const STATUSES = ['active', 'pending', 'inactive', 'dormant'];
               <span class="text-xs text-neutral-500 dark:text-neutral-400">
                 min. Rs {type.minimumOpeningAmount}
               </span>
+              <span class="text-xs text-neutral-500 dark:text-neutral-400">
+                floor Rs {type.minimumBalance}
+              </span>
             </summary>
 
             <form method="post" class="mt-4 grid gap-3 sm:grid-cols-2">
@@ -181,6 +199,28 @@ const STATUSES = ['active', 'pending', 'inactive', 'dormant'];
                   inputmode="decimal"
                   name="minimumOpeningAmount"
                   value={type.minimumOpeningAmount}
+                  disabled={!canManage}
+                  class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                />
+              </label>
+              <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                Minimum balance (Rs)
+                <input
+                  type="text"
+                  inputmode="decimal"
+                  name="minimumBalance"
+                  value={type.minimumBalance}
+                  disabled={!canManage}
+                  class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                />
+              </label>
+              <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                Maximum per transaction (Rs, blank for no limit)
+                <input
+                  type="text"
+                  inputmode="decimal"
+                  name="maximumTransactionAmount"
+                  value={type.maximumTransactionAmount ?? ''}
                   disabled={!canManage}
                   class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
                 />
@@ -224,6 +264,41 @@ const STATUSES = ['active', 'pending', 'inactive', 'dormant'];
                   ))}
                 </select>
               </label>
+              <fieldset class="flex flex-wrap gap-x-6 gap-y-2 sm:col-span-2">
+                <legend class="text-sm text-neutral-600 dark:text-neutral-300">
+                  Allowed on this account
+                </legend>
+                <label class="mt-1 flex items-center gap-x-2 text-sm text-neutral-600 dark:text-neutral-300">
+                  <input
+                    type="checkbox"
+                    name="allowsDeposit"
+                    checked={type.allowsDeposit}
+                    disabled={!canManage}
+                    class="text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600"
+                  />
+                  Deposits
+                </label>
+                <label class="mt-1 flex items-center gap-x-2 text-sm text-neutral-600 dark:text-neutral-300">
+                  <input
+                    type="checkbox"
+                    name="allowsWithdrawal"
+                    checked={type.allowsWithdrawal}
+                    disabled={!canManage}
+                    class="text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600"
+                  />
+                  Withdrawals
+                </label>
+                <label class="mt-1 flex items-center gap-x-2 text-sm text-neutral-600 dark:text-neutral-300">
+                  <input
+                    type="checkbox"
+                    name="allowsTransfer"
+                    checked={type.allowsTransfer}
+                    disabled={!canManage}
+                    class="text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600"
+                  />
+                  Transfers
+                </label>
+              </fieldset>
               <label class="flex items-center gap-x-2 text-sm text-neutral-600 dark:text-neutral-300">
                 <input
                   type="checkbox"
@@ -380,6 +455,25 @@ const STATUSES = ['active', 'pending', 'inactive', 'dormant'];
             />
           </label>
           <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            Minimum balance (Rs)
+            <input
+              type="text"
+              inputmode="decimal"
+              name="minimumBalance"
+              value="0.00"
+              class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+            />
+          </label>
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            Maximum per transaction (Rs, blank for no limit)
+            <input
+              type="text"
+              inputmode="decimal"
+              name="maximumTransactionAmount"
+              class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+            />
+          </label>
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
             Number prefix for a non-member's account (e.g. HSA)
             <input
               type="text"
@@ -388,6 +482,38 @@ const STATUSES = ['active', 'pending', 'inactive', 'dormant'];
               class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
             />
           </label>
+          <fieldset class="flex flex-wrap gap-x-6 gap-y-2 sm:col-span-2">
+            <legend class="text-sm text-neutral-600 dark:text-neutral-300">
+              Allowed on this account
+            </legend>
+            <label class="mt-1 flex items-center gap-x-2 text-sm text-neutral-600 dark:text-neutral-300">
+              <input
+                type="checkbox"
+                name="allowsDeposit"
+                checked
+                class="text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600"
+              />
+              Deposits
+            </label>
+            <label class="mt-1 flex items-center gap-x-2 text-sm text-neutral-600 dark:text-neutral-300">
+              <input
+                type="checkbox"
+                name="allowsWithdrawal"
+                checked
+                class="text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600"
+              />
+              Withdrawals
+            </label>
+            <label class="mt-1 flex items-center gap-x-2 text-sm text-neutral-600 dark:text-neutral-300">
+              <input
+                type="checkbox"
+                name="allowsTransfer"
+                checked
+                class="text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600"
+              />
+              Transfers
+            </label>
+          </fieldset>
           <div class="sm:col-span-2">
             <button
               type="submit"
