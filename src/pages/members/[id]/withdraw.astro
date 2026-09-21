@@ -1,0 +1,368 @@
+---
+// Record a withdrawal from one of a member's (or a customer's) accounts
+// (S-1501, S-1502). The rules are ledger/withdrawals.ts's; this page gathers
+// the form, shows the balance and what is available beside it, and shows
+// the receipt or the step it waits at.
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import { listAccountTypes, offeredPaymentMethods } from '@lib/config/reference';
+import { availableBalance } from '@lib/ledger/ledger';
+import {
+  PERMISSION_CAPTURE,
+  recordWithdrawal,
+  WithdrawalError,
+  type Withdrawal,
+} from '@lib/ledger/withdrawals';
+import { loadCustomer, loadMember } from '@lib/members/create';
+import { formatMoney } from '@lib/payments/money';
+
+const principal = Astro.locals.principal!;
+if (!principal.permissions.has(PERMISSION_CAPTURE)) {
+  return Astro.redirect('/denied');
+}
+
+const { id } = Astro.params;
+const member = id ? await loadMember(id) : null;
+const customer = !member && id ? await loadCustomer(id) : null;
+if (!member && !customer) return new Response('Not found', { status: 404 });
+const person = (member ?? customer)!;
+const personLabel = member
+  ? `${member.name} · ${member.memberNo}`
+  : person.name;
+
+const types = new Map((await listAccountTypes()).map(t => [t.id, t]));
+const accounts = await Promise.all(
+  person.accounts.map(async account => {
+    const figures = await availableBalance(account.id);
+    const type = types.get(account.accountTypeId);
+    return {
+      ...account,
+      balance: figures.balance,
+      available: figures.available,
+      pendingDebits: figures.pendingDebits,
+      floor: type?.minimumBalance ?? '0.00',
+      allowsWithdrawal: type?.allowsWithdrawal ?? false,
+    };
+  })
+);
+const withdrawable = accounts.filter(
+  a => a.status === 'active' && a.allowsWithdrawal
+);
+
+const paymentMethods = await offeredPaymentMethods();
+const requestedAccount = Astro.url.searchParams.get('account') ?? '';
+const fromTransactions = Astro.url.searchParams.get('from') === 'transactions';
+
+let values: Record<
+  | 'accountId'
+  | 'amount'
+  | 'method'
+  | 'methodReference'
+  | 'reason'
+  | 'idempotencyKey',
+  string
+> = {
+  accountId:
+    withdrawable.find(a => a.id === requestedAccount)?.id ??
+    withdrawable[0]?.id ??
+    '',
+  amount: '',
+  method: paymentMethods[0]?.code ?? '',
+  methodReference: '',
+  reason: '',
+  idempotencyKey: crypto.randomUUID(),
+};
+let error: string | null = null;
+let withdrawal: Withdrawal | null = null;
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const text = (name: string) => String(form.get(name) ?? '');
+  values = {
+    accountId: text('accountId'),
+    amount: text('amount'),
+    method: text('method'),
+    methodReference: text('methodReference'),
+    reason: text('reason'),
+    idempotencyKey: text('idempotencyKey') || crypto.randomUUID(),
+  };
+  if (!person.accounts.some(a => a.id === values.accountId)) {
+    error = 'Choose which account the withdrawal comes from.';
+  } else {
+    try {
+      withdrawal = await recordWithdrawal(values, principal);
+    } catch (err) {
+      if (err instanceof WithdrawalError) {
+        error = err.message;
+      } else {
+        console.error('[members/withdraw]', err);
+        error = 'Something went wrong. Please try again.';
+      }
+    }
+  }
+}
+
+const INPUT =
+  'mt-1 block w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100';
+---
+
+<DashboardLayout
+  title="Withdrawal · Al Barakah MCSL"
+  heading="Record a withdrawal"
+>
+  <div class="mx-auto max-w-3xl space-y-6">
+    <p class="flex flex-wrap items-center gap-x-3 text-sm text-neutral-600 dark:text-neutral-300">
+      {fromTransactions && (
+        <a
+          href="/transactions"
+          class="text-neutral-500 underline dark:text-neutral-400"
+        >
+          ← Transactions
+        </a>
+      )}
+      <a
+        href={`/members/${person.id}`}
+        class="font-medium underline hover:text-neutral-900 dark:hover:text-neutral-100"
+      >
+        {personLabel}
+      </a>
+    </p>
+
+    {error && (
+      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+        {error}
+      </div>
+    )}
+
+    {withdrawal ? (
+      <section class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-2xl border p-6">
+        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+          {withdrawal.status === 'posted'
+            ? `Withdrawal ${withdrawal.reference} paid out`
+            : `Withdrawal ${withdrawal.reference} submitted for approval`}
+        </h2>
+        {withdrawal.status !== 'posted' && withdrawal.currentStepName && (
+          <p class="mt-1 text-sm text-neutral-600 dark:text-neutral-300">
+            Waiting for {withdrawal.currentStepName}
+            {withdrawal.currentStepRole && ` (${withdrawal.currentStepRole})`}.
+            It is paid out once approved.
+          </p>
+        )}
+        <dl class="mt-4 grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
+          {withdrawal.receiptNo && (
+            <>
+              <dt class="text-neutral-500 dark:text-neutral-400">Receipt</dt>
+              <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+                {withdrawal.receiptNo}
+              </dd>
+            </>
+          )}
+          <dt class="text-neutral-500 dark:text-neutral-400">Amount</dt>
+          <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+            {formatMoney(withdrawal.amount, withdrawal.currency)} by{' '}
+            {withdrawal.methodName}
+            {withdrawal.methodReference && ` · ${withdrawal.methodReference}`}
+          </dd>
+          <dt class="text-neutral-500 dark:text-neutral-400">From</dt>
+          <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+            {withdrawal.accountNo} · {withdrawal.accountTypeName}
+          </dd>
+          {withdrawal.balanceAfter && (
+            <>
+              <dt class="text-neutral-500 dark:text-neutral-400">
+                Balance now
+              </dt>
+              <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+                {formatMoney(withdrawal.balanceAfter, withdrawal.currency)}
+              </dd>
+            </>
+          )}
+        </dl>
+        <div class="mt-5 flex flex-wrap gap-2">
+          <a
+            href={`/members/${person.id}`}
+            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+          >
+            Back to {member ? 'member' : 'customer'}
+          </a>
+          {withdrawal.status !== 'posted' && (
+            <a
+              href={`/transactions/${withdrawal.id}`}
+              class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+            >
+              Follow it
+            </a>
+          )}
+          <a
+            href={
+              fromTransactions
+                ? '/transactions/withdrawal'
+                : `/members/${person.id}/withdraw`
+            }
+            class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+          >
+            Record another
+          </a>
+        </div>
+      </section>
+    ) : withdrawable.length === 0 ? (
+      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-300">
+        {person.status !== 'active'
+          ? `This ${member ? 'member' : 'customer'} is ${person.status}, so nothing can be withdrawn.`
+          : 'None of these accounts allows a withdrawal.'}
+      </section>
+    ) : (
+      <form
+        method="post"
+        data-withdrawal-form
+        class="space-y-4 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
+      >
+        <input
+          type="hidden"
+          name="idempotencyKey"
+          value={values.idempotencyKey}
+        />
+
+        <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+          Account
+          <select name="accountId" class={INPUT}>
+            {accounts.map(account => (
+              <option
+                value={account.id}
+                selected={account.id === values.accountId}
+                disabled={
+                  !(account.status === 'active' && account.allowsWithdrawal)
+                }
+                data-available={account.available}
+                data-floor={account.floor}
+              >
+                {account.accountNo} · {account.accountTypeName} ·{' '}
+                {formatMoney(account.balance)}
+                {account.pendingDebits !== '0.00' &&
+                  ` · ${formatMoney(account.available)} available`}
+                {account.status !== 'active'
+                  ? ` · ${account.status}`
+                  : account.allowsWithdrawal
+                    ? ''
+                    : ' · no withdrawals'}
+              </option>
+            ))}
+          </select>
+        </label>
+        <p
+          data-available-note
+          class="text-xs text-neutral-500 dark:text-neutral-400"
+        ></p>
+
+        <div class="grid gap-3 sm:grid-cols-2">
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            Amount (Rs)
+            <input
+              type="text"
+              inputmode="decimal"
+              name="amount"
+              required
+              value={values.amount}
+              class={INPUT}
+            />
+          </label>
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            Paid by
+            <select name="method" class={INPUT}>
+              {paymentMethods.map(method => (
+                <option
+                  value={method.code}
+                  data-requires-reference={
+                    method.requiresReference || method.touchesBank
+                      ? 'true'
+                      : 'false'
+                  }
+                  selected={method.code === values.method}
+                >
+                  {method.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label
+            data-method-reference-field
+            class="text-sm text-neutral-600 dark:text-neutral-300"
+          >
+            Reference (cheque number, transfer reference)
+            <input
+              type="text"
+              name="methodReference"
+              value={values.methodReference}
+              class={INPUT}
+            />
+          </label>
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            Note
+            <input
+              type="text"
+              name="reason"
+              value={values.reason}
+              maxlength="200"
+              class={INPUT}
+            />
+          </label>
+        </div>
+
+        <div class="flex flex-wrap gap-2 pt-2">
+          <button
+            type="submit"
+            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+          >
+            Record withdrawal
+          </button>
+          <a
+            href={`/members/${person.id}`}
+            class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+          >
+            Cancel
+          </a>
+        </div>
+      </form>
+    )}
+  </div>
+</DashboardLayout>
+
+<script>
+  // A visual nudge only — every rule is enforced server-side
+  // (ledger/withdrawals.ts) whether or not this script runs: what is
+  // available on the chosen account, its floor, and whether the method
+  // carries a reference.
+  const form = document.querySelector<HTMLFormElement>(
+    '[data-withdrawal-form]'
+  );
+  if (form) {
+    const accountSelect =
+      form.querySelector<HTMLSelectElement>('[name="accountId"]');
+    const note = form.querySelector<HTMLElement>('[data-available-note]');
+    const methodSelect =
+      form.querySelector<HTMLSelectElement>('[name="method"]');
+    const referenceField = form.querySelector<HTMLElement>(
+      '[data-method-reference-field]'
+    );
+    const money = (value: string) =>
+      `Rs ${Number(value).toLocaleString('en-GB', { minimumFractionDigits: 2 })}`;
+    const recompute = () => {
+      const account = accountSelect?.selectedOptions[0];
+      if (note && account) {
+        const available = account.dataset.available ?? '0';
+        const floor = account.dataset.floor ?? '0';
+        const room = Math.max(0, Number(available) - Number(floor));
+        note.textContent =
+          Number(floor) > 0
+            ? `${money(available)} available; the account keeps at least ${money(floor)}, so up to ${money(room.toFixed(2))} can be withdrawn.`
+            : `${money(available)} available.`;
+      }
+      const method = methodSelect?.selectedOptions[0];
+      if (referenceField) {
+        referenceField.hidden = method?.dataset.requiresReference !== 'true';
+      }
+    };
+    accountSelect?.addEventListener('change', recompute);
+    methodSelect?.addEventListener('change', recompute);
+    recompute();
+  }
+</script>

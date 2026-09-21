@@ -73,7 +73,8 @@ they act on. Posting an approved transaction stays `transaction.post`.
 
 The segregation rules (`entity_type = 'transaction'`) say the officer who
 captured a transaction may not review it, approve it, post it through a
-chain, or void its receipt. They key on the `transaction.captured` audit row
+chain, or void its receipt — and, from migration 0072, that the person who
+approved it may not be the one who pays it out (S-1503). They key on the `transaction.captured` audit row
 the capture path writes, and are consulted wherever that later act is
 someone else's; the one-act deposit consults none.
 

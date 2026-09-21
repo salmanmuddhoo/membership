@@ -21,7 +21,11 @@ const KINDS: { label: string; href: string | null; blurb: string }[] = [
     href: '/transactions/deposit',
     blurb: 'Money into a Shares, MSA or other account.',
   },
-  { label: 'Withdrawal', href: null, blurb: 'Money out of an account.' },
+  {
+    label: 'Withdrawal',
+    href: '/transactions/withdrawal',
+    blurb: 'Money out of an account.',
+  },
   { label: 'Transfer', href: null, blurb: 'Between accounts, or out.' },
   { label: 'Resignation', href: null, blurb: 'A member leaves the Society.' },
   {

@@ -23,7 +23,8 @@ import {
   markReceiptIssued,
 } from '../payments/receipts';
 import { LedgerError, postTransaction } from './ledger';
-import type { TransactionKind } from '../config/reference';
+import type { PaymentMethod, TransactionKind } from '../config/reference';
+import { offeredMethod, PaymentError } from '../payments/payments';
 
 export const PERMISSION_REVIEW = 'transaction.review';
 export const PERMISSION_APPROVE = 'transaction.approve';
@@ -77,10 +78,16 @@ export interface TransactionSummary {
   submittedAt: Date | null;
   postedAt: Date | null;
   receiptNo: string | null;
+  // What the account stood at once this posted; null until then.
+  balanceAfter: string | null;
   workflowDefinitionId: string | null;
   workflowCode: string | null;
   workflowName: string | null;
   currentStepCode: string | null;
+  // The step it was left at, named — the chain as it is now may say
+  // otherwise (positionOf).
+  currentStepName: string | null;
+  currentStepRole: string | null;
   approvalRuleId: string | null;
   sourceOfFundFormConfirmed: boolean;
 }
@@ -100,9 +107,11 @@ const SELECT = `
          m.member_no,
          t.captured_by, u.display_name as captured_by_name,
          t.created_at, t.submitted_at, t.posted_at, rn.receipt_no,
+         fe.payload->>'balance_after' as balance_after,
          t.workflow_definition_id, wd.code as workflow_code,
-         wd.name as workflow_name, t.current_step_code, t.approval_rule_id,
-         t.source_of_fund_form_confirmed
+         wd.name as workflow_name, t.current_step_code,
+         ws.name as current_step_name, wr.name as current_step_role,
+         t.approval_rule_id, t.source_of_fund_form_confirmed
     from transaction t
     join account a on a.id = t.account_id
     join account_type at on at.id = a.account_type_id
@@ -114,7 +123,12 @@ const SELECT = `
       on p.application_id = coalesce(m.application_id, c.application_id)
      and p.subject = 'applicant' and p.ordinal = 1
     left join receipt_number rn on rn.id = t.receipt_number_id
+    left join financial_event fe
+      on fe.transaction_id = t.id and fe.event_type = 'transaction.posted'
     left join workflow_definition wd on wd.id = t.workflow_definition_id
+    left join workflow_step ws
+      on ws.definition_id = wd.id and ws.code = t.current_step_code
+    left join role wr on wr.id = ws.role_id
 `;
 
 interface Row {
@@ -142,10 +156,13 @@ interface Row {
   submitted_at: Date | null;
   posted_at: Date | null;
   receipt_no: string | null;
+  balance_after: string | null;
   workflow_definition_id: string | null;
   workflow_code: string | null;
   workflow_name: string | null;
   current_step_code: string | null;
+  current_step_name: string | null;
+  current_step_role: string | null;
   approval_rule_id: string | null;
   source_of_fund_form_confirmed: boolean;
 }
@@ -176,10 +193,13 @@ function assemble(r: Row): TransactionSummary {
     submittedAt: r.submitted_at,
     postedAt: r.posted_at,
     receiptNo: r.receipt_no,
+    balanceAfter: r.balance_after,
     workflowDefinitionId: r.workflow_definition_id,
     workflowCode: r.workflow_code,
     workflowName: r.workflow_name,
     currentStepCode: r.current_step_code,
+    currentStepName: r.current_step_name,
+    currentStepRole: r.current_step_role,
     approvalRuleId: r.approval_rule_id,
     sourceOfFundFormConfirmed: r.source_of_fund_form_confirmed,
   };
@@ -530,14 +550,41 @@ export async function reviewTransaction(
   return { status };
 }
 
+// S-1503: how an approved withdrawal was paid out. The reference is
+// mandatory where the method requires one and where it touches the
+// Society's bank (S-1307); from M19 it names which bank account.
+export interface Disbursement {
+  method: string;
+  methodReference?: string;
+}
+
+// Money leaving needs to say how it left; money arriving already said.
+const DISBURSED_KINDS: ReadonlySet<TransactionKind> = new Set(['withdrawal']);
+
+export function requireDisbursementReference(
+  method: PaymentMethod,
+  reference: string | undefined
+): void {
+  if (
+    (method.requiresReference || method.touchesBank) &&
+    (reference ?? '').trim() === ''
+  ) {
+    throw new ReviewError(`Enter the ${method.name.toLowerCase()} reference.`);
+  }
+}
+
 /**
- * S-1403 · Post an approved transaction: the act that moves the money, by
- * whoever holds transaction.post and did not capture it. A deposit takes
- * its receipt here, since a receipt is issued when money posts.
+ * S-1403, S-1503 · Post an approved transaction: the act that moves the
+ * money, by whoever holds transaction.post and neither captured nor
+ * approved it. A withdrawal is disbursed here — the method and reference
+ * it was actually paid by are recorded first, and the entry is dated the
+ * disbursement, not the decision. A receipt is issued when money posts,
+ * either way.
  */
 export async function postApprovedTransaction(
   id: string,
-  principal: Principal
+  principal: Principal,
+  disbursement?: Disbursement
 ): Promise<TransactionSummary> {
   if (!principal.permissions.has(PERMISSION_POST)) {
     throw new ReviewError(
@@ -555,26 +602,48 @@ export async function postApprovedTransaction(
       'conflict'
     );
   }
+  let paidBy: { code: string; reference: string | null } | null = null;
+  if (DISBURSED_KINDS.has(transaction.kind)) {
+    if (!disbursement) {
+      throw new ReviewError('Say how it was paid out.');
+    }
+    try {
+      const method = await offeredMethod(disbursement.method);
+      requireDisbursementReference(method, disbursement.methodReference);
+      paidBy = {
+        code: method.code,
+        reference: (disbursement.methodReference ?? '').trim() || null,
+      };
+    } catch (err) {
+      if (err instanceof PaymentError) throw new ReviewError(err.message);
+      throw err;
+    }
+  }
   await refuseUnlessSegregated(principal, transaction.reference, ACTION_POSTED);
 
-  const receipt =
-    transaction.kind === 'deposit'
-      ? await allocateReceiptNumber(principal.userId)
-      : null;
+  const receipt = await allocateReceiptNumber(principal.userId);
   try {
     await withTransaction(async client => {
-      if (receipt) {
-        await client.query(
-          `update transaction set receipt_number_id = $2 where id = $1`,
-          [transaction.id, receipt.id]
-        );
-      }
+      await client.query(
+        `update transaction
+            set receipt_number_id = $2,
+                method = coalesce($3, method),
+                method_reference = case when $3 is null then method_reference
+                                        else $4 end
+          where id = $1`,
+        [
+          transaction.id,
+          receipt.id,
+          paidBy?.code ?? null,
+          paidBy?.reference ?? null,
+        ]
+      );
       await postTransaction(
         transaction.id,
         { userId: principal.userId, description: principal.email },
         client
       );
-      if (receipt) await markReceiptIssued(receipt.id, client);
+      await markReceiptIssued(receipt.id, client);
       await client.query(
         `insert into transaction_transition
            (transaction_id, from_status, to_status, step_code, actor_user_id,
@@ -590,14 +659,12 @@ export async function postApprovedTransaction(
       );
     });
   } catch (err) {
-    if (receipt) {
-      await abandonReceiptNumber(
-        receipt.id,
-        err instanceof LedgerError
-          ? err.message
-          : 'The transaction failed while posting.'
-      );
-    }
+    await abandonReceiptNumber(
+      receipt.id,
+      err instanceof LedgerError
+        ? err.message
+        : 'The transaction failed while posting.'
+    );
     if (err instanceof LedgerError) {
       throw new ReviewError(err.message, 'conflict');
     }
