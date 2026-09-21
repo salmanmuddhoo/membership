@@ -3,7 +3,11 @@
 // role owns, approved ones they may post, and their own captures a reviewer
 // returned. One queue for every kind, oldest first, filterable by kind.
 import DashboardLayout from '@layouts/DashboardLayout.astro';
-import { TRANSACTION_KINDS, type TransactionKind } from '@lib/config/reference';
+import {
+  TRANSACTION_KINDS,
+  type TransactionKind,
+  type TransactionRowKind,
+} from '@lib/config/reference';
 import {
   approvedTransactions,
   pendingTransactions,
@@ -13,10 +17,12 @@ import { formatMoney } from '@lib/payments/money';
 
 const principal = Astro.locals.principal!;
 
-const KIND_LABELS: Record<TransactionKind, string> = {
+const KIND_LABELS: Record<TransactionRowKind, string> = {
   deposit: 'Deposit',
   withdrawal: 'Withdrawal',
   transfer: 'Transfer',
+  transfer_leg: 'Transfer',
+  reversal: 'Reversal',
   closure: 'Closure',
   resignation: 'Resignation',
   demise: 'Demise',

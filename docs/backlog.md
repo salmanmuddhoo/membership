@@ -4032,8 +4032,22 @@ the entry the disbursement. `availableBalance()` is the balance less what is
 already on its way out, on the form and on the balance endpoint. Withdrawal
 in the person's banner, the Transactions card by type and number, the
 review screen's pay-out form and correction form, and
-`POST /api/v1/withdrawals`. **Not yet:** transfers (S-1504), drafts and
-reversals (S-1505), the history across accounts (S-1506).
+`POST /api/v1/withdrawals`.
+
+**Shipped, second increment** (S-1504): a transfer is two legs under one
+id. Migration 0073 adds `transfer` (`TR-000001`) and the `transfer_leg`
+kind with its direction and, for a payee with no account here, the payee's
+name; `post_transaction()` posts a debit leg and then its credit leg in the
+same call, so both post or neither, and holds the floor on any debit. The
+debit leg is the transaction the matrix routes — as `transfer` between the
+same holder's accounts, as a withdrawal when the money leaves their
+control — and the chain reviews; the credit leg follows, never queued,
+never posted alone, and rejected with it. A payee transfer has one leg and
+is paid out at disbursement (S-1503). Transfer in the person's banner, the
+Transactions card, the review screen showing the other side and a
+correction form for the amount and note, and `POST /api/v1/transfers` with
+one key for the pair. **Not yet:** drafts and reversals (S-1505), the
+history across accounts (S-1506).
 
 ### S-1501 · Withdrawal ✅
 
@@ -4087,7 +4101,7 @@ approved. _(TXN-US-004, CLS-US-005 pattern, FRD 6.3, 15)_
 - Segregation: the approver and the disburser are different people
   (S-1311's rules)
 
-### S-1504 · Transfer
+### S-1504 · Transfer ✅
 
 **As** an officer, **I need** to move money between accounts as one
 transfer, **so that** the two sides can never be reconciled apart.

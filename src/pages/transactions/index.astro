@@ -26,7 +26,11 @@ const KINDS: { label: string; href: string | null; blurb: string }[] = [
     href: '/transactions/withdrawal',
     blurb: 'Money out of an account.',
   },
-  { label: 'Transfer', href: null, blurb: 'Between accounts, or out.' },
+  {
+    label: 'Transfer',
+    href: '/transactions/transfer',
+    blurb: 'Between accounts, or out.',
+  },
   { label: 'Resignation', href: null, blurb: 'A member leaves the Society.' },
   {
     label: 'Closure',

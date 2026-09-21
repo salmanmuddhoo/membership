@@ -105,7 +105,7 @@ function parseAmount(amount: string): number {
   return amountCents;
 }
 
-interface Source {
+export interface Source {
   id: string;
   accountTypeId: string;
   status: string;
@@ -114,11 +114,14 @@ interface Source {
   holderStatus: string;
   typeName: string;
   allowsWithdrawal: boolean;
+  allowsTransfer: boolean;
   minimumBalance: string;
   maximumTransactionAmount: string | null;
 }
 
-async function source(accountId: string): Promise<Source> {
+// The account money is to leave, with what the checks need. Shared with a
+// transfer's debit leg (S-1504), which meets every check a withdrawal does.
+export async function source(accountId: string): Promise<Source> {
   const result = await query<{
     id: string;
     account_type_id: string;
@@ -128,13 +131,14 @@ async function source(accountId: string): Promise<Source> {
     holder_status: string;
     type_name: string;
     allows_withdrawal: boolean;
+    allows_transfer: boolean;
     minimum_balance: string;
     maximum_transaction_amount: string | null;
   }>(
     `select a.id, a.account_type_id, a.status, a.member_id, a.customer_id,
             coalesce(m.status, c.status) as holder_status,
-            at.name as type_name, at.allows_withdrawal, at.minimum_balance,
-            at.maximum_transaction_amount
+            at.name as type_name, at.allows_withdrawal, at.allows_transfer,
+            at.minimum_balance, at.maximum_transaction_amount
        from account a
        join account_type at on at.id = a.account_type_id
        left join member m on m.id = a.member_id
@@ -155,6 +159,7 @@ async function source(accountId: string): Promise<Source> {
     holderStatus: r.holder_status,
     typeName: r.type_name,
     allowsWithdrawal: r.allows_withdrawal,
+    allowsTransfer: r.allows_transfer,
     minimumBalance: r.minimum_balance,
     maximumTransactionAmount: r.maximum_transaction_amount,
   };
@@ -163,23 +168,28 @@ async function source(accountId: string): Promise<Source> {
 // The checks, in FRD 6.3's order, the first failure named (S-1501). The
 // available balance excludes what is already on its way out (S-1502), and a
 // transaction being corrected excludes itself from that.
-async function refuseUnlessWithdrawable(
+export async function refuseUnlessWithdrawable(
   from: Source,
   amountCents: number,
-  excludingTransactionId: string | null = null
+  excludingTransactionId: string | null = null,
+  operation: 'withdrawal' | 'transfer' = 'withdrawal'
 ): Promise<void> {
+  const verb = operation === 'transfer' ? 'transferred' : 'withdrawn';
   if (from.status !== 'active') {
     throw new WithdrawalError(
-      `This account is ${from.status}, so nothing can be withdrawn from it.`
+      `This account is ${from.status}, so nothing can be ${verb} from it.`
     );
   }
-  if (!from.allowsWithdrawal) {
+  if (operation === 'withdrawal' && !from.allowsWithdrawal) {
     throw new WithdrawalError(`${from.typeName} does not allow withdrawals.`);
+  }
+  if (operation === 'transfer' && !from.allowsTransfer) {
+    throw new WithdrawalError(`${from.typeName} does not allow transfers.`);
   }
   if (from.holderStatus !== 'active') {
     throw new WithdrawalError(
       `This ${from.memberId ? 'member' : 'customer'} is ${from.holderStatus}, ` +
-        'so nothing can be withdrawn.'
+        `so nothing can be ${verb}.`
     );
   }
   const figures = await availableBalance(from.id);
@@ -208,7 +218,7 @@ async function refuseUnlessWithdrawable(
     throw new WithdrawalError(
       `A ${from.typeName} account must keep at least ` +
         `${fromCents(floorCents)}; only ` +
-        `${fromCents(Math.max(0, availableCents - floorCents))} can be withdrawn.`
+        `${fromCents(Math.max(0, availableCents - floorCents))} can be ${verb}.`
     );
   }
   if (

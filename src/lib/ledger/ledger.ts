@@ -193,6 +193,7 @@ export async function accountEntries(
     receipt_no: string | null;
     reverses_reference: string | null;
     captured_by_name: string;
+    counterpart: string | null;
   }>(
     `with running as (
        select e.id, e.sequence_no, e.transaction_id, e.direction, e.amount,
@@ -214,13 +215,21 @@ export async function accountEntries(
             coalesce(t.reason, '') as reason,
             rn.receipt_no,
             o.reference as reverses_reference,
-            u.display_name as captured_by_name
+            u.display_name as captured_by_name,
+            coalesce(t.payee_name,
+                     coalesce(la.account_no, lm.member_no) || ' · ' || lt.name)
+              as counterpart
        from running r
        join transaction t on t.id = r.transaction_id
        join payment_method pm on pm.code = t.method
        join app_user u on u.id = t.captured_by
        left join transaction o on o.id = t.reverses_id
        left join receipt_number rn on rn.id = t.receipt_number_id
+       left join transaction l
+         on l.transfer_id = t.transfer_id and l.id <> t.id
+       left join account la on la.id = l.account_id
+       left join account_type lt on lt.id = la.account_type_id
+       left join member lm on lm.id = la.member_id
       where ($2::bigint is null or r.sequence_no < $2)
       order by r.sequence_no desc
       limit $3`,
@@ -250,11 +259,19 @@ export async function accountEntries(
 
 function describe(r: {
   kind: string;
+  direction: 'credit' | 'debit';
   carried: boolean;
   reverses_carried: boolean;
   reverses_reference: string | null;
+  counterpart: string | null;
 }): string {
   if (r.kind === 'deposit') return r.carried ? 'Opening deposit' : 'Deposit';
+  if (r.kind === 'transfer_leg') {
+    const other = r.counterpart ? ` ${r.counterpart}` : '';
+    return r.direction === 'debit'
+      ? `Transfer to${other}`
+      : `Transfer from${other}`;
+  }
   if (r.kind === 'reversal') {
     return r.reverses_carried && r.carried
       ? 'Refund'
@@ -376,7 +393,8 @@ export async function availableBalance(
        from (select coalesce(sum(amount), 0) as pending
                from transaction
               where account_id = $1
-                and kind = 'withdrawal'
+                and (kind = 'withdrawal'
+                     or (kind = 'transfer_leg' and leg_direction = 'debit'))
                 and status in ('submitted', 'under_review', 'approved')) p
        left join account_balance b on b.account_id = $1`,
     [accountId]
