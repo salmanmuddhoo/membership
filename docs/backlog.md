@@ -4944,6 +4944,19 @@ to the device itself, which needs a token registry and a provider the
 Society has not chosen — the app shows the outcome on next open either
 way.
 
+# M25 — The job that watches the jobs ✅
+
+`docs/jobs.md` had recommended it since M1: `job_run` recorded every run
+and nothing read it back. **`job-watch`** (`src/lib/jobs/watch.ts`) now
+does, on the same runner: a run still open and untouched for six hours
+means a container died and nothing resumed it; a job whose latest run
+failed is one nobody has re-run. Each is told to every active System
+Administrator by email — `job.stalled`, `job.failed`, migration 0088 —
+once per run, the delivery log being the memory of what was said, so a
+stalled run found again the next morning is not reported again while the
+same run failing after it resumes is. It cannot see a job that never
+starts at all; that is the platform's own run history.
+
 # Open values that later stories depend on
 
 Each is absorbed by configuration, so none blocks the start of development.
