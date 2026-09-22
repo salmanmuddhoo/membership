@@ -70,6 +70,31 @@ export const TRANSACTION_PLACEHOLDERS: Record<string, readonly string[]> = {
   'receipt.voided': [...STAFF_COMMON, 'receipt_no', 'voided_by', 'reason'],
 };
 
+// The job that watches the jobs (src/lib/jobs/watch.ts): what the
+// System Administrators are told when a run has stalled or a job's last
+// run failed. Staff events, so email only.
+export const JOB_PLACEHOLDERS: Record<string, readonly string[]> = {
+  'job.stalled': [
+    'recipient_name',
+    'job',
+    'run_id',
+    'attempt',
+    'started_at',
+    'last_update',
+    'link',
+  ],
+  'job.failed': [
+    'recipient_name',
+    'job',
+    'run_id',
+    'attempt',
+    'started_at',
+    'finished_at',
+    'error',
+    'link',
+  ],
+};
+
 export const RECEIPT_ISSUED = 'receipt.issued';
 export const RECEIPT_PLACEHOLDERS = [
   'member_name',
@@ -131,6 +156,9 @@ export function placeholdersForEvent(eventCode: string): string[] | null {
   }
   if (eventCode in MEMBER_PLACEHOLDERS) {
     return [...MEMBER_PLACEHOLDERS[eventCode]];
+  }
+  if (eventCode in JOB_PLACEHOLDERS) {
+    return [...JOB_PLACEHOLDERS[eventCode]];
   }
 
   const [subject, happening] = eventCode.split('.');

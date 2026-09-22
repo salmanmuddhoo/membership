@@ -245,6 +245,34 @@ construction — a member marked tonight is not active tomorrow. Run
 pnpm job dormancy-detection
 ```
 
+## `job-watch`
+
+The runner records every run faithfully and then nothing reads the table.
+`watchJobs` (`src/lib/jobs/watch.ts`) reads it: every run still `running`
+whose `updated_at` is more than six hours old — a container died and no
+schedule has resumed it yet — and every job whose most recent run is
+`failed`, meaning nobody has re-run it since. Each is told to every active
+System Administrator by email (`job.stalled`, `job.failed`; migration
+0088), with a link to the Jobs report.
+
+Once per run, not once per check: the notification is written against the
+run (`entity_type` `job_run`), and a run already written about is skipped
+the next time — so a stalled run found again the next morning is not news
+again, while the same run failing after it resumes is. A failure followed by
+a success is not a concern at all. The watcher's own runs are on the same
+table and get the same treatment: a `job-watch` run that fails is reported
+by the next one that does not.
+
+Not chunked — the query is two short reads over `job_run` — and idempotent
+by construction. Run **every few hours**; a run with nothing wrong writes
+nothing. It does not know what is scheduled, so a job that simply never
+starts is not something it can see: that is Container Apps' own run
+history, and the Jobs report's "last run" column.
+
+```bash
+pnpm job job-watch
+```
+
 ## Recommendation for M7 and M8
 
 - **M7 migration import** — a Manual job. Read the cleansed extract in batches,
@@ -254,11 +282,7 @@ pnpm job dormancy-detection
   names sharing this runner.
 - **M8 dormancy sweep** — built as `dormancy-detection` (above), in exactly
   the shape `minor-majority-transition` (S-610) proved.
-- **Add a job that watches the jobs.** A `job_run` row still `running` with an
-  `updated_at` hours old means a container died and no schedule has picked it up.
-  Nothing currently notices. Now that M9's notification layer exists
-  (`notify()`, and the delivery log that makes a failure visible), this has
-  somewhere to report to.
+- **A job that watches the jobs** — built as `job-watch` (above).
 
 ## What is proven, and what is not
 

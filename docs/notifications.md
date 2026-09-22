@@ -232,7 +232,7 @@ transaction has committed and never failing it.
 
 ## The office
 
-Three events go to staff, by email only — `app_user` has an email and
+Five events go to staff, by email only — `app_user` has an email and
 nothing else (S-1804, S-1805, `src/lib/notifications/staff.ts`):
 
 - `transaction.awaiting`, to every active holder of a step's role when a
@@ -245,12 +245,19 @@ nothing else (S-1804, S-1805, `src/lib/notifications/staff.ts`):
 - `receipt.voided`, to every active holder of `receipt.void` other than the
   user who voided, for a transaction's receipt and a fee receipt alike:
   `receipt_no`, `voided_by` and the `reason`.
+- `job.stalled`, to every active System Administrator when a job run has
+  been left open for more than six hours — `job`, `run_id`, `attempt`,
+  `started_at`, `last_update`.
+- `job.failed`, the same people, when a job's most recent run failed —
+  `job`, `run_id`, `attempt`, `started_at`, `finished_at`, `error`.
 
-All three carry `recipient_name`, `kind`, `reference`, `member_name`,
+The first three carry `recipient_name`, `kind`, `reference`, `member_name`,
 `amount`, `account` and `link` — the transaction or receipt page at
 `PUBLIC_APP_URL` (or the origin of `ENTRA_REDIRECT_URI`); with neither set
 the placeholder reads "Sign in to open it." A deactivated user is not
-written to, whatever roles they still hold.
+written to, whatever roles they still hold. The two job events carry
+`recipient_name` and a `link` to the Jobs report, and are written once per
+run: `docs/jobs.md`.
 
 ## A member's standing
 

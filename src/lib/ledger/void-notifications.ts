@@ -7,7 +7,7 @@
 // Its own module rather than a corner of transaction-notifications.ts so
 // that payments.ts, which review.ts imports, can raise it without the
 // import graph looping back through review.ts.
-import { getAppOrigin } from '../config';
+import { appLink } from '../notifications/links';
 import { notify } from '../notifications/notify';
 import { staffWithPermission } from '../notifications/staff';
 import { formatMoney } from '../payments/money';
@@ -50,10 +50,7 @@ export function bareAmount(amount: string, currency: string): string {
 }
 
 // A full address when the origin is known; otherwise where to look.
-export function appLink(path: string): string {
-  const origin = getAppOrigin();
-  return origin ? `${origin}${path}` : 'Sign in to open it.';
-}
+export { appLink };
 
 export async function notifyReceiptVoided(
   notice: VoidNotice

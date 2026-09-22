@@ -21,6 +21,7 @@ import {
   disposeDueRecords,
   disposedAnything,
 } from '../src/lib/retention/disposal';
+import { watchJobs } from '../src/lib/jobs/watch';
 
 // Jobs are named here rather than passed as arbitrary strings: the container's
 // arguments are configuration, and configuration should not be able to name a
@@ -211,6 +212,27 @@ const JOBS: Record<string, () => Promise<unknown>> = {
         );
         context.log('repaired', {
           accounts: outcome.drifted.map(d => d.accountId),
+        });
+      },
+    }),
+
+  // The job that watches the jobs (docs/jobs.md). A run still open and not
+  // touched for hours means a container died and nothing resumed it; a job
+  // whose latest run failed is one nobody has re-run. Both are told to the
+  // System Administrators, once per run — the delivery log remembers what
+  // was said. Run every few hours; a run with nothing wrong writes nothing.
+  'job-watch': () =>
+    runJob<{ sweptAt: string }>({
+      name: 'job-watch',
+      run: async context => {
+        const { concerns, reported } = await watchJobs();
+        // processedCount is what was newly reported, not what is wrong: a
+        // stalled run found again tonight is not news.
+        await context.save({ sweptAt: new Date().toISOString() }, reported);
+        context.log('job history checked', {
+          concerns: concerns.length,
+          reported,
+          runs: concerns.map(c => `${c.jobName}#${c.runId} ${c.kind}`),
         });
       },
     }),
