@@ -345,6 +345,38 @@ describe('the pre-checks (S-1703)', () => {
     expect(fees.passed).toBe(false);
     expect(fees.detail).toMatch(/^Rs [\d,.]+ of the joining fees unpaid\.$/);
   });
+
+  it('ask nothing of a migrated member, who paid before migration', async () => {
+    const { resignations } = await load();
+    // As the legacy import leaves them: the core accounts opened, as
+    // migrated, by the application on file.
+    await run(
+      appUrl,
+      `update account a set opened_via_migration = true,
+              opened_by_application_id = m.application_id
+         from member m
+        where a.member_id = m.id and m.id = $1
+          and a.id = any($2::uuid[])`,
+      [member.id, [member.shares, member.msa]]
+    );
+    try {
+      const fees = (await resignations.checksFor(member.id)).find(
+        c => c.code === 'unpaid_fees'
+      )!;
+      expect(fees).toMatchObject({
+        passed: true,
+        detail: 'Paid before migration.',
+      });
+    } finally {
+      await run(
+        appUrl,
+        `update account set opened_via_migration = false,
+                opened_by_application_id = null
+          where id = any($1::uuid[])`,
+        [[member.shares, member.msa]]
+      );
+    }
+  });
 });
 
 describe('a resignation (S-1703)', () => {

@@ -26,6 +26,7 @@ import {
 import {
   PERMISSION_REVERSE,
   ReversalError,
+  reversalOf,
   reverseTransaction,
 } from '@lib/ledger/reversals';
 import { resubmitTransfer, TransferError } from '@lib/ledger/transfers';
@@ -207,10 +208,17 @@ const position = (IN_FLIGHT as readonly string[]).includes(transaction.status)
 const canAct = position ? mayActAt(position, principal) : false;
 // A posted mistake is undone by a reversal, never an edit (S-1505). A
 // transfer is reversed from its debit leg, whole.
+// Once reversed, there is nothing left to reverse: the block gives way to
+// a line naming the reversal.
+const reversedBy =
+  transaction.status === 'posted' && transaction.kind !== 'reversal'
+    ? await reversalOf(transaction.id)
+    : null;
 const canReverse =
   transaction.status === 'posted' &&
   transaction.kind !== 'reversal' &&
   transaction.legDirection !== 'credit' &&
+  !reversedBy &&
   principal.permissions.has(PERMISSION_REVERSE);
 const canPost =
   transaction.status === 'approved' &&
@@ -954,6 +962,19 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           </button>
         </div>
       </form>
+    )}
+
+    {reversedBy && (
+      <p class={`${CARD} text-sm`}>
+        Reversed by{' '}
+        <a
+          href={`/transactions/${reversedBy.id}`}
+          class="font-medium underline"
+        >
+          {reversedBy.reference}
+        </a>
+        .
+      </p>
     )}
 
     {canReverse && (

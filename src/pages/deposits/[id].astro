@@ -13,6 +13,8 @@ import {
 import { DepositError, loadDeposit } from '@lib/ledger/deposits';
 import { DocumentError, removeFiledDocument } from '@lib/documents/documents';
 import DocumentViewer from '@components/DocumentViewer.astro';
+import ChainTimeline from '@components/ChainTimeline.astro';
+import { chainTimeline } from '@lib/workflow/timeline';
 import { formatMoney } from '@lib/payments/money';
 import {
   PAGE,
@@ -27,7 +29,7 @@ import {
   PANEL,
   PILL_WARN,
   SECONDARY_SM,
-  DANGER_SM,
+  ICON_BUTTON_DANGER,
   TAG,
 } from '@lib/ui';
 
@@ -92,6 +94,14 @@ const step: Step = (STEPS as readonly string[]).includes(requested)
   : 'details';
 
 const item = await sourceOfFundItem(deposit.id);
+// The request's chevron: Details, the Source of Fund form, then the route
+// the matrix will send it on — each of this page's steps a link.
+const timeline = (await chainTimeline('transaction', deposit.id)) ?? [];
+const stepHrefs: Record<string, string> = {
+  details: `${base}?step=details`,
+  signature: `${base}?step=signature`,
+  capture: `${base}?step=submit`,
+};
 const filed = item?.filed ?? null;
 const canSubmit = !!filed && filed.state !== 'rejected';
 
@@ -121,6 +131,12 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         {formatMoney(deposit.amount)}
       </span>
     </div>
+
+    <ChainTimeline
+      steps={timeline}
+      hrefs={stepHrefs}
+      label="Deposit progress"
+    />
 
     {error && <div class={NOTICE_ERROR}>{error}</div>}
 
@@ -215,9 +231,11 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                     type="submit"
                     name="intent"
                     value="remove-form"
-                    class={DANGER_SM}
+                    aria-label="Delete the signed form"
+                    title="Delete"
+                    class={ICON_BUTTON_DANGER}
                   >
-                    Delete
+                    ✕
                   </button>
                 </form>
               </div>

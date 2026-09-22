@@ -158,7 +158,12 @@ The deposit page's button for such an amount is **Sign the Source of Fund
 form** and opens the form directly. Once signed, the wizard's Signature
 step shows the filed form with its state, **View** and **Delete**; deleting
 it (`removeFiledDocument`, allowed while the request is a draft) puts the
-Sign button back. Submit says to sign the form first when there is none.
+Sign button back; the delete is a red cross beside the form, as on a
+resignation's signed request. Submit says to sign the form first when there
+is none. The wizard carries the request's chevron — Details, Source of Fund
+form, Submitted, the chain the matrix would send it to, Posted
+(`depositPrelude` in `timeline.ts`), each of its own steps a link — and the
+form page's Back returns to Details, the first step.
 The API's `POST
 /api/v1/deposits` keeps its confirmation flag for an integrating surface;
 the screen no longer offers one.
@@ -457,6 +462,8 @@ direction from the original's own entry, so reversing a reversal restores it.
 a posted mistake: `receipt.void` (the Treasurer's, as voiding a payment is),
 a reason that is required, a transaction that is posted and not already
 reversed, and never the officer who captured it (0074's segregation rule).
+Once one is reversed the transaction page drops the Reverse block and names
+the reversal instead (`reversalOf()`).
 It inserts the reversal, posts it through the engine and issues it a receipt
 of its own, in one database transaction; a transfer is reversed whole, both
 legs, the receipt on the reversal of the leg named. The trail on the
@@ -558,6 +565,8 @@ on its own request. The request's life before its chain is a closure's —
 `/resignations/{id}/form` the sheet the member signs, filed against the
 transaction — and it rides the same chain, queue, trail and chevron
 (Details → Signature → Documents → Submitted → the chain → Resigned).
+Once signed, the Signature step shows the signed request with View and a
+red cross that deletes it; deleting it means signing again.
 
 What is its own is the **pre-checks** (`checksFor()`), each a
 configuration switch at Configuration → Fee schedules (`config_entry`,
@@ -565,7 +574,10 @@ configuration switch at Configuration → Fee schedules (`config_entry`,
 transaction still on its way on either core account; the joining fees
 fully paid (`amountDueForApplication` less the live payments against the
 founding application; a legacy member with no application here has
-nothing to check); and no financing outstanding, a hook for Phase 3/4 that
+nothing to check, and a migrated member — the application on file is the
+one the import wrote, which opened their Shares and MSA as migrated — paid
+before the system held them and reads "Paid before migration"); and no
+financing outstanding, a hook for Phase 3/4 that
 passes until something records financing, seeded off. A check switched off
 is shown as not checked and never blocks.
 

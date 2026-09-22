@@ -128,16 +128,37 @@ async function memberFor(memberId: string): Promise<{
   id: string;
   status: string;
   applicationId: string | null;
+  migrated: boolean;
 }> {
   const result = await query<{
     id: string;
     status: string;
     application_id: string | null;
-  }>(`select id, status, application_id from member where id = $1`, [memberId]);
+    migrated: boolean;
+  }>(
+    // Migrated: the application on file is the one the legacy import wrote
+    // (M7) — its Shares and MSA were opened by it, as migrated. A member who
+    // has since rejoined through a real application is not: that one's
+    // fees were charged here.
+    `select m.id, m.status, m.application_id,
+            exists (
+              select 1 from account a
+               where a.member_id = m.id
+                 and a.opened_by_application_id = m.application_id
+                 and a.opened_via_migration
+            ) as migrated
+       from member m where m.id = $1`,
+    [memberId]
+  );
   const r = result.rows[0];
   if (!r)
     throw new ResignationError('That member no longer exists.', 'not_found');
-  return { id: r.id, status: r.status, applicationId: r.application_id };
+  return {
+    id: r.id,
+    status: r.status,
+    applicationId: r.application_id,
+    migrated: r.migrated,
+  };
 }
 
 export async function resignationInFlightFor(
@@ -219,7 +240,11 @@ export async function checksFor(
     memberFor(memberId),
   ]);
   const pending = await pendingOnCoreAccounts(memberId, excludingId);
-  const unpaid = await unpaidFeesCents(member.applicationId);
+  // Officer direction: a migrated member paid their joining fees before the
+  // system held them, so nothing is owed here and none is asked for again.
+  const unpaid = member.migrated
+    ? 0
+    : await unpaidFeesCents(member.applicationId);
   return [
     {
       code: 'pending_transactions',
@@ -236,8 +261,9 @@ export async function checksFor(
       label: 'Joining fees fully paid',
       enabled: switches.unpaidFees,
       passed: unpaid === 0,
-      detail:
-        unpaid === 0
+      detail: member.migrated
+        ? 'Paid before migration.'
+        : unpaid === 0
           ? 'Nothing owed.'
           : `Rs ${fromCents(unpaid)} of the joining fees unpaid.`,
     },
