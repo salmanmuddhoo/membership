@@ -11,6 +11,15 @@ import {
   HINT,
   INPUT_BARE,
   SECONDARY_SM,
+  DIALOG,
+  DIALOG_HEADER,
+  SECONDARY_XS,
+  TABLE,
+  THEAD,
+  TH,
+  ROW,
+  TD,
+  TD_NUM,
 } from '@lib/ui';
 
 const principal = Astro.locals.principal!;
@@ -135,20 +144,20 @@ function accountButtonClasses(account: MemberListAccount): string {
 
       {members.length > 0 && (
         <div class="mt-4 overflow-x-auto">
-          <table class="w-full text-sm">
+          <table class={TABLE}>
             <thead>
-              <tr class="text-left text-xs text-neutral-500 dark:text-neutral-400">
-                <th class="py-2 pr-4 pl-4 font-medium">Name</th>
-                <th class="py-2 pr-4 font-medium">Status</th>
-                <th class="py-2 pr-4 font-medium">Joined</th>
+              <tr class={THEAD}>
+                <th class={TH}>Name</th>
+                <th class={TH}>Status</th>
+                <th class={TH}>Joined</th>
                 <th
-                  class="py-2 pr-4 font-medium"
+                  class={TH}
                   colspan={Math.max(1, activeAccountTypeColumns.length)}
                 >
                   Accounts
                 </th>
                 {canSeePayments && (
-                  <th class="py-2 pr-4 text-right font-medium">Total funds</th>
+                  <th class={`${TH} text-right`}>Total funds</th>
                 )}
               </tr>
             </thead>
@@ -156,10 +165,10 @@ function accountButtonClasses(account: MemberListAccount): string {
               {members.map(m => (
                 <tr
                   data-href={`/members/${m.id}`}
-                  class="group cursor-pointer border-t border-neutral-200 dark:border-neutral-800"
+                  class={`${ROW} group cursor-pointer`}
                 >
                   <td
-                    class={`py-2 pr-4 text-neutral-700 dark:text-neutral-200 ${ROW_HOVER}`}
+                    class={`${TD} text-neutral-700 dark:text-neutral-200 ${ROW_HOVER}`}
                   >
                     <span class="flex flex-wrap items-center gap-x-2">
                       {m.name}
@@ -171,17 +180,17 @@ function accountButtonClasses(account: MemberListAccount): string {
                     </span>
                   </td>
                   <td
-                    class={`py-2 pr-4 text-neutral-600 dark:text-neutral-300 ${ROW_HOVER}`}
+                    class={`${TD} text-neutral-600 dark:text-neutral-300 ${ROW_HOVER}`}
                   >
                     {m.status}
                   </td>
                   <td
-                    class={`py-2 pr-4 text-xs text-neutral-500 dark:text-neutral-400 ${ROW_HOVER}`}
+                    class={`${TD} text-xs text-neutral-500 dark:text-neutral-400 ${ROW_HOVER}`}
                   >
                     {dateFormat.format(m.joinedAt)}
                   </td>
                   {activeAccountTypeColumns.length === 0 ? (
-                    <td class={`py-2 pr-4 ${ROW_HOVER}`}>
+                    <td class={`${TD} ${ROW_HOVER}`}>
                       {m.accountBadges.length === 0 && (
                         <span class="text-xs text-neutral-400 dark:text-neutral-500">
                           —
@@ -194,7 +203,7 @@ function accountButtonClasses(account: MemberListAccount): string {
                         a => a.code === type.code
                       );
                       return (
-                        <td class={`py-2 pr-4 ${ROW_HOVER}`}>
+                        <td class={`${TD} ${ROW_HOVER}`}>
                           {account &&
                             (canSeePayments ? (
                               <button
@@ -227,7 +236,7 @@ function accountButtonClasses(account: MemberListAccount): string {
                   )}
                   {canSeePayments && (
                     <td
-                      class={`py-2 text-right font-medium text-neutral-800 tabular-nums dark:text-neutral-100 ${ROW_HOVER}`}
+                      class={`${TD_NUM} font-medium text-neutral-800 dark:text-neutral-100 ${ROW_HOVER}`}
                     >
                       {formatMoney(m.totalFunds)}
                     </td>
@@ -243,9 +252,9 @@ function accountButtonClasses(account: MemberListAccount): string {
     {canSeePayments && (
       <dialog
         id="account-transactions-dialog"
-        class="fixed top-1/2 left-1/2 m-0 w-[calc(100vw-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-neutral-200 bg-neutral-100 p-0 text-neutral-800 backdrop:bg-neutral-900/50 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-100"
+        class={`${DIALOG} w-[90vw] max-w-lg p-0`}
       >
-        <div class="flex items-center justify-between gap-3 border-b border-neutral-200 px-5 py-3 dark:border-neutral-800">
+        <div class={DIALOG_HEADER}>
           <div>
             <p
               data-dialog-name
@@ -256,11 +265,7 @@ function accountButtonClasses(account: MemberListAccount): string {
               class="text-xs text-neutral-500 dark:text-neutral-400"
             />
           </div>
-          <button
-            type="button"
-            data-dialog-close
-            class="rounded-lg border border-neutral-300 px-2.5 py-1 text-xs font-medium text-neutral-600 transition hover:bg-neutral-200 dark:border-neutral-600 dark:text-neutral-300 dark:hover:bg-neutral-800"
-          >
+          <button type="button" data-dialog-close class={SECONDARY_XS}>
             Close
           </button>
         </div>

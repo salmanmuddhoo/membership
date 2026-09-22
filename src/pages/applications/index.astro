@@ -15,6 +15,16 @@ import {
   BUTTON_SM,
   SECONDARY_SM,
   HINT,
+  DANGER_XS,
+  LABEL,
+  NOTICE_ERROR,
+  NOTICE_OK,
+  PILL,
+  TABLE,
+  THEAD,
+  TH,
+  ROW,
+  TD,
 } from '@lib/ui';
 import { listMembershipTypes } from '@lib/config/reference';
 import {
@@ -185,25 +195,17 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 
 <DashboardLayout title="Applications · Al Barakah MCSL" heading="Applications">
   <div class={PAGE.list}>
-    {error && (
-      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-        {error}
-      </div>
-    )}
+    {error && <div class={NOTICE_ERROR}>{error}</div>}
 
     {deletedCount > 0 && (
-      <div class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-lg border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
+      <div class={NOTICE_OK}>
         {deletedCount === 1
           ? '1 draft was deleted.'
           : `${deletedCount} drafts were deleted.`}
       </div>
     )}
 
-    {created && (
-      <div class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-lg border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
-        Application {created} started.
-      </div>
-    )}
+    {created && <div class={NOTICE_OK}>Application {created} started.</div>}
 
     {canCapture && (
       <section class={CARD}>
@@ -216,7 +218,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             action="/applications/new"
             class="flex flex-wrap items-end gap-2"
           >
-            <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            <label class={LABEL}>
               Applicant status
               <select name="type" class={INPUT}>
                 {types
@@ -242,11 +244,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       <div class="flex flex-wrap items-center justify-between gap-2">
         <h2 class={`${CARD_TITLE} flex items-center gap-2`}>
           Applications
-          {nonDraftCount !== null && (
-            <span class="rounded-full bg-neutral-200 px-2 py-0.5 text-xs font-medium text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
-              {nonDraftCount}
-            </span>
-          )}
+          {nonDraftCount !== null && <span class={PILL}>{nonDraftCount}</span>}
         </h2>
         <form method="get" class="flex flex-wrap items-center gap-2">
           <label for="q" class="sr-only">
@@ -306,18 +304,18 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                 value="delete"
                 data-bulk-delete
                 disabled
-                class="rounded-lg border border-red-300 px-3 py-1.5 text-xs font-medium text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
+                class={DANGER_XS}
               >
                 Delete selected
               </button>
             </div>
           )}
           <div class="mt-2 overflow-x-auto">
-            <table class="w-full text-sm">
+            <table class={TABLE}>
               <thead>
-                <tr class="text-left text-xs text-neutral-500 dark:text-neutral-400">
+                <tr class={THEAD}>
                   {canCapture && (
-                    <th class="py-2 pr-2 font-medium">
+                    <th class={TH}>
                       <input
                         type="checkbox"
                         data-select-all
@@ -334,7 +332,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                     ['Captured by', 'capturedBy'],
                     ['Updated', 'updated'],
                   ].map(([label, key]) => (
-                    <th class="py-2 pr-4 font-medium">
+                    <th class={TH}>
                       <button
                         type="button"
                         data-sort-key={key}
@@ -349,9 +347,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               </thead>
               <tbody>
                 {applications.map(a => (
-                  <tr class="border-t border-neutral-200 dark:border-neutral-800">
+                  <tr class={ROW}>
                     {canCapture && (
-                      <td class="py-2 pr-2">
+                      <td class={TD}>
                         {a.status === 'draft' && (
                           <>
                             <input
@@ -371,7 +369,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                         )}
                       </td>
                     )}
-                    <td class="py-2 pr-4" data-sort-value={a.reference}>
+                    <td class={TD} data-sort-value={a.reference}>
                       <a
                         href={
                           a.applicationKind === 'membership'
@@ -386,19 +384,19 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                       </a>
                     </td>
                     <td
-                      class="py-2 pr-4 text-neutral-700 dark:text-neutral-200"
+                      class={`${TD} text-neutral-700 dark:text-neutral-200`}
                       data-sort-value={a.applicantName}
                     >
                       {a.applicantName}
                     </td>
                     <td
-                      class="py-2 pr-4 text-neutral-600 dark:text-neutral-300"
+                      class={`${TD} text-neutral-600 dark:text-neutral-300`}
                       data-sort-value={a.membershipTypeName}
                     >
                       {a.membershipTypeName}
                     </td>
                     <td
-                      class="py-2 pr-4"
+                      class={TD}
                       data-sort-value={STATUS_LABELS[a.status] ?? a.status}
                     >
                       <span
@@ -435,13 +433,13 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                         )}
                     </td>
                     <td
-                      class="py-2 pr-4 text-xs text-neutral-500 dark:text-neutral-400"
+                      class={`${TD} text-xs text-neutral-500 dark:text-neutral-400`}
                       data-sort-value={a.capturedByName}
                     >
                       {a.capturedByName}
                     </td>
                     <td
-                      class="py-2 pr-4 text-xs text-neutral-500 dark:text-neutral-400"
+                      class={`${TD} text-xs text-neutral-500 dark:text-neutral-400`}
                       data-sort-value={a.updatedAt.toISOString()}
                     >
                       {dateFormat.format(a.updatedAt)}

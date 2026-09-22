@@ -6,7 +6,20 @@ import DashboardLayout from '@layouts/DashboardLayout.astro';
 import { query } from '@lib/db/pool';
 import { accountBalance, accountEntries } from '@lib/ledger/ledger';
 import { formatMoney } from '@lib/payments/money';
-import { PAGE, CARD_TITLE, FILTER, HINT, MUTED, SECONDARY_SM } from '@lib/ui';
+import {
+  PAGE,
+  CARD_TITLE,
+  FILTER,
+  HINT,
+  MUTED,
+  SECONDARY_SM,
+  TABLE,
+  THEAD,
+  TBODY,
+  TH,
+  TD,
+  TD_NUM,
+} from '@lib/ui';
 
 const { id } = Astro.params;
 const found = id
@@ -96,29 +109,29 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             : 'Nothing has been posted to this account.'}
         </p>
       ) : (
-        <table class="w-full text-sm">
-          <thead class="text-left text-xs text-neutral-500 uppercase dark:text-neutral-400">
+        <table class={TABLE}>
+          <thead class={THEAD}>
             <tr>
-              <th class="px-2 py-2">Date</th>
-              <th class="px-2 py-2">Reference</th>
-              <th class="px-2 py-2">Description</th>
-              <th class="px-2 py-2">Method</th>
-              <th class="px-2 py-2">Receipt</th>
-              <th class="px-2 py-2 text-right">In</th>
-              <th class="px-2 py-2 text-right">Out</th>
-              <th class="px-2 py-2 text-right">Balance</th>
+              <th class={TH}>Date</th>
+              <th class={TH}>Reference</th>
+              <th class={TH}>Description</th>
+              <th class={TH}>Method</th>
+              <th class={TH}>Receipt</th>
+              <th class={`${TH} text-right`}>In</th>
+              <th class={`${TH} text-right`}>Out</th>
+              <th class={`${TH} text-right`}>Balance</th>
             </tr>
           </thead>
-          <tbody class="divide-y divide-neutral-200 dark:divide-neutral-800">
+          <tbody class={TBODY}>
             {entries.map(entry => (
               <tr class="text-neutral-800 dark:text-neutral-100">
-                <td class="px-2 py-2 whitespace-nowrap">
+                <td class={`${TD} whitespace-nowrap`}>
                   {dateFormat.format(entry.occurredAt)}
                 </td>
-                <td class="px-2 py-2">
+                <td class={TD}>
                   <code class="text-xs">{entry.transactionReference}</code>
                 </td>
-                <td class="px-2 py-2">
+                <td class={TD}>
                   {entry.description}
                   {entry.reason && (
                     <span class="text-xs text-neutral-500 dark:text-neutral-400">
@@ -130,11 +143,11 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                     by {entry.capturedByName}
                   </span>
                 </td>
-                <td class="px-2 py-2">
+                <td class={TD}>
                   {entry.methodName}
                   {entry.methodReference && ` · ${entry.methodReference}`}
                 </td>
-                <td class="px-2 py-2">
+                <td class={TD}>
                   {entry.receiptNo ? (
                     <a
                       href={`/receipts/${entry.transactionId}`}
@@ -146,13 +159,13 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                     <code class="text-xs">—</code>
                   )}
                 </td>
-                <td class="px-2 py-2 text-right tabular-nums">
+                <td class={TD_NUM}>
                   {entry.direction === 'credit' && formatMoney(entry.amount)}
                 </td>
-                <td class="px-2 py-2 text-right tabular-nums">
+                <td class={TD_NUM}>
                   {entry.direction === 'debit' && formatMoney(entry.amount)}
                 </td>
-                <td class="px-2 py-2 text-right font-medium tabular-nums">
+                <td class={`${TD_NUM} font-medium`}>
                   {formatMoney(entry.runningBalance)}
                 </td>
               </tr>

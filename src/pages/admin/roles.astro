@@ -17,6 +17,9 @@ import {
   HINT,
   PAGE,
   PANEL,
+  INPUT,
+  NOTICE_ERROR,
+  NOTICE_OK,
 } from '@lib/ui';
 
 // Server-rendered forms rather than a client-side fetch of our own API. For an
@@ -144,16 +147,8 @@ const permissionGroups = groupPermissions(allPermissions);
 
 <DashboardLayout title="Roles · Al Barakah MCSL" heading="Roles">
   <div class={PAGE.list}>
-    {error && (
-      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-        {error}
-      </div>
-    )}
-    {notice && (
-      <div class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-lg border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
-        {notice}
-      </div>
-    )}
+    {error && <div class={NOTICE_ERROR}>{error}</div>}
+    {notice && <div class={NOTICE_OK}>{notice}</div>}
 
     <section class={CARD}>
       <h2 class={CARD_TITLE}>Roles</h2>
@@ -263,7 +258,7 @@ const permissionGroups = groupPermissions(allPermissions);
                 name="name"
                 required
                 placeholder="Regional Manager"
-                class="focus:border-mint-400 focus:ring-mint-400 mt-1 block w-full rounded-lg border-neutral-300 bg-white px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+                class={INPUT}
               />
             </label>
 
@@ -275,7 +270,7 @@ const permissionGroups = groupPermissions(allPermissions);
                 required
                 pattern="[a-z][a-z0-9_]{2,49}"
                 placeholder="regional_manager"
-                class="focus:border-mint-400 focus:ring-mint-400 mt-1 block w-full rounded-lg border-neutral-300 bg-white px-3 py-2 font-mono text-sm dark:border-neutral-700 dark:bg-neutral-900"
+                class={`${INPUT} font-mono`}
               />
               <span class="mt-1 block text-xs text-neutral-400">
                 Lower-case letters, digits and underscores. Cannot be changed
@@ -288,11 +283,7 @@ const permissionGroups = groupPermissions(allPermissions);
             <span class="text-neutral-700 dark:text-neutral-200">
               Description
             </span>
-            <input
-              type="text"
-              name="description"
-              class="focus:border-mint-400 focus:ring-mint-400 mt-1 block w-full rounded-lg border-neutral-300 bg-white px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-900"
-            />
+            <input type="text" name="description" class={INPUT} />
           </label>
 
           <fieldset class="space-y-4">

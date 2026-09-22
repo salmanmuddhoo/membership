@@ -23,6 +23,8 @@ import {
   PAGE,
   PANEL,
   SECONDARY_SM,
+  NOTICE_ERROR,
+  NOTICE_OK,
 } from '@lib/ui';
 
 const principal = Astro.locals.principal!;
@@ -114,16 +116,8 @@ const { users, total, truncated } = page;
   heading="Staff accounts"
 >
   <div class={PAGE.list}>
-    {error && (
-      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-        {error}
-      </div>
-    )}
-    {notice && (
-      <div class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-lg border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
-        {notice}
-      </div>
-    )}
+    {error && <div class={NOTICE_ERROR}>{error}</div>}
+    {notice && <div class={NOTICE_OK}>{notice}</div>}
 
     {canManage && (
       <section class={CARD}>
@@ -136,7 +130,7 @@ const { users, total, truncated } = page;
         <form method="post" class="mt-4 space-y-4">
           <input type="hidden" name="intent" value="create" />
           <div class="grid gap-3 sm:grid-cols-2">
-            <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            <label class={LABEL}>
               Work email
               <input
                 type="email"
@@ -146,7 +140,7 @@ const { users, total, truncated } = page;
                 class={INPUT}
               />
             </label>
-            <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            <label class={LABEL}>
               Name
               <input
                 type="text"
@@ -351,7 +345,7 @@ const { users, total, truncated } = page;
                       type="submit"
                       name="intent"
                       value="delete"
-                      class="rounded-lg border border-red-400 px-3 py-1.5 text-sm font-medium text-red-800 transition hover:bg-red-50 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-950"
+                      class={DANGER_SM}
                     >
                       Delete
                     </button>

@@ -30,6 +30,9 @@ import {
   INPUT,
   SECONDARY_SM,
   BUTTON,
+  CARD_OK,
+  CHECK_LABEL,
+  NOTICE_ERROR,
 } from '@lib/ui';
 
 const principal = Astro.locals.principal!;
@@ -202,14 +205,10 @@ const RADIO =
       </a>
     </p>
 
-    {error && (
-      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-        {error}
-      </div>
-    )}
+    {error && <div class={NOTICE_ERROR}>{error}</div>}
 
     {transfer ? (
-      <section class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-2xl border p-6">
+      <section class={CARD_OK}>
         <h2 class={CARD_TITLE}>
           {transfer.status === 'posted'
             ? `Transfer ${transfer.reference} posted`
@@ -336,7 +335,7 @@ const RADIO =
           <legend class="text-sm text-neutral-600 dark:text-neutral-300">
             To
           </legend>
-          <label class="flex items-center gap-2 text-sm text-neutral-800 dark:text-neutral-100">
+          <label class={CHECK_LABEL}>
             <input
               type="radio"
               name="destinationKind"
@@ -359,7 +358,7 @@ const RADIO =
               ))}
             </select>
           </div>
-          <label class="flex items-center gap-2 text-sm text-neutral-800 dark:text-neutral-100">
+          <label class={CHECK_LABEL}>
             <input
               type="radio"
               name="destinationKind"
@@ -370,7 +369,7 @@ const RADIO =
             Another member’s or customer’s account
           </label>
           <div data-destination="other" class="grid gap-3 pl-6 sm:grid-cols-2">
-            <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            <label class={LABEL}>
               Account type
               <select name="otherTypeId" class={INPUT}>
                 {lookupTypes.map(type => (
@@ -387,7 +386,7 @@ const RADIO =
                 ))}
               </select>
             </label>
-            <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            <label class={LABEL}>
               <span data-number-label>Member number</span>
               <input
                 type="text"
@@ -400,7 +399,7 @@ const RADIO =
               />
             </label>
           </div>
-          <label class="flex items-center gap-2 text-sm text-neutral-800 dark:text-neutral-100">
+          <label class={CHECK_LABEL}>
             <input
               type="radio"
               name="destinationKind"
@@ -411,7 +410,7 @@ const RADIO =
             Someone without an account here
           </label>
           <div data-destination="payee" class="grid gap-3 pl-6 sm:grid-cols-2">
-            <label class="text-sm text-neutral-600 dark:text-neutral-300 sm:col-span-2">
+            <label class={`${LABEL} sm:col-span-2`}>
               Paid to
               <input
                 type="text"
@@ -421,7 +420,7 @@ const RADIO =
                 class={INPUT}
               />
             </label>
-            <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            <label class={LABEL}>
               Paid by
               <select name="method" class={INPUT}>
                 {paymentMethods.map(method => (
@@ -440,10 +439,7 @@ const RADIO =
                 ))}
               </select>
             </label>
-            <label
-              data-method-reference-field
-              class="text-sm text-neutral-600 dark:text-neutral-300"
-            >
+            <label data-method-reference-field class={LABEL}>
               Reference (cheque number, transfer reference)
               <input
                 type="text"
@@ -452,10 +448,7 @@ const RADIO =
                 class={INPUT}
               />
             </label>
-            <label
-              data-bank-account-field
-              class="text-sm text-neutral-600 dark:text-neutral-300"
-            >
+            <label data-bank-account-field class={LABEL}>
               Bank account
               <select name="bankAccountId" class={INPUT}>
                 <option value="">Choose…</option>

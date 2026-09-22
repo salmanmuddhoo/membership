@@ -59,6 +59,10 @@ import {
   BUTTON_SM,
   DANGER,
   DANGER_SM,
+  INPUT_SM,
+  NOTICE_ERROR,
+  NOTICE_OK,
+  TAG,
 } from '@lib/ui';
 
 const principal = Astro.locals.principal!;
@@ -331,7 +335,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             Audit log
           </a>
         )}
-        <span class="rounded bg-neutral-200 px-2 py-0.5 text-xs font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
+        <span class={TAG}>
           {STATUS_LABELS[transaction.status] ?? transaction.status}
           {position && ` · ${position.step.name} (${position.step.roleName})`}
         </span>
@@ -349,16 +353,8 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       </p>
     )}
 
-    {error && (
-      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-        {error}
-      </div>
-    )}
-    {notice && (
-      <div class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-lg border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
-        {notice}
-      </div>
-    )}
+    {error && <div class={NOTICE_ERROR}>{error}</div>}
+    {notice && <div class={NOTICE_OK}>{notice}</div>}
 
     <section class={CARD}>
       <dl class="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
@@ -528,7 +524,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                                 name="reason"
                                 required
                                 placeholder="Why is this being rejected?"
-                                class="rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                                class={INPUT_SM}
                               />
                               <button type="submit" class={DANGER_SM}>
                                 Reject
@@ -670,7 +666,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         </p>
         {disburses && (
           <div class="grid gap-3 sm:grid-cols-2">
-            <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            <label class={LABEL}>
               Paid by
               <select name="method" class={INPUT}>
                 {paymentMethods.map(method => (
@@ -689,10 +685,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                 ))}
               </select>
             </label>
-            <label
-              data-method-reference-field
-              class="text-sm text-neutral-600 dark:text-neutral-300"
-            >
+            <label data-method-reference-field class={LABEL}>
               Reference (cheque number, transfer reference)
               <input
                 type="text"
@@ -701,10 +694,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                 class={INPUT}
               />
             </label>
-            <label
-              data-bank-account-field
-              class="text-sm text-neutral-600 dark:text-neutral-300"
-            >
+            <label data-bank-account-field class={LABEL}>
               Bank account
               <select name="bankAccountId" class={INPUT}>
                 <option value="">Choose…</option>
@@ -746,7 +736,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         <input type="hidden" name="intent" value="resubmit" />
         <input type="hidden" name="accountId" value={transaction.accountId} />
         <div class="grid gap-3 sm:grid-cols-2">
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             Amount (Rs)
             <input
               type="text"
@@ -757,7 +747,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               class={INPUT}
             />
           </label>
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             Note
             <input
               type="text"
@@ -769,7 +759,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           </label>
           {transaction.payeeName && (
             <>
-              <label class="text-sm text-neutral-600 dark:text-neutral-300">
+              <label class={LABEL}>
                 Paid by
                 <select name="method" class={INPUT}>
                   {paymentMethods.map(method => (
@@ -783,7 +773,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                   ))}
                 </select>
               </label>
-              <label class="text-sm text-neutral-600 dark:text-neutral-300">
+              <label class={LABEL}>
                 Reference (cheque number, transfer reference)
                 <input
                   type="text"
@@ -792,10 +782,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                   class={INPUT}
                 />
               </label>
-              <label
-                data-bank-account-field
-                class="text-sm text-neutral-600 dark:text-neutral-300"
-              >
+              <label data-bank-account-field class={LABEL}>
                 Bank account
                 <select name="bankAccountId" class={INPUT}>
                   <option value="">Choose…</option>
@@ -857,7 +844,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           </select>
         </label>
         <div class="grid gap-3 sm:grid-cols-2">
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             Amount (Rs)
             <input
               type="text"
@@ -869,7 +856,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               class={INPUT}
             />
           </label>
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             {isDeposit ? 'Method' : 'Paid by'}
             <select name="method" class={INPUT}>
               {paymentMethods.map(method => (
@@ -890,10 +877,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               ))}
             </select>
           </label>
-          <label
-            data-method-reference-field
-            class="text-sm text-neutral-600 dark:text-neutral-300"
-          >
+          <label data-method-reference-field class={LABEL}>
             Reference (cheque number, transfer reference)
             <input
               type="text"
@@ -902,10 +886,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               class={INPUT}
             />
           </label>
-          <label
-            data-bank-account-field
-            class="text-sm text-neutral-600 dark:text-neutral-300"
-          >
+          <label data-bank-account-field class={LABEL}>
             Bank account
             <select name="bankAccountId" class={INPUT}>
               <option value="">Choose…</option>
@@ -919,7 +900,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               ))}
             </select>
           </label>
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             Note
             <input
               type="text"

@@ -34,6 +34,9 @@ import {
   INPUT,
   BUTTON,
   DANGER,
+  NOTICE_ERROR,
+  SECONDARY_SM,
+  TAG,
 } from '@lib/ui';
 
 const principal = Astro.locals.principal!;
@@ -163,16 +166,12 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         ← {claim.holderName || 'member'}
         {claim.memberNo && ` · ${claim.memberNo}`}
       </a>
-      <span class="rounded bg-neutral-200 px-2 py-0.5 text-xs font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
+      <span class={TAG}>
         To {claim.payeeName} · {formatMoney(totals.total)}
       </span>
     </div>
 
-    {error && (
-      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-        {error}
-      </div>
-    )}
+    {error && <div class={NOTICE_ERROR}>{error}</div>}
     {returnComment && (
       <div class="rounded-lg border border-amber-300 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200">
         Returned: {returnComment}
@@ -216,7 +215,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           class="grid gap-3 sm:grid-cols-2"
           hidden={claim.claimantKind !== 'other'}
         >
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             Name
             <input
               type="text"
@@ -225,7 +224,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               class={INPUT}
             />
           </label>
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             NIC
             <input
               type="text"
@@ -234,7 +233,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               class={INPUT}
             />
           </label>
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             Address
             <input
               type="text"
@@ -243,7 +242,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               class={INPUT}
             />
           </label>
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             Relation to the member
             <input
               type="text"
@@ -252,7 +251,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               class={INPUT}
             />
           </label>
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             Email
             <input
               type="email"
@@ -263,7 +262,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               class={INPUT}
             />
           </label>
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             Mobile
             <input
               type="tel"
@@ -276,7 +275,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           </label>
         </div>
         <div class="grid gap-3 sm:grid-cols-2">
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             Paid out by
             <select name="method" class={INPUT}>
               {paymentMethods.map(method => (
@@ -290,7 +289,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               ))}
             </select>
           </label>
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             Reference (cheque number, transfer reference)
             <input
               type="text"
@@ -299,10 +298,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               class={INPUT}
             />
           </label>
-          <label
-            data-bank-account-field
-            class="text-sm text-neutral-600 dark:text-neutral-300"
-          >
+          <label data-bank-account-field class={LABEL}>
             Bank account
             <select name="bankAccountId" class={INPUT}>
               <option value="">Choose…</option>
@@ -385,7 +381,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                   data-transaction-id={claim.id}
                   data-document-type-id={item.documentTypeId}
                 >
-                  <label class="cursor-pointer rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-200 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800">
+                  <label class={`${SECONDARY_SM} cursor-pointer`}>
                     Upload
                     <input
                       type="file"

@@ -21,6 +21,14 @@ import {
   INPUT_BARE,
   BUTTON,
   BUTTON_SM,
+  LABEL,
+  NOTICE_ERROR,
+  NOTICE_OK,
+  TABLE,
+  THEAD,
+  TH,
+  ROW,
+  TD,
 } from '@lib/ui';
 
 const principal = Astro.locals.principal!;
@@ -123,16 +131,8 @@ const SUBJECT_LABELS: Record<string, string> = {
   <div class={PAGE.list}>
     <ConfigNav />
 
-    {error && (
-      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-        {error}
-      </div>
-    )}
-    {notice && (
-      <div class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-lg border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
-        {notice}
-      </div>
-    )}
+    {error && <div class={NOTICE_ERROR}>{error}</div>}
+    {notice && <div class={NOTICE_OK}>{notice}</div>}
 
     {types.map(type => (
       <section class={CARD}>
@@ -151,7 +151,7 @@ const SUBJECT_LABELS: Record<string, string> = {
 
         <form method="post" class="mt-4 grid gap-3 sm:grid-cols-2">
           <input type="hidden" name="typeId" value={type.id} />
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             Document checklist
             <select name="checklistId" disabled={!canManage} class={INPUT}>
               <option value="">— none —</option>
@@ -163,7 +163,7 @@ const SUBJECT_LABELS: Record<string, string> = {
             </select>
           </label>
           {type.code === 'individual' && (
-            <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            <label class={LABEL}>
               Documents required from a non-member applicant
               <select
                 name="nonMemberChecklistId"
@@ -182,7 +182,7 @@ const SUBJECT_LABELS: Record<string, string> = {
               </select>
             </label>
           )}
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             Fee schedule
             <select name="feeScheduleId" disabled={!canManage} class={INPUT}>
               <option value="">— none —</option>
@@ -210,7 +210,7 @@ const SUBJECT_LABELS: Record<string, string> = {
         {type.fields.some(f => f.subject === 'nominee') && (
           <form method="post" class="mt-4 flex flex-wrap items-end gap-3">
             <input type="hidden" name="typeId" value={type.id} />
-            <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            <label class={LABEL}>
               Nominees to capture
               <input
                 type="number"
@@ -237,7 +237,7 @@ const SUBJECT_LABELS: Record<string, string> = {
 
         <form method="post" class="mt-4 flex flex-wrap items-end gap-3">
           <input type="hidden" name="typeId" value={type.id} />
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             Age of majority
             <input
               type="number"
@@ -250,7 +250,7 @@ const SUBJECT_LABELS: Record<string, string> = {
               class={`${INPUT_BARE} mt-1 block w-24`}
             />
           </label>
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             Automatically becomes
             <select
               name="majorityTransitionTypeId"
@@ -304,19 +304,21 @@ const SUBJECT_LABELS: Record<string, string> = {
                     {SUBJECT_LABELS[subject]}
                   </legend>
                   <div class="overflow-x-auto">
-                    <table class="w-full text-sm">
+                    <table class={TABLE}>
                       <thead>
-                        <tr class="text-left text-xs text-neutral-500 dark:text-neutral-400">
-                          <th class="py-1 pr-4 font-medium">Field</th>
-                          <th class="py-1 pr-4 font-medium">Type</th>
-                          <th class="py-1 pr-4 font-medium">Shown</th>
-                          <th class="py-1 font-medium">Mandatory</th>
+                        <tr class={THEAD}>
+                          <th class={TH}>Field</th>
+                          <th class={TH}>Type</th>
+                          <th class={TH}>Shown</th>
+                          <th class={TH}>Mandatory</th>
                         </tr>
                       </thead>
                       <tbody>
                         {fields.map(field => (
-                          <tr class="border-t border-neutral-200 dark:border-neutral-800">
-                            <td class="py-1.5 pr-4 text-neutral-700 dark:text-neutral-200">
+                          <tr class={ROW}>
+                            <td
+                              class={`${TD} text-neutral-700 dark:text-neutral-200`}
+                            >
                               {field.label}
                               <input
                                 type="hidden"
@@ -324,10 +326,12 @@ const SUBJECT_LABELS: Record<string, string> = {
                                 value={field.id}
                               />
                             </td>
-                            <td class="py-1.5 pr-4 text-xs text-neutral-400 dark:text-neutral-500">
+                            <td
+                              class={`${TD} text-xs text-neutral-400 dark:text-neutral-500`}
+                            >
                               {field.dataType}
                             </td>
-                            <td class="py-1.5 pr-4">
+                            <td class={TD}>
                               <input
                                 type="checkbox"
                                 name="visible"
@@ -337,7 +341,7 @@ const SUBJECT_LABELS: Record<string, string> = {
                                 class="text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600"
                               />
                             </td>
-                            <td class="py-1.5">
+                            <td class={TD}>
                               <input
                                 type="checkbox"
                                 name="mandatory"

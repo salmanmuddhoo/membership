@@ -4,7 +4,21 @@ import DashboardLayout from '@layouts/DashboardLayout.astro';
 import { PERMISSION_VIEW, listSessions } from '@lib/cash/sessions';
 import { query } from '@lib/db/pool';
 import { formatMoney, fromCents, toCents } from '@lib/payments/money';
-import { BUTTON, CARD, HINT, INPUT_BARE, MUTED, PAGE } from '@lib/ui';
+import {
+  BUTTON,
+  CARD,
+  HINT,
+  INPUT_BARE,
+  MUTED,
+  PAGE,
+  LABEL,
+  TABLE,
+  THEAD,
+  TH,
+  TD,
+  TD_NUM,
+  ROW,
+} from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 if (!principal.permissions.has(PERMISSION_VIEW)) {
@@ -60,7 +74,7 @@ function overShortClass(value: string | null): string {
 <DashboardLayout title="Cash drawers · Al Barakah MCSL" heading="Cash drawers">
   <div class={PAGE.list}>
     <form method="get" class={`${CARD} flex flex-wrap items-end gap-3`}>
-      <label class="text-sm text-neutral-600 dark:text-neutral-300">
+      <label class={LABEL}>
         From
         <input
           type="date"
@@ -69,7 +83,7 @@ function overShortClass(value: string | null): string {
           class={`${INPUT_BARE} mt-1 block`}
         />
       </label>
-      <label class="text-sm text-neutral-600 dark:text-neutral-300">
+      <label class={LABEL}>
         To
         <input
           type="date"
@@ -78,7 +92,7 @@ function overShortClass(value: string | null): string {
           class={`${INPUT_BARE} mt-1 block`}
         />
       </label>
-      <label class="text-sm text-neutral-600 dark:text-neutral-300">
+      <label class={LABEL}>
         Cashier
         <select name="cashierId" class={`${INPUT_BARE} mt-1 block`}>
           <option value="" selected={!cashierId}>
@@ -105,45 +119,31 @@ function overShortClass(value: string | null): string {
       {sessions.length === 0 ? (
         <p class={`${HINT} mt-4`}>No drawers in this period.</p>
       ) : (
-        <table class="mt-4 w-full text-sm">
+        <table class={`${TABLE} mt-4`}>
           <thead>
-            <tr class="border-b border-neutral-300 text-left dark:border-neutral-700">
-              <th class="py-2 font-medium text-neutral-600 dark:text-neutral-300">
-                Cashier
-              </th>
-              <th class="py-2 font-medium text-neutral-600 dark:text-neutral-300">
-                Opened
-              </th>
-              <th class="py-2 font-medium text-neutral-600 dark:text-neutral-300">
-                Closed
-              </th>
-              <th class="py-2 text-right font-medium text-neutral-600 dark:text-neutral-300">
-                Float
-              </th>
-              <th class="py-2 text-right font-medium text-neutral-600 dark:text-neutral-300">
-                Expected
-              </th>
-              <th class="py-2 text-right font-medium text-neutral-600 dark:text-neutral-300">
-                Counted
-              </th>
-              <th class="py-2 text-right font-medium text-neutral-600 dark:text-neutral-300">
-                Over/short
-              </th>
-              <th class="py-2 font-medium text-neutral-600 dark:text-neutral-300">
-                Note
-              </th>
+            <tr
+              class={`${THEAD} border-b border-neutral-300 dark:border-neutral-700`}
+            >
+              <th class={TH}>Cashier</th>
+              <th class={TH}>Opened</th>
+              <th class={TH}>Closed</th>
+              <th class={`${TH} text-right`}>Float</th>
+              <th class={`${TH} text-right`}>Expected</th>
+              <th class={`${TH} text-right`}>Counted</th>
+              <th class={`${TH} text-right`}>Over/short</th>
+              <th class={TH}>Note</th>
             </tr>
           </thead>
           <tbody>
             {sessions.map(s => (
-              <tr class="border-b border-neutral-200 align-top dark:border-neutral-800">
-                <td class="py-2 text-neutral-800 dark:text-neutral-100">
+              <tr class={`${ROW} align-top`}>
+                <td class={`${TD} text-neutral-800 dark:text-neutral-100`}>
                   {s.cashierName}
                 </td>
-                <td class="py-2 text-neutral-500 dark:text-neutral-400">
+                <td class={`${TD} text-neutral-500 dark:text-neutral-400`}>
                   {dateFormat.format(s.openedAt)}
                 </td>
-                <td class="py-2">
+                <td class={TD}>
                   {s.closedAt === null ? (
                     <span class="bg-mint-200 dark:bg-mint-900 rounded px-1.5 py-0.5 text-xs text-neutral-800 dark:text-neutral-100">
                       Open
@@ -154,23 +154,23 @@ function overShortClass(value: string | null): string {
                     </span>
                   )}
                 </td>
-                <td class="py-2 text-right tabular-nums text-neutral-800 dark:text-neutral-100">
+                <td class={`${TD_NUM} text-neutral-800 dark:text-neutral-100`}>
                   {formatMoney(s.openingFloat)}
                 </td>
-                <td class="py-2 text-right tabular-nums text-neutral-800 dark:text-neutral-100">
+                <td class={`${TD_NUM} text-neutral-800 dark:text-neutral-100`}>
                   {s.expectedAtClose === null
                     ? '—'
                     : formatMoney(s.expectedAtClose)}
                 </td>
-                <td class="py-2 text-right tabular-nums text-neutral-800 dark:text-neutral-100">
+                <td class={`${TD_NUM} text-neutral-800 dark:text-neutral-100`}>
                   {s.closingCount === null ? '—' : formatMoney(s.closingCount)}
                 </td>
                 <td
-                  class={`py-2 text-right font-medium tabular-nums ${overShortClass(s.overShort)}`}
+                  class={`${TD_NUM} font-medium ${overShortClass(s.overShort)}`}
                 >
                   {s.overShort === null ? '—' : formatMoney(s.overShort)}
                 </td>
-                <td class="py-2 text-neutral-600 dark:text-neutral-300">
+                <td class={`${TD} text-neutral-600 dark:text-neutral-300`}>
                   {s.note || '—'}
                 </td>
               </tr>

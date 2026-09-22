@@ -14,7 +14,20 @@ import {
   returnedTransactions,
 } from '@lib/ledger/review';
 import { formatMoney } from '@lib/payments/money';
-import { PAGE, HINT, CARD_LABEL, FILTER } from '@lib/ui';
+import {
+  PAGE,
+  HINT,
+  CARD_LABEL,
+  FILTER,
+  INPUT_SM,
+  PILL,
+  TABLE,
+  THEAD,
+  TBODY,
+  TH,
+  TD,
+  TD_NUM,
+} from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 
@@ -77,7 +90,7 @@ const CELL = 'px-2 py-2';
           Kind
           <select
             name="kind"
-            class="ml-1 rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+            class={`${INPUT_SM} ml-1`}
             onchange="this.form.submit()"
           >
             <option value="" selected={!kind}>
@@ -116,32 +129,30 @@ const CELL = 'px-2 py-2';
             <h2 class={CARD_LABEL}>
               {group.title}
               {group.rows.length > 0 && (
-                <span class="ml-2 rounded-full bg-neutral-200 px-2 py-0.5 text-xs font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
-                  {group.rows.length}
-                </span>
+                <span class={`${PILL} ml-2`}>{group.rows.length}</span>
               )}
             </h2>
             <div class={`overflow-x-auto ${FILTER}`}>
               {group.rows.length === 0 ? (
                 <p class={HINT}>{group.empty}</p>
               ) : (
-                <table class="w-full text-sm">
-                  <thead class="text-left text-xs text-neutral-500 uppercase dark:text-neutral-400">
+                <table class={TABLE}>
+                  <thead class={THEAD}>
                     <tr>
-                      <th class={CELL}>Reference</th>
-                      <th class={CELL}>Kind</th>
-                      <th class={CELL}>Who</th>
-                      <th class={CELL}>Account</th>
-                      <th class={`${CELL} text-right`}>Amount</th>
-                      <th class={CELL}>Recorded by</th>
-                      <th class={CELL}>Waiting</th>
-                      <th class={CELL}>Step</th>
+                      <th class={TH}>Reference</th>
+                      <th class={TH}>Kind</th>
+                      <th class={TH}>Who</th>
+                      <th class={TH}>Account</th>
+                      <th class={`${TH} text-right`}>Amount</th>
+                      <th class={TH}>Recorded by</th>
+                      <th class={TH}>Waiting</th>
+                      <th class={TH}>Step</th>
                     </tr>
                   </thead>
-                  <tbody class="divide-y divide-neutral-200 dark:divide-neutral-800">
+                  <tbody class={TBODY}>
                     {group.rows.map(t => (
                       <tr class="text-neutral-800 dark:text-neutral-100">
-                        <td class={CELL}>
+                        <td class={TD}>
                           <a
                             href={`/transactions/${t.id}`}
                             class="font-medium underline"
@@ -149,8 +160,8 @@ const CELL = 'px-2 py-2';
                             <code class="text-xs">{t.reference}</code>
                           </a>
                         </td>
-                        <td class={CELL}>{KIND_LABELS[t.kind]}</td>
-                        <td class={CELL}>
+                        <td class={TD}>{KIND_LABELS[t.kind]}</td>
+                        <td class={TD}>
                           {t.holderName || t.holderKind}
                           {t.memberNo && (
                             <span class="block text-xs text-neutral-500 dark:text-neutral-400">
@@ -158,21 +169,19 @@ const CELL = 'px-2 py-2';
                             </span>
                           )}
                         </td>
-                        <td class={CELL}>
+                        <td class={TD}>
                           {t.accountNo} · {t.accountTypeName}
                         </td>
-                        <td
-                          class={`${CELL} text-right font-medium tabular-nums`}
-                        >
+                        <td class={`${TD_NUM} font-medium`}>
                           {formatMoney(t.amount, t.currency)}
                         </td>
-                        <td class={CELL}>{t.capturedByName}</td>
-                        <td class={`${CELL} whitespace-nowrap`}>
+                        <td class={TD}>{t.capturedByName}</td>
+                        <td class={`${TD} whitespace-nowrap`}>
                           <span title={dateFormat.format(t.waitingSince)}>
                             {waited(t.waitingSince)}
                           </span>
                         </td>
-                        <td class={CELL}>{t.note}</td>
+                        <td class={TD}>{t.note}</td>
                       </tr>
                     ))}
                   </tbody>

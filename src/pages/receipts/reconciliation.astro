@@ -9,7 +9,21 @@
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import { reconcileReceipts, type ExceptionKind } from '@lib/payments/receipts';
 import { formatMoney } from '@lib/payments/money';
-import { PAGE, CARD, CARD_TITLE, HINT, MUTED, INPUT, BUTTON } from '@lib/ui';
+import {
+  PAGE,
+  CARD,
+  CARD_TITLE,
+  HINT,
+  MUTED,
+  INPUT,
+  BUTTON,
+  LABEL,
+  TABLE,
+  THEAD,
+  ROW,
+  TH,
+  TD,
+} from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 if (!principal.permissions.has('receipt.reconcile')) {
@@ -63,11 +77,11 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 >
   <div class={PAGE.list}>
     <form method="get" class={`flex flex-wrap items-end gap-3 ${CARD}`}>
-      <label class="text-sm text-neutral-600 dark:text-neutral-300">
+      <label class={LABEL}>
         From
         <input type="date" name="from" value={asDate(from)} class={INPUT} />
       </label>
-      <label class="text-sm text-neutral-600 dark:text-neutral-300">
+      <label class={LABEL}>
         To
         <input
           type="date"
@@ -118,27 +132,31 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             : `Every number from ${period.firstSerial} to ${period.lastSerial} is accounted for. No gaps, no duplicates, no voids.`}
         </p>
       ) : (
-        <table class="mt-4 w-full text-sm">
+        <table class={`${TABLE} mt-4`}>
           <thead>
-            <tr class="border-b border-neutral-300 text-left dark:border-neutral-700">
-              <th class="py-2 font-medium text-neutral-600 dark:text-neutral-300">
+            <tr
+              class={`${THEAD} border-b border-neutral-300 dark:border-neutral-700`}
+            >
+              <th class={`${TH} text-neutral-600 dark:text-neutral-300`}>
                 Receipt
               </th>
-              <th class="py-2 font-medium text-neutral-600 dark:text-neutral-300">
+              <th class={`${TH} text-neutral-600 dark:text-neutral-300`}>
                 Finding
               </th>
-              <th class="py-2 font-medium text-neutral-600 dark:text-neutral-300">
+              <th class={`${TH} text-neutral-600 dark:text-neutral-300`}>
                 Reason
               </th>
-              <th class="py-2 font-medium text-neutral-600 dark:text-neutral-300">
+              <th class={`${TH} text-neutral-600 dark:text-neutral-300`}>
                 When
               </th>
             </tr>
           </thead>
           <tbody>
             {period.exceptions.map(exception => (
-              <tr class="border-b border-neutral-200 align-top dark:border-neutral-800">
-                <td class="py-2 font-medium text-neutral-800 tabular-nums dark:text-neutral-100">
+              <tr class={`${ROW} align-top`}>
+                <td
+                  class={`${TD} font-medium text-neutral-800 tabular-nums dark:text-neutral-100`}
+                >
                   {exception.paymentId || exception.transactionId ? (
                     <a
                       href={`/receipts/${exception.paymentId ?? exception.transactionId}`}
@@ -152,17 +170,17 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                     exception.receiptNo
                   )}
                 </td>
-                <td class="py-2">
+                <td class={TD}>
                   <span
                     class={`rounded px-1.5 py-0.5 text-xs ${KIND_CLASSES[exception.kind]}`}
                   >
                     {KIND_LABELS[exception.kind]}
                   </span>
                 </td>
-                <td class="py-2 text-neutral-600 dark:text-neutral-300">
+                <td class={`${TD} text-neutral-600 dark:text-neutral-300`}>
                   {exception.reason || 'Not recorded'}
                 </td>
-                <td class="py-2 text-neutral-500 dark:text-neutral-400">
+                <td class={`${TD} text-neutral-500 dark:text-neutral-400`}>
                   {exception.at ? dateFormat.format(exception.at) : '—'}
                   {exception.who && ` · ${exception.who}`}
                 </td>

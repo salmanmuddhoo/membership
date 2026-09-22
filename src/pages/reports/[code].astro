@@ -24,6 +24,10 @@ import {
   MUTED,
   PAGE,
   SECONDARY_SM,
+  LABEL,
+  TABLE,
+  THEAD,
+  ROW,
 } from '@lib/ui';
 
 const principal = Astro.locals.principal!;
@@ -92,7 +96,7 @@ const exportHref = () => {
 
       <form method="get" class="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {report.filters.map(filter => (
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             {filter.label}
             {filter.kind === 'choice' ? (
               <select name={filter.name} class={INPUT}>
@@ -150,9 +154,11 @@ const exportHref = () => {
           <p class={`${HINT} mt-4`}>Nothing matches.</p>
         ) : (
           <div class="mt-4 overflow-x-auto">
-            <table class="w-full text-sm">
+            <table class={TABLE}>
               <thead>
-                <tr class="border-b border-neutral-300 dark:border-neutral-700">
+                <tr
+                  class={`${THEAD} border-b border-neutral-300 dark:border-neutral-700`}
+                >
                   {result.columns.map(column => (
                     <th
                       class:list={[
@@ -167,7 +173,7 @@ const exportHref = () => {
               </thead>
               <tbody>
                 {result.rows.map(row => (
-                  <tr class="border-b border-neutral-200 dark:border-neutral-800">
+                  <tr class={ROW}>
                     {result.columns.map(column => (
                       <td
                         class:list={[

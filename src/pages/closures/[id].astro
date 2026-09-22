@@ -34,6 +34,9 @@ import {
   BUTTON,
   SECONDARY,
   DANGER,
+  NOTICE_ERROR,
+  NOTICE_OK,
+  TAG,
 } from '@lib/ui';
 
 const principal = Astro.locals.principal!;
@@ -145,22 +148,14 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         ← {closure.holderName || closure.holderKind}
         {closure.memberNo && ` · ${closure.memberNo}`}
       </a>
-      <span class="rounded bg-neutral-200 px-2 py-0.5 text-xs font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
+      <span class={TAG}>
         {closure.accountNo} · {closure.accountTypeName} ·{' '}
         {formatMoney(closure.amount)}
       </span>
     </div>
 
-    {error && (
-      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-        {error}
-      </div>
-    )}
-    {notice && (
-      <div class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-lg border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
-        {notice}
-      </div>
-    )}
+    {error && <div class={NOTICE_ERROR}>{error}</div>}
+    {notice && <div class={NOTICE_OK}>{notice}</div>}
     {returnComment && (
       <div class="rounded-lg border border-amber-300 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200">
         Returned: {returnComment}
@@ -191,7 +186,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           >{closure.reason}</textarea>
         </label>
         <div class="grid gap-3 sm:grid-cols-2">
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             Balance paid out by
             <select name="method" class={INPUT}>
               {paymentMethods.map(method => (
@@ -205,7 +200,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               ))}
             </select>
           </label>
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             Reference (cheque number, transfer reference)
             <input
               type="text"
@@ -214,10 +209,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               class={INPUT}
             />
           </label>
-          <label
-            data-bank-account-field
-            class="text-sm text-neutral-600 dark:text-neutral-300"
-          >
+          <label data-bank-account-field class={LABEL}>
             Bank account
             <select name="bankAccountId" class={INPUT}>
               <option value="">Choose…</option>

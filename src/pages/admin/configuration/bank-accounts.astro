@@ -27,6 +27,9 @@ import {
   INPUT,
   BUTTON,
   BUTTON_SM,
+  LABEL,
+  NOTICE_ERROR,
+  NOTICE_OK,
 } from '@lib/ui';
 
 const principal = Astro.locals.principal!;
@@ -102,16 +105,8 @@ const CHECK =
   <div class={PAGE.list}>
     <ConfigNav />
 
-    {error && (
-      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-        {error}
-      </div>
-    )}
-    {notice && (
-      <div class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-lg border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
-        {notice}
-      </div>
-    )}
+    {error && <div class={NOTICE_ERROR}>{error}</div>}
+    {notice && <div class={NOTICE_OK}>{notice}</div>}
 
     <section class={CARD}>
       <h2 class={CARD_TITLE}>The Society's accounts</h2>
@@ -152,7 +147,7 @@ const CHECK =
               {canManage ? (
                 <form method="post" class="mt-4 grid gap-3 sm:grid-cols-2">
                   <input type="hidden" name="accountId" value={account.id} />
-                  <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                  <label class={LABEL}>
                     Name
                     <input
                       type="text"
@@ -161,7 +156,7 @@ const CHECK =
                       class={INPUT}
                     />
                   </label>
-                  <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                  <label class={LABEL}>
                     Bank
                     <input
                       type="text"
@@ -170,7 +165,7 @@ const CHECK =
                       class={INPUT}
                     />
                   </label>
-                  <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                  <label class={LABEL}>
                     Account number
                     <input
                       type="text"
@@ -179,7 +174,7 @@ const CHECK =
                       class={INPUT}
                     />
                   </label>
-                  <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                  <label class={LABEL}>
                     Currency
                     <input
                       type="text"
@@ -189,7 +184,7 @@ const CHECK =
                       class={INPUT}
                     />
                   </label>
-                  <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                  <label class={LABEL}>
                     Opening balance (Rs)
                     <input
                       type="text"
@@ -199,7 +194,7 @@ const CHECK =
                       class={INPUT}
                     />
                   </label>
-                  <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                  <label class={LABEL}>
                     Opening date
                     <input
                       type="date"
@@ -267,7 +262,7 @@ const CHECK =
         <form method="post" class="mt-4 grid gap-3 sm:grid-cols-2">
           <input type="hidden" name="intent" value="create" />
           <input type="hidden" name="isActive" value="on" />
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             Code
             <input
               type="text"
@@ -277,19 +272,19 @@ const CHECK =
               class={INPUT}
             />
           </label>
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             Name
             <input type="text" name="name" required class={INPUT} />
           </label>
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             Bank
             <input type="text" name="bankName" required class={INPUT} />
           </label>
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             Account number
             <input type="text" name="accountNumber" required class={INPUT} />
           </label>
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             Currency
             <input
               type="text"
@@ -299,7 +294,7 @@ const CHECK =
               class={INPUT}
             />
           </label>
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             Opening balance (Rs)
             <input
               type="text"
@@ -309,7 +304,7 @@ const CHECK =
               class={INPUT}
             />
           </label>
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             Opening date
             <input type="date" name="openingDate" class={INPUT} />
           </label>

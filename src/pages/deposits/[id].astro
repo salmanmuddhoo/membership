@@ -22,6 +22,8 @@ import {
   BUTTON,
   SECONDARY,
   DANGER,
+  NOTICE_ERROR,
+  TAG,
 } from '@lib/ui';
 
 const principal = Astro.locals.principal!;
@@ -103,17 +105,13 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       >
         ← Back
       </a>
-      <span class="rounded bg-neutral-200 px-2 py-0.5 text-xs font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
+      <span class={TAG}>
         {deposit.accountNo} · {deposit.accountTypeName} ·{' '}
         {formatMoney(deposit.amount)}
       </span>
     </div>
 
-    {error && (
-      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-        {error}
-      </div>
-    )}
+    {error && <div class={NOTICE_ERROR}>{error}</div>}
 
     {step === 'details' && (
       <form method="post" class={FORM_CARD}>
