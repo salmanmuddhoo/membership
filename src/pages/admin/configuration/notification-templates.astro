@@ -87,6 +87,16 @@ const EVENT_LABELS: Record<string, string> = {
   'demised.under_review': 'Demised claim under review',
   'demised.approved': 'Demised claim paid out',
   'demised.rejected': 'Demised claim not approved',
+  'deposit.posted': 'Deposit received',
+  'withdrawal.submitted': 'Withdrawal received',
+  'withdrawal.under_review': 'Withdrawal under review',
+  'withdrawal.disbursed': 'Withdrawal paid out',
+  'withdrawal.rejected': 'Withdrawal not approved',
+  'transfer.posted': 'Transfer completed',
+  'balance.near_floor': 'Balance near its minimum',
+  'transaction.awaiting': 'Staff: transaction awaiting a step',
+  'transaction.returned': 'Staff: transaction returned to its captor',
+  'receipt.voided': 'Staff: receipt voided',
 };
 
 const eventLabel = (code: string) =>

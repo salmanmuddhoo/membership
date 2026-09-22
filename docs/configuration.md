@@ -122,6 +122,13 @@ claimant beside the balances of the member's accounts, read when a claim is
 submitted and carried on the claim from then. `docs/ledger.md`, "A deceased
 member's claim".
 
+**Near-floor notice (S-1803)** sits on the same screen:
+`balance.near_floor_margin` in `config_entry` (MUR, seeded 500 by 0081): a
+posted withdrawal or transfer that leaves an account within this much of
+its type's minimum balance sends the holder the `balance.near_floor`
+advisory; 0 sends none. `docs/notifications.md`, "A member's own
+transactions".
+
 **Resignation checks (S-1703)** sit on the same screen: three switches in
 `config_entry` (`resignation.check_pending_transactions`,
 `resignation.check_unpaid_fees`, `resignation.check_financing`), each a

@@ -28,6 +28,7 @@ import {
 import { availableBalance, LedgerError } from './ledger';
 import { notifyReceiptIssued } from './receipt-notifications';
 import { loadTransaction, type TransactionSummary } from './review';
+import { notifySubmitted } from './transaction-notifications';
 import {
   resolveRoute,
   resubmitTransaction,
@@ -369,7 +370,11 @@ export async function recordWithdrawal(
       return id;
     });
     if (receipt) await notifyReceiptIssued(id);
-    return (await loadTransaction(id))!;
+    // Paid out at once, or in for review: the member hears which, and a
+    // chain's first step hears it is waiting (S-1803, S-1804).
+    const made = (await loadTransaction(id))!;
+    await notifySubmitted([made], { byUserId: principal.userId });
+    return made;
   } catch (err) {
     if (receipt) {
       await abandonReceiptNumber(
@@ -517,7 +522,12 @@ export async function resubmitWithdrawal(
       }
     });
     if (receipt) await notifyReceiptIssued(id);
-    return (await loadTransaction(id))!;
+    const made = (await loadTransaction(id))!;
+    await notifySubmitted([made], {
+      byUserId: principal.userId,
+      resubmitted: true,
+    });
+    return made;
   } catch (err) {
     if (receipt) {
       await abandonReceiptNumber(

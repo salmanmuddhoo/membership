@@ -29,6 +29,47 @@ const EXIT_COMMON = [
   'amount',
 ] as const;
 
+// A member's own transactions (S-1803) and the staff who wait on them
+// (S-1804, S-1805): what src/lib/ledger/transaction-notifications.ts
+// passes for each.
+const TRANSACTION_COMMON = [
+  'member_name',
+  'reference',
+  'amount',
+  'account',
+] as const;
+const STAFF_COMMON = [
+  'recipient_name',
+  'kind',
+  'reference',
+  'member_name',
+  'amount',
+  'account',
+  'link',
+] as const;
+export const TRANSACTION_PLACEHOLDERS: Record<string, readonly string[]> = {
+  'deposit.posted': [...TRANSACTION_COMMON, 'balance'],
+  'withdrawal.submitted': TRANSACTION_COMMON,
+  'withdrawal.under_review': [...TRANSACTION_COMMON, 'comment'],
+  'withdrawal.disbursed': [
+    ...TRANSACTION_COMMON,
+    'method',
+    'receipt_no',
+    'balance',
+  ],
+  'withdrawal.rejected': [...TRANSACTION_COMMON, 'comment'],
+  'transfer.posted': [
+    ...TRANSACTION_COMMON,
+    'from_account',
+    'to_account',
+    'balance',
+  ],
+  'balance.near_floor': [...TRANSACTION_COMMON, 'balance', 'floor'],
+  'transaction.awaiting': [...STAFF_COMMON, 'step', 'captured_by'],
+  'transaction.returned': [...STAFF_COMMON, 'returned_by', 'comment'],
+  'receipt.voided': [...STAFF_COMMON, 'receipt_no', 'voided_by', 'reason'],
+};
+
 export const RECEIPT_ISSUED = 'receipt.issued';
 export const RECEIPT_PLACEHOLDERS = [
   'member_name',
@@ -73,6 +114,9 @@ export function placeholdersForEvent(eventCode: string): string[] | null {
   // A transaction's receipt (S-1602): what the ledger passes when one is
   // issued or re-sent (src/lib/ledger/receipt-notifications.ts).
   if (eventCode === RECEIPT_ISSUED) return [...RECEIPT_PLACEHOLDERS];
+  if (eventCode in TRANSACTION_PLACEHOLDERS) {
+    return [...TRANSACTION_PLACEHOLDERS[eventCode]];
+  }
 
   const [subject, happening] = eventCode.split('.');
   if ((EXIT_SUBJECTS as readonly string[]).includes(subject)) {

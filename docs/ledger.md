@@ -532,7 +532,13 @@ event carries `account_closed`, `membership_ended`, `takaful_benefit` and
 `claimant`. The retention anchor is the same as a resignation's.
 
 Every stage of an exit is told to its member or claimant (S-1705,
-`src/lib/ledger/exit-notifications.ts`, `docs/notifications.md`), and the
+`src/lib/ledger/exit-notifications.ts`, `docs/notifications.md`); a
+deposit, a withdrawal and a transfer tell the member the same way
+(S-1803, `src/lib/ledger/transaction-notifications.ts`), the step's role
+hears of every arrival and the captor of every return (S-1804), and
+whoever else may void hears of a void (S-1805,
+`src/lib/ledger/void-notifications.ts`) — all after the commit, none able
+to fail it; and the
 **Exits** report (S-1706, `src/lib/reports/definitions.ts`) lists closures,
 resignations and claims by the period they were submitted in: who, what
 was paid out and to whom, the benefit, the status, and the days from

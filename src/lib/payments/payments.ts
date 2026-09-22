@@ -16,6 +16,7 @@ import { recordAudit } from '../access/audit';
 import { checkSegregation } from '../admin/segregation';
 import { query, withTransaction } from '../db/pool';
 import { accountEntries, postOpeningBalances } from '../ledger/ledger';
+import { notifyReceiptVoided } from '../ledger/void-notifications';
 import {
   cashMaximum,
   cashSourceOfFundThreshold,
@@ -1940,6 +1941,21 @@ export async function voidPayment(
     );
   });
 
+  // Whoever else may void hears of it (S-1805).
+  await notifyReceiptVoided({
+    receiptNo: payment.receiptNo,
+    reference: payment.applicationReference ?? '',
+    kind: payment.kind === 'refund' ? 'Refund' : 'Fee receipt',
+    memberName: payment.applicantName,
+    amount: payment.totalAmount,
+    currency: payment.currency,
+    account: '',
+    reason: trimmed,
+    voidedBy: { userId: principal.userId, name: principal.displayName },
+    path: `/receipts/${payment.id}`,
+    entityType: ENTITY_TYPE,
+    entityId: payment.id,
+  });
   return (await loadPayment(payment.id))!;
 }
 

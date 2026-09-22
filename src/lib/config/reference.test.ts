@@ -2007,6 +2007,53 @@ describe('the cash maximum (a system setting, not reference data)', () => {
   });
 });
 
+describe('the near-floor margin (a system setting, not reference data)', () => {
+  afterEach(async () => {
+    const { config } = await load();
+    // Migration 0081 seeds 500; put it back for the same reason the other
+    // system settings' afterEach does.
+    await config.setNearFloorMargin('500', actor);
+  });
+
+  it('reads the value migration 0081 seeded, before anyone has changed it', async () => {
+    const { config } = await load();
+    expect(await config.nearFloorMargin()).toBe('500');
+  });
+
+  it('can be changed, and the new value reads back', async () => {
+    const { config } = await load();
+    await config.setNearFloorMargin('750', actor);
+    expect(await config.nearFloorMargin()).toBe('750');
+  });
+
+  it('refuses a value that is not an amount in rupees', async () => {
+    const { config } = await load();
+    await expect(config.setNearFloorMargin('ten', actor)).rejects.toThrowError(
+      /not an amount/
+    );
+  });
+
+  it('keeps its own history, the same as every other config_entry row', async () => {
+    const { config, pool } = await load();
+    // Other tests in this describe block share the same row and each reset
+    // it to 500 in afterEach, so history already has entries — only the
+    // tail this test itself just wrote is asserted on.
+    await config.setNearFloorMargin('750', actor);
+    await config.setNearFloorMargin('900', actor);
+
+    const rows = await run(
+      appUrl,
+      `select value::text as value, replaced_at is null as is_live
+         from config_entry_history
+        where config_key = 'balance.near_floor_margin'
+        order by effective_at`
+    );
+    expect(rows.rows.slice(-2).map(r => r.value)).toEqual(['750', '900']);
+    expect(rows.rows.at(-1)!.is_live).toBe(true);
+    await pool.closePool();
+  });
+});
+
 describe('the cash source-of-fund checklist (a system setting, not reference data)', () => {
   afterEach(async () => {
     const { config } = await load();
