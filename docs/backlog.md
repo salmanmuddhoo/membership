@@ -4977,6 +4977,29 @@ submit cannot disagree; `previewTimeline` and `routePreviewGroups`
 the membership application's chevron uses, and `RoutePreview.astro` shows
 the right one as the amount changes. `docs/ledger.md` has the detail.
 
+# M26 — After an exit: rejoining and reopening ✅
+
+A member who resigned could not come back, and a closed Hajj Savings
+account could not reopen: a fresh membership application would have made
+a second member with a second AB number, and an additional-account
+application for the type was refused at approval because the closed
+account still counted as held. Now the resigned member's page offers
+**Rejoin**, which starts the same membership application through the same
+chain, naming the member (`rejoins_member_id`, migration 0090) and copying
+the parties on file; approval re-admits that member — same row, same
+number, `rejoined_at` — and reactivates the Shares and MSA the resignation
+closed, under their own ids. A closed account's row offers **Reopen**,
+which starts the additional-account application for its type; approval
+brings the closed account back under its own number, `reopened_at`, rather
+than opening a second. Both are tagged on the page — "rejoined {date}",
+"Reopened {date}" — and audited as `member.rejoined` and
+`account.reopened`. The buttons a closed or resigned record no longer
+needs (Deposit, Close, Resign) were already gone with the status; the
+"already holds" check and the offer of types to open now ignore a closed
+account. `docs/ledger.md` under Closing an account and Resigning has the
+detail; `src/lib/members/rejoin.test.ts` proves both paths against the
+migrations.
+
 # Open values that later stories depend on
 
 Each is absorbed by configuration, so none blocks the start of development.

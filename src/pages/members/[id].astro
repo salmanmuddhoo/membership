@@ -3,10 +3,14 @@ import DashboardLayout from '@layouts/DashboardLayout.astro';
 import { loadMember, loadCustomer } from '@lib/members/create';
 import { accountBalance } from '@lib/ledger/ledger';
 import {
+  accountApplicationsInFlightFor,
   ApplicationError,
   findGuardian,
   guardianOf,
+  rejoinInFlightFor,
+  startAdditionalAccountApplication,
   startMembershipApplicationFromCustomer,
+  startRejoinApplication,
 } from '@lib/applications/capture';
 import { forDisplay } from '@lib/applications/phone';
 import { otherPartyGroups } from '@lib/applications/parties';
@@ -59,6 +63,7 @@ import {
   INPUT_SM,
   LABEL,
   NOTICE_ERROR,
+  PILL,
   SECONDARY_XS,
   SUBTITLE,
 } from '@lib/ui';
@@ -224,6 +229,51 @@ if (Astro.request.method === 'POST') {
         error = 'Something went wrong. Please try again.';
       }
     }
+  } else if (intent === 'rejoin' && member) {
+    // M26: a resigned member applies to rejoin — the same membership
+    // application, through the same chain, under the number they had.
+    // Lands on Applicant details like a customer's conversion does: the
+    // parties are copied from the founding application and want a look.
+    if (!canCapture) {
+      error = 'You do not have permission to do this.';
+    } else {
+      try {
+        const created = await startRejoinApplication(member.id, {
+          userId: principal.userId,
+          email: principal.email,
+        });
+        return Astro.redirect(`/applications/${created.id}?step=1`);
+      } catch (err) {
+        if (err instanceof ApplicationError) {
+          error = err.message;
+        } else {
+          console.error('[members/rejoin]', err);
+          error = 'Something went wrong. Please try again.';
+        }
+      }
+    }
+  } else if (intent === 'reopen' && member) {
+    // M26: a closed additional account reopens through the same
+    // additional-account application that opened it, for that one type.
+    if (!canCapture) {
+      error = 'You do not have permission to do this.';
+    } else {
+      try {
+        const created = await startAdditionalAccountApplication(
+          member.id,
+          [String(form.get('accountTypeId') ?? '')],
+          { userId: principal.userId, email: principal.email }
+        );
+        return Astro.redirect(`/applications/${created.id}/account?step=1`);
+      } catch (err) {
+        if (err instanceof ApplicationError) {
+          error = err.message;
+        } else {
+          console.error('[members/reopen]', err);
+          error = 'Something went wrong. Please try again.';
+        }
+      }
+    }
   }
 }
 
@@ -315,13 +365,19 @@ const status = (member ?? customer)!.status;
 // offer and the button is gone. Gated on application.capture, like starting
 // any application. Skipped entirely for a converted/inactive record.
 const person = (member ?? customer)!;
+// A closed account is not held (M26): its type is open to apply for again,
+// and approval brings the closed one back rather than opening a second.
 const canOpenAnotherAccount =
   canCapture &&
   person.status === 'active' &&
   openableAccountTypes(
     await listAccountTypes(),
     person.membershipTypeId,
-    new Set(person.accounts.map(a => a.accountTypeId))
+    new Set(
+      person.accounts
+        .filter(a => a.status !== 'closed')
+        .map(a => a.accountTypeId)
+    )
   ).length > 0;
 // S-1305: a deposit into one of their accounts. Gated on transaction.capture
 // (the counter officer's, like payment.record) and on there being an active
@@ -343,6 +399,26 @@ const canReactivate =
   !!member &&
   member.status === 'dormant' &&
   principal.permissions.has(PERMISSION_REACTIVATE);
+// M26: a resigned member rejoins through a membership application that
+// names them, offered until one is on its way.
+const rejoining =
+  member && member.status === 'resigned'
+    ? await rejoinInFlightFor(member.id)
+    : null;
+const canRejoin =
+  !!member && member.status === 'resigned' && canCapture && !rejoining;
+// M26: the additional-account applications on their way, by the type each
+// would reopen — a closed account's row links to its own rather than
+// offering to start another.
+const reopening = member
+  ? await accountApplicationsInFlightFor(member.id)
+  : new Map<string, { id: string; reference: string }>();
+const canReopen = (account: { status: string; accountTypeId: string }) =>
+  !!member &&
+  member.status === 'active' &&
+  canCapture &&
+  account.status === 'closed' &&
+  !reopening.has(account.accountTypeId);
 // S-1702: closing an account that is not the membership's, and the request
 // already on its way where there is one.
 const canClose = canDeposit;
@@ -449,6 +525,24 @@ const pageTitle = member ? member.memberNo : name;
         {notice}
       </div>
     )}
+    {canRejoin && (
+      <form method="post">
+        <input type="hidden" name="intent" value="rejoin" />
+        <button type="submit" class={BUTTON_SM}>
+          Rejoin
+        </button>
+      </form>
+    )}
+    {rejoining && (
+      <p class="text-sm">
+        <a
+          href={`/applications/${rejoining.id}`}
+          class="rounded-lg bg-amber-100 px-3 py-1.5 font-medium text-amber-900 underline dark:bg-amber-950 dark:text-amber-200"
+        >
+          Rejoining · {rejoining.reference}
+        </a>
+      </p>
+    )}
     {canReactivate && (
       <form method="post" class="flex flex-wrap items-end gap-3">
         <input type="hidden" name="intent" value="reactivate" />
@@ -513,6 +607,8 @@ const pageTitle = member ? member.memberNo : name;
         <p class={`${HINT} mt-1`}>
           {member && `${member.membershipTypeName} · `}joined{' '}
           {dateFormat.format(joinedAt)}
+          {member?.rejoinedAt &&
+            ` · rejoined ${dateFormat.format(member.rejoinedAt)}`}
           {applicationReference && (
             <>
               {' '}
@@ -781,7 +877,15 @@ const pageTitle = member ? member.memberNo : name;
                   {account.category} · {account.status} ·{' '}
                   {account.openedViaMigration ? 'migrated' : 'opened'}{' '}
                   {dateFormat.format(account.openedAt)}
+                  {account.status === 'closed' &&
+                    account.closedAt &&
+                    ` · closed ${dateFormat.format(account.closedAt)}`}
                 </span>
+                {account.reopenedAt && account.status !== 'closed' && (
+                  <span class={PILL}>
+                    Reopened {dateFormat.format(account.reopenedAt)}
+                  </span>
+                )}
                 {canSeeAccounts && (
                   <>
                     <span class="ml-auto font-medium text-neutral-800 tabular-nums dark:text-neutral-100">
@@ -797,6 +901,36 @@ const pageTitle = member ? member.memberNo : name;
                     </a>
                   </>
                 )}
+                {account.status === 'closed' &&
+                  reopening.has(account.accountTypeId) && (
+                    <a
+                      href={`/applications/${reopening.get(account.accountTypeId)!.id}/account`}
+                      class="rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-900 underline dark:bg-amber-950 dark:text-amber-200"
+                    >
+                      Reopening ·{' '}
+                      {reopening.get(account.accountTypeId)!.reference}
+                    </a>
+                  )}
+                {canReopen(account) &&
+                  !(
+                    'isMembershipDefault' in account &&
+                    account.isMembershipDefault
+                  ) && (
+                    <form method="post">
+                      <input type="hidden" name="intent" value="reopen" />
+                      <input
+                        type="hidden"
+                        name="accountTypeId"
+                        value={account.accountTypeId}
+                      />
+                      <button
+                        type="submit"
+                        class="text-sm font-medium text-neutral-700 underline hover:text-neutral-900 dark:text-neutral-200 dark:hover:text-neutral-100"
+                      >
+                        Reopen
+                      </button>
+                    </form>
+                  )}
                 {closing.has(account.id) ? (
                   <a
                     href={`/transactions/${closing.get(account.id)!.id}`}

@@ -502,6 +502,22 @@ the `transaction.posted` event carries `account_closed`. A closed account
 no longer counts against one account of each type per holder (0018, 0027),
 so the member can open another later.
 
+**Reopening** (M26, migration 0090): "another" means the same one. The
+closed account's row on the member's page offers **Reopen**, which starts
+the additional-account application for that type (the same one that opened
+it, through the same chain, `startAdditionalAccountApplication`), and the
+row says "Reopening · APP-…" while it is on its way
+(`accountApplicationsInFlightFor`). On approval `openAccountsForApplication`
+finds the holder's closed account of the type and reactivates it —
+`status` back to the type's default, `closed_at` cleared, `reopened_at`
+set, the approving application recorded as `opened_by_application_id` —
+under its own id and its own number, so HSA0001 comes back as HSA0001 with
+its history in one place rather than an HSA0002 beside a dead HSA0001. The
+audit action is `account.reopened`; the row wears "Reopened {date}" from
+then on. The "already holds" refusal at approval and the offer of types to
+open both ignore a closed account, and a customer's closed account reopens
+the same way (`openAccountsUnderCustomer`).
+
 `member.status` is a check constraint since 0077 (S-1701) — pending,
 active, inactive, dormant, resigned, demised — with `status_changed_at`
 beside it; `src/lib/members/status.ts` is the same list for the code and
@@ -547,6 +563,27 @@ for what it holds, closes each as it empties, and ends the membership —
 statement. The `transaction.posted` event carries `account_closed` and
 `membership_ended`. From that day the member's documents have the anchor
 retention was waiting for (`docs/retention.md`).
+
+**Rejoining** (M26, migration 0090). A resigned member's page offers
+**Rejoin** to an officer with `application.capture`, which starts a
+membership application of their type — the same form, the same fees the
+schedule asks, the same chain that admitted them — naming the member
+(`membership_application.rejoins_member_id`, `startRejoinApplication`),
+with the founding application's parties copied in for the officer to check
+rather than retype and its documents filed into the founding folder. The
+page says "Rejoining · APP-…" while it is on its way (`rejoinInFlightFor`;
+one at a time), and the application page wears "Rejoining as AB0001". On
+approval `createMemberFromApplication` sees the member named and, rather
+than inserting a second member with a second number, reactivates the one
+row: `status` back to active, `rejoined_at` set, the rejoin application
+recorded as theirs, and the Shares and MSA the resignation closed
+reactivated under their own ids (`reopened_at`, as for a closure), a
+membership-default type they never held opening fresh. The rejoin
+application keeps its APP reference — the AB number already belongs to the
+founding application. Audit: `member.rejoined`, `account.reopened`. The
+page's header reads "joined {date} · rejoined {date}" from then on. A
+demised member does not rejoin; a dormant one is reactivated, not
+re-admitted (M22).
 
 ## A deceased member's claim
 

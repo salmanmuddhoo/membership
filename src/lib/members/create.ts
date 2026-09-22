@@ -9,7 +9,11 @@ import type { PoolClient } from 'pg';
 import { recordAudit } from '../access/audit';
 import { query } from '../db/pool';
 import { postOpeningBalances } from '../ledger/ledger';
-import type { Actor, Application } from '../applications/capture';
+import type {
+  Actor,
+  Application,
+  MembershipApplication,
+} from '../applications/capture';
 
 export class MemberCreationError extends Error {
   constructor(message: string) {
@@ -94,6 +98,16 @@ export async function createMemberFromApplication(
         'so there is no account to open. Set one in Configuration → Account ' +
         'types before approving.'
     );
+  }
+
+  // M26 · A rejoin: the application names the resigned member it re-admits.
+  // They come back as the member they were — same row, same AB number —
+  // rather than as a second member with a second number, which is the
+  // whole point of naming them. The Shares and MSA the resignation closed
+  // are reactivated below under their own ids, so their history reads as
+  // one account that closed and reopened.
+  if (application.rejoinsMemberId) {
+    return rejoinMember(client, application, actor);
   }
 
   const member = options?.memberNo
@@ -402,6 +416,193 @@ export async function createMigratedCustomer(
   return { id: customer.rows[0].id };
 }
 
+// M26 · Which of a member's accounts of the given types stand closed, so
+// approval reactivates them rather than opening a second one — the unique
+// index (account_one_per_type_per_member_idx) ignores closed rows, so a
+// second row of the type would be allowed, and the member would then hold
+// two of one type, one of them the old number nobody could reach.
+async function closedAccountsOf(
+  client: PoolClient,
+  owner: { memberId: string } | { customerId: string },
+  accountTypeIds: string[]
+): Promise<Map<string, string>> {
+  const closed = await client.query<{ id: string; account_type_id: string }>(
+    'memberId' in owner
+      ? `select id, account_type_id from account
+          where member_id = $1 and account_type_id = any($2::uuid[])
+            and status = 'closed'
+          order by closed_at desc`
+      : `select id, account_type_id from account
+          where customer_id = $1 and account_type_id = any($2::uuid[])
+            and status = 'closed'
+          order by closed_at desc`,
+    ['memberId' in owner ? owner.memberId : owner.customerId, accountTypeIds]
+  );
+  const byType = new Map<string, string>();
+  for (const row of closed.rows) {
+    if (!byType.has(row.account_type_id))
+      byType.set(row.account_type_id, row.id);
+  }
+  return byType;
+}
+
+// M26 · Bring a closed account back under its own id and number, dated so
+// the page can say "reopened on". The balance is whatever the ledger says
+// it is — a closure paid it out, so it stands at nil until the opening
+// receipt posts.
+async function reopenClosedAccount(
+  client: PoolClient,
+  accountId: string,
+  status: string,
+  applicationId: string
+): Promise<void> {
+  await client.query(
+    `update account
+        set status = $2, closed_at = null, reopened_at = now(),
+            opened_by_application_id = $3, updated_at = now()
+      where id = $1 and status = 'closed'`,
+    [accountId, status, applicationId]
+  );
+}
+
+/**
+ * M26 · Re-admit a resigned member on the approval of the membership
+ * application that names them (rejoins_member_id).
+ *
+ * The member row is the one they always had: status back to active,
+ * rejoined_at set, and the application that brought them back recorded as
+ * theirs. Their Shares and MSA — closed by the resignation — are
+ * reactivated under their own ids; a membership-default type they never
+ * held (one configured since they left) opens fresh, as it would on any
+ * approval. The application keeps its APP reference: the AB number already
+ * belongs to the founding application, and one reference cannot name two.
+ */
+async function rejoinMember(
+  client: PoolClient,
+  application: MembershipApplication,
+  actor: Actor
+): Promise<CreatedMember> {
+  const member = await client.query<{ member_no: string; status: string }>(
+    `select member_no, status from member where id = $1 for no key update`,
+    [application.rejoinsMemberId]
+  );
+  if (member.rowCount === 0) {
+    throw new MemberCreationError('That member no longer exists.');
+  }
+  if (member.rows[0].status !== 'resigned') {
+    throw new MemberCreationError(
+      'This member is not resigned, so there is no membership to rejoin.'
+    );
+  }
+  const memberId = application.rejoinsMemberId!;
+  const memberNo = member.rows[0].member_no;
+
+  const openOnApproval = await client.query<{
+    id: string;
+    code: string;
+    name: string;
+    default_status: string;
+  }>(
+    `select id, code, name, default_status from account_type
+      where is_membership_default and is_active
+      order by sort_order, name`
+  );
+  if (openOnApproval.rowCount === 0) {
+    throw new MemberCreationError(
+      'No active account type is set to open when a membership is approved, ' +
+        'so there is no account to open. Set one in Configuration → Account ' +
+        'types before approving.'
+    );
+  }
+
+  await client.query(
+    `update member
+        set status = 'active', status_changed_at = now(), rejoined_at = now(),
+            application_id = $2, membership_type_id = $3, updated_at = now()
+      where id = $1`,
+    [memberId, application.id, application.membershipTypeId]
+  );
+
+  const closed = await closedAccountsOf(
+    client,
+    { memberId },
+    openOnApproval.rows.map(t => t.id)
+  );
+  const accounts: CreatedMember['accounts'] = [];
+  const reopened = new Set<string>();
+  for (const type of openOnApproval.rows) {
+    const existing = closed.get(type.id);
+    if (existing) {
+      await reopenClosedAccount(
+        client,
+        existing,
+        type.default_status,
+        application.id
+      );
+      reopened.add(existing);
+      accounts.push({ id: existing, typeCode: type.code, typeName: type.name });
+      continue;
+    }
+    const account = await client.query<{ id: string }>(
+      `insert into account
+         (member_id, account_type_id, is_membership_default, status,
+          opened_by_application_id)
+       values ($1, $2, true, $3, $4)
+       returning id`,
+      [memberId, type.id, type.default_status, application.id]
+    );
+    accounts.push({
+      id: account.rows[0].id,
+      typeCode: type.code,
+      typeName: type.name,
+    });
+  }
+
+  await recordAudit(
+    {
+      actorUserId: actor.userId,
+      actorDescription: actor.email,
+      action: 'member.rejoined',
+      entityType: 'member',
+      entityId: memberId,
+      previousValue: { status: 'resigned' },
+      newValue: {
+        status: 'active',
+        memberNo,
+        fromApplication: application.reference,
+        membershipType: application.membershipTypeCode,
+      },
+    },
+    client
+  );
+  for (const account of accounts) {
+    await recordAudit(
+      {
+        actorUserId: actor.userId,
+        actorDescription: actor.email,
+        action: reopened.has(account.id)
+          ? 'account.reopened'
+          : 'account.opened',
+        entityType: 'account',
+        entityId: account.id,
+        newValue: {
+          memberNo,
+          accountType: account.typeCode,
+          openedBecause: 'membership rejoined',
+        },
+      },
+      client
+    );
+  }
+
+  await postOpeningBalances(
+    application.id,
+    { userId: actor.userId, description: actor.email },
+    client
+  );
+  return { id: memberId, memberNo, accounts };
+}
+
 /**
  * S-613 · Turn an approved additional_account application into the
  * selected account(s), under the member it already names.
@@ -491,11 +692,14 @@ export async function openAccountsForApplication(
   // unique index (account_one_per_type_per_member_idx, migration 0018) to
   // turn a second HSA into an opaque constraint violation for whoever
   // approves this.
+  // A closed one does not count (M26): it is exactly what this application
+  // reopens, below, under its own number.
   const already = await client.query<{ name: string }>(
     `select t.name
        from account a
        join account_type t on t.id = a.account_type_id
-      where a.member_id = $1 and a.account_type_id = any($2::uuid[])`,
+      where a.member_id = $1 and a.account_type_id = any($2::uuid[])
+        and a.status <> 'closed'`,
     [application.existingMemberId, typeIds]
   );
   if ((already.rowCount ?? 0) > 0) {
@@ -504,9 +708,39 @@ export async function openAccountsForApplication(
     );
   }
 
+  // M26 · A closed account of a selected type comes back as itself — the
+  // HSA0001 they had, not an HSA0002 beside a dead HSA0001 — dated so the
+  // page can say so.
+  const closed = await closedAccountsOf(
+    client,
+    { memberId: application.existingMemberId! },
+    typeIds
+  );
   const accounts: CreatedMember['accounts'] = [];
+  const reopened = new Set<string>();
   for (const selected of application.selectedAccountTypes) {
     const type = byId.get(selected.id)!;
+    const existing = closed.get(type.id);
+    if (existing) {
+      await reopenClosedAccount(
+        client,
+        existing,
+        type.default_status,
+        application.id
+      );
+      const number = await client.query<{ account_no: string }>(
+        `select account_no from account where id = $1`,
+        [existing]
+      );
+      reopened.add(existing);
+      accounts.push({
+        id: existing,
+        typeCode: type.code,
+        typeName: type.name,
+        accountNo: number.rows[0].account_no,
+      });
+      continue;
+    }
     // Its own number, from the same per-type counter a non-member's account
     // draws from (next_customer_account_number) — a member's HSA and a
     // customer's HSA are numbered from one sequence, and account_no_unique_idx
@@ -548,7 +782,9 @@ export async function openAccountsForApplication(
       {
         actorUserId: actor.userId,
         actorDescription: actor.email,
-        action: 'account.opened',
+        action: reopened.has(account.id)
+          ? 'account.reopened'
+          : 'account.opened',
         entityType: 'account',
         entityId: account.id,
         newValue: {
@@ -661,7 +897,8 @@ async function openAccountsUnderCustomer(
     `select t.name
        from account a
        join account_type t on t.id = a.account_type_id
-      where a.customer_id = $1 and a.account_type_id = any($2::uuid[])`,
+      where a.customer_id = $1 and a.account_type_id = any($2::uuid[])
+        and a.status <> 'closed'`,
     [customerId, typeIds]
   );
   if ((already.rowCount ?? 0) > 0) {
@@ -670,9 +907,33 @@ async function openAccountsUnderCustomer(
     );
   }
 
+  // M26: a closed one of the type comes back as itself, as for a member.
+  const closed = await closedAccountsOf(client, { customerId }, typeIds);
   const accounts: CreatedMember['accounts'] = [];
+  const reopened = new Set<string>();
   for (const selected of application.selectedAccountTypes) {
     const type = byId.get(selected.id)!;
+    const existing = closed.get(type.id);
+    if (existing) {
+      await reopenClosedAccount(
+        client,
+        existing,
+        type.default_status,
+        application.id
+      );
+      const number = await client.query<{ account_no: string }>(
+        `select account_no from account where id = $1`,
+        [existing]
+      );
+      reopened.add(existing);
+      accounts.push({
+        id: existing,
+        typeCode: type.code,
+        typeName: type.name,
+        accountNo: number.rows[0].account_no,
+      });
+      continue;
+    }
     const numbered = await client.query<{ account_no: string }>(
       `select next_customer_account_number($1) as account_no`,
       [type.id]
@@ -700,7 +961,9 @@ async function openAccountsUnderCustomer(
       {
         actorUserId: actor.userId,
         actorDescription: actor.email,
-        action: 'account.opened',
+        action: reopened.has(account.id)
+          ? 'account.reopened'
+          : 'account.opened',
         entityType: 'account',
         entityId: account.id,
         newValue: {
@@ -914,10 +1177,16 @@ export interface MemberAccount {
   // account this member goes on to open live afterwards still reads
   // "opened".
   openedViaMigration: boolean;
+  // M26: when it closed, while it stands closed; when it last came back.
+  closedAt: Date | null;
+  reopenedAt: Date | null;
 }
 
 export interface MemberDetail extends MemberSummary {
   accounts: MemberAccount[];
+  // M26: when a resigned membership was last re-admitted; null for one
+  // that never left.
+  rejoinedAt: Date | null;
   // The membership type's own code (individual, corporate, minor) — the
   // detail page tags a minor from this, where the name alone would not
   // survive an administrator renaming the type.
@@ -1132,6 +1401,7 @@ export async function loadMember(id: string): Promise<MemberDetail | null> {
     status_changed_at: Date | null;
     name: string;
     joined_at: Date;
+    rejoined_at: Date | null;
     application_reference: string | null;
     application_id: string | null;
     applicant_values: Record<string, string> | null;
@@ -1140,7 +1410,7 @@ export async function loadMember(id: string): Promise<MemberDetail | null> {
     `select m.id, m.member_no, t.name as membership_type_name,
             t.code as membership_type_code, m.membership_type_id, m.status,
             m.status_changed_at,
-            ${NAME_SQL} as name, m.joined_at,
+            ${NAME_SQL} as name, m.joined_at, m.rejoined_at,
             a.reference as application_reference,
             m.application_id,
             p.values as applicant_values,
@@ -1168,11 +1438,13 @@ export async function loadMember(id: string): Promise<MemberDetail | null> {
     is_membership_default: boolean;
     opened_at: Date;
     opened_via_migration: boolean;
+    closed_at: Date | null;
+    reopened_at: Date | null;
   }>(
     `select a.id, a.account_no, a.account_type_id,
             t.name as account_type_name, t.category,
             a.status, a.is_membership_default, a.opened_at,
-            a.opened_via_migration
+            a.opened_via_migration, a.closed_at, a.reopened_at
        from account a
        join account_type t on t.id = a.account_type_id
       where a.member_id = $1
@@ -1194,6 +1466,7 @@ export async function loadMember(id: string): Promise<MemberDetail | null> {
     statusChangedAt: row.status_changed_at,
     name: row.name || '(unnamed)',
     joinedAt: row.joined_at,
+    rejoinedAt: row.rejoined_at,
     applicationReference: row.application_reference,
     applicationId: row.application_id,
     applicantValues: row.applicant_values ?? {},
@@ -1212,6 +1485,8 @@ export async function loadMember(id: string): Promise<MemberDetail | null> {
       isMembershipDefault: a.is_membership_default,
       openedAt: a.opened_at,
       openedViaMigration: a.opened_via_migration,
+      closedAt: a.closed_at,
+      reopenedAt: a.reopened_at,
     })),
   };
 }
@@ -1229,6 +1504,8 @@ export interface CustomerAccount {
   // See MemberAccount's own field — "migrated on", not "opened", for one
   // the legacy import created.
   openedViaMigration: boolean;
+  closedAt: Date | null;
+  reopenedAt: Date | null;
 }
 
 export interface CustomerDetail {
@@ -1293,10 +1570,13 @@ export async function loadCustomer(id: string): Promise<CustomerDetail | null> {
     status: string;
     opened_at: Date;
     opened_via_migration: boolean;
+    closed_at: Date | null;
+    reopened_at: Date | null;
   }>(
     `select a.id, a.account_no, a.account_type_id,
             t.name as account_type_name, t.category,
-            a.status, a.opened_at, a.opened_via_migration
+            a.status, a.opened_at, a.opened_via_migration,
+            a.closed_at, a.reopened_at
        from account a
        join account_type t on t.id = a.account_type_id
       where a.customer_id = $1
@@ -1324,6 +1604,8 @@ export async function loadCustomer(id: string): Promise<CustomerDetail | null> {
       status: a.status,
       openedAt: a.opened_at,
       openedViaMigration: a.opened_via_migration,
+      closedAt: a.closed_at,
+      reopenedAt: a.reopened_at,
     })),
   };
 }
