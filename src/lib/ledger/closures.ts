@@ -13,6 +13,7 @@
 // Only an account type that is not the membership's default can close
 // here. Shares and the MSA go together, and taking them away is a
 // resignation (S-1703): the refusal says so by name.
+import { canTransact } from '../members/status';
 import { recordAudit } from '../access/audit';
 import type { Principal } from '../access/principal';
 import { query, withTransaction } from '../db/pool';
@@ -192,7 +193,7 @@ async function refuseUnlessClosable(
       'conflict'
     );
   }
-  if (account.holderStatus !== 'active') {
+  if (!canTransact(account.holderStatus)) {
     throw new ClosureError(
       `This ${account.memberId ? 'member' : 'customer'} is ${account.holderStatus}.`,
       'conflict'

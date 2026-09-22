@@ -10,6 +10,7 @@
 // band the withdrawal posts at once, paid out by the officer recording it;
 // above it, it waits on its chain, and the disbursement is a separate act
 // once approved (S-1503, postApprovedTransaction).
+import { canTransact } from '../members/status';
 import { createHash } from 'node:crypto';
 import { recordAudit } from '../access/audit';
 import type { Principal } from '../access/principal';
@@ -191,7 +192,7 @@ export async function refuseUnlessWithdrawable(
   if (operation === 'transfer' && !from.allowsTransfer) {
     throw new WithdrawalError(`${from.typeName} does not allow transfers.`);
   }
-  if (from.holderStatus !== 'active') {
+  if (!canTransact(from.holderStatus)) {
     throw new WithdrawalError(
       `This ${from.memberId ? 'member' : 'customer'} is ${from.holderStatus}, ` +
         `so nothing can be ${verb}.`

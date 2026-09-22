@@ -528,13 +528,20 @@ describe('a resignation (S-1703)', () => {
       amount: 20000,
     });
 
-    // A resigned member transacts no more.
+    // Resigned, they deal as a non-member on what is left open (officer
+    // direction): the HSA still takes a deposit, the closed core accounts
+    // do not, and there is no membership left to resign.
+    const onHsa = await deposits.recordDeposit(
+      { accountId: member.hsa, amount: '10', method: 'cash' },
+      officer
+    );
+    expect(onHsa.status).toBe('posted');
     await expect(
       deposits.recordDeposit(
-        { accountId: member.hsa, amount: '10', method: 'cash' },
+        { accountId: member.shares, amount: '10', method: 'cash' },
         officer
       )
-    ).rejects.toThrowError(/This member is resigned/);
+    ).rejects.toThrowError(/This account is closed/);
     await expect(
       resignations.startResignation(
         { memberId: member.id, reason: 'Again', method: 'cash' },

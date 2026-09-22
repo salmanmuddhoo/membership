@@ -529,13 +529,18 @@ the same way (`openAccountsUnderCustomer`).
 `member.status` is a check constraint since 0077 (S-1701) — pending,
 active, inactive, dormant, resigned, demised — with `status_changed_at`
 beside it; `src/lib/members/status.ts` is the same list for the code and
-the rules the capture paths apply: only an active holder transacts
-(`canTransact`), and an active holder or a resigned member opens a further
-account (`canOpenAccount`) — a resigned member left the membership, not
-the Society, so an HSA or Investment account is still theirs to open on
-their existing record, from their page, through the same
-additional-account application. Shares and the MSA come back only by
-rejoining. `dormant` is set by the nightly
+the rules the capture paths apply. An active holder transacts and opens
+accounts; so does a resigned member (`canTransact`, `canOpenAccount`),
+because resigning ends the membership and not the relationship. The
+Shares and the MSA closed with the resignation, so whatever is still
+open is a non-membership account (HSA, Investment), and on it they deal
+exactly as a non-member customer does: deposit, withdraw, transfer,
+close, and open another from their page on their existing record. While
+they hold an open account they are tagged and counted as a non-member
+(`isNonMember`; the members list's `non_member`). They cannot resign
+again or be claimed for as a member, and the Shares and MSA come back
+only by rejoining. Dormant, inactive, pending and demised still move
+nothing. `dormant` is set by the nightly
 `dormancy-detection` job after `dormancy.months` without a posted entry or
 a fee payment on any of the member's accounts, and unset by an officer with
 `member.reactivate` and a reason (M22, `src/lib/members/dormancy.ts`,

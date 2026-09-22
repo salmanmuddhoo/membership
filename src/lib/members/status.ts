@@ -23,12 +23,27 @@ export const STATUS_LABELS: Record<MemberStatus, string> = {
   demised: 'Demised',
 };
 
-// Only an active member transacts or opens an account. The capture paths
-// (deposits.ts, withdrawals.ts, closures.ts) read the holder's status and
-// refuse anything else, naming it; this is the one place that says which
-// statuses those are, so a page can hide what the library would refuse.
+// Who money may move for. The capture paths (deposits.ts, withdrawals.ts,
+// transfers.ts, closures.ts) read the holder's status and refuse anything
+// else, naming it; this is the one place that says which statuses those
+// are, so a page can hide what the library would refuse.
+//
+// An active holder, and — officer direction — a resigned member: resigning
+// ends the membership, not the relationship. The Shares and the MSA closed
+// with it, so what is left open is only ever a non-membership account
+// (HSA, Investment), and on those they deal exactly as a non-member
+// customer does. Dormant, inactive, pending and demised still move nothing.
 export function canTransact(status: string): boolean {
-  return status === 'active';
+  return status === 'active' || status === 'resigned';
+}
+
+// A resigned member who still holds an open account is, to the Society, a
+// non-member: the screens tag them so, alongside customers.
+export function isNonMember(
+  status: string,
+  accounts: readonly { status: string }[]
+): boolean {
+  return status === 'resigned' && accounts.some(a => a.status !== 'closed');
 }
 
 // Who may apply for a further account (HSA, Investment, …). An active
@@ -49,10 +64,11 @@ export function statusNotice(
   changedAt: Date | null,
   format = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' })
 ): string | null {
-  if (canTransact(status)) return null;
+  if (status === 'active') return null;
   const label = STATUS_LABELS[status as MemberStatus] ?? status;
   const since = changedAt ? ` since ${format.format(changedAt)}` : '';
-  return canOpenAccount(status)
-    ? `${label}${since}. No transactions.`
-    : `${label}${since}. No transactions and no new accounts.`;
+  // A resigned member transacts and opens accounts as a non-member does:
+  // the line says what they are, and nothing is refused.
+  if (canTransact(status)) return `${label}${since}.`;
+  return `${label}${since}. No transactions and no new accounts.`;
 }
