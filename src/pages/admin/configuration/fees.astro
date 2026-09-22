@@ -9,7 +9,9 @@ import {
   cashSourceOfFundThreshold,
   listFeeSchedules,
   publishFeeVersion,
+  resignationChecks,
   setCashMaximum,
+  setResignationChecks,
   setCashSourceOfFundChecklist,
   setCashSourceOfFundThreshold,
   type FeeComponentCode,
@@ -45,6 +47,16 @@ if (Astro.request.method === 'POST') {
           actor
         );
         notice = 'Cash maximum updated.';
+      } else if (intent === 'set-resignation-checks') {
+        await setResignationChecks(
+          {
+            pendingTransactions: form.get('pendingTransactions') === 'on',
+            unpaidFees: form.get('unpaidFees') === 'on',
+            financing: form.get('financing') === 'on',
+          },
+          actor
+        );
+        notice = 'Resignation checks updated.';
       } else if (intent === 'set-cash-checklist') {
         const items = String(form.get('cashChecklist') ?? '')
           .split('\n')
@@ -84,6 +96,28 @@ if (Astro.request.method === 'POST') {
 const schedules = await listFeeSchedules();
 const cashThreshold = await cashSourceOfFundThreshold();
 const cashMax = await cashMaximum();
+const checks = await resignationChecks();
+const RESIGNATION_CHECKS: {
+  name: keyof typeof checks;
+  label: string;
+  hint: string;
+}[] = [
+  {
+    name: 'pendingTransactions',
+    label: 'No transaction on its way on Shares or the MSA',
+    hint: 'Anything submitted, under review or approved on either account.',
+  },
+  {
+    name: 'unpaidFees',
+    label: 'Joining fees fully paid',
+    hint: 'What the membership was charged to join, less what was paid.',
+  },
+  {
+    name: 'financing',
+    label: 'No financing outstanding',
+    hint: 'Nothing records financing yet; this passes until something does.',
+  },
+];
 const checklistItems = await cashSourceOfFundChecklist();
 
 const COMPONENT_LABELS: Record<string, string> = {
@@ -323,6 +357,44 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             class="mt-1 block w-full max-w-xl rounded-lg border border-neutral-300 bg-white px-2 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
           >{checklistItems.join('\n')}</textarea>
         </label>
+        {canManage && (
+          <button
+            type="submit"
+            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+          >
+            Save
+          </button>
+        )}
+      </form>
+    </section>
+
+    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+      <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+        Resignation checks
+      </h2>
+      <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+        A resignation cannot be submitted while a ticked check fails. Each one
+        is named on the request when it blocks.
+      </p>
+      <form method="post" class="mt-4 space-y-3">
+        <input type="hidden" name="intent" value="set-resignation-checks" />
+        {RESIGNATION_CHECKS.map(check => (
+          <label class="flex items-start gap-3 text-sm text-neutral-700 dark:text-neutral-200">
+            <input
+              type="checkbox"
+              name={check.name}
+              checked={checks[check.name]}
+              disabled={!canManage}
+              class="mt-1"
+            />
+            <span>
+              <span class="font-medium">{check.label}</span>
+              <span class="block text-xs text-neutral-500 dark:text-neutral-400">
+                {check.hint}
+              </span>
+            </span>
+          </label>
+        ))}
         {canManage && (
           <button
             type="submit"

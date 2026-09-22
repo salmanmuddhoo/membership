@@ -22,11 +22,12 @@ is the record of who authorised a disposal and when.
 
 ## What can be disposed of
 
-| Record                                  | Anchored on                      | What goes                                                             |
-| --------------------------------------- | -------------------------------- | --------------------------------------------------------------------- |
-| **Notification log**                    | When the message was sent        | The whole row — recipient, subject and the text of what was said      |
-| **Applications that were not approved** | When the application was refused | The applicant's captured details, the documents, the SharePoint files |
-| **Drafts that were never submitted**    | When the draft was last touched  | The whole application                                                 |
+| Record                                  | Anchored on                      | What goes                                                                                                                                                                     |
+| --------------------------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Notification log**                    | When the message was sent        | The whole row — recipient, subject and the text of what was said                                                                                                              |
+| **Applications that were not approved** | When the application was refused | The applicant's captured details, the documents, the SharePoint files                                                                                                         |
+| **Drafts that were never submitted**    | When the draft was last touched  | The whole application                                                                                                                                                         |
+| **Documents of a member who left**      | The day the membership ended     | Every document about them — filed against them, a request of theirs, or an application of theirs — and the files; the member, their applications' facts and their ledger stay |
 
 The rule behind those three differences is one sentence: **disposal removes the
 personal data, and keeps the fact that something happened** — except where the
@@ -47,15 +48,22 @@ record is only personal data, and then it goes too.
 
 ## Two things this deliberately does not do
 
-### A member's own KYC documents are not disposable
+### A current member's own KYC documents are not disposable
 
-The period for those runs from the **end of the relationship**, and this system
-has no end of relationship yet: resignation and closure are M8, deferred to
-Phase 2. The only date available today is the upload date, and anchoring on it
-would destroy an active member's identity papers because they joined a long
-time ago. That is not a retention policy; it is data loss with a schedule.
+The period for those runs from the **end of the relationship**. Until M17
+this system had no end of relationship, and the only date available — the
+upload date — would have destroyed an active member's identity papers
+because they joined a long time ago. That is not a retention policy; it is
+data loss with a schedule.
 
-When M8 lands, closure gives the anchor and this becomes a fourth class.
+Resignation (S-1703) gave the anchor: `member.status_changed_at`, the day a
+membership ended, for a member whose status is `resigned` or `demised`.
+That is the fourth class above. A member still with the Society is never
+selected, whatever the period, and a former member's documents go once,
+recorded on `member.documents_disposed_at`. What stays is what the ledger
+and the receipts need to keep meaning something: the member row and its
+number, the applications and their statuses, the applicant's own captured
+details, every entry and every transaction.
 
 ### The audit trail cannot be disposed of at all
 

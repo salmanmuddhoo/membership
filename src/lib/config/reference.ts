@@ -2092,6 +2092,61 @@ export async function setCashMaximum(
   });
 }
 
+// The pre-checks a resignation runs before it can be submitted (S-1703),
+// each its own switch: named when it blocks, and the Society's to turn off.
+// Seeded by migration 0078; the defaults here are read only before it has
+// run. Financing is a hook for Phase 3/4 with nothing behind it, off.
+export interface ResignationChecks {
+  pendingTransactions: boolean;
+  unpaidFees: boolean;
+  financing: boolean;
+}
+
+const RESIGNATION_CHECK_KEYS: Record<keyof ResignationChecks, string> = {
+  pendingTransactions: 'resignation.check_pending_transactions',
+  unpaidFees: 'resignation.check_unpaid_fees',
+  financing: 'resignation.check_financing',
+};
+const DEFAULT_RESIGNATION_CHECKS: ResignationChecks = {
+  pendingTransactions: true,
+  unpaidFees: true,
+  financing: false,
+};
+
+async function readResignationChecks(): Promise<ResignationChecks> {
+  const result = await query<{ key: string; value: boolean }>(
+    `select key, value from config_entry where key = any($1::text[])`,
+    [Object.values(RESIGNATION_CHECK_KEYS)]
+  );
+  const byKey = new Map(result.rows.map(r => [r.key, r.value === true]));
+  const checks = { ...DEFAULT_RESIGNATION_CHECKS };
+  for (const name of Object.keys(checks) as (keyof ResignationChecks)[]) {
+    const value = byKey.get(RESIGNATION_CHECK_KEYS[name]);
+    if (value !== undefined) checks[name] = value;
+  }
+  return checks;
+}
+
+export function resignationChecks(): Promise<ResignationChecks> {
+  return cached('resignation-checks', readResignationChecks);
+}
+
+export async function setResignationChecks(
+  checks: ResignationChecks,
+  actor: Actor
+): Promise<void> {
+  await withConfigurationActor(actorFor(actor), async client => {
+    for (const name of Object.keys(checks) as (keyof ResignationChecks)[]) {
+      await client.query(
+        `update config_entry
+            set value = to_jsonb($2::boolean), updated_by = $3
+          where key = $1`,
+        [RESIGNATION_CHECK_KEYS[name], checks[name], actor.userId]
+      );
+    }
+  });
+}
+
 // The checklist an officer works through, on screen, before signing the
 // Source of Fund form for a cash payment above the threshold above. The
 // Society's own wording, not this codebase's — seeded with one placeholder

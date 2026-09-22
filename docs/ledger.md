@@ -459,6 +459,42 @@ beside it; `src/lib/members/status.ts` is the same list for the code and
 the one rule the capture paths already apply: only an active holder
 transacts or opens an account.
 
+## Resigning
+
+A resignation (S-1703, `src/lib/ledger/resignations.ts`, migration 0078)
+is a transaction of kind `resignation` on the member's Shares account,
+covering every account of a membership-default type: Shares and the MSA go
+together and cannot be resigned singly (FRD 7.2), while a Hajj Savings or
+Investment account is untouched and closes, if the member wants it closed,
+on its own request. The request's life before its chain is a closure's —
+`/members/{id}/resign` starts a draft, `/resignations/{id}` is the wizard,
+`/resignations/{id}/form` the sheet the member signs, filed against the
+transaction — and it rides the same chain, queue, trail and chevron
+(Details → Signature → Documents → Submitted → the chain → Resigned).
+
+What is its own is the **pre-checks** (`checksFor()`), each a
+configuration switch at Configuration → Fee schedules (`config_entry`,
+`resignationChecks()`) and each named on the request when it blocks: no
+transaction still on its way on either core account; the joining fees
+fully paid (`amountDueForApplication` less the live payments against the
+founding application; a legacy member with no application here has
+nothing to check); and no financing outstanding, a hook for Phase 3/4 that
+passes until something records financing, seeded off. A check switched off
+is shown as not checked and never blocks.
+
+`submitResignation()` refuses without the signed request or while an
+enabled check fails, sets the amount to what both accounts hold, puts both
+into `closing`, and routes by the matrix's `resignation` kind. Rejected or
+withdrawn, both are active again. Posting is S-1503's disbursement, one
+receipt for the combined balance: `postApprovedTransaction()` reads the
+balances again into the amount, and `post_transaction()` refuses a
+resignation whose amount is not their sum, writes one debit per account
+for what it holds, closes each as it empties, and ends the membership —
+`member.status = 'resigned'`, `status_changed_at = now()` — in the same
+statement. The `transaction.posted` event carries `account_closed` and
+`membership_ended`. From that day the member's documents have the anchor
+retention was waiting for (`docs/retention.md`).
+
 ## History, across accounts
 
 `listTransactions()` in `src/lib/ledger/history.ts` (S-1506) is one query

@@ -580,6 +580,17 @@ export async function reviewTransaction(
         [transaction.accountId]
       );
     }
+    // A resignation refused is a membership kept (S-1703): every core
+    // account was closing for this request and for nothing else.
+    if (transaction.kind === 'resignation' && status === 'rejected') {
+      await client.query(
+        `update account a set status = 'active'
+           from account_type at
+          where at.id = a.account_type_id and at.is_membership_default
+            and a.member_id = $1 and a.status = 'closing'`,
+        [transaction.holderId]
+      );
+    }
     // A transfer's other leg goes with it (S-1504): a rejection ends both,
     // and the transfer row reads whatever the debit leg reads.
     if (transaction.transferId) {
@@ -649,6 +660,7 @@ export function needsDisbursement(
   return (
     transaction.kind === 'withdrawal' ||
     transaction.kind === 'closure' ||
+    transaction.kind === 'resignation' ||
     (transaction.kind === 'transfer_leg' && transaction.payeeName !== null)
   );
 }
@@ -746,6 +758,22 @@ export async function postApprovedTransaction(
               set amount = coalesce(
                 (select balance from account_balance where account_id = t.account_id),
                 0)
+            where t.id = $1`,
+          [transaction.id]
+        );
+      }
+      // A resignation pays out every core account (S-1703), read the same
+      // way and refused the same way by post_transaction.
+      if (transaction.kind === 'resignation') {
+        await client.query(
+          `update transaction t
+              set amount = (
+                select coalesce(sum(coalesce(b.balance, 0)), 0)
+                  from account a
+                  join account_type at on at.id = a.account_type_id
+                  left join account_balance b on b.account_id = a.id
+                 where a.member_id = t.member_id
+                   and at.is_membership_default and a.status = 'closing')
             where t.id = $1`,
           [transaction.id]
         );

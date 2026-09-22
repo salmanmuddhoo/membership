@@ -1,0 +1,194 @@
+---
+// Start a member's resignation (S-1703): why, and how the balance of their
+// Shares and MSA goes back to them. What this makes is a draft; the member
+// signs the request on the next screen and the officer submits it once
+// every check passes.
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import { offeredPaymentMethods } from '@lib/config/reference';
+import {
+  checksFor,
+  coreAccounts,
+  resignationInFlightFor,
+  ResignationError,
+  startResignation,
+  totalCents,
+  PERMISSION_CAPTURE,
+} from '@lib/ledger/resignations';
+import { loadMember } from '@lib/members/create';
+import { formatMoney, fromCents } from '@lib/payments/money';
+
+const principal = Astro.locals.principal!;
+if (!principal.permissions.has(PERMISSION_CAPTURE)) {
+  return Astro.redirect('/denied');
+}
+
+const { id } = Astro.params;
+const member = id ? await loadMember(id) : null;
+if (!member) return new Response('Not found', { status: 404 });
+
+const inFlight = await resignationInFlightFor(member.id);
+if (inFlight) return Astro.redirect(`/transactions/${inFlight.id}`);
+
+const [accounts, checks, paymentMethods] = await Promise.all([
+  coreAccounts(member.id),
+  checksFor(member.id),
+  offeredPaymentMethods(),
+]);
+const total = fromCents(totalCents(accounts));
+const others = member.accounts.filter(a => !accounts.some(c => c.id === a.id));
+
+let values = {
+  reason: '',
+  method: paymentMethods[0]?.code ?? '',
+  methodReference: '',
+};
+let error: string | null = null;
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const text = (name: string) => String(form.get(name) ?? '');
+  values = {
+    reason: text('reason'),
+    method: text('method'),
+    methodReference: text('methodReference'),
+  };
+  try {
+    const request = await startResignation(
+      { memberId: member.id, ...values },
+      principal
+    );
+    return Astro.redirect(`/resignations/${request.id}?step=signature`);
+  } catch (err) {
+    if (err instanceof ResignationError) {
+      error = err.message;
+    } else {
+      console.error('[members/resign]', err);
+      error = 'Something went wrong. Please try again.';
+    }
+  }
+}
+
+const INPUT =
+  'mt-1 block w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100';
+---
+
+<DashboardLayout title="Resignation · Al Barakah MCSL" heading="Resignation">
+  <div class="mx-auto max-w-3xl space-y-6">
+    <a
+      href={`/members/${member.id}`}
+      class="inline-block text-sm text-neutral-500 underline dark:text-neutral-400"
+    >
+      ← {member.name} · {member.memberNo}
+    </a>
+
+    {error && (
+      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+        {error}
+      </div>
+    )}
+
+    <section class="space-y-3 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+      <h2 class="text-sm font-semibold text-neutral-700 uppercase dark:text-neutral-200">
+        Accounts closing
+      </h2>
+      <ul class="divide-y divide-neutral-200 text-sm dark:divide-neutral-800">
+        {accounts.map(account => (
+          <li class="flex items-center justify-between py-2">
+            <span class="text-neutral-800 dark:text-neutral-100">
+              {account.accountNo} · {account.typeName}
+            </span>
+            <span class="tabular-nums">{formatMoney(account.balance)}</span>
+          </li>
+        ))}
+        <li class="flex items-center justify-between py-2 font-semibold">
+          <span>Paid out</span>
+          <span class="tabular-nums">{formatMoney(total)}</span>
+        </li>
+      </ul>
+      {others.length > 0 && (
+        <p class="text-xs text-neutral-500 dark:text-neutral-400">
+          Not part of this:{' '}
+          {others.map(a => `${a.accountNo} · ${a.accountTypeName}`).join(', ')}.
+          Each closes on its own request.
+        </p>
+      )}
+    </section>
+
+    <section class="space-y-2 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+      <h2 class="text-sm font-semibold text-neutral-700 uppercase dark:text-neutral-200">
+        Checks
+      </h2>
+      <ul class="space-y-1 text-sm">
+        {checks.map(check => (
+          <li class="flex flex-wrap items-baseline gap-x-2">
+            <span
+              class:list={[
+                'font-medium',
+                !check.enabled
+                  ? 'text-neutral-400 dark:text-neutral-500'
+                  : check.passed
+                    ? 'text-neutral-800 dark:text-neutral-100'
+                    : 'text-red-700 dark:text-red-300',
+              ]}
+            >
+              {check.label}
+            </span>
+            <span class="text-xs text-neutral-500 dark:text-neutral-400">
+              {check.enabled ? check.detail : 'Not checked'}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
+
+    <form
+      method="post"
+      class="space-y-4 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
+    >
+      <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+        Reason
+        <textarea
+          name="reason"
+          rows="3"
+          required
+          maxlength="500"
+          class={INPUT}
+        >{values.reason}</textarea>
+      </label>
+      <div class="grid gap-3 sm:grid-cols-2">
+        <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          Balance paid out by
+          <select name="method" class={INPUT}>
+            {paymentMethods.map(method => (
+              <option
+                value={method.code}
+                selected={method.code === values.method}
+              >
+                {method.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          Reference (cheque number, transfer reference)
+          <input
+            type="text"
+            name="methodReference"
+            value={values.methodReference}
+            class={INPUT}
+          />
+        </label>
+      </div>
+      <p class="text-xs text-neutral-500 dark:text-neutral-400">
+        The balance is paid out when the resignation is approved, as it stands
+        then. Both accounts close and the membership ends.
+      </p>
+      <button
+        type="submit"
+        class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
+      >
+        Continue to signature
+      </button>
+    </form>
+  </div>
+</DashboardLayout>

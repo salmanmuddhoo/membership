@@ -212,11 +212,17 @@ async function checkedMethod(code: string) {
   }
 }
 
-function checkedReason(reason: string | undefined): string {
+// Shared with a resignation (resignations.ts), which says what is missing
+// in its own words and throws its own error.
+export function checkedReason(
+  reason: string | undefined,
+  missing = 'Say why the account is closing.',
+  refuse: (message: string) => Error = message => new ClosureError(message)
+): string {
   const trimmed = (reason ?? '').trim();
-  if (trimmed === '') throw new ClosureError('Say why the account is closing.');
+  if (trimmed === '') throw refuse(missing);
   if (trimmed.length > 500) {
-    throw new ClosureError('The reason is too long (500 characters at most).');
+    throw refuse('The reason is too long (500 characters at most).');
   }
   return trimmed;
 }
@@ -356,19 +362,33 @@ export interface ClosureChecklistItem {
   filed: TransactionDocument | null;
 }
 
+// The kinds of transaction that are a request the officer builds before it
+// goes to its chain, and the signed paper each one needs.
+export const REQUEST_DOCUMENT_CODES: Record<string, string> = {
+  closure: REQUEST_DOCUMENT_CODE,
+  resignation: 'resignation_request',
+};
+
+export function isExitRequest(kind: string): boolean {
+  return kind in REQUEST_DOCUMENT_CODES;
+}
+
 /**
- * What a closure has to carry, and what it does: the signed request, filed
- * against the transaction (documents.ts). One item today; a resignation or
- * a demised claim adds its own (S-1703, S-1704).
+ * What a request has to carry, and what it does: the signed request, filed
+ * against the transaction (documents.ts). One item per kind today; a
+ * demised claim adds its certificate and affidavit (S-1704).
  */
-export async function closureChecklist(
-  transactionId: string
+export async function requestChecklist(
+  transactionId: string,
+  kind: string
 ): Promise<ClosureChecklistItem[]> {
+  const code = REQUEST_DOCUMENT_CODES[kind];
+  if (!code) return [];
   const [types, filed] = await Promise.all([
     listDocumentTypes(),
     documentsForTransaction(transactionId),
   ]);
-  const request = types.find(t => t.code === REQUEST_DOCUMENT_CODE);
+  const request = types.find(t => t.code === code);
   if (!request) return [];
   return [
     {
@@ -378,6 +398,12 @@ export async function closureChecklist(
       filed: filed.find(d => d.documentTypeId === request.id) ?? null,
     },
   ];
+}
+
+export function closureChecklist(
+  transactionId: string
+): Promise<ClosureChecklistItem[]> {
+  return requestChecklist(transactionId, 'closure');
 }
 
 export function checklistComplete(items: ClosureChecklistItem[]): boolean {

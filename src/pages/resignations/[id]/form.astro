@@ -1,50 +1,50 @@
 ---
-// The account closure request the member signs (S-1702): a sheet, like
-// the Cash Deposit Form, read on screen, signed on the pad, rasterised and
-// filed against the request. What is filed is this sheet as the member saw
-// it, not a second rendering of it.
+// The resignation request the member signs (S-1703): a sheet, like the
+// closure request, read on screen, signed on the pad, rasterised and filed
+// against the request. What is filed is this sheet as the member saw it.
 import BaseLayout from '@layouts/BaseLayout.astro';
 import { listDocumentTypes } from '@lib/config/reference';
+import { isEditable } from '@lib/ledger/closures';
 import {
-  closureChecklist,
-  isEditable,
+  coreAccounts,
+  resignationChecklist,
+  totalCents,
   REQUEST_DOCUMENT_CODE,
-} from '@lib/ledger/closures';
+} from '@lib/ledger/resignations';
 import { loadTransaction } from '@lib/ledger/review';
-import { loadCustomer, loadMember } from '@lib/members/create';
-import { formatMoney } from '@lib/payments/money';
+import { loadMember } from '@lib/members/create';
+import { formatMoney, fromCents } from '@lib/payments/money';
 
 const principal = Astro.locals.principal!;
 const { id } = Astro.params;
-const closure = id ? await loadTransaction(id) : null;
+const request = id ? await loadTransaction(id) : null;
 if (
-  !closure ||
-  closure.kind !== 'closure' ||
-  !isEditable(closure.status) ||
-  closure.capturedById !== principal.userId
+  !request ||
+  request.kind !== 'resignation' ||
+  !isEditable(request.status) ||
+  request.capturedById !== principal.userId
 ) {
   return new Response('Not found', { status: 404 });
 }
 
-const holder =
-  closure.holderKind === 'member'
-    ? await loadMember(closure.holderId)
-    : await loadCustomer(closure.holderId);
+const holder = await loadMember(request.holderId);
 const nic = (holder?.applicantValues?.nic ?? '').trim();
+const accounts = await coreAccounts(request.holderId);
+const total = fromCents(totalCents(accounts));
 const documentType = (await listDocumentTypes()).find(
   t => t.code === REQUEST_DOCUMENT_CODE
 );
-const alreadyFiled = (await closureChecklist(closure.id))[0]?.filed ?? null;
-const back = `/closures/${closure.id}?step=signature`;
-const next = `/closures/${closure.id}?step=documents`;
+const alreadyFiled = (await resignationChecklist(request.id))[0]?.filed ?? null;
+const back = `/resignations/${request.id}?step=signature`;
+const next = `/resignations/${request.id}?step=documents`;
 const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
 ---
 
-<BaseLayout title={`${closure.reference} · Account closure request`}>
+<BaseLayout title={`${request.reference} · Resignation request`}>
   <div
     class="form-page"
-    data-transaction-id={closure.id}
-    data-reference={closure.reference}
+    data-transaction-id={request.id}
+    data-reference={request.reference}
     data-document-type-id={documentType?.id ?? ''}
     data-next={next}
     data-filed-document-id={alreadyFiled?.documentId ?? ''}
@@ -52,11 +52,11 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
     <header class="head">
       <div>
         <h1>AL BARAKAH MCSL</h1>
-        <p class="sub">ACCOUNT CLOSURE REQUEST</p>
+        <p class="sub">RESIGNATION REQUEST</p>
       </div>
       <div class="ref">
         <p>
-          <strong>{closure.reference}</strong>
+          <strong>{request.reference}</strong>
         </p>
         <p>{dateFormat.format(new Date())}</p>
       </div>
@@ -65,42 +65,46 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
     <div class="box">
       <div class="row">
         <span class="label">NAME:</span>
-        <span class="value">{closure.holderName || <i class="blank" />}</span>
+        <span class="value">{request.holderName || <i class="blank" />}</span>
       </div>
       <div class="row">
         <span class="label">MEMBER NO:</span>
-        <span class="value">{closure.memberNo ?? '—'}</span>
+        <span class="value">{request.memberNo ?? '—'}</span>
         <span class="label gap">NIC / PASSPORT NO:</span>
         <span class="value">{nic || <i class="blank" />}</span>
       </div>
+      {accounts.map(account => (
+        <div class="row">
+          <span class="label">ACCOUNT:</span>
+          <span class="value">
+            {account.accountNo} · {account.typeName} ·{' '}
+            {formatMoney(account.balance)}
+          </span>
+        </div>
+      ))}
       <div class="row">
-        <span class="label">ACCOUNT:</span>
-        <span class="value">
-          {closure.accountNo} · {closure.accountTypeName}
-        </span>
-      </div>
-      <div class="row">
-        <span class="label">BALANCE:</span>
-        <span class="value">{formatMoney(closure.amount)}</span>
+        <span class="label">TOTAL PAID OUT:</span>
+        <span class="value">{formatMoney(total)}</span>
       </div>
       <div class="row">
         <span class="label">PAID OUT BY:</span>
         <span class="value">
-          {closure.methodName}
-          {closure.methodReference && ` · ${closure.methodReference}`}
+          {request.methodName}
+          {request.methodReference && ` · ${request.methodReference}`}
         </span>
       </div>
       <div class="row">
         <span class="label">REASON:</span>
-        <span class="value">{closure.reason}</span>
+        <span class="value">{request.reason}</span>
       </div>
     </div>
 
     <p class="certify">
-      I request Al Barakah Multipurpose Co-operative Society Limited to close
-      the account named above and to pay me its balance as it stands on the day
-      the closure is approved. I understand that once closed, the account cannot
-      be used again.
+      I hereby resign my membership of Al Barakah Multipurpose Co-operative
+      Society Limited and request that my Shares and Multiplier Savings Account
+      be closed and their balances paid to me as they stand on the day the
+      resignation is approved. I understand that my membership ends when it is
+      paid out.
     </p>
 
     <div class="sign">
@@ -296,6 +300,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
 
   wireSignedRequestForm({
     signatureTitle: "Member's signature",
-    documentLabel: 'Account closure request',
+    documentLabel: 'Resignation request',
   });
 </script>
