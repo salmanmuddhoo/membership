@@ -195,7 +195,7 @@ describe('the readiness list says who changed what (S-1802)', () => {
   });
 
   it('reads the configuration tables’ own trail for the matrix, a chain and a period', async () => {
-    const { readiness, config, retention } = await load();
+    const { config, retention } = await load();
     const rule = (await config.listApprovalRules()).find(
       r => r.kind === 'withdrawal' && r.amountTo !== null
     )!;

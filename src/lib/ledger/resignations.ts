@@ -38,7 +38,7 @@ import {
   type ClosureChecklistItem,
 } from './closures';
 import { LedgerError } from './ledger';
-import { requireBankAccount, resolveBankAccount } from './bank-accounts';
+import { requireBankAccount } from './bank-accounts';
 import { notifyExit } from './exit-notifications';
 import { notifySubmitted } from './transaction-notifications';
 import { notifyReceiptIssued } from './receipt-notifications';

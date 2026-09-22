@@ -7,7 +7,6 @@
 // the wrapper fails at the database. The audit entry is therefore written by
 // the database in the same transaction as the change, and this module does not
 // write one itself: two trails would only disagree.
-import type { PoolClient } from 'pg';
 import { query, withConfigurationActor } from '../db/pool';
 import { cached } from './cache';
 import type { ConfigurationActor } from '../db/pool';

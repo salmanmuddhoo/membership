@@ -151,24 +151,6 @@ async function filePaper(
   );
 }
 
-async function accountStatus(id: string) {
-  return (
-    await run(appUrl, `select status, closed_at from account where id = $1`, [
-      id,
-    ])
-  ).rows[0];
-}
-
-async function memberStatus() {
-  return (
-    await run(
-      appUrl,
-      `select status, status_changed_at from member where id = $1`,
-      [member.id]
-    )
-  ).rows[0];
-}
-
 beforeAll(async () => {
   await run(ADMIN_URL, `create database ${dbName}`);
   await run(ownerUrl, 'revoke all on schema public from public');

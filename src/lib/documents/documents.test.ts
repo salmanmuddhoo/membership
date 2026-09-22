@@ -1969,7 +1969,7 @@ describe('S-410: expiry', () => {
   });
 
   it('records the expiry as the system, not as a person', async () => {
-    const { documents } = await load();
+    await load();
     const audited = await run(
       appUrl,
       `select actor_user_id, actor_description from audit_event
