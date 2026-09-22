@@ -1,0 +1,267 @@
+---
+// A large cash deposit as a request (S-1306): the details, the depositor's
+// signature on the Source of Fund form, and the submission that posts it —
+// the same shape as a closure request (closures/[id].astro), once it is
+// clear the form needs a second pair of eyes rather than a tick box.
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import {
+  cancelDepositRequest,
+  sourceOfFundItem,
+  submitDepositRequest,
+  updateDepositRequest,
+} from '@lib/ledger/deposit-requests';
+import { DepositError, loadDeposit } from '@lib/ledger/deposits';
+import { formatMoney } from '@lib/payments/money';
+
+const principal = Astro.locals.principal!;
+const { id } = Astro.params;
+let deposit = id ? await loadDeposit(id) : null;
+if (
+  !deposit ||
+  deposit.kind !== 'deposit' ||
+  deposit.status !== 'draft' ||
+  deposit.capturedById !== principal.userId
+) {
+  return new Response('Not found', { status: 404 });
+}
+
+const STEPS = ['details', 'signature', 'submit'] as const;
+type Step = (typeof STEPS)[number];
+const base = `/deposits/${deposit.id}`;
+
+let error: string | null = null;
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const text = (name: string) => String(form.get(name) ?? '');
+  const intent = text('intent');
+  try {
+    if (intent === 'details') {
+      deposit = await updateDepositRequest(
+        deposit.id,
+        { amount: text('amount'), reason: text('reason') },
+        principal
+      );
+      return Astro.redirect(`${base}?step=signature`);
+    } else if (intent === 'submit') {
+      await submitDepositRequest(deposit.id, principal);
+      return Astro.redirect(`/transactions/${deposit.id}`);
+    } else if (intent === 'cancel') {
+      await cancelDepositRequest(deposit.id, principal);
+      return Astro.redirect(
+        `/members/${deposit.memberId ?? deposit.customerId}`
+      );
+    }
+  } catch (err) {
+    if (err instanceof DepositError) {
+      error = err.message;
+    } else {
+      console.error('[deposits]', err);
+      error = 'Something went wrong. Please try again.';
+    }
+  }
+}
+
+const requested = Astro.url.searchParams.get('step') ?? 'details';
+const step: Step = (STEPS as readonly string[]).includes(requested)
+  ? (requested as Step)
+  : 'details';
+
+const item = await sourceOfFundItem(deposit.id);
+const filed = item?.filed ?? null;
+const canSubmit = filed?.state === 'verified';
+
+const dateFormat = new Intl.DateTimeFormat('en-GB', {
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+});
+
+const INPUT =
+  'mt-1 block w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100';
+const BUTTON =
+  'bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50';
+const LINK =
+  'rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800';
+const DANGER =
+  'rounded-lg border border-red-300 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950';
+const CARD =
+  'space-y-4 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950';
+---
+
+<DashboardLayout
+  title={`${deposit.reference} · Al Barakah MCSL`}
+  heading={`Cash deposit ${deposit.reference}`}
+>
+  <div class="mx-auto max-w-4xl space-y-6">
+    <div class="-mx-4 flex flex-wrap items-center justify-between gap-2 border-t border-neutral-200/80 bg-neutral-100/95 px-4 py-3 text-sm sm:mx-0 sm:rounded-b-2xl sm:px-3 sm:py-1.5 dark:border-neutral-800/80 dark:bg-neutral-950/95">
+      <a
+        href={`/members/${deposit.memberId ?? deposit.customerId}`}
+        class="text-neutral-500 underline dark:text-neutral-400"
+      >
+        ← Back
+      </a>
+      <span class="rounded bg-neutral-200 px-2 py-0.5 text-xs font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
+        {deposit.accountNo} · {deposit.accountTypeName} ·{' '}
+        {formatMoney(deposit.amount)}
+      </span>
+    </div>
+
+    {error && (
+      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+        {error}
+      </div>
+    )}
+
+    {step === 'details' && (
+      <form method="post" class={CARD}>
+        <h2 class="text-sm font-semibold text-neutral-700 uppercase dark:text-neutral-200">
+          Details
+        </h2>
+        <dl class="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
+          <dt class="text-neutral-500 dark:text-neutral-400">Account</dt>
+          <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+            {deposit.accountNo} · {deposit.accountTypeName}
+          </dd>
+        </dl>
+        <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+          Amount (Rs)
+          <input
+            type="text"
+            inputmode="decimal"
+            name="amount"
+            required
+            value={deposit.amount}
+            class={INPUT}
+          />
+        </label>
+        <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+          Reason
+          <input
+            type="text"
+            name="reason"
+            value={deposit.reason}
+            class={INPUT}
+          />
+        </label>
+        <div class="flex flex-wrap gap-2 pt-2">
+          <button type="submit" class={BUTTON} name="intent" value="details">
+            Save
+          </button>
+          <button
+            type="submit"
+            class={DANGER}
+            name="intent"
+            value="cancel"
+            formnovalidate
+          >
+            Cancel request
+          </button>
+        </div>
+      </form>
+    )}
+
+    {step === 'signature' && (
+      <section class={CARD}>
+        <h2 class="text-sm font-semibold text-neutral-700 uppercase dark:text-neutral-200">
+          Signature
+        </h2>
+        {!item ? (
+          <p class="text-sm text-red-700 dark:text-red-300">
+            The Source of Fund form document type is not configured. Ask an
+            administrator.
+          </p>
+        ) : !filed ? (
+          <>
+            <p class="text-sm text-neutral-700 dark:text-neutral-200">
+              The depositor signs the form on the next screen, and it is filed
+              here.
+            </p>
+            <div class="flex flex-wrap gap-2">
+              <a href={`${base}/form`} class={BUTTON}>
+                Open the form to sign
+              </a>
+              <a href={`${base}?step=submit`} class={LINK}>
+                Next
+              </a>
+            </div>
+          </>
+        ) : (
+          <>
+            <p class="text-sm text-neutral-700 dark:text-neutral-200">
+              Source of Fund form on file: {filed.fileName}, filed{' '}
+              {dateFormat.format(filed.uploadedAt)} by {filed.uploadedByName}.
+            </p>
+            <p class="text-sm text-neutral-700 dark:text-neutral-200">
+              {filed.state === 'under_review' && 'Waiting to be verified.'}
+              {filed.state === 'verified' && 'Verified.'}
+              {filed.state === 'rejected' &&
+                'Rejected: sign and file it again.'}
+            </p>
+            <div class="flex flex-wrap gap-2">
+              <a href={`${base}/form`} class={BUTTON}>
+                Sign again
+              </a>
+              <a href={`${base}?step=submit`} class={LINK}>
+                Next
+              </a>
+            </div>
+          </>
+        )}
+      </section>
+    )}
+
+    {step === 'submit' && (
+      <form method="post" class={CARD}>
+        <h2 class="text-sm font-semibold text-neutral-700 uppercase dark:text-neutral-200">
+          Submit
+        </h2>
+        <dl class="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
+          <dt class="text-neutral-500 dark:text-neutral-400">Account</dt>
+          <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+            {deposit.accountNo} · {deposit.accountTypeName}
+          </dd>
+          <dt class="text-neutral-500 dark:text-neutral-400">Amount</dt>
+          <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+            {formatMoney(deposit.amount)}
+          </dd>
+          <dt class="text-neutral-500 dark:text-neutral-400">Method</dt>
+          <dd class="text-neutral-800 dark:text-neutral-100">
+            {deposit.methodName}
+          </dd>
+          <dt class="text-neutral-500 dark:text-neutral-400">Reason</dt>
+          <dd class="text-neutral-800 dark:text-neutral-100">
+            {deposit.reason}
+          </dd>
+        </dl>
+        <div class="flex flex-wrap items-center gap-2 pt-2">
+          <button
+            type="submit"
+            class={BUTTON}
+            name="intent"
+            value="submit"
+            disabled={!canSubmit}
+          >
+            Submit
+          </button>
+          <button
+            type="submit"
+            class={DANGER}
+            name="intent"
+            value="cancel"
+            formnovalidate
+          >
+            Cancel request
+          </button>
+        </div>
+        {!canSubmit && (
+          <p class="text-sm text-neutral-600 dark:text-neutral-300">
+            The Source of Fund form must be verified first.
+          </p>
+        )}
+      </form>
+    )}
+  </div>
+</DashboardLayout>

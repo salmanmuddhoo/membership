@@ -5,7 +5,11 @@
 import ChainTimeline from '@components/ChainTimeline.astro';
 import DocumentViewer from '@components/DocumentViewer.astro';
 import DashboardLayout from '@layouts/DashboardLayout.astro';
-import { documentsForTransaction } from '@lib/documents/documents';
+import {
+  documentsForTransaction,
+  DocumentError,
+  reviewDocument,
+} from '@lib/documents/documents';
 import { AFFIDAVIT_NOTE } from '@lib/ledger/demises';
 import {
   cashMaximum,
@@ -122,6 +126,17 @@ if (Astro.request.method === 'POST') {
       );
       const refs = result.reversals.map(r => r.reference).join(' and ');
       notice = `${transaction.reference} reversed by ${refs}. Receipt ${result.reversals[0]?.receiptNo ?? ''}.`;
+    } else if (intent === 'verify-document' || intent === 'reject-document') {
+      const outcome = intent === 'verify-document' ? 'verify' : 'reject';
+      const result = await reviewDocument(
+        text('documentId'),
+        { outcome, reason: text('reason') },
+        principal
+      );
+      notice =
+        result.state === 'verified'
+          ? 'Document verified.'
+          : 'Document rejected.';
     } else if (intent === 'resubmit') {
       const edit = {
         accountId: text('accountId'),
@@ -156,7 +171,8 @@ if (Astro.request.method === 'POST') {
       err instanceof DepositError ||
       err instanceof WithdrawalError ||
       err instanceof TransferError ||
-      err instanceof ReversalError
+      err instanceof ReversalError ||
+      err instanceof DocumentError
     ) {
       error = err.message;
     } else {
@@ -209,9 +225,22 @@ const canEditClosure =
   (transaction.status === 'returned' || transaction.status === 'draft') &&
   transaction.capturedById === principal.userId &&
   principal.permissions.has(PERMISSION_CAPTURE);
-const closureDocuments = isExit
-  ? await documentsForTransaction(transaction.id)
-  : [];
+const closureDocuments =
+  isExit || transaction.kind === 'deposit'
+    ? await documentsForTransaction(transaction.id)
+    : [];
+// A document's own author may not check it — reviewDocument refuses
+// regardless, this only keeps the controls off the screen when they could
+// never work (the same officer-feedback rule the application pages follow).
+const canVerifyDocuments =
+  principal.permissions.has('document.verify') &&
+  transaction.capturedById !== principal.userId;
+// A deposit request still its captor's to finish (S-1306): the wizard has
+// the amount, the signature and the submission, not this page.
+const canContinueDepositRequest =
+  transaction.kind === 'deposit' &&
+  transaction.status === 'draft' &&
+  transaction.capturedById === principal.userId;
 // Posting money that leaves the Society is paying it out: the method and
 // reference are recorded then (S-1503).
 const disburses = needsDisbursement(transaction);
@@ -266,6 +295,10 @@ const BUTTON =
   'bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50';
 const DANGER =
   'rounded-lg border border-red-300 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950';
+const SMALL_BUTTON =
+  'bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition';
+const SMALL_DANGER =
+  'rounded-lg border border-red-300 px-3 py-1.5 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950';
 ---
 
 <DashboardLayout
@@ -300,6 +333,17 @@ const DANGER =
         </span>
       </span>
     </div>
+
+    {canContinueDepositRequest && (
+      <p class="text-sm">
+        <a
+          href={`/deposits/${transaction.id}`}
+          class="text-neutral-500 underline dark:text-neutral-400"
+        >
+          Continue the request
+        </a>
+      </p>
+    )}
 
     {error && (
       <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
@@ -410,25 +454,87 @@ const DANGER =
             </dd>
           </>
         )}
-        {isExit && (
+        {(closureDocuments.length > 0 || isExit) && (
           <>
             <dt class="text-neutral-500 dark:text-neutral-400">
-              {isDemise ? 'Documents' : 'Signed request'}
+              {isDeposit
+                ? 'Source of Fund form'
+                : isDemise
+                  ? 'Documents'
+                  : 'Signed request'}
             </dt>
             <dd class="text-neutral-800 dark:text-neutral-100">
               {closureDocuments.length === 0 ? (
                 <span class="text-red-700 dark:text-red-300">Not on file</span>
               ) : (
-                closureDocuments.map(document => (
-                  <button
-                    type="button"
-                    data-view-document
-                    data-document-id={document.documentId}
-                    class="underline"
-                  >
-                    {document.documentName}
-                  </button>
-                ))
+                <ul class="space-y-2">
+                  {closureDocuments.map(document => (
+                    <li class="flex flex-wrap items-center gap-x-2 gap-y-2">
+                      <span class="flex flex-wrap items-center gap-x-2">
+                        <button
+                          type="button"
+                          data-view-document
+                          data-document-id={document.documentId}
+                          class="underline"
+                        >
+                          {document.documentName}
+                        </button>
+                        {document.state === 'verified' && (
+                          <span class="text-xs text-neutral-500 dark:text-neutral-400">
+                            verified
+                          </span>
+                        )}
+                        {document.state === 'rejected' && (
+                          <span class="text-xs text-red-700 dark:text-red-300">
+                            rejected
+                          </span>
+                        )}
+                      </span>
+                      {canVerifyDocuments &&
+                        document.state === 'under_review' && (
+                          <span class="flex flex-wrap items-center gap-2">
+                            <form method="post" class="flex items-center gap-2">
+                              <input
+                                type="hidden"
+                                name="intent"
+                                value="verify-document"
+                              />
+                              <input
+                                type="hidden"
+                                name="documentId"
+                                value={document.documentId}
+                              />
+                              <button type="submit" class={SMALL_BUTTON}>
+                                Verify
+                              </button>
+                            </form>
+                            <form method="post" class="flex items-center gap-2">
+                              <input
+                                type="hidden"
+                                name="intent"
+                                value="reject-document"
+                              />
+                              <input
+                                type="hidden"
+                                name="documentId"
+                                value={document.documentId}
+                              />
+                              <input
+                                type="text"
+                                name="reason"
+                                required
+                                placeholder="Why is this being rejected?"
+                                class="rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                              />
+                              <button type="submit" class={SMALL_DANGER}>
+                                Reject
+                              </button>
+                            </form>
+                          </span>
+                        )}
+                    </li>
+                  ))}
+                </ul>
               )}
             </dd>
           </>
@@ -950,7 +1056,7 @@ const DANGER =
       )}
     </section>
   </div>
-  {isExit && <DocumentViewer />}
+  {(isExit || closureDocuments.length > 0) && <DocumentViewer />}
 </DashboardLayout>
 
 <script>

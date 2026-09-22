@@ -10,6 +10,7 @@ import {
   offeredBankAccounts,
   offeredPaymentMethods,
 } from '@lib/config/reference';
+import { startDepositRequest } from '@lib/ledger/deposit-requests';
 import {
   DepositError,
   PERMISSION_CAPTURE,
@@ -88,6 +89,7 @@ let deposit: Deposit | null = null;
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
   const text = (name: string) => String(form.get(name) ?? '');
+  const intent = text('intent') || 'record';
   values = {
     accountId: text('accountId'),
     amount: text('amount'),
@@ -101,14 +103,33 @@ if (Astro.request.method === 'POST') {
   // among, not a free pointer into the ledger.
   if (!person.accounts.some(a => a.id === values.accountId)) {
     error = 'Choose which account the deposit goes into.';
+  } else if (intent === 'request') {
+    // Cash above the Source of Fund threshold: a request, not a deposit
+    // posted at once — the officer continues into the wizard that has the
+    // depositor sign the form before anything reaches the ledger.
+    try {
+      const request = await startDepositRequest(
+        {
+          accountId: values.accountId,
+          amount: values.amount,
+          method: values.method,
+          reason: values.reason,
+        },
+        principal
+      );
+      return Astro.redirect(`/deposits/${request.id}?step=signature`);
+    } catch (err) {
+      if (err instanceof DepositError) {
+        error = err.message;
+      } else {
+        console.error('[members/deposit]', err);
+        error = 'Something went wrong. Please try again.';
+      }
+    }
   } else {
     try {
       deposit = await recordDeposit(
-        {
-          ...values,
-          sourceOfFundFormConfirmed:
-            form.get('sourceOfFundFormConfirmed') === 'true',
-        },
+        { ...values, sourceOfFundFormConfirmed: false },
         principal
       );
     } catch (err) {
@@ -348,17 +369,6 @@ const INPUT =
             Cash above {formatMoney(cashThreshold)} needs the Source of Fund
             form.
           </p>
-          <label class="flex items-start gap-x-2">
-            <input
-              type="checkbox"
-              name="sourceOfFundFormConfirmed"
-              value="true"
-              data-cash-form-confirm
-              class="text-mint-500 focus:ring-mint-400 mt-0.5 rounded border-neutral-300 dark:border-neutral-600"
-            />
-            The depositor has completed and signed the Source of Fund form, and
-            it is filed.
-          </label>
         </div>
 
         <p
@@ -373,10 +383,22 @@ const INPUT =
         <div class="flex flex-wrap gap-2 pt-2">
           <button
             type="submit"
+            name="intent"
+            value="record"
             data-deposit-submit
             class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50"
           >
             Post deposit
+          </button>
+          <button
+            type="submit"
+            name="intent"
+            value="request"
+            data-request-submit
+            hidden
+            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Continue to the Source of Fund form
           </button>
           <a
             href={`/members/${person.id}`}
@@ -415,14 +437,14 @@ const INPUT =
       '[data-bank-account-field]'
     );
     const reminder = form.querySelector<HTMLElement>('[data-cash-reminder]');
-    const confirm = form.querySelector<HTMLInputElement>(
-      '[data-cash-form-confirm]'
-    );
     const maximumWarning = form.querySelector<HTMLElement>(
       '[data-cash-maximum-warning]'
     );
     const submit = form.querySelector<HTMLButtonElement>(
       '[data-deposit-submit]'
+    );
+    const requestSubmit = form.querySelector<HTMLButtonElement>(
+      '[data-request-submit]'
     );
 
     const recompute = () => {
@@ -451,15 +473,16 @@ const INPUT =
         thresholdCents !== null &&
         cents > thresholdCents;
       if (reminder) reminder.hidden = !needsSourceOfFund;
-      const sourceOfFundMissing =
-        needsSourceOfFund && !(confirm?.checked ?? false);
+      if (requestSubmit) {
+        requestSubmit.disabled = !needsSourceOfFund;
+        requestSubmit.hidden = !needsSourceOfFund;
+      }
 
-      if (submit) submit.disabled = overMaximum || sourceOfFundMissing;
+      if (submit) submit.disabled = overMaximum || needsSourceOfFund;
     };
 
     amountInput?.addEventListener('input', recompute);
     methodSelect?.addEventListener('change', recompute);
-    confirm?.addEventListener('change', recompute);
     recompute();
   }
 </script>

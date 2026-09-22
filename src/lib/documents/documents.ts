@@ -1270,11 +1270,15 @@ export async function reviewDocument(
     state: string;
     document_code: string;
     captured_by: string | null;
+    on_transaction: boolean;
   }>(
-    `select d.id, d.state, t.code as document_code, a.captured_by
+    `select d.id, d.state, t.code as document_code,
+            coalesce(a.captured_by, tx.captured_by) as captured_by,
+            (tx.id is not null) as on_transaction
        from document d
        join document_type t on t.id = d.document_type_id
        left join membership_application a on a.id = d.application_id
+       left join transaction tx on tx.id = d.transaction_id
       where d.id = $1`,
     [documentId]
   );
@@ -1300,15 +1304,20 @@ export async function reviewDocument(
   // application's papers is the same conflict one step out, so the author is
   // refused whatever the permission says and whoever did the filing.
   //
-  // Only for a document that belongs to an application. One filed against a
-  // member directly has no author to be in conflict with.
+  // For a document that belongs to an application, and since S-1306 for one
+  // filed against a transaction — a request's own papers are the officer
+  // who recorded it's to file, and somebody else's to check. One filed
+  // against a member directly has no author to be in conflict with.
   if (
     document.rows[0].captured_by &&
     document.rows[0].captured_by === principal.userId
   ) {
     throw new DocumentError(
-      'You captured this application, so someone else must check its ' +
-        'documents.',
+      document.rows[0].on_transaction
+        ? 'You recorded this transaction, so someone else must check its ' +
+            'papers.'
+        : 'You captured this application, so someone else must check its ' +
+            'documents.',
       'refused'
     );
   }

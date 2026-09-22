@@ -132,6 +132,29 @@ and the MSA, the account's own for an HSA or Investment;
 `findAccountByNumber`, `src/lib/ledger/lookup.ts`), then opens the same form
 with that account chosen.
 
+**Cash above the Source of Fund threshold is a request, not one act**
+(S-1306, `src/lib/ledger/deposit-requests.ts`, M23). The Society wants the
+Source of Fund form signed, filed and checked by somebody else before that
+money is on an account, and a tick on the capture screen is not that. So
+the deposit page, for cash above `payment.cash_source_of_fund_threshold`,
+continues into a request instead: `startDepositRequest` writes the
+transaction as a `draft` (the account, the amount, the method, checked as
+any deposit is, the cash ceiling included) and posts nothing;
+`/deposits/{id}` is the wizard and `/deposits/{id}/form` the sheet the
+depositor signs on screen, rasterised and filed against the transaction
+through the same wiring as a closure request (`documents.ts`, owner
+'transaction'; the document type is 0062's `source_of_fund_form`, so a fee
+payment and a deposit share one form). An officer holding
+`document.verify` verifies or rejects it on the transaction page — never
+the officer who recorded the request, the rule an application's papers
+already follow — and only then does `submitDepositRequest` go: the form
+verified, the same rules again, the matrix, the engine, the receipt when it
+posts, `source_of_fund_form_confirmed` set on the row. A draft can be
+changed (amount, reason; below the threshold it is refused, because that is
+a direct deposit) or cancelled by its captor. The API's `POST
+/api/v1/deposits` keeps its confirmation flag for an integrating surface;
+the screen no longer offers one.
+
 ## Recording a withdrawal
 
 `recordWithdrawal()` in `src/lib/ledger/withdrawals.ts` (S-1501) is the same
