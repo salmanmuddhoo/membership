@@ -52,6 +52,23 @@ async function alreadyReversed(transactionId: string): Promise<string | null> {
 }
 
 /**
+ * The posted reversal of a transaction, if it has one — so a page offers
+ * Reverse only while there is something left to reverse, and says what
+ * reversed it once there is not.
+ */
+export async function reversalOf(
+  transactionId: string
+): Promise<{ id: string; reference: string } | null> {
+  const result = await query<{ id: string; reference: string }>(
+    `select id, reference from transaction
+      where reverses_id = $1 and status = 'posted'
+      order by created_at limit 1`,
+    [transactionId]
+  );
+  return result.rows[0] ?? null;
+}
+
+/**
  * Reverse a posted transaction, with a reason. Both legs of a transfer go
  * together; the receipt is on the reversal of the transaction named.
  */

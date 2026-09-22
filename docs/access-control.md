@@ -42,6 +42,16 @@ Prefixes ending in `/` cover everything beneath them, so a sub-page added later
 inherits protection. The longest matching prefix wins, so a specific rule can
 tighten a broader one.
 
+### Fee schedules
+
+`/admin/configuration/fees` has its own read permission, `fee.view`
+(migration 0091), rather than the section's `config.view`. Every role that
+held `config.view` or `fee.manage` was given it. The Treasurer, who owns the
+fee schedules (S-207), holds `fee.view` and `fee.manage` and no longer holds
+`config.view`, so the rest of Configuration is closed to them: the sidebar
+shows them **Fee schedules** in its place, and the page's section tabs are
+hidden from anyone without `config.view`.
+
 ## Permissions are data
 
 Effective permissions are the union of every role the user holds, read from the

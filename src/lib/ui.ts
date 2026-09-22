@@ -103,6 +103,9 @@ export const PILL_OUTLINE_WARN =
 // A button that is only an icon, beside a field.
 export const ICON_BUTTON =
   'shrink-0 rounded-lg border border-neutral-300 p-1.5 text-neutral-600 transition hover:bg-neutral-200 dark:border-neutral-600 dark:text-neutral-300 dark:hover:bg-neutral-800';
+// The red cross beside a filed document that deletes it.
+export const ICON_BUTTON_DANGER =
+  'shrink-0 rounded-lg border border-red-300 px-2 py-0.5 text-sm font-semibold text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950';
 // A block of code or a schema, scrolling past a height.
 export const CODE_BLOCK =
   'max-h-72 overflow-auto rounded-lg bg-neutral-100 p-3 text-xs text-neutral-700 dark:bg-neutral-950 dark:text-neutral-300';

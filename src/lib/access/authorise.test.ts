@@ -175,7 +175,6 @@ describe('the live route map', () => {
     for (const page of [
       '/admin/configuration/membership-types',
       '/admin/configuration/account-types',
-      '/admin/configuration/fees',
       '/admin/configuration/checklists',
       '/admin/configuration/workflows',
       '/admin/configuration/something-added-later',
@@ -189,10 +188,28 @@ describe('the live route map', () => {
     // before it will write. Someone granted only the first can read what the
     // fees are without being able to set them.
     const viewer = principal({ permissions: new Set(['config.view']) });
-    expect(authorise(viewer, '/admin/configuration/fees').allowed).toBe(true);
+    expect(
+      authorise(viewer, '/admin/configuration/account-types').allowed
+    ).toBe(true);
 
     const manager = principal({ permissions: new Set(['config.manage']) });
-    expect(authorise(manager, '/admin/configuration/fees').allowed).toBe(false);
+    expect(
+      authorise(manager, '/admin/configuration/account-types').allowed
+    ).toBe(false);
+  });
+
+  it('opens the fee schedules, and only them, on fee.view', () => {
+    // A Treasurer owns the fees (S-207) and nothing else of Configuration.
+    const treasurer = principal({
+      permissions: new Set(['fee.view', 'fee.manage']),
+    });
+    expect(authorise(treasurer, '/admin/configuration/fees').allowed).toBe(
+      true
+    );
+    expect(authorise(treasurer, '/admin/configuration').allowed).toBe(false);
+    expect(authorise(treasurer, '/admin/configuration/workflows').allowed).toBe(
+      false
+    );
   });
 
   it('does not rely on the system-administrator exemption for them', () => {

@@ -22,6 +22,7 @@ import {
   isExitRequest,
   requestChecklist,
 } from '../ledger/closures';
+import { sourceOfFundItem } from '../ledger/deposit-requests';
 import { loadTransaction, positionOf, transitionsFor } from '../ledger/review';
 import { describeBand, resolveRoute, routeBands } from '../ledger/routing';
 import { toCents } from '../payments/money';
@@ -285,7 +286,9 @@ export async function chainTimeline(
         await requestChecklist(transaction.id, transaction.kind),
         transaction.kind
       )
-    : {};
+    : transaction.kind === 'deposit'
+      ? await depositRequestPrelude(transaction.id, transaction.status)
+      : {};
   return transactionTimeline({
     status: transaction.status,
     chain,
@@ -303,14 +306,50 @@ async function expectedChain(transaction: {
   accountTypeId: string;
   amount: string;
 }): Promise<WorkflowStep[]> {
-  if (!isExitRequest(transaction.kind)) return [];
+  if (!isExitRequest(transaction.kind) && transaction.kind !== 'deposit') {
+    return [];
+  }
   const route = await resolveRoute({
-    kind: transaction.kind as 'closure' | 'resignation' | 'demise',
+    kind: transaction.kind as TransactionKind,
     accountTypeId: transaction.accountTypeId,
     amountCents: toCents(transaction.amount),
     roleCodes: [],
   });
   return route.definition ? activeChain(route.definition.code) : [];
+}
+
+/**
+ * A large cash deposit's own steps before its chain (S-1306): the details
+ * are on the request from the moment it exists; the Source of Fund form is
+ * the signed sheet on file. Only a deposit that went through the request —
+ * a draft, or one with the form filed — has them; one recorded in one act
+ * has none.
+ */
+async function depositRequestPrelude(
+  transactionId: string,
+  status: string
+): Promise<Pick<TransactionTimelineInput, 'prelude' | 'submitLabel'>> {
+  const item = await sourceOfFundItem(transactionId);
+  if (status !== 'draft' && !item?.filed) return {};
+  return depositPrelude(Boolean(item?.filed));
+}
+
+export function depositPrelude(
+  signed: boolean
+): Pick<TransactionTimelineInput, 'prelude' | 'submitLabel'> {
+  return {
+    prelude: [
+      { key: 'details', label: 'Details', done: true },
+      {
+        key: 'signature',
+        label: 'Source of Fund form',
+        done: signed,
+        detail: signed ? undefined : 'Not signed yet',
+        problem: !signed,
+      },
+    ],
+    submitLabel: 'Submitted',
+  };
 }
 
 /**

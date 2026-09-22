@@ -30,7 +30,8 @@ const nic = (holder?.applicantValues?.nic ?? '').trim();
 
 const item = await sourceOfFundItem(deposit.id);
 const checklistItems = await cashSourceOfFundChecklist();
-const back = `/deposits/${deposit.id}?step=signature`;
+// Back to the first step of the request, not the one this page left from.
+const back = `/deposits/${deposit.id}?step=details`;
 const next = `/deposits/${deposit.id}?step=signature`;
 const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
 

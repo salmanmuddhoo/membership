@@ -69,10 +69,15 @@ export const CONFIG_SECTIONS = [
 ] as const;
 
 const current = Astro.url.pathname;
+// Someone who holds only the fee schedules (a Treasurer) sees no tabs for
+// pages they cannot open.
+const principal = Astro.locals.principal;
+const seesAll = principal?.permissions.has('config.view') ?? false;
+const sections = seesAll ? CONFIG_SECTIONS : [];
 ---
 
 <nav class="flex flex-wrap gap-2" aria-label="Configuration sections">
-  {CONFIG_SECTIONS.map(section => (
+  {sections.map(section => (
     <a
       href={section.href}
       aria-current={current === section.href ? 'page' : undefined}

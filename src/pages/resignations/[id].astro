@@ -24,6 +24,7 @@ import {
   updateResignation,
 } from '@lib/ledger/resignations';
 import { loadTransaction, transitionsFor } from '@lib/ledger/review';
+import { DocumentError, removeFiledDocument } from '@lib/documents/documents';
 import { formatMoney, fromCents } from '@lib/payments/money';
 import { chainTimeline } from '@lib/workflow/timeline';
 import {
@@ -35,9 +36,9 @@ import {
   LABEL,
   INPUT,
   BUTTON,
-  SECONDARY,
   DANGER,
   NOTICE_ERROR,
+  ICON_BUTTON_DANGER,
   TAG,
 } from '@lib/ui';
 
@@ -86,12 +87,18 @@ if (Astro.request.method === 'POST') {
     } else if (intent === 'submit') {
       const submitted = await submitResignation(request.id, principal);
       return Astro.redirect(`/transactions/${submitted.id}`);
+    } else if (intent === 'remove-form') {
+      // The signed request on THIS resignation, read here rather than
+      // taken from the page. Deleting it means signing again.
+      const current = (await resignationChecklist(request.id))[0]?.filed;
+      if (current) await removeFiledDocument(current.documentId, principal);
+      return Astro.redirect(`${base}?step=signature`);
     } else if (intent === 'cancel') {
       await cancelResignation(request.id, principal);
       return Astro.redirect(`/members/${request.holderId}`);
     }
   } catch (err) {
-    if (err instanceof ResignationError) {
+    if (err instanceof ResignationError || err instanceof DocumentError) {
       error = err.message;
     } else {
       console.error('[resignations]', err);
@@ -249,25 +256,55 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       <section class={FORM_CARD}>
         <h2 class={CARD_LABEL}>Signature</h2>
         {form?.filed ? (
-          <p class="text-sm text-neutral-700 dark:text-neutral-200">
-            Signed request on file: {form.filed.fileName}, filed{' '}
-            {dateFormat.format(form.filed.uploadedAt)} by{' '}
-            {form.filed.uploadedByName}. Signing again replaces it.
-          </p>
+          <>
+            <div
+              class={`${PANEL} flex flex-wrap items-center justify-between gap-3`}
+            >
+              <div class="min-w-0">
+                <p class="truncate font-medium text-neutral-800 dark:text-neutral-100">
+                  {form.filed.fileName}
+                </p>
+                <p class={MUTED}>
+                  Signed {dateFormat.format(form.filed.uploadedAt)} ·{' '}
+                  {form.filed.uploadedByName}
+                </p>
+              </div>
+              <div class="flex shrink-0 items-center gap-2">
+                <button
+                  type="button"
+                  data-view-document
+                  data-document-id={form.filed.documentId}
+                  class="font-medium text-neutral-700 underline hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-neutral-100"
+                >
+                  View
+                </button>
+                <form method="post" data-confirm-remove>
+                  <button
+                    type="submit"
+                    name="intent"
+                    value="remove-form"
+                    aria-label="Delete the signed request"
+                    title="Delete"
+                    class={ICON_BUTTON_DANGER}
+                  >
+                    ✕
+                  </button>
+                </form>
+              </div>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <a href={`${base}?step=documents`} class={BUTTON}>
+                Next
+              </a>
+            </div>
+          </>
         ) : (
-          <p class="text-sm text-neutral-700 dark:text-neutral-200">
-            The member signs the request on the next screen, and it is filed
-            here.
-          </p>
+          <div class="flex flex-wrap gap-2">
+            <a href={`${base}/form`} class={BUTTON}>
+              Sign the request
+            </a>
+          </div>
         )}
-        <div class="flex flex-wrap gap-2">
-          <a href={`${base}/form`} class={BUTTON}>
-            {form?.filed ? 'Sign again' : 'Open the request to sign'}
-          </a>
-          <a href={`${base}?step=documents`} class={SECONDARY}>
-            Next
-          </a>
-        </div>
       </section>
     )}
 
@@ -404,6 +441,19 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
   </div>
   <DocumentViewer />
 </DashboardLayout>
+
+<script>
+  // A destructive action warns once.
+  for (const remove of document.querySelectorAll<HTMLFormElement>(
+    'form[data-confirm-remove]'
+  )) {
+    remove.addEventListener('submit', event => {
+      if (!confirm('Delete the signed request? It will need signing again.')) {
+        event.preventDefault();
+      }
+    });
+  }
+</script>
 
 <script>
   // A visual nudge only — enforced server-side (ledger/resignations.ts)
