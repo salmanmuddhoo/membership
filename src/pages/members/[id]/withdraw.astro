@@ -4,7 +4,11 @@
 // the form, shows the balance and what is available beside it, and shows
 // the receipt or the step it waits at.
 import DashboardLayout from '@layouts/DashboardLayout.astro';
-import { listAccountTypes, offeredPaymentMethods } from '@lib/config/reference';
+import {
+  listAccountTypes,
+  offeredBankAccounts,
+  offeredPaymentMethods,
+} from '@lib/config/reference';
 import { availableBalance } from '@lib/ledger/ledger';
 import {
   PERMISSION_CAPTURE,
@@ -49,6 +53,7 @@ const withdrawable = accounts.filter(
 );
 
 const paymentMethods = await offeredPaymentMethods();
+const bankAccounts = await offeredBankAccounts();
 const requestedAccount = Astro.url.searchParams.get('account') ?? '';
 const fromTransactions = Astro.url.searchParams.get('from') === 'transactions';
 
@@ -57,6 +62,7 @@ let values: Record<
   | 'amount'
   | 'method'
   | 'methodReference'
+  | 'bankAccountId'
   | 'reason'
   | 'idempotencyKey',
   string
@@ -68,6 +74,7 @@ let values: Record<
   amount: '',
   method: paymentMethods[0]?.code ?? '',
   methodReference: '',
+  bankAccountId: '',
   reason: '',
   idempotencyKey: crypto.randomUUID(),
 };
@@ -82,6 +89,7 @@ if (Astro.request.method === 'POST') {
     amount: text('amount'),
     method: text('method'),
     methodReference: text('methodReference'),
+    bankAccountId: text('bankAccountId'),
     reason: text('reason'),
     idempotencyKey: text('idempotencyKey') || crypto.randomUUID(),
   };
@@ -278,6 +286,7 @@ const INPUT =
                       ? 'true'
                       : 'false'
                   }
+                  data-touches-bank={method.touchesBank ? 'true' : 'false'}
                   selected={method.code === values.method}
                 >
                   {method.name}
@@ -296,6 +305,23 @@ const INPUT =
               value={values.methodReference}
               class={INPUT}
             />
+          </label>
+          <label
+            data-bank-account-field
+            class="text-sm text-neutral-600 dark:text-neutral-300"
+          >
+            Bank account
+            <select name="bankAccountId" class={INPUT}>
+              <option value="">Choose…</option>
+              {bankAccounts.map(account => (
+                <option
+                  value={account.id}
+                  selected={account.id === values.bankAccountId}
+                >
+                  {account.name} · {account.bankName}
+                </option>
+              ))}
+            </select>
           </label>
           <label class="text-sm text-neutral-600 dark:text-neutral-300">
             Note
@@ -345,6 +371,9 @@ const INPUT =
     const referenceField = form.querySelector<HTMLElement>(
       '[data-method-reference-field]'
     );
+    const bankField = form.querySelector<HTMLElement>(
+      '[data-bank-account-field]'
+    );
     const money = (value: string) =>
       `Rs ${Number(value).toLocaleString('en-GB', { minimumFractionDigits: 2 })}`;
     const recompute = () => {
@@ -361,6 +390,9 @@ const INPUT =
       const method = methodSelect?.selectedOptions[0];
       if (referenceField) {
         referenceField.hidden = method?.dataset.requiresReference !== 'true';
+      }
+      if (bankField) {
+        bankField.hidden = method?.dataset.touchesBank !== 'true';
       }
     };
     accountSelect?.addEventListener('change', recompute);

@@ -7,7 +7,10 @@
 import ChainTimeline from '@components/ChainTimeline.astro';
 import DocumentViewer from '@components/DocumentViewer.astro';
 import DashboardLayout from '@layouts/DashboardLayout.astro';
-import { offeredPaymentMethods } from '@lib/config/reference';
+import {
+  offeredBankAccounts,
+  offeredPaymentMethods,
+} from '@lib/config/reference';
 import { checklistComplete, isEditable } from '@lib/ledger/closures';
 import {
   blockingChecks,
@@ -61,6 +64,7 @@ if (Astro.request.method === 'POST') {
           reason: text('reason'),
           method: text('method'),
           methodReference: text('methodReference'),
+          bankAccountId: text('bankAccountId'),
         },
         principal
       );
@@ -87,15 +91,23 @@ const step: Step = (STEPS as readonly string[]).includes(requested)
   ? (requested as Step)
   : 'details';
 
-const [checklist, timeline, trail, paymentMethods, accounts, checks] =
-  await Promise.all([
-    resignationChecklist(request.id),
-    chainTimeline('transaction', request.id),
-    transitionsFor(request.id),
-    offeredPaymentMethods(),
-    coreAccounts(request.holderId),
-    checksFor(request.holderId, request.id),
-  ]);
+const [
+  checklist,
+  timeline,
+  trail,
+  paymentMethods,
+  bankAccounts,
+  accounts,
+  checks,
+] = await Promise.all([
+  resignationChecklist(request.id),
+  chainTimeline('transaction', request.id),
+  transitionsFor(request.id),
+  offeredPaymentMethods(),
+  offeredBankAccounts(),
+  coreAccounts(request.holderId),
+  checksFor(request.holderId, request.id),
+]);
 const complete = checklistComplete(checklist);
 const blocking = blockingChecks(checks);
 const total = fromCents(totalCents(accounts));
@@ -160,7 +172,7 @@ const CARD =
     )}
 
     {step === 'details' && (
-      <form method="post" class={CARD}>
+      <form method="post" data-resignation-details-form class={CARD}>
         <h2 class="text-sm font-semibold text-neutral-700 uppercase dark:text-neutral-200">
           Details
         </h2>
@@ -195,6 +207,7 @@ const CARD =
               {paymentMethods.map(method => (
                 <option
                   value={method.code}
+                  data-touches-bank={method.touchesBank ? 'true' : 'false'}
                   selected={method.code === request!.method}
                 >
                   {method.name}
@@ -210,6 +223,23 @@ const CARD =
               value={request.methodReference}
               class={INPUT}
             />
+          </label>
+          <label
+            data-bank-account-field
+            class="text-sm text-neutral-600 dark:text-neutral-300"
+          >
+            Bank account
+            <select name="bankAccountId" class={INPUT}>
+              <option value="">Choose…</option>
+              {bankAccounts.map(account => (
+                <option
+                  value={account.id}
+                  selected={account.id === request!.bankAccountId}
+                >
+                  {account.name} · {account.bankName}
+                </option>
+              ))}
+            </select>
           </label>
         </div>
         <input type="hidden" name="intent" value="details" />
@@ -383,3 +413,26 @@ const CARD =
   </div>
   <DocumentViewer />
 </DashboardLayout>
+
+<script>
+  // A visual nudge only — enforced server-side (ledger/resignations.ts)
+  // whether or not this script runs.
+  const form = document.querySelector<HTMLFormElement>(
+    '[data-resignation-details-form]'
+  );
+  if (form) {
+    const methodSelect =
+      form.querySelector<HTMLSelectElement>('[name="method"]');
+    const bankField = form.querySelector<HTMLElement>(
+      '[data-bank-account-field]'
+    );
+    const recompute = () => {
+      const selected = methodSelect?.selectedOptions[0];
+      if (bankField) {
+        bankField.hidden = selected?.dataset.touchesBank !== 'true';
+      }
+    };
+    methodSelect?.addEventListener('change', recompute);
+    recompute();
+  }
+</script>

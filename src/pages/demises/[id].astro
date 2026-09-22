@@ -6,7 +6,10 @@
 import ChainTimeline from '@components/ChainTimeline.astro';
 import DocumentViewer from '@components/DocumentViewer.astro';
 import DashboardLayout from '@layouts/DashboardLayout.astro';
-import { offeredPaymentMethods } from '@lib/config/reference';
+import {
+  offeredBankAccounts,
+  offeredPaymentMethods,
+} from '@lib/config/reference';
 import { checklistComplete, isEditable } from '@lib/ledger/closures';
 import {
   AFFIDAVIT_NOTE,
@@ -70,6 +73,7 @@ if (Astro.request.method === 'POST') {
           },
           method: text('method'),
           methodReference: text('methodReference'),
+          bankAccountId: text('bankAccountId'),
           reason: text('reason'),
         },
         principal
@@ -97,15 +101,23 @@ const step: Step = (STEPS as readonly string[]).includes(requested)
   ? (requested as Step)
   : 'details';
 
-const [checklist, timeline, trail, paymentMethods, totals, nominee] =
-  await Promise.all([
-    demiseChecklist(claim.id),
-    chainTimeline('transaction', claim.id),
-    transitionsFor(claim.id),
-    offeredPaymentMethods(),
-    claimTotals(claim.holderId),
-    nomineeFor(claim.holderId),
-  ]);
+const [
+  checklist,
+  timeline,
+  trail,
+  paymentMethods,
+  bankAccounts,
+  totals,
+  nominee,
+] = await Promise.all([
+  demiseChecklist(claim.id),
+  chainTimeline('transaction', claim.id),
+  transitionsFor(claim.id),
+  offeredPaymentMethods(),
+  offeredBankAccounts(),
+  claimTotals(claim.holderId),
+  nomineeFor(claim.holderId),
+]);
 const complete = checklistComplete(checklist);
 const claimant = claim.claimant!;
 const returnComment =
@@ -270,6 +282,7 @@ const CARD =
               {paymentMethods.map(method => (
                 <option
                   value={method.code}
+                  data-touches-bank={method.touchesBank ? 'true' : 'false'}
                   selected={method.code === claim!.method}
                 >
                   {method.name}
@@ -285,6 +298,23 @@ const CARD =
               value={claim.methodReference}
               class={INPUT}
             />
+          </label>
+          <label
+            data-bank-account-field
+            class="text-sm text-neutral-600 dark:text-neutral-300"
+          >
+            Bank account
+            <select name="bankAccountId" class={INPUT}>
+              <option value="">Choose…</option>
+              {bankAccounts.map(account => (
+                <option
+                  value={account.id}
+                  selected={account.id === claim!.bankAccountId}
+                >
+                  {account.name} · {account.bankName}
+                </option>
+              ))}
+            </select>
           </label>
         </div>
         <label class="block text-sm text-neutral-600 dark:text-neutral-300">
@@ -478,12 +508,21 @@ const CARD =
   // claimant.
   const form = document.querySelector<HTMLFormElement>('[data-claimant-form]');
   const other = form?.querySelector<HTMLElement>('[data-other-fields]');
+  const methodSelect =
+    form?.querySelector<HTMLSelectElement>('[name="method"]');
+  const bankField = form?.querySelector<HTMLElement>(
+    '[data-bank-account-field]'
+  );
   if (form && other) {
     const refresh = () => {
       const picked = form.querySelector<HTMLInputElement>(
         'input[name="kind"]:checked'
       );
       other.hidden = picked?.value !== 'other';
+      const selectedMethod = methodSelect?.selectedOptions[0];
+      if (bankField) {
+        bankField.hidden = selectedMethod?.dataset.touchesBank !== 'true';
+      }
     };
     form.addEventListener('change', refresh);
     refresh();

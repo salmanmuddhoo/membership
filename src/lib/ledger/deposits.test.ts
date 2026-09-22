@@ -78,6 +78,7 @@ let shares: string;
 let msa: string;
 let hsa: string;
 let pendingInv: string;
+let bankAccountId: string;
 
 function principalFor(userId: string, email: string, permissions: string[]) {
   return {
@@ -170,6 +171,14 @@ beforeAll(async () => {
   msa = await open('msa');
   hsa = await open('hsa', 'active', 'HSA0001');
   pendingInv = await open('inv', 'pending', 'INV0001');
+
+  await configure(
+    `insert into bank_account (code, name, bank_name, account_number)
+     values ('mcb', 'MCB current', 'MCB', '000123456789')`
+  );
+  bankAccountId = (
+    await run(appUrl, `select id from bank_account where code = 'mcb'`)
+  ).rows[0].id;
 }, 60_000);
 
 afterAll(async () => {
@@ -310,7 +319,12 @@ describe('recording a deposit', () => {
       attempt({ accountId: msa, amount: '20000.01', method: 'cash' })
     ).rejects.toThrowError(/cannot exceed 20000.00/);
     await expect(
-      attempt({ accountId: shares, amount: '10', method: 'cheque' })
+      attempt({
+        accountId: shares,
+        amount: '10',
+        method: 'cheque',
+        bankAccountId,
+      })
     ).rejects.toThrowError(/Enter the cheque reference/);
     await expect(
       attempt({ accountId: shares, amount: '10', method: 'migration' })
@@ -363,6 +377,7 @@ describe('recording a deposit', () => {
         amount: '250000',
         method: 'bank_transfer',
         methodReference: 'TRF-L',
+        bankAccountId,
       },
       clerk
     );
@@ -566,6 +581,7 @@ describe('recording a deposit', () => {
         amount: '600000',
         method: 'bank_transfer',
         methodReference: 'TRF-9',
+        bankAccountId,
       },
       officer
     );

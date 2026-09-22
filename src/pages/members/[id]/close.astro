@@ -4,7 +4,10 @@
 // member signs the request on the next screen and the officer submits it
 // from there.
 import DashboardLayout from '@layouts/DashboardLayout.astro';
-import { offeredPaymentMethods } from '@lib/config/reference';
+import {
+  offeredBankAccounts,
+  offeredPaymentMethods,
+} from '@lib/config/reference';
 import { accountBalance } from '@lib/ledger/ledger';
 import {
   ClosureError,
@@ -46,6 +49,7 @@ const closable = await Promise.all(
     }))
 );
 const paymentMethods = await offeredPaymentMethods();
+const bankAccounts = await offeredBankAccounts();
 const requestedAccount = Astro.url.searchParams.get('account') ?? '';
 
 let values = {
@@ -54,6 +58,7 @@ let values = {
   reason: '',
   method: paymentMethods[0]?.code ?? '',
   methodReference: '',
+  bankAccountId: '',
 };
 let error: string | null = null;
 
@@ -65,6 +70,7 @@ if (Astro.request.method === 'POST') {
     reason: text('reason'),
     method: text('method'),
     methodReference: text('methodReference'),
+    bankAccountId: text('bankAccountId'),
   };
   if (!person.accounts.some(a => a.id === values.accountId)) {
     error = 'Choose which account is closing.';
@@ -113,6 +119,7 @@ const INPUT =
     ) : (
       <form
         method="post"
+        data-closure-form
         class="space-y-4 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
       >
         <label class="block text-sm text-neutral-600 dark:text-neutral-300">
@@ -146,6 +153,7 @@ const INPUT =
               {paymentMethods.map(method => (
                 <option
                   value={method.code}
+                  data-touches-bank={method.touchesBank ? 'true' : 'false'}
                   selected={method.code === values.method}
                 >
                   {method.name}
@@ -162,6 +170,23 @@ const INPUT =
               class={INPUT}
             />
           </label>
+          <label
+            data-bank-account-field
+            class="text-sm text-neutral-600 dark:text-neutral-300"
+          >
+            Bank account
+            <select name="bankAccountId" class={INPUT}>
+              <option value="">Choose…</option>
+              {bankAccounts.map(account => (
+                <option
+                  value={account.id}
+                  selected={account.id === values.bankAccountId}
+                >
+                  {account.name} · {account.bankName}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
         <p class="text-xs text-neutral-500 dark:text-neutral-400">
           The balance is paid out when the closure is approved, as it stands
@@ -177,3 +202,24 @@ const INPUT =
     )}
   </div>
 </DashboardLayout>
+
+<script>
+  // A visual nudge only — enforced server-side (ledger/closures.ts)
+  // whether or not this script runs.
+  const form = document.querySelector<HTMLFormElement>('[data-closure-form]');
+  if (form) {
+    const methodSelect =
+      form.querySelector<HTMLSelectElement>('[name="method"]');
+    const bankField = form.querySelector<HTMLElement>(
+      '[data-bank-account-field]'
+    );
+    const recompute = () => {
+      const selected = methodSelect?.selectedOptions[0];
+      if (bankField) {
+        bankField.hidden = selected?.dataset.touchesBank !== 'true';
+      }
+    };
+    methodSelect?.addEventListener('change', recompute);
+    recompute();
+  }
+</script>

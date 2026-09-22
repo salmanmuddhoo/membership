@@ -83,6 +83,7 @@ let secretary: Principal;
 let president: Principal;
 let amina: { id: string; shares: string; msa: string };
 let bilal: { id: string; shares: string; msa: string };
+let bankAccountId: string;
 
 function principalFor(
   userId: string,
@@ -195,6 +196,14 @@ beforeAll(async () => {
   amina = await newMember('Amina');
   bilal = await newMember('Bilal');
 
+  await configure(
+    `insert into bank_account (code, name, bank_name, account_number)
+     values ('mcb', 'MCB current', 'MCB', '000123456789')`
+  );
+  bankAccountId = (
+    await run(appUrl, `select id from bank_account where code = 'mcb'`)
+  ).rows[0].id;
+
   const { deposits } = await load();
   await deposits.recordDeposit(
     { accountId: amina.shares, amount: '8000', method: 'cash' },
@@ -207,6 +216,7 @@ beforeAll(async () => {
         amount: '90000',
         method: 'bank_transfer',
         methodReference: `D${n}`,
+        bankAccountId,
       },
       officer
     );
@@ -472,6 +482,7 @@ describe('a transfer to a payee with no account here', () => {
     await expect(
       review.postApprovedTransaction(transfer.debitLeg.id, treasurer, {
         method: 'cheque',
+        bankAccountId,
       })
     ).rejects.toThrowError(/Enter the cheque reference/);
     const posted = await review.postApprovedTransaction(
@@ -480,6 +491,7 @@ describe('a transfer to a payee with no account here', () => {
       {
         method: 'cheque',
         methodReference: 'CHQ 4411',
+        bankAccountId,
       }
     );
     expect(posted.status).toBe('posted');
@@ -510,6 +522,7 @@ describe('a transfer to a payee with no account here', () => {
             kind: 'payee',
             payeeName: 'Someone',
             method: 'cheque',
+            bankAccountId,
           },
         },
         officer
@@ -538,6 +551,7 @@ describe('correcting a returned transfer', () => {
           amount: '90000',
           method: 'bank_transfer',
           methodReference: `E${n}`,
+          bankAccountId,
         },
         officer
       );

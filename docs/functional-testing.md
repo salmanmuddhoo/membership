@@ -139,6 +139,21 @@ Readiness** is checked first (nothing should read as missing) and again
 after (still nothing), and each row's figure is confirmed as the Society's
 own before the database is cleared for production.
 
+## Before go-live: a reconciliation dry-run
+
+S-1902's acceptance is a dry-run against a real statement. On the Test
+environment, with the Society's bank accounts set up at **Configuration →
+Bank accounts**, an Account Officer records a day's worth of bank-touching
+transactions as they appear on a real statement — deposits by transfer and
+cheque, a withdrawal paid out by transfer, a payee transfer — each naming
+its bank account and carrying the reference the statement shows. Then
+`GET /api/v1/financial-events` for the day is matched line by line against
+the statement on `bank_account_id`, `method_reference` and `amount`: every
+statement line finds its posting, every posting its line, and the balance
+on **Bank accounts** agrees with the statement's closing figure. A line
+that cannot be matched is a reference typed differently from the bank's,
+and that is what the dry-run exists to catch before Phase 5 automates it.
+
 ## Adding to it
 
 Address fields by their `name`, not by their label: the names come from the

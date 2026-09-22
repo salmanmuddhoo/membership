@@ -33,6 +33,7 @@ import {
   markReceiptIssued,
 } from '../payments/receipts';
 import { LedgerError } from './ledger';
+import { requireBankAccount, resolveBankAccount } from './bank-accounts';
 import { notifyExit } from './exit-notifications';
 import { notifySubmitted } from './transaction-notifications';
 import { notifyReceiptIssued } from './receipt-notifications';
@@ -78,6 +79,9 @@ export interface ClosureInput {
   // disbursement (S-1503).
   method: string;
   methodReference?: string;
+  // Which of the Society's bank accounts it is paid from (S-1902), where
+  // the method touches one.
+  bankAccountId?: string;
 }
 
 export type ClosureEdit = Omit<ClosureInput, 'accountId'>;
@@ -474,6 +478,11 @@ export async function submitClosure(
       if (err instanceof PaymentError) throw new ClosureError(err.message);
       throw err;
     }
+    requireBankAccount(
+      method,
+      closure.bankAccountId,
+      message => new ClosureError(message)
+    );
   }
   const receipt = route.definition
     ? null

@@ -85,6 +85,7 @@ let memberId: string;
 let shares: string;
 let msa: string;
 let hsa: string;
+let bankAccountId: string;
 
 function principalFor(
   userId: string,
@@ -214,6 +215,14 @@ beforeAll(async () => {
     { accountId: hsa, amount: '1000', method: 'cash' },
     officer
   );
+
+  await configure(
+    `insert into bank_account (code, name, bank_name, account_number)
+     values ('mcb', 'MCB current', 'MCB', '000123456789')`
+  );
+  bankAccountId = (
+    await run(appUrl, `select id from bank_account where code = 'mcb'`)
+  ).rows[0].id;
 }, 60_000);
 
 afterAll(async () => {
@@ -290,7 +299,12 @@ describe('recording a withdrawal', () => {
     ).rejects.toThrowError(/cannot exceed 20000.00/);
     // The method's reference, because it pays out now.
     await expect(
-      attempt({ accountId: msa, amount: '10', method: 'cheque' })
+      attempt({
+        accountId: msa,
+        amount: '10',
+        method: 'cheque',
+        bankAccountId,
+      })
     ).rejects.toThrowError(/Enter the cheque reference/);
     await expect(
       attempt({ accountId: msa, amount: '10', method: 'migration' })
@@ -370,6 +384,7 @@ describe('available, not merely current (S-1502)', () => {
         amount: '90000',
         method: 'bank_transfer',
         methodReference: 'D1',
+        bankAccountId,
       },
       officer
     );
@@ -445,6 +460,7 @@ describe('disbursing an approved withdrawal (S-1503)', () => {
     await expect(
       mods.review.postApprovedTransaction(large.id, treasurer, {
         method: 'bank_transfer',
+        bankAccountId,
       })
     ).rejects.toThrowError(/Enter the bank transfer reference/);
     // The captor may not pay it out; nor may the approver.
@@ -467,6 +483,7 @@ describe('disbursing an approved withdrawal (S-1503)', () => {
       {
         method: 'bank_transfer',
         methodReference: 'BT-9001',
+        bankAccountId,
       }
     );
     expect(posted.status).toBe('posted');
@@ -497,6 +514,7 @@ describe('disbursing an approved withdrawal (S-1503)', () => {
           amount: '90000',
           method: 'bank_transfer',
           methodReference: `D2-${n}`,
+          bankAccountId,
         },
         officer
       );
@@ -563,6 +581,7 @@ describe('disbursing an approved withdrawal (S-1503)', () => {
           amount: '90000',
           method: 'bank_transfer',
           methodReference: `D3-${n}`,
+          bankAccountId,
         },
         officer
       );

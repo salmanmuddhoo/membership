@@ -63,6 +63,7 @@ async function load() {
     withdrawals: await import('../ledger/withdrawals'),
     transfers: await import('../ledger/transfers'),
     review: await import('../ledger/review'),
+    reversals: await import('../ledger/reversals'),
   };
 }
 
@@ -138,7 +139,7 @@ beforeAll(async () => {
     byEmail.get('treasurer@albarakah.mu'),
     'treasurer@albarakah.mu',
     ['treasurer'],
-    ['transaction.post', 'transaction.view']
+    ['transaction.post', 'transaction.view', 'receipt.void']
   );
   await configure(
     `update account_type set maximum_transaction_amount = null where code = 'msa'`
@@ -401,5 +402,163 @@ describe('the Society’s bank accounts are configuration (S-1901)', () => {
         bankAccountId: '00000000-0000-0000-0000-000000000000',
       })
     ).rejects.toThrowError(/only an approved transaction posts/);
+  });
+});
+
+describe('money through a bank names its account and reference (S-1902)', () => {
+  it('refuses a bank-touching deposit, payout, transfer or disbursement without both', async () => {
+    const { config, deposits, withdrawals, transfers, review } = await load();
+    const [account] = await config.listBankAccounts();
+    await expect(
+      deposits.recordDeposit(
+        {
+          accountId: msa,
+          amount: '100',
+          method: 'bank_transfer',
+          methodReference: 'NO-ACCOUNT',
+        },
+        officer
+      )
+    ).rejects.toThrowError(/Choose the Society's bank account/);
+    await expect(
+      deposits.recordDeposit(
+        {
+          accountId: msa,
+          amount: '100',
+          method: 'bank_transfer',
+          bankAccountId: account.id,
+        },
+        officer
+      )
+    ).rejects.toThrowError(/bank transfer reference/);
+    // Cash needs neither.
+    const cash = await deposits.recordDeposit(
+      { accountId: msa, amount: '100', method: 'cash' },
+      officer
+    );
+    expect(cash.bankAccountId).toBeNull();
+
+    await expect(
+      withdrawals.recordWithdrawal(
+        {
+          accountId: msa,
+          amount: '50',
+          method: 'cheque',
+          methodReference: 'CHQ 9',
+        },
+        officer
+      )
+    ).rejects.toThrowError(/Choose the Society's bank account/);
+    await expect(
+      transfers.recordTransfer(
+        {
+          sourceAccountId: msa,
+          amount: '50',
+          destination: {
+            kind: 'payee',
+            payeeName: 'Someone',
+            method: 'bank_transfer',
+            methodReference: 'OUT-9',
+          },
+        },
+        officer
+      )
+    ).rejects.toThrowError(/Choose the Society's bank account/);
+
+    // A chained withdrawal may leave it until the payout — and then must say.
+    for (const reference of ['IN-3', 'IN-4']) {
+      await deposits.recordDeposit(
+        {
+          accountId: msa,
+          amount: '80000',
+          method: 'bank_transfer',
+          methodReference: reference,
+          bankAccountId: account.id,
+        },
+        officer
+      );
+    }
+    const large = await withdrawals.recordWithdrawal(
+      { accountId: msa, amount: '105000', method: 'bank_transfer' },
+      officer
+    );
+    expect(large.bankAccountId).toBeNull();
+    await review.reviewTransaction(
+      large.id,
+      { outcome: 'forward', comment: '' },
+      secretary
+    );
+    await review.reviewTransaction(
+      large.id,
+      { outcome: 'forward', comment: '' },
+      president
+    );
+    await expect(
+      review.postApprovedTransaction(large.id, treasurer, {
+        method: 'bank_transfer',
+        methodReference: 'OUT-10',
+      })
+    ).rejects.toThrowError(/Choose the Society's bank account/);
+    const posted = await review.postApprovedTransaction(large.id, treasurer, {
+      method: 'bank_transfer',
+      methodReference: 'OUT-10',
+      bankAccountId: account.id,
+    });
+    expect(posted.bankAccountId).toBe(account.id);
+  });
+
+  it('carries both in the posting, guards them in the ledger itself, and hands them to a reversal', async () => {
+    const { config, deposits, reversals } = await load();
+    const [account] = await config.listBankAccounts();
+    const deposit = await deposits.recordDeposit(
+      {
+        accountId: msa,
+        amount: '700',
+        method: 'cheque',
+        methodReference: 'CHQ 700',
+        bankAccountId: account.id,
+      },
+      officer
+    );
+    const event = await run(
+      appUrl,
+      `select payload->>'bank_account_id' as bank_account_id,
+              payload->>'method_reference' as method_reference
+         from financial_event
+        where transaction_id = $1 and event_type = 'transaction.posted'`,
+      [deposit.id]
+    );
+    expect(event.rows[0]).toEqual({
+      bank_account_id: account.id,
+      method_reference: 'CHQ 700',
+    });
+
+    // The reversal undoes it on the same bank account.
+    const { reversals: made } = await reversals.reverseTransaction(
+      deposit.id,
+      { reason: 'Cheque bounced' },
+      treasurer
+    );
+    expect(made[0].bankAccountId).toBe(account.id);
+    expect(made[0].status).toBe('posted');
+
+    // post_transaction refuses a bank-touching row that lost either, on
+    // whatever path it took: a submitted row edited underneath the rule.
+    const stripped = await run(
+      appUrl,
+      `insert into transaction
+         (kind, member_id, account_id, amount, method, method_reference,
+          status, captured_by, submitted_at)
+       select 'deposit', member_id, id, 10, 'bank_transfer', 'REF', 'submitted', $2, now()
+         from account where id = $1
+       returning id`,
+      [msa, officer.userId]
+    );
+    await expect(
+      run(appUrl, `select post_transaction($1, $2, 'test')`, [
+        stripped.rows[0].id,
+        officer.userId,
+      ])
+    ).rejects.toThrowError(/must name the bank account and the reference/);
   });
 });

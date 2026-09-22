@@ -34,6 +34,24 @@ export async function resolveBankAccount(
   return account.id;
 }
 
+/**
+ * FRD 15's rule (S-1902): money that moves through a bank says which of
+ * the Society's accounts it went through. Where the method touches a bank
+ * and no account is named, refused in the caller's own words — beside
+ * requireReference, which demands the reference the same way.
+ */
+export function requireBankAccount(
+  method: { touchesBank: boolean; name: string },
+  bankAccountId: string | null | undefined,
+  fail: (message: string) => Error
+): void {
+  if (method.touchesBank && !bankAccountId) {
+    throw fail(
+      `Choose the Society's bank account the ${method.name.toLowerCase()} went through.`
+    );
+  }
+}
+
 export interface BankAccountBalance extends BankAccount {
   balance: string;
   // Posted transactions naming it, and the latest.

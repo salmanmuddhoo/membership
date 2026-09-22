@@ -24,7 +24,7 @@ import {
   allocateReceiptNumber,
   markReceiptIssued,
 } from '../payments/receipts';
-import { resolveBankAccount } from './bank-accounts';
+import { requireBankAccount, resolveBankAccount } from './bank-accounts';
 import { LedgerError } from './ledger';
 import { notifyReceiptIssued } from './receipt-notifications';
 import { loadTransaction } from './review';
@@ -102,6 +102,9 @@ export interface Deposit {
   currentStepCode: string | null;
   currentStepName: string | null;
   currentStepRole: string | null;
+  // Which of the Society's bank accounts it reached (S-1901).
+  bankAccountId: string | null;
+  bankAccountName: string | null;
 }
 
 // What the key is checked against. Amount in cents so "5000" and "5000.00"
@@ -133,7 +136,8 @@ const DEPOSIT_SELECT = `
          t.captured_by, u.display_name as captured_by_name,
          t.created_at, t.posted_at,
          t.workflow_definition_id, wd.name as workflow_name, t.current_step_code,
-         ws.name as current_step_name, wr.name as current_step_role
+         ws.name as current_step_name, wr.name as current_step_role,
+         t.bank_account_id, ba.name as bank_account_name
     from transaction t
     join account a on a.id = t.account_id
     join account_type at on at.id = a.account_type_id
@@ -147,6 +151,7 @@ const DEPOSIT_SELECT = `
     left join workflow_step ws
       on ws.definition_id = wd.id and ws.code = t.current_step_code
     left join role wr on wr.id = ws.role_id
+    left join bank_account ba on ba.id = t.bank_account_id
 `;
 
 interface DepositRow {
@@ -176,6 +181,8 @@ interface DepositRow {
   current_step_code: string | null;
   current_step_name: string | null;
   current_step_role: string | null;
+  bank_account_id: string | null;
+  bank_account_name: string | null;
 }
 
 function assemble(r: DepositRow): Deposit {
@@ -206,6 +213,8 @@ function assemble(r: DepositRow): Deposit {
     currentStepCode: r.current_step_code,
     currentStepName: r.current_step_name,
     currentStepRole: r.current_step_role,
+    bankAccountId: r.bank_account_id,
+    bankAccountName: r.bank_account_name,
   };
 }
 
@@ -402,6 +411,13 @@ export async function recordDeposit(
     input.bankAccountId,
     message => new DepositError(message)
   );
+  // Through a bank, so which account (S-1902): a deposit's method is final
+  // at capture, chain or no chain.
+  requireBankAccount(
+    method,
+    bankAccountId,
+    message => new DepositError(message)
+  );
   const receipt = route.definition
     ? null
     : await allocateReceiptNumber(principal.userId);
@@ -568,6 +584,13 @@ export async function resubmitDeposit(
   }
   const bankAccountId = await resolveBankAccount(
     input.bankAccountId,
+    message => new DepositError(message)
+  );
+  // Through a bank, so which account (S-1902): a deposit's method is final
+  // at capture, chain or no chain.
+  requireBankAccount(
+    method,
+    bankAccountId,
     message => new DepositError(message)
   );
   const receipt = route.definition

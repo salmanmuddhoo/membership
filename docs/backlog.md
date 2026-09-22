@@ -4568,9 +4568,21 @@ stored, from the opening balance and the posted transactions naming it.
 `transaction.bank_account_id` arrives nullable: a deposit, a withdrawal, a
 transfer to a payee and a disbursement may name an active account of the
 Society's and the ledger refuses any other; the transaction page shows it
-beside the method. **Next:** S-1902 makes it mandatory wherever the method
-touches a bank, on every form and the API, and carries both fields in the
-`financial_event` payload.
+beside the method.
+
+**Shipped, second increment** (S-1902) — M19 complete. Wherever the
+method touches a bank, the bank account and the reference are mandatory:
+at capture for a deposit; at capture when it posts at once and at
+disbursement otherwise for a withdrawal, a transfer to a payee, a closure,
+a resignation and a claim; a reversal inherits the original's.
+`requireBankAccount()` asks in the caller's words at every one of those
+points, and `post_transaction` (0083) refuses to post money through a bank
+without both, whatever path was taken; the posting's `financial_event`
+payload carries `bank_account_id` beside `method_reference`. Every capture
+and disbursement form gains a bank account select, shown for a
+bank-touching method and naming accounts without their numbers; every
+endpoint that takes a method takes `bankAccountId`. The reconciliation
+dry-run is in `docs/functional-testing.md`.
 
 ### S-1901 · The Society's bank accounts ✅
 
@@ -4579,7 +4591,7 @@ configuration: bank, reference, currency, opening balance, active; full
 details visible only with `bank_account.manage`; a read-only balance derived
 from posted transactions that name it.
 
-### S-1902 · Every bank-touching transaction names its bank account
+### S-1902 · Every bank-touching transaction names its bank account ✅
 
 _(BNK-US-002, BNK-US-003, FRD 15)_ `Must · 3 · EPIC-25` — where the method
 `touches_bank` (S-1307), `transaction.bank_account_id` and the reference are

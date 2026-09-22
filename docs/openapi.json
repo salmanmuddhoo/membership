@@ -315,6 +315,15 @@
                             "methodReference": {
                               "type": "string"
                             },
+                            "bankAccountId": {
+                              "type": "string",
+                              "format": "uuid",
+                              "nullable": true
+                            },
+                            "bankAccountName": {
+                              "type": "string",
+                              "nullable": true
+                            },
                             "reason": {
                               "type": "string"
                             },
@@ -530,6 +539,11 @@
                   },
                   "methodReference": {
                     "type": "string"
+                  },
+                  "bankAccountId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "One of the Society's bank accounts. Required where the method touches a bank, when it posts at once; otherwise given at disbursement."
                   }
                 }
               }
@@ -2502,6 +2516,15 @@
                             "methodReference": {
                               "type": "string"
                             },
+                            "bankAccountId": {
+                              "type": "string",
+                              "format": "uuid",
+                              "nullable": true
+                            },
+                            "bankAccountName": {
+                              "type": "string",
+                              "nullable": true
+                            },
                             "reason": {
                               "type": "string"
                             },
@@ -2663,7 +2686,12 @@
                   },
                   "methodReference": {
                     "type": "string",
-                    "description": "Required where the method says so."
+                    "description": "Required where the method says so, and wherever it touches a bank."
+                  },
+                  "bankAccountId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "One of the Society's bank accounts (bank_account.view lists them). Required, with the reference, where the method touches a bank."
                   },
                   "reason": {
                     "type": "string"
@@ -7257,6 +7285,15 @@
                             "methodReference": {
                               "type": "string"
                             },
+                            "bankAccountId": {
+                              "type": "string",
+                              "format": "uuid",
+                              "nullable": true
+                            },
+                            "bankAccountName": {
+                              "type": "string",
+                              "nullable": true
+                            },
                             "reason": {
                               "type": "string"
                             },
@@ -7496,6 +7533,11 @@
                   "methodReference": {
                     "type": "string"
                   },
+                  "bankAccountId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "One of the Society's bank accounts. Required where the method touches a bank, when it posts at once; otherwise given at disbursement."
+                  },
                   "reason": {
                     "type": "string"
                   }
@@ -7610,6 +7652,15 @@
                             },
                             "methodReference": {
                               "type": "string"
+                            },
+                            "bankAccountId": {
+                              "type": "string",
+                              "format": "uuid",
+                              "nullable": true
+                            },
+                            "bankAccountName": {
+                              "type": "string",
+                              "nullable": true
                             },
                             "reason": {
                               "type": "string"
@@ -7826,6 +7877,11 @@
                   },
                   "methodReference": {
                     "type": "string"
+                  },
+                  "bankAccountId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "One of the Society's bank accounts. Required where the method touches a bank, when it posts at once; otherwise given at disbursement."
                   }
                 }
               }
@@ -8094,6 +8150,15 @@
                               },
                               "methodReference": {
                                 "type": "string"
+                              },
+                              "bankAccountId": {
+                                "type": "string",
+                                "format": "uuid",
+                                "nullable": true
+                              },
+                              "bankAccountName": {
+                                "type": "string",
+                                "nullable": true
                               },
                               "reason": {
                                 "type": "string"
@@ -8408,6 +8473,15 @@
                               },
                               "methodReference": {
                                 "type": "string"
+                              },
+                              "bankAccountId": {
+                                "type": "string",
+                                "format": "uuid",
+                                "nullable": true
+                              },
+                              "bankAccountName": {
+                                "type": "string",
+                                "nullable": true
                               },
                               "reason": {
                                 "type": "string"
@@ -8752,6 +8826,15 @@
                                 "methodReference": {
                                   "type": "string"
                                 },
+                                "bankAccountId": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "nullable": true
+                                },
+                                "bankAccountName": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
                                 "reason": {
                                   "type": "string"
                                 },
@@ -8972,6 +9055,15 @@
                                 },
                                 "methodReference": {
                                   "type": "string"
+                                },
+                                "bankAccountId": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "nullable": true
+                                },
+                                "bankAccountName": {
+                                  "type": "string",
+                                  "nullable": true
                                 },
                                 "reason": {
                                   "type": "string"
@@ -9251,6 +9343,11 @@
                       "methodReference": {
                         "type": "string",
                         "description": "Required where the method says so, when it posts at once."
+                      },
+                      "bankAccountId": {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "With kind \"payee\": one of the Society's bank accounts. Required where the method touches a bank, when it posts at once; otherwise given at disbursement."
                       }
                     }
                   },
@@ -9368,6 +9465,15 @@
                             },
                             "methodReference": {
                               "type": "string"
+                            },
+                            "bankAccountId": {
+                              "type": "string",
+                              "format": "uuid",
+                              "nullable": true
+                            },
+                            "bankAccountName": {
+                              "type": "string",
+                              "nullable": true
                             },
                             "reason": {
                               "type": "string"
@@ -9622,6 +9728,11 @@
                   "methodReference": {
                     "type": "string",
                     "description": "Required where the method says so, when it is paid out at once."
+                  },
+                  "bankAccountId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "One of the Society's bank accounts (bank_account.view lists them). Required where the method touches a bank, when it is paid out at once; otherwise given at disbursement."
                   },
                   "reason": {
                     "type": "string"

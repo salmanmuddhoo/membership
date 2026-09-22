@@ -48,6 +48,8 @@ const depositSchema = {
     method: { type: 'string' },
     methodName: { type: 'string' },
     methodReference: { type: 'string' },
+    bankAccountId: { type: 'string', format: 'uuid', nullable: true },
+    bankAccountName: { type: 'string', nullable: true },
     reason: { type: 'string' },
     receiptNo: { type: 'string', nullable: true },
     balanceAfter: {
@@ -104,7 +106,16 @@ const create = defineEndpoint(
         },
         methodReference: {
           type: 'string',
-          description: 'Required where the method says so.',
+          description:
+            'Required where the method says so, and wherever it touches a bank.',
+        },
+        bankAccountId: {
+          type: 'string',
+          format: 'uuid',
+          description:
+            "One of the Society's bank accounts (bank_account.view lists " +
+            'them). Required, with the reference, where the method touches ' +
+            'a bank.',
         },
         reason: { type: 'string' },
         sourceOfFundFormConfirmed: {
@@ -127,6 +138,7 @@ const create = defineEndpoint(
       amount?: unknown;
       method?: unknown;
       methodReference?: unknown;
+      bankAccountId?: unknown;
       reason?: unknown;
       sourceOfFundFormConfirmed?: unknown;
     }>();
@@ -138,6 +150,7 @@ const create = defineEndpoint(
           amount: text(input.amount),
           method: text(input.method),
           methodReference: text(input.methodReference),
+          bankAccountId: text(input.bankAccountId),
           reason: text(input.reason),
           sourceOfFundFormConfirmed: input.sourceOfFundFormConfirmed === true,
           idempotencyKey: idempotencyKey ?? undefined,
