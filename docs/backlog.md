@@ -4468,7 +4468,19 @@ nothing as missing, everything as at default, and that a rule removed, a
 chain with no enabled step or wording switched off is flagged.
 Configuration → Readiness shows the list read-only with the counts and a
 link to where each is changed; `docs/functional-testing.md` carries the
-go-live walk-through. **Next:** S-1806's reports.
+go-live walk-through.
+
+**Shipped, third increment** (S-1806) — M18 complete. Three reports in
+`src/lib/reports/definitions.ts`: **Transactions** (everything recorded in
+a period by kind, method and officer, with status, receipt, posting date
+and posted totals by kind; a transfer once, as its debit leg), **Approvals**
+(everything that went to a chain: the step and role it waits at, the days
+since submission or to the decision, and the average turnaround) and
+**Accounts near their minimum** (open accounts within a margin of their
+type's floor, the configured margin unless one is typed, with headroom);
+and the **Accounts** report gains a balance column and status and
+balance-band filters. Region is not offered: nothing in the data records
+one. Cashier reports are M20's. `docs/ledger.md`, "Receipts".
 
 ### S-1801 · Every Phase 2 setting has a working default ✅
 
@@ -4524,7 +4536,7 @@ NOTIF-US-003, FRD 11.2)_
 _(NOTIF-US-004, FRD 11.2)_ `Must · 1 · EPIC-30` — `receipt.voided`, with
 reason and user, to holders of `receipt.void`.
 
-### S-1806 · Reports for Section 13
+### S-1806 · Reports for Section 13 ✅
 
 **As** a manager and an auditor, **I need** the reports Section 13 lists,
 **so that** transactions, approvals, exits, receipts and floors are visible.
@@ -4532,10 +4544,11 @@ _(ACC-US-008, FRD 13)_
 `Should · 8 → split by report · EPIC-12`
 
 - New definitions in `definitions.ts`, each its own change: transactions
-  (by period, method, type, officer, region); pending approvals with age
-  and turnaround; exits (S-1706); receipts extended (S-1603); accounts at
-  or near floor; the `accounts` report (S-905) gains balance and status
-  filters. Cashier reports arrive with M20
+  (by period, method, type, officer; region is not recorded anywhere, so
+  not offered); pending approvals with age and turnaround; exits (S-1706);
+  receipts extended (S-1603); accounts at or near floor; the `accounts`
+  report (S-905) gains balance and status filters. Cashier reports arrive
+  with M20
 
 ---
 

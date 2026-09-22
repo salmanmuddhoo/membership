@@ -96,6 +96,7 @@ async function load() {
     receipts: await import('./receipts'),
     config: await import('../config/reference'),
     staff: await import('../notifications/staff'),
+    reports: await import('../reports/definitions'),
   };
 }
 
@@ -632,5 +633,119 @@ describe('a void is told to whoever else may void (S-1805)', () => {
       expect.arrayContaining(['receipt_no', 'voided_by', 'reason'])
     );
     expect(placeholdersForEvent('withdrawal.returned')).toBeNull();
+  });
+});
+
+// The Section 13 reports (S-1806), over the transactions the cases above
+// left behind: two deposits and a top-up on Amina's MSA, two transfers, a
+// withdrawal paid out through the chain, one refused, one voided, and an
+// Education account left within its margin of the floor.
+describe('the Section 13 reports (S-1806)', () => {
+  const today = new Date().toISOString().slice(0, 10);
+
+  it('lists every transaction in a period by kind, method and officer', async () => {
+    const { reports } = await load();
+    const report = reports.reportByCode('transactions')!;
+    expect(report.permission).toBe('transaction.view');
+    const all = await report.run({ from: today, to: today });
+    expect(all.rows.length).toBeGreaterThanOrEqual(10);
+    // A transfer shows once, as the leg the money left.
+    const transfers = await report.run({ kind: 'transfer' });
+    expect(transfers.rows).toHaveLength(2);
+    expect(transfers.rows.every(r => r.Kind === 'Transfer')).toBe(true);
+    expect(transfers.rows[0].Account).toContain('Multiplier Savings Account');
+    const cash = await report.run({ method: 'cash', officer: 'offic' });
+    expect(cash.rows.length).toBeGreaterThan(0);
+    expect(cash.rows.every(r => r.Method === 'Cash')).toBe(true);
+    expect(cash.rows.every(r => r.Officer === 'Officer')).toBe(true);
+    const refused = all.rows.find(r => r.Status === 'rejected');
+    expect(refused).toMatchObject({
+      Kind: 'Withdrawal',
+      Amount: '110000.00',
+      Posted: null,
+      Receipt: '',
+    });
+    expect(all.summary).toMatch(/posted: Deposit Rs 28[0-9,]*\.00/);
+    expect(all.summary).toContain('Withdrawal Rs 120600.00');
+    const none = await report.run({ from: '2000-01-01', to: '2000-01-02' });
+    expect(none.rows).toEqual([]);
+    expect(none.summary).toBe('0 transaction(s).');
+  });
+
+  it('shows what waits on a step, for how long, and the turnaround of the decided', async () => {
+    const { reports, withdrawals } = await load();
+    const waiting = await withdrawals.recordWithdrawal(
+      { accountId: amina.msa, amount: '105000', method: 'cash' },
+      officer
+    );
+    const report = reports.reportByCode('pending-approvals')!;
+    const result = await report.run({});
+    expect(result.rows[0]).toMatchObject({
+      Reference: waiting.reference,
+      Kind: 'Withdrawal',
+      Holder: 'Amina Test',
+      Status: 'submitted',
+      'Waiting at': 'Secretary review · Secretary',
+      Officer: 'Officer',
+      Decided: null,
+      Days: 0,
+    });
+    const decided = result.rows.filter(r => r.Decided !== null);
+    expect(decided.map(r => r.Status).sort()).toEqual(['posted', 'rejected']);
+    expect(decided.every(r => r['Waiting at'] === '')).toBe(true);
+    expect(result.summary).toBe(
+      '1 waiting (oldest 0 day(s)); 2 decided, 0.0 day(s) from submission to decision on average.'
+    );
+    // Only what went to a chain: the ones the matrix posted at once are
+    // not approvals.
+    expect(result.rows).toHaveLength(3);
+    const none = await report.run({ kind: 'deposit' });
+    expect(none.rows).toEqual([]);
+    expect(none.summary).toBe('0 waiting; 0 decided.');
+  });
+
+  it('lists the accounts at or near their minimum, within the configured or a typed margin', async () => {
+    const { reports } = await load();
+    const report = reports.reportByCode('accounts-near-floor')!;
+    expect(report.permission).toBe('account.view');
+    const near = await report.run({});
+    expect(near.rows).toEqual([
+      {
+        'Account no': 'EDU0001',
+        Type: 'Education Savings',
+        'Member no': expect.any(String),
+        Holder: 'Amina Test',
+        Status: 'active',
+        Balance: '1300.00',
+        Minimum: '1000.00',
+        Headroom: '300.00',
+        'At minimum': 'No',
+      },
+    ]);
+    expect(near.summary).toBe(
+      '1 account(s) within Rs 500.00 of their minimum, 0 at or below it.'
+    );
+    expect((await report.run({ margin: '10' })).rows).toEqual([]);
+    const wide = await report.run({ margin: '200,000' });
+    expect(wide.rows).toHaveLength(3);
+    expect(wide.rows[0].Headroom).toBe('300.00');
+    expect((await report.run({ type: 'edu' })).rows).toHaveLength(1);
+  });
+
+  it('filters the accounts report by status and balance, and shows the balance', async () => {
+    const { reports } = await load();
+    const report = reports.reportByCode('accounts')!;
+    const active = await report.run({ status: 'active' });
+    expect(active.rows).toHaveLength(3);
+    expect(active.summary).toMatch(/^3 account\(s\), Rs \d+\.\d\d held\.$/);
+    const rich = await report.run({ balanceFrom: '100000' });
+    expect(rich.rows).toHaveLength(1);
+    expect(rich.rows[0].Type).toBe('Multiplier Savings Account');
+    const small = await report.run({ balanceTo: '2000' });
+    expect(small.rows.map(r => r['Account no'])).toEqual(['EDU0001']);
+    expect(small.rows[0].Balance).toBe('1300.00');
+    expect((await report.run({ status: 'closed' })).rows).toEqual([]);
+    // A bound that is not an amount is no bound.
+    expect((await report.run({ balanceFrom: 'lots' })).rows).toHaveLength(3);
   });
 });
