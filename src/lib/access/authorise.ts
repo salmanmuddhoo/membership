@@ -88,6 +88,7 @@ const ROUTE_PERMISSIONS: ReadonlyArray<readonly [string, string]> = [
   // A closure request being built (S-1702): the officer's own wizard,
   // reached from the member's page. Reviewing one is /transactions/<id>.
   ['/closures/', 'transaction.capture'],
+  ['/deposits/', 'transaction.capture'],
   ['/resignations/', 'transaction.capture'],
   ['/demises/', 'transaction.capture'],
   // The cash drawer (S-2001): opening and closing your own is cash.session;

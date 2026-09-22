@@ -48,7 +48,9 @@ if (Astro.request.method === 'POST') {
       return Astro.redirect(`/transactions/${deposit.id}`);
     } else if (intent === 'cancel') {
       await cancelDepositRequest(deposit.id, principal);
-      return Astro.redirect(`/members/${deposit.memberId ?? deposit.customerId}`);
+      return Astro.redirect(
+        `/members/${deposit.memberId ?? deposit.customerId}`
+      );
     }
   } catch (err) {
     if (err instanceof DepositError) {
@@ -137,7 +139,12 @@ const CARD =
         </label>
         <label class="block text-sm text-neutral-600 dark:text-neutral-300">
           Reason
-          <input type="text" name="reason" value={deposit.reason} class={INPUT} />
+          <input
+            type="text"
+            name="reason"
+            value={deposit.reason}
+            class={INPUT}
+          />
         </label>
         <input type="hidden" name="intent" value="details" />
         <div class="flex flex-wrap gap-2 pt-2">
@@ -170,8 +177,8 @@ const CARD =
         ) : !filed ? (
           <>
             <p class="text-sm text-neutral-700 dark:text-neutral-200">
-              The depositor signs the form on the next screen, and it is
-              filed here.
+              The depositor signs the form on the next screen, and it is filed
+              here.
             </p>
             <div class="flex flex-wrap gap-2">
               <a href={`${base}/form`} class={BUTTON}>
@@ -191,7 +198,8 @@ const CARD =
             <p class="text-sm text-neutral-700 dark:text-neutral-200">
               {filed.state === 'under_review' && 'Waiting to be verified.'}
               {filed.state === 'verified' && 'Verified.'}
-              {filed.state === 'rejected' && 'Rejected: sign and file it again.'}
+              {filed.state === 'rejected' &&
+                'Rejected: sign and file it again.'}
             </p>
             <div class="flex flex-wrap gap-2">
               <a href={`${base}/form`} class={BUTTON}>
