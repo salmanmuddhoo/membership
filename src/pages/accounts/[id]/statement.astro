@@ -6,6 +6,7 @@ import DashboardLayout from '@layouts/DashboardLayout.astro';
 import { accountStatement } from '@lib/ledger/ledger';
 import { statementPeriod } from '@lib/ledger/statement';
 import { formatMoney } from '@lib/payments/money';
+import { PAGE, FILTER, BUTTON, INPUT, SECONDARY_SM } from '@lib/ui';
 
 const { id } = Astro.params;
 const params = Astro.url.searchParams;
@@ -33,43 +34,36 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 const longDate = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
 const day = (value: string) => longDate.format(new Date(`${value}T00:00:00`));
 const excelHref = `/api/v1/accounts/${id}/statement?from=${shown.from}&to=${shown.to}&format=xlsx`;
-const control =
-  'mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100';
-const button =
-  'rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800';
 ---
 
 <DashboardLayout
   title={`Statement ${statement.accountNo} · Al Barakah MCSL`}
   heading={`Statement · ${statement.accountNo}`}
 >
-  <div class="mx-auto max-w-5xl space-y-6">
+  <div class={PAGE.list}>
     <form
       method="get"
-      class="print:hidden flex flex-wrap items-end gap-3 rounded-2xl border border-neutral-200 bg-neutral-100 p-4 dark:border-neutral-800 dark:bg-neutral-950"
+      class={`print:hidden flex flex-wrap items-end gap-3 ${FILTER}`}
     >
       <label class="text-sm text-neutral-600 dark:text-neutral-300">
         From
-        <input type="date" name="from" value={shown.from} class={control} />
+        <input type="date" name="from" value={shown.from} class={INPUT} />
       </label>
       <label class="text-sm text-neutral-600 dark:text-neutral-300">
         To
-        <input type="date" name="to" value={shown.to} class={control} />
+        <input type="date" name="to" value={shown.to} class={INPUT} />
       </label>
-      <button
-        type="submit"
-        class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
-      >
+      <button type="submit" class={BUTTON}>
         Show
       </button>
       <span class="grow"></span>
-      <button type="button" id="print" class={button}>
+      <button type="button" id="print" class={SECONDARY_SM}>
         Print
       </button>
-      <a href={excelHref} class={button}>
+      <a href={excelHref} class={SECONDARY_SM}>
         Download as Excel
       </a>
-      <a href={`/accounts/${id}`} class={button}>
+      <a href={`/accounts/${id}`} class={SECONDARY_SM}>
         Back
       </a>
       {invalidPeriod && (

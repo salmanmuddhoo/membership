@@ -25,6 +25,15 @@ them.
 The reasoning behind a design belongs in a code comment or in `docs/`, never on
 screen.
 
+## Building a screen
+
+`src/lib/ui.ts` is the screen's vocabulary: a page is one of four widths
+(`PAGE.form`, `.detail`, `.list`, `.wide`) chosen by what it is for; a section
+is a `CARD`, an item inside it a `PANEL`, a bar of controls a `FILTER`; a
+field is a `LABEL` over an `INPUT`; the action of a form is a `BUTTON`, a
+row's action a `BUTTON_SM`. Reach for the name, never the classes — a page
+that spells them out is how two forms end up different widths.
+
 ## Elsewhere
 
 - Schema changes reach a database only through `migrations/`, applied by the

@@ -6,6 +6,16 @@ import {
   deleteDraftApplication,
   listApplications,
 } from '@lib/applications/capture';
+import {
+  PAGE,
+  CARD,
+  CARD_TITLE,
+  INPUT,
+  INPUT_BARE,
+  BUTTON_SM,
+  SECONDARY_SM,
+  HINT,
+} from '@lib/ui';
 import { listMembershipTypes } from '@lib/config/reference';
 import {
   pendingApplicationIds,
@@ -174,7 +184,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 ---
 
 <DashboardLayout title="Applications · Al Barakah MCSL" heading="Applications">
-  <div class="mx-auto max-w-5xl space-y-6">
+  <div class={PAGE.list}>
     {error && (
       <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
         {error}
@@ -196,10 +206,8 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     )}
 
     {canCapture && (
-      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-          Start an application
-        </h2>
+      <section class={CARD}>
+        <h2 class={CARD_TITLE}>Start an application</h2>
         <div class="mt-4 flex flex-wrap items-end justify-between gap-4">
           {/* A GET, deliberately. Opening the form creates nothing — the
                 application exists once a detail is entered. */}
@@ -210,10 +218,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           >
             <label class="text-sm text-neutral-600 dark:text-neutral-300">
               Applicant status
-              <select
-                name="type"
-                class="mt-1 block rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-              >
+              <select name="type" class={INPUT}>
                 {types
                   .filter(t => t.isActive)
                   .map(t => (
@@ -221,27 +226,21 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                   ))}
               </select>
             </label>
-            <button
-              type="submit"
-              class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
-            >
+            <button type="submit" class={BUTTON_SM}>
               Member Registration
             </button>
           </form>
 
-          <a
-            href="/applications/new-account"
-            class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
-          >
+          <a href="/applications/new-account" class={SECONDARY_SM}>
             Open other account
           </a>
         </div>
       </section>
     )}
 
-    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+    <section class={CARD}>
       <div class="flex flex-wrap items-center justify-between gap-2">
-        <h2 class="flex items-center gap-2 text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+        <h2 class={`${CARD_TITLE} flex items-center gap-2`}>
           Applications
           {nonDraftCount !== null && (
             <span class="rounded-full bg-neutral-200 px-2 py-0.5 text-xs font-medium text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
@@ -259,16 +258,12 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             name="q"
             value={search}
             placeholder="Search applicant or reference"
-            class="rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+            class={INPUT_BARE}
           />
           <label for="status" class="sr-only">
             Filter by status
           </label>
-          <select
-            id="status"
-            name="status"
-            class="rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-          >
+          <select id="status" name="status" class={INPUT_BARE}>
             <option value="">All statuses</option>
             {Object.entries(STATUS_LABELS).map(([code, label]) => (
               <option value={code} selected={code === filter}>
@@ -276,17 +271,11 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               </option>
             ))}
           </select>
-          <button
-            type="submit"
-            class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
-          >
+          <button type="submit" class={SECONDARY_SM}>
             Filter
           </button>
           {(search || filter) && (
-            <a
-              href="/applications"
-              class="text-sm text-neutral-500 underline dark:text-neutral-400"
-            >
+            <a href="/applications" class={`${HINT} underline`}>
               Clear
             </a>
           )}
@@ -294,7 +283,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       </div>
 
       {applications.length === 0 ? (
-        <p class="mt-4 text-sm text-neutral-500 dark:text-neutral-400">
+        <p class={`mt-4 ${HINT}`}>
           {search
             ? `Nothing matches "${search}".`
             : filter

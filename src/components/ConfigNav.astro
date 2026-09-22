@@ -2,6 +2,8 @@
 // Sub-navigation shared by the reference-configuration pages. Kept in one
 // place so a new section appears in every page's nav at once rather than in
 // whichever ones were remembered.
+import { SECONDARY_SM } from '@lib/ui';
+
 export const CONFIG_SECTIONS = [
   {
     href: '/admin/configuration/membership-types',
@@ -75,10 +77,9 @@ const current = Astro.url.pathname;
       href={section.href}
       aria-current={current === section.href ? 'page' : undefined}
       class:list={[
-        'rounded-lg px-3 py-1.5 text-sm font-medium transition',
         current === section.href
-          ? 'bg-mint-300 text-neutral-800'
-          : 'border border-neutral-300 text-neutral-700 hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800',
+          ? 'rounded-lg px-3 py-1.5 text-sm font-medium text-neutral-800 bg-mint-300 transition'
+          : SECONDARY_SM,
       ]}
     >
       {section.label}

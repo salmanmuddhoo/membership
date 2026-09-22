@@ -46,6 +46,20 @@ import {
 import { loadCustomer, loadMember } from '@lib/members/create';
 import { formatMoney } from '@lib/payments/money';
 import { chainTimeline } from '@lib/workflow/timeline';
+import {
+  PAGE,
+  CARD,
+  FORM_CARD,
+  CARD_LABEL,
+  HINT,
+  MUTED,
+  LABEL,
+  INPUT,
+  BUTTON,
+  BUTTON_SM,
+  DANGER,
+  DANGER_SM,
+} from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 const { id } = Astro.params;
@@ -289,23 +303,13 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
   hour: '2-digit',
   minute: '2-digit',
 });
-const INPUT =
-  'mt-1 block w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100';
-const BUTTON =
-  'bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50';
-const DANGER =
-  'rounded-lg border border-red-300 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950';
-const SMALL_BUTTON =
-  'bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition';
-const SMALL_DANGER =
-  'rounded-lg border border-red-300 px-3 py-1.5 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950';
 ---
 
 <DashboardLayout
   title={`${transaction.reference} · Al Barakah MCSL`}
   heading={`${KIND_LABELS[transaction.kind] ?? transaction.kind} ${transaction.reference}`}
 >
-  <div class="mx-auto max-w-4xl space-y-6">
+  <div class={PAGE.detail}>
     <ChainTimeline steps={timeline} label="Transaction progress" />
 
     <div
@@ -356,7 +360,7 @@ const SMALL_DANGER =
       </div>
     )}
 
-    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+    <section class={CARD}>
       <dl class="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
         <dt class="text-neutral-500 dark:text-neutral-400">Who</dt>
         <dd class="font-medium text-neutral-800 dark:text-neutral-100">
@@ -504,7 +508,7 @@ const SMALL_DANGER =
                                 name="documentId"
                                 value={document.documentId}
                               />
-                              <button type="submit" class={SMALL_BUTTON}>
+                              <button type="submit" class={BUTTON_SM}>
                                 Verify
                               </button>
                             </form>
@@ -526,7 +530,7 @@ const SMALL_DANGER =
                                 placeholder="Why is this being rejected?"
                                 class="rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
                               />
-                              <button type="submit" class={SMALL_DANGER}>
+                              <button type="submit" class={DANGER_SM}>
                                 Reject
                               </button>
                             </form>
@@ -596,7 +600,7 @@ const SMALL_DANGER =
     )}
 
     {canEditClosure && (
-      <div class="flex flex-wrap items-center gap-3 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+      <div class={`flex flex-wrap items-center gap-3 ${CARD}`}>
         {returnComment && (
           <p class="w-full rounded-lg border border-amber-300 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200">
             {returnComment}
@@ -621,14 +625,9 @@ const SMALL_DANGER =
     )}
 
     {canAct && position && !isCreditLeg && (
-      <form
-        method="post"
-        class="space-y-3 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
-      >
-        <h2 class="text-sm font-semibold text-neutral-700 uppercase dark:text-neutral-200">
-          {position.step.name}
-        </h2>
-        <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+      <form method="post" class={`space-y-3 ${CARD}`}>
+        <h2 class={CARD_LABEL}>{position.step.name}</h2>
+        <label class={LABEL}>
           Comment
           <textarea
             name="comment"
@@ -657,11 +656,7 @@ const SMALL_DANGER =
     )}
 
     {canPost && (
-      <form
-        method="post"
-        data-disbursement-form
-        class="space-y-3 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
-      >
+      <form method="post" data-disbursement-form class={`space-y-3 ${CARD}`}>
         <p class="text-sm text-neutral-700 dark:text-neutral-200">
           {isDemise
             ? 'Approved. Record how the claimant was paid; every account closes, the membership ends and the receipt is issued now.'
@@ -741,14 +736,8 @@ const SMALL_DANGER =
     )}
 
     {canEdit && isTransfer && (
-      <form
-        method="post"
-        data-transfer-edit-form
-        class="space-y-4 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
-      >
-        <h2 class="text-sm font-semibold text-neutral-700 uppercase dark:text-neutral-200">
-          Correct and resubmit
-        </h2>
+      <form method="post" data-transfer-edit-form class={FORM_CARD}>
+        <h2 class={CARD_LABEL}>Correct and resubmit</h2>
         {returnComment && (
           <p class="rounded-lg border border-amber-300 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200">
             {returnComment}
@@ -837,18 +826,16 @@ const SMALL_DANGER =
         data-deposit-form
         data-cash-threshold={cashThreshold}
         data-cash-maximum={cashMax}
-        class="space-y-4 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
+        class={FORM_CARD}
       >
-        <h2 class="text-sm font-semibold text-neutral-700 uppercase dark:text-neutral-200">
-          Correct and resubmit
-        </h2>
+        <h2 class={CARD_LABEL}>Correct and resubmit</h2>
         {returnComment && (
           <p class="rounded-lg border border-amber-300 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200">
             {returnComment}
           </p>
         )}
         <input type="hidden" name="intent" value="resubmit" />
-        <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+        <label class={LABEL}>
           Account
           <select name="accountId" class={INPUT}>
             {accounts.map(account => (
@@ -986,19 +973,14 @@ const SMALL_DANGER =
     )}
 
     {canReverse && (
-      <form
-        method="post"
-        class="space-y-3 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
-      >
-        <h2 class="text-sm font-semibold text-neutral-700 uppercase dark:text-neutral-200">
-          Reverse
-        </h2>
-        <p class="text-sm text-neutral-600 dark:text-neutral-300">
+      <form method="post" class={`space-y-3 ${CARD}`}>
+        <h2 class={CARD_LABEL}>Reverse</h2>
+        <p class={MUTED}>
           A reversal posts the opposite entry on the same account
           {isTransfer && ', on both sides of the transfer,'} with its own
           receipt. This one stays as it is.
         </p>
-        <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+        <label class={LABEL}>
           Reason
           <textarea
             name="reason"
@@ -1015,14 +997,10 @@ const SMALL_DANGER =
       </form>
     )}
 
-    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-      <h2 class="text-sm font-semibold text-neutral-700 uppercase dark:text-neutral-200">
-        Trail
-      </h2>
+    <section class={CARD}>
+      <h2 class={CARD_LABEL}>Trail</h2>
       {trail.length === 0 ? (
-        <p class="mt-2 text-sm text-neutral-500 dark:text-neutral-400">
-          Nothing yet.
-        </p>
+        <p class={`mt-2 ${HINT}`}>Nothing yet.</p>
       ) : (
         <ol class="mt-3 space-y-3 text-sm">
           {trail.map(entry => (

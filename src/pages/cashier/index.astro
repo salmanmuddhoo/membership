@@ -10,6 +10,7 @@ import {
   openSessionFor,
 } from '@lib/cash/sessions';
 import { formatMoney, fromCents, toCents } from '@lib/payments/money';
+import { BUTTON, CARD, CARD_TITLE, HINT, INPUT, PAGE } from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 if (!principal.permissions.has(PERMISSION_SESSION)) {
@@ -67,15 +68,10 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
   dateStyle: 'medium',
   timeStyle: 'short',
 });
-
-const INPUT =
-  'mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100';
-const BUTTON =
-  'bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition';
 ---
 
 <DashboardLayout title="Cash drawer · Al Barakah MCSL" heading="Cash drawer">
-  <div class="mx-auto max-w-3xl space-y-6">
+  <div class={PAGE.form}>
     {error && (
       <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
         {error}
@@ -88,10 +84,8 @@ const BUTTON =
     )}
 
     {!session ? (
-      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-          No drawer open
-        </h2>
+      <section class={CARD}>
+        <h2 class={CARD_TITLE}>No drawer open</h2>
         <form method="post" class="mt-4 grid gap-3 sm:grid-cols-2">
           <input type="hidden" name="intent" value="open" />
           <label class="text-sm text-neutral-600 dark:text-neutral-300">
@@ -117,7 +111,7 @@ const BUTTON =
       </section>
     ) : (
       <>
-        <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+        <section class={CARD}>
           <dl class="grid gap-4 text-sm sm:grid-cols-5">
             <div>
               <dt class="text-neutral-500 dark:text-neutral-400">Opened</dt>
@@ -152,14 +146,10 @@ const BUTTON =
           </dl>
         </section>
 
-        <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-          <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-            Movements
-          </h2>
+        <section class={CARD}>
+          <h2 class={CARD_TITLE}>Movements</h2>
           {figures!.movements.length === 0 ? (
-            <p class="mt-3 text-sm text-neutral-500 dark:text-neutral-400">
-              No cash movements yet.
-            </p>
+            <p class={`${HINT} mt-3`}>No cash movements yet.</p>
           ) : (
             <table class="mt-4 w-full text-sm">
               <thead>
@@ -214,10 +204,8 @@ const BUTTON =
           )}
         </section>
 
-        <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-          <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-            Close drawer
-          </h2>
+        <section class={CARD}>
+          <h2 class={CARD_TITLE}>Close drawer</h2>
           <form method="post" class="mt-4 grid gap-3 sm:grid-cols-2">
             <input type="hidden" name="intent" value="close" />
             <label class="text-sm text-neutral-600 dark:text-neutral-300">

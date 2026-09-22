@@ -5,6 +5,7 @@
 // page does not change under an officer as they arrive.
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import { pendingTransactionCount } from '@lib/ledger/review';
+import { PAGE, CARD, CARD_TITLE, HINT, MUTED } from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 const canCapture = principal.permissions.has('transaction.capture');
@@ -46,7 +47,7 @@ const KINDS: { label: string; href: string | null; blurb: string }[] = [
 ---
 
 <DashboardLayout title="Transactions · Al Barakah MCSL" heading="Transactions">
-  <div class="mx-auto max-w-4xl space-y-6">
+  <div class={PAGE.list}>
     <a
       href="/transactions/pending"
       class="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-neutral-200 bg-neutral-100 px-6 py-4 transition hover:border-mint-400 hover:bg-white dark:border-neutral-800 dark:bg-neutral-950 dark:hover:border-mint-700 dark:hover:bg-neutral-900"
@@ -54,7 +55,7 @@ const KINDS: { label: string; href: string | null; blurb: string }[] = [
       <span class="font-semibold text-neutral-800 dark:text-neutral-100">
         Waiting on you
       </span>
-      <span class="text-sm text-neutral-600 dark:text-neutral-300">
+      <span class={MUTED}>
         {waiting === 0
           ? 'Nothing'
           : `${waiting} transaction${waiting === 1 ? '' : 's'}`}
@@ -68,9 +69,7 @@ const KINDS: { label: string; href: string | null; blurb: string }[] = [
       <span class="font-semibold text-neutral-800 dark:text-neutral-100">
         Today’s transactions
       </span>
-      <span class="text-sm text-neutral-600 dark:text-neutral-300">
-        Every kind, every status →
-      </span>
+      <span class={MUTED}>Every kind, every status →</span>
     </a>
     <ul class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {KINDS.map(kind =>
@@ -78,14 +77,10 @@ const KINDS: { label: string; href: string | null; blurb: string }[] = [
           <li>
             <a
               href={kind.href}
-              class="block rounded-2xl border border-neutral-200 bg-neutral-100 p-6 transition hover:border-mint-400 hover:bg-white dark:border-neutral-800 dark:bg-neutral-950 dark:hover:border-mint-700 dark:hover:bg-neutral-900"
+              class={`block ${CARD} transition hover:border-mint-400 hover:bg-white dark:hover:border-mint-700 dark:hover:bg-neutral-900`}
             >
-              <span class="block text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-                {kind.label}
-              </span>
-              <span class="mt-1 block text-sm text-neutral-500 dark:text-neutral-400">
-                {kind.blurb}
-              </span>
+              <span class={`block ${CARD_TITLE}`}>{kind.label}</span>
+              <span class={`mt-1 block ${HINT}`}>{kind.blurb}</span>
             </a>
           </li>
         ) : (
@@ -93,12 +88,8 @@ const KINDS: { label: string; href: string | null; blurb: string }[] = [
             aria-disabled="true"
             class="rounded-2xl border border-dashed border-neutral-300 p-6 opacity-60 dark:border-neutral-700"
           >
-            <span class="block text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-              {kind.label}
-            </span>
-            <span class="mt-1 block text-sm text-neutral-500 dark:text-neutral-400">
-              {kind.blurb}
-            </span>
+            <span class={`block ${CARD_TITLE}`}>{kind.label}</span>
+            <span class={`mt-1 block ${HINT}`}>{kind.blurb}</span>
             <span class="mt-2 inline-block rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
               Not yet available
             </span>

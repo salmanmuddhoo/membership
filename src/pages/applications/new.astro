@@ -23,6 +23,7 @@ import {
   checklistForMembershipType,
   listMembershipTypes,
 } from '@lib/config/reference';
+import { PAGE, BUTTON, HINT } from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 if (!principal.permissions.has('application.capture')) {
@@ -143,7 +144,7 @@ if (Astro.request.method === 'POST') {
   title={`New ${type.name} application · Al Barakah MCSL`}
   heading={`New ${type.name} application`}
 >
-  <div class="mx-auto max-w-5xl space-y-6">
+  <div class={PAGE.list}>
     <ChainTimeline steps={timeline} label="Application progress" />
 
     <div
@@ -151,10 +152,7 @@ if (Astro.request.method === 'POST') {
       class="sticky z-20 -mx-4 flex flex-wrap items-center gap-2 border-t border-neutral-200/80 bg-neutral-100/95 px-4 py-3 backdrop-blur-md sm:mx-0 sm:rounded-b-2xl sm:px-3 sm:py-1.5 dark:border-neutral-800/80 dark:bg-neutral-950/95"
       style="top: calc(var(--app-header-height, 3.75rem) + var(--app-timeline-height, 0px))"
     >
-      <a
-        href="/applications"
-        class="inline-block text-sm text-neutral-500 underline dark:text-neutral-400"
-      >
+      <a href="/applications" class={`${HINT} inline-block underline`}>
         ← All applications
       </a>
     </div>
@@ -176,12 +174,7 @@ if (Astro.request.method === 'POST') {
         {/* Hidden until the script below un-hides it, so a reader with
             scripting off never sees an inert button — they get the noscript
             one, which works by being a real form submission. */}
-        <button
-          type="button"
-          id="next-button"
-          hidden
-          class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50"
-        >
+        <button type="button" id="next-button" hidden class={BUTTON}>
           Next
         </button>
         <span
@@ -193,10 +186,7 @@ if (Astro.request.method === 'POST') {
             button the ordinary way saves and moves on in one step, which is
             the same thing Next does with scripting on. */}
         <noscript>
-          <button
-            type="submit"
-            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
-          >
+          <button type="submit" class={BUTTON}>
             Next
           </button>
         </noscript>

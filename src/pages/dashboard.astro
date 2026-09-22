@@ -1,5 +1,6 @@
 ---
 import DashboardLayout from '@layouts/DashboardLayout.astro';
+import { CARD, CARD_TITLE, PAGE } from '@lib/ui';
 
 const displayName =
   Astro.locals.principal?.displayName ||
@@ -9,10 +10,10 @@ const displayName =
 ---
 
 <DashboardLayout title="Dashboard · Al Barakah MCSL" heading="Dashboard">
-  <div class="mx-auto max-w-5xl">
+  <div class={PAGE.list}>
     {/* Welcome */}
-    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 sm:p-8 dark:border-neutral-800 dark:bg-neutral-950">
-      <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+    <section class={`${CARD} sm:p-8`}>
+      <h2 class={CARD_TITLE}>
         Assalamoualaikoum{displayName ? `, ${displayName}` : ''}
       </h2>
     </section>

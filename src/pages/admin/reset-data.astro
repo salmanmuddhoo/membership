@@ -12,6 +12,7 @@ import {
   countsBeforeReset,
   resetAllTestData,
 } from '@lib/admin/reset';
+import { PAGE } from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 const isTestEnvironment = !isProductionEnvironment();
@@ -53,7 +54,7 @@ const counts = isTestEnvironment && !done ? await countsBeforeReset() : null;
   title="Reset test data · Al Barakah MCSL"
   heading="Reset test data"
 >
-  <div class="mx-auto max-w-2xl space-y-6">
+  <div class={PAGE.form}>
     {!isTestEnvironment && (
       <div class="rounded-lg border border-neutral-300 bg-neutral-100 px-4 py-3 text-sm text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200">
         This deployment is not marked as a test environment, so this is not

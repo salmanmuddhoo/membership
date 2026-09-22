@@ -6,6 +6,7 @@ import DashboardLayout from '@layouts/DashboardLayout.astro';
 import { query } from '@lib/db/pool';
 import { accountBalance, accountEntries } from '@lib/ledger/ledger';
 import { formatMoney } from '@lib/payments/money';
+import { PAGE, CARD_TITLE, FILTER, HINT, MUTED, SECONDARY_SM } from '@lib/ui';
 
 const { id } = Astro.params;
 const found = id
@@ -38,17 +39,18 @@ const found = id
 const account = found?.rows[0];
 if (!account) return new Response('Not found', { status: 404 });
 
-const PAGE = 50;
+const PAGE_SIZE = 50;
 const beforeParam = Astro.url.searchParams.get('before');
 const before =
   beforeParam && /^\d+$/.test(beforeParam) ? Number(beforeParam) : undefined;
 
 const [balance, entries] = await Promise.all([
   accountBalance(id!),
-  accountEntries(id!, { limit: PAGE, beforeSequenceNo: before }),
+  accountEntries(id!, { limit: PAGE_SIZE, beforeSequenceNo: before }),
 ]);
 const oldest = entries[entries.length - 1];
-const nextBefore = entries.length === PAGE && oldest ? oldest.sequenceNo : null;
+const nextBefore =
+  entries.length === PAGE_SIZE && oldest ? oldest.sequenceNo : null;
 
 const dateFormat = new Intl.DateTimeFormat('en-GB', {
   day: 'numeric',
@@ -61,9 +63,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
   title={`${account.account_no} · Al Barakah MCSL`}
   heading={`${account.account_no} · ${account.type_name}`}
 >
-  <div class="mx-auto max-w-5xl space-y-6">
+  <div class={PAGE.list}>
     <div class="flex flex-wrap items-baseline justify-between gap-3">
-      <p class="text-sm text-neutral-600 dark:text-neutral-300">
+      <p class={MUTED}>
         <a
           href={`/members/${account.holder_id}`}
           class="font-medium underline hover:text-neutral-900 dark:hover:text-neutral-100"
@@ -73,25 +75,22 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         {' · '}
         {account.status}
       </p>
-      <p class="flex items-baseline gap-4 text-sm text-neutral-600 dark:text-neutral-300">
-        <a
-          href={`/accounts/${id}/statement`}
-          class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
-        >
+      <p class={`flex items-baseline gap-4 ${MUTED}`}>
+        <a href={`/accounts/${id}/statement`} class={SECONDARY_SM}>
           Statement
         </a>
         <span>
           Balance{' '}
-          <span class="text-lg font-semibold text-neutral-800 tabular-nums dark:text-neutral-100">
+          <span class={`${CARD_TITLE} tabular-nums`}>
             {balance ? formatMoney(balance.balance) : '—'}
           </span>
         </span>
       </p>
     </div>
 
-    <section class="overflow-x-auto rounded-2xl border border-neutral-200 bg-neutral-100 p-4 dark:border-neutral-800 dark:bg-neutral-950">
+    <section class={`overflow-x-auto ${FILTER}`}>
       {entries.length === 0 ? (
-        <p class="text-sm text-neutral-500 dark:text-neutral-400">
+        <p class={HINT}>
           {before
             ? 'Nothing older.'
             : 'Nothing has been posted to this account.'}
@@ -165,18 +164,12 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 
     <div class="flex flex-wrap gap-2">
       {before && (
-        <a
-          href={`/accounts/${id}`}
-          class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
-        >
+        <a href={`/accounts/${id}`} class={SECONDARY_SM}>
           Latest
         </a>
       )}
       {nextBefore !== null && (
-        <a
-          href={`/accounts/${id}?before=${nextBefore}`}
-          class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
-        >
+        <a href={`/accounts/${id}?before=${nextBefore}`} class={SECONDARY_SM}>
           Older
         </a>
       )}

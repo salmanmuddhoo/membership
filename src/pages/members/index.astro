@@ -4,6 +4,14 @@ import { listMembers, type MemberListAccount } from '@lib/members/create';
 import { countPendingDetailsRequests } from '@lib/members/details-requests';
 import { listAccountTypes } from '@lib/config/reference';
 import { formatMoney } from '@lib/payments/money';
+import {
+  PAGE,
+  CARD,
+  CARD_TITLE,
+  HINT,
+  INPUT_BARE,
+  SECONDARY_SM,
+} from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 const canSeePayments = principal.permissions.has('payment.view');
@@ -71,12 +79,10 @@ function accountButtonClasses(account: MemberListAccount): string {
 ---
 
 <DashboardLayout title="Members · Al Barakah MCSL" heading="Members">
-  <div class="mx-auto max-w-5xl space-y-6">
-    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+  <div class={PAGE.list}>
+    <section class={CARD}>
       <div class="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-          Members
-        </h2>
+        <h2 class={CARD_TITLE}>Members</h2>
         {pendingDetailsUpdates > 0 && (
           <a
             href="/members/details-updates"
@@ -98,25 +104,19 @@ function accountButtonClasses(account: MemberListAccount): string {
           name="q"
           value={search}
           placeholder="Search by ID or name"
-          class="focus:border-mint-400 focus:ring-mint-400 min-w-64 flex-1 rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm text-neutral-800 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+          class={`${INPUT_BARE} min-w-64 flex-1 text-neutral-800`}
         />
-        <button
-          type="submit"
-          class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
-        >
+        <button type="submit" class={SECONDARY_SM}>
           Search
         </button>
         {search && (
-          <a
-            href="/members"
-            class="px-2 py-1.5 text-sm text-neutral-500 underline dark:text-neutral-400"
-          >
+          <a href="/members" class={`${HINT} px-2 py-1.5 underline`}>
             Clear
           </a>
         )}
       </form>
 
-      <p class="mt-3 text-sm text-neutral-500 dark:text-neutral-400">
+      <p class={`${HINT} mt-3`}>
         {total === 0
           ? search
             ? `No members match “${search}”.`

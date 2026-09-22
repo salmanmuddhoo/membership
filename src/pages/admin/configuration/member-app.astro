@@ -11,6 +11,7 @@ import {
   enabledMemberOperations,
   setEnabledMemberOperations,
 } from '@lib/config/reference';
+import { PAGE, CARD, CARD_TITLE, HINT, BUTTON } from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 const canManage = principal.permissions.has('config.manage');
@@ -50,7 +51,7 @@ const OPERATIONS: ReadonlyArray<{ value: string; label: string }> = [
 ---
 
 <DashboardLayout title="Member app · Al Barakah MCSL" heading="Member app">
-  <div class="mx-auto max-w-5xl space-y-6">
+  <div class={PAGE.list}>
     <ConfigNav />
 
     {error && (
@@ -64,11 +65,9 @@ const OPERATIONS: ReadonlyArray<{ value: string; label: string }> = [
       </p>
     )}
 
-    <section class="space-y-3 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-      <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-        Transactions a member may start from the app
-      </h2>
-      <p class="text-sm text-neutral-500 dark:text-neutral-400">
+    <section class={`${CARD} space-y-3`}>
+      <h2 class={CARD_TITLE}>Transactions a member may start from the app</h2>
+      <p class={HINT}>
         Each one waits on an approval chain. Nothing posts from the app.
       </p>
 
@@ -90,10 +89,7 @@ const OPERATIONS: ReadonlyArray<{ value: string; label: string }> = [
         </div>
 
         {canManage && (
-          <button
-            type="submit"
-            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-semibold text-neutral-800 transition"
-          >
+          <button type="submit" class={BUTTON}>
             Save
           </button>
         )}

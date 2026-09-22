@@ -14,6 +14,7 @@ import {
   returnedTransactions,
 } from '@lib/ledger/review';
 import { formatMoney } from '@lib/payments/money';
+import { PAGE, HINT, CARD_LABEL, FILTER } from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 
@@ -66,12 +67,9 @@ const CELL = 'px-2 py-2';
   title="Waiting on you · Al Barakah MCSL"
   heading="Waiting on you"
 >
-  <div class="mx-auto max-w-5xl space-y-6">
+  <div class={PAGE.list}>
     <div class="flex flex-wrap items-center justify-between gap-3">
-      <a
-        href="/transactions"
-        class="text-sm text-neutral-500 underline dark:text-neutral-400"
-      >
+      <a href="/transactions" class={`${HINT} underline`}>
         ← Transactions
       </a>
       <form method="get" class="flex items-center gap-2 text-sm">
@@ -115,7 +113,7 @@ const CELL = 'px-2 py-2';
       group =>
         (group.rows.length > 0 || group.empty) && (
           <section class="space-y-2">
-            <h2 class="text-sm font-semibold text-neutral-700 uppercase dark:text-neutral-200">
+            <h2 class={CARD_LABEL}>
               {group.title}
               {group.rows.length > 0 && (
                 <span class="ml-2 rounded-full bg-neutral-200 px-2 py-0.5 text-xs font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
@@ -123,11 +121,9 @@ const CELL = 'px-2 py-2';
                 </span>
               )}
             </h2>
-            <div class="overflow-x-auto rounded-2xl border border-neutral-200 bg-neutral-100 p-4 dark:border-neutral-800 dark:bg-neutral-950">
+            <div class={`overflow-x-auto ${FILTER}`}>
               {group.rows.length === 0 ? (
-                <p class="text-sm text-neutral-500 dark:text-neutral-400">
-                  {group.empty}
-                </p>
+                <p class={HINT}>{group.empty}</p>
               ) : (
                 <table class="w-full text-sm">
                   <thead class="text-left text-xs text-neutral-500 uppercase dark:text-neutral-400">

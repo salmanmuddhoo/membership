@@ -43,6 +43,17 @@ import {
   PERMISSION_REACTIVATE,
   reactivateMember,
 } from '@lib/members/dormancy';
+import {
+  PAGE,
+  CARD,
+  CARD_TITLE,
+  HINT,
+  MUTED,
+  PANEL,
+  BUTTON_SM,
+  SECONDARY_SM,
+  DANGER_SM,
+} from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 const canSeePayments = principal.permissions.has('payment.view');
@@ -374,12 +385,9 @@ const pageTitle = member ? member.memberNo : name;
   title={`${pageTitle} · Al Barakah MCSL`}
   heading={member ? `Member ${member.memberNo}` : name}
 >
-  <div class="mx-auto max-w-4xl space-y-6">
+  <div class={PAGE.detail}>
     <div class="flex flex-wrap items-center justify-between gap-2">
-      <a
-        href="/members"
-        class="inline-block text-sm text-neutral-500 underline dark:text-neutral-400"
-      >
+      <a href="/members" class={`${HINT} inline-block underline`}>
         ← All members
       </a>
       {/* Officer feedback: the transactions an officer starts on this
@@ -388,29 +396,17 @@ const pageTitle = member ? member.memberNo : name;
           Transactions page starts the same ones from a number instead. */}
       {canDeposit && (
         <div class="flex flex-wrap gap-2">
-          <a
-            href={`/members/${recordId}/deposit`}
-            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
-          >
+          <a href={`/members/${recordId}/deposit`} class={BUTTON_SM}>
             Deposit
           </a>
-          <a
-            href={`/members/${recordId}/withdraw`}
-            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
-          >
+          <a href={`/members/${recordId}/withdraw`} class={BUTTON_SM}>
             Withdrawal
           </a>
-          <a
-            href={`/members/${recordId}/transfer`}
-            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
-          >
+          <a href={`/members/${recordId}/transfer`} class={BUTTON_SM}>
             Transfer
           </a>
           {canResign && (
-            <a
-              href={`/members/${recordId}/resign`}
-              class="rounded-lg border border-red-300 px-3 py-1.5 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
-            >
+            <a href={`/members/${recordId}/resign`} class={DANGER_SM}>
               Resign
             </a>
           )}
@@ -423,10 +419,7 @@ const pageTitle = member ? member.memberNo : name;
             </a>
           )}
           {canClaim && (
-            <a
-              href={`/members/${recordId}/demise`}
-              class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
-            >
+            <a href={`/members/${recordId}/demise`} class={SECONDARY_SM}>
               Demised claim
             </a>
           )}
@@ -464,22 +457,17 @@ const pageTitle = member ? member.memberNo : name;
             class="mt-1 block w-64 rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
           />
         </label>
-        <button
-          type="submit"
-          class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
-        >
+        <button type="submit" class={BUTTON_SM}>
           Reactivate
         </button>
       </form>
     )}
 
-    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+    <section class={CARD}>
       <div data-edit-block data-record-id={recordId}>
         <div class="flex flex-wrap items-start justify-between gap-2">
           <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-              {name}
-            </h2>
+            <h2 class={CARD_TITLE}>{name}</h2>
             {member && (
               <code class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
                 {member.memberNo}
@@ -518,7 +506,7 @@ const pageTitle = member ? member.memberNo : name;
             </button>
           )}
         </div>
-        <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+        <p class={`${HINT} mt-1`}>
           {member && `${member.membershipTypeName} · `}joined{' '}
           {dateFormat.format(joinedAt)}
           {applicationReference && (
@@ -624,17 +612,13 @@ const pageTitle = member ? member.memberNo : name;
               class="mb-2 text-sm text-red-700 dark:text-red-300"
             />
             <div data-edit-actions hidden class="flex items-center gap-3">
-              <button
-                type="button"
-                data-edit-save
-                class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
-              >
+              <button type="button" data-edit-save class={BUTTON_SM}>
                 Save
               </button>
               <button
                 type="button"
                 data-edit-cancel
-                class="text-sm text-neutral-500 underline dark:text-neutral-400"
+                class={`${HINT} underline`}
               >
                 Cancel
               </button>
@@ -657,10 +641,7 @@ const pageTitle = member ? member.memberNo : name;
                   name="intent"
                   value="apply-for-membership"
                 />
-                <button
-                  type="submit"
-                  class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
-                >
+                <button type="submit" class={BUTTON_SM}>
                   Apply to become a member
                 </button>
               </form>
@@ -683,10 +664,8 @@ const pageTitle = member ? member.memberNo : name;
     </section>
 
     {guardianContactFields.length > 0 && (
-      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-          Parent / Guardian
-        </h2>
+      <section class={CARD}>
+        <h2 class={CARD_TITLE}>Parent / Guardian</h2>
         <dl class="mt-4 grid gap-x-6 gap-y-2 sm:grid-cols-2">
           {guardianContactFields.map(field => (
             <div class="flex gap-2 text-sm">
@@ -709,10 +688,8 @@ const pageTitle = member ? member.memberNo : name;
     )}
 
     {guardedParties.length > 0 && (
-      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-          Guardian of
-        </h2>
+      <section class={CARD}>
+        <h2 class={CARD_TITLE}>Guardian of</h2>
         <ul class="mt-4 space-y-2">
           {guardedParties.map(party => (
             <li class="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
@@ -737,10 +714,8 @@ const pageTitle = member ? member.memberNo : name;
     )}
 
     {partyGroups.length > 0 && (
-      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-          Nominee
-        </h2>
+      <section class={CARD}>
+        <h2 class={CARD_TITLE}>Nominee</h2>
         <div class="mt-4 space-y-4">
           {partyGroups.map(group => (
             <div>
@@ -765,11 +740,9 @@ const pageTitle = member ? member.memberNo : name;
       </section>
     )}
 
-    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+    <section class={CARD}>
       <div class="flex flex-wrap items-center justify-between gap-2">
-        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-          Accounts
-        </h2>
+        <h2 class={CARD_TITLE}>Accounts</h2>
         {principal.permissions.has('transaction.view') && (
           <a
             href={`/members/${recordId}/transactions`}
@@ -790,14 +763,12 @@ const pageTitle = member ? member.memberNo : name;
       ) : (
         <ul class="mt-4 space-y-3">
           {(member ?? customer)!.accounts.map(account => (
-            <li class="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+            <li class={PANEL}>
               <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
                 <code class="font-medium text-neutral-800 dark:text-neutral-100">
                   {account.accountNo}
                 </code>
-                <span class="text-sm text-neutral-600 dark:text-neutral-300">
-                  {account.accountTypeName}
-                </span>
+                <span class={MUTED}>{account.accountTypeName}</span>
                 {'isMembershipDefault' in account &&
                   account.isMembershipDefault && (
                     <span class="bg-mint-200 dark:bg-mint-900 rounded px-1.5 py-0.5 text-xs text-neutral-800 dark:text-neutral-100">
@@ -856,12 +827,10 @@ const pageTitle = member ? member.memberNo : name;
     </section>
 
     {canSeeDocuments && (
-      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-          Documents
-        </h2>
+      <section class={CARD}>
+        <h2 class={CARD_TITLE}>Documents</h2>
         {documentGroups.length === 0 ? (
-          <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+          <p class={`${HINT} mt-1`}>
             Nothing filed for {member ? 'this member' : 'them'} yet.
           </p>
         ) : (
@@ -931,18 +900,14 @@ const pageTitle = member ? member.memberNo : name;
     )}
 
     {canSeePayments && (
-      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-          Payments
-        </h2>
+      <section class={CARD}>
+        <h2 class={CARD_TITLE}>Payments</h2>
         {payments.length === 0 ? (
-          <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
-            Nothing recorded against this member.
-          </p>
+          <p class={`${HINT} mt-1`}>Nothing recorded against this member.</p>
         ) : (
           <ul class="mt-4 space-y-3">
             {payments.map(payment => (
-              <li class="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+              <li class={PANEL}>
                 <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
                   <a
                     href={`/receipts/${payment.id}`}

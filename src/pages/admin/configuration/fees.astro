@@ -26,6 +26,16 @@ import {
   type FeeComponentCode,
   type FeeRequirement,
 } from '@lib/config/reference';
+import {
+  PAGE,
+  CARD,
+  CARD_TITLE,
+  HINT,
+  PANEL,
+  LABEL,
+  BUTTON,
+  BUTTON_SM,
+} from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 const canManage =
@@ -188,7 +198,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
   title="Fee schedules · Al Barakah MCSL"
   heading="Fee schedules"
 >
-  <div class="mx-auto max-w-5xl space-y-6">
+  <div class={PAGE.list}>
     <ConfigNav />
 
     {error && (
@@ -202,16 +212,14 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       </div>
     )}
 
-    <p class="text-sm text-neutral-500 dark:text-neutral-400">
+    <p class={HINT}>
       Saving publishes a new version and closes the previous one.
     </p>
 
     {schedules.map(schedule => (
-      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+      <section class={CARD}>
         <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-            {schedule.name}
-          </h2>
+          <h2 class={CARD_TITLE}>{schedule.name}</h2>
           <code class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
             {schedule.code}
           </code>
@@ -222,9 +230,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             </span>
           )}
         </div>
-        <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
-          {schedule.description}
-        </p>
+        <p class={`${HINT} mt-1`}>{schedule.description}</p>
 
         <form method="post" class="mt-4">
           <input type="hidden" name="intent" value="publish-fee-version" />
@@ -285,17 +291,14 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           </div>
 
           {canManage && (
-            <button
-              type="submit"
-              class="bg-mint-300 hover:bg-mint-400 mt-4 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
-            >
+            <button type="submit" class={`${BUTTON} mt-4`}>
               Publish new version
             </button>
           )}
         </form>
 
         {schedule.history.length > 0 && (
-          <details class="mt-4 rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+          <details class={`${PANEL} mt-4`}>
             <summary class="cursor-pointer text-sm font-medium text-neutral-700 dark:text-neutral-200">
               Earlier versions ({schedule.history.length})
             </summary>
@@ -324,11 +327,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       </section>
     ))}
 
-    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-      <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-        Cash payments
-      </h2>
-      <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+    <section class={CARD}>
+      <h2 class={CARD_TITLE}>Cash payments</h2>
+      <p class={`${HINT} mt-1`}>
         Above the threshold, recording a cash receipt asks the officer to sign a
         Source of Fund form on screen. Above the maximum, cash is not accepted
         at all — the officer is told to use another method or split the payment.
@@ -349,10 +350,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             />
           </label>
           {canManage && (
-            <button
-              type="submit"
-              class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
-            >
+            <button type="submit" class={BUTTON_SM}>
               Save
             </button>
           )}
@@ -372,10 +370,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             />
           </label>
           {canManage && (
-            <button
-              type="submit"
-              class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
-            >
+            <button type="submit" class={BUTTON_SM}>
               Save
             </button>
           )}
@@ -384,7 +379,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 
       <form method="post" class="mt-5 space-y-2">
         <input type="hidden" name="intent" value="set-cash-checklist" />
-        <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+        <label class={LABEL}>
           Source of Fund checklist — one item per line, shown to the officer in
           this order before they sign
           <textarea
@@ -395,21 +390,16 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           >{checklistItems.join('\n')}</textarea>
         </label>
         {canManage && (
-          <button
-            type="submit"
-            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
-          >
+          <button type="submit" class={BUTTON_SM}>
             Save
           </button>
         )}
       </form>
     </section>
 
-    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-      <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-        Demised claims
-      </h2>
-      <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+    <section class={CARD}>
+      <h2 class={CARD_TITLE}>Demised claims</h2>
+      <p class={`${HINT} mt-1`}>
         Paid to the claimant beside the balances of the member's accounts, as
         set when the claim is submitted.
       </p>
@@ -427,21 +417,16 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           />
         </label>
         {canManage && (
-          <button
-            type="submit"
-            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
-          >
+          <button type="submit" class={BUTTON_SM}>
             Save
           </button>
         )}
       </form>
     </section>
 
-    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-      <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-        Near-floor notice
-      </h2>
-      <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+    <section class={CARD}>
+      <h2 class={CARD_TITLE}>Near-floor notice</h2>
+      <p class={`${HINT} mt-1`}>
         A withdrawal or transfer that leaves an account within this amount of
         its minimum balance sends the member a notice. 0 sends none.
       </p>
@@ -459,21 +444,16 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           />
         </label>
         {canManage && (
-          <button
-            type="submit"
-            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
-          >
+          <button type="submit" class={BUTTON_SM}>
             Save
           </button>
         )}
       </form>
     </section>
 
-    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-      <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-        Dormancy
-      </h2>
-      <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+    <section class={CARD}>
+      <h2 class={CARD_TITLE}>Dormancy</h2>
+      <p class={`${HINT} mt-1`}>
         A member with no transaction or fee payment for this long is marked
         dormant each night. 0 turns it off.
       </p>
@@ -491,10 +471,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           />
         </label>
         {canManage && (
-          <button
-            type="submit"
-            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
-          >
+          <button type="submit" class={BUTTON_SM}>
             Save
           </button>
         )}
@@ -517,21 +494,16 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           </select>
         </label>
         {canManage && (
-          <button
-            type="submit"
-            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
-          >
+          <button type="submit" class={BUTTON_SM}>
             Save
           </button>
         )}
       </form>
     </section>
 
-    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-      <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-        Resignation checks
-      </h2>
-      <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+    <section class={CARD}>
+      <h2 class={CARD_TITLE}>Resignation checks</h2>
+      <p class={`${HINT} mt-1`}>
         A resignation cannot be submitted while a ticked check fails. Each one
         is named on the request when it blocks.
       </p>
@@ -555,10 +527,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           </label>
         ))}
         {canManage && (
-          <button
-            type="submit"
-            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
-          >
+          <button type="submit" class={BUTTON_SM}>
             Save
           </button>
         )}

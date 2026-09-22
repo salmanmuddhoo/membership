@@ -4,6 +4,7 @@ import DashboardLayout from '@layouts/DashboardLayout.astro';
 import { PERMISSION_VIEW, listSessions } from '@lib/cash/sessions';
 import { query } from '@lib/db/pool';
 import { formatMoney, fromCents, toCents } from '@lib/payments/money';
+import { BUTTON, CARD, HINT, INPUT_BARE, MUTED, PAGE } from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 if (!principal.permissions.has(PERMISSION_VIEW)) {
@@ -54,22 +55,19 @@ function overShortClass(value: string | null): string {
   if (amount < 0) return 'text-red-700 dark:text-red-400';
   return 'text-amber-700 dark:text-amber-400';
 }
-
-const INPUT =
-  'mt-1 block rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100';
-const BUTTON =
-  'bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition';
 ---
 
 <DashboardLayout title="Cash drawers · Al Barakah MCSL" heading="Cash drawers">
-  <div class="mx-auto max-w-5xl space-y-6">
-    <form
-      method="get"
-      class="flex flex-wrap items-end gap-3 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
-    >
+  <div class={PAGE.list}>
+    <form method="get" class={`${CARD} flex flex-wrap items-end gap-3`}>
       <label class="text-sm text-neutral-600 dark:text-neutral-300">
         From
-        <input type="date" name="from" value={asDate(from)} class={INPUT} />
+        <input
+          type="date"
+          name="from"
+          value={asDate(from)}
+          class={`${INPUT_BARE} mt-1 block`}
+        />
       </label>
       <label class="text-sm text-neutral-600 dark:text-neutral-300">
         To
@@ -77,12 +75,12 @@ const BUTTON =
           type="date"
           name="to"
           value={asDate(toInclusive)}
-          class={INPUT}
+          class={`${INPUT_BARE} mt-1 block`}
         />
       </label>
       <label class="text-sm text-neutral-600 dark:text-neutral-300">
         Cashier
-        <select name="cashierId" class={INPUT}>
+        <select name="cashierId" class={`${INPUT_BARE} mt-1 block`}>
           <option value="" selected={!cashierId}>
             All
           </option>
@@ -98,16 +96,14 @@ const BUTTON =
       </button>
     </form>
 
-    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-      <p class="text-sm text-neutral-600 dark:text-neutral-300">
+    <section class={CARD}>
+      <p class={MUTED}>
         {sessions.length} drawer{sessions.length === 1 ? '' : 's'} · {openCount}{' '}
         still open · net over/short {formatMoney(fromCents(netOverShortCents))}
       </p>
 
       {sessions.length === 0 ? (
-        <p class="mt-4 text-sm text-neutral-500 dark:text-neutral-400">
-          No drawers in this period.
-        </p>
+        <p class={`${HINT} mt-4`}>No drawers in this period.</p>
       ) : (
         <table class="mt-4 w-full text-sm">
           <thead>

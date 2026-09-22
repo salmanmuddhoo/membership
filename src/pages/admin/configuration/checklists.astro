@@ -12,6 +12,16 @@ import {
   setChecklistItemRequirement,
   type FieldSubject,
 } from '@lib/config/reference';
+import {
+  PAGE,
+  CARD,
+  CARD_TITLE,
+  HINT,
+  PANEL,
+  INPUT,
+  BUTTON,
+  BUTTON_SM,
+} from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 const canManage = principal.permissions.has('config.manage');
@@ -102,7 +112,7 @@ const SUBJECT_LABELS: Record<string, string> = {
   title="Document checklists · Al Barakah MCSL"
   heading="Document checklists"
 >
-  <div class="mx-auto max-w-5xl space-y-6">
+  <div class={PAGE.list}>
     <ConfigNav />
 
     {error && (
@@ -117,11 +127,9 @@ const SUBJECT_LABELS: Record<string, string> = {
     )}
 
     {checklists.map(checklist => (
-      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+      <section class={CARD}>
         <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-            {checklist.name}
-          </h2>
+          <h2 class={CARD_TITLE}>{checklist.name}</h2>
           <code class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
             {checklist.code}
           </code>
@@ -143,16 +151,14 @@ const SUBJECT_LABELS: Record<string, string> = {
             </form>
           )}
         </div>
-        <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
-          {checklist.description}
-        </p>
+        <p class={`${HINT} mt-1`}>{checklist.description}</p>
 
         <div class="mt-4 space-y-4">
           {SUBJECTS.map(subject => {
             const items = checklist.items.filter(i => i.subject === subject);
             if (items.length === 0) return null;
             return (
-              <div class="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+              <div class={PANEL}>
                 <h3 class="text-sm font-medium text-neutral-700 dark:text-neutral-200">
                   {SUBJECT_LABELS[subject]}
                 </h3>
@@ -223,10 +229,7 @@ const SUBJECT_LABELS: Record<string, string> = {
             <input type="hidden" name="checklistId" value={checklist.id} />
             <label class="text-sm text-neutral-600 dark:text-neutral-300">
               Document
-              <select
-                name="documentTypeId"
-                class="mt-1 block rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-              >
+              <select name="documentTypeId" class={INPUT}>
                 {documentTypes
                   .filter(d => d.isActive)
                   .map(d => (
@@ -236,10 +239,7 @@ const SUBJECT_LABELS: Record<string, string> = {
             </label>
             <label class="text-sm text-neutral-600 dark:text-neutral-300">
               For
-              <select
-                name="subject"
-                class="mt-1 block rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-              >
+              <select name="subject" class={INPUT}>
                 {SUBJECTS.map(s => (
                   <option value={s}>{SUBJECT_LABELS[s]}</option>
                 ))}
@@ -247,18 +247,12 @@ const SUBJECT_LABELS: Record<string, string> = {
             </label>
             <label class="text-sm text-neutral-600 dark:text-neutral-300">
               Requirement
-              <select
-                name="requirement"
-                class="mt-1 block rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-              >
+              <select name="requirement" class={INPUT}>
                 <option value="required">required</option>
                 <option value="optional">optional</option>
               </select>
             </label>
-            <button
-              type="submit"
-              class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
-            >
+            <button type="submit" class={BUTTON_SM}>
               Add
             </button>
           </form>
@@ -267,11 +261,9 @@ const SUBJECT_LABELS: Record<string, string> = {
     ))}
 
     {canManage && (
-      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-          Add a checklist
-        </h2>
-        <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+      <section class={CARD}>
+        <h2 class={CARD_TITLE}>Add a checklist</h2>
+        <p class={`${HINT} mt-1`}>
           An empty checklist to start with — add documents to it below once it
           exists. It becomes available immediately wherever a checklist is
           chosen, such as an account type's own "Documents required to open".
@@ -286,7 +278,7 @@ const SUBJECT_LABELS: Record<string, string> = {
               required
               pattern="[a-z][a-z0-9_]{2,39}"
               placeholder="hsa_opening"
-              class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+              class={INPUT}
             />
             <span class="mt-1 block text-xs text-neutral-400">
               Lower-case letters, digits and underscores. Cannot be changed
@@ -300,22 +292,15 @@ const SUBJECT_LABELS: Record<string, string> = {
               name="name"
               required
               placeholder="HSA opening"
-              class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+              class={INPUT}
             />
           </label>
           <label class="text-sm text-neutral-600 sm:col-span-2 dark:text-neutral-300">
             Description
-            <input
-              type="text"
-              name="description"
-              class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-            />
+            <input type="text" name="description" class={INPUT} />
           </label>
           <div class="sm:col-span-2">
-            <button
-              type="submit"
-              class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
-            >
+            <button type="submit" class={BUTTON}>
               Create checklist
             </button>
           </div>
