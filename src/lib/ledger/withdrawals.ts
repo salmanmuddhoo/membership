@@ -26,6 +26,7 @@ import {
   markReceiptIssued,
 } from '../payments/receipts';
 import { availableBalance, LedgerError } from './ledger';
+import { notifyReceiptIssued } from './receipt-notifications';
 import { loadTransaction, type TransactionSummary } from './review';
 import {
   resolveRoute,
@@ -367,6 +368,7 @@ export async function recordWithdrawal(
       }
       return id;
     });
+    if (receipt) await notifyReceiptIssued(id);
     return (await loadTransaction(id))!;
   } catch (err) {
     if (receipt) {
@@ -514,6 +516,7 @@ export async function resubmitWithdrawal(
         await markReceiptIssued(receipt.id, client);
       }
     });
+    if (receipt) await notifyReceiptIssued(id);
     return (await loadTransaction(id))!;
   } catch (err) {
     if (receipt) {

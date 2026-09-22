@@ -1,0 +1,46 @@
+---
+// A member's receipt, from the link the Society sent them (S-1602). No
+// sign-in: the signed, expiring token in the address is the credential, and
+// it names one transaction. The sheet and nothing else — no void, no
+// re-send, no way to anything further.
+import BaseLayout from '@layouts/BaseLayout.astro';
+import TransactionReceiptSheet from '@components/TransactionReceiptSheet.astro';
+import { verifyReceiptToken } from '@lib/ledger/receipt-links';
+import {
+  loadTransactionReceipt,
+  transactionPrintHistory,
+} from '@lib/ledger/receipts';
+import '@styles/receipt.css';
+
+const { token } = Astro.params;
+const transactionId = token ? await verifyReceiptToken(token) : null;
+const receipt = transactionId
+  ? await loadTransactionReceipt(transactionId)
+  : null;
+const prints = receipt
+  ? await transactionPrintHistory(receipt.transaction.id)
+  : null;
+---
+
+<BaseLayout title={receipt ? `${receipt.receiptNo} · Receipt` : 'Receipt'}>
+  {receipt && prints ? (
+    <TransactionReceiptSheet
+      receipt={receipt}
+      prints={prints}
+      canVoid={false}
+      shared
+    />
+  ) : (
+    <div class="messages">
+      <p class="message error">
+        This link has expired or is not valid. Ask at your branch for a copy of
+        the receipt.
+      </p>
+    </div>
+  )}
+</BaseLayout>
+
+<script>
+  const button = document.getElementById('print') as HTMLButtonElement | null;
+  button?.addEventListener('click', () => window.print());
+</script>

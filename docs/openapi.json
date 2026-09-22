@@ -403,6 +403,238 @@
         ]
       }
     },
+    "/api/v1/accounts/{id}/statement": {
+      "get": {
+        "summary": "Read one account's statement for a period",
+        "description": "The balance the account opened the period at, every entry posted in it with the balance after each, the totals in and out, and the closing balance — all read from the entries themselves. Dates are calendar days, inclusive; with neither given the period is the current month to date. `format=xlsx` returns the same as a spreadsheet.",
+        "tags": [
+          "Transactions"
+        ],
+        "operationId": "getAccountsIdStatement",
+        "x-required-permission": "account.view",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "accountId",
+                        "accountNo",
+                        "accountTypeName",
+                        "holderName",
+                        "from",
+                        "to",
+                        "openingBalance",
+                        "closingBalance",
+                        "totalCredits",
+                        "totalDebits",
+                        "lines"
+                      ],
+                      "properties": {
+                        "accountId": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "accountNo": {
+                          "type": "string"
+                        },
+                        "accountTypeName": {
+                          "type": "string"
+                        },
+                        "holderId": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "holderKind": {
+                          "type": "string",
+                          "enum": [
+                            "member",
+                            "customer"
+                          ]
+                        },
+                        "holderName": {
+                          "type": "string"
+                        },
+                        "memberNo": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "from": {
+                          "type": "string",
+                          "format": "date"
+                        },
+                        "to": {
+                          "type": "string",
+                          "format": "date"
+                        },
+                        "openingBalance": {
+                          "type": "string"
+                        },
+                        "closingBalance": {
+                          "type": "string"
+                        },
+                        "totalCredits": {
+                          "type": "string"
+                        },
+                        "totalDebits": {
+                          "type": "string"
+                        },
+                        "lines": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "sequenceNo",
+                              "transactionId",
+                              "reference",
+                              "postedAt",
+                              "description",
+                              "debit",
+                              "credit",
+                              "balance"
+                            ],
+                            "properties": {
+                              "sequenceNo": {
+                                "type": "integer"
+                              },
+                              "transactionId": {
+                                "type": "string",
+                                "format": "uuid"
+                              },
+                              "reference": {
+                                "type": "string"
+                              },
+                              "postedAt": {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              "description": {
+                                "type": "string"
+                              },
+                              "debit": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "credit": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "balance": {
+                                "type": "string"
+                              },
+                              "receiptNo": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "methodName": {
+                                "type": "string"
+                              },
+                              "methodReference": {
+                                "type": "string"
+                              },
+                              "reason": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "description": "First day of the period, YYYY-MM-DD.",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "description": "Last day of the period, YYYY-MM-DD.",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "description": "`xlsx` for a spreadsheet; JSON otherwise.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "json",
+                "xlsx"
+              ]
+            }
+          }
+        ]
+      }
+    },
     "/api/v1/accounts/{id}/transactions": {
       "get": {
         "summary": "Read one account's credits and debits",

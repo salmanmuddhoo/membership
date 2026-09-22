@@ -28,6 +28,7 @@ import {
   markReceiptIssued,
 } from '../payments/receipts';
 import { LedgerError } from './ledger';
+import { notifyReceiptIssued } from './receipt-notifications';
 import { loadTransaction, type TransactionSummary } from './review';
 import {
   resolveRoute,
@@ -470,7 +471,9 @@ export async function recordTransfer(
       }
       return transferId;
     });
-    return (await loadTransfer(transferId))!;
+    const made = (await loadTransfer(transferId))!;
+    if (receipt) await notifyReceiptIssued(made.debitLeg.id);
+    return made;
   } catch (err) {
     if (receipt) {
       await abandonReceiptNumber(
@@ -644,6 +647,7 @@ export async function resubmitTransfer(
         );
       }
     });
+    if (receipt) await notifyReceiptIssued(leg.id);
     return (await loadTransfer(leg.transferId!))!;
   } catch (err) {
     if (receipt) {

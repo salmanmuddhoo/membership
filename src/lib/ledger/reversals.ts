@@ -17,6 +17,7 @@ import {
   markReceiptIssued,
 } from '../payments/receipts';
 import { LedgerError, postTransaction } from './ledger';
+import { notifyReceiptIssued } from './receipt-notifications';
 import { loadTransaction, type TransactionSummary } from './review';
 
 export class ReversalError extends Error {
@@ -166,6 +167,7 @@ export async function reverseTransaction(
       await markReceiptIssued(receipt.id, client);
       return created;
     });
+    await notifyReceiptIssued(ids[0]);
     const reversals = await Promise.all(ids.map(id => loadTransaction(id)));
     return { reversals: reversals.filter((r): r is TransactionSummary => !!r) };
   } catch (err) {

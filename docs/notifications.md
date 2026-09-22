@@ -170,6 +170,19 @@ What the failures mean:
 | `(#132001)`                                     | Template exists but not in that language               |
 | Sent, but nothing arrives on WhatsApp           | Trial number: recipient not on Meta's allowed list     |
 
+## A receipt to its member
+
+`receipt.issued` (S-1602) is raised by the ledger whenever a transaction's
+receipt is issued, and again when an officer presses **Send** on the
+receipt. Its placeholders are `member_name`, `receipt_no`, `reference`,
+`kind` (Deposit, Withdrawal, Transfer, Reversal), `amount` (the bare
+figure, `7,000.00` — the wording carries "Rs"), `account` and `link`. The
+link opens the receipt without a sign-in for thirty days; where the link
+cannot be made — no `MEMBER_SESSION_SECRET`, or no `PUBLIC_APP_URL` and no
+`ENTRA_REDIRECT_URI` to take an origin from — `{{link}}` reads "Ask at your
+branch for a printed copy." rather than nothing. How the link is signed and
+what opens it is in `docs/ledger.md`.
+
 ## Retrying, and giving up
 
 `notification-retry` (see `docs/jobs.md`) attempts everything whose backoff has

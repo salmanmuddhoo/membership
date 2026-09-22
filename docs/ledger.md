@@ -330,6 +330,50 @@ in the period's total by the direction of its entry (a leg between two
 accounts here counts nothing). The receipts report shows kind, reference,
 method, amount and the void reason, with totals by method.
 
+**Sent to the member** (S-1602): `notifyReceiptIssued()` in
+`src/lib/ledger/receipt-notifications.ts` raises `receipt.issued` — an
+email and a WhatsApp template, migration 0076, edited like any other at
+Configuration → Notification wording — to the email and mobile on the
+holder's application (the same `contactFor` M9 uses, so a minor's goes to
+the guardian). Every path that issues a receipt calls it after its
+transaction commits: a deposit or withdrawal posting directly, a chained
+one at disbursement, a transfer (once, for the debit leg), a reversal. It
+never throws and returns the notification ids, so a post whose message
+failed is still a post, and the delivery log says what happened. The
+receipt page lists where it went and re-sends it with **Send**, to whatever
+address the member has now; a voided receipt is not sent.
+
+The message carries a link rather than a file: a JWT (`jose`, HS256) signed
+with `MEMBER_SESSION_SECRET` — the member-facing secret, since it is the
+member's to open — naming one transaction, with purpose `receipt`, good for
+thirty days (`src/lib/ledger/receipt-links.ts`). `/receipts/shared/{token}`
+is public in the middleware; the token is the credential, and the page
+renders the sheet with nothing that leads into the officer's screens, or
+one line saying the link no longer works. The origin is `PUBLIC_APP_URL`,
+else `ENTRA_REDIRECT_URI`'s; with no origin or no secret the wording's
+`{{link}}` reads "Ask at your branch for a printed copy." instead. WhatsApp
+as a document is the story's Should half and is not built.
+
+## The statement
+
+`accountStatement(accountId, from, to)` in `src/lib/ledger/ledger.ts`
+(S-1604) is the account over two calendar days, inclusive, in the
+database's day: the opening balance is the sum of every entry posted before
+`from`, each entry in the period carries the balance after it (the same
+window over `sequence_no` the history uses), the totals in and out are
+summed in cents, and the closing balance is the last line's, or the
+opening one when nothing moved. Nothing is read from `account_balance`, so
+a statement is exactly what the entries say.
+
+`GET /api/v1/accounts/{id}/statement?from&to` returns it; with neither
+date it is the month to date, and either alone takes the other from it
+(`statementPeriod()` in `src/lib/ledger/statement.ts`). `format=xlsx`
+returns the same through S-905's `reportToWorkbook`, opening and closing
+balance as the first and last rows so the sheet reconciles without adding
+anything up. `/accounts/{id}/statement`, linked from the account's history,
+shows it with a period form, prints through the browser as a receipt does,
+and links the download.
+
 ## Who may do what
 
 `transaction.capture` records; `transaction.post` posts directly below the
