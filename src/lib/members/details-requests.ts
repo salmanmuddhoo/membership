@@ -21,6 +21,7 @@ import {
   type MembershipTypeField,
 } from '../config/reference';
 import { query, withTransaction } from '../db/pool';
+import { tellMember } from './tell-member';
 
 export const PERMISSION_VERIFY = 'member.details_verify';
 export const ENTITY_TYPE = 'member_details_request';
@@ -302,7 +303,7 @@ export async function applyDetailsRequest(
   }
   const fields = await fieldsFor(owner.rows[0].membership_type_id);
 
-  return withTransaction(async client => {
+  const result = await withTransaction(async client => {
     // Locked, so two people acting on the same request cannot both apply it.
     const locked = await client.query<{
       member_id: string;
@@ -398,8 +399,20 @@ export async function applyDetailsRequest(
       client
     );
 
-    return { memberId: row.member_id, applied: changes.length };
+    return {
+      memberId: row.member_id,
+      applied: changes.length,
+      fields: changes.map(c => c.label),
+    };
   });
+
+  // Told once the change is on the record, never failing it: the member
+  // sent this from a phone and would otherwise learn what became of it
+  // only by opening the app again.
+  await tellMember(result.memberId, ACTION_APPLIED, {
+    fields: result.fields.join(', '),
+  });
+  return { memberId: result.memberId, applied: result.applied };
 }
 
 /**
@@ -421,7 +434,7 @@ export async function declineDetailsRequest(
     );
   }
 
-  return withTransaction(async client => {
+  const result = await withTransaction(async client => {
     const updated = await client.query<{ member_id: string }>(
       `update member_details_request
           set status = 'declined', decided_at = now(), decided_by = $2,
@@ -454,4 +467,7 @@ export async function declineDetailsRequest(
 
     return { memberId: row.member_id };
   });
+
+  await tellMember(result.memberId, ACTION_DECLINED, { reason });
+  return result;
 }

@@ -7486,7 +7486,7 @@
     "/api/v1/member/me/documents": {
       "get": {
         "summary": "Documents on file for the caller",
-        "description": "Name, state, filed date and expiry. No download: viewing stays a branch matter until a member-facing viewer is decided.",
+        "description": "Name, state, filed date and expiry of every document on file for the caller. Each opens at /me/documents/{id}/content.",
         "tags": [
           "Member app"
         ],
@@ -7551,6 +7551,87 @@
                           }
                         }
                       }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/member/me/documents/{id}/content": {
+      "get": {
+        "summary": "One of the caller's documents: the file itself",
+        "description": "Streams the filed document from this origin, for the app to render in place. 404 unless the document is the caller's own (what /me/documents lists).",
+        "tags": [
+          "Member app"
+        ],
+        "operationId": "getMemberMeDocumentsIdContent",
+        "x-required-permission": "(a member app session)",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "string",
+                      "format": "binary"
                     },
                     "correlationId": {
                       "type": "string"

@@ -173,7 +173,8 @@ header is the whole of what is needed; a body is not.
 | POST   | `/me/deposits`                               | member | A deposit into the caller's own account, captured by the system user in the Member role and routed by the matrix; never cash; 403 until deposits from the app are switched on (S-2102). |
 | POST   | `/me/withdrawals`                            | member | A withdrawal from the caller's own account, the same way; 403 until switched on.                                                                                                        |
 | POST   | `/me/transfers`                              | member | A transfer from the caller's own account to an account here, the same way; 403 until switched on.                                                                                       |
-| GET    | `/me/documents`                              | member | `documentsForMember`. No download URL.                                                                                                                                                  |
+| GET    | `/me/documents`                              | member | `documentsForMember`; each entry's `id` opens at the row below.                                                                                                                         |
+| GET    | `/me/documents/{id}/content`                 | member | The file itself, streamed from this origin for the app to render in place; 404 unless the document is the caller's own — one listed above (`ownedDocumentId`).                          |
 | GET    | `/applications`                              | member | Those started from the caller's verified mobile, plus a member's founding one.                                                                                                          |
 | POST   | `/applications`                              | member | `startApplication` as the system user; 409 while one is in progress.                                                                                                                    |
 | GET    | `/applications/{id}`                         | member | 404 unless the caller's.                                                                                                                                                                |
@@ -237,9 +238,13 @@ The request is history once made: the application role has no `delete` on
 as they were, and the field-by-field change — in the audit trail
 (`member.details.applied`, `member.details.declined`).
 
-**Not built yet:** nothing notifies the member that their update was
-decided; they see it the next time they open the app. That is the same
-push/WhatsApp piece an application status change wants (M9).
+**The member is told.** Applying or declining raises
+`member.details.applied` (the fields that changed, by label) or
+`member.details.declined` (the officer's reason) after the decision
+commits — email and WhatsApp wording each, migration 0087, on the address
+the founding application recorded (`src/lib/members/tell-member.ts`, the
+same path dormancy uses). The app still shows the outcome under
+`lastUpdate` for a member with no address on file.
 
 ## Transactions from the app
 

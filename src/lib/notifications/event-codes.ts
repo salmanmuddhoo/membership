@@ -92,10 +92,14 @@ export const RECEIPT_PLACEHOLDERS = [
  */
 // A member's standing (S-804, S-805): what src/lib/members/dormancy.ts
 // passes when the nightly job marks a member dormant and when an officer
-// reactivates them.
+// reactivates them — and what details-requests.ts passes when a details
+// update the member sent from the app is applied (the fields that changed,
+// by label) or declined (the reason the officer wrote).
 export const MEMBER_PLACEHOLDERS: Record<string, readonly string[]> = {
   'member.dormant': ['member_name', 'member_no', 'last_activity', 'months'],
   'member.reactivated': ['member_name', 'member_no', 'reason'],
+  'member.details.applied': ['member_name', 'member_no', 'fields'],
+  'member.details.declined': ['member_name', 'member_no', 'reason'],
 };
 
 export function eventCodeForKind(
