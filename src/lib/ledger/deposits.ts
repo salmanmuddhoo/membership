@@ -227,7 +227,7 @@ export async function loadDeposit(id: string): Promise<Deposit | null> {
 
 // The account as the rules see it: its status, its holder's, and the type's
 // switches and cap (S-1304).
-interface Destination {
+export interface Destination {
   id: string;
   accountTypeId: string;
   status: string;
@@ -239,7 +239,7 @@ interface Destination {
   maximumTransactionAmount: string | null;
 }
 
-async function destination(accountId: string): Promise<Destination> {
+export async function destination(accountId: string): Promise<Destination> {
   const result = await query<{
     id: string;
     account_type_id: string;
@@ -278,7 +278,10 @@ async function destination(accountId: string): Promise<Destination> {
 }
 
 // Refused before anything is written, naming which rule (S-1305).
-function refuseUnlessDepositable(to: Destination, amountCents: number): void {
+export function refuseUnlessDepositable(
+  to: Destination,
+  amountCents: number
+): void {
   if (to.holderStatus !== 'active') {
     throw new DepositError(
       `This ${to.memberId ? 'member' : 'customer'} is ${to.holderStatus}, ` +
@@ -317,7 +320,7 @@ async function existingForKey(
   return row ? { id: row.id, fingerprint: row.idempotency_fingerprint } : null;
 }
 
-function parseAmount(amount: string): number {
+export function parseAmount(amount: string): number {
   let amountCents: number;
   try {
     amountCents = toCents(amount);

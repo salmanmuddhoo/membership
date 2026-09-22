@@ -241,6 +241,13 @@ changes. Without scripting it simply stays visible. The same table's
 `is_cash` is what makes the cash controls above apply — on the method, not
 on a list of names in code.
 
+**A deposit follows the same two rules** through the very function a
+payment calls (S-1306). Cash above the Source of Fund threshold is not a
+tick on the deposit screen, though: it becomes a request, and the form —
+this same document type — is signed on screen, filed against the
+transaction and verified by somebody else before the deposit is submitted
+(`docs/ledger.md`, "Recording a deposit").
+
 ## Refunds
 
 A refund is a `payment` row with `kind = 'refund'`, its own receipt number, and

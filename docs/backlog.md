@@ -3555,11 +3555,10 @@ changed request with 409; the form issues its key on render, so a refresh
 after a success cannot post twice. S-1306: the ceiling and the threshold
 apply to a cash deposit through the very function a payment calls, reading
 the same three entries — one control, not two; the deposit records the
-officer's confirmation (`source_of_fund_form_confirmed`). **Not yet:** the
-Source of Fund form as a filed checklist document for a deposit, with its
-Missing → Verified lifecycle gating the post — that needs a document keyed
-to a transaction rather than an application, and comes with M16's receipt
-and statement work rather than here. `transaction.capture` (0068) is the
+officer's confirmation (`source_of_fund_form_confirmed`). The rest of
+S-1306 — the form as a filed document for a deposit, verified before the
+post — arrived with M23, once documents could be keyed to a transaction
+(M17). `transaction.capture` (0068) is the
 permission, held by whoever holds `payment.record`; the rest of the
 transaction permissions are S-1311's.
 
@@ -3601,7 +3600,7 @@ writes `transaction.captured` to the trail before the engine writes
 officer who captured may not approve, may not post through a chain, may
 not void the receipt. Nothing consults them yet on the one-act deposit;
 M14's post and approve actions and S-1505's void do. M13's one open end
-is S-1306's filed Source of Fund document for a deposit (◐).
+was S-1306's filed Source of Fund document for a deposit, closed by M23.
 
 **Officer feedback, after M13:** a **Transactions** page (sidebar, under
 Money) with a card per kind — Deposit, Withdrawal, Transfer, Resignation,
@@ -3787,7 +3786,18 @@ FRD 6.2)_
   `payment.recorded` does — and `financial_event.event_type`'s check is
   widened by a new migration, never by editing 0017
 
-### S-1306 · Cash controls apply to a deposit as they do to a payment ◐
+### S-1306 · Cash controls apply to a deposit as they do to a payment ✅
+
+**Completed by M23.** Cash above the threshold is a request
+(`src/lib/ledger/deposit-requests.ts`): a draft the officer starts, the
+Source of Fund form — 0062's own document type — signed on screen and
+filed against the transaction, verified by somebody else holding
+`document.verify` on the transaction page (the recording officer is
+refused, as an application's captor is), and only then submitted: the
+matrix, the engine, the receipt. A draft's amount and reason can change
+while it is the officer's, and it can be cancelled; the deposit page
+continues into the request instead of offering a tick. Open point 17's
+"later capture path" for the `draft` status is this one.
 
 **As** the Society, **I need** the Source of Funds requirement and the cash
 cap to govern a cash deposit exactly as they govern a cash payment, **so
@@ -4856,25 +4866,25 @@ The FRD closes its own open points. These are the ones the code raises. Each
 has a default the stories are written to, so none blocks the start of M13;
 each should be confirmed before the milestone that consumes it.
 
-| #   | Point                                                       | Needed by    | Default the backlog assumes                                                                                                |
-| --- | ----------------------------------------------------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Which Phase 1 fee components open which balance             | M13 · S-1303 | `shares` → Shares, `msa_deposit` → MSA; entrance, processing, Takaful open nothing                                         |
-| 2   | The full `member.status` vocabulary                         | M17 · S-1701 | What the code writes today plus `dormant`, `resigned`, `demised`                                                           |
-| 3   | Dormancy: detection and reactivation (M8's S-804 to S-806)  | M15 · S-1501 | **Closed by M22**: detection nightly after `dormancy.months` of no activity (12); reactivation by an officer with a reason |
-| 4   | Payment method list and which need a reference              | M13 · S-1307 | FRD 6.6's list; cheque, transfers and bank methods require a reference                                                     |
-| 5   | HSA / Investment as multi-instance per member               | M13          | One of each type per member (0018) stands; multi-instance is a later migration if wanted                                   |
-| 6   | Receipt by email: link or attachment                        | M16 · S-1602 | A link; WhatsApp media is Should                                                                                           |
-| 7   | Whether a pending withdrawal reserves balance               | M15 · S-1502 | Yes: available = balance − pending debits, as a query                                                                      |
-| 8   | Transfer to a non-member: where the credit goes             | M15 · S-1504 | Nowhere: debit leg plus disbursement out, no credit leg                                                                    |
-| 9   | One API surface for staff and member (API-US-003)           | M21          | Two surfaces on one framework and one engine, as Phase 4 built; the rules are identical, the paths differ                  |
-| 10  | Withdrawing from Shares below the holding minimum           | M15 · S-1501 | Refused; resignation is the only way below it                                                                              |
-| 11  | A returned transaction whose amount crosses a matrix band   | M14 · S-1404 | Re-routed by the rule that now applies                                                                                     |
-| 12  | Correcting a posted transaction                             | M15 · S-1505 | A reversing transaction, never an edit                                                                                     |
-| 13  | Receipt number format and yearly reset (FRD shows RC-2026-) | M16 · S-1601 | `RCT-` continuous, as 0017; prefix becomes configuration; no yearly reset                                                  |
-| 14  | Takaful / funeral benefit amount                            | M17 · S-1704 | Rs 15,000, configuration                                                                                                   |
-| 15  | Minimum balance floors and approval thresholds per type     | M13 · S-1304 | Shares: the holding minimum; others 0; escalation threshold a single configured amount                                     |
-| 16  | Board quorum on President's step for large disbursements    | M14          | 1 — `quorum_count` exists (0022) and can be raised without a release                                                       |
-| 17  | Transaction drafts                                          | M15 · S-1505 | Not persisted: a form abandoned before Submit records nothing; the `draft` status stays for a later capture path           |
+| #   | Point                                                       | Needed by    | Default the backlog assumes                                                                                                             |
+| --- | ----------------------------------------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Which Phase 1 fee components open which balance             | M13 · S-1303 | `shares` → Shares, `msa_deposit` → MSA; entrance, processing, Takaful open nothing                                                      |
+| 2   | The full `member.status` vocabulary                         | M17 · S-1701 | What the code writes today plus `dormant`, `resigned`, `demised`                                                                        |
+| 3   | Dormancy: detection and reactivation (M8's S-804 to S-806)  | M15 · S-1501 | **Closed by M22**: detection nightly after `dormancy.months` of no activity (12); reactivation by an officer with a reason              |
+| 4   | Payment method list and which need a reference              | M13 · S-1307 | FRD 6.6's list; cheque, transfers and bank methods require a reference                                                                  |
+| 5   | HSA / Investment as multi-instance per member               | M13          | One of each type per member (0018) stands; multi-instance is a later migration if wanted                                                |
+| 6   | Receipt by email: link or attachment                        | M16 · S-1602 | A link; WhatsApp media is Should                                                                                                        |
+| 7   | Whether a pending withdrawal reserves balance               | M15 · S-1502 | Yes: available = balance − pending debits, as a query                                                                                   |
+| 8   | Transfer to a non-member: where the credit goes             | M15 · S-1504 | Nowhere: debit leg plus disbursement out, no credit leg                                                                                 |
+| 9   | One API surface for staff and member (API-US-003)           | M21          | Two surfaces on one framework and one engine, as Phase 4 built; the rules are identical, the paths differ                               |
+| 10  | Withdrawing from Shares below the holding minimum           | M15 · S-1501 | Refused; resignation is the only way below it                                                                                           |
+| 11  | A returned transaction whose amount crosses a matrix band   | M14 · S-1404 | Re-routed by the rule that now applies                                                                                                  |
+| 12  | Correcting a posted transaction                             | M15 · S-1505 | A reversing transaction, never an edit                                                                                                  |
+| 13  | Receipt number format and yearly reset (FRD shows RC-2026-) | M16 · S-1601 | `RCT-` continuous, as 0017; prefix becomes configuration; no yearly reset                                                               |
+| 14  | Takaful / funeral benefit amount                            | M17 · S-1704 | Rs 15,000, configuration                                                                                                                |
+| 15  | Minimum balance floors and approval thresholds per type     | M13 · S-1304 | Shares: the holding minimum; others 0; escalation threshold a single configured amount                                                  |
+| 16  | Board quorum on President's step for large disbursements    | M14          | 1 — `quorum_count` exists (0022) and can be raised without a release                                                                    |
+| 17  | Transaction drafts                                          | M15 · S-1505 | Not persisted for a one-act deposit; the `draft` status carries the request flows — closures, exits, and since M23 a large cash deposit |
 
 # Phase 4 — Member mobile app (AD-03) ✅ first slice
 
