@@ -19,6 +19,7 @@ import {
   PAGE,
   PANEL,
   SECONDARY_SM,
+  LABEL,
 } from '@lib/ui';
 
 const params = Astro.url.searchParams;
@@ -209,7 +210,7 @@ function describeEntry(entry: AuditEventRow): string {
     <section class={CARD}>
       <h2 class={CARD_TITLE}>Filter</h2>
       <form method="get" class="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <label class="text-sm text-neutral-600 dark:text-neutral-300">
+        <label class={LABEL}>
           Actor
           <input
             type="text"
@@ -219,7 +220,7 @@ function describeEntry(entry: AuditEventRow): string {
             class={INPUT}
           />
         </label>
-        <label class="text-sm text-neutral-600 dark:text-neutral-300">
+        <label class={LABEL}>
           Action
           <select name="action" class={INPUT}>
             <option value="">All actions</option>
@@ -230,7 +231,7 @@ function describeEntry(entry: AuditEventRow): string {
             ))}
           </select>
         </label>
-        <label class="text-sm text-neutral-600 dark:text-neutral-300">
+        <label class={LABEL}>
           Record type
           <select name="entityType" class={INPUT}>
             <option value="">All record types</option>
@@ -241,7 +242,7 @@ function describeEntry(entry: AuditEventRow): string {
             ))}
           </select>
         </label>
-        <label class="text-sm text-neutral-600 dark:text-neutral-300">
+        <label class={LABEL}>
           Record ID
           <input
             type="text"
@@ -251,11 +252,11 @@ function describeEntry(entry: AuditEventRow): string {
             class={INPUT}
           />
         </label>
-        <label class="text-sm text-neutral-600 dark:text-neutral-300">
+        <label class={LABEL}>
           From
           <input type="date" name="from" value={fromRaw} class={INPUT} />
         </label>
-        <label class="text-sm text-neutral-600 dark:text-neutral-300">
+        <label class={LABEL}>
           To
           <input type="date" name="to" value={toRaw} class={INPUT} />
         </label>

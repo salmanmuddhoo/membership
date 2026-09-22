@@ -4,7 +4,7 @@
 // transaction; a transfer once, naming the other side.
 import type { TransactionSummary } from '@lib/ledger/review';
 import { formatMoney } from '@lib/payments/money';
-import { FILTER, HINT } from '@lib/ui';
+import { FILTER, HINT, TABLE, TBODY, THEAD } from '@lib/ui';
 
 interface Props {
   transactions: TransactionSummary[];
@@ -63,8 +63,8 @@ const CELL = 'px-2 py-2';
   {transactions.length === 0 ? (
     <p class={HINT}>{empty}</p>
   ) : (
-    <table class="w-full text-sm">
-      <thead class="text-left text-xs text-neutral-500 uppercase dark:text-neutral-400">
+    <table class={TABLE}>
+      <thead class={THEAD}>
         <tr>
           <th class={CELL}>Date</th>
           <th class={CELL}>Reference</th>
@@ -77,7 +77,7 @@ const CELL = 'px-2 py-2';
           <th class={CELL}>Recorded by</th>
         </tr>
       </thead>
-      <tbody class="divide-y divide-neutral-200 dark:divide-neutral-800">
+      <tbody class={TBODY}>
         {transactions.map(t => (
           <tr class="text-neutral-800 dark:text-neutral-100">
             <td class={`${CELL} whitespace-nowrap`}>

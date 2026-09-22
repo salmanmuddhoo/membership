@@ -23,6 +23,9 @@ import {
   BUTTON_SM,
   SECONDARY_SM,
   DANGER_SM,
+  LABEL,
+  NOTICE_ERROR,
+  NOTICE_OK,
 } from '@lib/ui';
 
 const principal = Astro.locals.principal!;
@@ -134,16 +137,8 @@ const STATUSES = ['active', 'pending', 'inactive', 'dormant'];
   <div class={PAGE.list}>
     <ConfigNav />
 
-    {error && (
-      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-        {error}
-      </div>
-    )}
-    {notice && (
-      <div class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-lg border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
-        {notice}
-      </div>
-    )}
+    {error && <div class={NOTICE_ERROR}>{error}</div>}
+    {notice && <div class={NOTICE_OK}>{notice}</div>}
 
     <section class={CARD}>
       <h2 class={CARD_TITLE}>Products</h2>
@@ -182,7 +177,7 @@ const STATUSES = ['active', 'pending', 'inactive', 'dormant'];
 
             <form method="post" class="mt-4 grid gap-3 sm:grid-cols-2">
               <input type="hidden" name="typeId" value={type.id} />
-              <label class="text-sm text-neutral-600 dark:text-neutral-300">
+              <label class={LABEL}>
                 Name
                 <input
                   type="text"
@@ -192,7 +187,7 @@ const STATUSES = ['active', 'pending', 'inactive', 'dormant'];
                   class={INPUT}
                 />
               </label>
-              <label class="text-sm text-neutral-600 dark:text-neutral-300">
+              <label class={LABEL}>
                 Category
                 <input
                   type="text"
@@ -202,7 +197,7 @@ const STATUSES = ['active', 'pending', 'inactive', 'dormant'];
                   class={INPUT}
                 />
               </label>
-              <label class="text-sm text-neutral-600 dark:text-neutral-300">
+              <label class={LABEL}>
                 Minimum opening amount (Rs)
                 <input
                   type="text"
@@ -213,7 +208,7 @@ const STATUSES = ['active', 'pending', 'inactive', 'dormant'];
                   class={INPUT}
                 />
               </label>
-              <label class="text-sm text-neutral-600 dark:text-neutral-300">
+              <label class={LABEL}>
                 Minimum balance (Rs)
                 <input
                   type="text"
@@ -224,7 +219,7 @@ const STATUSES = ['active', 'pending', 'inactive', 'dormant'];
                   class={INPUT}
                 />
               </label>
-              <label class="text-sm text-neutral-600 dark:text-neutral-300">
+              <label class={LABEL}>
                 Maximum per transaction (Rs, blank for no limit)
                 <input
                   type="text"
@@ -235,7 +230,7 @@ const STATUSES = ['active', 'pending', 'inactive', 'dormant'];
                   class={INPUT}
                 />
               </label>
-              <label class="text-sm text-neutral-600 dark:text-neutral-300">
+              <label class={LABEL}>
                 Default status
                 <select
                   name="defaultStatus"
@@ -249,7 +244,7 @@ const STATUSES = ['active', 'pending', 'inactive', 'dormant'];
                   ))}
                 </select>
               </label>
-              <label class="text-sm text-neutral-600 dark:text-neutral-300">
+              <label class={LABEL}>
                 Number prefix for a non-member's account (e.g. HSA)
                 <input
                   type="text"
@@ -259,7 +254,7 @@ const STATUSES = ['active', 'pending', 'inactive', 'dormant'];
                   class={INPUT}
                 />
               </label>
-              <label class="text-sm text-neutral-600 sm:col-span-2 dark:text-neutral-300">
+              <label class={`${LABEL} sm:col-span-2`}>
                 Documents required to open
                 <select name="checklistId" disabled={!canManage} class={INPUT}>
                   <option value="">— none —</option>
@@ -420,7 +415,7 @@ const STATUSES = ['active', 'pending', 'inactive', 'dormant'];
         <h2 class={CARD_TITLE}>Add an account type</h2>
         <form method="post" class="mt-4 grid gap-3 sm:grid-cols-2">
           <input type="hidden" name="intent" value="create" />
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             Code
             <input
               type="text"
@@ -430,15 +425,15 @@ const STATUSES = ['active', 'pending', 'inactive', 'dormant'];
               class={INPUT}
             />
           </label>
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             Name
             <input type="text" name="name" required class={INPUT} />
           </label>
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             Category
             <input type="text" name="category" value="savings" class={INPUT} />
           </label>
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             Minimum opening amount (Rs)
             <input
               type="text"
@@ -448,7 +443,7 @@ const STATUSES = ['active', 'pending', 'inactive', 'dormant'];
               class={INPUT}
             />
           </label>
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             Minimum balance (Rs)
             <input
               type="text"
@@ -458,7 +453,7 @@ const STATUSES = ['active', 'pending', 'inactive', 'dormant'];
               class={INPUT}
             />
           </label>
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             Maximum per transaction (Rs, blank for no limit)
             <input
               type="text"
@@ -467,7 +462,7 @@ const STATUSES = ['active', 'pending', 'inactive', 'dormant'];
               class={INPUT}
             />
           </label>
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             Number prefix for a non-member's account (e.g. HSA)
             <input
               type="text"

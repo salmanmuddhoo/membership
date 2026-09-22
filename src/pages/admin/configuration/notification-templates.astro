@@ -24,6 +24,9 @@ import {
   LABEL,
   INPUT,
   BUTTON,
+  CHECK_LABEL,
+  NOTICE_ERROR,
+  NOTICE_OK,
 } from '@lib/ui';
 
 const principal = Astro.locals.principal!;
@@ -132,16 +135,8 @@ for (const template of templates) {
   <div class={PAGE.list}>
     <ConfigNav />
 
-    {error && (
-      <p class="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200">
-        {error}
-      </p>
-    )}
-    {notice && (
-      <p class="border-mint-400 bg-mint-50 dark:bg-mint-950 rounded-xl border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
-        {notice}
-      </p>
-    )}
+    {error && <p class={NOTICE_ERROR}>{error}</p>}
+    {notice && <p class={NOTICE_OK}>{notice}</p>}
 
     {!canManage && (
       <p class="rounded-xl border border-neutral-300 px-4 py-3 text-sm text-neutral-600 dark:border-neutral-700 dark:text-neutral-300">
@@ -187,7 +182,7 @@ for (const template of templates) {
               <span class="text-sm font-semibold text-neutral-800 dark:text-neutral-100">
                 {CHANNEL_LABELS[template.channel]}
               </span>
-              <label class="flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-300">
+              <label class={CHECK_LABEL}>
                 <input
                   type="checkbox"
                   name="isActive"
@@ -238,7 +233,7 @@ for (const template of templates) {
             )}
 
             {template.eventCode === 'receipt.issued' && (
-              <label class="flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-300">
+              <label class={CHECK_LABEL}>
                 <input type="hidden" name="attachesDocumentShown" value="1" />
                 <input
                   type="checkbox"

@@ -12,7 +12,15 @@ import {
   countsBeforeReset,
   resetAllTestData,
 } from '@lib/admin/reset';
-import { PAGE } from '@lib/ui';
+import {
+  PAGE,
+  BUTTON_DESTRUCTIVE,
+  CARD_DANGER,
+  CARD_DANGER_TITLE,
+  NOTICE,
+  NOTICE_ERROR,
+  NOTICE_OK,
+} from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 const isTestEnvironment = !isProductionEnvironment();
@@ -56,20 +64,16 @@ const counts = isTestEnvironment && !done ? await countsBeforeReset() : null;
 >
   <div class={PAGE.form}>
     {!isTestEnvironment && (
-      <div class="rounded-lg border border-neutral-300 bg-neutral-100 px-4 py-3 text-sm text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200">
+      <div class={NOTICE}>
         This deployment is not marked as a test environment, so this is not
         available here.
       </div>
     )}
 
-    {error && (
-      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-        {error}
-      </div>
-    )}
+    {error && <div class={NOTICE_ERROR}>{error}</div>}
 
     {done && (
-      <div class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-lg border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
+      <div class={NOTICE_OK}>
         Done. Every member, application, document, payment and receipt has been
         removed, and numbering starts over from AB0001. Staff accounts and
         configuration are unchanged.
@@ -77,10 +81,8 @@ const counts = isTestEnvironment && !done ? await countsBeforeReset() : null;
     )}
 
     {counts && (
-      <section class="rounded-2xl border border-red-300 bg-red-50 p-6 dark:border-red-900 dark:bg-red-950">
-        <h2 class="text-lg font-semibold text-red-900 dark:text-red-200">
-          This removes everything, permanently
-        </h2>
+      <section class={CARD_DANGER}>
+        <h2 class={CARD_DANGER_TITLE}>This removes everything, permanently</h2>
         <p class="mt-2 text-sm text-red-800 dark:text-red-200">
           {counts.members} member{counts.members === 1 ? '' : 's'},{' '}
           {counts.applications} application
@@ -109,7 +111,7 @@ const counts = isTestEnvironment && !done ? await countsBeforeReset() : null;
             type="submit"
             data-reset-submit
             disabled
-            class="rounded-lg bg-red-700 px-4 py-2 text-sm font-bold text-white transition hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-50"
+            class={BUTTON_DESTRUCTIVE}
           >
             Delete everything
           </button>

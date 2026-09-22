@@ -35,6 +35,14 @@ import {
   LABEL,
   BUTTON,
   BUTTON_SM,
+  INPUT_SM,
+  NOTICE_ERROR,
+  NOTICE_OK,
+  TABLE,
+  THEAD,
+  TH,
+  ROW,
+  TD,
 } from '@lib/ui';
 
 const principal = Astro.locals.principal!;
@@ -201,16 +209,8 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
   <div class={PAGE.list}>
     <ConfigNav />
 
-    {error && (
-      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-        {error}
-      </div>
-    )}
-    {notice && (
-      <div class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-lg border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
-        {notice}
-      </div>
-    )}
+    {error && <div class={NOTICE_ERROR}>{error}</div>}
+    {notice && <div class={NOTICE_OK}>{notice}</div>}
 
     <p class={HINT}>
       Saving publishes a new version and closes the previous one.
@@ -236,12 +236,12 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           <input type="hidden" name="intent" value="publish-fee-version" />
           <input type="hidden" name="scheduleId" value={schedule.id} />
           <div class="overflow-x-auto">
-            <table class="w-full text-sm">
+            <table class={TABLE}>
               <thead>
-                <tr class="text-left text-xs text-neutral-500 dark:text-neutral-400">
-                  <th class="py-1 pr-4 font-medium">Component</th>
-                  <th class="py-1 pr-4 font-medium">Amount (Rs)</th>
-                  <th class="py-1 font-medium">Applies</th>
+                <tr class={THEAD}>
+                  <th class={TH}>Component</th>
+                  <th class={TH}>Amount (Rs)</th>
+                  <th class={TH}>Applies</th>
                 </tr>
               </thead>
               <tbody>
@@ -250,25 +250,27 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                     c => c.code === code
                   );
                   return (
-                    <tr class="border-t border-neutral-200 dark:border-neutral-800">
-                      <td class="py-2 pr-4 text-neutral-700 dark:text-neutral-200">
+                    <tr class={ROW}>
+                      <td
+                        class={`${TD} text-neutral-700 dark:text-neutral-200`}
+                      >
                         {COMPONENT_LABELS[code]}
                       </td>
-                      <td class="py-2 pr-4">
+                      <td class={TD}>
                         <input
                           type="text"
                           inputmode="decimal"
                           name={`amount.${code}`}
                           value={component?.amount ?? '0.00'}
                           disabled={!canManage}
-                          class="w-32 rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                          class={`${INPUT_SM} w-32`}
                         />
                       </td>
-                      <td class="py-2">
+                      <td class={TD}>
                         <select
                           name={`requirement.${code}`}
                           disabled={!canManage}
-                          class="rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                          class={INPUT_SM}
                         >
                           {REQUIREMENTS.map(r => (
                             <option
@@ -338,7 +340,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       <div class="mt-4 flex flex-wrap gap-6">
         <form method="post" class="flex flex-wrap items-end gap-3">
           <input type="hidden" name="intent" value="set-cash-threshold" />
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             Source of fund threshold (Rs)
             <input
               type="text"
@@ -346,7 +348,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               name="cashThreshold"
               value={cashThreshold}
               disabled={!canManage}
-              class="mt-1 block w-40 rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+              class={`${INPUT_SM} mt-1 block w-40`}
             />
           </label>
           {canManage && (
@@ -358,7 +360,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 
         <form method="post" class="flex flex-wrap items-end gap-3">
           <input type="hidden" name="intent" value="set-cash-maximum" />
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             Maximum (Rs)
             <input
               type="text"
@@ -366,7 +368,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               name="cashMaximum"
               value={cashMax}
               disabled={!canManage}
-              class="mt-1 block w-40 rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+              class={`${INPUT_SM} mt-1 block w-40`}
             />
           </label>
           {canManage && (
@@ -405,7 +407,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       </p>
       <form method="post" class="mt-4 flex flex-wrap items-end gap-3">
         <input type="hidden" name="intent" value="set-takaful-benefit" />
-        <label class="text-sm text-neutral-600 dark:text-neutral-300">
+        <label class={LABEL}>
           Takaful benefit (Rs)
           <input
             type="text"
@@ -413,7 +415,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             name="takafulBenefit"
             value={takaful}
             disabled={!canManage}
-            class="mt-1 block w-40 rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+            class={`${INPUT_SM} mt-1 block w-40`}
           />
         </label>
         {canManage && (
@@ -432,7 +434,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       </p>
       <form method="post" class="mt-4 flex flex-wrap items-end gap-3">
         <input type="hidden" name="intent" value="set-near-floor-margin" />
-        <label class="text-sm text-neutral-600 dark:text-neutral-300">
+        <label class={LABEL}>
           Margin (Rs)
           <input
             type="text"
@@ -440,7 +442,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             name="nearFloorMargin"
             value={nearFloor}
             disabled={!canManage}
-            class="mt-1 block w-40 rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+            class={`${INPUT_SM} mt-1 block w-40`}
           />
         </label>
         {canManage && (
@@ -459,7 +461,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       </p>
       <form method="post" class="mt-4 flex flex-wrap items-end gap-3">
         <input type="hidden" name="intent" value="set-dormancy-months" />
-        <label class="text-sm text-neutral-600 dark:text-neutral-300">
+        <label class={LABEL}>
           Months
           <input
             type="text"
@@ -467,7 +469,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             name="dormancyMonths"
             value={dormancy}
             disabled={!canManage}
-            class="mt-1 block w-40 rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+            class={`${INPUT_SM} mt-1 block w-40`}
           />
         </label>
         {canManage && (
@@ -479,12 +481,12 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 
       <form method="post" class="mt-4 flex flex-wrap items-end gap-3">
         <input type="hidden" name="intent" value="set-dormancy-reactivation" />
-        <label class="text-sm text-neutral-600 dark:text-neutral-300">
+        <label class={LABEL}>
           Reactivation
           <select
             name="dormancyReactivation"
             disabled={!canManage}
-            class="mt-1 block rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+            class={`${INPUT_SM} mt-1 block`}
           >
             {DORMANCY_REACTIVATIONS.map(value => (
               <option value={value} selected={reactivation === value}>

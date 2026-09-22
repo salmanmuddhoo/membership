@@ -11,7 +11,15 @@ import {
   enabledMemberOperations,
   setEnabledMemberOperations,
 } from '@lib/config/reference';
-import { PAGE, CARD, CARD_TITLE, HINT, BUTTON } from '@lib/ui';
+import {
+  PAGE,
+  CARD,
+  CARD_TITLE,
+  HINT,
+  BUTTON,
+  NOTICE_ERROR,
+  NOTICE_OK,
+} from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 const canManage = principal.permissions.has('config.manage');
@@ -54,16 +62,8 @@ const OPERATIONS: ReadonlyArray<{ value: string; label: string }> = [
   <div class={PAGE.list}>
     <ConfigNav />
 
-    {error && (
-      <p class="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200">
-        {error}
-      </p>
-    )}
-    {notice && (
-      <p class="border-mint-400 bg-mint-50 dark:bg-mint-950 rounded-xl border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
-        {notice}
-      </p>
-    )}
+    {error && <p class={NOTICE_ERROR}>{error}</p>}
+    {notice && <p class={NOTICE_OK}>{notice}</p>}
 
     <section class={`${CARD} space-y-3`}>
       <h2 class={CARD_TITLE}>Transactions a member may start from the app</h2>

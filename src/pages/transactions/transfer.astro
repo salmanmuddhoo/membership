@@ -6,7 +6,15 @@ import DashboardLayout from '@layouts/DashboardLayout.astro';
 import { listAccountTypes } from '@lib/config/reference';
 import { PERMISSION_CAPTURE } from '@lib/ledger/transfers';
 import { findAccountByNumber } from '@lib/ledger/lookup';
-import { PAGE, FORM_CARD, HINT, LABEL, INPUT, BUTTON } from '@lib/ui';
+import {
+  PAGE,
+  FORM_CARD,
+  HINT,
+  LABEL,
+  INPUT,
+  BUTTON,
+  NOTICE_ERROR,
+} from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 if (!principal.permissions.has(PERMISSION_CAPTURE)) {
@@ -40,11 +48,7 @@ if (chosen && number.trim()) {
       ← Transactions
     </a>
 
-    {error && (
-      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-        {error}
-      </div>
-    )}
+    {error && <div class={NOTICE_ERROR}>{error}</div>}
 
     <form method="get" data-transfer-lookup class={FORM_CARD}>
       <fieldset>

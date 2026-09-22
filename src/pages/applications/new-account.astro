@@ -24,7 +24,17 @@ import {
 } from '@lib/applications/capture';
 import { loadCustomer, loadMember } from '@lib/members/create';
 import { listAccountTypes, openableAccountTypes } from '@lib/config/reference';
-import { PAGE, CARD, PANEL, HINT, LABEL, INPUT, BUTTON } from '@lib/ui';
+import {
+  PAGE,
+  CARD,
+  PANEL,
+  HINT,
+  LABEL,
+  INPUT,
+  BUTTON,
+  CHECK_LABEL,
+  NOTICE_ERROR,
+} from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 if (!principal.permissions.has('application.capture')) {
@@ -168,11 +178,7 @@ if (Astro.request.method === 'POST') {
       </a>
     </div>
 
-    {error && (
-      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-        {error}
-      </div>
-    )}
+    {error && <div class={NOTICE_ERROR}>{error}</div>}
 
     {accountTypes.length === 0 ? (
       <p class={HINT}>
@@ -238,7 +244,7 @@ if (Astro.request.method === 'POST') {
           </legend>
           <div class="mt-2 space-y-2">
             {accountTypes.map(t => (
-              <label class="flex items-center gap-2 text-sm text-neutral-800 dark:text-neutral-100">
+              <label class={CHECK_LABEL}>
                 <input
                   type="checkbox"
                   name="accountTypeId"

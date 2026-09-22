@@ -23,7 +23,7 @@ import {
   checklistForMembershipType,
   listMembershipTypes,
 } from '@lib/config/reference';
-import { PAGE, BUTTON, HINT } from '@lib/ui';
+import { PAGE, BUTTON, HINT, NOTICE_ERROR } from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 if (!principal.permissions.has('application.capture')) {
@@ -157,11 +157,7 @@ if (Astro.request.method === 'POST') {
       </a>
     </div>
 
-    {error && (
-      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-        {error}
-      </div>
-    )}
+    {error && <div class={NOTICE_ERROR}>{error}</div>}
 
     <form method="post" id="capture-form" class="space-y-6">
       <CaptureFields

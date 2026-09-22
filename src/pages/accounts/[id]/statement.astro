@@ -6,7 +6,20 @@ import DashboardLayout from '@layouts/DashboardLayout.astro';
 import { accountStatement } from '@lib/ledger/ledger';
 import { statementPeriod } from '@lib/ledger/statement';
 import { formatMoney } from '@lib/payments/money';
-import { PAGE, FILTER, BUTTON, INPUT, SECONDARY_SM } from '@lib/ui';
+import {
+  PAGE,
+  FILTER,
+  BUTTON,
+  INPUT,
+  SECONDARY_SM,
+  LABEL,
+  TABLE,
+  THEAD,
+  TBODY,
+  TH,
+  TD,
+  TD_NUM,
+} from '@lib/ui';
 
 const { id } = Astro.params;
 const params = Astro.url.searchParams;
@@ -45,11 +58,11 @@ const excelHref = `/api/v1/accounts/${id}/statement?from=${shown.from}&to=${show
       method="get"
       class={`print:hidden flex flex-wrap items-end gap-3 ${FILTER}`}
     >
-      <label class="text-sm text-neutral-600 dark:text-neutral-300">
+      <label class={LABEL}>
         From
         <input type="date" name="from" value={shown.from} class={INPUT} />
       </label>
-      <label class="text-sm text-neutral-600 dark:text-neutral-300">
+      <label class={LABEL}>
         To
         <input type="date" name="to" value={shown.to} class={INPUT} />
       </label>
@@ -94,39 +107,37 @@ const excelHref = `/api/v1/accounts/${id}/statement?from=${shown.from}&to=${show
       </header>
 
       <div class="mt-6 overflow-x-auto">
-        <table class="w-full text-sm">
-          <thead class="text-left text-xs text-neutral-500 uppercase dark:text-neutral-400">
+        <table class={TABLE}>
+          <thead class={THEAD}>
             <tr>
-              <th class="px-2 py-2">Date</th>
-              <th class="px-2 py-2">Reference</th>
-              <th class="px-2 py-2">Description</th>
-              <th class="px-2 py-2">Receipt</th>
-              <th class="px-2 py-2 text-right">Out</th>
-              <th class="px-2 py-2 text-right">In</th>
-              <th class="px-2 py-2 text-right">Balance</th>
+              <th class={TH}>Date</th>
+              <th class={TH}>Reference</th>
+              <th class={TH}>Description</th>
+              <th class={TH}>Receipt</th>
+              <th class={`${TH} text-right`}>Out</th>
+              <th class={`${TH} text-right`}>In</th>
+              <th class={`${TH} text-right`}>Balance</th>
             </tr>
           </thead>
-          <tbody class="divide-y divide-neutral-200 dark:divide-neutral-800">
+          <tbody class={TBODY}>
             <tr class="font-medium">
-              <td class="px-2 py-2 whitespace-nowrap">{day(statement.from)}</td>
-              <td class="px-2 py-2"></td>
-              <td class="px-2 py-2">Opening balance</td>
-              <td class="px-2 py-2"></td>
-              <td class="px-2 py-2"></td>
-              <td class="px-2 py-2"></td>
-              <td class="px-2 py-2 text-right tabular-nums">
-                {formatMoney(statement.openingBalance)}
-              </td>
+              <td class={`${TD} whitespace-nowrap`}>{day(statement.from)}</td>
+              <td class={TD}></td>
+              <td class={TD}>Opening balance</td>
+              <td class={TD}></td>
+              <td class={TD}></td>
+              <td class={TD}></td>
+              <td class={TD_NUM}>{formatMoney(statement.openingBalance)}</td>
             </tr>
             {statement.lines.map(line => (
               <tr>
-                <td class="px-2 py-2 whitespace-nowrap">
+                <td class={`${TD} whitespace-nowrap`}>
                   {dateFormat.format(line.postedAt)}
                 </td>
-                <td class="px-2 py-2">
+                <td class={TD}>
                   <code class="text-xs">{line.reference}</code>
                 </td>
-                <td class="px-2 py-2">
+                <td class={TD}>
                   {line.description}
                   {line.reason && (
                     <span class="text-xs text-neutral-500 dark:text-neutral-400">
@@ -139,18 +150,14 @@ const excelHref = `/api/v1/accounts/${id}/statement?from=${shown.from}&to=${show
                     {line.methodReference && ` · ${line.methodReference}`}
                   </span>
                 </td>
-                <td class="px-2 py-2">
+                <td class={TD}>
                   <code class="text-xs">{line.receiptNo ?? '—'}</code>
                 </td>
-                <td class="px-2 py-2 text-right tabular-nums">
-                  {line.debit && formatMoney(line.debit)}
-                </td>
-                <td class="px-2 py-2 text-right tabular-nums">
+                <td class={TD_NUM}>{line.debit && formatMoney(line.debit)}</td>
+                <td class={TD_NUM}>
                   {line.credit && formatMoney(line.credit)}
                 </td>
-                <td class="px-2 py-2 text-right tabular-nums">
-                  {formatMoney(line.balance)}
-                </td>
+                <td class={TD_NUM}>{formatMoney(line.balance)}</td>
               </tr>
             ))}
             {statement.lines.length === 0 && (
@@ -166,19 +173,13 @@ const excelHref = `/api/v1/accounts/${id}/statement?from=${shown.from}&to=${show
           </tbody>
           <tfoot class="border-t-2 border-neutral-300 font-medium dark:border-neutral-700">
             <tr>
-              <td class="px-2 py-2 whitespace-nowrap">{day(statement.to)}</td>
-              <td class="px-2 py-2"></td>
-              <td class="px-2 py-2">Closing balance</td>
-              <td class="px-2 py-2"></td>
-              <td class="px-2 py-2 text-right tabular-nums">
-                {formatMoney(statement.totalDebits)}
-              </td>
-              <td class="px-2 py-2 text-right tabular-nums">
-                {formatMoney(statement.totalCredits)}
-              </td>
-              <td class="px-2 py-2 text-right tabular-nums">
-                {formatMoney(statement.closingBalance)}
-              </td>
+              <td class={`${TD} whitespace-nowrap`}>{day(statement.to)}</td>
+              <td class={TD}></td>
+              <td class={TD}>Closing balance</td>
+              <td class={TD}></td>
+              <td class={TD_NUM}>{formatMoney(statement.totalDebits)}</td>
+              <td class={TD_NUM}>{formatMoney(statement.totalCredits)}</td>
+              <td class={TD_NUM}>{formatMoney(statement.closingBalance)}</td>
             </tr>
           </tfoot>
         </table>

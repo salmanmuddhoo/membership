@@ -16,6 +16,9 @@ import {
   INPUT,
   BUTTON,
   BUTTON_SM,
+  LABEL,
+  NOTICE_ERROR,
+  NOTICE_OK,
 } from '@lib/ui';
 
 const principal = Astro.locals.principal!;
@@ -86,16 +89,8 @@ const FLAGS = [
   <div class={PAGE.list}>
     <ConfigNav />
 
-    {error && (
-      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-        {error}
-      </div>
-    )}
-    {notice && (
-      <div class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-lg border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
-        {notice}
-      </div>
-    )}
+    {error && <div class={NOTICE_ERROR}>{error}</div>}
+    {notice && <div class={NOTICE_OK}>{notice}</div>}
 
     <section class={CARD}>
       <h2 class={CARD_TITLE}>How money is received</h2>
@@ -144,7 +139,7 @@ const FLAGS = [
             ) : (
               <form method="post" class="mt-4 grid gap-3 sm:grid-cols-2">
                 <input type="hidden" name="methodId" value={method.id} />
-                <label class="text-sm text-neutral-600 sm:col-span-2 dark:text-neutral-300">
+                <label class={`${LABEL} sm:col-span-2`}>
                   Name
                   <input
                     type="text"
@@ -201,7 +196,7 @@ const FLAGS = [
         <form method="post" class="mt-4 grid gap-3 sm:grid-cols-2">
           <input type="hidden" name="intent" value="create" />
           <input type="hidden" name="isActive" value="on" />
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             Code
             <input
               type="text"
@@ -211,7 +206,7 @@ const FLAGS = [
               class={INPUT}
             />
           </label>
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             Name
             <input type="text" name="name" required class={INPUT} />
           </label>

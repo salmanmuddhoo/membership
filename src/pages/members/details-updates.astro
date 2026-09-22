@@ -13,7 +13,19 @@ import {
   DetailsRequestError,
   listDetailsRequests,
 } from '@lib/members/details-requests';
-import { PAGE, CARD, CARD_TITLE, HINT, INPUT_BARE, SECONDARY } from '@lib/ui';
+import {
+  PAGE,
+  CARD,
+  CARD_TITLE,
+  HINT,
+  INPUT_BARE,
+  SECONDARY,
+  TABLE,
+  THEAD,
+  TH,
+  ROW,
+  TD,
+} from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 const canVerify = principal.permissions.has('member.details_verify');
@@ -112,24 +124,28 @@ function display(value: string, dataType: string): string {
               </span>
             </header>
 
-            <table class="mt-4 w-full text-sm">
+            <table class={`${TABLE} mt-4`}>
               <thead>
-                <tr class="text-left text-xs text-neutral-500 dark:text-neutral-400">
-                  <th class="py-1 pr-4 font-medium">Field</th>
-                  <th class="py-1 pr-4 font-medium">On record</th>
-                  <th class="py-1 font-medium">Member says</th>
+                <tr class={THEAD}>
+                  <th class={TH}>Field</th>
+                  <th class={TH}>On record</th>
+                  <th class={TH}>Member says</th>
                 </tr>
               </thead>
               <tbody>
                 {request.changes.map(change => (
-                  <tr class="border-t border-neutral-200 dark:border-neutral-800">
-                    <td class="py-2 pr-4 text-neutral-600 dark:text-neutral-300">
+                  <tr class={ROW}>
+                    <td class={`${TD} text-neutral-600 dark:text-neutral-300`}>
                       {change.label}
                     </td>
-                    <td class="py-2 pr-4 text-neutral-500 line-through dark:text-neutral-400">
+                    <td
+                      class={`${TD} text-neutral-500 line-through dark:text-neutral-400`}
+                    >
                       {display(change.before, change.dataType)}
                     </td>
-                    <td class="py-2 font-medium text-neutral-800 dark:text-neutral-100">
+                    <td
+                      class={`${TD} font-medium text-neutral-800 dark:text-neutral-100`}
+                    >
                       {display(change.after, change.dataType)}
                     </td>
                   </tr>
@@ -179,20 +195,20 @@ function display(value: string, dataType: string): string {
       <section class={CARD}>
         <h2 class={CARD_TITLE}>Already decided</h2>
         <div class="mt-4 overflow-x-auto">
-          <table class="w-full text-sm">
+          <table class={TABLE}>
             <thead>
-              <tr class="text-left text-xs text-neutral-500 dark:text-neutral-400">
-                <th class="py-2 pr-4 font-medium">Member</th>
-                <th class="py-2 pr-4 font-medium">Outcome</th>
-                <th class="py-2 pr-4 font-medium">Changes</th>
-                <th class="py-2 pr-4 font-medium">Decided</th>
-                <th class="py-2 font-medium">By</th>
+              <tr class={THEAD}>
+                <th class={TH}>Member</th>
+                <th class={TH}>Outcome</th>
+                <th class={TH}>Changes</th>
+                <th class={TH}>Decided</th>
+                <th class={TH}>By</th>
               </tr>
             </thead>
             <tbody>
               {decided.map(request => (
-                <tr class="border-t border-neutral-200 dark:border-neutral-800">
-                  <td class="py-2 pr-4 text-neutral-700 dark:text-neutral-200">
+                <tr class={ROW}>
+                  <td class={`${TD} text-neutral-700 dark:text-neutral-200`}>
                     <a href={`/members/${request.memberId}`} class="underline">
                       {request.memberName}
                     </a>
@@ -200,7 +216,7 @@ function display(value: string, dataType: string): string {
                       {request.memberNo}
                     </span>
                   </td>
-                  <td class="py-2 pr-4 text-neutral-600 dark:text-neutral-300">
+                  <td class={`${TD} text-neutral-600 dark:text-neutral-300`}>
                     {request.status === 'applied' ? 'Applied' : 'Declined'}
                     {request.comment && (
                       <span class="block text-xs text-neutral-500 dark:text-neutral-400">
@@ -208,15 +224,19 @@ function display(value: string, dataType: string): string {
                       </span>
                     )}
                   </td>
-                  <td class="py-2 pr-4 text-neutral-600 dark:text-neutral-300">
+                  <td class={`${TD} text-neutral-600 dark:text-neutral-300`}>
                     {request.changeCount}
                   </td>
-                  <td class="py-2 pr-4 text-xs text-neutral-500 dark:text-neutral-400">
+                  <td
+                    class={`${TD} text-xs text-neutral-500 dark:text-neutral-400`}
+                  >
                     {request.decidedAt
                       ? dateTimeFormat.format(request.decidedAt)
                       : '—'}
                   </td>
-                  <td class="py-2 text-xs text-neutral-500 dark:text-neutral-400">
+                  <td
+                    class={`${TD} text-xs text-neutral-500 dark:text-neutral-400`}
+                  >
                     {request.decidedByName ?? '—'}
                   </td>
                 </tr>

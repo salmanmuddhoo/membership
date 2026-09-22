@@ -27,6 +27,7 @@ import {
   LABEL,
   INPUT,
   BUTTON,
+  NOTICE_ERROR,
 } from '@lib/ui';
 
 const principal = Astro.locals.principal!;
@@ -120,11 +121,7 @@ if (Astro.request.method === 'POST') {
       ← {member.name} · {member.memberNo}
     </a>
 
-    {error && (
-      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-        {error}
-      </div>
-    )}
+    {error && <div class={NOTICE_ERROR}>{error}</div>}
 
     <section class={`${CARD} space-y-3`}>
       <h2 class={CARD_LABEL}>Entitlements</h2>
@@ -186,15 +183,15 @@ if (Astro.request.method === 'POST') {
         class="grid gap-3 sm:grid-cols-2"
         hidden={values.kind !== 'other'}
       >
-        <label class="text-sm text-neutral-600 dark:text-neutral-300">
+        <label class={LABEL}>
           Name
           <input type="text" name="name" value={values.name} class={INPUT} />
         </label>
-        <label class="text-sm text-neutral-600 dark:text-neutral-300">
+        <label class={LABEL}>
           NIC
           <input type="text" name="nic" value={values.nic} class={INPUT} />
         </label>
-        <label class="text-sm text-neutral-600 dark:text-neutral-300">
+        <label class={LABEL}>
           Address
           <input
             type="text"
@@ -203,7 +200,7 @@ if (Astro.request.method === 'POST') {
             class={INPUT}
           />
         </label>
-        <label class="text-sm text-neutral-600 dark:text-neutral-300">
+        <label class={LABEL}>
           Relation to the member
           <input
             type="text"
@@ -212,17 +209,17 @@ if (Astro.request.method === 'POST') {
             class={INPUT}
           />
         </label>
-        <label class="text-sm text-neutral-600 dark:text-neutral-300">
+        <label class={LABEL}>
           Email
           <input type="email" name="email" value={values.email} class={INPUT} />
         </label>
-        <label class="text-sm text-neutral-600 dark:text-neutral-300">
+        <label class={LABEL}>
           Mobile
           <input type="tel" name="mobile" value={values.mobile} class={INPUT} />
         </label>
       </div>
       <div class="grid gap-3 sm:grid-cols-2">
-        <label class="text-sm text-neutral-600 dark:text-neutral-300">
+        <label class={LABEL}>
           Paid out by
           <select name="method" class={INPUT}>
             {paymentMethods.map(method => (
@@ -236,7 +233,7 @@ if (Astro.request.method === 'POST') {
             ))}
           </select>
         </label>
-        <label class="text-sm text-neutral-600 dark:text-neutral-300">
+        <label class={LABEL}>
           Reference (cheque number, transfer reference)
           <input
             type="text"
@@ -245,10 +242,7 @@ if (Astro.request.method === 'POST') {
             class={INPUT}
           />
         </label>
-        <label
-          data-bank-account-field
-          class="text-sm text-neutral-600 dark:text-neutral-300"
-        >
+        <label data-bank-account-field class={LABEL}>
           Bank account
           <select name="bankAccountId" class={INPUT}>
             <option value="">Choose…</option>
