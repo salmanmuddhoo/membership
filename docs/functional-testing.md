@@ -128,6 +128,17 @@ Three kinds of failure, and they mean different things:
   configured with and checks the wording exists. **Send test** on
   **Notifications** is how you prove delivery, and it needs a real recipient.
 
+## Before go-live: one of each, with nobody at the console
+
+S-1801's acceptance is a walk-through rather than a script. On the Test
+environment, with a fresh database and **no administrator having changed
+anything**, a new Account Officer records a deposit, a withdrawal and a
+transfer, and a Clerk starts a closure — each posts or reaches its chain
+without an administrator being asked for a value. **Configuration →
+Readiness** is checked first (nothing should read as missing) and again
+after (still nothing), and each row's figure is confirmed as the Society's
+own before the database is cleared for production.
+
 ## Adding to it
 
 Address fields by their `name`, not by their label: the names come from the
