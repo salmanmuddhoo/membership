@@ -72,7 +72,13 @@ const accountTypes = holder
   ? openableAccountTypes(
       allAccountTypes,
       holder.membershipTypeId,
-      new Set(holder.accounts.map(a => a.accountTypeId))
+      // A closed account is not held (M26): approving an application for
+      // its type brings it back rather than opening a second.
+      new Set(
+        holder.accounts
+          .filter(a => a.status !== 'closed')
+          .map(a => a.accountTypeId)
+      )
     )
   : allAccountTypes.filter(t => t.isActive && !t.isMembershipDefault);
 

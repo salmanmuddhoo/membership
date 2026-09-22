@@ -87,6 +87,13 @@ export interface MembershipApplication extends ApplicationCommon {
   // (createMemberFromApplication, members/create.ts). Null for every
   // ordinary membership application.
   sourceCustomerId: string | null;
+  // M26: set only when this application re-admits a resigned member
+  // (startRejoinApplication) — approval reactivates that member under
+  // their existing AB number rather than creating another. Null for every
+  // other membership application.
+  rejoinsMemberId: string | null;
+  // That member's number, for the screen to say whom it re-admits.
+  rejoinsMemberNo: string | null;
 }
 
 // S-613's application, opening an account type an existing holder does not
@@ -1021,6 +1028,8 @@ export async function loadApplication(id: string): Promise<Application | null> {
       existing_customer_name: string | null;
       existing_customer_application_id: string | null;
       source_customer_id: string | null;
+      rejoins_member_id: string | null;
+      rejoins_member_no: string | null;
       status: string;
       captured_by: string;
       captured_by_name: string;
@@ -1040,7 +1049,8 @@ export async function loadApplication(id: string): Promise<Application | null> {
             trim(coalesce(cp.values->>'name', '') || ' '
                  || coalesce(cp.values->>'surname', '')) as existing_customer_name,
             cust.application_id as existing_customer_application_id,
-            a.source_customer_id,
+            a.source_customer_id, a.rejoins_member_id,
+            rj.member_no as rejoins_member_no,
             a.status, a.captured_by,
             u.display_name as captured_by_name,
             u.email::text as captured_by_email,
@@ -1048,6 +1058,7 @@ export async function loadApplication(id: string): Promise<Application | null> {
        from membership_application a
        left join membership_type mt on mt.id = a.membership_type_id
        left join member mb          on mb.id = a.existing_member_id
+       left join member rj          on rj.id = a.rejoins_member_id
        left join customer cust       on cust.id = a.existing_customer_id
        left join application_party cp
          on cp.application_id = cust.application_id
@@ -1124,7 +1135,144 @@ export async function loadApplication(id: string): Promise<Application | null> {
     membershipTypeCode: row.membership_type_code!,
     membershipTypeName: row.membership_type_name!,
     sourceCustomerId: row.source_customer_id,
+    rejoinsMemberId: row.rejoins_member_id,
+    rejoinsMemberNo: row.rejoins_member_no,
   };
+}
+
+/**
+ * M26 · A resigned member applies to rejoin.
+ *
+ * The same membership application as the one that admitted them — the same
+ * type, the same chain, the same fees the schedule asks — started from
+ * their page, with their founding application's parties copied in so the
+ * officer checks what is on file rather than retyping it. The application
+ * names the member (rejoins_member_id), and approval
+ * (createMemberFromApplication) re-admits that member under the AB number
+ * they always had, reopening the Shares and MSA the resignation closed.
+ */
+export async function startRejoinApplication(
+  memberId: string,
+  actor: Actor
+): Promise<{ id: string; reference: string }> {
+  const found = await query<{
+    status: string;
+    application_id: string | null;
+    membership_type_code: string;
+  }>(
+    `select m.status, m.application_id, mt.code as membership_type_code
+       from member m
+       join membership_type mt on mt.id = m.membership_type_id
+      where m.id = $1`,
+    [memberId]
+  );
+  if (found.rowCount === 0) {
+    throw new ApplicationError('That member no longer exists.', 'not_found');
+  }
+  if (found.rows[0].status !== 'resigned') {
+    throw new ApplicationError('Only a resigned member can rejoin.');
+  }
+  const open = await rejoinInFlightFor(memberId);
+  if (open) {
+    throw new ApplicationError(
+      `A rejoin application is already on its way: ${open.reference}.`
+    );
+  }
+  // Resolved before the transaction opens, for the same reason
+  // startMembershipApplicationFromCustomer does (the type cache checks out
+  // its own connection).
+  const type = await acceptingType(found.rows[0].membership_type_code);
+  const sourceApplicationId = found.rows[0].application_id;
+
+  return withTransaction(async client => {
+    const { id, reference } = await insertApplication(client, type, actor);
+
+    await client.query(
+      `update membership_application a
+          set rejoins_member_id = $2,
+              folder_application_id = coalesce(
+                (select coalesce(s.folder_application_id, s.id)
+                   from membership_application s where s.id = $3),
+                a.folder_application_id)
+        where a.id = $1`,
+      [id, memberId, sourceApplicationId]
+    );
+
+    // What the founding application recorded, onto the rows
+    // insertApplication seeded — a subject or ordinal the type gained since
+    // has nothing to copy and stays empty for the officer. A legacy member
+    // with no founding application (M7) starts from blank.
+    if (sourceApplicationId) {
+      await client.query(
+        `update application_party target
+            set values = source.values
+           from application_party source
+          where target.application_id = $1
+            and source.application_id = $2
+            and source.subject = target.subject
+            and source.ordinal = target.ordinal`,
+        [id, sourceApplicationId]
+      );
+    }
+
+    await recordAudit(
+      {
+        actorUserId: actor.userId,
+        actorDescription: actor.email,
+        action: 'membership.application.started_for_rejoin',
+        entityType: 'membership_application',
+        entityId: id,
+        newValue: { reference, rejoinsMemberId: memberId },
+      },
+      client
+    );
+
+    return { id, reference };
+  });
+}
+
+// The rejoin application still on its way for a member, if any: not yet
+// approved or rejected.
+export async function rejoinInFlightFor(
+  memberId: string
+): Promise<{ id: string; reference: string; status: string } | null> {
+  const result = await query<{ id: string; reference: string; status: string }>(
+    `select id, reference, status
+       from membership_application
+      where rejoins_member_id = $1
+        and status not in ('approved', 'rejected')
+      order by created_at desc
+      limit 1`,
+    [memberId]
+  );
+  return result.rows[0] ?? null;
+}
+
+// M26 · The additional-account applications still on their way for a
+// member, by the account type each would open — so a closed account's row
+// can say its reopening is already under way rather than offer it twice.
+export async function accountApplicationsInFlightFor(
+  memberId: string
+): Promise<Map<string, { id: string; reference: string }>> {
+  const result = await query<{
+    id: string;
+    reference: string;
+    account_type_id: string;
+  }>(
+    `select a.id, a.reference, s.account_type_id
+       from membership_application a
+       join application_account_selection s on s.application_id = a.id
+      where a.existing_member_id = $1
+        and a.application_kind = 'additional_account'
+        and a.status not in ('approved', 'rejected')`,
+    [memberId]
+  );
+  return new Map(
+    result.rows.map(r => [
+      r.account_type_id,
+      { id: r.id, reference: r.reference },
+    ])
+  );
 }
 
 // Shared by additional_account and customer_account (S-612, S-614) — the

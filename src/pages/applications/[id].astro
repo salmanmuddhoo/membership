@@ -82,6 +82,7 @@ import {
   NOTICE_OK,
   NOTICE_WARN,
   SECONDARY_XS,
+  PILL,
   SUBTITLE,
   ROW,
   TABLE,
@@ -937,6 +938,15 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           captured by {application!.capturedByName} · updated{' '}
           {dateFormat.format(application!.updatedAt)}
         </span>
+        {application!.applicationKind === 'membership' &&
+          application!.rejoinsMemberId && (
+            <a
+              href={`/members/${application!.rejoinsMemberId}`}
+              class={`${PILL} underline`}
+            >
+              Rejoining as {application!.rejoinsMemberNo}
+            </a>
+          )}
       </div>
 
       {blocking.length > 0 && isEditable && (

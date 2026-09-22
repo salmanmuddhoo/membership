@@ -37,6 +37,8 @@ function membershipApplication(
     membershipTypeCode: 'individual',
     membershipTypeName: 'Individual',
     sourceCustomerId: null,
+    rejoinsMemberId: null,
+    rejoinsMemberNo: null,
     ...overrides,
   };
 }
