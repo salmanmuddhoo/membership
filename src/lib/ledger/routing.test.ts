@@ -121,6 +121,38 @@ describe('the seeded matrix', () => {
     });
   });
 
+  // The timeline experience: the bands an officer is shown over the form
+  // are read off resolveRoute itself, so they cannot disagree with what
+  // pressing Record will do.
+  it('draws the bands the rules cut the amounts into, and says what each does', async () => {
+    const { routing } = await load();
+    const bands = await routing.routeBands({
+      kind: 'deposit',
+      accountTypeId: shares,
+      roleCodes: ['regional_officer'],
+    });
+    expect(
+      bands.map(b => [b.fromCents, b.toCents, b.chain.map(s => s.code)])
+    ).toEqual([
+      [1, cents(100000), []],
+      [cents(100000.01), null, ['secretary_review', 'president_decision']],
+    ]);
+    expect(routing.describeBand(bands[0])).toBe(
+      'Up to Rs 100,000.00: posted at once, no review needed.'
+    );
+    expect(routing.describeBand(bands[1])).toBe(
+      'Rs 100,000.01 and above: Secretary review (Secretary), then President decision (President / Chairperson).'
+    );
+    // A kind that is always reviewed is one band, from the first cent.
+    const closure = await routing.routeBands({
+      kind: 'closure',
+      accountTypeId: shares,
+      roleCodes: [],
+    });
+    expect(closure).toHaveLength(1);
+    expect(routing.describeBand(closure[0])).toMatch(/^Any amount: /);
+  });
+
   it('always reviews a closure, a resignation and a demised claim', async () => {
     const { routing } = await load();
     for (const kind of ['closure', 'resignation', 'demise'] as const) {

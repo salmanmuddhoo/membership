@@ -12,14 +12,18 @@
 // caller of `assignStates`: an application's stages are fixed by its
 // process (capture, sign, documents, pay, submit, decide), a transaction's
 // come from its chain.
-import { activeChain, type WorkflowStep } from '../config/reference';
+import {
+  activeChain,
+  type TransactionKind,
+  type WorkflowStep,
+} from '../config/reference';
 import {
   checklistComplete,
   isExitRequest,
   requestChecklist,
 } from '../ledger/closures';
 import { loadTransaction, positionOf, transitionsFor } from '../ledger/review';
-import { resolveRoute } from '../ledger/routing';
+import { describeBand, resolveRoute, routeBands } from '../ledger/routing';
 import { toCents } from '../payments/money';
 
 export type StepState =
@@ -176,6 +180,71 @@ export function transactionTimeline(
     },
   ];
   return assignStates(planned);
+}
+
+/**
+ * The timeline a transaction WOULD take, before it exists (the timeline
+ * experience): what an officer sees over the form, so the first chevron is
+ * theirs and the rest say who decides. Recorded is current, every step of
+ * the chain to come, Posted at the end — or Recorded then Posted alone
+ * where the matrix posts at once.
+ */
+export function previewTimeline(
+  chain: Pick<WorkflowStep, 'code' | 'name' | 'roleName'>[],
+  labels: { submitLabel?: string; postedLabel?: string } = {}
+): TimelineStep[] {
+  return transactionTimeline({
+    status: 'draft',
+    chain,
+    currentStepCode: null,
+    passedStepCodes: [],
+    rejectedAtStepCode: null,
+    returnedBy: null,
+    receiptNo: null,
+    submitLabel: labels.submitLabel ?? 'Record',
+    postedLabel: labels.postedLabel ?? 'Posted',
+  });
+}
+
+// What the form pages show above their fields: for each of a holder's
+// accounts, the bands the matrix draws for this kind and this officer, each
+// with its own line and its own preview timeline. Bands are computed once
+// per account type — two accounts of one type route alike.
+export interface RoutePreviewBand {
+  key: string;
+  fromCents: number;
+  toCents: number | null;
+  summary: string;
+  steps: TimelineStep[];
+}
+export interface RoutePreviewGroup {
+  accountId: string;
+  bands: RoutePreviewBand[];
+}
+
+export async function routePreviewGroups(
+  kind: TransactionKind,
+  accounts: { id: string; accountTypeId: string }[],
+  roleCodes: readonly string[]
+): Promise<RoutePreviewGroup[]> {
+  const byType = new Map<string, RoutePreviewBand[]>();
+  for (const typeId of new Set(accounts.map(a => a.accountTypeId))) {
+    const bands = await routeBands({ kind, accountTypeId: typeId, roleCodes });
+    byType.set(
+      typeId,
+      bands.map((band, i) => ({
+        key: `${typeId}:${i}`,
+        fromCents: band.fromCents,
+        toCents: band.toCents,
+        summary: describeBand(band),
+        steps: previewTimeline(band.chain),
+      }))
+    );
+  }
+  return accounts.map(a => ({
+    accountId: a.id,
+    bands: byType.get(a.accountTypeId) ?? [],
+  }));
 }
 
 /**

@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   closurePrelude,
+  previewTimeline,
   transactionTimeline,
   type TimelineStep,
 } from './timeline';
@@ -42,6 +43,26 @@ describe('a transaction without a chain', () => {
     expect(steps.map(s => s.key)).toEqual(['capture', 'posted']);
     expect(states(steps)).toEqual({ capture: 'done', posted: 'done' });
     expect(steps[1].detail).toBe('RCT-000001');
+  });
+});
+
+describe('the preview over a form (the timeline experience)', () => {
+  it('starts at Record, shows every step to come, and ends at Posted', () => {
+    const steps = previewTimeline(CHAIN);
+    expect(steps.map(s => [s.key, s.label, s.state])).toEqual([
+      ['capture', 'Record', 'current'],
+      ['secretary_review', 'Secretary review', 'todo'],
+      ['president_decision', 'President decision', 'todo'],
+      ['posted', 'Posted', 'todo'],
+    ]);
+    expect(steps[1].detail).toBe('Secretary');
+  });
+
+  it('is two chevrons where the matrix posts at once', () => {
+    expect(previewTimeline([]).map(s => [s.key, s.state])).toEqual([
+      ['capture', 'current'],
+      ['posted', 'todo'],
+    ]);
   });
 });
 

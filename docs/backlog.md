@@ -4961,6 +4961,22 @@ stalled run found again the next morning is not reported again while the
 same run failing after it resumes is. It cannot see a job that never
 starts at all; that is the platform's own run history.
 
+# M27 — The timeline experience for transactions ✅
+
+An officer recording a deposit, a withdrawal or a transfer used to learn
+whether it would be reviewed only after pressing Record. Now the form opens
+on the chevron the transaction page will show, drawn ahead of time — Record
+current, every step of the chain to come, Posted at the end, or Record and
+Posted alone under "Up to Rs 100,000.00: posted at once, no review needed"
+— for the account chosen and the amount typed, from a member's page and from
+the Transactions lookups alike. The bands are `routeBands()` in
+`src/lib/ledger/routing.ts`, read off `resolveRoute` at every boundary the
+matrix draws for that kind, account type and officer, so the picture and the
+submit cannot disagree; `previewTimeline` and `routePreviewGroups`
+(`src/lib/workflow/timeline.ts`) turn them into the same `TimelineStep`s
+the membership application's chevron uses, and `RoutePreview.astro` shows
+the right one as the amount changes. `docs/ledger.md` has the detail.
+
 # Open values that later stories depend on
 
 Each is absorbed by configuration, so none blocks the start of development.

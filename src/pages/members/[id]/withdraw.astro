@@ -17,7 +17,9 @@ import {
   type Withdrawal,
 } from '@lib/ledger/withdrawals';
 import { loadCustomer, loadMember } from '@lib/members/create';
-import { formatMoney } from '@lib/payments/money';
+import { formatMoney, toCents } from '@lib/payments/money';
+import { routePreviewGroups } from '@lib/workflow/timeline';
+import RoutePreview from '@components/RoutePreview.astro';
 import {
   PAGE,
   MUTED,
@@ -121,6 +123,16 @@ if (Astro.request.method === 'POST') {
     }
   }
 }
+// The timeline experience: what will happen to this transaction, by
+// account and amount, drawn over the form before it is recorded.
+const routeGroups = await routePreviewGroups(
+  'withdrawal',
+  withdrawable,
+  principal.roles
+);
+const initialCents = /^\d{1,12}(\.\d{1,2})?$/.test(values.amount ?? '')
+  ? toCents(values.amount)
+  : null;
 ---
 
 <DashboardLayout
@@ -221,119 +233,127 @@ if (Astro.request.method === 'POST') {
           : 'None of these accounts allows a withdrawal.'}
       </section>
     ) : (
-      <form method="post" data-withdrawal-form class={FORM_CARD}>
-        <input
-          type="hidden"
-          name="idempotencyKey"
-          value={values.idempotencyKey}
+      <>
+        <RoutePreview
+          groups={routeGroups}
+          accountField="accountId"
+          initialAccountId={values.accountId}
+          initialAmountCents={initialCents}
         />
+        <form method="post" data-withdrawal-form class={FORM_CARD}>
+          <input
+            type="hidden"
+            name="idempotencyKey"
+            value={values.idempotencyKey}
+          />
 
-        <label class={LABEL}>
-          Account
-          <select name="accountId" class={INPUT}>
-            {accounts.map(account => (
-              <option
-                value={account.id}
-                selected={account.id === values.accountId}
-                disabled={
-                  !(account.status === 'active' && account.allowsWithdrawal)
-                }
-                data-available={account.available}
-                data-floor={account.floor}
-              >
-                {account.accountNo} · {account.accountTypeName} ·{' '}
-                {formatMoney(account.balance)}
-                {account.pendingDebits !== '0.00' &&
-                  ` · ${formatMoney(account.available)} available`}
-                {account.status !== 'active'
-                  ? ` · ${account.status}`
-                  : account.allowsWithdrawal
-                    ? ''
-                    : ' · no withdrawals'}
-              </option>
-            ))}
-          </select>
-        </label>
-        <p
-          data-available-note
-          class="text-xs text-neutral-500 dark:text-neutral-400"
-        ></p>
-
-        <div class="grid gap-3 sm:grid-cols-2">
           <label class={LABEL}>
-            Amount (Rs)
-            <input
-              type="text"
-              inputmode="decimal"
-              name="amount"
-              required
-              value={values.amount}
-              class={INPUT}
-            />
-          </label>
-          <label class={LABEL}>
-            Paid by
-            <select name="method" class={INPUT}>
-              {paymentMethods.map(method => (
-                <option
-                  value={method.code}
-                  data-requires-reference={
-                    method.requiresReference || method.touchesBank
-                      ? 'true'
-                      : 'false'
-                  }
-                  data-touches-bank={method.touchesBank ? 'true' : 'false'}
-                  selected={method.code === values.method}
-                >
-                  {method.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label data-method-reference-field class={LABEL}>
-            Reference (cheque number, transfer reference)
-            <input
-              type="text"
-              name="methodReference"
-              value={values.methodReference}
-              class={INPUT}
-            />
-          </label>
-          <label data-bank-account-field class={LABEL}>
-            Bank account
-            <select name="bankAccountId" class={INPUT}>
-              <option value="">Choose…</option>
-              {bankAccounts.map(account => (
+            Account
+            <select name="accountId" class={INPUT}>
+              {accounts.map(account => (
                 <option
                   value={account.id}
-                  selected={account.id === values.bankAccountId}
+                  selected={account.id === values.accountId}
+                  disabled={
+                    !(account.status === 'active' && account.allowsWithdrawal)
+                  }
+                  data-available={account.available}
+                  data-floor={account.floor}
                 >
-                  {account.name} · {account.bankName}
+                  {account.accountNo} · {account.accountTypeName} ·{' '}
+                  {formatMoney(account.balance)}
+                  {account.pendingDebits !== '0.00' &&
+                    ` · ${formatMoney(account.available)} available`}
+                  {account.status !== 'active'
+                    ? ` · ${account.status}`
+                    : account.allowsWithdrawal
+                      ? ''
+                      : ' · no withdrawals'}
                 </option>
               ))}
             </select>
           </label>
-          <label class={LABEL}>
-            Note
-            <input
-              type="text"
-              name="reason"
-              value={values.reason}
-              maxlength="200"
-              class={INPUT}
-            />
-          </label>
-        </div>
+          <p
+            data-available-note
+            class="text-xs text-neutral-500 dark:text-neutral-400"
+          ></p>
 
-        <div class="flex flex-wrap gap-2 pt-2">
-          <button type="submit" class={BUTTON}>
-            Record withdrawal
-          </button>
-          <a href={`/members/${person.id}`} class={SECONDARY_SM}>
-            Cancel
-          </a>
-        </div>
-      </form>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label class={LABEL}>
+              Amount (Rs)
+              <input
+                type="text"
+                inputmode="decimal"
+                name="amount"
+                required
+                value={values.amount}
+                class={INPUT}
+              />
+            </label>
+            <label class={LABEL}>
+              Paid by
+              <select name="method" class={INPUT}>
+                {paymentMethods.map(method => (
+                  <option
+                    value={method.code}
+                    data-requires-reference={
+                      method.requiresReference || method.touchesBank
+                        ? 'true'
+                        : 'false'
+                    }
+                    data-touches-bank={method.touchesBank ? 'true' : 'false'}
+                    selected={method.code === values.method}
+                  >
+                    {method.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label data-method-reference-field class={LABEL}>
+              Reference (cheque number, transfer reference)
+              <input
+                type="text"
+                name="methodReference"
+                value={values.methodReference}
+                class={INPUT}
+              />
+            </label>
+            <label data-bank-account-field class={LABEL}>
+              Bank account
+              <select name="bankAccountId" class={INPUT}>
+                <option value="">Choose…</option>
+                {bankAccounts.map(account => (
+                  <option
+                    value={account.id}
+                    selected={account.id === values.bankAccountId}
+                  >
+                    {account.name} · {account.bankName}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label class={LABEL}>
+              Note
+              <input
+                type="text"
+                name="reason"
+                value={values.reason}
+                maxlength="200"
+                class={INPUT}
+              />
+            </label>
+          </div>
+
+          <div class="flex flex-wrap gap-2 pt-2">
+            <button type="submit" class={BUTTON}>
+              Record withdrawal
+            </button>
+            <a href={`/members/${person.id}`} class={SECONDARY_SM}>
+              Cancel
+            </a>
+          </div>
+        </form>
+      </>
     )}
   </div>
 </DashboardLayout>

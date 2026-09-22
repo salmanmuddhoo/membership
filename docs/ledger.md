@@ -286,6 +286,21 @@ the same `resolveRoute` with `roleCodes: ['member']` and a principal that
 may capture but never post, so a rule "by Member" decides its chain and a
 route with no chain is refused rather than posted.
 
+**The officer sees the route before they record it.** The deposit,
+withdrawal and transfer forms — reached from a member's page or from the
+Transactions lookups, which land on the form with the account chosen — open
+on the same chevron the transaction page will show, drawn ahead of time
+(`RoutePreview.astro`, `previewTimeline` and `routePreviewGroups` in
+`src/lib/workflow/timeline.ts`): Record as the current step, every step of
+the chain to come, Posted at the end — or Record and Posted alone with "posted
+at once, no review needed" above, where the matrix posts directly. The
+amounts are `routeBands()` in `routing.ts`: every boundary the kind's rules
+draw for that account type and that officer, each band read off
+`resolveRoute` itself, so the picture can never say something the submit
+would not do. One block per account and band is rendered; a script shows the
+one for the account and amount typed, so a larger amount reveals its review
+before Record is pressed.
+
 ## Acting on what waits
 
 `src/lib/ledger/review.ts` (S-1403, S-1404). Where a transaction stands is
