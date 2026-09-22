@@ -12,6 +12,23 @@
 
 export type Happening = 'submitted' | 'returned' | 'approved' | 'rejected';
 
+// An exit's stages (S-1705): closure.*, resignation.* and demised.*, what
+// src/lib/ledger/exit-notifications.ts passes for each.
+export const EXIT_SUBJECTS = ['closure', 'resignation', 'demised'] as const;
+export const EXIT_HAPPENINGS = [
+  'submitted',
+  'under_review',
+  'approved',
+  'rejected',
+] as const;
+const EXIT_COMMON = [
+  'recipient_name',
+  'member_name',
+  'reference',
+  'account',
+  'amount',
+] as const;
+
 export const RECEIPT_ISSUED = 'receipt.issued';
 export const RECEIPT_PLACEHOLDERS = [
   'member_name',
@@ -58,6 +75,20 @@ export function placeholdersForEvent(eventCode: string): string[] | null {
   if (eventCode === RECEIPT_ISSUED) return [...RECEIPT_PLACEHOLDERS];
 
   const [subject, happening] = eventCode.split('.');
+  if ((EXIT_SUBJECTS as readonly string[]).includes(subject)) {
+    if (!(EXIT_HAPPENINGS as readonly string[]).includes(happening)) {
+      return null;
+    }
+    switch (happening) {
+      case 'under_review':
+      case 'rejected':
+        return [...EXIT_COMMON, 'comment'];
+      case 'approved':
+        return [...EXIT_COMMON, 'method', 'receipt_no'];
+      default:
+        return [...EXIT_COMMON];
+    }
+  }
   if (subject !== 'application' && subject !== 'account') return null;
 
   const common = ['applicant_name', 'reference'];

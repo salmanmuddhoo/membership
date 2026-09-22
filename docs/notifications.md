@@ -183,6 +183,27 @@ cannot be made — no `MEMBER_SESSION_SECRET`, or no `PUBLIC_APP_URL` and no
 branch for a printed copy." rather than nothing. How the link is signed and
 what opens it is in `docs/ledger.md`.
 
+## An exit, at every stage
+
+A closure, a resignation and a demised claim (S-1705, M17) each raise four
+events — `closure.*`, `resignation.*`, `demised.*` for `submitted`,
+`under_review`, `approved` and `rejected` — with an email and a WhatsApp
+template each (migration 0080), edited like any other. `submitted` goes
+when the request reaches its chain; `under_review` when a reviewer forwards
+it to a further step, with their comment; `rejected` with the reason;
+`approved` at the payout, not at the decision — the money leaving is what
+the member or claimant hears about, with the amount, the method and the
+receipt number. A request the matrix posts at once raises only `approved`.
+
+A closure or a resignation writes to the member, at the address their
+application recorded, exactly as a receipt does. A claim writes to the
+claimant — the nominee's email and mobile as captured, or the ones the
+officer recorded for another person — and never to the deceased member's
+own address. Placeholders: `recipient_name`, `member_name`, `reference`,
+`account`, `amount` (bare figure; the wording carries "Rs"), plus `comment`
+on the review and rejection events and `method` and `receipt_no` on the
+payout. `src/lib/ledger/exit-notifications.ts` raises them.
+
 ## Retrying, and giving up
 
 `notification-retry` (see `docs/jobs.md`) attempts everything whose backoff has

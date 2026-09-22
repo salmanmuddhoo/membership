@@ -283,6 +283,8 @@ describe('a demised claim (S-1704)', () => {
       nic: 'Y1234567890123',
       address: '12 Rue des Palmiers, Curepipe',
       relation: 'Nominee',
+      email: null,
+      mobile: null,
     });
     await expect(
       demises.startDemise(

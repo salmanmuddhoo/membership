@@ -75,6 +75,18 @@ const EVENT_LABELS: Record<string, string> = {
   'account.approved': 'Account opened',
   'account.rejected': 'Account application not approved',
   'receipt.issued': 'Receipt issued',
+  'closure.submitted': 'Account closure received',
+  'closure.under_review': 'Account closure under review',
+  'closure.approved': 'Account closed and paid out',
+  'closure.rejected': 'Account closure not approved',
+  'resignation.submitted': 'Resignation received',
+  'resignation.under_review': 'Resignation under review',
+  'resignation.approved': 'Resignation approved and paid out',
+  'resignation.rejected': 'Resignation not approved',
+  'demised.submitted': 'Demised claim received',
+  'demised.under_review': 'Demised claim under review',
+  'demised.approved': 'Demised claim paid out',
+  'demised.rejected': 'Demised claim not approved',
 };
 
 const eventLabel = (code: string) =>

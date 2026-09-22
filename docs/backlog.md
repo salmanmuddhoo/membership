@@ -4329,8 +4329,20 @@ carried on the claim; posting writes one debit per account, closes each,
 pays the total to the claimant on one receipt and sets `member.status =
 'demised'`, dated. **7c** — the review screen shows the claimant, the
 benefit beside the total and the two documents. `POST
-/api/v1/members/{id}/demise` starts one. **Not yet:** the notifications
-(S-1705) and the report (S-1706).
+/api/v1/members/{id}/demise` starts one.
+
+**Shipped, fourth increment** (S-1705, S-1706) — M17 complete. Twelve
+events, `closure.*`, `resignation.*` and `demised.*` for submitted,
+under review (with the reviewer's comment), approved (at the payout, with
+the amount, method and receipt) and rejected (with the reason), each with
+seeded email and WhatsApp wording at Configuration → Notification wording
+(0080); a closure or a resignation writes to the member, a claim to the
+claimant's own email and mobile — the nominee's as captured, or the ones
+the officer records — never the deceased member's. The **Exits** report
+lists the three kinds by the period submitted, with the member, what was
+paid out and to whom, the Takaful benefit, the status, the receipt and the
+days from submission to payout; filterable by kind, totals by kind in the
+summary, Excel through the same export as every report.
 
 ### S-1701 · Member status gets a vocabulary ✅
 
@@ -4401,7 +4413,7 @@ two figures and the documents — `3`.
   is the right legal instrument is the reviewer's call, and the screen says
   so in one line (FRD 7.3)
 
-### S-1705 · Notifications at every stage of an exit
+### S-1705 · Notifications at every stage of an exit ✅
 
 **As** the member or claimant, **I need** to hear when a request is
 submitted, under review, approved with the payout, or rejected, **so that**
@@ -4413,7 +4425,7 @@ nobody has to phone. _(CLS-US-007, RES-US-007, DEM-US-008, FRD 11.1)_
   at Configuration → Notification wording; a demised claim writes to the
   claimant's contact, not the member's
 
-### S-1706 · Exits report
+### S-1706 · Exits report ✅
 
 **As** a manager, **I need** closures, resignations and demised claims by
 period with amounts and turnaround, **so that** exits are visible.

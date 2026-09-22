@@ -40,6 +40,8 @@ let values = {
   nic: '',
   address: '',
   relation: '',
+  email: '',
+  mobile: '',
   method: paymentMethods[0]?.code ?? '',
   methodReference: '',
   reason: '',
@@ -55,6 +57,8 @@ if (Astro.request.method === 'POST') {
     nic: text('nic'),
     address: text('address'),
     relation: text('relation'),
+    email: text('email'),
+    mobile: text('mobile'),
     method: text('method'),
     methodReference: text('methodReference'),
     reason: text('reason'),
@@ -69,6 +73,8 @@ if (Astro.request.method === 'POST') {
           nic: values.nic,
           address: values.address,
           relation: values.relation,
+          email: values.email,
+          mobile: values.mobile,
         },
         method: values.method,
         methodReference: values.methodReference,
@@ -202,6 +208,14 @@ const INPUT =
             value={values.relation}
             class={INPUT}
           />
+        </label>
+        <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          Email
+          <input type="email" name="email" value={values.email} class={INPUT} />
+        </label>
+        <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          Mobile
+          <input type="tel" name="mobile" value={values.mobile} class={INPUT} />
         </label>
       </div>
       <div class="grid gap-3 sm:grid-cols-2">
