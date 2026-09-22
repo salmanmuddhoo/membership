@@ -1,0 +1,250 @@
+---
+// The cash drawer (S-2001, S-2002).
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import {
+  CashSessionError,
+  PERMISSION_SESSION,
+  closeSession,
+  drawerFigures,
+  openSession,
+  openSessionFor,
+} from '@lib/cash/sessions';
+import { formatMoney, fromCents, toCents } from '@lib/payments/money';
+
+const principal = Astro.locals.principal!;
+if (!principal.permissions.has(PERMISSION_SESSION)) {
+  return Astro.redirect('/denied');
+}
+
+let error: string | null = null;
+let notice: string | null = null;
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = String(form.get('intent') ?? '');
+
+  try {
+    if (intent === 'open') {
+      await openSession(
+        {
+          openingFloat: String(form.get('openingFloat') ?? ''),
+          note: String(form.get('note') ?? ''),
+        },
+        principal
+      );
+      notice = 'Drawer opened.';
+    } else if (intent === 'close') {
+      const closed = await closeSession(
+        {
+          closingCount: String(form.get('closingCount') ?? ''),
+          note: String(form.get('note') ?? ''),
+        },
+        principal
+      );
+      const overShortCents = toCents(closed.overShort ?? '0');
+      const difference =
+        overShortCents === 0
+          ? 'The count matches.'
+          : overShortCents > 0
+            ? `Over by ${formatMoney(closed.overShort!)}.`
+            : `Short by ${formatMoney(fromCents(-overShortCents))}.`;
+      notice = `Drawer closed. ${difference}`;
+    }
+  } catch (err) {
+    if (err instanceof CashSessionError) {
+      error = err.message;
+    } else {
+      console.error('[cashier]', err);
+      error = 'Something went wrong. Please try again.';
+    }
+  }
+}
+
+const session = await openSessionFor(principal.userId);
+const figures = session ? await drawerFigures(session.id) : null;
+
+const dateFormat = new Intl.DateTimeFormat('en-GB', {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+});
+
+const INPUT =
+  'mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100';
+const BUTTON =
+  'bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition';
+---
+
+<DashboardLayout title="Cash drawer · Al Barakah MCSL" heading="Cash drawer">
+  <div class="mx-auto max-w-3xl space-y-6">
+    {error && (
+      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+        {error}
+      </div>
+    )}
+    {notice && (
+      <div class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-lg border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
+        {notice}
+      </div>
+    )}
+
+    {!session ? (
+      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+          No drawer open
+        </h2>
+        <form method="post" class="mt-4 grid gap-3 sm:grid-cols-2">
+          <input type="hidden" name="intent" value="open" />
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            Opening float (Rs)
+            <input
+              type="text"
+              name="openingFloat"
+              inputmode="decimal"
+              required
+              class={INPUT}
+            />
+          </label>
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            Note
+            <input type="text" name="note" class={INPUT} />
+          </label>
+          <div class="sm:col-span-2">
+            <button type="submit" class={BUTTON}>
+              Open drawer
+            </button>
+          </div>
+        </form>
+      </section>
+    ) : (
+      <>
+        <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+          <dl class="grid gap-4 text-sm sm:grid-cols-5">
+            <div>
+              <dt class="text-neutral-500 dark:text-neutral-400">Opened</dt>
+              <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+                {dateFormat.format(session.openedAt)}
+              </dd>
+            </div>
+            <div>
+              <dt class="text-neutral-500 dark:text-neutral-400">Float</dt>
+              <dd class="font-medium text-neutral-800 tabular-nums dark:text-neutral-100">
+                {formatMoney(figures!.openingFloat)}
+              </dd>
+            </div>
+            <div>
+              <dt class="text-neutral-500 dark:text-neutral-400">Cash in</dt>
+              <dd class="font-medium text-neutral-800 tabular-nums dark:text-neutral-100">
+                {formatMoney(figures!.cashIn)}
+              </dd>
+            </div>
+            <div>
+              <dt class="text-neutral-500 dark:text-neutral-400">Cash out</dt>
+              <dd class="font-medium text-neutral-800 tabular-nums dark:text-neutral-100">
+                {formatMoney(figures!.cashOut)}
+              </dd>
+            </div>
+            <div>
+              <dt class="text-neutral-500 dark:text-neutral-400">Expected</dt>
+              <dd class="text-lg font-bold text-neutral-800 tabular-nums dark:text-neutral-100">
+                {formatMoney(figures!.expected)}
+              </dd>
+            </div>
+          </dl>
+        </section>
+
+        <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+          <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+            Movements
+          </h2>
+          {figures!.movements.length === 0 ? (
+            <p class="mt-3 text-sm text-neutral-500 dark:text-neutral-400">
+              No cash movements yet.
+            </p>
+          ) : (
+            <table class="mt-4 w-full text-sm">
+              <thead>
+                <tr class="border-b border-neutral-300 text-left dark:border-neutral-700">
+                  <th class="py-2 font-medium text-neutral-600 dark:text-neutral-300">
+                    Time
+                  </th>
+                  <th class="py-2 font-medium text-neutral-600 dark:text-neutral-300">
+                    What
+                  </th>
+                  <th class="py-2 font-medium text-neutral-600 dark:text-neutral-300">
+                    Reference
+                  </th>
+                  <th class="py-2 font-medium text-neutral-600 dark:text-neutral-300">
+                    Receipt
+                  </th>
+                  <th class="py-2 text-right font-medium text-neutral-600 dark:text-neutral-300">
+                    In
+                  </th>
+                  <th class="py-2 text-right font-medium text-neutral-600 dark:text-neutral-300">
+                    Out
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {figures!.movements.map(m => (
+                  <tr class="border-b border-neutral-200 dark:border-neutral-800">
+                    <td class="py-2 text-neutral-500 dark:text-neutral-400">
+                      {dateFormat.format(m.at)}
+                    </td>
+                    <td class="py-2 text-neutral-800 dark:text-neutral-100">
+                      {m.what}
+                    </td>
+                    <td class="py-2">
+                      <code class="text-xs text-neutral-600 dark:text-neutral-300">
+                        {m.reference}
+                      </code>
+                    </td>
+                    <td class="py-2 text-neutral-500 dark:text-neutral-400">
+                      {m.receiptNo ?? '—'}
+                    </td>
+                    <td class="py-2 text-right tabular-nums text-neutral-800 dark:text-neutral-100">
+                      {m.direction === 'in' ? formatMoney(m.amount) : ''}
+                    </td>
+                    <td class="py-2 text-right tabular-nums text-neutral-800 dark:text-neutral-100">
+                      {m.direction === 'out' ? formatMoney(m.amount) : ''}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </section>
+
+        <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+          <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+            Close drawer
+          </h2>
+          <form method="post" class="mt-4 grid gap-3 sm:grid-cols-2">
+            <input type="hidden" name="intent" value="close" />
+            <label class="text-sm text-neutral-600 dark:text-neutral-300">
+              Counted (Rs)
+              <input
+                type="text"
+                name="closingCount"
+                inputmode="decimal"
+                required
+                class={INPUT}
+              />
+            </label>
+            <label class="text-sm text-neutral-600 dark:text-neutral-300">
+              Note
+              <input type="text" name="note" class={INPUT} />
+            </label>
+            <p class="text-sm text-amber-700 dark:text-amber-400 sm:col-span-2">
+              Closing fixes the count and the difference on this drawer.
+            </p>
+            <div class="sm:col-span-2">
+              <button type="submit" class={BUTTON}>
+                Close drawer
+              </button>
+            </div>
+          </form>
+        </section>
+      </>
+    )}
+  </div>
+</DashboardLayout>

@@ -102,6 +102,18 @@ const navGroups: NavGroup[] = [
             },
           ]
         : []),
+      ...(can('cash.session')
+        ? [{ label: 'Cash drawer', href: '/cashier', icon: 'reports' }]
+        : []),
+      ...(can('cash.view')
+        ? [
+            {
+              label: 'Cash drawers',
+              href: '/cashier/sessions',
+              icon: 'reports',
+            },
+          ]
+        : []),
       ...(can('receipt.reconcile')
         ? [
             {
