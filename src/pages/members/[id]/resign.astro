@@ -1,13 +1,10 @@
 ---
-// Start a member's resignation (S-1703): why, and how the balance of their
-// Shares and MSA goes back to them. What this makes is a draft; the member
+// Start a member's resignation (S-1703): why. How the balance of their
+// Shares and MSA goes back to them is recorded when the approved request is
+// posted (officer feedback). What this makes is a draft; the member
 // signs the request on the next screen and the officer submits it once
 // every check passes.
 import DashboardLayout from '@layouts/DashboardLayout.astro';
-import {
-  offeredBankAccounts,
-  offeredPaymentMethods,
-} from '@lib/config/reference';
 import {
   checksFor,
   coreAccounts,
@@ -43,32 +40,22 @@ if (!member) return new Response('Not found', { status: 404 });
 const inFlight = await resignationInFlightFor(member.id);
 if (inFlight) return Astro.redirect(`/transactions/${inFlight.id}`);
 
-const [accounts, checks, paymentMethods, bankAccounts] = await Promise.all([
+const [accounts, checks] = await Promise.all([
   coreAccounts(member.id),
   checksFor(member.id),
-  offeredPaymentMethods(),
-  offeredBankAccounts(),
 ]);
 const total = fromCents(totalCents(accounts));
 const others = member.accounts.filter(a => !accounts.some(c => c.id === a.id));
 
-let values = {
-  reason: '',
-  method: paymentMethods[0]?.code ?? '',
-  methodReference: '',
-  bankAccountId: '',
-};
+// Officer feedback: only the reason here. How the balance is paid out is
+// recorded by whoever posts the approved resignation.
+let values = { reason: '' };
 let error: string | null = null;
 
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
   const text = (name: string) => String(form.get(name) ?? '');
-  values = {
-    reason: text('reason'),
-    method: text('method'),
-    methodReference: text('methodReference'),
-    bankAccountId: text('bankAccountId'),
-  };
+  values = { reason: text('reason') };
   try {
     const request = await startResignation(
       { memberId: member.id, ...values },
@@ -155,45 +142,6 @@ if (Astro.request.method === 'POST') {
           class={INPUT}
         >{values.reason}</textarea>
       </label>
-      <div class="grid gap-3 sm:grid-cols-2">
-        <label class={LABEL}>
-          Balance paid out by
-          <select name="method" class={INPUT}>
-            {paymentMethods.map(method => (
-              <option
-                value={method.code}
-                data-touches-bank={method.touchesBank ? 'true' : 'false'}
-                selected={method.code === values.method}
-              >
-                {method.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label class={LABEL}>
-          Reference (cheque number, transfer reference)
-          <input
-            type="text"
-            name="methodReference"
-            value={values.methodReference}
-            class={INPUT}
-          />
-        </label>
-        <label data-bank-account-field class={LABEL}>
-          Bank account
-          <select name="bankAccountId" class={INPUT}>
-            <option value="">Choose…</option>
-            {bankAccounts.map(account => (
-              <option
-                value={account.id}
-                selected={account.id === values.bankAccountId}
-              >
-                {account.name} · {account.bankName}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
       <p class="text-xs text-neutral-500 dark:text-neutral-400">
         The balance is paid out when the resignation is approved, as it stands
         then. Both accounts close and the membership ends.
@@ -204,26 +152,3 @@ if (Astro.request.method === 'POST') {
     </form>
   </div>
 </DashboardLayout>
-
-<script>
-  // A visual nudge only — enforced server-side (ledger/resignations.ts)
-  // whether or not this script runs.
-  const form = document.querySelector<HTMLFormElement>(
-    '[data-resignation-form]'
-  );
-  if (form) {
-    const methodSelect =
-      form.querySelector<HTMLSelectElement>('[name="method"]');
-    const bankField = form.querySelector<HTMLElement>(
-      '[data-bank-account-field]'
-    );
-    const recompute = () => {
-      const selected = methodSelect?.selectedOptions[0];
-      if (bankField) {
-        bankField.hidden = selected?.dataset.touchesBank !== 'true';
-      }
-    };
-    methodSelect?.addEventListener('change', recompute);
-    recompute();
-  }
-</script>

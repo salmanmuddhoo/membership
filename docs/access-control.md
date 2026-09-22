@@ -52,6 +52,16 @@ fee schedules (S-207), holds `fee.view` and `fee.manage` and no longer holds
 shows them **Fee schedules** in its place, and the page's section tabs are
 hidden from anyone without `config.view`.
 
+### The day's transactions
+
+Transactions → Today's transactions lists every transaction for a role
+holding `transaction.view_all` (migration 0092), and only the ones the
+officer recorded for anyone else — by default a Regional Officer or a
+Regional Manager; every other role that held `transaction.view` was given
+it. The staff API's `GET /api/v1/transactions`, called without a member,
+customer or account, is scoped the same way. Moving `transaction.view_all`
+between roles at Configuration → Roles changes who sees what.
+
 ## Permissions are data
 
 Effective permissions are the union of every role the user holds, read from the

@@ -15,6 +15,9 @@ export interface HistoryFilter {
   memberId?: string;
   customerId?: string;
   accountId?: string;
+  // Only what this officer recorded: the day's list for someone without
+  // transaction.view_all.
+  capturedBy?: string;
   kind?: TransactionRowKind;
   status?: string;
   // Inclusive dates, on when the transaction was recorded.
@@ -47,6 +50,8 @@ export async function listTransactions(
   if (filter.customerId)
     where.push(`t.customer_id = ${add(filter.customerId)}`);
   if (filter.accountId) where.push(`t.account_id = ${add(filter.accountId)}`);
+  if (filter.capturedBy)
+    where.push(`t.captured_by = ${add(filter.capturedBy)}`);
   if (filter.kind) where.push(`t.kind = ${add(filter.kind)}`);
   if (filter.status) where.push(`t.status = ${add(filter.status)}`);
   if (filter.from) where.push(`t.created_at >= ${add(filter.from)}`);

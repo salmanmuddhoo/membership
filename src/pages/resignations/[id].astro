@@ -24,6 +24,7 @@ import {
   updateResignation,
 } from '@lib/ledger/resignations';
 import { loadTransaction, transitionsFor } from '@lib/ledger/review';
+import { resolveRoute } from '@lib/ledger/routing';
 import { DocumentError, removeFiledDocument } from '@lib/documents/documents';
 import { formatMoney, fromCents } from '@lib/payments/money';
 import { chainTimeline } from '@lib/workflow/timeline';
@@ -73,18 +74,28 @@ if (Astro.request.method === 'POST') {
   const intent = text('intent');
   try {
     if (intent === 'details') {
+      // Only the reason: the payout is the posting officer's to record.
       request = await updateResignation(
         request.id,
-        {
-          reason: text('reason'),
-          method: text('method'),
-          methodReference: text('methodReference'),
-          bankAccountId: text('bankAccountId'),
-        },
+        { reason: text('reason') },
         principal
       );
       return Astro.redirect(`${base}?step=signature`);
     } else if (intent === 'submit') {
+      // Where the matrix posts it at once, submitting IS the posting, and
+      // the payout is asked here (postsAtOnce, below).
+      if (form.has('method')) {
+        request = await updateResignation(
+          request.id,
+          {
+            reason: request.reason,
+            method: text('method'),
+            methodReference: text('methodReference'),
+            bankAccountId: text('bankAccountId'),
+          },
+          principal
+        );
+      }
       const submitted = await submitResignation(request.id, principal);
       return Astro.redirect(`/transactions/${submitted.id}`);
     } else if (intent === 'remove-form') {
@@ -132,6 +143,18 @@ const [
 const complete = checklistComplete(checklist);
 const blocking = blockingChecks(checks);
 const total = fromCents(totalCents(accounts));
+// Posted at once when the matrix routes it nowhere: only then is the payout
+// asked before the posting step, because submitting is the posting.
+const postsAtOnce =
+  accounts.length > 0 &&
+  !(
+    await resolveRoute({
+      kind: 'resignation',
+      accountTypeId: accounts[0].accountTypeId,
+      amountCents: totalCents(accounts),
+      roleCodes: principal.roles,
+    })
+  ).definition;
 const form = checklist[0] ?? null;
 const returnComment =
   request.status === 'returned'
@@ -178,7 +201,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     )}
 
     {step === 'details' && (
-      <form method="post" data-resignation-details-form class={FORM_CARD}>
+      <form method="post" class={FORM_CARD}>
         <h2 class={CARD_LABEL}>Details</h2>
         <ul class="divide-y divide-neutral-200 text-sm dark:divide-neutral-800">
           {accounts.map(account => (
@@ -204,45 +227,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             class={INPUT}
           >{request.reason}</textarea>
         </label>
-        <div class="grid gap-3 sm:grid-cols-2">
-          <label class={LABEL}>
-            Balance paid out by
-            <select name="method" class={INPUT}>
-              {paymentMethods.map(method => (
-                <option
-                  value={method.code}
-                  data-touches-bank={method.touchesBank ? 'true' : 'false'}
-                  selected={method.code === request!.method}
-                >
-                  {method.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label class={LABEL}>
-            Reference (cheque number, transfer reference)
-            <input
-              type="text"
-              name="methodReference"
-              value={request.methodReference}
-              class={INPUT}
-            />
-          </label>
-          <label data-bank-account-field class={LABEL}>
-            Bank account
-            <select name="bankAccountId" class={INPUT}>
-              <option value="">Choose…</option>
-              {bankAccounts.map(account => (
-                <option
-                  value={account.id}
-                  selected={account.id === request!.bankAccountId}
-                >
-                  {account.name} · {account.bankName}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
         <input type="hidden" name="intent" value="details" />
         <div class="flex flex-wrap gap-2 pt-2">
           <button type="submit" class={BUTTON}>
@@ -359,7 +343,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     )}
 
     {step === 'submit' && (
-      <form method="post" class={FORM_CARD}>
+      <form method="post" data-resignation-details-form class={FORM_CARD}>
         <h2 class={CARD_LABEL}>Submit</h2>
         <dl class="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
           <dt class="text-neutral-500 dark:text-neutral-400">Closing</dt>
@@ -374,11 +358,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           <dd class="text-neutral-800 dark:text-neutral-100">
             {request.reason}
           </dd>
-          <dt class="text-neutral-500 dark:text-neutral-400">Paid out by</dt>
-          <dd class="text-neutral-800 dark:text-neutral-100">
-            {request.methodName}
-            {request.methodReference && ` · ${request.methodReference}`}
-          </dd>
           <dt class="text-neutral-500 dark:text-neutral-400">Signed request</dt>
           <dd
             class:list={[
@@ -390,6 +369,47 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             {complete ? 'On file' : 'Missing'}
           </dd>
         </dl>
+        {postsAtOnce && (
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label class={LABEL}>
+              Balance paid out by
+              <select name="method" class={INPUT}>
+                {paymentMethods.map(method => (
+                  <option
+                    value={method.code}
+                    data-touches-bank={method.touchesBank ? 'true' : 'false'}
+                    selected={method.code === request!.method}
+                  >
+                    {method.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label class={LABEL}>
+              Reference (cheque number, transfer reference)
+              <input
+                type="text"
+                name="methodReference"
+                value={request.methodReference}
+                class={INPUT}
+              />
+            </label>
+            <label data-bank-account-field class={LABEL}>
+              Bank account
+              <select name="bankAccountId" class={INPUT}>
+                <option value="">Choose…</option>
+                {bankAccounts.map(account => (
+                  <option
+                    value={account.id}
+                    selected={account.id === request!.bankAccountId}
+                  >
+                    {account.name} · {account.bankName}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        )}
         <ul class="space-y-1 text-sm">
           {checks.map(check => (
             <li class="flex flex-wrap items-baseline gap-x-2">

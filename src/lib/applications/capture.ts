@@ -551,11 +551,55 @@ async function holderSourceApplicationIds(
     foundingApplicationId: string | null;
   }
 ): Promise<string[]> {
+  if (holder.column === 'existing_member_id') {
+    return memberSourceApplicationIds(client, holder.ownerId, newApplicationId);
+  }
   const result = await client.query<{ id: string }>(
     `select id from membership_application
       where (id = $1::uuid or ${holder.column} = $2::uuid)
         and id <> $3::uuid`,
     [holder.foundingApplicationId, holder.ownerId, newApplicationId]
+  );
+  return result.rows.map(r => r.id);
+}
+
+// Every application that is this member's, wherever their papers were
+// filed (officer feedback: a member coming back — rejoining, or opening a
+// further account after resigning — was asked for their NIC again). The
+// one on file and the one that founded the folder, every account
+// application and rejoin naming them, and — for someone who became a member
+// from a non-member customer (S-614) — that customer's own applications,
+// where their identity documents were first filed. Never the new one.
+async function memberSourceApplicationIds(
+  client: PoolClient,
+  memberId: string,
+  newApplicationId: string
+): Promise<string[]> {
+  const result = await client.query<{ id: string }>(
+    `with own as (
+       select a.id, a.folder_application_id, a.source_customer_id
+         from membership_application a
+         join member m on m.id = $1::uuid
+        where a.id = m.application_id
+           or a.existing_member_id = m.id
+           or a.rejoins_member_id = m.id
+     ),
+     customers as (
+       select distinct source_customer_id as id from own
+        where source_customer_id is not null
+     )
+     select id from own
+     union
+     select folder_application_id from own
+      where folder_application_id is not null
+     union
+     select c.application_id from customer c join customers x on x.id = c.id
+     union
+     select a.id from membership_application a
+       join customers x on x.id = a.existing_customer_id
+     except
+     select $2::uuid`,
+    [memberId, newApplicationId]
   );
   return result.rows.map(r => r.id);
 }
@@ -1216,6 +1260,20 @@ export async function startRejoinApplication(
         [id, sourceApplicationId]
       );
     }
+
+    // Their identity card and the rest are already on file: carried onto
+    // this application exactly as a further account's are, for the officer
+    // to keep, or delete and file afresh.
+    await carryForwardMemberDocuments(client, {
+      applicationId: id,
+      memberId,
+      sourceApplicationIds: await memberSourceApplicationIds(
+        client,
+        memberId,
+        id
+      ),
+      actor,
+    });
 
     await recordAudit(
       {

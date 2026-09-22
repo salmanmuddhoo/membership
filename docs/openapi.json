@@ -10021,7 +10021,7 @@
     "/api/v1/transactions": {
       "get": {
         "summary": "List transactions",
-        "description": "Every transaction, newest first, paged. Filter by member or customer (across all their accounts), account, kind, status, and the dates it was recorded between (from, to; YYYY-MM-DD, inclusive). A transfer shows once: its credit leg is left out wherever its debit leg is in the same list, and shows on its own only for the person who received it. Query: member, customer, account, kind, status, from, to, page, pageSize (max 200).",
+        "description": "Every transaction, newest first, paged. Filter by member or customer (across all their accounts), account, kind, status, and the dates it was recorded between (from, to; YYYY-MM-DD, inclusive). A transfer shows once: its credit leg is left out wherever its debit leg is in the same list, and shows on its own only for the person who received it. Without transaction.view_all, a list not narrowed to a member, customer or account holds only the transactions the caller recorded. Query: member, customer, account, kind, status, from, to, page, pageSize (max 200).",
         "tags": [
           "Transactions"
         ],
