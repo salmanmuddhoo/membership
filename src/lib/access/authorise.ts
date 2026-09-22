@@ -62,6 +62,9 @@ const ROUTE_PERMISSIONS: ReadonlyArray<readonly [string, string]> = [
   // before it will change anything. Viewing what the fees are is a different
   // thing from setting them.
   ['/admin/configuration/', 'config.view'],
+  // Bank accounts (S-1901): its own permission because an account number is
+  // not a fee schedule. The longer prefix wins over the section rule above.
+  ['/admin/configuration/bank-accounts', 'bank_account.view'],
 
   // Membership applications (M3). A prefix rule so a sub-page added later is
   // covered. Capturing, submitting, reviewing and approving are separate

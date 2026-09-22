@@ -22,6 +22,7 @@ import {
   allocateReceiptNumber,
   markReceiptIssued,
 } from '../payments/receipts';
+import { resolveBankAccount } from './bank-accounts';
 import { LedgerError, postTransaction } from './ledger';
 import { notifyReceiptIssued } from './receipt-notifications';
 import { notifyExit } from './exit-notifications';
@@ -113,6 +114,10 @@ export interface TransactionSummary {
   claimantKind: 'nominee' | 'other' | null;
   claimant: Claimant | null;
   takafulBenefit: string;
+  // Which of the Society's bank accounts the money reached or left
+  // (S-1901); null where none was named, or the method never touches one.
+  bankAccountId: string | null;
+  bankAccountName: string | null;
 }
 
 export interface Claimant {
@@ -150,6 +155,7 @@ export const TRANSACTION_SELECT = `
          t.approval_rule_id, t.source_of_fund_form_confirmed,
          t.transfer_id, tr.reference as transfer_reference, t.leg_direction,
          t.payee_name, t.claimant_kind, t.claimant, t.takaful_benefit,
+         t.bank_account_id, ba.name as bank_account_name,
          l.account_id as counterpart_account_id,
          coalesce(la.account_no, lm.member_no) as counterpart_account_no,
          lt.name as counterpart_account_type_name,
@@ -174,6 +180,7 @@ export const TRANSACTION_SELECT = `
       on ws.definition_id = wd.id and ws.code = t.current_step_code
     left join role wr on wr.id = ws.role_id
     left join transfer tr on tr.id = t.transfer_id
+    left join bank_account ba on ba.id = t.bank_account_id
     left join transaction l on l.transfer_id = t.transfer_id and l.id <> t.id
     left join account la on la.id = l.account_id
     left join account_type lt on lt.id = la.account_type_id
@@ -225,6 +232,8 @@ export interface TransactionRow {
   claimant_kind: 'nominee' | 'other' | null;
   claimant: Claimant | null;
   takaful_benefit: string;
+  bank_account_id: string | null;
+  bank_account_name: string | null;
   counterpart_account_id: string | null;
   counterpart_account_no: string | null;
   counterpart_account_type_name: string | null;
@@ -279,6 +288,8 @@ export function assembleTransaction(r: TransactionRow): TransactionSummary {
     claimantKind: r.claimant_kind,
     claimant: r.claimant,
     takafulBenefit: r.takaful_benefit,
+    bankAccountId: r.bank_account_id,
+    bankAccountName: r.bank_account_name,
   };
 }
 
@@ -699,6 +710,8 @@ export async function reviewTransaction(
 export interface Disbursement {
   method: string;
   methodReference?: string;
+  // The Society's bank account it was paid from (S-1901).
+  bankAccountId?: string;
 }
 
 // Money leaving the Society needs to say how it left; money arriving, or
@@ -756,7 +769,11 @@ export async function postApprovedTransaction(
       'conflict'
     );
   }
-  let paidBy: { code: string; reference: string | null } | null = null;
+  let paidBy: {
+    code: string;
+    reference: string | null;
+    bankAccountId: string | null;
+  } | null = null;
   if (transaction.legDirection === 'credit') {
     throw new ReviewError(
       'A transfer posts from its debit leg; open the transfer instead.',
@@ -773,6 +790,10 @@ export async function postApprovedTransaction(
       paidBy = {
         code: method.code,
         reference: (disbursement.methodReference ?? '').trim() || null,
+        bankAccountId: await resolveBankAccount(
+          disbursement.bankAccountId,
+          message => new ReviewError(message)
+        ),
       };
     } catch (err) {
       if (err instanceof PaymentError) throw new ReviewError(err.message);
@@ -789,13 +810,16 @@ export async function postApprovedTransaction(
             set receipt_number_id = $2,
                 method = coalesce($3, method),
                 method_reference = case when $3 is null then method_reference
-                                        else $4 end
+                                        else $4 end,
+                bank_account_id = case when $3 is null then bank_account_id
+                                       else $5::uuid end
           where id = $1`,
         [
           transaction.id,
           receipt.id,
           paidBy?.code ?? null,
           paidBy?.reference ?? null,
+          paidBy?.bankAccountId ?? null,
         ]
       );
       // A closure pays out whatever the account holds at this moment

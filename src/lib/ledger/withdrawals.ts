@@ -25,6 +25,7 @@ import {
   allocateReceiptNumber,
   markReceiptIssued,
 } from '../payments/receipts';
+import { resolveBankAccount } from './bank-accounts';
 import { availableBalance, LedgerError } from './ledger';
 import { notifyReceiptIssued } from './receipt-notifications';
 import { loadTransaction, type TransactionSummary } from './review';
@@ -59,6 +60,8 @@ export interface WithdrawalInput {
   methodReference?: string;
   reason?: string;
   idempotencyKey?: string;
+  // Which of the Society's bank accounts it is paid from (S-1901).
+  bankAccountId?: string;
 }
 
 export type Withdrawal = TransactionSummary;
@@ -298,6 +301,10 @@ export async function recordWithdrawal(
       throw err;
     }
   }
+  const bankAccountId = await resolveBankAccount(
+    input.bankAccountId,
+    message => new WithdrawalError(message)
+  );
   const receipt = route.definition
     ? null
     : await allocateReceiptNumber(principal.userId);
@@ -310,9 +317,10 @@ export async function recordWithdrawal(
           `insert into transaction
              (kind, member_id, customer_id, account_id, amount, method,
               method_reference, reason, status, receipt_number_id,
-              idempotency_key, idempotency_fingerprint, captured_by)
+              idempotency_key, idempotency_fingerprint, captured_by,
+              bank_account_id)
            values ('withdrawal', $1, $2, $3, $4, $5, $6, $7, 'submitted', $8,
-                   $9, $10, $11)
+                   $9, $10, $11, $12)
            returning id, reference`,
           [
             from.memberId,
@@ -326,6 +334,7 @@ export async function recordWithdrawal(
             key,
             key ? print : null,
             principal.userId,
+            bankAccountId,
           ]
         );
       } catch (err) {
@@ -460,6 +469,10 @@ export async function resubmitWithdrawal(
       throw err;
     }
   }
+  const bankAccountId = await resolveBankAccount(
+    input.bankAccountId,
+    message => new WithdrawalError(message)
+  );
   const receipt = route.definition
     ? null
     : await allocateReceiptNumber(principal.userId);
@@ -469,7 +482,8 @@ export async function resubmitWithdrawal(
       await client.query(
         `update transaction
             set account_id = $2, amount = $3, method = $4,
-                method_reference = $5, reason = $6, receipt_number_id = $7
+                method_reference = $5, reason = $6, receipt_number_id = $7,
+                bank_account_id = $8
           where id = $1`,
         [
           withdrawal.id,
@@ -479,6 +493,7 @@ export async function resubmitWithdrawal(
           (input.methodReference ?? '').trim() || null,
           (input.reason ?? '').trim() || null,
           receipt?.id ?? null,
+          bankAccountId,
         ]
       );
       await recordAudit(

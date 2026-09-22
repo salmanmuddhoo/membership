@@ -4558,7 +4558,21 @@ _(ACC-US-008, FRD 13)_
 transaction that touches one names it and carries a reference, so Phase 5
 can match statements without re-engineering Phase 2.
 
-### S-1901 · The Society's bank accounts
+**Shipped, first increment** (S-1901): `bank_account` (0082) — code, name,
+bank, number, currency, opening balance and date, active — audited like
+every configuration table, with its own `bank_account.view` (the number
+masked to its last four, server-side) and `bank_account.manage` (whole;
+add and change), the Treasurer holding both and the Auditor the first.
+Configuration → Bank accounts shows each with a balance derived, never
+stored, from the opening balance and the posted transactions naming it.
+`transaction.bank_account_id` arrives nullable: a deposit, a withdrawal, a
+transfer to a payee and a disbursement may name an active account of the
+Society's and the ledger refuses any other; the transaction page shows it
+beside the method. **Next:** S-1902 makes it mandatory wherever the method
+touches a bank, on every form and the API, and carries both fields in the
+`financial_event` payload.
+
+### S-1901 · The Society's bank accounts ✅
 
 _(BNK-US-001, BNK-US-004, FRD 15)_ `Must · 3 · EPIC-25` — `bank_account`
 configuration: bank, reference, currency, opening balance, active; full

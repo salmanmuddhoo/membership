@@ -365,6 +365,8 @@ const DANGER =
               {transaction.methodName}
               {transaction.methodReference &&
                 ` · ${transaction.methodReference}`}
+              {transaction.bankAccountName &&
+                ` · ${transaction.bankAccountName}`}
             </>
           )}
         </dd>

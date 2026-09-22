@@ -157,6 +157,34 @@ foreign keys to `code`. A record carries the method's name beside its code
 (`Payment.methodName`) so a retired method still reads on the receipt that
 used it. Configuration → Payment methods.
 
+### Bank accounts (S-1901, FRD 15)
+
+`bank_account` (migration 0082): the Society's own accounts at the bank —
+code, name, bank, the number, currency, an opening balance and the date it
+stood on, active or not — audited like every other configuration table.
+Its own two permissions rather than `config.view` / `config.manage`, because
+an account number is not a fee schedule: `bank_account.view` reads the list
+with the number masked to its last four digits (the masking is done before
+the page renders, so a viewer never receives the whole number),
+`bank_account.manage` sees it whole and may add or change one. The
+Treasurer holds both, the Auditor the first, the System Administrator both.
+Configuration → Bank accounts; `/admin/configuration/bank-accounts` is
+declared with `bank_account.view` in `authorise.ts`, the longer prefix
+winning over the section's `config.view` rule.
+
+No balance is stored. `bankAccountBalances()` in
+`src/lib/ledger/bank-accounts.ts` derives one when asked: the opening
+balance, plus every posted transaction that names the account — credited to
+a member's account means money came into the bank, debited means it left,
+read off the posting's own `financial_event` row — leaving out a transfer
+between two accounts here, which moves nothing at the bank. There is no
+second ledger to drift from the first.
+
+`transaction.bank_account_id` is nullable in this increment: a deposit, a
+withdrawal, a transfer to a payee and a disbursement may name one, and the
+ledger refuses anything but an active account of the Society's. S-1902
+makes it mandatory wherever the method touches a bank.
+
 ### Approval matrix (S-1401, FRD 6.5, 9, 17)
 
 `approval_rule`. Which chain — or none — a transaction falls under: by kind
@@ -278,11 +306,13 @@ is right: nobody at the Society made it.
 
 ## Permissions
 
-| Permission      | Grants                                              |
-| --------------- | --------------------------------------------------- |
-| `config.view`   | Read every configuration page and the reference API |
-| `config.manage` | Change any of it                                    |
-| `fee.manage`    | Publish fee versions                                |
+| Permission            | Grants                                              |
+| --------------------- | --------------------------------------------------- |
+| `config.view`         | Read every configuration page and the reference API |
+| `config.manage`       | Change any of it                                    |
+| `fee.manage`          | Publish fee versions                                |
+| `bank_account.view`   | See the Society's bank accounts, numbers masked     |
+| `bank_account.manage` | See them whole, and add or change one (S-1901)      |
 
 `/admin/configuration/` is guarded by `config.view` as a prefix rule, so a
 section added later is covered without touching the route map. Each page then

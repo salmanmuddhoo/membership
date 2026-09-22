@@ -561,6 +561,18 @@ the filters: nothing in the data records one (the regional roles are
 roles, not places), so a filter would be a lie. Cashier reports arrive
 with M20.
 
+## The Society's bank accounts
+
+Where the money went or came from, on the Society's side (S-1901, FRD 15):
+`transaction.bank_account_id` names one of the accounts configured at
+Configuration → Bank accounts, optional in this increment and mandatory
+wherever the method touches a bank from S-1902. A deposit, a withdrawal
+and a transfer to a payee take it at capture; a chained withdrawal or exit
+takes it at disbursement, beside the method and reference. The ledger
+refuses anything but an active account of the Society's. Each account's
+balance is derived from the posted transactions naming it
+(`src/lib/ledger/bank-accounts.ts`, `docs/configuration.md`).
+
 ## History, across accounts
 
 `listTransactions()` in `src/lib/ledger/history.ts` (S-1506) is one query
