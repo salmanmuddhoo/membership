@@ -581,6 +581,32 @@ Phase 5's reconciliation reads. The ledger refuses anything but an active
 account of the Society's. Each account's balance is derived from the
 posted transactions naming it (`docs/configuration.md`).
 
+## The cash drawer
+
+A cashier's drawer (S-2001, S-2002, FRD 14) is a `cash_session`
+(migration 0084): opened with a float, closed against a count. What it
+should hold is never typed in. It is the float plus every cash movement
+the database attributed to the session while it was open — and the
+attribution is the database's, not each path's: when a cash transaction
+posts, a trigger writes the open session of whoever posted it onto the
+row (`transaction.cash_session_id`), and when a cash fee receipt or refund
+is recorded, the open session of whoever recorded it
+(`payment.cash_session_id`). A movement with no open session belongs to
+no drawer, which the daily report will show. Money credited to a member's
+account or taken on a fee receipt is cash in; money debited or refunded is
+cash out; a voided fee receipt was never taken.
+
+`src/lib/cash/sessions.ts`: `openSession` (one open drawer per cashier,
+refused otherwise), `drawerFigures` (float, in, out, expected, and every
+movement), `closeSession` (the cashier's own only; the expected figure,
+the count and the over or short are fixed on the session then and never
+recomputed; a closed session cannot change and no session is deleted),
+`listSessions` for a holder of `cash.view`. Opening and closing are
+audited with the figures. **Cash drawer** is the cashier's own page;
+**Cash drawers** lists every session for the Treasurer, the Regional
+Manager and the Auditor. There is no region or branch to record: nothing
+in the data has one, so a session is a cashier's.
+
 ## History, across accounts
 
 `listTransactions()` in `src/lib/ledger/history.ts` (S-1506) is one query

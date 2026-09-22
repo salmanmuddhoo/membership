@@ -4606,14 +4606,29 @@ the acceptance test, and the `financial_event` payload carries both fields.
 to hold what the day's cash transactions say, and closes against a count.
 Should-Have: designed here, not required for go-live.
 
-### S-2001 · Open and close the drawer
+**Shipped, first increment** (S-2001, S-2002): `cash_session` (0084) —
+cashier, opened at, float, closed at, count, expected at close, over or
+short, note — one open per cashier, closed only by its cashier, immutable
+once closed, never deleted, opening and closing audited with the figures.
+Attribution is the database's: a trigger writes the open session of
+whoever posted a cash transaction onto `transaction.cash_session_id`, and
+of whoever recorded a cash fee receipt or refund onto
+`payment.cash_session_id`, so no path that moves cash has to remember.
+Expected = float + cash in − cash out from those rows, live on the
+**Cash drawer** page (`cash.session`: Clerk, Account Officer, Regional
+Officer, Treasurer) with every movement, and fixed at closing; **Cash
+drawers** (`cash.view`: Treasurer, Regional Manager, Auditor) lists every
+session with its count and over or short. No region or branch: nothing in
+the data has one. **Next:** S-2003, the daily cash reconciliation report.
+
+### S-2001 · Open and close the drawer ✅
 
 _(CSH-US-001, CSH-US-003, FRD 14)_ `Should · 5 · EPIC-24` — `cash_session`
 per cashier per day: opening float, closing count, computed expected,
 over/short logged and audited; a cashier cannot open twice or close what
 they did not open.
 
-### S-2002 · Expected cash, live
+### S-2002 · Expected cash, live ✅
 
 _(CSH-US-002, CSH-US-004, FRD 14)_ `Should · 3 · EPIC-24` — every cash
 transaction posted while a session is open is attributed to it (region,
