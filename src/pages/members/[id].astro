@@ -38,6 +38,11 @@ import { closuresInFlightFor } from '@lib/ledger/closures';
 import { resignationInFlightFor } from '@lib/ledger/resignations';
 import { demiseInFlightFor } from '@lib/ledger/demises';
 import { statusNotice } from '@lib/members/status';
+import {
+  DormancyError,
+  PERMISSION_REACTIVATE,
+  reactivateMember,
+} from '@lib/members/dormancy';
 
 const principal = Astro.locals.principal!;
 const canSeePayments = principal.permissions.has('payment.view');
@@ -66,12 +71,13 @@ const { id } = Astro.params;
 // account. S-614's own "not all members" — member is tried first only
 // because it is the far more common case, not because a customer is any
 // less a real record.
-const member = id ? await loadMember(id) : null;
+let member = id ? await loadMember(id) : null;
 const customer = !member && id ? await loadCustomer(id) : null;
 if (!member && !customer) return new Response('Not found', { status: 404 });
 const recordId = (member ?? customer)!.id;
 
 let error: string | null = null;
+let notice: string | null = null;
 
 // The application that carries this person's applicant party — where a
 // phone number or address actually lives (member/customer rows carry
@@ -182,6 +188,23 @@ if (Astro.request.method === 'POST') {
         }
       }
     }
+  } else if (intent === 'reactivate' && member) {
+    try {
+      await reactivateMember(
+        member.id,
+        String(form.get('reason') ?? ''),
+        principal
+      );
+      notice = 'Member reactivated.';
+      member = id ? await loadMember(id) : null;
+    } catch (err) {
+      if (err instanceof DormancyError) {
+        error = err.message;
+      } else {
+        console.error('[members/reactivate]', err);
+        error = 'Something went wrong. Please try again.';
+      }
+    }
   }
 }
 
@@ -288,10 +311,19 @@ const canDeposit =
   principal.permissions.has('transaction.capture') &&
   person.status === 'active' &&
   person.accounts.some(a => a.status === 'active');
-// S-1701: a member who cannot transact, and why, in one line.
-const notice = member
-  ? statusNotice(member.status, member.statusChangedAt)
-  : null;
+// S-1701: a member who cannot transact, and why, in one line — unless a
+// POST above already set a notice of its own (a reactivation just done),
+// which takes priority over the status line it would otherwise replace.
+if (!notice) {
+  notice = member ? statusNotice(member.status, member.statusChangedAt) : null;
+}
+// S-804/S-805: a dormant member, put back to active by an officer with a
+// reason. Recomputed against the (possibly just-reloaded) member so the
+// button is gone the moment reactivation succeeds.
+const canReactivate =
+  !!member &&
+  member.status === 'dormant' &&
+  principal.permissions.has(PERMISSION_REACTIVATE);
 // S-1702: closing an account that is not the membership's, and the request
 // already on its way where there is one.
 const canClose = canDeposit;
@@ -419,6 +451,26 @@ const pageTitle = member ? member.memberNo : name;
       <div class="rounded-lg border border-amber-300 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200">
         {notice}
       </div>
+    )}
+    {canReactivate && (
+      <form method="post" class="flex flex-wrap items-end gap-3">
+        <input type="hidden" name="intent" value="reactivate" />
+        <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          Reason
+          <input
+            type="text"
+            name="reason"
+            required
+            class="mt-1 block w-64 rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+          />
+        </label>
+        <button
+          type="submit"
+          class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+        >
+          Reactivate
+        </button>
+      </form>
     )}
 
     <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">

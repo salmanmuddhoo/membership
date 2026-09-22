@@ -90,6 +90,14 @@ export const RECEIPT_PLACEHOLDERS = [
  * membership has been approved — so the two carry different codes, and the
  * Society writes each its own wording (migrations 0053 and 0054).
  */
+// A member's standing (S-804, S-805): what src/lib/members/dormancy.ts
+// passes when the nightly job marks a member dormant and when an officer
+// reactivates them.
+export const MEMBER_PLACEHOLDERS: Record<string, readonly string[]> = {
+  'member.dormant': ['member_name', 'member_no', 'last_activity', 'months'],
+  'member.reactivated': ['member_name', 'member_no', 'reason'],
+};
+
 export function eventCodeForKind(
   applicationKind: string,
   happening: Happening
@@ -116,6 +124,9 @@ export function placeholdersForEvent(eventCode: string): string[] | null {
   if (eventCode === RECEIPT_ISSUED) return [...RECEIPT_PLACEHOLDERS];
   if (eventCode in TRANSACTION_PLACEHOLDERS) {
     return [...TRANSACTION_PLACEHOLDERS[eventCode]];
+  }
+  if (eventCode in MEMBER_PLACEHOLDERS) {
+    return [...MEMBER_PLACEHOLDERS[eventCode]];
   }
 
   const [subject, happening] = eventCode.split('.');

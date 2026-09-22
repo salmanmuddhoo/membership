@@ -2233,6 +2233,101 @@ export async function setEnabledMemberOperations(
   });
 }
 
+// ---------------------------------------------------------------------------
+// S-804, S-805 · Dormancy: after how long, and how a member comes back
+// ---------------------------------------------------------------------------
+// Seeded by migration 0086; the defaults here are read only before it has
+// run. dormancy.months is what the nightly job measures against (0 turns it
+// off); dormancy.reactivation names the rule a dormant member comes back
+// under — "staff" is the only one built, the backlog's default until the
+// Society confirms another, and naming it here means another is a value.
+const DORMANCY_MONTHS_KEY = 'dormancy.months';
+const DEFAULT_DORMANCY_MONTHS = 12;
+const DORMANCY_REACTIVATION_KEY = 'dormancy.reactivation';
+export const DORMANCY_REACTIVATIONS = ['staff'] as const;
+export type DormancyReactivation = (typeof DORMANCY_REACTIVATIONS)[number];
+
+async function readDormancyMonths(): Promise<number> {
+  const result = await query<{ value: unknown }>(
+    `select value from config_entry where key = $1`,
+    [DORMANCY_MONTHS_KEY]
+  );
+  const value = Number(result.rows[0]?.value);
+  return Number.isInteger(value) && value >= 0
+    ? value
+    : DEFAULT_DORMANCY_MONTHS;
+}
+
+export function dormancyMonths(): Promise<number> {
+  return cached('dormancy-months', readDormancyMonths);
+}
+
+export async function setDormancyMonths(
+  months: string,
+  actor: Actor
+): Promise<void> {
+  const trimmed = months.trim();
+  if (!/^\d{1,3}$/.test(trimmed)) {
+    throw new ConfigError(
+      `${months || 'That'} is not a whole number of months (0 to 999).`
+    );
+  }
+  await withConfigurationActor(actorFor(actor), async client => {
+    await client.query(
+      `insert into config_entry (key, value, value_type, description, updated_by)
+       values (
+         $1, to_jsonb($2::int), 'number',
+         'An active member with no posted transaction and no fee payment ' ||
+         'on any of their accounts for this many months is marked dormant ' ||
+         'by the nightly dormancy-detection job. 0 turns detection off.',
+         $3
+       )
+       on conflict (key) do update
+         set value = excluded.value, updated_by = excluded.updated_by`,
+      [DORMANCY_MONTHS_KEY, Number(trimmed), actor.userId]
+    );
+  });
+}
+
+async function readDormancyReactivation(): Promise<DormancyReactivation> {
+  const result = await query<{ value: unknown }>(
+    `select value from config_entry where key = $1`,
+    [DORMANCY_REACTIVATION_KEY]
+  );
+  const value = result.rows[0]?.value;
+  return (DORMANCY_REACTIVATIONS as readonly unknown[]).includes(value)
+    ? (value as DormancyReactivation)
+    : 'staff';
+}
+
+export function dormancyReactivation(): Promise<DormancyReactivation> {
+  return cached('dormancy-reactivation', readDormancyReactivation);
+}
+
+export async function setDormancyReactivation(
+  rule: string,
+  actor: Actor
+): Promise<void> {
+  if (!(DORMANCY_REACTIVATIONS as readonly string[]).includes(rule)) {
+    throw new ConfigError(`${rule || 'That'} is not a reactivation rule.`);
+  }
+  await withConfigurationActor(actorFor(actor), async client => {
+    await client.query(
+      `insert into config_entry (key, value, value_type, description, updated_by)
+       values (
+         $1, to_jsonb($2::text), 'string',
+         'How a dormant member becomes active again. "staff": an officer ' ||
+         'holding member.reactivate does it on the member''s page, with a ' ||
+         'reason.',
+         $3
+       )
+       on conflict (key) do update
+         set value = excluded.value, updated_by = excluded.updated_by`,
+      [DORMANCY_REACTIVATION_KEY, rule, actor.userId]
+    );
+  });
+}
+
 // The pre-checks a resignation runs before it can be submitted (S-1703),
 // each its own switch: named when it blocks, and the Society's to turn off.
 // Seeded by migration 0078; the defaults here are read only before it has

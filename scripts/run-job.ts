@@ -14,6 +14,7 @@ import {
 import { runJob, JobAlreadyRunning } from '../src/lib/jobs/runner';
 import { expireDocuments } from '../src/lib/documents/documents';
 import { transitionMinorsAtMajority } from '../src/lib/members/majority';
+import { detectDormancy } from '../src/lib/members/dormancy';
 import { verifyLedger } from '../src/lib/ledger/ledger';
 import { retryDueNotifications } from '../src/lib/notifications/retry';
 import {
@@ -66,6 +67,26 @@ const JOBS: Record<string, () => Promise<unknown>> = {
         context.log('minors transitioned at majority', {
           transitioned: transitioned.length,
           memberNos: transitioned.map(t => t.memberNo),
+        });
+      },
+    }),
+
+  // S-804. Marks dormant every active member with nothing moving on their
+  // accounts for dormancy.months (Configuration -> Fee schedules; 0 turns
+  // it off), audited and told. Run nightly; a second run finds nothing.
+  'dormancy-detection': () =>
+    runJob<{ sweptAt: string }>({
+      name: 'dormancy-detection',
+      run: async context => {
+        const { marked, months } = await detectDormancy();
+        await context.save(
+          { sweptAt: new Date().toISOString() },
+          marked.length
+        );
+        context.log('members marked dormant', {
+          months,
+          marked: marked.length,
+          memberNos: marked.map(m => m.memberNo),
         });
       },
     }),
