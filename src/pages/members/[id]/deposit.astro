@@ -2,6 +2,7 @@
 // Record a deposit into one of a member's (or a customer's) accounts
 // (S-1305, S-1306, S-1308). The rules are ledger/deposits.ts's; this page
 // gathers the form, shows what was refused, and shows the receipt.
+import { canTransact } from '@lib/members/status';
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import {
   cashMaximum,
@@ -261,7 +262,7 @@ const initialCents = /^\d{1,12}(\.\d{1,2})?$/.test(values.amount ?? '')
       </section>
     ) : depositable.length === 0 ? (
       <section class={`${CARD} text-sm text-neutral-600 dark:text-neutral-300`}>
-        {person.status !== 'active'
+        {!canTransact(person.status)
           ? `This ${member ? 'member' : 'customer'} is ${person.status}, so no deposit can be taken.`
           : 'None of these accounts can take a deposit.'}
       </section>

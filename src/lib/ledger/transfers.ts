@@ -11,6 +11,7 @@
 // gets no credit leg: the debit leg names the payee and is paid out through
 // the disbursement step (S-1503). post_transaction() posts both legs or
 // neither.
+import { canTransact } from '../members/status';
 import { createHash } from 'node:crypto';
 import { recordAudit } from '../access/audit';
 import type { Principal } from '../access/principal';
@@ -182,7 +183,7 @@ async function destination(accountId: string): Promise<Destination> {
 }
 
 function refuseUnlessCreditable(to: Destination, amountCents: number): void {
-  if (to.holderStatus !== 'active') {
+  if (!canTransact(to.holderStatus)) {
     throw new TransferError(
       `The ${to.memberId ? 'member' : 'customer'} receiving it is ` +
         `${to.holderStatus}, so nothing can be transferred to them.`

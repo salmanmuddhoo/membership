@@ -41,7 +41,12 @@ import DocumentViewer from '@components/DocumentViewer.astro';
 import { closuresInFlightFor } from '@lib/ledger/closures';
 import { resignationInFlightFor } from '@lib/ledger/resignations';
 import { demiseInFlightFor } from '@lib/ledger/demises';
-import { canOpenAccount, statusNotice } from '@lib/members/status';
+import {
+  canOpenAccount,
+  canTransact,
+  isNonMember,
+  statusNotice,
+} from '@lib/members/status';
 import {
   DormancyError,
   PERMISSION_REACTIVATE,
@@ -384,7 +389,7 @@ const canOpenAnotherAccount =
 // account to take it — the deposit page itself decides the rest.
 const canDeposit =
   principal.permissions.has('transaction.capture') &&
-  person.status === 'active' &&
+  canTransact(person.status) &&
   person.accounts.some(a => a.status === 'active');
 // S-1701: a member who cannot transact, and why, in one line — unless a
 // POST above already set a notice of its own (a reactivation just done),
@@ -428,13 +433,16 @@ const resigning =
   member && principal.permissions.has('transaction.view')
     ? await resignationInFlightFor(member.id)
     : null;
-const canResign = Boolean(member) && canDeposit && !resigning;
+// Only a member still in the membership resigns or is claimed for: a
+// resigned one deals as a non-member and has no membership left to end.
+const inMembership = member?.status === 'active';
+const canResign = inMembership && canDeposit && !resigning;
 // S-1704: settling a deceased member's entitlements.
 const settling =
   member && principal.permissions.has('transaction.view')
     ? await demiseInFlightFor(member.id)
     : null;
-const canClaim = Boolean(member) && canDeposit && !resigning && !settling;
+const canClaim = inMembership && canDeposit && !resigning && !settling;
 const closing = principal.permissions.has('transaction.view')
   ? await closuresInFlightFor(
       member ? { memberId: member.id } : { customerId: customer!.id }
@@ -571,7 +579,8 @@ const pageTitle = member ? member.memberNo : name;
                 {member.memberNo}
               </code>
             )}
-            {customer && (
+            {(customer ||
+              (member && isNonMember(member.status, member.accounts))) && (
               <span class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
                 Non-member
               </span>

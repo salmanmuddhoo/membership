@@ -8,6 +8,7 @@
 // deposit is either wholly on the ledger with its receipt or not there at
 // all. A deposit below the escalation threshold has no approval chain (FRD
 // 6.2); M14 puts the threshold in front of this.
+import { canTransact } from '../members/status';
 import { createHash } from 'node:crypto';
 import { recordAudit } from '../access/audit';
 import type { Principal } from '../access/principal';
@@ -282,7 +283,7 @@ export function refuseUnlessDepositable(
   to: Destination,
   amountCents: number
 ): void {
-  if (to.holderStatus !== 'active') {
+  if (!canTransact(to.holderStatus)) {
     throw new DepositError(
       `This ${to.memberId ? 'member' : 'customer'} is ${to.holderStatus}, ` +
         'so no deposit can be taken.'

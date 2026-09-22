@@ -3,6 +3,7 @@
 // (S-1504): to another of their own, to another person's account found by
 // type and number, or to a payee with no account here. The rules are
 // ledger/transfers.ts's; this page gathers the form and shows both legs.
+import { canTransact } from '@lib/members/status';
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import {
   listAccountTypes,
@@ -288,7 +289,7 @@ const initialCents = /^\d{1,12}(\.\d{1,2})?$/.test(values.amount ?? '')
       </section>
     ) : sources.length === 0 ? (
       <section class={`${CARD} text-sm text-neutral-600 dark:text-neutral-300`}>
-        {person.status !== 'active'
+        {!canTransact(person.status)
           ? `This ${member ? 'member' : 'customer'} is ${person.status}, so nothing can be transferred.`
           : 'None of these accounts allows a transfer out.'}
       </section>

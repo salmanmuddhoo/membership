@@ -5004,8 +5004,10 @@ detail; `src/lib/members/rejoin.test.ts` proves both paths against the
 migrations. Since then: a rejoin application is no longer refused as a
 duplicate of the member's own NIC; a resigned member opens a further
 account (HSA, Investment) from their page without rejoining
-(`canOpenAccount`); and the members list shows no badge for a closed
-account.
+(`canOpenAccount`); the members list shows no badge for a closed
+account; and a resigned member is a non-member from then on — they
+deposit, withdraw, transfer and close on the accounts still open, and
+are tagged and counted as a non-member while they hold one.
 
 # Open values that later stories depend on
 

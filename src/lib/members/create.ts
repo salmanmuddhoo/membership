@@ -1235,6 +1235,7 @@ export async function listMembers(
     application_reference: string | null;
     accounts: MemberListAccount[];
     total_funds: string;
+    non_member: boolean;
     total_count: string;
     member_count: string;
     non_member_count: string;
@@ -1350,13 +1351,24 @@ export async function listMembers(
      )
      select id, kind, identifier, type_label, status, name, joined_at,
             application_reference, accounts, total_funds::numeric(14,2)::text as total_funds,
+            -- Officer direction: a resigned member still holding an open
+            -- account is a non-member, tagged and counted as one.
+            (kind = 'customer'
+              or (status = 'resigned' and json_array_length(accounts) > 0))
+              as non_member,
             count(*) over () as total_count,
             -- Officer feedback: the header splits the total into members
             -- (Shares/MSA holders) and non-members (only an additional
             -- account). Counted here, after the search filter, so the two
             -- always add up to the same total the list is showing.
-            count(*) filter (where kind = 'member') over () as member_count,
-            count(*) filter (where kind = 'customer') over () as non_member_count
+            count(*) filter (
+              where not (kind = 'customer'
+                or (status = 'resigned' and json_array_length(accounts) > 0))
+            ) over () as member_count,
+            count(*) filter (
+              where kind = 'customer'
+                or (status = 'resigned' and json_array_length(accounts) > 0)
+            ) over () as non_member_count
        from rows
       where $1::text is null
          or strpos(lower(identifier), lower($1::text)) > 0
@@ -1384,6 +1396,7 @@ export async function listMembers(
       joinedAt: r.joined_at,
       applicationReference: r.application_reference,
       accountBadges: r.accounts ?? [],
+      nonMember: r.non_member,
       totalFunds: r.total_funds,
     })),
     total,

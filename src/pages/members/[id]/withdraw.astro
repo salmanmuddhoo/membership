@@ -3,6 +3,7 @@
 // (S-1501, S-1502). The rules are ledger/withdrawals.ts's; this page gathers
 // the form, shows the balance and what is available beside it, and shows
 // the receipt or the step it waits at.
+import { canTransact } from '@lib/members/status';
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import {
   listAccountTypes,
@@ -228,7 +229,7 @@ const initialCents = /^\d{1,12}(\.\d{1,2})?$/.test(values.amount ?? '')
       </section>
     ) : withdrawable.length === 0 ? (
       <section class={`${CARD} text-sm text-neutral-600 dark:text-neutral-300`}>
-        {person.status !== 'active'
+        {!canTransact(person.status)
           ? `This ${member ? 'member' : 'customer'} is ${person.status}, so nothing can be withdrawn.`
           : 'None of these accounts allows a withdrawal.'}
       </section>

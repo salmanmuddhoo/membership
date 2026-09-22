@@ -403,6 +403,8 @@ describe('a resigned member opening a further account', () => {
     expect(listed.accountBadges.map((b: { code: string }) => b.code)).toEqual([
       'hsa',
     ]);
+    // Resigned, with an account still open: a non-member now.
+    expect(listed.nonMember).toBe(true);
 
     const started = await capture.startAdditionalAccountApplication(
       member.id,
