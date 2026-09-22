@@ -4480,7 +4480,7 @@ since submission or to the decision, and the average turnaround) and
 type's floor, the configured margin unless one is typed, with headroom);
 and the **Accounts** report gains a balance column and status and
 balance-band filters. Region is not offered: nothing in the data records
-one. Cashier reports are M20's. `docs/ledger.md`, "Receipts".
+one. The cashier's report is M20's (S-2003). `docs/ledger.md`, "Receipts".
 
 ### S-1801 · Every Phase 2 setting has a working default ✅
 
@@ -4619,7 +4619,18 @@ Expected = float + cash in − cash out from those rows, live on the
 Officer, Treasurer) with every movement, and fixed at closing; **Cash
 drawers** (`cash.view`: Treasurer, Regional Manager, Auditor) lists every
 session with its count and over or short. No region or branch: nothing in
-the data has one. **Next:** S-2003, the daily cash reconciliation report.
+the data has one.
+
+**Shipped, second increment** (S-2003) — M20 complete. **Daily cash
+reconciliation** (`cash.view`, under Reports → Money): every drawer in a
+period — day, cashier, opened and closed, float, cash in, cash out,
+expected, counted, over or short, movements, note — and, by day and by
+whoever moved it, the cash that went through no drawer at all, so nothing
+that touched the till is missing from the day. A closed drawer's expected
+figure is the one fixed at closing; the movements beside it are what the
+database attributes to it now, and the one way they can disagree — a fee
+receipt voided after the drawer closed — is said on the row. The summary
+gives the counted total against the expected and the net over or short.
 
 ### S-2001 · Open and close the drawer ✅
 
@@ -4635,9 +4646,11 @@ transaction posted while a session is open is attributed to it (region,
 branch, cashier on the transaction); expected = float + cash in − cash out,
 from the ledger.
 
-### S-2003 · Daily cash reconciliation report
+### S-2003 · Daily cash reconciliation report ✅
 
-_(CSH-US-005, FRD 13, 14)_ `Should · 3 · EPIC-12`
+_(CSH-US-005, FRD 13, 14)_ `Should · 3 · EPIC-12` — per day and cashier:
+float, cash in, cash out, expected, counted, over or short, with the cash
+moved outside any drawer listed beside; `cash.view`.
 
 ---
 

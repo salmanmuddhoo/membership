@@ -62,6 +62,7 @@ async function load() {
     withdrawals: await import('../ledger/withdrawals'),
     payments: await import('../payments/payments'),
     capture: await import('../applications/capture'),
+    reports: await import('../reports/definitions'),
   };
 }
 
@@ -131,7 +132,13 @@ beforeAll(async () => {
     byEmail.get('treasurer@albarakah.mu'),
     'treasurer@albarakah.mu',
     ['treasurer'],
-    ['cash.session', 'cash.view', 'transaction.capture', 'transaction.post']
+    [
+      'cash.session',
+      'cash.view',
+      'transaction.capture',
+      'transaction.post',
+      'payment.void',
+    ]
   );
   bankAccountId = (
     await run(
@@ -334,5 +341,89 @@ describe('the cash drawer (S-2001, S-2002)', () => {
     expect(await cash.listSessions({ cashierId: treasurer.userId })).toEqual(
       []
     );
+  });
+
+  // S-2003 · The day's reconciliation, over what the cases above left: one
+  // drawer closed short, one just opened, and the Treasurer's cash deposit
+  // that went through no drawer.
+  it('reconciles every drawer of the day, and the cash moved with none open', async () => {
+    const { cash, payments, reports } = await load();
+    const report = reports.reportByCode('cash-reconciliation')!;
+    expect(report.permission).toBe('cash.view');
+    const today = new Date().toISOString().slice(0, 10);
+
+    const result = await report.run({ from: today, to: today });
+    expect(result.rows.map(r => [r.Cashier, r.Status])).toEqual([
+      ['Cashier', 'Closed'],
+      ['Cashier', 'Open'],
+      ['Treasurer', 'No drawer'],
+    ]);
+    expect(result.rows[0]).toMatchObject({
+      Float: '5000.00',
+      'Cash in': '9500.00',
+      'Cash out': '300.00',
+      Expected: '14200.00',
+      Counted: '14150.00',
+      'Over/short': '-50.00',
+      Movements: 3,
+      Note: 'One note short',
+    });
+    expect(result.rows[0].Opened).toMatch(/^\d\d:\d\d$/);
+    expect(result.rows[0].Closed).toMatch(/^\d\d:\d\d$/);
+    expect(result.rows[1]).toMatchObject({
+      Float: '2000.00',
+      'Cash in': '0.00',
+      'Cash out': '0.00',
+      Expected: '2000.00',
+      Counted: null,
+      'Over/short': null,
+      Closed: '',
+      Movements: 0,
+    });
+    expect(result.rows[2]).toMatchObject({
+      Opened: '',
+      Float: null,
+      'Cash in': '50.00',
+      'Cash out': '0.00',
+      Expected: null,
+      Movements: 1,
+    });
+    expect(result.summary).toBe(
+      '2 drawer(s): 1 closed, 1 open; cash in Rs 9500.00, out Rs 300.00; ' +
+        'counted Rs 14150.00 against Rs 14200.00 expected, short by Rs 50.00. ' +
+        '1 cash movement(s) with no drawer open: Rs 50.00 in, Rs 0.00 out.'
+    );
+
+    // By cashier, and outside the period.
+    const mine = await report.run({ cashier: 'treas' });
+    expect(mine.rows).toHaveLength(1);
+    expect(mine.summary).toBe(
+      '0 drawer(s): 0 closed, 0 open; cash in Rs 0.00, out Rs 0.00. ' +
+        '1 cash movement(s) with no drawer open: Rs 50.00 in, Rs 0.00 out.'
+    );
+    const none = await report.run({ from: '2000-01-01', to: '2000-01-02' });
+    expect(none.rows).toEqual([]);
+    expect(none.summary).toBe(
+      '0 drawer(s): 0 closed, 0 open; cash in Rs 0.00, out Rs 0.00.'
+    );
+
+    // A fee receipt voided after the drawer closed: the record stands, the
+    // movements no longer add up to it, and the row says so.
+    const closed = (await cash.listSessions({})).find(s => s.closedAt)!;
+    const fee = await run(
+      appUrl,
+      `select id from payment where cash_session_id = $1 and kind = 'payment'`,
+      [closed.id]
+    );
+    await payments.voidPayment(fee.rows[0].id, 'Taken in error', treasurer);
+    const after = await report.run({ from: today, to: today });
+    expect(after.rows[0]).toMatchObject({
+      Status: 'Closed · receipt voided since',
+      'Cash in': '1000.00',
+      Expected: '14200.00',
+      Counted: '14150.00',
+      'Over/short': '-50.00',
+      Movements: 2,
+    });
   });
 });

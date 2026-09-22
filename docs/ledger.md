@@ -558,8 +558,8 @@ near-floor margin unless a figure is typed, with the headroom and whether
 they are at or below it. The **Accounts** report (S-905) gains a balance
 column and filters by status and by a balance band. Region is not among
 the filters: nothing in the data records one (the regional roles are
-roles, not places), so a filter would be a lie. Cashier reports arrive
-with M20.
+roles, not places), so a filter would be a lie. The cashier's own report
+is under "The cash drawer".
 
 ## The Society's bank accounts
 
@@ -592,7 +592,7 @@ posts, a trigger writes the open session of whoever posted it onto the
 row (`transaction.cash_session_id`), and when a cash fee receipt or refund
 is recorded, the open session of whoever recorded it
 (`payment.cash_session_id`). A movement with no open session belongs to
-no drawer, which the daily report will show. Money credited to a member's
+no drawer, and the daily report says so. Money credited to a member's
 account or taken on a fee receipt is cash in; money debited or refunded is
 cash out; a voided fee receipt was never taken.
 
@@ -606,6 +606,22 @@ audited with the figures. **Cash drawer** is the cashier's own page;
 **Cash drawers** lists every session for the Treasurer, the Regional
 Manager and the Auditor. There is no region or branch to record: nothing
 in the data has one, so a session is a cashier's.
+
+**Daily cash reconciliation** (S-2003, `cash.view`, in
+`src/lib/reports/definitions.ts` beside the other reports) is the day's
+account of the till: one row per drawer in the period — day, cashier,
+opened and closed, float, cash in, cash out, expected, counted, over or
+short, movements and the note — and one row per day and officer for the
+cash that moved with no drawer open, so a cash deposit posted by somebody
+who never opened a drawer is on the sheet rather than missing from it. A
+closed drawer's expected figure is the one fixed at closing, the record;
+the cash in and out beside it are what the database attributes to the
+drawer now, and the only way they can disagree is a fee receipt voided
+after the drawer closed (a posted transaction never changes and a
+reversal is a new movement), which the row's status says. An open
+drawer's expected figure is live. The summary gives the counted total
+against the expected and the net over or short across the closed
+drawers, and the total moved outside any drawer.
 
 ## History, across accounts
 

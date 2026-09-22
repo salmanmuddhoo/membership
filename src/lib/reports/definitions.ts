@@ -879,6 +879,155 @@ const pendingApprovals: ReportDefinition = {
   },
 };
 
+// S-2003 · Daily cash reconciliation: every drawer in a period — float,
+// cash in, cash out, what it should have held, what was counted and the
+// difference — and the cash that moved with no drawer open, by day and by
+// whoever moved it, so that nothing that went through the till is missing
+// from the day. A closed drawer's expected figure is the one fixed at
+// closing (the record); the movements beside it are what the database
+// attributes to it now, and the only way the two can disagree is a fee
+// receipt voided after the drawer closed, which the row says.
+const cashReconciliation: ReportDefinition = {
+  code: 'cash-reconciliation',
+  title: 'Daily cash reconciliation',
+  category: 'Money',
+  summary:
+    'Every cash drawer in a period with its float, cash in and out, ' +
+    'expected, count and over or short, and any cash moved with no drawer ' +
+    'open.',
+  permission: 'cash.view',
+  filters: [...PERIOD, { name: 'cashier', label: 'Cashier', kind: 'text' }],
+  async run(filters) {
+    const result = await query<Record<string, string | number | null>>(
+      `with movement as (
+         select t.cash_session_id as session_id, t.posted_by as user_id,
+                t.posted_at as at,
+                case when fe.payload->>'direction' = 'credit'
+                     then t.amount else 0 end as cash_in,
+                case when fe.payload->>'direction' = 'credit'
+                     then 0 else t.amount end as cash_out
+           from transaction t
+           join financial_event fe
+             on fe.transaction_id = t.id
+            and fe.event_type = 'transaction.posted'
+           join payment_method pm on pm.code = t.method
+          where t.status = 'posted' and pm.is_cash
+         union all
+         select p.cash_session_id, p.recorded_by, p.received_at,
+                case p.kind when 'refund' then 0 else p.total_amount end,
+                case p.kind when 'refund' then p.total_amount else 0 end
+           from payment p
+           join payment_method pm on pm.code = p.method
+          where p.voided_at is null and pm.is_cash
+       ),
+       drawer as (
+         select s.opened_at::date as day, u.display_name as cashier,
+                s.opened_at, s.closed_at, s.opening_float, s.closing_count,
+                s.expected_at_close, s.over_short, s.note,
+                coalesce(sum(m.cash_in), 0)::numeric(14, 2) as cash_in,
+                coalesce(sum(m.cash_out), 0)::numeric(14, 2) as cash_out,
+                count(m.at)::int as movements
+           from cash_session s
+           join app_user u on u.id = s.cashier_user_id
+           left join movement m on m.session_id = s.id
+          group by s.id, u.display_name
+       ),
+       outside as (
+         select m.at::date as day, u.display_name as cashier,
+                sum(m.cash_in)::numeric(14, 2) as cash_in,
+                sum(m.cash_out)::numeric(14, 2) as cash_out,
+                count(*)::int as movements
+           from movement m
+           join app_user u on u.id = m.user_id
+          where m.session_id is null
+          group by m.at::date, u.display_name
+       ),
+       row_set as (
+         select day, 0 as sort, opened_at, cashier,
+                case when closed_at is null then 'Open'
+                     when opening_float + cash_in - cash_out
+                          <> expected_at_close
+                     then 'Closed · receipt voided since'
+                     else 'Closed' end as status,
+                to_char(opened_at, 'HH24:MI') as opened,
+                coalesce(to_char(closed_at, 'HH24:MI'), '') as closed,
+                opening_float::text as opening_float, cash_in::text as cash_in,
+                cash_out::text as cash_out,
+                coalesce(expected_at_close,
+                         opening_float + cash_in - cash_out)::text as expected,
+                closing_count::text as counted, over_short::text as over_short,
+                movements, note
+           from drawer
+         union all
+         select day, 1, null, cashier, 'No drawer', '', '', null,
+                cash_in::text, cash_out::text, null, null, null, movements, ''
+           from outside
+       )
+       select to_char(day, 'DD Mon YYYY') as "Day",
+              cashier as "Cashier", status as "Status", opened as "Opened",
+              closed as "Closed", opening_float as "Float", cash_in as "Cash in",
+              cash_out as "Cash out", expected as "Expected",
+              counted as "Counted", over_short as "Over/short",
+              movements as "Movements", note as "Note"
+         from row_set
+        where ($1::date is null or day >= $1::date)
+          and ($2::date is null or day <= $2::date)
+          and ($3::text is null or cashier ilike '%' || $3::text || '%')
+        order by day desc, sort, opened_at, cashier`,
+      [
+        dateOrNull(filters.from),
+        dateOrNull(filters.to),
+        textOrNull(filters.cashier),
+      ]
+    );
+
+    const drawers = result.rows.filter(r => r.Status !== 'No drawer');
+    const closed = drawers.filter(r => r.Counted !== null);
+    const outside = result.rows.filter(r => r.Status === 'No drawer');
+    const sum = (rows: typeof result.rows, key: string) =>
+      rows.reduce((total, r) => total + Number(r[key] ?? 0), 0);
+    const overShort = sum(closed, 'Over/short');
+
+    return {
+      columns: [
+        { key: 'Day', label: 'Day' },
+        { key: 'Cashier', label: 'Cashier' },
+        { key: 'Status', label: 'Status' },
+        { key: 'Opened', label: 'Opened' },
+        { key: 'Closed', label: 'Closed' },
+        { key: 'Float', label: 'Float', numeric: true },
+        { key: 'Cash in', label: 'Cash in', numeric: true },
+        { key: 'Cash out', label: 'Cash out', numeric: true },
+        { key: 'Expected', label: 'Expected', numeric: true },
+        { key: 'Counted', label: 'Counted', numeric: true },
+        { key: 'Over/short', label: 'Over/short', numeric: true },
+        { key: 'Movements', label: 'Movements', numeric: true },
+        { key: 'Note', label: 'Note' },
+      ],
+      rows: result.rows,
+      summary:
+        `${drawers.length} drawer(s): ${closed.length} closed, ` +
+        `${drawers.length - closed.length} open; cash in Rs ` +
+        `${sum(drawers, 'Cash in').toFixed(2)}, out Rs ` +
+        `${sum(drawers, 'Cash out').toFixed(2)}` +
+        (closed.length
+          ? `; counted Rs ${sum(closed, 'Counted').toFixed(2)} against Rs ` +
+            `${sum(closed, 'Expected').toFixed(2)} expected, ` +
+            (overShort === 0
+              ? 'no difference'
+              : overShort > 0
+                ? `over by Rs ${overShort.toFixed(2)}`
+                : `short by Rs ${(-overShort).toFixed(2)}`)
+          : '') +
+        (outside.length
+          ? `. ${sum(outside, 'Movements')} cash movement(s) with no drawer ` +
+            `open: Rs ${sum(outside, 'Cash in').toFixed(2)} in, Rs ` +
+            `${sum(outside, 'Cash out').toFixed(2)} out.`
+          : '.'),
+    };
+  },
+};
+
 // S-1706 · Exits: closures, resignations and demised claims by period, with
 // what each paid out and how long it took. Turnaround is submission to
 // payout — the whole of what the member or claimant waited for — and, for
@@ -1117,6 +1266,7 @@ export const REPORTS: ReportDefinition[] = [
   receipts,
   accountsNearFloor,
   pendingApprovals,
+  cashReconciliation,
   accessAndActions,
   jobs,
 ];
