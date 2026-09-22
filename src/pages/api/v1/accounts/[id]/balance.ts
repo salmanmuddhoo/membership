@@ -15,7 +15,7 @@ const endpoint = defineEndpoint(
     path: '/api/v1/accounts/{id}/balance',
     summary: "Read one account's balance",
     description: BALANCE_DESCRIPTION,
-    tag: 'Transactions',
+    tag: 'Accounts',
     permission: 'account.view',
     responseSchema: BALANCE_SCHEMA,
   },

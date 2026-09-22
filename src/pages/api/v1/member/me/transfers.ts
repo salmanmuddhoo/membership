@@ -115,7 +115,7 @@ const endpoint = defineMemberEndpoint(
       'transfers from the app on. The destination is an account on the ' +
       "system, the caller's own or another member's, by id. 404 unless " +
       "the source is the caller's own.",
-    tag: 'Member app',
+    tag: 'Transactions',
     caller: 'member',
     idempotent: true,
     requestSchema: {

@@ -138,7 +138,10 @@ was written for the applicant (a return or a rejection).
 
 ## Endpoints
 
-All under `/api/v1/member`; the generated document has the schemas.
+All under `/api/v1/member`; the generated document has the schemas. In
+the in-app explorer (`/admin/api`) the account reads and the transaction
+writes are grouped under Accounts and Transactions beside the staff
+endpoints they mirror (S-2103); the rest is under Member app.
 Where a rule says 422, `details` carries one entry per problem, keyed
 `subject.ordinal.fieldKey` for a party field and `document.<code>` for a
 missing document — the app folds those onto the fields by that key.

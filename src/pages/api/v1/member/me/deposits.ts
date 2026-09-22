@@ -72,7 +72,7 @@ const endpoint = defineMemberEndpoint(
       "method, with its reference and the Society's bank account from " +
       "/api/v1/member/reference. 404 unless the account is the caller's " +
       'own.',
-    tag: 'Member app',
+    tag: 'Transactions',
     caller: 'member',
     idempotent: true,
     requestSchema: {

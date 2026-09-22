@@ -17,7 +17,7 @@ const endpoint = defineEndpoint(
     path: '/api/v1/accounts/{id}/history',
     summary: "Read one account's history",
     description: HISTORY_DESCRIPTION,
-    tag: 'Transactions',
+    tag: 'Accounts',
     permission: 'account.view',
     query: HISTORY_QUERY,
     responseSchema: HISTORY_SCHEMA,

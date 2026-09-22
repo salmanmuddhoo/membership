@@ -115,7 +115,7 @@ const endpoint = defineMemberEndpoint(
       'withdrawals from the app on. The method is how it will be paid ' +
       'out, with its reference where the method requires one. 404 unless ' +
       "the account is the caller's own.",
-    tag: 'Member app',
+    tag: 'Transactions',
     caller: 'member',
     idempotent: true,
     requestSchema: {

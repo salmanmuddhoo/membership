@@ -18,7 +18,7 @@ const endpoint = defineMemberEndpoint(
     summary: "One of the caller's accounts: its history, newest first, paged",
     description:
       HISTORY_DESCRIPTION + " 404 unless the account is the caller's own.",
-    tag: 'Member app',
+    tag: 'Accounts',
     caller: 'member',
     query: HISTORY_QUERY,
     responseSchema: HISTORY_SCHEMA,

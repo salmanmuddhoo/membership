@@ -21,7 +21,7 @@ const endpoint = defineEndpoint(
     path: '/api/v1/accounts/{id}/statement',
     summary: "Read one account's statement for a period",
     description: STATEMENT_DESCRIPTION,
-    tag: 'Transactions',
+    tag: 'Accounts',
     permission: 'account.view',
     query: STATEMENT_QUERY,
     responseSchema: STATEMENT_SCHEMA,

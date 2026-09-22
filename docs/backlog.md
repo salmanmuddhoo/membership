@@ -4686,8 +4686,17 @@ Readiness) switches each of the three on; until then the endpoints exist
 and refuse. A cash deposit is refused outright; `/reference` now names the
 Society's bank accounts so a deposit can say which one it reached; a
 transfer goes to an account here by id, never to a payee outside. Member
-writes demand an `Idempotency-Key` as staff ones do. **Next:** S-2103, the
-API reference and explorer grouping.
+writes demand an `Idempotency-Key` as staff ones do.
+
+**Shipped, third increment** (S-2103) — M21 complete. Every Phase 2
+endpoint is in the generated document already (`pnpm openapi:check` fails
+the build otherwise); what changed is how the explorer groups them. Tags
+now follow the thing, not the caller: an account's balance, history,
+statement and transactions — staff and member alike — are **Accounts**, a
+deposit, withdrawal, transfer, reversal or exit **Transactions**, with the
+permission line on each saying whether it is an officer's permission or a
+member app session. **Member app** keeps identity, applications, documents
+and the reference.
 
 ### S-2101 · Balance, statement and history for a member's own accounts ✅
 
@@ -4706,7 +4715,7 @@ enabled call `resolveRoute()` and the engine exactly as a clerk's submission
 does — the initiating role is "member", which the matrix can route
 differently, never more leniently.
 
-### S-2103 · The API reference covers Phase 2
+### S-2103 · The API reference covers Phase 2 ✅
 
 _(API-US-004)_ `Must · 2 · EPIC-26` — every endpoint above is in the OpenAPI
 document (`pnpm openapi:check` already fails otherwise) and the in-app

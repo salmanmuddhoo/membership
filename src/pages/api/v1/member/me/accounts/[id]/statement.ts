@@ -25,7 +25,7 @@ const endpoint = defineMemberEndpoint(
     summary: "One of the caller's accounts: its statement for a period",
     description:
       STATEMENT_DESCRIPTION + " 404 unless the account is the caller's own.",
-    tag: 'Member app',
+    tag: 'Accounts',
     caller: 'member',
     query: STATEMENT_QUERY,
     responseSchema: STATEMENT_SCHEMA,
