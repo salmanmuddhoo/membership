@@ -75,7 +75,9 @@ NOTIFY_EMAIL_WEBHOOK_URL=https://<gateway>/send
 NOTIFY_EMAIL_WEBHOOK_TOKEN=<optional bearer token>
 ```
 
-The gateway receives `{ channel, to, subject, message }` as JSON.
+The gateway receives `{ channel, to, subject, message }` as JSON, plus
+`attachment: { url, filename, contentType }` when the wording attaches the
+receipt — the gateway fetches the file from `url`.
 
 ## WhatsApp
 
@@ -113,7 +115,9 @@ sent, so the body and the approved template have to agree.
 4. Under **Message templates**, create one template per WhatsApp wording, with
    body variables in the same order as the placeholders here. Submit each for
    approval — this takes minutes to hours, and an unapproved template is
-   rejected at send time.
+   rejected at send time. A template that is to carry the receipt as a
+   document must be created with a **document header**; then tick **Attach
+   the receipt as a PDF** on that wording.
 5. Set:
 
    ```
@@ -141,7 +145,9 @@ NOTIFY_WHATSAPP_WEBHOOK_URL=https://<gateway>/send
 NOTIFY_WHATSAPP_WEBHOOK_TOKEN=<optional bearer token>
 ```
 
-The gateway receives `{ channel, to, message }`. Note that the 24-hour rule
+The gateway receives `{ channel, to, message }`, plus `attachment: { url,
+filename, contentType }` when the wording attaches the receipt — the gateway
+fetches the file from `url`. Note that the 24-hour rule
 still applies at the provider behind it — a reseller that accepts text is
 mapping it onto an approved template of its own, and that mapping is theirs to
 configure.
@@ -182,6 +188,18 @@ cannot be made — no `MEMBER_SESSION_SECRET`, or no `PUBLIC_APP_URL` and no
 `ENTRA_REDIRECT_URI` to take an origin from — `{{link}}` reads "Ask at your
 branch for a printed copy." rather than nothing. How the link is signed and
 what opens it is in `docs/ledger.md`.
+
+Since migration 0089 the receipt can travel as a document too: `{{link}}`
+with `.pdf` on the end serves the sheet as a one-page PDF
+(`src/lib/ledger/receipt-pdf.ts`, drawn with jsPDF on the server, the same
+token so message and file expire together). Whether a wording carries it is
+its own switch — **Attach the receipt as a PDF** at Configuration →
+Notification wording, per channel, off by default. On WhatsApp it goes as
+the template's document header, which Meta fetches from the link itself, so
+the template registered with Meta must have a document header or Meta
+refuses the message; on email it goes as an attachment, fetched at send
+time; a gateway receives its address under `attachment`. What was attached
+is stored on the notification row, so a retry sends the same document.
 
 ## An exit, at every stage
 

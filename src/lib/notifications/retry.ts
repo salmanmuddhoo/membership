@@ -14,6 +14,7 @@
 // already guarantees one instance at a time.
 import { query } from '../db/pool';
 import { activeChannels } from './channels';
+import type { Attachment } from './notify';
 import type { NotificationChannel } from './templates';
 
 /**
@@ -66,6 +67,8 @@ export interface DueNotification {
   providerTemplateName: string | null;
   providerTemplateLanguage: string | null;
   providerParameters: string[] | null;
+  // What the first attempt attached, if anything (migration 0089).
+  attachment: Attachment | null;
 }
 
 /**
@@ -88,12 +91,16 @@ export async function dueNotifications(
     provider_template_name: string | null;
     provider_template_language: string | null;
     provider_parameters: string[] | null;
+    attachment_url: string | null;
+    attachment_name: string | null;
+    attachment_type: string | null;
   }>(
     // The template is joined for its provider name and language only — a
     // template deleted since leaves those null, and the send then refuses
     // with a reason rather than guessing one.
     `select n.id, n.channel, n.recipient, n.subject, n.body, n.attempts,
             n.provider_parameters,
+            n.attachment_url, n.attachment_name, n.attachment_type,
             t.provider_template_name, t.provider_template_language
        from notification n
        left join notification_template t on t.id = n.template_id
@@ -121,6 +128,14 @@ export async function dueNotifications(
     providerTemplateName: r.provider_template_name,
     providerTemplateLanguage: r.provider_template_language,
     providerParameters: r.provider_parameters,
+    attachment:
+      r.attachment_url && r.attachment_name
+        ? {
+            url: r.attachment_url,
+            filename: r.attachment_name,
+            contentType: r.attachment_type ?? 'application/octet-stream',
+          }
+        : null,
   }));
 }
 
@@ -204,6 +219,7 @@ export async function retryDueNotifications(
         providerTemplateLanguage:
           notification.providerTemplateLanguage ?? undefined,
         parameters: notification.providerParameters,
+        attachment: notification.attachment,
       });
       await markSent(notification.id);
       outcome.sent += 1;

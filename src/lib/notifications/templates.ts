@@ -30,6 +30,12 @@ export interface NotificationTemplate {
   // sentence.
   providerTemplateName: string | null;
   providerTemplateLanguage: string;
+  // Whether the message carries the event's document as well as its text
+  // (migration 0089): a receipt's PDF as the WhatsApp template's document
+  // header, or as an email attachment. Off unless the Society turns it on,
+  // since a WhatsApp template only takes one if it was registered with a
+  // document header.
+  attachesDocument: boolean;
 }
 
 interface TemplateRow {
@@ -42,6 +48,7 @@ interface TemplateRow {
   description: string;
   provider_template_name: string | null;
   provider_template_language: string;
+  attaches_document: boolean;
 }
 
 function toTemplate(row: TemplateRow): NotificationTemplate {
@@ -55,6 +62,7 @@ function toTemplate(row: TemplateRow): NotificationTemplate {
     description: row.description,
     providerTemplateName: row.provider_template_name,
     providerTemplateLanguage: row.provider_template_language,
+    attachesDocument: row.attaches_document,
   };
 }
 
@@ -64,7 +72,8 @@ export async function listNotificationTemplates(): Promise<
   return cached('notification_templates', async () => {
     const result = await query<TemplateRow>(
       `select id, event_code, channel, subject, body, is_active, description,
-              provider_template_name, provider_template_language
+              provider_template_name, provider_template_language,
+              attaches_document
          from notification_template
         order by event_code, channel`
     );
@@ -157,6 +166,9 @@ export interface TemplateEdit {
   // elsewhere, so the editing screen need not know which is which.
   providerTemplateName?: string | null;
   providerTemplateLanguage?: string;
+  // Only meaningful on an event that has a document to carry (a receipt);
+  // left alone when the edit does not say.
+  attachesDocument?: boolean;
 }
 
 /**
@@ -232,7 +244,8 @@ export async function updateNotificationTemplate(
         `update notification_template
             set subject = $2, body = $3, is_active = $4,
                 provider_template_name = $5,
-                provider_template_language = coalesce($6, 'en')
+                provider_template_language = coalesce($6, 'en'),
+                attaches_document = coalesce($7, attaches_document)
           where id = $1`,
         [
           id,
@@ -241,6 +254,7 @@ export async function updateNotificationTemplate(
           edit.isActive,
           edit.providerTemplateName?.trim() || null,
           edit.providerTemplateLanguage?.trim() || null,
+          edit.attachesDocument ?? null,
         ]
       );
     }

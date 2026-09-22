@@ -47,12 +47,23 @@ export async function verifyReceiptToken(
   }
 }
 
-// The full address, or null when the origin or the secret is not known.
-export async function receiptLink(
+// The full addresses, or null when the origin or the secret is not known:
+// the page, and the same token with the receipt as a file on the end —
+// what a WhatsApp document or an email attachment is fetched from at send
+// time (S-1602's Should half). One token for both, so the message and its
+// attachment expire together.
+export async function receiptLinks(
   transactionId: string
-): Promise<string | null> {
+): Promise<{ page: string; pdf: string } | null> {
   const origin = getAppOrigin();
   const token = await signReceiptToken(transactionId);
   if (!origin || !token) return null;
-  return `${origin}/receipts/shared/${token}`;
+  const page = `${origin}/receipts/shared/${token}`;
+  return { page, pdf: `${page}.pdf` };
+}
+
+export async function receiptLink(
+  transactionId: string
+): Promise<string | null> {
+  return (await receiptLinks(transactionId))?.page ?? null;
 }

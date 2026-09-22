@@ -42,6 +42,9 @@ if (Astro.request.method === 'POST') {
           providerTemplateLanguage: String(
             form.get('providerTemplateLanguage') ?? ''
           ).trim(),
+          ...(form.has('attachesDocumentShown')
+            ? { attachesDocument: form.get('attachesDocument') === 'on' }
+            : {}),
         },
         { userId: principal.userId, email: principal.email }
       );
@@ -227,6 +230,22 @@ for (const template of templates) {
                   />
                 </label>
               </div>
+            )}
+
+            {template.eventCode === 'receipt.issued' && (
+              <label class="flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-300">
+                <input type="hidden" name="attachesDocumentShown" value="1" />
+                <input
+                  type="checkbox"
+                  name="attachesDocument"
+                  checked={template.attachesDocument}
+                  disabled={!canManage}
+                  class="rounded border-neutral-300 dark:border-neutral-600"
+                />
+                {template.channel === 'whatsapp'
+                  ? 'Attach the receipt as a PDF (the WhatsApp template needs a document header)'
+                  : 'Attach the receipt as a PDF'}
+              </label>
             )}
 
             <label class="block text-sm text-neutral-600 dark:text-neutral-300">

@@ -9,7 +9,8 @@ import { contactFor, type Contact } from '../notifications/events';
 import { RECEIPT_ISSUED } from '../notifications/event-codes';
 import { notify } from '../notifications/notify';
 import { formatMoney } from '../payments/money';
-import { receiptLink } from './receipt-links';
+import { receiptLinks } from './receipt-links';
+import { receiptPdfFileName } from './receipt-pdf';
 import { loadTransactionReceipt, type TransactionReceipt } from './receipts';
 
 const KIND_WORDS: Record<string, string> = {
@@ -65,13 +66,23 @@ export async function notifyReceiptIssued(
     if (!contact || (!contact.email && !contact.mobile)) {
       return { ...empty, contact };
     }
-    const link = await receiptLink(transactionId);
+    const links = await receiptLinks(transactionId);
+    const link = links?.page ?? null;
     const notificationIds = await notify({
       eventCode: RECEIPT_ISSUED,
       recipients: { email: contact.email, mobile: contact.mobile },
       values: valuesFor(receipt, contact, link),
       entityType: 'transaction',
       entityId: receipt.transaction.id,
+      // The receipt itself, for a wording that says to attach it: the same
+      // signed link with .pdf on the end (receipt-pdf.ts).
+      attachment: links
+        ? {
+            url: links.pdf,
+            filename: receiptPdfFileName(receipt),
+            contentType: 'application/pdf',
+          }
+        : null,
     });
     return { notificationIds, contact, link };
   } catch (error) {

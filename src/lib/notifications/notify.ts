@@ -27,11 +27,22 @@ import {
   type NotificationTemplate,
 } from './templates';
 
+// A document that travels with the message (S-1602): where it is fetched
+// from at send time — a signed, expiring link of this system's own, so a
+// retry fetches the same document — and what it is called.
+export interface Attachment {
+  url: string;
+  filename: string;
+  contentType: string;
+}
+
 export interface OutgoingMessage {
   channel: NotificationChannel;
   recipient: string;
   subject: string | null;
   body: string;
+  // Present only when the wording says to attach the event's document.
+  attachment?: Attachment | null;
   // For a provider that sends approved templates rather than finished text
   // (WhatsApp, S-903): what the wording is called at the provider, and the
   // values for its positional slots. `body` is still the rendered text, which
@@ -60,6 +71,9 @@ export interface NotifyRequest {
   // What this is about, so a member's record can show what they were told.
   entityType?: string;
   entityId?: string;
+  // The event's document, if it has one. Attached only on a channel whose
+  // wording says so (NotificationTemplate.attachesDocument).
+  attachment?: Attachment | null;
 }
 
 // Which provider carries a channel is channels.ts's question, for the first
@@ -103,8 +117,9 @@ async function record(
   const result = await query<{ id: string }>(
     `insert into notification
        (event_code, channel, template_id, recipient, subject, body,
-        entity_type, entity_id, provider_parameters)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        entity_type, entity_id, provider_parameters,
+        attachment_url, attachment_name, attachment_type)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
      returning id`,
     [
       request.eventCode,
@@ -119,6 +134,9 @@ async function record(
       // rendered body is: a second attempt sends what the first would have,
       // even if the wording has been edited since.
       message.parameters ? JSON.stringify(message.parameters) : null,
+      message.attachment?.url ?? null,
+      message.attachment?.filename ?? null,
+      message.attachment?.contentType ?? null,
     ]
   );
   return result.rows[0].id;
@@ -185,6 +203,10 @@ export async function notify(request: NotifyRequest): Promise<string[]> {
         // The body's own placeholder order is the parameter order: the Nth
         // slot an administrator writes is the provider template's {{N}}.
         parameters: parametersFor(template, request.values),
+        attachment:
+          template.attachesDocument && request.attachment
+            ? request.attachment
+            : null,
       };
 
       const id = await record(template, message, request);

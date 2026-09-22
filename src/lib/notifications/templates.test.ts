@@ -76,6 +76,7 @@ describe('what the editor refuses', () => {
       description: '',
       providerTemplateName: null,
       providerTemplateLanguage: 'en',
+      attachesDocument: false,
       ...overrides,
     };
   }

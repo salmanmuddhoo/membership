@@ -384,8 +384,11 @@ is public in the middleware; the token is the credential, and the page
 renders the sheet with nothing that leads into the officer's screens, or
 one line saying the link no longer works. The origin is `PUBLIC_APP_URL`,
 else `ENTRA_REDIRECT_URI`'s; with no origin or no secret the wording's
-`{{link}}` reads "Ask at your branch for a printed copy." instead. WhatsApp
-as a document is the story's Should half and is not built.
+`{{link}}` reads "Ask at your branch for a printed copy." instead. The
+receipt as a document is the story's Should half, built since migration
+0089: the same token with `.pdf` on the end serves the sheet as a PDF
+(`src/lib/ledger/receipt-pdf.ts`), attached on whichever channel's wording
+says so — `docs/notifications.md` has how each provider carries it.
 
 ## The statement
 

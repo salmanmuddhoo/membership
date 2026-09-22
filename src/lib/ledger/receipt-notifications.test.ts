@@ -54,6 +54,7 @@ interface Sent {
   recipient: string;
   subject: string | null;
   body: string;
+  attachment: { url: string; filename: string; contentType: string } | null;
 }
 
 async function load() {
@@ -81,6 +82,7 @@ async function load() {
           recipient: message.recipient,
           subject: message.subject,
           body: message.body,
+          attachment: message.attachment ?? null,
         });
       },
     });
@@ -88,6 +90,7 @@ async function load() {
   return {
     sent,
     notify,
+    retry: await import('../notifications/retry'),
     deposits: await import('./deposits'),
     withdrawals: await import('./withdrawals'),
     receipts: await import('./receipts'),
@@ -368,5 +371,85 @@ describe('the account statement (S-1604)', () => {
         today
       )
     ).toBeNull();
+  });
+});
+
+// Last, because its deposits would shift the statement's figures above.
+describe('the receipt as a document (S-1602)', () => {
+  // S-1602's Should half: the receipt as a document rides the same message
+  // once the wording says so — and only then, since a WhatsApp template
+  // without a document header refuses one.
+  it('attaches the receipt as a PDF only where the wording says to', async () => {
+    const before = await load();
+    const plain = await before.deposits.recordDeposit(
+      { accountId: reachable.msa, amount: '100', method: 'cash' },
+      officer
+    );
+    expect(before.sent.every(s => s.attachment === null)).toBe(true);
+    expect(plain.receiptNo).toMatch(/^RCT-/);
+
+    await run(
+      appUrl,
+      `begin; set local albarakah.actor_description = 'test';
+       update notification_template set attaches_document = true
+        where event_code = 'receipt.issued' and channel = 'whatsapp';
+       commit;`
+    );
+    const { sent, deposits, links, retry } = await load();
+    const deposit = await deposits.recordDeposit(
+      { accountId: reachable.msa, amount: '7000', method: 'cash' },
+      officer
+    );
+    const whatsapp = sent.find(s => s.channel === 'whatsapp')!;
+    expect(whatsapp.attachment).toMatchObject({
+      filename: `Receipt ${deposit.receiptNo}.pdf`,
+      contentType: 'application/pdf',
+    });
+    const pdf = whatsapp.attachment!.url.match(
+      /^https:\/\/members\.example\.mu\/receipts\/shared\/(\S+)\.pdf$/
+    );
+    expect(pdf).not.toBeNull();
+    expect(await links.verifyReceiptToken(pdf![1])).toBe(deposit.id);
+    // The same token as the page link in the body: one expiry for both.
+    expect(whatsapp.body).toContain(
+      whatsapp.attachment!.url.replace(/\.pdf$/, '')
+    );
+    // Email's wording did not say to, so it carries the link alone.
+    expect(sent.find(s => s.channel === 'email')!.attachment).toBeNull();
+
+    // On the row, so a retry days later fetches the same document.
+    const rows = await run(
+      appUrl,
+      `select channel, attachment_url, attachment_name, attachment_type
+         from notification
+        where entity_type = 'transaction' and entity_id = $1
+          and event_code = 'receipt.issued'
+        order by channel`,
+      [deposit.id]
+    );
+    expect(rows.rows).toEqual([
+      {
+        channel: 'email',
+        attachment_url: null,
+        attachment_name: null,
+        attachment_type: null,
+      },
+      {
+        channel: 'whatsapp',
+        attachment_url: whatsapp.attachment!.url,
+        attachment_name: `Receipt ${deposit.receiptNo}.pdf`,
+        attachment_type: 'application/pdf',
+      },
+    ]);
+    await run(
+      appUrl,
+      `update notification set status = 'failed', next_attempt_at = now()
+        where entity_id = $1 and channel = 'whatsapp'`,
+      [deposit.id]
+    );
+    const due = await retry.dueNotifications(10);
+    expect(due.find(n => n.channel === 'whatsapp')?.attachment).toEqual(
+      whatsapp.attachment
+    );
   });
 });
