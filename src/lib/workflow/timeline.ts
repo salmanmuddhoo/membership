@@ -13,7 +13,11 @@
 // process (capture, sign, documents, pay, submit, decide), a transaction's
 // come from its chain.
 import { activeChain, type WorkflowStep } from '../config/reference';
-import { closureChecklist, checklistComplete } from '../ledger/closures';
+import {
+  checklistComplete,
+  isExitRequest,
+  requestChecklist,
+} from '../ledger/closures';
 import { loadTransaction, positionOf, transitionsFor } from '../ledger/review';
 import { resolveRoute } from '../ledger/routing';
 import { toCents } from '../payments/money';
@@ -207,10 +211,12 @@ export async function chainTimeline(
     .map(t => t.stepCode!);
   const rejected = [...trail].reverse().find(t => t.toStatus === 'rejected');
   const lastReturn = [...trail].reverse().find(t => t.toStatus === 'returned');
-  const closure =
-    transaction.kind === 'closure'
-      ? closurePrelude(await closureChecklist(transaction.id))
-      : {};
+  const closure = isExitRequest(transaction.kind)
+    ? closurePrelude(
+        await requestChecklist(transaction.id, transaction.kind),
+        transaction.kind
+      )
+    : {};
   return transactionTimeline({
     status: transaction.status,
     chain,
@@ -228,9 +234,9 @@ async function expectedChain(transaction: {
   accountTypeId: string;
   amount: string;
 }): Promise<WorkflowStep[]> {
-  if (transaction.kind !== 'closure') return [];
+  if (!isExitRequest(transaction.kind)) return [];
   const route = await resolveRoute({
-    kind: 'closure',
+    kind: transaction.kind as 'closure' | 'resignation',
     accountTypeId: transaction.accountTypeId,
     amountCents: toCents(transaction.amount),
     roleCodes: [],
@@ -245,7 +251,8 @@ async function expectedChain(transaction: {
  * that one form. Pure, so the tests can say what each state looks like.
  */
 export function closurePrelude(
-  checklist: { documentName: string; filed: unknown | null }[]
+  checklist: { documentName: string; filed: unknown | null }[],
+  kind: string = 'closure'
 ): Pick<TransactionTimelineInput, 'prelude' | 'submitLabel' | 'postedLabel'> {
   const complete = checklistComplete(
     checklist as Parameters<typeof checklistComplete>[0]
@@ -270,6 +277,6 @@ export function closurePrelude(
       },
     ],
     submitLabel: 'Submitted',
-    postedLabel: 'Closed',
+    postedLabel: kind === 'resignation' ? 'Resigned' : 'Closed',
   };
 }

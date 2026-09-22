@@ -35,6 +35,7 @@ import {
 import { approvalCommentsFor } from '@lib/applications/workflow';
 import DocumentViewer from '@components/DocumentViewer.astro';
 import { closuresInFlightFor } from '@lib/ledger/closures';
+import { resignationInFlightFor } from '@lib/ledger/resignations';
 import { statusNotice } from '@lib/members/status';
 
 const principal = Astro.locals.principal!;
@@ -293,6 +294,13 @@ const notice = member
 // S-1702: closing an account that is not the membership's, and the request
 // already on its way where there is one.
 const canClose = canDeposit;
+// S-1703: leaving the Society, and the request on its way where there is
+// one. Only a member resigns; a customer holds no membership to end.
+const resigning =
+  member && principal.permissions.has('transaction.view')
+    ? await resignationInFlightFor(member.id)
+    : null;
+const canResign = Boolean(member) && canDeposit && !resigning;
 const closing = principal.permissions.has('transaction.view')
   ? await closuresInFlightFor(
       member ? { memberId: member.id } : { customerId: customer!.id }
@@ -359,6 +367,22 @@ const pageTitle = member ? member.memberNo : name;
           >
             Transfer
           </a>
+          {canResign && (
+            <a
+              href={`/members/${recordId}/resign`}
+              class="rounded-lg border border-red-300 px-3 py-1.5 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
+            >
+              Resign
+            </a>
+          )}
+          {resigning && (
+            <a
+              href={`/transactions/${resigning.id}`}
+              class="rounded-lg bg-amber-100 px-3 py-1.5 text-sm font-medium text-amber-900 underline dark:bg-amber-950 dark:text-amber-200"
+            >
+              Resigning · {resigning.reference}
+            </a>
+          )}
         </div>
       )}
     </div>

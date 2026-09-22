@@ -1834,6 +1834,56 @@ export async function discardApplicationDocuments(
   }
 }
 
+/**
+ * Every file a former member's documents put in the drive (S-1703,
+ * docs/retention.md): the ones filed against them as a member, against a
+ * request of theirs (a closure, the resignation), and against every
+ * application they made — the founding one, whose folder is theirs and
+ * goes with it, and any further account they opened. Rows are the
+ * retention job's to remove afterwards; this only removes the bytes.
+ */
+export async function discardMemberFiles(
+  memberId: string,
+  config?: GraphConfig
+): Promise<void> {
+  const files = await query<{ sharepoint_path: string }>(
+    `select distinct v.sharepoint_path
+       from document_version v
+       join document d on d.id = v.document_id
+       left join transaction t on t.id = d.transaction_id
+      where (d.member_id = $1 or t.member_id = $1)
+        and v.sharepoint_path is not null
+        and not exists (
+          select 1
+            from document_version o
+            join document od on od.id = o.document_id
+            left join transaction ot on ot.id = od.transaction_id
+           where od.member_id is distinct from $1
+             and ot.member_id is distinct from $1
+             and o.state = 'committed'
+             and o.superseded_at is null
+             and (o.sharepoint_path = v.sharepoint_path
+                  or (o.sharepoint_item_id is not null
+                      and o.sharepoint_item_id = v.sharepoint_item_id))
+        )`,
+    [memberId]
+  );
+  for (const file of files.rows) {
+    await deleteItemByPath(file.sharepoint_path, config);
+  }
+
+  const applications = await query<{ id: string }>(
+    `select id from membership_application
+      where existing_member_id = $1
+         or id = (select application_id from member where id = $1)
+      order by created_at`,
+    [memberId]
+  );
+  for (const application of applications.rows) {
+    await discardApplicationDocuments(application.id, config);
+  }
+}
+
 export async function discardApplicationFiles(
   reference: string,
   surname = '',

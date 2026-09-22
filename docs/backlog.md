@@ -4295,9 +4295,26 @@ disbursement: `post_transaction()` refuses a closure whose amount is not
 the balance at that moment, writes the debit (none for an empty account)
 and closes the account in the same statement, with a receipt. Shares and
 the MSA are refused by name: closing them is a resignation.
-`POST /api/v1/accounts/{id}/closure` starts one. **Not yet:** resignation
-(S-1703), the demised claim (S-1704), the notifications (S-1705) and the
-report (S-1706).
+`POST /api/v1/accounts/{id}/closure` starts one.
+
+**Shipped, second increment** (S-1703): a resignation is a transaction of
+kind `resignation` on the Shares account covering every membership-default
+account (0078) — Shares and the MSA as one unit, a Hajj Savings or
+Investment untouched — with the same request life as a closure:
+**Resign** on the member's page, the signed request filed against the
+transaction, Details → Signature → Documents → Submitted → the chain →
+Resigned. The pre-checks are each a switch at Configuration → Fee
+schedules and each named when it blocks: nothing still on its way on
+either core account, the joining fees fully paid, no financing outstanding
+(a hook with nothing behind it, seeded off). Submitting puts both accounts
+into `closing`; rejected or withdrawn, both are active again. Posting is
+one disbursement and one receipt: `post_transaction()` refuses an amount
+that is not what both accounts hold, writes one debit per account, closes
+each as it empties and sets `member.status = 'resigned'`, dated. Retention
+gained its fourth class, "Documents of a member who left", anchored on
+that date (`docs/retention.md`). `POST /api/v1/members/{id}/resignation`
+starts one. **Not yet:** the demised claim (S-1704), the notifications
+(S-1705) and the report (S-1706).
 
 ### S-1701 · Member status gets a vocabulary ✅
 
@@ -4327,7 +4344,7 @@ without leaving the Society. _(CLS-US-001..006, ACC-US-005, FRD 7.1)_
 - The chevron: Details → Signature → Documents → Submit → the live chain →
   Disbursement
 
-### S-1703 · Resignation request (Shares + MSA, ends membership)
+### S-1703 · Resignation request (Shares + MSA, ends membership) ✅
 
 **As** an officer, **I need** to resign a member, **so that** both their core
 accounts close together and their membership ends. _(RES-US-001..006, FRD

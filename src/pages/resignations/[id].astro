@@ -1,0 +1,385 @@
+---
+// A resignation request while it is the officer's (S-1703): the details,
+// the member's signature on the request, what is filed, the checks, and
+// the submission that sends it to its chain. Once submitted it is reviewed
+// at /transactions/<id> like any transaction, and comes back here only if
+// a reviewer returns it.
+import ChainTimeline from '@components/ChainTimeline.astro';
+import DocumentViewer from '@components/DocumentViewer.astro';
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import { offeredPaymentMethods } from '@lib/config/reference';
+import { checklistComplete, isEditable } from '@lib/ledger/closures';
+import {
+  blockingChecks,
+  cancelResignation,
+  checksFor,
+  coreAccounts,
+  resignationChecklist,
+  ResignationError,
+  submitResignation,
+  totalCents,
+  updateResignation,
+} from '@lib/ledger/resignations';
+import { loadTransaction, transitionsFor } from '@lib/ledger/review';
+import { formatMoney, fromCents } from '@lib/payments/money';
+import { chainTimeline } from '@lib/workflow/timeline';
+
+const principal = Astro.locals.principal!;
+const { id } = Astro.params;
+let request = id ? await loadTransaction(id) : null;
+if (!request || request.kind !== 'resignation') {
+  return new Response('Not found', { status: 404 });
+}
+if (!isEditable(request.status)) {
+  return Astro.redirect(`/transactions/${request.id}`);
+}
+if (request.capturedById !== principal.userId) {
+  return Astro.redirect(`/transactions/${request.id}`);
+}
+
+const STEPS = ['details', 'signature', 'documents', 'submit'] as const;
+type Step = (typeof STEPS)[number];
+const base = `/resignations/${request.id}`;
+const stepHrefs: Record<string, string> = {
+  details: `${base}?step=details`,
+  signature: `${base}?step=signature`,
+  documents: `${base}?step=documents`,
+  capture: `${base}?step=submit`,
+};
+
+let error: string | null = null;
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const text = (name: string) => String(form.get(name) ?? '');
+  const intent = text('intent');
+  try {
+    if (intent === 'details') {
+      request = await updateResignation(
+        request.id,
+        {
+          reason: text('reason'),
+          method: text('method'),
+          methodReference: text('methodReference'),
+        },
+        principal
+      );
+      return Astro.redirect(`${base}?step=signature`);
+    } else if (intent === 'submit') {
+      const submitted = await submitResignation(request.id, principal);
+      return Astro.redirect(`/transactions/${submitted.id}`);
+    } else if (intent === 'cancel') {
+      await cancelResignation(request.id, principal);
+      return Astro.redirect(`/members/${request.holderId}`);
+    }
+  } catch (err) {
+    if (err instanceof ResignationError) {
+      error = err.message;
+    } else {
+      console.error('[resignations]', err);
+      error = 'Something went wrong. Please try again.';
+    }
+  }
+}
+
+const requested = Astro.url.searchParams.get('step') ?? 'details';
+const step: Step = (STEPS as readonly string[]).includes(requested)
+  ? (requested as Step)
+  : 'details';
+
+const [checklist, timeline, trail, paymentMethods, accounts, checks] =
+  await Promise.all([
+    resignationChecklist(request.id),
+    chainTimeline('transaction', request.id),
+    transitionsFor(request.id),
+    offeredPaymentMethods(),
+    coreAccounts(request.holderId),
+    checksFor(request.holderId, request.id),
+  ]);
+const complete = checklistComplete(checklist);
+const blocking = blockingChecks(checks);
+const total = fromCents(totalCents(accounts));
+const form = checklist[0] ?? null;
+const returnComment =
+  request.status === 'returned'
+    ? [...trail].reverse().find(t => t.toStatus === 'returned')?.comment
+    : null;
+const dateFormat = new Intl.DateTimeFormat('en-GB', {
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+});
+
+const INPUT =
+  'mt-1 block w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100';
+const BUTTON =
+  'bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50';
+const LINK =
+  'rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800';
+const DANGER =
+  'rounded-lg border border-red-300 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950';
+const CARD =
+  'space-y-4 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950';
+---
+
+<DashboardLayout
+  title={`${request.reference} · Al Barakah MCSL`}
+  heading={`Resignation ${request.reference}`}
+>
+  <div class="mx-auto max-w-4xl space-y-6">
+    <ChainTimeline
+      steps={timeline ?? []}
+      hrefs={stepHrefs}
+      label="Resignation progress"
+    />
+
+    <div class="-mx-4 flex flex-wrap items-center justify-between gap-2 border-t border-neutral-200/80 bg-neutral-100/95 px-4 py-3 text-sm sm:mx-0 sm:rounded-b-2xl sm:px-3 sm:py-1.5 dark:border-neutral-800/80 dark:bg-neutral-950/95">
+      <a
+        href={`/members/${request.holderId}`}
+        class="text-neutral-500 underline dark:text-neutral-400"
+      >
+        ← {request.holderName || 'member'}
+        {request.memberNo && ` · ${request.memberNo}`}
+      </a>
+      <span class="rounded bg-neutral-200 px-2 py-0.5 text-xs font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
+        {accounts.map(a => a.typeName).join(' + ')} · {formatMoney(total)}
+      </span>
+    </div>
+
+    {error && (
+      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+        {error}
+      </div>
+    )}
+    {returnComment && (
+      <div class="rounded-lg border border-amber-300 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200">
+        Returned: {returnComment}
+      </div>
+    )}
+
+    {step === 'details' && (
+      <form method="post" class={CARD}>
+        <h2 class="text-sm font-semibold text-neutral-700 uppercase dark:text-neutral-200">
+          Details
+        </h2>
+        <ul class="divide-y divide-neutral-200 text-sm dark:divide-neutral-800">
+          {accounts.map(account => (
+            <li class="flex items-center justify-between py-2">
+              <span class="text-neutral-800 dark:text-neutral-100">
+                {account.accountNo} · {account.typeName}
+              </span>
+              <span class="tabular-nums">{formatMoney(account.balance)}</span>
+            </li>
+          ))}
+          <li class="flex items-center justify-between py-2 font-semibold">
+            <span>Paid out</span>
+            <span class="tabular-nums">{formatMoney(total)}</span>
+          </li>
+        </ul>
+        <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+          Reason
+          <textarea
+            name="reason"
+            rows="3"
+            required
+            maxlength="500"
+            class={INPUT}
+          >{request.reason}</textarea>
+        </label>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            Balance paid out by
+            <select name="method" class={INPUT}>
+              {paymentMethods.map(method => (
+                <option
+                  value={method.code}
+                  selected={method.code === request!.method}
+                >
+                  {method.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            Reference (cheque number, transfer reference)
+            <input
+              type="text"
+              name="methodReference"
+              value={request.methodReference}
+              class={INPUT}
+            />
+          </label>
+        </div>
+        <input type="hidden" name="intent" value="details" />
+        <div class="flex flex-wrap gap-2 pt-2">
+          <button type="submit" class={BUTTON}>
+            Save and continue
+          </button>
+        </div>
+      </form>
+    )}
+
+    {step === 'signature' && (
+      <section class={CARD}>
+        <h2 class="text-sm font-semibold text-neutral-700 uppercase dark:text-neutral-200">
+          Signature
+        </h2>
+        {form?.filed ? (
+          <p class="text-sm text-neutral-700 dark:text-neutral-200">
+            Signed request on file: {form.filed.fileName}, filed{' '}
+            {dateFormat.format(form.filed.uploadedAt)} by{' '}
+            {form.filed.uploadedByName}. Signing again replaces it.
+          </p>
+        ) : (
+          <p class="text-sm text-neutral-700 dark:text-neutral-200">
+            The member signs the request on the next screen, and it is filed
+            here.
+          </p>
+        )}
+        <div class="flex flex-wrap gap-2">
+          <a href={`${base}/form`} class={BUTTON}>
+            {form?.filed ? 'Sign again' : 'Open the request to sign'}
+          </a>
+          <a href={`${base}?step=documents`} class={LINK}>
+            Next
+          </a>
+        </div>
+      </section>
+    )}
+
+    {step === 'documents' && (
+      <section class={CARD}>
+        <h2 class="text-sm font-semibold text-neutral-700 uppercase dark:text-neutral-200">
+          Documents
+        </h2>
+        {checklist.length === 0 ? (
+          <p class="text-sm text-red-700 dark:text-red-300">
+            The resignation request document type is not configured. Ask an
+            administrator.
+          </p>
+        ) : (
+          <ul class="space-y-2">
+            {checklist.map(item => (
+              <li class="flex items-center justify-between gap-3 rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm dark:border-neutral-800 dark:bg-neutral-900">
+                <span>
+                  <span class="font-medium text-neutral-800 dark:text-neutral-100">
+                    {item.documentName}
+                  </span>
+                  <span class="block text-xs text-neutral-500 dark:text-neutral-400">
+                    {item.filed
+                      ? `${item.filed.fileName} · ${dateFormat.format(item.filed.uploadedAt)}`
+                      : 'Missing'}
+                  </span>
+                </span>
+                {item.filed ? (
+                  <button
+                    type="button"
+                    data-view-document
+                    data-document-id={item.filed.documentId}
+                    class="shrink-0 font-medium text-neutral-700 underline hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-neutral-100"
+                  >
+                    View
+                  </button>
+                ) : (
+                  <a href={`${base}?step=signature`} class="shrink-0 underline">
+                    Sign
+                  </a>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+        <div class="flex flex-wrap gap-2">
+          <a href={`${base}?step=submit`} class={BUTTON}>
+            Next
+          </a>
+        </div>
+      </section>
+    )}
+
+    {step === 'submit' && (
+      <form method="post" class={CARD}>
+        <h2 class="text-sm font-semibold text-neutral-700 uppercase dark:text-neutral-200">
+          Submit
+        </h2>
+        <dl class="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
+          <dt class="text-neutral-500 dark:text-neutral-400">Closing</dt>
+          <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+            {accounts.map(a => `${a.accountNo} · ${a.typeName}`).join(', ')}
+          </dd>
+          <dt class="text-neutral-500 dark:text-neutral-400">Paid out</dt>
+          <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+            {formatMoney(total)}
+          </dd>
+          <dt class="text-neutral-500 dark:text-neutral-400">Reason</dt>
+          <dd class="text-neutral-800 dark:text-neutral-100">
+            {request.reason}
+          </dd>
+          <dt class="text-neutral-500 dark:text-neutral-400">Paid out by</dt>
+          <dd class="text-neutral-800 dark:text-neutral-100">
+            {request.methodName}
+            {request.methodReference && ` · ${request.methodReference}`}
+          </dd>
+          <dt class="text-neutral-500 dark:text-neutral-400">Signed request</dt>
+          <dd
+            class:list={[
+              complete
+                ? 'text-neutral-800 dark:text-neutral-100'
+                : 'text-red-700 dark:text-red-300',
+            ]}
+          >
+            {complete ? 'On file' : 'Missing'}
+          </dd>
+        </dl>
+        <ul class="space-y-1 text-sm">
+          {checks.map(check => (
+            <li class="flex flex-wrap items-baseline gap-x-2">
+              <span
+                class:list={[
+                  'font-medium',
+                  !check.enabled
+                    ? 'text-neutral-400 dark:text-neutral-500'
+                    : check.passed
+                      ? 'text-neutral-800 dark:text-neutral-100'
+                      : 'text-red-700 dark:text-red-300',
+                ]}
+              >
+                {check.label}
+              </span>
+              <span class="text-xs text-neutral-500 dark:text-neutral-400">
+                {check.enabled ? check.detail : 'Not checked'}
+              </span>
+            </li>
+          ))}
+        </ul>
+        <p class="text-sm text-neutral-600 dark:text-neutral-300">
+          Once submitted, nothing else moves on these accounts until the
+          resignation is decided. When it is approved and paid out, both close
+          and the membership ends.
+        </p>
+        <input type="hidden" name="intent" value="submit" />
+        <div class="flex flex-wrap gap-2 pt-2">
+          <button
+            type="submit"
+            class={BUTTON}
+            disabled={!complete || blocking.length > 0}
+          >
+            {request.status === 'returned' ? 'Resubmit' : 'Submit'}
+          </button>
+          <button
+            type="submit"
+            class={DANGER}
+            name="intent"
+            value="cancel"
+            formnovalidate
+          >
+            Withdraw the request
+          </button>
+        </div>
+      </form>
+    )}
+  </div>
+  <DocumentViewer />
+</DashboardLayout>

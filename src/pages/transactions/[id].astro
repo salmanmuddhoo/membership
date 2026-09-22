@@ -192,12 +192,16 @@ const isDeposit = transaction.kind === 'deposit';
 // A closure (S-1702) is corrected in its own wizard, not here: the signed
 // request may need signing again.
 const isClosure = transaction.kind === 'closure';
+const isResignation = transaction.kind === 'resignation';
+// A request the officer built (a closure, a resignation): its papers are
+// on it, and it is corrected in its own wizard.
+const isExit = isClosure || isResignation;
 const canEditClosure =
-  isClosure &&
+  isExit &&
   (transaction.status === 'returned' || transaction.status === 'draft') &&
   transaction.capturedById === principal.userId &&
   principal.permissions.has(PERMISSION_CAPTURE);
-const closureDocuments = isClosure
+const closureDocuments = isExit
   ? await documentsForTransaction(transaction.id)
   : [];
 // Posting money that leaves the Society is paying it out: the method and
@@ -345,7 +349,7 @@ const DANGER =
           </>
         )}
         <dt class="text-neutral-500 dark:text-neutral-400">
-          {isClosure ? 'Balance to pay out' : 'Amount'}
+          {isExit ? 'Balance to pay out' : 'Amount'}
         </dt>
         <dd class="font-medium text-neutral-800 dark:text-neutral-100">
           {formatMoney(transaction.amount, transaction.currency)}
@@ -361,14 +365,14 @@ const DANGER =
         {transaction.reason && (
           <>
             <dt class="text-neutral-500 dark:text-neutral-400">
-              {isClosure ? 'Reason' : 'Note'}
+              {isExit ? 'Reason' : 'Note'}
             </dt>
             <dd class="text-neutral-800 dark:text-neutral-100">
               {transaction.reason}
             </dd>
           </>
         )}
-        {isClosure && (
+        {isExit && (
           <>
             <dt class="text-neutral-500 dark:text-neutral-400">
               Signed request
@@ -423,6 +427,14 @@ const DANGER =
       </p>
     )}
 
+    {isResignation && transaction.status !== 'posted' && (
+      <p class="rounded-lg border border-neutral-300 px-4 py-3 text-sm text-neutral-700 dark:border-neutral-700 dark:text-neutral-200">
+        Resigns {transaction.holderName || 'this member'}: Shares and the
+        Multiplier Savings Account close together, their balances paid out when
+        it is approved, and the membership ends with it.
+      </p>
+    )}
+
     {isClosure && transaction.status !== 'posted' && (
       <p class="rounded-lg border border-neutral-300 px-4 py-3 text-sm text-neutral-700 dark:border-neutral-700 dark:text-neutral-200">
         Closes {transaction.accountNo} · {transaction.accountTypeName}. The
@@ -438,7 +450,10 @@ const DANGER =
             {returnComment}
           </p>
         )}
-        <a href={`/closures/${transaction.id}`} class={BUTTON}>
+        <a
+          href={`/${isResignation ? 'resignations' : 'closures'}/${transaction.id}`}
+          class={BUTTON}
+        >
           {transaction.status === 'returned'
             ? 'Correct and resubmit'
             : 'Continue the request'}
@@ -496,11 +511,13 @@ const DANGER =
         class="space-y-3 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
       >
         <p class="text-sm text-neutral-700 dark:text-neutral-200">
-          {isClosure
-            ? 'Approved. Record how the balance was paid out; the account closes and the receipt is issued now.'
-            : disburses
-              ? 'Approved. Record how it was paid out; the money moves and the receipt is issued now.'
-              : 'Approved. Posting moves the money and issues the receipt.'}
+          {isResignation
+            ? 'Approved. Record how the balances were paid out; both accounts close, the membership ends and the receipt is issued now.'
+            : isClosure
+              ? 'Approved. Record how the balance was paid out; the account closes and the receipt is issued now.'
+              : disburses
+                ? 'Approved. Record how it was paid out; the money moves and the receipt is issued now.'
+                : 'Approved. Posting moves the money and issues the receipt.'}
         </p>
         {disburses && (
           <div class="grid gap-3 sm:grid-cols-2">
@@ -538,11 +555,13 @@ const DANGER =
         )}
         <input type="hidden" name="intent" value="post" />
         <button type="submit" class={BUTTON}>
-          {isClosure
-            ? 'Pay out and close'
-            : disburses
-              ? 'Pay out and post'
-              : 'Post'}
+          {isResignation
+            ? 'Pay out and resign'
+            : isClosure
+              ? 'Pay out and close'
+              : disburses
+                ? 'Pay out and post'
+                : 'Post'}
         </button>
       </form>
     )}
@@ -827,7 +846,7 @@ const DANGER =
       )}
     </section>
   </div>
-  {isClosure && <DocumentViewer />}
+  {isExit && <DocumentViewer />}
 </DashboardLayout>
 
 <script>

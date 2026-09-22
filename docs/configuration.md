@@ -116,6 +116,13 @@ Amounts are `numeric` in the database and decimal **strings** in TypeScript and
 JSON. Money through a float is a rounding error waiting for a reconciliation to
 find it.
 
+**Resignation checks (S-1703)** sit on the same screen: three switches in
+`config_entry` (`resignation.check_pending_transactions`,
+`resignation.check_unpaid_fees`, `resignation.check_financing`), each a
+check a resignation must pass before it can be submitted and each named on
+the request when it blocks. The financing one is a hook for Phase 3/4 with
+nothing behind it, seeded off. `docs/ledger.md`, "Resigning".
+
 ### Payment methods (S-1307, FRD 6.6)
 
 `payment_method`. How money moves, as a row rather than a check constraint

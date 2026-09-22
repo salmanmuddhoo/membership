@@ -113,6 +113,7 @@ async function clearAllPeriods(): Promise<void> {
     'notification_log',
     'rejected_application',
     'abandoned_draft',
+    'former_member_documents',
   ]) {
     await setPeriodDirectly(code, null);
   }
@@ -271,6 +272,7 @@ describe('with no period set', () => {
     expect(outcome).toEqual({
       notificationsDeleted: 0,
       applicationsRedacted: 0,
+      formerMembersDisposed: 0,
       draftsDeleted: 0,
       draftsRefused: 0,
       filesFailed: 0,
@@ -301,6 +303,7 @@ describe('with no period set', () => {
       'notification_log',
       'rejected_application',
       'abandoned_draft',
+      'former_member_documents',
     ]);
   });
 });
@@ -767,5 +770,149 @@ describe('the audit trail itself', () => {
     await expect(
       run(appUrl, `update audit_event set action = 'changed'`)
     ).rejects.toThrow();
+  });
+});
+
+// A member who left (S-1703): their documents go once the period after the
+// day the membership ended has passed — the anchor the first release of
+// this module said it did not have.
+describe('a member who resigned', () => {
+  async function makeFormerMember(fixture: {
+    status: 'resigned' | 'demised' | 'active';
+    ageMonths: number;
+    surname: string;
+  }): Promise<{ memberId: string; applicationId: string; paths: string[] }> {
+    const ago = `now() - interval '${fixture.ageMonths} months'`;
+    const application = await run(
+      appUrl,
+      `insert into membership_application
+         (membership_type_id, status, captured_by, submitted_at, decided_at,
+          created_at, updated_at)
+       values ($1, 'approved', $2, ${ago}, ${ago}, ${ago}, ${ago})
+       returning id, reference`,
+      [individualTypeId, officerId]
+    );
+    const { id: applicationId, reference } = application.rows[0];
+    await run(
+      appUrl,
+      `insert into application_party (application_id, subject, ordinal, values)
+       values ($1, 'applicant', 1, $2::jsonb)`,
+      [
+        applicationId,
+        JSON.stringify({ surname: fixture.surname, name: 'Aisha' }),
+      ]
+    );
+    const member = await run(
+      appUrl,
+      `insert into member
+         (application_id, membership_type_id, status, status_changed_at)
+       values ($1, $2, $3, case when $3 = 'active' then null else ${ago} end)
+       returning id, member_no`,
+      [applicationId, individualTypeId, fixture.status]
+    );
+    const { id: memberId, member_no: memberNo } = member.rows[0];
+    const paths = [
+      `${folderFor(reference, fixture.surname)}/id.pdf`,
+      `${folderFor(reference, fixture.surname)}/${memberNo}-utility.pdf`,
+    ];
+    // One document on the founding application, one filed against them
+    // as a member later.
+    const onApplication = await run(
+      appUrl,
+      `insert into document (document_type_id, subject, application_id, state)
+       values ($1, 'applicant', $2, 'verified') returning id`,
+      [idCardTypeId, applicationId]
+    );
+    const onMember = await run(
+      appUrl,
+      `insert into document (document_type_id, subject, member_id, state)
+       values ((select id from document_type where code = 'utility_bill'),
+               'applicant', $1, 'verified') returning id`,
+      [memberId]
+    );
+    for (const [documentId, path, item] of [
+      [onApplication.rows[0].id, paths[0], `item-${reference}-id`],
+      [onMember.rows[0].id, paths[1], `item-${reference}-utility`],
+    ] as const) {
+      await run(
+        appUrl,
+        `insert into document_version
+           (document_id, version_no, state, file_name, content_type, size_bytes,
+            sharepoint_item_id, sharepoint_path, uploaded_by, committed_at)
+         values ($1, 1, 'committed', 'x.pdf', 'application/pdf', 1024,
+                 $2, $3, $4, now())`,
+        [documentId, item, path, officerId]
+      );
+    }
+    return { memberId, applicationId, paths };
+  }
+
+  it('loses their documents and files once the period after leaving has passed, and keeps the member, the ledger and the facts', async () => {
+    const gone = await makeFormerMember({
+      status: 'resigned',
+      ageMonths: 90,
+      surname: 'Gone',
+    });
+    const recent = await makeFormerMember({
+      status: 'resigned',
+      ageMonths: 2,
+      surname: 'Recent',
+    });
+    const staying = await makeFormerMember({
+      status: 'active',
+      ageMonths: 90,
+      surname: 'Staying',
+    });
+    await setPeriodDirectly('former_member_documents', 60);
+
+    const preview = await previewDisposal();
+    expect(
+      preview.find(p => p.code === 'former_member_documents')?.dueCount
+    ).toBe(1);
+
+    deletedFromDrive.length = 0;
+    const outcome = await disposeDueRecords({});
+    expect(outcome.formerMembersDisposed).toBe(1);
+    expect(disposedAnything(outcome)).toBe(true);
+    for (const path of gone.paths) expect(deletedFromDrive).toContain(path);
+    for (const other of [recent, staying]) {
+      for (const path of other.paths) {
+        expect(deletedFromDrive).not.toContain(path);
+      }
+    }
+
+    const documentsLeft = async (memberId: string, applicationId: string) =>
+      (
+        await run(
+          appUrl,
+          `select count(*)::int as n from document
+            where member_id = $1 or application_id = $2`,
+          [memberId, applicationId]
+        )
+      ).rows[0].n;
+    expect(await documentsLeft(gone.memberId, gone.applicationId)).toBe(0);
+    expect(await documentsLeft(recent.memberId, recent.applicationId)).toBe(2);
+    expect(await documentsLeft(staying.memberId, staying.applicationId)).toBe(
+      2
+    );
+
+    const member = await run(
+      appUrl,
+      `select status, documents_disposed_at from member where id = $1`,
+      [gone.memberId]
+    );
+    expect(member.rows[0].status).toBe('resigned');
+    expect(member.rows[0].documents_disposed_at).toBeInstanceOf(Date);
+    const party = await run(
+      appUrl,
+      `select values from application_party where application_id = $1`,
+      [gone.applicationId]
+    );
+    expect(party.rows[0].values).toEqual({ surname: 'Gone', name: 'Aisha' });
+
+    // Not twice.
+    const again = await disposeDueRecords({});
+    expect(again.formerMembersDisposed).toBe(0);
+    await setPeriodDirectly('former_member_documents', null);
   });
 });

@@ -12,6 +12,7 @@ const KINDS: TransactionRowKind[] = [
   'transfer_leg',
   'reversal',
   'closure',
+  'resignation',
 ];
 const STATUSES = [
   'submitted',

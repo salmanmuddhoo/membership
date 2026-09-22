@@ -18,6 +18,7 @@ const KIND_WORDS: Record<string, string> = {
   transfer_leg: 'Transfer',
   reversal: 'Reversal',
   closure: 'Account closure',
+  resignation: 'Resignation',
 };
 
 // The holder's contact details: a member's or a customer's, off the
