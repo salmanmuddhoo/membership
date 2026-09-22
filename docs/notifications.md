@@ -264,6 +264,14 @@ legacy member with no application is marked and reactivated all the same,
 and told nothing. `src/lib/members/dormancy.ts` raises both after the
 status has committed and never failing it.
 
+Two more since the app's details updates are decided (migration 0087):
+`member.details.applied`, with `fields` — the labels of what changed,
+comma-separated — and `member.details.declined`, with the `reason` the
+officer wrote. `src/lib/members/details-requests.ts` raises them after the
+decision has committed, through the same `tellMember` the dormancy job
+uses, so a member with no application on file is decided about and told
+nothing.
+
 ## Retrying, and giving up
 
 `notification-retry` (see `docs/jobs.md`) attempts everything whose backoff has

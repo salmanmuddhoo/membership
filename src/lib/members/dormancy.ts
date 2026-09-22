@@ -16,11 +16,9 @@
 // rule; "staff" is the only one there is.
 import { recordAudit } from '../access/audit';
 import type { Principal } from '../access/principal';
-import { loadApplication } from '../applications/capture';
 import { dormancyMonths, dormancyReactivation } from '../config/reference';
 import { query, withTransaction } from '../db/pool';
-import { contactFor } from '../notifications/events';
-import { notify } from '../notifications/notify';
+import { tellMember } from './tell-member';
 
 export const PERMISSION_REACTIVATE = 'member.reactivate';
 export const ACTION_DETECTED = 'member.dormancy_detected';
@@ -60,41 +58,6 @@ export interface DormancyMark {
 }
 
 const dateWords = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
-
-async function tellMember(
-  memberId: string,
-  eventCode: string,
-  values: Record<string, string>
-): Promise<void> {
-  try {
-    const member = await query<{
-      member_no: string;
-      application_id: string | null;
-    }>(`select member_no, application_id from member where id = $1`, [
-      memberId,
-    ]);
-    const row = member.rows[0];
-    if (!row?.application_id) return;
-    const application = await loadApplication(row.application_id);
-    const contact = application ? await contactFor(application) : null;
-    if (!contact || (!contact.email && !contact.mobile)) return;
-    await notify({
-      eventCode,
-      recipients: { email: contact.email, mobile: contact.mobile },
-      values: {
-        member_name: contact.name,
-        member_no: row.member_no,
-        ...values,
-      },
-      entityType: 'member',
-      entityId: memberId,
-    });
-  } catch (error) {
-    // A message that could not be queued must not undo a status the trail
-    // already records; the delivery log is where a failure shows.
-    console.error('[dormancy] notification failed', error);
-  }
-}
 
 /**
  * Mark dormant every active member with no activity for the configured

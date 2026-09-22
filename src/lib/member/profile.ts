@@ -230,6 +230,38 @@ export async function ownedAccountId(
   return owned.rows[0].id;
 }
 
+/**
+ * The document's id if it is the caller's own, else not_found — the same
+ * answer for someone else's document, a draft's, and an id that is not
+ * even a uuid, as ownedAccountId gives for an account.
+ *
+ * Own means what memberDocuments lists: filed against the member's founding
+ * application, against an additional-account application of theirs that
+ * has left draft, or carried onto the member record itself. Nothing a
+ * customer or an applicant session holds is a document here.
+ */
+export async function ownedDocumentId(
+  principal: MemberPrincipal,
+  documentId: string
+): Promise<string> {
+  const owned = await query<{ id: string }>(
+    `select d.id
+       from document d
+       left join membership_application a on a.id = d.application_id
+       left join member m on m.id = $2::uuid
+      where d.id = $1::uuid
+        and $2::uuid is not null
+        and (d.member_id = $2::uuid
+          or a.id = m.application_id
+          or (a.existing_member_id = $2::uuid
+              and a.application_kind = 'additional_account'
+              and a.status <> 'draft'))`,
+    [isUuid(documentId) ? documentId : null, principal.memberId]
+  );
+  if (!owned.rows[0]) throw new ApiError('not_found', 'No such document.');
+  return owned.rows[0].id;
+}
+
 export async function accountTransactions(
   principal: MemberPrincipal,
   accountId: string

@@ -4926,10 +4926,23 @@ anything an officer corrected at the branch while the request waited.
 The balance a member sees is the ledger's since M13, and since M21 the
 app reads the same balance, history and statement payloads the branch
 does and, where the Society switches it on, starts a transaction that
-rides the same matrix. Still open: a member-facing document viewer, and
-push or WhatsApp notification when an application's status changes or a
-details update is decided (M9) — today the member sees either the next
-time they open the app.
+rides the same matrix.
+
+**The two leftovers, closed as M24.** A member opens their own documents:
+`GET /me/documents/{id}/content` streams the file from this origin exactly
+as the branch's print path does (`getDocumentContent`), for any document
+`/me/documents` lists and nothing else — `ownedDocumentId` answers the same
+not_found for someone else's, a draft's and a non-id, as `ownedAccountId`
+does for an account. And a member is told when a details update they sent
+is decided: `member.details.applied` names the fields that changed,
+`member.details.declined` carries the officer's reason (migration 0087,
+email and WhatsApp wording each), raised after the decision commits
+through the same `tellMember` the dormancy job uses. An application's
+status changes already reached the applicant through `application.*` and
+`account.*` events on the address they gave; what remains unbuilt is push
+to the device itself, which needs a token registry and a provider the
+Society has not chosen — the app shows the outcome on next open either
+way.
 
 # Open values that later stories depend on
 
