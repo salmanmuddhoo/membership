@@ -237,6 +237,14 @@ describe('one list across every account (S-1506)', () => {
     // The Society's list: credit legs never, so the transfer to Bilal once.
     const everything = await history.listTransactions({});
     expect(everything.total).toBe(5);
+    // The day's list for someone without transaction.view_all: what they
+    // recorded, and nobody else's.
+    expect(
+      (await history.listTransactions({ capturedBy: officer.userId })).total
+    ).toBe(5);
+    expect(
+      (await history.listTransactions({ capturedBy: treasurer.userId })).total
+    ).toBe(0);
 
     const shares = await history.listTransactions({
       memberId: amina.id,

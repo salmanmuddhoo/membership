@@ -36,7 +36,9 @@ const endpoint = defineEndpoint(
       'was recorded between (from, to; YYYY-MM-DD, inclusive). A transfer ' +
       'shows once: its credit leg is left out wherever its debit leg is in ' +
       'the same list, and shows on its own only for the person who received ' +
-      'it. Query: member, customer, account, kind, status, from, to, page, ' +
+      'it. Without transaction.view_all, a list not narrowed to a member, ' +
+      'customer or account holds only the transactions the caller recorded. ' +
+      'Query: member, customer, account, kind, status, from, to, page, ' +
       'pageSize (max 200).',
     tag: 'Transactions',
     permission: 'transaction.view',
@@ -97,10 +99,21 @@ const endpoint = defineEndpoint(
         pageSize: ['must be between 1 and 200'],
       });
     }
+    const memberId = uuid('member');
+    const customerId = uuid('customer');
+    const accountId = uuid('account');
+    const principal = context.locals.principal!;
+    // The Society-wide list is the day's list: scoped like the page.
+    const scoped =
+      !memberId &&
+      !customerId &&
+      !accountId &&
+      !principal.permissions.has('transaction.view_all');
     const result = await listTransactions({
-      memberId: uuid('member'),
-      customerId: uuid('customer'),
-      accountId: uuid('account'),
+      memberId,
+      customerId,
+      accountId,
+      capturedBy: scoped ? principal.userId : undefined,
       kind: kind as TransactionRowKind | undefined,
       status,
       from: date('from', false),

@@ -566,7 +566,12 @@ on its own request. The request's life before its chain is a closure's —
 transaction — and it rides the same chain, queue, trail and chevron
 (Details → Signature → Documents → Submitted → the chain → Resigned).
 Once signed, the Signature step shows the signed request with View and a
-red cross that deletes it; deleting it means signing again.
+red cross that deletes it; deleting it means signing again. The request
+asks only for the reason: how the balance is paid out (method, reference,
+bank account) is recorded by whoever posts the approved resignation, as
+for a withdrawal, and a stand-in method holds the column until then. Only
+where the matrix routes a resignation nowhere — submitting is then the
+posting — does the Submit step ask for the payout.
 
 What is its own is the **pre-checks** (`checksFor()`), each a
 configuration switch at Configuration → Fee schedules (`config_entry`,
@@ -610,7 +615,12 @@ recorded as theirs, and the Shares and MSA the resignation closed
 reactivated under their own ids (`reopened_at`, as for a closure), a
 membership-default type they never held opening fresh. The rejoin
 application keeps its APP reference — the AB number already belongs to the
-founding application. Audit: `member.rejoined`, `account.reopened`. The
+founding application. The documents on file for the member — on their
+founding application, any account application or earlier rejoin, and the
+customer record they converted from — are carried onto the rejoin
+application as a further account's are (`carryForwardMemberDocuments`,
+sources from `memberSourceApplicationIds`), for the officer to keep or
+delete and file afresh. Audit: `member.rejoined`, `account.reopened`. The
 application carries the member's own NIC, so the duplicate-NIC check at
 submission (`findNicHolder`) leaves out the member it names, their own
 applications and the customer record they converted from — otherwise

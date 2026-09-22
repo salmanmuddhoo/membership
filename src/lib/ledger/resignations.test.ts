@@ -634,11 +634,23 @@ describe('a resignation (S-1703)', () => {
       );
     }
 
+    // Only the reason is asked when it starts: the payout is recorded when
+    // the approved request is posted, and a stand-in method holds its place.
     const first = await resignations.startResignation(
-      { memberId: m.rows[0].id, reason: 'Leaving', method: 'cash' },
+      { memberId: m.rows[0].id, reason: 'Leaving' },
       clerk
     );
     expect(first.amount).toBe('0.00');
+    expect(first.method).not.toBe('');
+    const edited = await resignations.updateResignation(
+      first.id,
+      { reason: 'Leaving for good' },
+      clerk
+    );
+    expect(edited).toMatchObject({
+      reason: 'Leaving for good',
+      method: first.method,
+    });
     await fileRequest(first.id, clerk);
     await resignations.submitResignation(first.id, clerk);
     for (const id of accounts) {

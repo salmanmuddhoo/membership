@@ -412,6 +412,8 @@ const rejoining =
     : null;
 const canRejoin =
   !!member && member.status === 'resigned' && canCapture && !rejoining;
+// A resigned member's Open other account moves up beside Rejoin.
+const resignedMember = member?.status === 'resigned';
 // M26: the additional-account applications on their way, by the type each
 // would reopen — a closed account's row links to its own rather than
 // offering to start another.
@@ -533,23 +535,35 @@ const pageTitle = member ? member.memberNo : name;
         {notice}
       </div>
     )}
-    {canRejoin && (
-      <form method="post">
-        <input type="hidden" name="intent" value="rejoin" />
-        <button type="submit" class={BUTTON_SM}>
-          Rejoin
-        </button>
-      </form>
-    )}
-    {rejoining && (
-      <p class="text-sm">
-        <a
-          href={`/applications/${rejoining.id}`}
-          class="rounded-lg bg-amber-100 px-3 py-1.5 font-medium text-amber-900 underline dark:bg-amber-950 dark:text-amber-200"
-        >
-          Rejoining · {rejoining.reference}
-        </a>
-      </p>
+    {/* Officer feedback: a resigned member's two ways back sit on one row —
+        Rejoin on the left, Open other account on the far right. */}
+    {(canRejoin || rejoining || (resignedMember && canOpenAnotherAccount)) && (
+      <div class="flex flex-wrap items-center gap-3">
+        {canRejoin && (
+          <form method="post">
+            <input type="hidden" name="intent" value="rejoin" />
+            <button type="submit" class={BUTTON_SM}>
+              Rejoin
+            </button>
+          </form>
+        )}
+        {rejoining && (
+          <a
+            href={`/applications/${rejoining.id}`}
+            class="rounded-lg bg-amber-100 px-3 py-1.5 text-sm font-medium text-amber-900 underline dark:bg-amber-950 dark:text-amber-200"
+          >
+            Rejoining · {rejoining.reference}
+          </a>
+        )}
+        {resignedMember && canOpenAnotherAccount && (
+          <a
+            href={`/applications/new-account?member=${member!.id}`}
+            class={`${SECONDARY_SM} ml-auto`}
+          >
+            Open other account
+          </a>
+        )}
+      </div>
     )}
     {canReactivate && (
       <form method="post" class="flex flex-wrap items-end gap-3">
@@ -739,7 +753,7 @@ const pageTitle = member ? member.memberNo : name;
         // account" is offered to a member and a non-member alike, whenever
         // there is still a type they can open (canOpenAnotherAccount).
         ((customer && customer.status === 'active' && canConvertCustomer) ||
-          canOpenAnotherAccount) && (
+          (canOpenAnotherAccount && !resignedMember)) && (
           <div class="mt-5 flex flex-wrap gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800">
             {customer && customer.status === 'active' && canConvertCustomer && (
               <form method="post">
@@ -753,7 +767,7 @@ const pageTitle = member ? member.memberNo : name;
                 </button>
               </form>
             )}
-            {canOpenAnotherAccount && (
+            {canOpenAnotherAccount && !resignedMember && (
               <a
                 href={
                   member

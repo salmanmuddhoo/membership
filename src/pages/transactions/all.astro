@@ -25,6 +25,10 @@ const STATUSES = [
   'returned',
   'rejected',
 ];
+const principal = Astro.locals.principal!;
+// Officer feedback: a Regional Officer or Manager sees the transactions they
+// recorded; roles holding transaction.view_all see the Society's whole day.
+const seesAll = principal.permissions.has('transaction.view_all');
 const params = Astro.url.searchParams;
 const today = new Date().toISOString().slice(0, 10);
 const kind = params.get('kind') ?? '';
@@ -37,6 +41,7 @@ const asDate = (value: string, endOfDay: boolean) => {
   return new Date(`${value}T${endOfDay ? '23:59:59.999' : '00:00:00'}`);
 };
 const result = await listTransactions({
+  capturedBy: seesAll ? undefined : principal.userId,
   kind: KINDS.some(([k]) => k === kind)
     ? (kind as TransactionRowKind)
     : undefined,
@@ -57,8 +62,8 @@ const pageHref = (n: number) => {
 ---
 
 <DashboardLayout
-  title="All transactions · Al Barakah MCSL"
-  heading="All transactions"
+  title={`${seesAll ? 'All transactions' : 'Your transactions'} · Al Barakah MCSL`}
+  heading={seesAll ? 'All transactions' : 'Your transactions'}
 >
   <div class={PAGE.wide}>
     <a href="/transactions" class={`inline-block ${HINT} underline`}>

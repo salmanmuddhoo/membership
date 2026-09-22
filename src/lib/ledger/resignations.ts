@@ -15,7 +15,7 @@
 import { recordAudit } from '../access/audit';
 import type { Principal } from '../access/principal';
 import { query, withTransaction } from '../db/pool';
-import { resignationChecks } from '../config/reference';
+import { offeredPaymentMethods, resignationChecks } from '../config/reference';
 import {
   amountDueForApplication,
   paymentsForApplication,
@@ -67,8 +67,12 @@ export const REQUEST_DOCUMENT_CODE = 'resignation_request';
 export interface ResignationInput {
   memberId: string;
   reason: string;
-  // How the combined balance goes back to the member.
-  method: string;
+  // How the combined balance goes back to the member. Officer feedback: not
+  // asked when the request is started — whoever posts the approved
+  // resignation records the payout then (postApprovedTransaction's
+  // disbursement). Left out, the first offered method stands in until
+  // then; asked on submit only where the matrix posts it at once.
+  method?: string;
   methodReference?: string;
   // Which of the Society's bank accounts it is paid from (S-1902), where
   // the method touches one.
@@ -297,6 +301,19 @@ async function checkedMethod(code: string) {
   }
 }
 
+// The method given, checked; or, none given, the first one offered, as the
+// stand-in the posting officer replaces with the real payout.
+async function methodOrDefault(code: string | undefined) {
+  if (code && code.trim()) return checkedMethod(code);
+  const [first] = await offeredPaymentMethods();
+  if (!first) {
+    throw new ResignationError(
+      'No payment method is configured. Ask an administrator.'
+    );
+  }
+  return checkedMethod(first.code);
+}
+
 function checkedReasonOrRefuse(reason: string | undefined): string {
   return checkedReason(
     reason,
@@ -384,7 +401,7 @@ export async function startResignation(
   }
   const accounts = await refuseUnlessResignable(input.memberId, null);
   const reason = checkedReasonOrRefuse(input.reason);
-  const method = await checkedMethod(input.method);
+  const method = await methodOrDefault(input.method);
 
   const id = await withTransaction(async client => {
     const inserted = await client.query<{ id: string; reference: string }>(
@@ -434,14 +451,24 @@ export async function updateResignation(
 ): Promise<Resignation> {
   const request = await ownedEditable(id, principal);
   const reason = checkedReasonOrRefuse(edit.reason);
-  const method = await checkedMethod(edit.method);
-  const methodReference = (edit.methodReference ?? '').trim() || null;
+  // Only the reason, unless a payout is given (the submit step, where the
+  // matrix posts at once): what is not given stays as it was.
+  const method = await checkedMethod(edit.method ?? request.method);
+  const methodReference =
+    edit.methodReference === undefined
+      ? request.methodReference || null
+      : edit.methodReference.trim() || null;
+  const bankAccountId =
+    edit.bankAccountId === undefined
+      ? (request.bankAccountId ?? null)
+      : edit.bankAccountId.trim() || null;
   await withTransaction(async client => {
     await client.query(
       `update transaction
-          set reason = $2, method = $3, method_reference = $4
+          set reason = $2, method = $3, method_reference = $4,
+              bank_account_id = $5
         where id = $1`,
-      [request.id, reason, method.code, methodReference]
+      [request.id, reason, method.code, methodReference, bankAccountId]
     );
     await recordAudit(
       {

@@ -85,6 +85,9 @@ let member: {
   hsa: string;
 };
 let hsaTypeId: string;
+// A document the membership checklist asks for, filed on the founding
+// application: what a rejoin must carry rather than ask for again.
+let kycTypeId: string | null = null;
 
 async function memberRow() {
   return (
@@ -174,6 +177,34 @@ beforeAll(async () => {
     ])
   );
   hsaTypeId = types.hsa;
+
+  const kyc = await run(
+    appUrl,
+    `select i.document_type_id, i.subject
+       from membership_type t
+       join document_checklist_item i on i.checklist_id = t.checklist_id
+       join document_type d on d.id = i.document_type_id
+      where t.code = 'individual' and d.code <> 'signed_form'
+      order by i.sort_order limit 1`
+  );
+  if (kyc.rowCount) {
+    kycTypeId = kyc.rows[0].document_type_id;
+    const doc = await run(
+      appUrl,
+      `insert into document (document_type_id, subject, application_id, state)
+       values ($1, $2, $3, 'verified') returning id`,
+      [kycTypeId, kyc.rows[0].subject, application.rows[0].id]
+    );
+    await run(
+      appUrl,
+      `insert into document_version
+         (document_id, version_no, state, file_name, content_type, size_bytes,
+          sharepoint_path, uploaded_by, committed_at)
+       values ($1, 1, 'committed', 'NIC.pdf', 'application/pdf', 1234,
+               '/test/nic.pdf', $2, now())`,
+      [doc.rows[0].id, actor.userId]
+    );
+  }
   const open = async (code: string, accountNo: string | null) =>
     (
       await run(
@@ -254,6 +285,19 @@ describe('rejoining (M26)', () => {
     // application is not refused as a duplicate of the member it re-admits.
     const problems = await capture.problemsBlockingSubmission(application!);
     expect(problems.map(p => p.label).join(' ')).not.toMatch(/already on file/);
+    // The identity document on file is carried, not asked for again.
+    expect(kycTypeId).not.toBeNull();
+    if (kycTypeId) {
+      const carried = await run(
+        appUrl,
+        `select v.file_name from document d
+           join document_version v on v.document_id = d.id
+          where d.application_id = $1 and d.document_type_id = $2
+            and v.state = 'committed' and v.superseded_at is null`,
+        [started.id, kycTypeId]
+      );
+      expect(carried.rows.map(r => r.file_name)).toEqual(['NIC.pdf']);
+    }
     const folder = await run(
       appUrl,
       `select folder_application_id from membership_application where id = $1`,
