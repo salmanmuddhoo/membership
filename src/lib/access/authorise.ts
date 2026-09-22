@@ -90,6 +90,10 @@ const ROUTE_PERMISSIONS: ReadonlyArray<readonly [string, string]> = [
   ['/closures/', 'transaction.capture'],
   ['/resignations/', 'transaction.capture'],
   ['/demises/', 'transaction.capture'],
+  // The cash drawer (S-2001): opening and closing your own is cash.session;
+  // seeing every drawer is the separate, wider cash.view.
+  ['/cashier', 'cash.session'],
+  ['/cashier/sessions', 'cash.view'],
   // Details a member sent from the app (docs/member-app.md). Seeing the
   // queue is member.view like the rest of /members; acting on one needs
   // member.details_verify, which the page checks itself — the same split

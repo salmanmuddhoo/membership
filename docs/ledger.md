@@ -558,8 +558,8 @@ near-floor margin unless a figure is typed, with the headroom and whether
 they are at or below it. The **Accounts** report (S-905) gains a balance
 column and filters by status and by a balance band. Region is not among
 the filters: nothing in the data records one (the regional roles are
-roles, not places), so a filter would be a lie. Cashier reports arrive
-with M20.
+roles, not places), so a filter would be a lie. The cashier's own report
+is under "The cash drawer".
 
 ## The Society's bank accounts
 
@@ -580,6 +580,48 @@ payload carries `bank_account_id` beside `method_reference`, which is what
 Phase 5's reconciliation reads. The ledger refuses anything but an active
 account of the Society's. Each account's balance is derived from the
 posted transactions naming it (`docs/configuration.md`).
+
+## The cash drawer
+
+A cashier's drawer (S-2001, S-2002, FRD 14) is a `cash_session`
+(migration 0084): opened with a float, closed against a count. What it
+should hold is never typed in. It is the float plus every cash movement
+the database attributed to the session while it was open — and the
+attribution is the database's, not each path's: when a cash transaction
+posts, a trigger writes the open session of whoever posted it onto the
+row (`transaction.cash_session_id`), and when a cash fee receipt or refund
+is recorded, the open session of whoever recorded it
+(`payment.cash_session_id`). A movement with no open session belongs to
+no drawer, and the daily report says so. Money credited to a member's
+account or taken on a fee receipt is cash in; money debited or refunded is
+cash out; a voided fee receipt was never taken.
+
+`src/lib/cash/sessions.ts`: `openSession` (one open drawer per cashier,
+refused otherwise), `drawerFigures` (float, in, out, expected, and every
+movement), `closeSession` (the cashier's own only; the expected figure,
+the count and the over or short are fixed on the session then and never
+recomputed; a closed session cannot change and no session is deleted),
+`listSessions` for a holder of `cash.view`. Opening and closing are
+audited with the figures. **Cash drawer** is the cashier's own page;
+**Cash drawers** lists every session for the Treasurer, the Regional
+Manager and the Auditor. There is no region or branch to record: nothing
+in the data has one, so a session is a cashier's.
+
+**Daily cash reconciliation** (S-2003, `cash.view`, in
+`src/lib/reports/definitions.ts` beside the other reports) is the day's
+account of the till: one row per drawer in the period — day, cashier,
+opened and closed, float, cash in, cash out, expected, counted, over or
+short, movements and the note — and one row per day and officer for the
+cash that moved with no drawer open, so a cash deposit posted by somebody
+who never opened a drawer is on the sheet rather than missing from it. A
+closed drawer's expected figure is the one fixed at closing, the record;
+the cash in and out beside it are what the database attributes to the
+drawer now, and the only way they can disagree is a fee receipt voided
+after the drawer closed (a posted transaction never changes and a
+reversal is a new movement), which the row's status says. An open
+drawer's expected figure is live. The summary gives the counted total
+against the expected and the net over or short across the closed
+drawers, and the total moved outside any drawer.
 
 ## History, across accounts
 

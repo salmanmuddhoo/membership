@@ -1,0 +1,187 @@
+---
+// Every cash drawer, for a holder of cash.view (S-2001).
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import { PERMISSION_VIEW, listSessions } from '@lib/cash/sessions';
+import { query } from '@lib/db/pool';
+import { formatMoney, fromCents, toCents } from '@lib/payments/money';
+
+const principal = Astro.locals.principal!;
+if (!principal.permissions.has(PERMISSION_VIEW)) {
+  return Astro.redirect('/denied');
+}
+
+// Default to the current month, matching the reconciliation page.
+const now = new Date();
+const monthStart = new Date(
+  Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)
+);
+const asDate = (value: Date) => value.toISOString().slice(0, 10);
+
+const params = Astro.url.searchParams;
+const parse = (value: string | null, fallback: Date) => {
+  if (!value) return fallback;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return Number.isNaN(parsed.getTime()) ? fallback : parsed;
+};
+
+const from = parse(params.get('from'), monthStart);
+const toInclusive = parse(params.get('to'), now);
+// The query is half-open, so the last day typed is included.
+const to = new Date(toInclusive.getTime() + 24 * 60 * 60 * 1000);
+const cashierId = params.get('cashierId') || null;
+
+const [sessions, cashiers] = await Promise.all([
+  listSessions({ from, to, cashierId }),
+  query<{ id: string; display_name: string }>(
+    `select id, display_name from app_user where is_active order by display_name`
+  ),
+]);
+
+const openCount = sessions.filter(s => s.closedAt === null).length;
+const netOverShortCents = sessions
+  .filter((s): s is typeof s & { overShort: string } => s.overShort !== null)
+  .reduce((total, s) => total + toCents(s.overShort), 0);
+
+const dateFormat = new Intl.DateTimeFormat('en-GB', {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+});
+
+function overShortClass(value: string | null): string {
+  if (value === null) return 'text-neutral-500 dark:text-neutral-400';
+  const amount = Number(value);
+  if (amount === 0) return 'text-emerald-700 dark:text-emerald-400';
+  if (amount < 0) return 'text-red-700 dark:text-red-400';
+  return 'text-amber-700 dark:text-amber-400';
+}
+
+const INPUT =
+  'mt-1 block rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100';
+const BUTTON =
+  'bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition';
+---
+
+<DashboardLayout title="Cash drawers · Al Barakah MCSL" heading="Cash drawers">
+  <div class="mx-auto max-w-5xl space-y-6">
+    <form
+      method="get"
+      class="flex flex-wrap items-end gap-3 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
+    >
+      <label class="text-sm text-neutral-600 dark:text-neutral-300">
+        From
+        <input type="date" name="from" value={asDate(from)} class={INPUT} />
+      </label>
+      <label class="text-sm text-neutral-600 dark:text-neutral-300">
+        To
+        <input
+          type="date"
+          name="to"
+          value={asDate(toInclusive)}
+          class={INPUT}
+        />
+      </label>
+      <label class="text-sm text-neutral-600 dark:text-neutral-300">
+        Cashier
+        <select name="cashierId" class={INPUT}>
+          <option value="" selected={!cashierId}>
+            All
+          </option>
+          {cashiers.rows.map(c => (
+            <option value={c.id} selected={c.id === cashierId}>
+              {c.display_name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <button type="submit" class={BUTTON}>
+        Show
+      </button>
+    </form>
+
+    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+      <p class="text-sm text-neutral-600 dark:text-neutral-300">
+        {sessions.length} drawer{sessions.length === 1 ? '' : 's'} · {openCount}{' '}
+        still open · net over/short {formatMoney(fromCents(netOverShortCents))}
+      </p>
+
+      {sessions.length === 0 ? (
+        <p class="mt-4 text-sm text-neutral-500 dark:text-neutral-400">
+          No drawers in this period.
+        </p>
+      ) : (
+        <table class="mt-4 w-full text-sm">
+          <thead>
+            <tr class="border-b border-neutral-300 text-left dark:border-neutral-700">
+              <th class="py-2 font-medium text-neutral-600 dark:text-neutral-300">
+                Cashier
+              </th>
+              <th class="py-2 font-medium text-neutral-600 dark:text-neutral-300">
+                Opened
+              </th>
+              <th class="py-2 font-medium text-neutral-600 dark:text-neutral-300">
+                Closed
+              </th>
+              <th class="py-2 text-right font-medium text-neutral-600 dark:text-neutral-300">
+                Float
+              </th>
+              <th class="py-2 text-right font-medium text-neutral-600 dark:text-neutral-300">
+                Expected
+              </th>
+              <th class="py-2 text-right font-medium text-neutral-600 dark:text-neutral-300">
+                Counted
+              </th>
+              <th class="py-2 text-right font-medium text-neutral-600 dark:text-neutral-300">
+                Over/short
+              </th>
+              <th class="py-2 font-medium text-neutral-600 dark:text-neutral-300">
+                Note
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {sessions.map(s => (
+              <tr class="border-b border-neutral-200 align-top dark:border-neutral-800">
+                <td class="py-2 text-neutral-800 dark:text-neutral-100">
+                  {s.cashierName}
+                </td>
+                <td class="py-2 text-neutral-500 dark:text-neutral-400">
+                  {dateFormat.format(s.openedAt)}
+                </td>
+                <td class="py-2">
+                  {s.closedAt === null ? (
+                    <span class="bg-mint-200 dark:bg-mint-900 rounded px-1.5 py-0.5 text-xs text-neutral-800 dark:text-neutral-100">
+                      Open
+                    </span>
+                  ) : (
+                    <span class="text-neutral-500 dark:text-neutral-400">
+                      {dateFormat.format(s.closedAt)}
+                    </span>
+                  )}
+                </td>
+                <td class="py-2 text-right tabular-nums text-neutral-800 dark:text-neutral-100">
+                  {formatMoney(s.openingFloat)}
+                </td>
+                <td class="py-2 text-right tabular-nums text-neutral-800 dark:text-neutral-100">
+                  {s.expectedAtClose === null
+                    ? '—'
+                    : formatMoney(s.expectedAtClose)}
+                </td>
+                <td class="py-2 text-right tabular-nums text-neutral-800 dark:text-neutral-100">
+                  {s.closingCount === null ? '—' : formatMoney(s.closingCount)}
+                </td>
+                <td
+                  class={`py-2 text-right font-medium tabular-nums ${overShortClass(s.overShort)}`}
+                >
+                  {s.overShort === null ? '—' : formatMoney(s.overShort)}
+                </td>
+                <td class="py-2 text-neutral-600 dark:text-neutral-300">
+                  {s.note || '—'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  </div>
+</DashboardLayout>
