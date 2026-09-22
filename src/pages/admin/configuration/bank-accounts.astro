@@ -1,0 +1,328 @@
+---
+// S-1901 · The Society's bank accounts.
+//
+// Its own two permissions rather than config.view/config.manage: an account
+// number is not a fee schedule, and a holder of bank_account.view alone must
+// never receive the whole number. Masking happens here, server-side, on the
+// data itself — never trust a class name or a disabled input to hide a value
+// the response already carries. The balance shown is derived
+// (bankAccountBalances), never stored, so it cannot drift from the ledger.
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import ConfigNav from '@components/ConfigNav.astro';
+import {
+  ConfigError,
+  PERMISSION_BANK_ACCOUNT_MANAGE,
+  createBankAccount,
+  maskAccountNumber,
+  updateBankAccount,
+} from '@lib/config/reference';
+import { bankAccountBalances } from '@lib/ledger/bank-accounts';
+import { formatMoney } from '@lib/payments/money';
+
+const principal = Astro.locals.principal!;
+const canManage = principal.permissions.has(PERMISSION_BANK_ACCOUNT_MANAGE);
+
+let error: string | null = null;
+let notice: string | null = null;
+
+function fieldsFrom(form: FormData) {
+  return {
+    name: String(form.get('name') ?? ''),
+    bankName: String(form.get('bankName') ?? ''),
+    accountNumber: String(form.get('accountNumber') ?? ''),
+    currency: String(form.get('currency') ?? 'MUR'),
+    openingBalance: String(form.get('openingBalance') ?? ''),
+    openingDate: String(form.get('openingDate') ?? ''),
+    isActive: form.get('isActive') === 'on',
+  };
+}
+
+if (Astro.request.method === 'POST') {
+  if (!canManage) {
+    error = 'You do not have permission to change bank accounts.';
+  } else {
+    const form = await Astro.request.formData();
+    const intent = String(form.get('intent') ?? '');
+    const actor = { userId: principal.userId, email: principal.email };
+
+    try {
+      if (intent === 'create') {
+        await createBankAccount(
+          { code: String(form.get('code') ?? ''), ...fieldsFrom(form) },
+          actor
+        );
+        notice = 'Bank account added.';
+      } else if (intent === 'update') {
+        await updateBankAccount(
+          String(form.get('accountId')),
+          fieldsFrom(form),
+          actor
+        );
+        notice = 'Bank account updated.';
+      }
+    } catch (err) {
+      if (err instanceof ConfigError) {
+        error = err.message;
+      } else {
+        console.error('[config/bank-accounts]', err);
+        error = 'Something went wrong. Please try again.';
+      }
+    }
+  }
+}
+
+const balances = await bankAccountBalances();
+const accounts = canManage
+  ? balances
+  : balances.map(a => ({
+      ...a,
+      accountNumber: maskAccountNumber(a.accountNumber),
+    }));
+
+const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium' });
+
+const INPUT =
+  'mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100';
+const CHECK =
+  'text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600';
+---
+
+<DashboardLayout
+  title="Bank accounts · Al Barakah MCSL"
+  heading="Bank accounts"
+>
+  <div class="mx-auto max-w-5xl space-y-6">
+    <ConfigNav />
+
+    {error && (
+      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+        {error}
+      </div>
+    )}
+    {notice && (
+      <div class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-lg border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
+        {notice}
+      </div>
+    )}
+
+    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+      <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+        The Society's accounts
+      </h2>
+      <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+        An inactive account is no longer offered. Transactions already recorded
+        against it are not affected.
+      </p>
+
+      {accounts.length === 0 ? (
+        <p class="mt-5 rounded-xl border border-neutral-200 bg-white p-4 text-sm text-neutral-500 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
+          No bank accounts yet.
+        </p>
+      ) : (
+        <div class="mt-5 space-y-4">
+          {accounts.map(account => (
+            <details class="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+              <summary class="flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-1">
+                <span class="font-medium text-neutral-800 dark:text-neutral-100">
+                  {account.name}
+                </span>
+                <span class="text-sm text-neutral-500 dark:text-neutral-400">
+                  {account.bankName}
+                </span>
+                <code class="rounded bg-neutral-100 px-1.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
+                  {account.accountNumber}
+                </code>
+                <span class="bg-mint-200 dark:bg-mint-900 rounded px-1.5 py-0.5 text-xs text-neutral-800 dark:text-neutral-100">
+                  {formatMoney(account.balance, account.currency)}
+                </span>
+                {!account.isActive && (
+                  <span class="rounded bg-red-100 px-1.5 py-0.5 text-xs text-red-800 dark:bg-red-950 dark:text-red-200">
+                    inactive
+                  </span>
+                )}
+                <span class="w-full text-xs text-neutral-400 dark:text-neutral-500">
+                  {account.movements > 0
+                    ? `${account.movements} posted · last ${dateFormat.format(account.lastPostedAt!)}`
+                    : 'No postings yet'}
+                </span>
+              </summary>
+
+              {canManage ? (
+                <form method="post" class="mt-4 grid gap-3 sm:grid-cols-2">
+                  <input type="hidden" name="accountId" value={account.id} />
+                  <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                    Name
+                    <input
+                      type="text"
+                      name="name"
+                      value={account.name}
+                      class={INPUT}
+                    />
+                  </label>
+                  <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                    Bank
+                    <input
+                      type="text"
+                      name="bankName"
+                      value={account.bankName}
+                      class={INPUT}
+                    />
+                  </label>
+                  <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                    Account number
+                    <input
+                      type="text"
+                      name="accountNumber"
+                      value={account.accountNumber}
+                      class={INPUT}
+                    />
+                  </label>
+                  <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                    Currency
+                    <input
+                      type="text"
+                      name="currency"
+                      value={account.currency}
+                      maxlength="3"
+                      class={INPUT}
+                    />
+                  </label>
+                  <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                    Opening balance (Rs)
+                    <input
+                      type="text"
+                      name="openingBalance"
+                      value={account.openingBalance}
+                      inputmode="decimal"
+                      class={INPUT}
+                    />
+                  </label>
+                  <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                    Opening date
+                    <input
+                      type="date"
+                      name="openingDate"
+                      value={account.openingDate}
+                      class={INPUT}
+                    />
+                  </label>
+                  <label class="flex items-center gap-x-2 text-sm text-neutral-600 dark:text-neutral-300">
+                    <input
+                      type="checkbox"
+                      name="isActive"
+                      checked={account.isActive}
+                      class={CHECK}
+                    />
+                    Active
+                  </label>
+                  <div class="pt-2 sm:col-span-2">
+                    <button
+                      type="submit"
+                      name="intent"
+                      value="update"
+                      class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+                    >
+                      Save
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <dl class="mt-4 grid gap-x-4 gap-y-2 text-sm sm:grid-cols-2">
+                  <dt class="text-neutral-500 dark:text-neutral-400">Bank</dt>
+                  <dd class="text-neutral-800 dark:text-neutral-100">
+                    {account.bankName}
+                  </dd>
+                  <dt class="text-neutral-500 dark:text-neutral-400">
+                    Account number
+                  </dt>
+                  <dd class="text-neutral-800 dark:text-neutral-100">
+                    <code>{account.accountNumber}</code>
+                  </dd>
+                  <dt class="text-neutral-500 dark:text-neutral-400">
+                    Currency
+                  </dt>
+                  <dd class="text-neutral-800 dark:text-neutral-100">
+                    {account.currency}
+                  </dd>
+                  <dt class="text-neutral-500 dark:text-neutral-400">
+                    Opening balance
+                  </dt>
+                  <dd class="text-neutral-800 dark:text-neutral-100">
+                    {formatMoney(account.openingBalance, account.currency)} on{' '}
+                    {dateFormat.format(new Date(account.openingDate))}
+                  </dd>
+                </dl>
+              )}
+            </details>
+          ))}
+        </div>
+      )}
+    </section>
+
+    {canManage && (
+      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+          Add a bank account
+        </h2>
+        <form method="post" class="mt-4 grid gap-3 sm:grid-cols-2">
+          <input type="hidden" name="intent" value="create" />
+          <input type="hidden" name="isActive" value="on" />
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            Code
+            <input
+              type="text"
+              name="code"
+              required
+              placeholder="mcb_current"
+              class={INPUT}
+            />
+          </label>
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            Name
+            <input type="text" name="name" required class={INPUT} />
+          </label>
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            Bank
+            <input type="text" name="bankName" required class={INPUT} />
+          </label>
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            Account number
+            <input type="text" name="accountNumber" required class={INPUT} />
+          </label>
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            Currency
+            <input
+              type="text"
+              name="currency"
+              value="MUR"
+              maxlength="3"
+              class={INPUT}
+            />
+          </label>
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            Opening balance (Rs)
+            <input
+              type="text"
+              name="openingBalance"
+              value="0"
+              inputmode="decimal"
+              class={INPUT}
+            />
+          </label>
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            Opening date
+            <input type="date" name="openingDate" class={INPUT} />
+          </label>
+          <div class="sm:col-span-2">
+            <button
+              type="submit"
+              class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+            >
+              Add
+            </button>
+          </div>
+        </form>
+      </section>
+    )}
+  </div>
+</DashboardLayout>

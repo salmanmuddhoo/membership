@@ -24,6 +24,7 @@ import {
   allocateReceiptNumber,
   markReceiptIssued,
 } from '../payments/receipts';
+import { resolveBankAccount } from './bank-accounts';
 import { LedgerError } from './ledger';
 import { notifyReceiptIssued } from './receipt-notifications';
 import { loadTransaction } from './review';
@@ -67,6 +68,8 @@ export interface DepositInput {
   // required only for cash above payment.cash_source_of_fund_threshold, the
   // rule a payment already follows (S-1306).
   sourceOfFundFormConfirmed?: boolean;
+  // Which of the Society's bank accounts the money reached (S-1901).
+  bankAccountId?: string;
 }
 
 export interface Deposit {
@@ -395,6 +398,10 @@ export async function recordDeposit(
   // the deposit's transaction, so a number that never became a receipt is
   // visible in the sequence rather than silently reused (S-502,
   // docs/payments.md). A deposit going to a chain takes none yet.
+  const bankAccountId = await resolveBankAccount(
+    input.bankAccountId,
+    message => new DepositError(message)
+  );
   const receipt = route.definition
     ? null
     : await allocateReceiptNumber(principal.userId);
@@ -408,9 +415,9 @@ export async function recordDeposit(
              (kind, member_id, customer_id, account_id, amount, method,
               method_reference, reason, status, receipt_number_id,
               idempotency_key, idempotency_fingerprint, captured_by,
-              source_of_fund_form_confirmed)
+              source_of_fund_form_confirmed, bank_account_id)
            values ('deposit', $1, $2, $3, $4, $5, $6, $7, 'submitted', $8,
-                   $9, $10, $11, $12)
+                   $9, $10, $11, $12, $13)
            returning id, reference`,
           [
             to.memberId,
@@ -425,6 +432,7 @@ export async function recordDeposit(
             key ? print : null,
             principal.userId,
             input.sourceOfFundFormConfirmed ?? false,
+            bankAccountId,
           ]
         );
       } catch (err) {
@@ -558,6 +566,10 @@ export async function resubmitDeposit(
       'forbidden'
     );
   }
+  const bankAccountId = await resolveBankAccount(
+    input.bankAccountId,
+    message => new DepositError(message)
+  );
   const receipt = route.definition
     ? null
     : await allocateReceiptNumber(principal.userId);
@@ -568,7 +580,8 @@ export async function resubmitDeposit(
         `update transaction
             set account_id = $2, amount = $3, method = $4,
                 method_reference = $5, reason = $6,
-                source_of_fund_form_confirmed = $7, receipt_number_id = $8
+                source_of_fund_form_confirmed = $7, receipt_number_id = $8,
+                bank_account_id = $9
           where id = $1`,
         [
           deposit.id,
@@ -579,6 +592,7 @@ export async function resubmitDeposit(
           (input.reason ?? '').trim() || null,
           input.sourceOfFundFormConfirmed ?? false,
           receipt?.id ?? null,
+          bankAccountId,
         ]
       );
       await recordAudit(

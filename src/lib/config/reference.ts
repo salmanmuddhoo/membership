@@ -2696,3 +2696,222 @@ export async function deleteApprovalRule(
     }
   });
 }
+
+// ---------------------------------------------------------------------------
+// S-1901 · The Society's bank accounts
+// ---------------------------------------------------------------------------
+// Configuration (migration 0082): which bank accounts the Society has, so
+// a transaction that touches a bank can say which (S-1902) and Phase 5 can
+// reconcile a statement against it. The number is the sensitive part:
+// bank_account.view reads it masked to its last four digits,
+// bank_account.manage whole. The balance is not here — it is derived from
+// posted transactions (src/lib/ledger/bank-accounts.ts), never stored.
+export interface BankAccount {
+  id: string;
+  code: string;
+  name: string;
+  bankName: string;
+  // Masked unless the caller may see it whole (maskAccountNumber).
+  accountNumber: string;
+  currency: string;
+  openingBalance: string;
+  // ISO date: the day the system started recording against it.
+  openingDate: string;
+  isActive: boolean;
+  sortOrder: number;
+}
+
+export const PERMISSION_BANK_ACCOUNT_VIEW = 'bank_account.view';
+export const PERMISSION_BANK_ACCOUNT_MANAGE = 'bank_account.manage';
+
+// Everything but the last four characters, so a list a clerk can see
+// identifies the account without giving the number away.
+export function maskAccountNumber(number: string): string {
+  const trimmed = number.trim();
+  if (trimmed.length <= 4) return '••••';
+  return '•'.repeat(trimmed.length - 4) + trimmed.slice(-4);
+}
+
+async function readBankAccounts(): Promise<BankAccount[]> {
+  const result = await query<{
+    id: string;
+    code: string;
+    name: string;
+    bank_name: string;
+    account_number: string;
+    currency: string;
+    opening_balance: string;
+    opening_date: string;
+    is_active: boolean;
+    sort_order: number;
+  }>(
+    `select id, code, name, bank_name, account_number, currency,
+            opening_balance::text as opening_balance,
+            opening_date::text as opening_date, is_active, sort_order
+       from bank_account
+      order by sort_order, name`
+  );
+  return result.rows.map(r => ({
+    id: r.id,
+    code: r.code,
+    name: r.name,
+    bankName: r.bank_name,
+    accountNumber: r.account_number,
+    currency: r.currency,
+    openingBalance: r.opening_balance,
+    openingDate: r.opening_date,
+    isActive: r.is_active,
+    sortOrder: r.sort_order,
+  }));
+}
+
+// The full list, numbers whole: for a caller that has checked
+// bank_account.manage, and for the ledger, which names an account by id.
+export function listBankAccounts(): Promise<BankAccount[]> {
+  return cached('bank-accounts', readBankAccounts);
+}
+
+// The list as a holder of bank_account.view may see it.
+export async function listBankAccountsMasked(): Promise<BankAccount[]> {
+  return (await listBankAccounts()).map(a => ({
+    ...a,
+    accountNumber: maskAccountNumber(a.accountNumber),
+  }));
+}
+
+// What a form offers a transaction that touches a bank: the active ones.
+export async function offeredBankAccounts(): Promise<BankAccount[]> {
+  return (await listBankAccounts()).filter(a => a.isActive);
+}
+
+export async function bankAccountById(id: string): Promise<BankAccount | null> {
+  return (await listBankAccounts()).find(a => a.id === id) ?? null;
+}
+
+export interface BankAccountInput {
+  name: string;
+  bankName: string;
+  accountNumber: string;
+  currency?: string;
+  openingBalance: string;
+  openingDate?: string;
+  isActive: boolean;
+}
+
+function validateBankAccount(input: BankAccountInput): {
+  name: string;
+  bankName: string;
+  accountNumber: string;
+  currency: string;
+  openingBalance: string;
+  openingDate: string | null;
+} {
+  const name = input.name.trim();
+  const bankName = input.bankName.trim();
+  const accountNumber = input.accountNumber.trim();
+  const currency = (input.currency ?? 'MUR').trim().toUpperCase() || 'MUR';
+  const openingBalance = input.openingBalance.trim().replace(/,/g, '') || '0';
+  const openingDate = (input.openingDate ?? '').trim() || null;
+  if (!name) throw new ConfigError('A name is required.');
+  if (!bankName) throw new ConfigError('The bank is required.');
+  if (!/^[A-Za-z0-9 -]{4,40}$/.test(accountNumber)) {
+    throw new ConfigError(
+      'The account number is letters, digits, spaces and dashes, 4 to 40 long.'
+    );
+  }
+  if (!/^[A-Z]{3}$/.test(currency)) {
+    throw new ConfigError('The currency is a three-letter code, such as MUR.');
+  }
+  if (!/^-?\d+(\.\d{1,2})?$/.test(openingBalance)) {
+    throw new ConfigError(
+      `${input.openingBalance || 'That'} is not an amount in rupees.`
+    );
+  }
+  if (openingDate !== null && !/^\d{4}-\d{2}-\d{2}$/.test(openingDate)) {
+    throw new ConfigError('The opening date is not a date.');
+  }
+  return {
+    name,
+    bankName,
+    accountNumber,
+    currency,
+    openingBalance,
+    openingDate,
+  };
+}
+
+export async function createBankAccount(
+  input: BankAccountInput & { code: string },
+  actor: Actor
+): Promise<string> {
+  const code = input.code.trim().toLowerCase();
+  if (!CODE_PATTERN.test(code)) {
+    throw new ConfigError(
+      'A code must start with a letter and contain only lowercase letters, ' +
+        'digits and underscores.'
+    );
+  }
+  const fields = validateBankAccount(input);
+  return withConfigurationActor(actorFor(actor), async client => {
+    const existing = await client.query(
+      'select 1 from bank_account where code = $1',
+      [code]
+    );
+    if (existing.rowCount) {
+      throw new ConfigError(
+        `A bank account with code ${code} already exists.`,
+        'conflict'
+      );
+    }
+    const result = await client.query<{ id: string }>(
+      `insert into bank_account
+         (code, name, bank_name, account_number, currency, opening_balance,
+          opening_date, is_active, sort_order)
+       values ($1, $2, $3, $4, $5, $6, coalesce($7::date, current_date), $8,
+               coalesce((select max(sort_order) + 10 from bank_account), 10))
+       returning id`,
+      [
+        code,
+        fields.name,
+        fields.bankName,
+        fields.accountNumber,
+        fields.currency,
+        fields.openingBalance,
+        fields.openingDate,
+        input.isActive,
+      ]
+    );
+    return result.rows[0].id;
+  });
+}
+
+export async function updateBankAccount(
+  id: string,
+  input: BankAccountInput,
+  actor: Actor
+): Promise<void> {
+  const fields = validateBankAccount(input);
+  await withConfigurationActor(actorFor(actor), async client => {
+    const result = await client.query(
+      `update bank_account
+          set name = $2, bank_name = $3, account_number = $4, currency = $5,
+              opening_balance = $6,
+              opening_date = coalesce($7::date, opening_date),
+              is_active = $8
+        where id = $1`,
+      [
+        id,
+        fields.name,
+        fields.bankName,
+        fields.accountNumber,
+        fields.currency,
+        fields.openingBalance,
+        fields.openingDate,
+        input.isActive,
+      ]
+    );
+    if (result.rowCount === 0) {
+      throw new ConfigError('That bank account no longer exists.', 'not_found');
+    }
+  });
+}

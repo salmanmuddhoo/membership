@@ -27,6 +27,7 @@ import {
   allocateReceiptNumber,
   markReceiptIssued,
 } from '../payments/receipts';
+import { resolveBankAccount } from './bank-accounts';
 import { LedgerError } from './ledger';
 import { notifyReceiptIssued } from './receipt-notifications';
 import { loadTransaction, type TransactionSummary } from './review';
@@ -70,6 +71,8 @@ export type TransferDestination =
       payeeName: string;
       method: string;
       methodReference?: string;
+      // Which of the Society's bank accounts it is paid from (S-1901).
+      bankAccountId?: string;
     };
 
 export interface TransferInput {
@@ -271,10 +274,19 @@ async function existingForKey(
 
 async function paidBy(destination: TransferDestination, postsNow: boolean) {
   if (destination.kind === 'account') {
-    return { code: INTERNAL_METHOD, reference: null, payeeName: null };
+    return {
+      code: INTERNAL_METHOD,
+      reference: null,
+      payeeName: null,
+      bankAccountId: null,
+    };
   }
   const payeeName = destination.payeeName.trim();
   if (!payeeName) throw new TransferError('Say who the money goes to.');
+  const bankAccountId = await resolveBankAccount(
+    destination.bankAccountId,
+    message => new TransferError(message)
+  );
   try {
     const method = await offeredMethod(destination.method);
     if (postsNow) requireReference(method, destination.methodReference);
@@ -282,6 +294,7 @@ async function paidBy(destination: TransferDestination, postsNow: boolean) {
       code: method.code,
       reference: (destination.methodReference ?? '').trim() || null,
       payeeName,
+      bankAccountId,
     };
   } catch (err) {
     if (err instanceof PaymentError) {
@@ -383,9 +396,9 @@ export async function recordTransfer(
              (kind, member_id, customer_id, account_id, amount, method,
               method_reference, reason, status, receipt_number_id,
               idempotency_key, idempotency_fingerprint, captured_by,
-              transfer_id, leg_direction, payee_name)
+              transfer_id, leg_direction, payee_name, bank_account_id)
            values ('transfer_leg', $1, $2, $3, $4, $5, $6, $7, 'submitted', $8,
-                   $9, $10, $11, $12, 'debit', $13)
+                   $9, $10, $11, $12, 'debit', $13, $14)
            returning id, reference`,
           [
             from.memberId,
@@ -401,6 +414,7 @@ export async function recordTransfer(
             principal.userId,
             transferId,
             paid.payeeName,
+            paid.bankAccountId,
           ]
         );
       } catch (err) {
@@ -585,7 +599,7 @@ export async function resubmitTransfer(
       await client.query(
         `update transaction
             set amount = $2, method = $3, method_reference = $4, reason = $5,
-                receipt_number_id = $6
+                receipt_number_id = $6, bank_account_id = $7
           where id = $1`,
         [
           leg.id,
@@ -594,6 +608,7 @@ export async function resubmitTransfer(
           paid.reference,
           (input.reason ?? '').trim() || null,
           receipt?.id ?? null,
+          paid.bankAccountId,
         ]
       );
       await client.query(
