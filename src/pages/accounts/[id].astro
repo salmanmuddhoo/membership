@@ -128,7 +128,16 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                   {entry.methodReference && ` · ${entry.methodReference}`}
                 </td>
                 <td class="px-2 py-2">
-                  <code class="text-xs">{entry.receiptNo ?? '—'}</code>
+                  {entry.receiptNo ? (
+                    <a
+                      href={`/receipts/${entry.transactionId}`}
+                      class="underline"
+                    >
+                      <code class="text-xs">{entry.receiptNo}</code>
+                    </a>
+                  ) : (
+                    <code class="text-xs">—</code>
+                  )}
                 </td>
                 <td class="px-2 py-2 text-right tabular-nums">
                   {entry.direction === 'credit' && formatMoney(entry.amount)}

@@ -152,7 +152,9 @@ const INPUT =
             <>
               <dt class="text-neutral-500 dark:text-neutral-400">Receipt</dt>
               <dd class="font-medium text-neutral-800 dark:text-neutral-100">
-                {withdrawal.receiptNo}
+                <a href={`/receipts/${withdrawal.id}`} class="underline">
+                  {withdrawal.receiptNo}
+                </a>
               </dd>
             </>
           )}

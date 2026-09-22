@@ -226,7 +226,9 @@ const RADIO =
             <>
               <dt class="text-neutral-500 dark:text-neutral-400">Receipt</dt>
               <dd class="font-medium text-neutral-800 dark:text-neutral-100">
-                {transfer.debitLeg.receiptNo}
+                <a href={`/receipts/${transfer.debitLeg.id}`} class="underline">
+                  {transfer.debitLeg.receiptNo}
+                </a>
               </dd>
             </>
           )}

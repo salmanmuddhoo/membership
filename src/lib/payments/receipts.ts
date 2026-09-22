@@ -98,9 +98,10 @@ export interface ReceiptException {
   receiptNo: string;
   serialNo: number;
   // The receipt behind the finding, where there is one. A void has a payment
-  // to open; an abandoned allocation never became one, and reads as a dead
-  // end because that is what it is.
+  // or a transaction to open; an abandoned allocation never became either,
+  // and reads as a dead end because that is what it is.
   paymentId: string | null;
+  transactionId: string | null;
   // Why, where the system knows. Empty is itself a finding: a number that went
   // nowhere for no recorded reason is the one an auditor asks about.
   reason: string;
@@ -128,6 +129,7 @@ interface ExceptionRow {
   at: Date | null;
   who: string | null;
   payment_id: string | null;
+  transaction_id: string | null;
 }
 
 // One statement, three findings, so the period is read once and the results
@@ -140,10 +142,12 @@ interface ExceptionRow {
 // something happened outside this application.
 const EXCEPTIONS = `
   with window_rows as (
-    select r.*, u.display_name as allocated_by_name, p.id as payment_id
+    select r.*, u.display_name as allocated_by_name, p.id as payment_id,
+           t.id as transaction_id
       from receipt_number r
       join app_user u on u.id = r.allocated_by
       left join payment p on p.receipt_number_id = r.id
+      left join transaction t on t.receipt_number_id = r.id
      where r.allocated_at >= $1 and r.allocated_at < $2
   ),
   bounds as (
@@ -155,7 +159,7 @@ const EXCEPTIONS = `
            coalesce(reason, '') as reason,
            coalesce(settled_at, allocated_at) as at,
            allocated_by_name as who,
-           payment_id
+           payment_id, transaction_id
       from window_rows
      where state <> 'issued'
   ),
@@ -163,7 +167,8 @@ const EXCEPTIONS = `
     select 'duplicate' as kind, receipt_no, min(serial_no) as serial_no,
            count(*)::text || ' rows share this number' as reason,
            min(allocated_at) as at, null::text as who,
-           min(payment_id::text)::uuid as payment_id
+           min(payment_id::text)::uuid as payment_id,
+           min(transaction_id::text)::uuid as transaction_id
       from window_rows
      group by receipt_no
     having count(*) > 1
@@ -173,7 +178,7 @@ const EXCEPTIONS = `
            'RCT-' || lpad(s::text, 6, '0') as receipt_no,
            s as serial_no,
            '' as reason, null::timestamptz as at, null::text as who,
-           null::uuid as payment_id
+           null::uuid as payment_id, null::uuid as transaction_id
       from bounds, generate_series(bounds.lo, bounds.hi) as s
      where bounds.lo is not null
        and not exists (select 1 from receipt_number r where r.serial_no = s)
@@ -198,15 +203,25 @@ export async function reconcileReceipts(
       `select min(r.serial_no) as lo,
               max(r.serial_no) as hi,
               count(*) filter (where r.state = 'issued') as issued,
-              -- Net, not gross: a refund is money that went back out, and a
-              -- Treasurer reconciling a day's takings needs the figure the
-              -- cash box should hold.
-              sum(case when p.kind = 'refund' then -p.total_amount
-                       else p.total_amount end)
+              -- Net, not gross: a refund or a withdrawal is money that went
+              -- back out, and a Treasurer reconciling a day's takings needs
+              -- the figure the cash box should hold. A transaction's receipt
+              -- counts by the direction of its entry (S-1601); a leg between
+              -- two accounts here moved nothing outside the Society.
+              sum(case
+                    when p.id is not null then
+                      case when p.kind = 'refund' then -p.total_amount
+                           else p.total_amount end
+                    when t.method = 'internal_transfer' then 0
+                    when e.direction = 'credit' then t.amount
+                    else -t.amount
+                  end)
                 filter (where r.state = 'issued' and p.voided_at is null)
                 as total
          from receipt_number r
          left join payment p on p.receipt_number_id = r.id
+         left join transaction t on t.receipt_number_id = r.id
+         left join account_entry e on e.transaction_id = t.id
         where r.allocated_at >= $1 and r.allocated_at < $2`,
       [from, to]
     ),
@@ -227,6 +242,7 @@ export async function reconcileReceipts(
       receiptNo: e.receipt_no,
       serialNo: Number(e.serial_no),
       paymentId: e.payment_id,
+      transactionId: e.transaction_id,
       reason: e.reason ?? '',
       at: e.at,
       who: e.who,

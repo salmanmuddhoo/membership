@@ -165,7 +165,9 @@ const INPUT =
             <>
               <dt class="text-neutral-500 dark:text-neutral-400">Receipt</dt>
               <dd class="font-medium text-neutral-800 dark:text-neutral-100">
-                {deposit.receiptNo}
+                <a href={`/receipts/${deposit.id}`} class="underline">
+                  {deposit.receiptNo}
+                </a>
               </dd>
             </>
           )}

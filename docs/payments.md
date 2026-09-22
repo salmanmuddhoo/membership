@@ -290,6 +290,11 @@ has confirmed is running.
 When there are no exceptions the page says so in words. An empty table would
 read the same whether the sequence is clean or the query found nothing.
 
+Since M13 the same sequence numbers every transaction's receipt (S-1601,
+`docs/ledger.md`), so the reconciliation reads both: a voided transaction
+receipt is a finding that opens the transaction, and the period's total
+counts a transaction by the direction of its entry.
+
 ## The event stream
 
 Every payment, refund and void emits a `financial_event` inside the same
@@ -310,7 +315,8 @@ answerable if the first print is on the record. `receipt_print` logs each one,
 written when the officer **clicks Print** — opening a receipt to read it is not
 a reprint, and marking it as one would make the stamp meaningless within a week.
 A failure to record does not stop the print: there is an applicant waiting, and
-a stamp one print behind is the lesser problem.
+a stamp one print behind is the lesser problem. A transaction's receipt is
+printed and recorded the same way (`receipt_print.transaction_id`, 0075).
 
 ## Reading a member's payments
 

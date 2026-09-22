@@ -1,0 +1,187 @@
+---
+// A transaction's receipt (S-1601): the sheet the member is handed, for a
+// deposit, a withdrawal, a transfer (both sides on the one receipt) or a
+// reversal, read entirely from the transaction — nothing typed twice. The
+// Treasurer's void is on screen only; the paper carries the receipt.
+// Rendered inside /receipts/[id], whose styles it shares.
+import type { PrintHistory, TransactionReceipt } from '@lib/ledger/receipts';
+import { formatMoney } from '@lib/payments/money';
+
+interface Props {
+  receipt: TransactionReceipt;
+  prints: PrintHistory;
+  canVoid: boolean;
+}
+const { receipt, prints, canVoid } = Astro.props;
+const t = receipt.transaction;
+const isReprint = prints.count > 0;
+const dateFormat = new Intl.DateTimeFormat('en-GB', {
+  dateStyle: 'long',
+  timeStyle: 'short',
+});
+const TITLES: Record<string, string> = {
+  deposit: 'Deposit receipt',
+  withdrawal: 'Withdrawal receipt',
+  transfer_leg: 'Transfer receipt',
+  reversal: 'Reversal',
+};
+const LINES: Record<string, string> = {
+  deposit: 'Deposit',
+  withdrawal: 'Withdrawal',
+  transfer_leg: 'Transfer',
+  reversal: 'Reversal',
+};
+const holder = [t.holderName || t.holderKind, t.memberNo]
+  .filter(Boolean)
+  .join(' · ');
+const account = `${t.accountNo} · ${t.accountTypeName}`;
+const otherSide =
+  t.kind === 'transfer_leg'
+    ? t.payeeName
+      ? t.payeeName
+      : [
+          t.counterpartHolderName,
+          t.counterpartAccountNo &&
+            `${t.counterpartAccountNo} · ${t.counterpartAccountTypeName}`,
+        ]
+          .filter(Boolean)
+          .join(' · ')
+    : null;
+const moneyIn = t.kind === 'deposit' || t.legDirection === 'credit';
+const backHref = `/transactions/${t.id}`;
+---
+
+<div class="print-page">
+  {receipt.state === 'void' && <div class="watermark">VOID</div>}
+
+  <header class="head">
+    <div>
+      <h1>Al Barakah MCSL</h1>
+      <p class="sub">{TITLES[t.kind] ?? 'Receipt'}</p>
+    </div>
+    <div class="ref">
+      <p>
+        <strong>{receipt.receiptNo}</strong>
+      </p>
+      <p>{dateFormat.format(t.postedAt ?? t.createdAt)}</p>
+      {isReprint && <p class="reprint">REPRINT</p>}
+    </div>
+  </header>
+
+  {isReprint && (
+    <p class="reprint-note">
+      Reprint. First issued {dateFormat.format(prints.firstPrintedAt!)} by{' '}
+      {prints.firstPrintedByName}.
+    </p>
+  )}
+
+  {receipt.state === 'void' && (
+    <p class="void-note">
+      Voided {receipt.voidedAt && dateFormat.format(receipt.voidedAt)}.{' '}
+      {receipt.voidReason}
+    </p>
+  )}
+
+  <dl class="facts">
+    <div class="row">
+      <dt>{moneyIn ? 'Received from' : 'Paid to'}</dt>
+      <dd>{t.kind === 'transfer_leg' && t.payeeName ? t.payeeName : holder}</dd>
+    </div>
+    <div class="row">
+      <dt>Account</dt>
+      <dd>{account}</dd>
+    </div>
+    {otherSide && !t.payeeName && (
+      <div class="row">
+        <dt>{t.legDirection === 'credit' ? 'From' : 'To'}</dt>
+        <dd>{otherSide}</dd>
+      </div>
+    )}
+    {t.kind === 'transfer_leg' && t.payeeName && (
+      <div class="row">
+        <dt>On behalf of</dt>
+        <dd>{holder}</dd>
+      </div>
+    )}
+    <div class="row">
+      <dt>Transaction</dt>
+      <dd>
+        {t.reference}
+        {t.transferReference && ` · ${t.transferReference}`}
+      </dd>
+    </div>
+    {t.method !== 'internal_transfer' && (
+      <div class="row">
+        <dt>Method</dt>
+        <dd>
+          {t.methodName}
+          {t.methodReference && ` · ${t.methodReference}`}
+        </dd>
+      </div>
+    )}
+    <div class="row">
+      <dt>Recorded by</dt>
+      <dd>
+        {t.capturedByName}
+        {receipt.capturedByRole && ` · ${receipt.capturedByRole}`}
+      </dd>
+    </div>
+    {receipt.postedByName && receipt.postedByName !== t.capturedByName && (
+      <div class="row">
+        <dt>Posted by</dt>
+        <dd>{receipt.postedByName}</dd>
+      </div>
+    )}
+  </dl>
+
+  <table class="lines">
+    <tbody>
+      <tr>
+        <td>
+          {LINES[t.kind] ?? t.kind}
+          {t.reason && ` · ${t.reason}`}
+        </td>
+        <td class="amount">{formatMoney(t.amount, t.currency)}</td>
+      </tr>
+      <tr class="total">
+        <td>Total</td>
+        <td class="amount">{formatMoney(t.amount, t.currency)}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  {t.balanceAfter && (
+    <p class="note">Balance after: {formatMoney(t.balanceAfter, t.currency)}</p>
+  )}
+
+  <div class="signature">
+    <div class="sig-line"></div>
+    <p>For Al Barakah Multipurpose Co-operative Society Limited</p>
+  </div>
+
+  <div class="actions screen-only">
+    <button type="button" id="print">
+      Print
+    </button>
+    <a href={backHref}>Back</a>
+  </div>
+</div>
+
+{canVoid && receipt.state === 'issued' && (
+  <section class="screen-only panel danger">
+    <h2>Void this receipt</h2>
+    <p>
+      The number is withdrawn; the transaction stays posted. To undo the money,
+      reverse the transaction.
+    </p>
+    <form method="post" id="void-form">
+      <label>
+        Reason
+        <input type="text" name="reason" required />
+      </label>
+      <button type="submit" name="intent" value="void">
+        Void {receipt.receiptNo}
+      </button>
+    </form>
+  </section>
+)}
