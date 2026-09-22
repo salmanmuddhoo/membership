@@ -7,12 +7,43 @@
 import type { PrintHistory, TransactionReceipt } from '@lib/ledger/receipts';
 import { formatMoney } from '@lib/payments/money';
 
+export interface ReceiptSendRecord {
+  channel: string;
+  recipient: string;
+  status: string;
+  at: Date;
+}
+
 interface Props {
   receipt: TransactionReceipt;
   prints: PrintHistory;
   canVoid: boolean;
+  // Opened from the signed link the member was sent (S-1602): the sheet
+  // alone, with nothing that leads back into the officer's screens.
+  shared?: boolean;
+  // Where this receipt has been sent, most recent first, and whether the
+  // officer may send it again.
+  sent?: ReceiptSendRecord[];
+  canSend?: boolean;
 }
-const { receipt, prints, canVoid } = Astro.props;
+const {
+  receipt,
+  prints,
+  canVoid,
+  shared = false,
+  sent = [],
+  canSend = false,
+} = Astro.props;
+const CHANNEL_WORDS: Record<string, string> = {
+  email: 'Email',
+  whatsapp: 'WhatsApp',
+};
+const STATUS_WORDS: Record<string, string> = {
+  pending: 'sending',
+  sent: 'sent',
+  failed: 'failed',
+  abandoned: 'not delivered',
+};
 const t = receipt.transaction;
 const isReprint = prints.count > 0;
 const dateFormat = new Intl.DateTimeFormat('en-GB', {
@@ -163,9 +194,34 @@ const backHref = `/transactions/${t.id}`;
     <button type="button" id="print">
       Print
     </button>
-    <a href={backHref}>Back</a>
+    {!shared && <a href={backHref}>Back</a>}
   </div>
 </div>
+
+{!shared && (canSend || sent.length > 0) && (
+  <section class="screen-only panel">
+    <h2>Send to the member</h2>
+    {sent.length > 0 ? (
+      <ul>
+        {sent.map(s => (
+          <li>
+            {CHANNEL_WORDS[s.channel] ?? s.channel} to {s.recipient} ·{' '}
+            {STATUS_WORDS[s.status] ?? s.status} · {dateFormat.format(s.at)}
+          </li>
+        ))}
+      </ul>
+    ) : (
+      <p class="hint">Not sent yet.</p>
+    )}
+    {canSend && receipt.state === 'issued' && (
+      <form method="post">
+        <button type="submit" name="intent" value="send">
+          {sent.length > 0 ? 'Send again' : 'Send'}
+        </button>
+      </form>
+    )}
+  </section>
+)}
 
 {canVoid && receipt.state === 'issued' && (
   <section class="screen-only panel danger">

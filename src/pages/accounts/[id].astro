@@ -73,10 +73,18 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         {' · '}
         {account.status}
       </p>
-      <p class="text-sm text-neutral-600 dark:text-neutral-300">
-        Balance{' '}
-        <span class="text-lg font-semibold text-neutral-800 tabular-nums dark:text-neutral-100">
-          {balance ? formatMoney(balance.balance) : '—'}
+      <p class="flex items-baseline gap-4 text-sm text-neutral-600 dark:text-neutral-300">
+        <a
+          href={`/accounts/${id}/statement`}
+          class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+        >
+          Statement
+        </a>
+        <span>
+          Balance{' '}
+          <span class="text-lg font-semibold text-neutral-800 tabular-nums dark:text-neutral-100">
+            {balance ? formatMoney(balance.balance) : '—'}
+          </span>
         </span>
       </p>
     </div>

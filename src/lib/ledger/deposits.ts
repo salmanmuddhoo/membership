@@ -25,6 +25,7 @@ import {
   markReceiptIssued,
 } from '../payments/receipts';
 import { LedgerError } from './ledger';
+import { notifyReceiptIssued } from './receipt-notifications';
 import {
   resolveRoute,
   resubmitTransaction,
@@ -467,6 +468,9 @@ export async function recordDeposit(
       }
       return id;
     });
+    // The member is sent their receipt once it exists (S-1602); a send that
+    // fails is on the delivery log, never a failed deposit.
+    if (receipt) await notifyReceiptIssued(id);
     return (await loadDeposit(id))!;
   } catch (err) {
     if (receipt) {
@@ -610,6 +614,7 @@ export async function resubmitDeposit(
         await markReceiptIssued(receipt.id, client);
       }
     });
+    if (receipt) await notifyReceiptIssued(id);
     return (await loadDeposit(id))!;
   } catch (err) {
     if (receipt) {

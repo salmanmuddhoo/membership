@@ -4184,8 +4184,24 @@ Treasurer's act and never the captor's, and leaves the transaction posted;
 it is an event on the stream. The reconciliation lists voided transaction
 receipts beside payment ones and counts transactions in the period's total
 by direction; the receipts report gains kind, reference, method, amount and
-the void reason, with totals by method. **Not yet:** the receipt by email or
-WhatsApp (S-1602), the statement (S-1604), and the Treasurer's notification
+the void reason, with totals by method.
+
+**Shipped, second increment** (S-1602, S-1604) — M16 complete. A receipt
+goes to its member the moment it is issued: `receipt.issued` is an event
+with an email and a WhatsApp template (0076), raised by the ledger after
+every post that issues a receipt and again from the receipt page's **Send**,
+to the address on the holder's application. The message carries a signed
+link — HS256 on `MEMBER_SESSION_SECRET`, thirty days, one transaction — that
+opens `/receipts/shared/{token}` without a sign-in and renders the sheet
+alone; without the secret or an origin (`PUBLIC_APP_URL`, else the
+redirect URI's) the wording says to ask at the branch. Where it went, and
+whether it arrived, is on the receipt page. The statement is
+`accountStatement()`: the balance before the period from the entries, every
+entry in it with the running balance, totals and the closing balance;
+`GET /api/v1/accounts/{id}/statement?from&to` returns it, `format=xlsx` as
+the spreadsheet, and `/accounts/{id}/statement` shows it, prints it and
+links the download — month to date until a period is chosen. **Not yet:**
+WhatsApp as a document (S-1602's Should), and the Treasurer's notification
 on void, which is S-1805's.
 
 ### S-1601 · Every transaction takes a receipt from the one sequence ✅
@@ -4202,12 +4218,12 @@ a gap means the same thing everywhere. _(RCT-US-001, RCT-US-007, FRD 6.8)_
 - A transfer's two legs share one receipt; the printable form (S-503's
   renderer) gains a transaction variant
 
-### S-1602 · A receipt by email or WhatsApp
+### S-1602 · A receipt by email or WhatsApp ✅
 
 **As** an officer, **I need** to send the member their receipt without
 printing it, **so that** they leave with a record. _(RCT-US-002, NOTIF-US-005,
 FRD 6.8, open point 6)_
-`Must · 5 · EPIC-20` — WhatsApp media `Should`
+`Must · 5 · EPIC-20` — WhatsApp media `Should`, not yet
 
 - **Given** a receipt is issued **Then** a `receipt.issued` notification
   (M9 templates) carries a link to `/receipts/{id}`, which the member's own
@@ -4232,7 +4248,7 @@ explainable. _(RCT-US-003, RCT-US-004, RCT-US-006, FRD 6.8, 12)_
   totals by period, branch, officer and method
 - Treasurer notified on void (S-1805)
 
-### S-1604 · The statement
+### S-1604 · The statement ✅
 
 **As** an officer — and later the member — **I need** an account's statement
 for a date range, on screen and as PDF or Excel, **so that** history is

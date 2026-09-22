@@ -216,6 +216,30 @@ export function getDatabaseConfig(): DatabaseConfig {
   };
 }
 
+// Where this application is reached from outside (S-1602): the origin a
+// link in an email or a WhatsApp message must carry. PUBLIC_APP_URL when set;
+// otherwise the origin the sign-in redirect already names, which is the same
+// deployment. Null when neither is known, in which case no link is sent.
+export function getAppOrigin(): string | null {
+  const explicit = readEnv('PUBLIC_APP_URL');
+  if (explicit) return explicit.replace(/\/+$/, '');
+  const redirect = readEnv('ENTRA_REDIRECT_URI');
+  if (!redirect) return null;
+  try {
+    return new URL(redirect).origin;
+  } catch {
+    return null;
+  }
+}
+
+// What signs a receipt link (S-1602): the member-facing secret, since the
+// link is the member's to open — never the staff session's. Null when it is
+// not configured, and then no link is sent rather than an unsigned one.
+export function getReceiptLinkSecret(): string | null {
+  const secret = readEnv('MEMBER_SESSION_SECRET');
+  return secret && secret.length >= 32 ? secret : null;
+}
+
 export interface MemberConfig {
   // Signs the member app's access tokens. Its own secret, not
   // AUTH_SESSION_SECRET: a staff cookie and a member token must never be

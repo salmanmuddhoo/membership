@@ -23,6 +23,7 @@ import {
   markReceiptIssued,
 } from '../payments/receipts';
 import { LedgerError, postTransaction } from './ledger';
+import { notifyReceiptIssued } from './receipt-notifications';
 import type {
   PaymentMethod,
   TransactionKind,
@@ -757,6 +758,7 @@ export async function postApprovedTransaction(
     }
     throw err;
   }
+  await notifyReceiptIssued(id);
   return (await loadTransaction(id))!;
 }
 

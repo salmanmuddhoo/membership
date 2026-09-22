@@ -12,6 +12,17 @@
 
 export type Happening = 'submitted' | 'returned' | 'approved' | 'rejected';
 
+export const RECEIPT_ISSUED = 'receipt.issued';
+export const RECEIPT_PLACEHOLDERS = [
+  'member_name',
+  'receipt_no',
+  'reference',
+  'kind',
+  'amount',
+  'account',
+  'link',
+] as const;
+
 /**
  * The event code for one thing happening to one kind of application.
  *
@@ -42,6 +53,10 @@ export function eventCodeForKind(
  * is not necessarily wrong, and refusing what cannot be checked would be.
  */
 export function placeholdersForEvent(eventCode: string): string[] | null {
+  // A transaction's receipt (S-1602): what the ledger passes when one is
+  // issued or re-sent (src/lib/ledger/receipt-notifications.ts).
+  if (eventCode === RECEIPT_ISSUED) return [...RECEIPT_PLACEHOLDERS];
+
   const [subject, happening] = eventCode.split('.');
   if (subject !== 'application' && subject !== 'account') return null;
 

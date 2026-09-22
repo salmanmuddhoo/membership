@@ -12,6 +12,7 @@
 import type { PoolClient } from 'pg';
 import { query, withTransaction } from '../db/pool';
 import { recordAudit } from '../access/audit';
+import { fromCents, toCents } from '../payments/money';
 
 export interface LedgerActor {
   userId: string | null;
@@ -404,5 +405,177 @@ export async function availableBalance(
     balance: r.balance,
     pendingDebits: r.pending,
     available: r.available,
+  };
+}
+
+// S-1604 · The statement: an account's entries between two dates, with the
+// balance it opened and closed the range at, from the entries themselves.
+export interface StatementLine {
+  sequenceNo: number;
+  transactionId: string;
+  reference: string;
+  postedAt: Date;
+  description: string;
+  debit: string | null;
+  credit: string | null;
+  balance: string;
+  receiptNo: string | null;
+  methodName: string;
+  methodReference: string;
+  reason: string;
+}
+
+export interface Statement {
+  accountId: string;
+  accountNo: string;
+  accountTypeName: string;
+  holderId: string;
+  holderKind: 'member' | 'customer';
+  holderName: string;
+  memberNo: string | null;
+  // Calendar days, inclusive, as the officer chose them (YYYY-MM-DD).
+  from: string;
+  to: string;
+  openingBalance: string;
+  closingBalance: string;
+  totalCredits: string;
+  totalDebits: string;
+  lines: StatementLine[];
+}
+
+export async function accountStatement(
+  accountId: string,
+  from: string,
+  to: string
+): Promise<Statement | null> {
+  const account = await query<{
+    account_no: string;
+    type_name: string;
+    holder_id: string;
+    holder_kind: 'member' | 'customer';
+    holder_name: string;
+    member_no: string | null;
+  }>(
+    `select coalesce(a.account_no, m.member_no) as account_no,
+            t.name as type_name,
+            coalesce(a.member_id, a.customer_id) as holder_id,
+            case when a.member_id is not null then 'member' else 'customer' end
+              as holder_kind,
+            trim(coalesce(p.values->>'name', '') || ' '
+                 || coalesce(p.values->>'surname', '')) as holder_name,
+            m.member_no
+       from account a
+       join account_type t on t.id = a.account_type_id
+       left join member m on m.id = a.member_id
+       left join customer c on c.id = a.customer_id
+       left join application_party p
+         on p.application_id = coalesce(m.application_id, c.application_id)
+        and p.subject = 'applicant' and p.ordinal = 1
+      where a.id = $1`,
+    [accountId]
+  );
+  const header = account.rows[0];
+  if (!header) return null;
+
+  const opening = await query<{ balance: string }>(
+    `select coalesce(sum(case direction when 'credit' then amount else -amount end), 0)
+              ::numeric(14, 2)::text as balance
+       from account_entry
+      where account_id = $1 and posted_at < $2::date`,
+    [accountId, from]
+  );
+  const rows = await query<{
+    sequence_no: string;
+    transaction_id: string;
+    reference: string;
+    kind: string;
+    direction: 'credit' | 'debit';
+    amount: string;
+    posted_at: Date;
+    running_balance: string;
+    carried: boolean;
+    reverses_carried: boolean;
+    reverses_reference: string | null;
+    receipt_no: string | null;
+    method_name: string;
+    method_reference: string;
+    reason: string;
+    counterpart: string | null;
+  }>(
+    `with running as (
+       select e.id, e.sequence_no, e.transaction_id, e.direction, e.amount,
+              e.posted_at,
+              sum(case e.direction when 'credit' then e.amount else -e.amount end)
+                over (order by e.sequence_no) as running_balance
+         from account_entry e
+        where e.account_id = $1
+     )
+     select r.sequence_no, r.transaction_id, t.reference, t.kind, r.direction,
+            r.amount, r.posted_at, r.running_balance,
+            (t.payment_line_id is not null
+             or t.payment_account_line_id is not null) as carried,
+            (o.payment_line_id is not null
+             or o.payment_account_line_id is not null) as reverses_carried,
+            o.reference as reverses_reference,
+            rn.receipt_no,
+            pm.name as method_name,
+            coalesce(t.method_reference, '') as method_reference,
+            coalesce(t.reason, '') as reason,
+            coalesce(t.payee_name,
+                     coalesce(la.account_no, lm.member_no) || ' · ' || lt.name)
+              as counterpart
+       from running r
+       join transaction t on t.id = r.transaction_id
+       join payment_method pm on pm.code = t.method
+       left join transaction o on o.id = t.reverses_id
+       left join receipt_number rn on rn.id = t.receipt_number_id
+       left join transaction l
+         on l.transfer_id = t.transfer_id and l.id <> t.id
+       left join account la on la.id = l.account_id
+       left join account_type lt on lt.id = la.account_type_id
+       left join member lm on lm.id = la.member_id
+      where r.posted_at >= $2::date and r.posted_at < $3::date + 1
+      order by r.sequence_no`,
+    [accountId, from, to]
+  );
+  let credits = 0;
+  let debits = 0;
+  const lines = rows.rows.map(r => {
+    const cents = toCents(r.amount);
+    if (r.direction === 'credit') credits += cents;
+    else debits += cents;
+    return {
+      sequenceNo: Number(r.sequence_no),
+      transactionId: r.transaction_id,
+      reference: r.reference,
+      postedAt: r.posted_at,
+      description: describe(r),
+      debit: r.direction === 'debit' ? r.amount : null,
+      credit: r.direction === 'credit' ? r.amount : null,
+      balance: r.running_balance,
+      receiptNo: r.receipt_no,
+      methodName: r.method_name,
+      methodReference: r.method_reference,
+      reason: r.reason,
+    };
+  });
+  const openingBalance = opening.rows[0]?.balance ?? '0.00';
+  const closingBalance =
+    lines.length > 0 ? lines[lines.length - 1].balance : openingBalance;
+  return {
+    accountId,
+    accountNo: header.account_no,
+    accountTypeName: header.type_name,
+    holderId: header.holder_id,
+    holderKind: header.holder_kind,
+    holderName: header.holder_name,
+    memberNo: header.member_no,
+    from,
+    to,
+    openingBalance,
+    closingBalance,
+    totalCredits: fromCents(credits),
+    totalDebits: fromCents(debits),
+    lines,
   };
 }
