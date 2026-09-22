@@ -389,11 +389,12 @@ const CARD =
           resignation is decided. When it is approved and paid out, both close
           and the membership ends.
         </p>
-        <input type="hidden" name="intent" value="submit" />
         <div class="flex flex-wrap gap-2 pt-2">
           <button
             type="submit"
             class={BUTTON}
+            name="intent"
+            value="submit"
             disabled={!complete || blocking.length > 0}
           >
             {request.status === 'returned' ? 'Resubmit' : 'Submit'}

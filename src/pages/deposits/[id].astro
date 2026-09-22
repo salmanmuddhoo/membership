@@ -146,9 +146,8 @@ const CARD =
             class={INPUT}
           />
         </label>
-        <input type="hidden" name="intent" value="details" />
         <div class="flex flex-wrap gap-2 pt-2">
-          <button type="submit" class={BUTTON}>
+          <button type="submit" class={BUTTON} name="intent" value="details">
             Save
           </button>
           <button
@@ -237,9 +236,14 @@ const CARD =
             {deposit.reason}
           </dd>
         </dl>
-        <input type="hidden" name="intent" value="submit" />
         <div class="flex flex-wrap items-center gap-2 pt-2">
-          <button type="submit" class={BUTTON} disabled={!canSubmit}>
+          <button
+            type="submit"
+            class={BUTTON}
+            name="intent"
+            value="submit"
+            disabled={!canSubmit}
+          >
             Submit
           </button>
           <button

@@ -358,9 +358,14 @@ const CARD =
           Once submitted, nothing else moves on this account until the closure
           is decided.
         </p>
-        <input type="hidden" name="intent" value="submit" />
         <div class="flex flex-wrap gap-2 pt-2">
-          <button type="submit" class={BUTTON} disabled={!complete}>
+          <button
+            type="submit"
+            class={BUTTON}
+            name="intent"
+            value="submit"
+            disabled={!complete}
+          >
             {closure.status === 'returned' ? 'Resubmit' : 'Submit'}
           </button>
           <button
