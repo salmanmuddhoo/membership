@@ -4276,7 +4276,30 @@ documents its checklist requires, the trail) that, on approval, produces
 `disbursement`-kind transactions through S-1503's step and then changes
 status. No request touches a balance itself.
 
-### S-1701 · Member status gets a vocabulary
+**Shipped, first increment** (S-1701, S-1702): `member.status` is a check
+constraint (0077) — pending, active, inactive, dormant, resigned, demised —
+with `status_changed_at` beside it, and the member page says in one line
+what a member who cannot transact is and since when; the capture paths
+already refused anything but active. An account can be `closing` and
+`closed`, dated, and a closed one no longer counts against one-of-each-type.
+A closure is a transaction of kind `closure` on the chain 0070 seeded for
+it: **Close** on any account that is not the membership's opens a draft
+(account, reason, how the balance goes back), the member signs the request
+on a sheet that is rasterised and filed against the transaction itself —
+`document` gained a third owner — and **Submit** puts the account into
+`closing`, where nothing else posts and the balance reads as spoken for.
+The chevron is Details → Signature → Documents → Submitted → the chain →
+Closed. Reviewed, returned, corrected and resubmitted like any transaction;
+rejected or withdrawn, the account is active again. Posting is S-1503's
+disbursement: `post_transaction()` refuses a closure whose amount is not
+the balance at that moment, writes the debit (none for an empty account)
+and closes the account in the same statement, with a receipt. Shares and
+the MSA are refused by name: closing them is a resignation.
+`POST /api/v1/accounts/{id}/closure` starts one. **Not yet:** resignation
+(S-1703), the demised claim (S-1704), the notifications (S-1705) and the
+report (S-1706).
+
+### S-1701 · Member status gets a vocabulary ✅
 
 **As** the system, **I need** `member.status` to name every state a member
 can be in and refuse any other, **so that** `resigned` and `demised` mean
@@ -4288,7 +4311,7 @@ something. _(RES-US-006, DEM-US-007, open point 2)_
   `demised`; a member in the last three cannot transact or open an account,
   and the member page says why
 
-### S-1702 · Closure request (HSA / Investment)
+### S-1702 · Closure request (HSA / Investment) ✅
 
 **As** an officer, **I need** to close a member's secondary account with the
 member's signature and the reason, **so that** they can leave a product

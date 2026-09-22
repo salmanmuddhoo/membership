@@ -2550,3 +2550,130 @@ describe("officer feedback: a member's documents carry onto a new account openin
     expect(foundingId?.state).not.toBe('missing');
   });
 });
+
+describe("S-1702: a request's own paper is filed against the transaction", () => {
+  it("files the signed closure request in the member's folder, named by the transaction, one per request", async () => {
+    const { documents } = await load();
+    const membershipTypeId = (
+      await run(
+        appUrl,
+        `select id from membership_type where code = 'individual'`
+      )
+    ).rows[0].id;
+    const approved = await run(
+      appUrl,
+      `insert into membership_application (membership_type_id, captured_by, status)
+       values ($1, $2, 'approved') returning id`,
+      [membershipTypeId, officer.userId]
+    );
+    await run(
+      appUrl,
+      `insert into application_party (application_id, subject, ordinal, values)
+       values ($1, 'applicant', 1, '{"name": "Zainab", "surname": "Closure"}')`,
+      [approved.rows[0].id]
+    );
+    const member = await run(
+      appUrl,
+      `insert into member (application_id, membership_type_id)
+       values ($1, $2) returning id, member_no`,
+      [approved.rows[0].id, membershipTypeId]
+    );
+    const msaType = (
+      await run(appUrl, `select id from account_type where code = 'msa'`)
+    ).rows[0].id;
+    const account = await run(
+      appUrl,
+      `insert into account (member_id, account_type_id, status)
+       values ($1, $2, 'active') returning id`,
+      [member.rows[0].id, msaType]
+    );
+    const closure = async () =>
+      (
+        await run(
+          appUrl,
+          `insert into transaction
+             (kind, member_id, account_id, amount, method, reason, status, captured_by)
+           values ('closure', $1, $2, 0, 'cash', 'Test', 'draft', $3)
+           returning id, reference`,
+          [member.rows[0].id, account.rows[0].id, officer.userId]
+        )
+      ).rows[0] as { id: string; reference: string };
+    const first = await closure();
+    const second = await closure();
+    const requestType = (
+      await run(
+        appUrl,
+        `select id from document_type where code = 'closure_request'`
+      )
+    ).rows[0].id;
+
+    const begun = await documents.beginUpload(
+      {
+        transactionId: first.id,
+        documentTypeId: requestType,
+        subject: 'applicant',
+        fileName: 'whatever.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 2048,
+      },
+      officer
+    );
+    expect(begun.ticket.itemPath).toBe(
+      `${documents.memberFolderPath(member.rows[0].member_no, 'Zainab Closure')}` +
+        `/Account closure request - ${first.reference}.pdf`
+    );
+    drive.files.set(begun.ticket.itemPath, { id: 'item-1', size: 2048 });
+    await documents.commitUpload(begun.versionId, officer);
+
+    const filed = await documents.documentsForTransaction(first.id);
+    expect(filed).toHaveLength(1);
+    expect(filed[0]).toMatchObject({
+      documentCode: 'closure_request',
+      fileName: `Account closure request - ${first.reference}.pdf`,
+      uploadedByName: 'Officer',
+    });
+    expect(await documents.documentsForTransaction(second.id)).toEqual([]);
+
+    // A second request on the same member takes its own document rather
+    // than colliding with the first's.
+    const other = await documents.beginUpload(
+      {
+        transactionId: second.id,
+        documentTypeId: requestType,
+        subject: 'applicant',
+        fileName: 'again.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 1024,
+      },
+      officer
+    );
+    expect(other.documentId).not.toBe(begun.documentId);
+    expect(other.ticket.itemPath).toContain(second.reference);
+
+    // Once submitted, the request's paper is a record.
+    await run(
+      appUrl,
+      `update transaction set status = 'submitted', submitted_at = now() where id = $1`,
+      [first.id]
+    );
+    await expect(
+      documents.beginUpload(
+        {
+          transactionId: first.id,
+          documentTypeId: requestType,
+          subject: 'applicant',
+          fileName: 'late.pdf',
+          contentType: 'application/pdf',
+          sizeBytes: 1024,
+        },
+        officer
+      )
+    ).rejects.toThrowError(/This request has been submitted/);
+    await expect(
+      documents.removeFiledDocument(begun.documentId, {
+        ...officer,
+        permissions: new Set(['document.upload']),
+      })
+    ).rejects.toThrowError(/This request has been submitted/);
+  });
+});

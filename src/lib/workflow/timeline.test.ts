@@ -2,7 +2,11 @@
 // between Recorded and Posted. Pure — what is under test is the mapping from
 // recorded state to what the officer is told.
 import { describe, expect, it } from 'vitest';
-import { transactionTimeline, type TimelineStep } from './timeline';
+import {
+  closurePrelude,
+  transactionTimeline,
+  type TimelineStep,
+} from './timeline';
 
 const CHAIN = [
   { code: 'secretary_review', name: 'Secretary review', roleName: 'Secretary' },
@@ -147,5 +151,75 @@ describe('a transaction on a chain', () => {
     });
     expect(current(steps)).toEqual(['capture']);
     expect(steps[0]).toMatchObject({ problem: true, detail: 'Rejected' });
+  });
+});
+
+// A closure's chevron (S-1702): the officer's own steps before the chain,
+// then the chain, then Closed.
+describe('a closure request', () => {
+  const unsigned = closurePrelude([
+    { documentName: 'Account closure request', filed: null },
+  ]);
+  const signed = closurePrelude([
+    { documentName: 'Account closure request', filed: { id: 'd' } },
+  ]);
+
+  it('starts at the signature while the request is a draft with nothing filed', () => {
+    const steps = transactionTimeline({
+      ...base,
+      status: 'draft',
+      ...unsigned,
+    });
+    expect(steps.map(s => s.key)).toEqual([
+      'details',
+      'signature',
+      'documents',
+      'capture',
+      'secretary_review',
+      'president_decision',
+      'posted',
+    ]);
+    expect(states(steps)).toMatchObject({
+      details: 'done',
+      signature: 'current',
+      documents: 'todo',
+      capture: 'todo',
+    });
+    expect(steps.find(s => s.key === 'signature')?.problem).toBe(true);
+    expect(steps.find(s => s.key === 'capture')?.label).toBe('Submitted');
+    expect(steps.find(s => s.key === 'posted')?.label).toBe('Closed');
+  });
+
+  it('has the submission next once the request is signed, and everything done once closed', () => {
+    const draft = transactionTimeline({ ...base, status: 'draft', ...signed });
+    expect(current(draft)).toEqual(['capture']);
+    const posted = transactionTimeline({
+      ...base,
+      status: 'posted',
+      receiptNo: 'RCT-000009',
+      ...signed,
+    });
+    expect(posted.every(s => s.state === 'done')).toBe(true);
+    expect(posted.find(s => s.key === 'posted')?.detail).toBe('RCT-000009');
+  });
+
+  it('sends a returned request back to the submission, keeping the signature', () => {
+    const steps = transactionTimeline({
+      ...base,
+      status: 'returned',
+      currentStepCode: null,
+      passedStepCodes: ['secretary_review'],
+      returnedBy: 'Secretary',
+      ...signed,
+    });
+    expect(states(steps)).toMatchObject({
+      signature: 'done',
+      documents: 'done',
+      capture: 'current',
+      secretary_review: 'done',
+    });
+    expect(steps.find(s => s.key === 'capture')?.detail).toBe(
+      'Returned by Secretary'
+    );
   });
 });

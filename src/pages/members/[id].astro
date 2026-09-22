@@ -34,6 +34,8 @@ import {
 } from '@lib/config/reference';
 import { approvalCommentsFor } from '@lib/applications/workflow';
 import DocumentViewer from '@components/DocumentViewer.astro';
+import { closuresInFlightFor } from '@lib/ledger/closures';
+import { statusNotice } from '@lib/members/status';
 
 const principal = Astro.locals.principal!;
 const canSeePayments = principal.permissions.has('payment.view');
@@ -284,6 +286,18 @@ const canDeposit =
   principal.permissions.has('transaction.capture') &&
   person.status === 'active' &&
   person.accounts.some(a => a.status === 'active');
+// S-1701: a member who cannot transact, and why, in one line.
+const notice = member
+  ? statusNotice(member.status, member.statusChangedAt)
+  : null;
+// S-1702: closing an account that is not the membership's, and the request
+// already on its way where there is one.
+const canClose = canDeposit;
+const closing = principal.permissions.has('transaction.view')
+  ? await closuresInFlightFor(
+      member ? { memberId: member.id } : { customerId: customer!.id }
+    )
+  : new Map<string, { id: string; reference: string; status: string }>();
 // S-1309: each account's balance, from the ledger's cache. Null for one
 // nothing has ever posted to, which the page shows as a dash rather than
 // a zero that would read as a fact.
@@ -352,6 +366,11 @@ const pageTitle = member ? member.memberNo : name;
     {error && (
       <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
         {error}
+      </div>
+    )}
+    {notice && (
+      <div class="rounded-lg border border-amber-300 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200">
+        {notice}
       </div>
     )}
 
@@ -707,6 +726,28 @@ const pageTitle = member ? member.memberNo : name;
                       History
                     </a>
                   </>
+                )}
+                {closing.has(account.id) ? (
+                  <a
+                    href={`/transactions/${closing.get(account.id)!.id}`}
+                    class="rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-900 underline dark:bg-amber-950 dark:text-amber-200"
+                  >
+                    Closing · {closing.get(account.id)!.reference}
+                  </a>
+                ) : (
+                  canClose &&
+                  account.status === 'active' &&
+                  !(
+                    'isMembershipDefault' in account &&
+                    account.isMembershipDefault
+                  ) && (
+                    <a
+                      href={`/members/${recordId}/close?account=${account.id}`}
+                      class="text-sm font-medium text-neutral-700 underline hover:text-neutral-900 dark:text-neutral-200 dark:hover:text-neutral-100"
+                    >
+                      Close
+                    </a>
+                  )
                 )}
               </div>
             </li>

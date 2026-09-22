@@ -571,6 +571,15 @@ export async function reviewTransaction(
       `update transaction set status = $2, current_step_code = $3 where id = $1`,
       [transaction.id, status, nextStep]
     );
+    // A closure refused is an account kept (S-1702): it was closing for
+    // this request and for nothing else.
+    if (transaction.kind === 'closure' && status === 'rejected') {
+      await client.query(
+        `update account set status = 'active'
+          where id = $1 and status = 'closing'`,
+        [transaction.accountId]
+      );
+    }
     // A transfer's other leg goes with it (S-1504): a rejection ends both,
     // and the transfer row reads whatever the debit leg reads.
     if (transaction.transferId) {
@@ -639,6 +648,7 @@ export function needsDisbursement(
 ): boolean {
   return (
     transaction.kind === 'withdrawal' ||
+    transaction.kind === 'closure' ||
     (transaction.kind === 'transfer_leg' && transaction.payeeName !== null)
   );
 }
@@ -726,6 +736,20 @@ export async function postApprovedTransaction(
           paidBy?.reference ?? null,
         ]
       );
+      // A closure pays out whatever the account holds at this moment
+      // (S-1702): the figure is read again here, and post_transaction
+      // refuses one that does not match, so nothing is left on a closed
+      // account and nothing is paid that is not there.
+      if (transaction.kind === 'closure') {
+        await client.query(
+          `update transaction t
+              set amount = coalesce(
+                (select balance from account_balance where account_id = t.account_id),
+                0)
+            where t.id = $1`,
+          [transaction.id]
+        );
+      }
       await postTransaction(
         transaction.id,
         { userId: principal.userId, description: principal.email },

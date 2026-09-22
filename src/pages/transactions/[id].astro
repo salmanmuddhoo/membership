@@ -3,7 +3,9 @@
 // where it stands, what this person may do with it now — review, decide,
 // post, or correct and resubmit — and the trail of who did what.
 import ChainTimeline from '@components/ChainTimeline.astro';
+import DocumentViewer from '@components/DocumentViewer.astro';
 import DashboardLayout from '@layouts/DashboardLayout.astro';
+import { documentsForTransaction } from '@lib/documents/documents';
 import {
   cashMaximum,
   cashSourceOfFundThreshold,
@@ -53,11 +55,14 @@ const KIND_LABELS: Record<string, string> = {
   deposit: 'Deposit',
   withdrawal: 'Withdrawal',
   transfer: 'Transfer',
-  closure: 'Closure',
+  transfer_leg: 'Transfer',
+  reversal: 'Reversal',
+  closure: 'Account closure',
   resignation: 'Resignation',
   demise: 'Demise',
 };
 const STATUS_LABELS: Record<string, string> = {
+  draft: 'Draft',
   submitted: 'Submitted',
   under_review: 'Under review',
   approved: 'Approved',
@@ -184,6 +189,17 @@ const canEdit =
     transaction.kind === 'withdrawal' ||
     isTransfer);
 const isDeposit = transaction.kind === 'deposit';
+// A closure (S-1702) is corrected in its own wizard, not here: the signed
+// request may need signing again.
+const isClosure = transaction.kind === 'closure';
+const canEditClosure =
+  isClosure &&
+  (transaction.status === 'returned' || transaction.status === 'draft') &&
+  transaction.capturedById === principal.userId &&
+  principal.permissions.has(PERMISSION_CAPTURE);
+const closureDocuments = isClosure
+  ? await documentsForTransaction(transaction.id)
+  : [];
 // Posting money that leaves the Society is paying it out: the method and
 // reference are recorded then (S-1503).
 const disburses = needsDisbursement(transaction);
@@ -328,7 +344,9 @@ const DANGER =
             </dd>
           </>
         )}
-        <dt class="text-neutral-500 dark:text-neutral-400">Amount</dt>
+        <dt class="text-neutral-500 dark:text-neutral-400">
+          {isClosure ? 'Balance to pay out' : 'Amount'}
+        </dt>
         <dd class="font-medium text-neutral-800 dark:text-neutral-100">
           {formatMoney(transaction.amount, transaction.currency)}
           {transaction.method !== 'internal_transfer' && (
@@ -342,9 +360,34 @@ const DANGER =
         </dd>
         {transaction.reason && (
           <>
-            <dt class="text-neutral-500 dark:text-neutral-400">Note</dt>
+            <dt class="text-neutral-500 dark:text-neutral-400">
+              {isClosure ? 'Reason' : 'Note'}
+            </dt>
             <dd class="text-neutral-800 dark:text-neutral-100">
               {transaction.reason}
+            </dd>
+          </>
+        )}
+        {isClosure && (
+          <>
+            <dt class="text-neutral-500 dark:text-neutral-400">
+              Signed request
+            </dt>
+            <dd class="text-neutral-800 dark:text-neutral-100">
+              {closureDocuments.length === 0 ? (
+                <span class="text-red-700 dark:text-red-300">Not on file</span>
+              ) : (
+                closureDocuments.map(document => (
+                  <button
+                    type="button"
+                    data-view-document
+                    data-document-id={document.documentId}
+                    class="underline"
+                  >
+                    {document.documentName}
+                  </button>
+                ))
+              )}
             </dd>
           </>
         )}
@@ -378,6 +421,29 @@ const DANGER =
       <p class="rounded-lg border border-neutral-300 px-4 py-3 text-sm text-neutral-700 dark:border-neutral-700 dark:text-neutral-200">
         This is the receiving side of a transfer. It posts with the other side.
       </p>
+    )}
+
+    {isClosure && transaction.status !== 'posted' && (
+      <p class="rounded-lg border border-neutral-300 px-4 py-3 text-sm text-neutral-700 dark:border-neutral-700 dark:text-neutral-200">
+        Closes {transaction.accountNo} · {transaction.accountTypeName}. The
+        balance is paid out when it is approved, as it stands then, and the
+        account closes with it.
+      </p>
+    )}
+
+    {canEditClosure && (
+      <div class="flex flex-wrap items-center gap-3 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+        {returnComment && (
+          <p class="w-full rounded-lg border border-amber-300 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200">
+            {returnComment}
+          </p>
+        )}
+        <a href={`/closures/${transaction.id}`} class={BUTTON}>
+          {transaction.status === 'returned'
+            ? 'Correct and resubmit'
+            : 'Continue the request'}
+        </a>
+      </div>
     )}
 
     {stalled && !isCreditLeg && (
@@ -430,9 +496,11 @@ const DANGER =
         class="space-y-3 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
       >
         <p class="text-sm text-neutral-700 dark:text-neutral-200">
-          {disburses
-            ? 'Approved. Record how it was paid out; the money moves and the receipt is issued now.'
-            : 'Approved. Posting moves the money and issues the receipt.'}
+          {isClosure
+            ? 'Approved. Record how the balance was paid out; the account closes and the receipt is issued now.'
+            : disburses
+              ? 'Approved. Record how it was paid out; the money moves and the receipt is issued now.'
+              : 'Approved. Posting moves the money and issues the receipt.'}
         </p>
         {disburses && (
           <div class="grid gap-3 sm:grid-cols-2">
@@ -470,7 +538,11 @@ const DANGER =
         )}
         <input type="hidden" name="intent" value="post" />
         <button type="submit" class={BUTTON}>
-          {disburses ? 'Pay out and post' : 'Post'}
+          {isClosure
+            ? 'Pay out and close'
+            : disburses
+              ? 'Pay out and post'
+              : 'Post'}
         </button>
       </form>
     )}
@@ -755,6 +827,7 @@ const DANGER =
       )}
     </section>
   </div>
+  {isClosure && <DocumentViewer />}
 </DashboardLayout>
 
 <script>

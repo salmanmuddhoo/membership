@@ -394,7 +394,7 @@ export async function availableBalance(
        from (select coalesce(sum(amount), 0) as pending
                from transaction
               where account_id = $1
-                and (kind = 'withdrawal'
+                and (kind in ('withdrawal', 'closure')
                      or (kind = 'transfer_leg' and leg_direction = 'debit'))
                 and status in ('submitted', 'under_review', 'approved')) p
        left join account_balance b on b.account_id = $1`,

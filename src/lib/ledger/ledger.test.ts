@@ -236,9 +236,11 @@ describe('posting a deposit', () => {
 
   it('refuses to post onto an account that is not active', async () => {
     const ledger = await load();
-    await run(ownerUrl, `update account set status = 'closed' where id = $1`, [
-      secondAccountId,
-    ]);
+    await run(
+      ownerUrl,
+      `update account set status = 'closed', closed_at = now() where id = $1`,
+      [secondAccountId]
+    );
     try {
       const id = await newDeposit('10.00', 'submitted', secondAccountId);
       await expect(ledger.postTransaction(id, actor)).rejects.toThrowError(
@@ -250,7 +252,7 @@ describe('posting a deposit', () => {
     } finally {
       await run(
         ownerUrl,
-        `update account set status = 'active' where id = $1`,
+        `update account set status = 'active', closed_at = null where id = $1`,
         [secondAccountId]
       );
     }
