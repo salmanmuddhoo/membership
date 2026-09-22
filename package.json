@@ -44,8 +44,8 @@
   "devDependencies": {
     "@playwright/test": "^1.63.0",
     "@types/pg": "^8.23.1",
-    "prettier": "^3.9.6",
-    "prettier-plugin-astro": "^1.0.0",
+    "prettier": "^3.9.8",
+    "prettier-plugin-astro": "^1.0.1",
     "prettier-plugin-tailwindcss": "^0.8.1",
     "tsx": "^4.23.13",
     "typescript": "^6.0.3",
