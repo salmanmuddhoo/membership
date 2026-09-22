@@ -25,7 +25,7 @@ const KIND_LABELS: Record<TransactionRowKind, string> = {
   reversal: 'Reversal',
   closure: 'Account closure',
   resignation: 'Resignation',
-  demise: 'Demise',
+  demise: 'Demised claim',
 };
 const requested = Astro.url.searchParams.get('kind') ?? '';
 const kind = (TRANSACTION_KINDS as readonly string[]).includes(requested)

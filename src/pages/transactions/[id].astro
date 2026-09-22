@@ -6,6 +6,7 @@ import ChainTimeline from '@components/ChainTimeline.astro';
 import DocumentViewer from '@components/DocumentViewer.astro';
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import { documentsForTransaction } from '@lib/documents/documents';
+import { AFFIDAVIT_NOTE } from '@lib/ledger/demises';
 import {
   cashMaximum,
   cashSourceOfFundThreshold,
@@ -59,7 +60,7 @@ const KIND_LABELS: Record<string, string> = {
   reversal: 'Reversal',
   closure: 'Account closure',
   resignation: 'Resignation',
-  demise: 'Demise',
+  demise: 'Demised claim',
 };
 const STATUS_LABELS: Record<string, string> = {
   draft: 'Draft',
@@ -193,9 +194,10 @@ const isDeposit = transaction.kind === 'deposit';
 // request may need signing again.
 const isClosure = transaction.kind === 'closure';
 const isResignation = transaction.kind === 'resignation';
-// A request the officer built (a closure, a resignation): its papers are
-// on it, and it is corrected in its own wizard.
-const isExit = isClosure || isResignation;
+const isDemise = transaction.kind === 'demise';
+// A request the officer built (a closure, a resignation, a claim): its
+// papers are on it, and it is corrected in its own wizard.
+const isExit = isClosure || isResignation || isDemise;
 const canEditClosure =
   isExit &&
   (transaction.status === 'returned' || transaction.status === 'draft') &&
@@ -349,7 +351,11 @@ const DANGER =
           </>
         )}
         <dt class="text-neutral-500 dark:text-neutral-400">
-          {isExit ? 'Balance to pay out' : 'Amount'}
+          {isDemise
+            ? 'Total to pay out'
+            : isExit
+              ? 'Balance to pay out'
+              : 'Amount'}
         </dt>
         <dd class="font-medium text-neutral-800 dark:text-neutral-100">
           {formatMoney(transaction.amount, transaction.currency)}
@@ -362,10 +368,32 @@ const DANGER =
             </>
           )}
         </dd>
+        {isDemise && transaction.claimant && (
+          <>
+            <dt class="text-neutral-500 dark:text-neutral-400">Claimant</dt>
+            <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+              {transaction.claimant.name} · {transaction.claimant.relation}
+              <span class="block text-xs font-normal text-neutral-500 dark:text-neutral-400">
+                {[transaction.claimant.nic, transaction.claimant.address]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </span>
+            </dd>
+            <dt class="text-neutral-500 dark:text-neutral-400">
+              Takaful benefit
+            </dt>
+            <dd class="text-neutral-800 dark:text-neutral-100">
+              {formatMoney(transaction.takafulBenefit, transaction.currency)}
+              <span class="block text-xs text-neutral-500 dark:text-neutral-400">
+                The rest is what the accounts hold.
+              </span>
+            </dd>
+          </>
+        )}
         {transaction.reason && (
           <>
             <dt class="text-neutral-500 dark:text-neutral-400">
-              {isExit ? 'Reason' : 'Note'}
+              {isExit && !isDemise ? 'Reason' : 'Note'}
             </dt>
             <dd class="text-neutral-800 dark:text-neutral-100">
               {transaction.reason}
@@ -375,7 +403,7 @@ const DANGER =
         {isExit && (
           <>
             <dt class="text-neutral-500 dark:text-neutral-400">
-              Signed request
+              {isDemise ? 'Documents' : 'Signed request'}
             </dt>
             <dd class="text-neutral-800 dark:text-neutral-100">
               {closureDocuments.length === 0 ? (
@@ -427,6 +455,14 @@ const DANGER =
       </p>
     )}
 
+    {isDemise && (
+      <p class="rounded-lg border border-neutral-300 px-4 py-3 text-sm text-neutral-700 dark:border-neutral-700 dark:text-neutral-200">
+        {transaction.status !== 'posted' &&
+          `Settles ${transaction.holderName || 'this member'}: every account closes, the total is paid to the claimant when it is approved, and the membership ends with it. `}
+        {AFFIDAVIT_NOTE}
+      </p>
+    )}
+
     {isResignation && transaction.status !== 'posted' && (
       <p class="rounded-lg border border-neutral-300 px-4 py-3 text-sm text-neutral-700 dark:border-neutral-700 dark:text-neutral-200">
         Resigns {transaction.holderName || 'this member'}: Shares and the
@@ -451,7 +487,7 @@ const DANGER =
           </p>
         )}
         <a
-          href={`/${isResignation ? 'resignations' : 'closures'}/${transaction.id}`}
+          href={`/${isDemise ? 'demises' : isResignation ? 'resignations' : 'closures'}/${transaction.id}`}
           class={BUTTON}
         >
           {transaction.status === 'returned'
@@ -511,13 +547,15 @@ const DANGER =
         class="space-y-3 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
       >
         <p class="text-sm text-neutral-700 dark:text-neutral-200">
-          {isResignation
-            ? 'Approved. Record how the balances were paid out; both accounts close, the membership ends and the receipt is issued now.'
-            : isClosure
-              ? 'Approved. Record how the balance was paid out; the account closes and the receipt is issued now.'
-              : disburses
-                ? 'Approved. Record how it was paid out; the money moves and the receipt is issued now.'
-                : 'Approved. Posting moves the money and issues the receipt.'}
+          {isDemise
+            ? 'Approved. Record how the claimant was paid; every account closes, the membership ends and the receipt is issued now.'
+            : isResignation
+              ? 'Approved. Record how the balances were paid out; both accounts close, the membership ends and the receipt is issued now.'
+              : isClosure
+                ? 'Approved. Record how the balance was paid out; the account closes and the receipt is issued now.'
+                : disburses
+                  ? 'Approved. Record how it was paid out; the money moves and the receipt is issued now.'
+                  : 'Approved. Posting moves the money and issues the receipt.'}
         </p>
         {disburses && (
           <div class="grid gap-3 sm:grid-cols-2">
@@ -555,13 +593,15 @@ const DANGER =
         )}
         <input type="hidden" name="intent" value="post" />
         <button type="submit" class={BUTTON}>
-          {isResignation
-            ? 'Pay out and resign'
-            : isClosure
-              ? 'Pay out and close'
-              : disburses
-                ? 'Pay out and post'
-                : 'Post'}
+          {isDemise
+            ? 'Pay out and settle'
+            : isResignation
+              ? 'Pay out and resign'
+              : isClosure
+                ? 'Pay out and close'
+                : disburses
+                  ? 'Pay out and post'
+                  : 'Post'}
         </button>
       </form>
     )}

@@ -2092,6 +2092,48 @@ export async function setCashMaximum(
   });
 }
 
+// The Takaful benefit a deceased member's claim pays beside the balances
+// of their accounts (S-1704): the Society's figure, Administrator-editable.
+// Seeded 15,000 by migration 0079; the default here is read only before it
+// has run.
+const TAKAFUL_BENEFIT_KEY = 'demised.takaful_benefit';
+const DEFAULT_TAKAFUL_BENEFIT = '15000';
+
+async function readTakafulBenefit(): Promise<string> {
+  const result = await query<{ value: string }>(
+    `select value::text as value from config_entry where key = $1`,
+    [TAKAFUL_BENEFIT_KEY]
+  );
+  return result.rows[0]?.value ?? DEFAULT_TAKAFUL_BENEFIT;
+}
+
+export function takafulBenefit(): Promise<string> {
+  return cached('takaful-benefit', readTakafulBenefit);
+}
+
+export async function setTakafulBenefit(
+  amount: string,
+  actor: Actor
+): Promise<void> {
+  if (!/^\d+(\.\d{1,2})?$/.test(amount.trim())) {
+    throw new ConfigError(`${amount || 'That'} is not an amount in rupees.`);
+  }
+  await withConfigurationActor(actorFor(actor), async client => {
+    await client.query(
+      `insert into config_entry (key, value, value_type, description, updated_by)
+       values (
+         $1, to_jsonb($2::numeric), 'number',
+         'The Takaful benefit (MUR) paid to the claimant of a deceased ' ||
+         'member, beside the balances of their accounts.',
+         $3
+       )
+       on conflict (key) do update
+         set value = excluded.value, updated_by = excluded.updated_by`,
+      [TAKAFUL_BENEFIT_KEY, amount.trim(), actor.userId]
+    );
+  });
+}
+
 // The pre-checks a resignation runs before it can be submitted (S-1703),
 // each its own switch: named when it blocks, and the Society's to turn off.
 // Seeded by migration 0078; the defaults here are read only before it has

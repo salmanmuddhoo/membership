@@ -4313,7 +4313,23 @@ that is not what both accounts hold, writes one debit per account, closes
 each as it empties and sets `member.status = 'resigned'`, dated. Retention
 gained its fourth class, "Documents of a member who left", anchored on
 that date (`docs/retention.md`). `POST /api/v1/members/{id}/resignation`
-starts one. **Not yet:** the demised claim (S-1704), the notifications
+starts one.
+
+**Shipped, third increment** (S-1704, all three parts): a claim is a
+transaction of kind `demise` covering every account the member holds
+(0079). **7a** — the claimant is the nominee the member named (S-602) by
+default, or another person in full (name, NIC, address, relation), on the
+transaction with the name in `payee_name`; the death certificate and the
+affidavit are filed against the transaction from the wizard's Documents
+step, and the affidavit is a category, not a validation, said in one line.
+**7b** — the two figures: every account's balance, and the Takaful benefit
+from `demised.takaful_benefit` (15,000, Administrator-editable at
+Configuration → Fee schedules) as its own line, read at submission and
+carried on the claim; posting writes one debit per account, closes each,
+pays the total to the claimant on one receipt and sets `member.status =
+'demised'`, dated. **7c** — the review screen shows the claimant, the
+benefit beside the total and the two documents. `POST
+/api/v1/members/{id}/demise` starts one. **Not yet:** the notifications
 (S-1705) and the report (S-1706).
 
 ### S-1701 · Member status gets a vocabulary ✅
@@ -4363,7 +4379,7 @@ accounts close together and their membership ends. _(RES-US-001..006, FRD
   become anchorable for retention (docs/retention.md's "cannot be anchored
   yet" is now anchored)
 
-### S-1704 · Demised claim
+### S-1704 · Demised claim ✅
 
 **As** an officer, **I need** to settle a deceased member's entitlements to
 their claimant, **so that** the family is paid what is owed and nothing

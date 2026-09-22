@@ -424,6 +424,37 @@
                             "counterpartHolderName": {
                               "type": "string",
                               "nullable": true
+                            },
+                            "claimantKind": {
+                              "type": "string",
+                              "enum": [
+                                "nominee",
+                                "other"
+                              ],
+                              "nullable": true,
+                              "description": "A demised claim’s claimant (S-1704)."
+                            },
+                            "claimant": {
+                              "type": "object",
+                              "nullable": true,
+                              "properties": {
+                                "name": {
+                                  "type": "string"
+                                },
+                                "nic": {
+                                  "type": "string"
+                                },
+                                "address": {
+                                  "type": "string"
+                                },
+                                "relation": {
+                                  "type": "string"
+                                }
+                              }
+                            },
+                            "takafulBenefit": {
+                              "type": "string",
+                              "description": "The Takaful benefit a demised claim pays beside the balances; \"0.00\" on every other kind."
                             }
                           }
                         }
@@ -7121,6 +7152,360 @@
         }
       }
     },
+    "/api/v1/members/{id}/demise": {
+      "post": {
+        "summary": "Start a deceased member's claim",
+        "description": "A draft claim (a transaction of kind \"demise\") covering every account the member holds, paid to the claimant: the nominee the member named on their application, or another person given in full. The amount is every account’s balance plus the configured Takaful benefit as it stands; both are read again at submission and the balances again at the payout. Refused for a member who is not active, while another claim is already on its way, and when an account is not active. The death certificate and the affidavit are filed against the transaction and the claim submitted from its page.",
+        "tags": [
+          "Transactions"
+        ],
+        "operationId": "postMembersIdDemise",
+        "x-required-permission": "transaction.capture",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "claim"
+                      ],
+                      "properties": {
+                        "claim": {
+                          "type": "object",
+                          "required": [
+                            "id",
+                            "reference",
+                            "kind",
+                            "status",
+                            "accountId",
+                            "accountNo",
+                            "accountTypeName",
+                            "amount",
+                            "currency",
+                            "method",
+                            "methodName",
+                            "createdAt"
+                          ],
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "reference": {
+                              "type": "string",
+                              "description": "TX-000001-style."
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "status": {
+                              "type": "string"
+                            },
+                            "accountId": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "accountNo": {
+                              "type": "string"
+                            },
+                            "accountTypeId": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "accountTypeName": {
+                              "type": "string"
+                            },
+                            "holderId": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "holderKind": {
+                              "type": "string",
+                              "enum": [
+                                "member",
+                                "customer"
+                              ]
+                            },
+                            "holderName": {
+                              "type": "string"
+                            },
+                            "memberNo": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "amount": {
+                              "type": "string"
+                            },
+                            "currency": {
+                              "type": "string"
+                            },
+                            "method": {
+                              "type": "string"
+                            },
+                            "methodName": {
+                              "type": "string"
+                            },
+                            "methodReference": {
+                              "type": "string"
+                            },
+                            "reason": {
+                              "type": "string"
+                            },
+                            "receiptNo": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "balanceAfter": {
+                              "type": "string",
+                              "nullable": true,
+                              "description": "What the account stood at once this posted."
+                            },
+                            "capturedById": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "capturedByName": {
+                              "type": "string"
+                            },
+                            "createdAt": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "submittedAt": {
+                              "type": "string",
+                              "format": "date-time",
+                              "nullable": true
+                            },
+                            "postedAt": {
+                              "type": "string",
+                              "format": "date-time",
+                              "nullable": true
+                            },
+                            "workflowDefinitionId": {
+                              "type": "string",
+                              "format": "uuid",
+                              "nullable": true
+                            },
+                            "workflowCode": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "workflowName": {
+                              "type": "string",
+                              "nullable": true,
+                              "description": "The approval chain it was routed to, if any."
+                            },
+                            "currentStepCode": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "currentStepName": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "currentStepRole": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "approvalRuleId": {
+                              "type": "string",
+                              "format": "uuid",
+                              "nullable": true
+                            },
+                            "sourceOfFundFormConfirmed": {
+                              "type": "boolean"
+                            },
+                            "transferId": {
+                              "type": "string",
+                              "format": "uuid",
+                              "nullable": true
+                            },
+                            "transferReference": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "legDirection": {
+                              "type": "string",
+                              "enum": [
+                                "credit",
+                                "debit"
+                              ],
+                              "nullable": true
+                            },
+                            "payeeName": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "counterpartAccountId": {
+                              "type": "string",
+                              "format": "uuid",
+                              "nullable": true
+                            },
+                            "counterpartAccountNo": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "counterpartAccountTypeName": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "counterpartHolderId": {
+                              "type": "string",
+                              "format": "uuid",
+                              "nullable": true
+                            },
+                            "counterpartHolderName": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "claimantKind": {
+                              "type": "string",
+                              "enum": [
+                                "nominee",
+                                "other"
+                              ],
+                              "nullable": true,
+                              "description": "A demised claim’s claimant (S-1704)."
+                            },
+                            "claimant": {
+                              "type": "object",
+                              "nullable": true,
+                              "properties": {
+                                "name": {
+                                  "type": "string"
+                                },
+                                "nic": {
+                                  "type": "string"
+                                },
+                                "address": {
+                                  "type": "string"
+                                },
+                                "relation": {
+                                  "type": "string"
+                                }
+                              }
+                            },
+                            "takafulBenefit": {
+                              "type": "string",
+                              "description": "The Takaful benefit a demised claim pays beside the balances; \"0.00\" on every other kind."
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "claimant",
+                  "method"
+                ],
+                "properties": {
+                  "claimant": {
+                    "type": "object",
+                    "required": [
+                      "kind"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "nominee",
+                          "other"
+                        ]
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "nic": {
+                        "type": "string"
+                      },
+                      "address": {
+                        "type": "string"
+                      },
+                      "relation": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "method": {
+                    "type": "string",
+                    "description": "How it is paid out: a payment_method code from /api/v1/config/reference."
+                  },
+                  "methodReference": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/members/{id}/resignation": {
       "post": {
         "summary": "Start a member's resignation",
@@ -7335,6 +7720,37 @@
                             "counterpartHolderName": {
                               "type": "string",
                               "nullable": true
+                            },
+                            "claimantKind": {
+                              "type": "string",
+                              "enum": [
+                                "nominee",
+                                "other"
+                              ],
+                              "nullable": true,
+                              "description": "A demised claim’s claimant (S-1704)."
+                            },
+                            "claimant": {
+                              "type": "object",
+                              "nullable": true,
+                              "properties": {
+                                "name": {
+                                  "type": "string"
+                                },
+                                "nic": {
+                                  "type": "string"
+                                },
+                                "address": {
+                                  "type": "string"
+                                },
+                                "relation": {
+                                  "type": "string"
+                                }
+                              }
+                            },
+                            "takafulBenefit": {
+                              "type": "string",
+                              "description": "The Takaful benefit a demised claim pays beside the balances; \"0.00\" on every other kind."
                             }
                           }
                         }
@@ -7788,6 +8204,37 @@
                               "counterpartHolderName": {
                                 "type": "string",
                                 "nullable": true
+                              },
+                              "claimantKind": {
+                                "type": "string",
+                                "enum": [
+                                  "nominee",
+                                  "other"
+                                ],
+                                "nullable": true,
+                                "description": "A demised claim’s claimant (S-1704)."
+                              },
+                              "claimant": {
+                                "type": "object",
+                                "nullable": true,
+                                "properties": {
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "nic": {
+                                    "type": "string"
+                                  },
+                                  "address": {
+                                    "type": "string"
+                                  },
+                                  "relation": {
+                                    "type": "string"
+                                  }
+                                }
+                              },
+                              "takafulBenefit": {
+                                "type": "string",
+                                "description": "The Takaful benefit a demised claim pays beside the balances; \"0.00\" on every other kind."
                               }
                             }
                           }
@@ -8071,6 +8518,37 @@
                               "counterpartHolderName": {
                                 "type": "string",
                                 "nullable": true
+                              },
+                              "claimantKind": {
+                                "type": "string",
+                                "enum": [
+                                  "nominee",
+                                  "other"
+                                ],
+                                "nullable": true,
+                                "description": "A demised claim’s claimant (S-1704)."
+                              },
+                              "claimant": {
+                                "type": "object",
+                                "nullable": true,
+                                "properties": {
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "nic": {
+                                    "type": "string"
+                                  },
+                                  "address": {
+                                    "type": "string"
+                                  },
+                                  "relation": {
+                                    "type": "string"
+                                  }
+                                }
+                              },
+                              "takafulBenefit": {
+                                "type": "string",
+                                "description": "The Takaful benefit a demised claim pays beside the balances; \"0.00\" on every other kind."
                               }
                             }
                           }
@@ -8383,6 +8861,37 @@
                                 "counterpartHolderName": {
                                   "type": "string",
                                   "nullable": true
+                                },
+                                "claimantKind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "nominee",
+                                    "other"
+                                  ],
+                                  "nullable": true,
+                                  "description": "A demised claim’s claimant (S-1704)."
+                                },
+                                "claimant": {
+                                  "type": "object",
+                                  "nullable": true,
+                                  "properties": {
+                                    "name": {
+                                      "type": "string"
+                                    },
+                                    "nic": {
+                                      "type": "string"
+                                    },
+                                    "address": {
+                                      "type": "string"
+                                    },
+                                    "relation": {
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                "takafulBenefit": {
+                                  "type": "string",
+                                  "description": "The Takaful benefit a demised claim pays beside the balances; \"0.00\" on every other kind."
                                 }
                               }
                             },
@@ -8573,6 +9082,37 @@
                                 "counterpartHolderName": {
                                   "type": "string",
                                   "nullable": true
+                                },
+                                "claimantKind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "nominee",
+                                    "other"
+                                  ],
+                                  "nullable": true,
+                                  "description": "A demised claim’s claimant (S-1704)."
+                                },
+                                "claimant": {
+                                  "type": "object",
+                                  "nullable": true,
+                                  "properties": {
+                                    "name": {
+                                      "type": "string"
+                                    },
+                                    "nic": {
+                                      "type": "string"
+                                    },
+                                    "address": {
+                                      "type": "string"
+                                    },
+                                    "relation": {
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                "takafulBenefit": {
+                                  "type": "string",
+                                  "description": "The Takaful benefit a demised claim pays beside the balances; \"0.00\" on every other kind."
                                 }
                               },
                               "nullable": true
@@ -8938,6 +9478,37 @@
                             "counterpartHolderName": {
                               "type": "string",
                               "nullable": true
+                            },
+                            "claimantKind": {
+                              "type": "string",
+                              "enum": [
+                                "nominee",
+                                "other"
+                              ],
+                              "nullable": true,
+                              "description": "A demised claim’s claimant (S-1704)."
+                            },
+                            "claimant": {
+                              "type": "object",
+                              "nullable": true,
+                              "properties": {
+                                "name": {
+                                  "type": "string"
+                                },
+                                "nic": {
+                                  "type": "string"
+                                },
+                                "address": {
+                                  "type": "string"
+                                },
+                                "relation": {
+                                  "type": "string"
+                                }
+                              }
+                            },
+                            "takafulBenefit": {
+                              "type": "string",
+                              "description": "The Takaful benefit a demised claim pays beside the balances; \"0.00\" on every other kind."
                             }
                           }
                         }

@@ -495,6 +495,42 @@ statement. The `transaction.posted` event carries `account_closed` and
 `membership_ended`. From that day the member's documents have the anchor
 retention was waiting for (`docs/retention.md`).
 
+## A deceased member's claim
+
+A claim (S-1704, `src/lib/ledger/demises.ts`, migration 0079) is a
+transaction of kind `demise` covering every account the member holds, of
+any type. The claimant is who is paid: the nominee the member named on
+their application (S-602, `nomineeFor()`) by default, or another person
+the officer records in full — name, NIC, address, relation — carried on
+the transaction (`claimant_kind`, `claimant`) with the name in
+`payee_name`, which is what the receipt reads "Paid to" from. The request's
+life before its chain is a closure's without a signature of the member's
+to take: **Demised claim** on the member's page starts a draft
+(`/members/{id}/demise`), `/demises/{id}` is Claimant → Documents →
+Submit, and the death certificate and the affidavit are filed against the
+transaction from the Documents step through the same upload path as any
+document. The affidavit is a category, not a validation: whether the file
+is the right legal instrument is the reviewer's call, and the wizard and
+the review screen say so in one line (FRD 7.3).
+
+The two figures (`claimTotals()`): what every account holds, and the
+**Takaful benefit** — the Society's own money, `demised.takaful_benefit`
+at Configuration → Fee schedules (default 15,000, Administrator-editable),
+read when the claim is submitted and carried on the transaction
+(`takaful_benefit`) as its own line, in the total and never in the ledger,
+which only ever says what an account held. `submitDemise()` refuses
+without both papers or while any transaction is still on its way on any
+of the member's accounts, sets the amount to the accounts' balances plus
+the benefit, and puts every account into `closing`; rejected or withdrawn,
+all are active again. Posting is S-1503's disbursement, one receipt:
+`postApprovedTransaction()` reads the balances again, `post_transaction()`
+refuses a claim whose amount is not their sum plus the benefit, writes one
+debit per account, closes each as it empties and ends the membership —
+`member.status = 'demised'`, dated, a distinct value from `resigned` for
+the exits report (S-1806) — in the same statement. The `transaction.posted`
+event carries `account_closed`, `membership_ended`, `takaful_benefit` and
+`claimant`. The retention anchor is the same as a resignation's.
+
 ## History, across accounts
 
 `listTransactions()` in `src/lib/ledger/history.ts` (S-1506) is one query

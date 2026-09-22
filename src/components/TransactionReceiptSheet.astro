@@ -57,6 +57,7 @@ const TITLES: Record<string, string> = {
   reversal: 'Reversal',
   closure: 'Account closure receipt',
   resignation: 'Resignation receipt',
+  demise: 'Demised claim receipt',
 };
 const LINES: Record<string, string> = {
   deposit: 'Deposit',
@@ -65,6 +66,7 @@ const LINES: Record<string, string> = {
   reversal: 'Reversal',
   closure: 'Account closed · balance paid out',
   resignation: 'Membership resigned · Shares and MSA paid out',
+  demise: 'Entitlements paid to the claimant',
 };
 const holder = [t.holderName || t.holderKind, t.memberNo]
   .filter(Boolean)
@@ -120,7 +122,7 @@ const backHref = `/transactions/${t.id}`;
   <dl class="facts">
     <div class="row">
       <dt>{moneyIn ? 'Received from' : 'Paid to'}</dt>
-      <dd>{t.kind === 'transfer_leg' && t.payeeName ? t.payeeName : holder}</dd>
+      <dd>{t.payeeName ? t.payeeName : holder}</dd>
     </div>
     <div class="row">
       <dt>Account</dt>
@@ -132,9 +134,9 @@ const backHref = `/transactions/${t.id}`;
         <dd>{otherSide}</dd>
       </div>
     )}
-    {t.kind === 'transfer_leg' && t.payeeName && (
+    {t.payeeName && (
       <div class="row">
-        <dt>On behalf of</dt>
+        <dt>{t.kind === 'demise' ? 'Entitlements of' : 'On behalf of'}</dt>
         <dd>{holder}</dd>
       </div>
     )}
