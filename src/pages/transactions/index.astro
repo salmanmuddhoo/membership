@@ -5,7 +5,7 @@
 // page does not change under an officer as they arrive.
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import { pendingTransactionCount } from '@lib/ledger/review';
-import { PAGE, CARD, CARD_TITLE, HINT, MUTED } from '@lib/ui';
+import { PAGE, CARD, CARD_TITLE, HINT, LINK_CARD, MUTED } from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 const canCapture = principal.permissions.has('transaction.capture');
@@ -48,24 +48,18 @@ const KINDS: { label: string; href: string | null; blurb: string }[] = [
 
 <DashboardLayout title="Transactions · Al Barakah MCSL" heading="Transactions">
   <div class={PAGE.list}>
-    <a
-      href="/transactions/pending"
-      class="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-neutral-200 bg-neutral-100 px-6 py-4 transition hover:border-mint-400 hover:bg-white dark:border-neutral-800 dark:bg-neutral-950 dark:hover:border-mint-700 dark:hover:bg-neutral-900"
-    >
-      <span class="font-semibold text-neutral-800 dark:text-neutral-100">
-        Waiting on you
-      </span>
-      <span class={MUTED}>
-        {waiting === 0
-          ? 'Nothing'
-          : `${waiting} transaction${waiting === 1 ? '' : 's'}`}
-        {' →'}
-      </span>
-    </a>
-    <a
-      href="/transactions/all"
-      class="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-neutral-200 bg-neutral-100 px-6 py-4 transition hover:border-mint-400 hover:bg-white dark:border-neutral-800 dark:bg-neutral-950 dark:hover:border-mint-700 dark:hover:bg-neutral-900"
-    >
+    {waiting > 0 && (
+      <a href="/transactions/pending" class={LINK_CARD}>
+        <span class="font-semibold text-neutral-800 dark:text-neutral-100">
+          Waiting on you
+        </span>
+        <span class={MUTED}>
+          {`${waiting} transaction${waiting === 1 ? '' : 's'}`}
+          {' →'}
+        </span>
+      </a>
+    )}
+    <a href="/transactions/all" class={LINK_CARD}>
       <span class="font-semibold text-neutral-800 dark:text-neutral-100">
         Today’s transactions
       </span>

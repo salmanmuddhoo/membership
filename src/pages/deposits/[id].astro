@@ -11,6 +11,8 @@ import {
   updateDepositRequest,
 } from '@lib/ledger/deposit-requests';
 import { DepositError, loadDeposit } from '@lib/ledger/deposits';
+import { DocumentError, removeFiledDocument } from '@lib/documents/documents';
+import DocumentViewer from '@components/DocumentViewer.astro';
 import { formatMoney } from '@lib/payments/money';
 import {
   PAGE,
@@ -20,9 +22,13 @@ import {
   LABEL,
   INPUT,
   BUTTON,
-  SECONDARY,
   DANGER,
   NOTICE_ERROR,
+  PANEL,
+  PILL,
+  PILL_WARN,
+  SECONDARY_SM,
+  DANGER_SM,
   TAG,
 } from '@lib/ui';
 
@@ -59,6 +65,12 @@ if (Astro.request.method === 'POST') {
     } else if (intent === 'submit') {
       await submitDepositRequest(deposit.id, principal);
       return Astro.redirect(`/transactions/${deposit.id}`);
+    } else if (intent === 'remove-form') {
+      // The form on THIS request, read here rather than taken from the
+      // page: the id in a POST is not a pointer into anyone's documents.
+      const current = (await sourceOfFundItem(deposit.id))?.filed;
+      if (current) await removeFiledDocument(current.documentId, principal);
+      return Astro.redirect(`${base}?step=signature`);
     } else if (intent === 'cancel') {
       await cancelDepositRequest(deposit.id, principal);
       return Astro.redirect(
@@ -66,7 +78,7 @@ if (Astro.request.method === 'POST') {
       );
     }
   } catch (err) {
-    if (err instanceof DepositError) {
+    if (err instanceof DepositError || err instanceof DocumentError) {
       error = err.message;
     } else {
       console.error('[deposits]', err);
@@ -168,37 +180,60 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             administrator.
           </p>
         ) : !filed ? (
-          <>
-            <p class="text-sm text-neutral-700 dark:text-neutral-200">
-              The depositor signs the form on the next screen, and it is filed
-              here.
-            </p>
-            <div class="flex flex-wrap gap-2">
-              <a href={`${base}/form`} class={BUTTON}>
-                Open the form to sign
-              </a>
-              <a href={`${base}?step=submit`} class={SECONDARY}>
-                Next
-              </a>
-            </div>
-          </>
+          <div class="flex flex-wrap gap-2">
+            <a href={`${base}/form`} class={BUTTON}>
+              Sign the Source of Fund form
+            </a>
+          </div>
         ) : (
           <>
-            <p class="text-sm text-neutral-700 dark:text-neutral-200">
-              Source of Fund form on file: {filed.fileName}, filed{' '}
-              {dateFormat.format(filed.uploadedAt)} by {filed.uploadedByName}.
-            </p>
-            <p class="text-sm text-neutral-700 dark:text-neutral-200">
-              {filed.state === 'under_review' && 'Waiting to be verified.'}
-              {filed.state === 'verified' && 'Verified.'}
-              {filed.state === 'rejected' &&
-                'Rejected: sign and file it again.'}
-            </p>
+            <div
+              class={`${PANEL} flex flex-wrap items-center justify-between gap-3`}
+            >
+              <div class="min-w-0">
+                <p class="truncate font-medium text-neutral-800 dark:text-neutral-100">
+                  {filed.fileName}
+                </p>
+                <p class={MUTED}>
+                  Signed {dateFormat.format(filed.uploadedAt)} ·{' '}
+                  {filed.uploadedByName}
+                </p>
+              </div>
+              <div class="flex shrink-0 flex-wrap items-center gap-2">
+                <span class={filed.state === 'rejected' ? PILL_WARN : PILL}>
+                  {filed.state === 'verified'
+                    ? 'Verified'
+                    : filed.state === 'rejected'
+                      ? 'Rejected'
+                      : 'Waiting to be verified'}
+                </span>
+                <button
+                  type="button"
+                  data-view-document
+                  data-document-id={filed.documentId}
+                  class={SECONDARY_SM}
+                >
+                  View
+                </button>
+                <form method="post" data-confirm-remove>
+                  <button
+                    type="submit"
+                    name="intent"
+                    value="remove-form"
+                    class={DANGER_SM}
+                  >
+                    Delete
+                  </button>
+                </form>
+              </div>
+            </div>
+            {filed.state === 'rejected' && (
+              <p class="text-sm text-red-700 dark:text-red-300">
+                Rejected. Delete it and sign the form again.
+              </p>
+            )}
             <div class="flex flex-wrap gap-2">
-              <a href={`${base}/form`} class={BUTTON}>
-                Sign again
-              </a>
-              <a href={`${base}?step=submit`} class={SECONDARY}>
+              <a href={`${base}?step=submit`} class={BUTTON}>
                 Next
               </a>
             </div>
@@ -248,10 +283,42 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             Cancel request
           </button>
         </div>
-        {!canSubmit && (
-          <p class={MUTED}>The Source of Fund form must be verified first.</p>
+        {!filed ? (
+          <p class={MUTED}>
+            Sign the Source of Fund form first.{' '}
+            <a href={`${base}/form`} class="underline">
+              Sign it now
+            </a>
+          </p>
+        ) : filed.state === 'rejected' ? (
+          <p class={MUTED}>
+            The Source of Fund form was rejected.{' '}
+            <a href={`${base}?step=signature`} class="underline">
+              Delete it and sign again
+            </a>
+          </p>
+        ) : (
+          !canSubmit && (
+            <p class={MUTED}>
+              Waiting for another officer to verify the Source of Fund form.
+            </p>
+          )
         )}
       </form>
     )}
   </div>
+  {filed && <DocumentViewer />}
 </DashboardLayout>
+
+<script>
+  // A destructive action warns once.
+  for (const form of document.querySelectorAll<HTMLFormElement>(
+    'form[data-confirm-remove]'
+  )) {
+    form.addEventListener('submit', event => {
+      if (!confirm('Delete the signed Source of Fund form?')) {
+        event.preventDefault();
+      }
+    });
+  }
+</script>

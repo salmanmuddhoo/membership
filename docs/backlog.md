@@ -2758,7 +2758,11 @@ does not want.
 template carries a `Shares Balance` and an `MSA Deposit Balance` column, and
 generates a `<Account Type> Balance` column for **every account type the
 Society configures** — so a Haj savings account gets one the moment an
-administrator adds that account type, with no change here. Balances are
+administrator adds that account type, with no change here. A row naming an
+AB Number must fill both `Shares Balance` and `MSA Deposit Balance` (0
+where there is nothing; a 0 records no payment line and uses no receipt
+number), and the header cells carry that as a note; a non-member's row
+leaves them blank. Balances are
 written as one opening payment per member (`recordMigrationOpeningBalances`),
 itemised exactly as an ordinary payment is.
 

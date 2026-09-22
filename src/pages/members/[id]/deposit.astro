@@ -132,7 +132,9 @@ if (Astro.request.method === 'POST') {
         },
         principal
       );
-      return Astro.redirect(`/deposits/${request.id}?step=signature`);
+      // Straight to the form: signing it is the only thing left to do
+      // before the request can go.
+      return Astro.redirect(`/deposits/${request.id}/form`);
     } catch (err) {
       if (err instanceof DepositError) {
         error = err.message;
@@ -373,17 +375,6 @@ const initialCents = /^\d{1,12}(\.\d{1,2})?$/.test(values.amount ?? '')
             </label>
           </div>
 
-          <div
-            data-cash-reminder
-            hidden
-            class="space-y-2 rounded-lg border border-amber-300 px-3 py-3 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200"
-          >
-            <p class="font-medium">
-              Cash above {formatMoney(cashThreshold)} needs the Source of Fund
-              form.
-            </p>
-          </div>
-
           <p
             data-cash-maximum-warning
             hidden
@@ -411,7 +402,7 @@ const initialCents = /^\d{1,12}(\.\d{1,2})?$/.test(values.amount ?? '')
               hidden
               class={BUTTON}
             >
-              Continue to the Source of Fund form
+              Sign the Source of Fund form
             </button>
             <a href={`/members/${person.id}`} class={SECONDARY_SM}>
               Cancel
@@ -447,7 +438,6 @@ const initialCents = /^\d{1,12}(\.\d{1,2})?$/.test(values.amount ?? '')
     const bankField = form.querySelector<HTMLElement>(
       '[data-bank-account-field]'
     );
-    const reminder = form.querySelector<HTMLElement>('[data-cash-reminder]');
     const maximumWarning = form.querySelector<HTMLElement>(
       '[data-cash-maximum-warning]'
     );
@@ -483,7 +473,6 @@ const initialCents = /^\d{1,12}(\.\d{1,2})?$/.test(values.amount ?? '')
         cents !== null &&
         thresholdCents !== null &&
         cents > thresholdCents;
-      if (reminder) reminder.hidden = !needsSourceOfFund;
       if (requestSubmit) {
         requestSubmit.disabled = !needsSourceOfFund;
         requestSubmit.hidden = !needsSourceOfFund;
