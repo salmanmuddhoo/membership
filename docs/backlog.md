@@ -4455,10 +4455,22 @@ comment and a link; `receipt.voided` to every other holder of
 `receipt.void` with the reason and the user, for transaction and fee
 receipts alike. `src/lib/ledger/transaction-notifications.ts`,
 `void-notifications.ts`, `src/lib/notifications/staff.ts`;
-`docs/notifications.md`. **Next:** S-1801, S-1802 (readiness), then
-S-1806's reports.
+`docs/notifications.md`.
 
-### S-1801 · Every Phase 2 setting has a working default
+**Shipped, second increment** (S-1801, S-1802): `src/lib/config/readiness.ts`
+lists every Phase 2 setting — the Fee-schedules amounts, the matrix and
+chain per kind, each active account type's limits, the methods offered, the
+wording by subject, the retention periods — with its value, whether a person
+has changed it since it was seeded and by whom (from `config_entry_history`
+and the configuration tables' `audit_event` rows, a migration's own change
+counting as default). `readiness.test.ts` asserts a fresh database reads
+nothing as missing, everything as at default, and that a rule removed, a
+chain with no enabled step or wording switched off is flagged.
+Configuration → Readiness shows the list read-only with the counts and a
+link to where each is changed; `docs/functional-testing.md` carries the
+go-live walk-through. **Next:** S-1806's reports.
+
+### S-1801 · Every Phase 2 setting has a working default ✅
 
 **As** an administrator, **I need** to adjust configuration rather than
 author it, **so that** officers can transact on day one. _(CFG-US-001,
@@ -4471,7 +4483,7 @@ CFG-US-004, CFG-US-006, FRD 9)_
   that has a new officer complete one of each transaction with no
   administrator involved
 
-### S-1802 · Configuration → Readiness
+### S-1802 · Configuration → Readiness ✅
 
 **As** an administrator, **I need** one page listing every Phase 2 setting
 with its value and when it last changed, **so that** I can confirm the

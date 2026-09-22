@@ -243,6 +243,39 @@ switched off rather than missing. A status an enabled step transitions into
 cannot be deactivated — the chain would otherwise move a record into a state
 the configuration says does not exist.
 
+### Readiness (S-1801, S-1802, FRD 9)
+
+FRD 9's rule is that no officer is ever blocked by a value nobody set. Every
+milestone's migration seeds its own defaults, and `src/lib/config/readiness.ts`
+is how that is proved: one list of every Phase 2 setting — the amounts on
+Fee schedules (cash maximum, Source of Fund threshold and checklist, Takaful
+benefit, near-floor margin, the three resignation checks), the approval
+matrix and the chain for each of the six kinds, each active account type's
+floor, cap and allowed operations, the payment methods offered, the
+notification wording by subject (receipt, the three exits, a member's
+transactions, staff), and the retention periods — with what each stands at,
+whether a person has changed it since it was seeded and, if so, who and
+when. `readiness.test.ts` asserts that on a fresh database nothing reads as
+missing and everything reads as still at default.
+
+Configuration → Readiness shows the same list, read-only, to anyone with
+`config.view`, with a summary of how many are changed, at default and
+missing and a link from each row to where it is changed. **Still at
+default** is information, not an error: a seeded value is a working one,
+and the list exists for the go-live walk-through, where an administrator
+reads down it and confirms each figure is the Society's rather than the
+FRD's placeholder. **Missing** is the one state that is a problem — a kind
+with no active rule (everything falls to its most demanding chain), a chain
+with no enabled step, an event with no active wording, no payment method
+offered — and on a migrated database it should never appear.
+
+Who last changed a setting comes from two trails: `config_entry_history`
+for the plain values (`changed_by` is null on a seed, a user on a change
+through the application) and `audit_event` for the configuration tables,
+whose trigger records a migration with no `actor_user_id` and a person with
+one. A change made by a migration therefore still reads as default, which
+is right: nobody at the Society made it.
+
 ## Permissions
 
 | Permission      | Grants                                              |

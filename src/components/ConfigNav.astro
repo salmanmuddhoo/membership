@@ -49,6 +49,11 @@ export const CONFIG_SECTIONS = [
     label: 'Retention',
     blurb: 'How long each kind of record is kept before it is disposed of.',
   },
+  {
+    href: '/admin/configuration/readiness',
+    label: 'Readiness',
+    blurb: 'Every setting, what it stands at, and who last changed it.',
+  },
 ] as const;
 
 const current = Astro.url.pathname;

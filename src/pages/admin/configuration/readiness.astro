@@ -1,0 +1,116 @@
+---
+// Every Phase 2 setting, what it stands at, and who last changed it (S-1802).
+//
+// Read-only: reaching it needs only config.view, like every page under
+// /admin/configuration/ (the prefix rule in authorise.ts) — there is nothing
+// here to manage, only to read before go-live.
+//
+// "Still at default" is shown as information, not as an error. A seeded
+// value is a working value; the Society may well keep it. The list exists
+// for the go-live walk-through, so an administrator can read down it and
+// confirm each figure is the Society's, not a placeholder left over from
+// seeding.
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import ConfigNav from '@components/ConfigNav.astro';
+import {
+  readiness,
+  summarise,
+  type ReadinessItem,
+} from '@lib/config/readiness';
+
+const items = await readiness();
+const summary = summarise(items);
+
+const groups = new Map<string, ReadinessItem[]>();
+for (const item of items) {
+  const group = groups.get(item.group);
+  if (group) {
+    group.push(item);
+  } else {
+    groups.set(item.group, [item]);
+  }
+}
+
+const dateFormat = new Intl.DateTimeFormat('en-GB', {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+});
+---
+
+<DashboardLayout title="Readiness · Al Barakah MCSL" heading="Readiness">
+  <div class="mx-auto max-w-5xl space-y-6">
+    <ConfigNav />
+
+    <p
+      class:list={[
+        'rounded-xl border px-4 py-3 text-sm',
+        summary.missing > 0
+          ? 'border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100'
+          : 'border-neutral-300 text-neutral-600 dark:border-neutral-700 dark:text-neutral-300',
+      ]}
+    >
+      {summary.total} settings · {summary.changed} changed since seeding ·{' '}
+      {summary.atDefault} still at default · {summary.missing} missing
+    </p>
+
+    {[...groups].map(([group, groupItems]) => (
+      <section class="space-y-3 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+          {group}
+        </h2>
+
+        <div class="overflow-x-auto">
+          <table class="mt-4 w-full text-sm">
+            <thead>
+              <tr class="text-left text-xs uppercase tracking-wide text-neutral-500">
+                <th class="py-2 pr-4">Setting</th>
+                <th class="py-2 pr-4">Value</th>
+                <th class="py-2 pr-4">Last changed</th>
+                <th class="py-2 pr-4"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {groupItems.map(item => (
+                <tr class="border-t border-neutral-200 dark:border-neutral-800">
+                  <td class="py-2 pr-4 align-top text-neutral-800 dark:text-neutral-100">
+                    {item.label}
+                  </td>
+                  <td class="py-2 pr-4 align-top text-neutral-700 dark:text-neutral-200">
+                    {item.value}
+                    {item.note && (
+                      <span class="block text-xs text-amber-700 dark:text-amber-300">
+                        {item.note}
+                      </span>
+                    )}
+                  </td>
+                  <td class="py-2 pr-4 align-top text-neutral-600 dark:text-neutral-300">
+                    {item.state === 'changed' && item.changedAt && (
+                      <span>
+                        {dateFormat.format(item.changedAt)} · {item.changedBy}
+                      </span>
+                    )}
+                    {item.state === 'default' && (
+                      <span class="rounded-full border border-neutral-300 px-2 py-0.5 text-xs text-neutral-600 dark:border-neutral-600 dark:text-neutral-300">
+                        Default
+                      </span>
+                    )}
+                    {item.state === 'missing' && (
+                      <span class="rounded-full border border-amber-300 px-2 py-0.5 text-xs text-amber-700 dark:border-amber-700 dark:text-amber-300">
+                        Missing
+                      </span>
+                    )}
+                  </td>
+                  <td class="py-2 pr-4 align-top">
+                    <a href={item.href} class="underline">
+                      Change
+                    </a>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    ))}
+  </div>
+</DashboardLayout>
