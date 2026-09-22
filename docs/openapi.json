@@ -92,7 +92,7 @@
         "summary": "Read one account's balance",
         "description": "The balance the ledger holds for the account: the sum of every posted entry, maintained by the engine as each one posts (docs/ledger.md). An account nothing has ever posted to reads as \"0.00\" with no entries. \"available\" is the balance less every withdrawal already submitted, under review or approved but not yet paid out — what a further withdrawal can draw on.",
         "tags": [
-          "Transactions"
+          "Accounts"
         ],
         "operationId": "getAccountsIdBalance",
         "x-required-permission": "account.view",
@@ -557,7 +557,7 @@
         "summary": "Read one account's history",
         "description": "Every posted entry on the account, newest first, each with the balance the account stood at once it had posted — computed from the entries themselves, so a statement built from this is exactly what the ledger says. Page backwards with `before`, the `sequenceNo` of the oldest entry on the page you have.",
         "tags": [
-          "Transactions"
+          "Accounts"
         ],
         "operationId": "getAccountsIdHistory",
         "x-required-permission": "account.view",
@@ -750,7 +750,7 @@
         "summary": "Read one account's statement for a period",
         "description": "The balance the account opened the period at, every entry posted in it with the balance after each, the totals in and out, and the closing balance — all read from the entries themselves. Dates are calendar days, inclusive; with neither given the period is the current month to date. `format=xlsx` returns the same as a spreadsheet.",
         "tags": [
-          "Transactions"
+          "Accounts"
         ],
         "operationId": "getAccountsIdStatement",
         "x-required-permission": "account.view",
@@ -982,7 +982,7 @@
         "summary": "Read one account's credits and debits",
         "description": "Every posted entry on this account, oldest first, as a credit or a debit with a one-line description. For the running balance, the receipt and paging, use /accounts/{id}/history.",
         "tags": [
-          "Payments"
+          "Accounts"
         ],
         "operationId": "getAccountsIdTransactions",
         "x-required-permission": "account.view",
@@ -6247,9 +6247,9 @@
     "/api/v1/member/me/accounts": {
       "get": {
         "summary": "The caller's accounts",
-        "description": "Balance is what the payment that opened the account and any refund add up to — there is no ledger yet — and null where nothing has been recorded.",
+        "description": "Every account the caller holds, with the ledger's balance for each (null for an account nothing has ever posted to). Balance, history and statement per account are under /me/accounts/{id}.",
         "tags": [
-          "Member app"
+          "Accounts"
         ],
         "operationId": "getMemberMeAccounts",
         "x-required-permission": "(a member app session)",
@@ -6367,11 +6367,574 @@
         }
       }
     },
+    "/api/v1/member/me/accounts/{id}/balance": {
+      "get": {
+        "summary": "One of the caller's accounts: its balance",
+        "description": "The balance the ledger holds for the account: the sum of every posted entry, maintained by the engine as each one posts (docs/ledger.md). An account nothing has ever posted to reads as \"0.00\" with no entries. \"available\" is the balance less every withdrawal already submitted, under review or approved but not yet paid out — what a further withdrawal can draw on. 404 unless the account is the caller's own.",
+        "tags": [
+          "Accounts"
+        ],
+        "operationId": "getMemberMeAccountsIdBalance",
+        "x-required-permission": "(a member app session)",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "accountId",
+                        "accountNo",
+                        "balance",
+                        "available",
+                        "currency",
+                        "entryCount"
+                      ],
+                      "properties": {
+                        "accountId": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "accountNo": {
+                          "type": "string"
+                        },
+                        "accountTypeName": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string"
+                        },
+                        "balance": {
+                          "type": "string"
+                        },
+                        "pendingDebits": {
+                          "type": "string",
+                          "description": "Withdrawals on their way out, not yet posted."
+                        },
+                        "available": {
+                          "type": "string"
+                        },
+                        "currency": {
+                          "type": "string"
+                        },
+                        "entryCount": {
+                          "type": "integer"
+                        },
+                        "asOfSequenceNo": {
+                          "type": "integer",
+                          "nullable": true
+                        },
+                        "updatedAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "nullable": true
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/member/me/accounts/{id}/history": {
+      "get": {
+        "summary": "One of the caller's accounts: its history, newest first, paged",
+        "description": "Every posted entry on the account, newest first, each with the balance the account stood at once it had posted — computed from the entries themselves, so a statement built from this is exactly what the ledger says. Page backwards with `before`, the `sequenceNo` of the oldest entry on the page you have. 404 unless the account is the caller's own.",
+        "tags": [
+          "Accounts"
+        ],
+        "operationId": "getMemberMeAccountsIdHistory",
+        "x-required-permission": "(a member app session)",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "entries",
+                        "nextBefore"
+                      ],
+                      "properties": {
+                        "entries": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "id",
+                              "sequenceNo",
+                              "reference",
+                              "kind",
+                              "description",
+                              "direction",
+                              "amount",
+                              "currency",
+                              "runningBalance",
+                              "occurredAt",
+                              "postedAt"
+                            ],
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "format": "uuid"
+                              },
+                              "sequenceNo": {
+                                "type": "integer"
+                              },
+                              "transactionId": {
+                                "type": "string",
+                                "format": "uuid"
+                              },
+                              "reference": {
+                                "type": "string"
+                              },
+                              "kind": {
+                                "type": "string"
+                              },
+                              "description": {
+                                "type": "string"
+                              },
+                              "direction": {
+                                "type": "string",
+                                "enum": [
+                                  "credit",
+                                  "debit"
+                                ]
+                              },
+                              "amount": {
+                                "type": "string"
+                              },
+                              "currency": {
+                                "type": "string"
+                              },
+                              "runningBalance": {
+                                "type": "string"
+                              },
+                              "occurredAt": {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              "postedAt": {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              "methodName": {
+                                "type": "string"
+                              },
+                              "methodReference": {
+                                "type": "string"
+                              },
+                              "reason": {
+                                "type": "string"
+                              },
+                              "receiptNo": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "reversesReference": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "capturedByName": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        },
+                        "nextBefore": {
+                          "type": "integer",
+                          "nullable": true,
+                          "description": "Pass as `before` for the next page; null when this is the last."
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Entries per page, 1 to 500. Default 50.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "required": false,
+            "description": "Return entries older than this sequence number.",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/member/me/accounts/{id}/statement": {
+      "get": {
+        "summary": "One of the caller's accounts: its statement for a period",
+        "description": "The balance the account opened the period at, every entry posted in it with the balance after each, the totals in and out, and the closing balance — all read from the entries themselves. Dates are calendar days, inclusive; with neither given the period is the current month to date. `format=xlsx` returns the same as a spreadsheet. 404 unless the account is the caller's own.",
+        "tags": [
+          "Accounts"
+        ],
+        "operationId": "getMemberMeAccountsIdStatement",
+        "x-required-permission": "(a member app session)",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "accountId",
+                        "accountNo",
+                        "accountTypeName",
+                        "holderName",
+                        "from",
+                        "to",
+                        "openingBalance",
+                        "closingBalance",
+                        "totalCredits",
+                        "totalDebits",
+                        "lines"
+                      ],
+                      "properties": {
+                        "accountId": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "accountNo": {
+                          "type": "string"
+                        },
+                        "accountTypeName": {
+                          "type": "string"
+                        },
+                        "holderId": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "holderKind": {
+                          "type": "string",
+                          "enum": [
+                            "member",
+                            "customer"
+                          ]
+                        },
+                        "holderName": {
+                          "type": "string"
+                        },
+                        "memberNo": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "from": {
+                          "type": "string",
+                          "format": "date"
+                        },
+                        "to": {
+                          "type": "string",
+                          "format": "date"
+                        },
+                        "openingBalance": {
+                          "type": "string"
+                        },
+                        "closingBalance": {
+                          "type": "string"
+                        },
+                        "totalCredits": {
+                          "type": "string"
+                        },
+                        "totalDebits": {
+                          "type": "string"
+                        },
+                        "lines": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "sequenceNo",
+                              "transactionId",
+                              "reference",
+                              "postedAt",
+                              "description",
+                              "debit",
+                              "credit",
+                              "balance"
+                            ],
+                            "properties": {
+                              "sequenceNo": {
+                                "type": "integer"
+                              },
+                              "transactionId": {
+                                "type": "string",
+                                "format": "uuid"
+                              },
+                              "reference": {
+                                "type": "string"
+                              },
+                              "postedAt": {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              "description": {
+                                "type": "string"
+                              },
+                              "debit": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "credit": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "balance": {
+                                "type": "string"
+                              },
+                              "receiptNo": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "methodName": {
+                                "type": "string"
+                              },
+                              "methodReference": {
+                                "type": "string"
+                              },
+                              "reason": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "description": "First day of the period, YYYY-MM-DD.",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "description": "Last day of the period, YYYY-MM-DD.",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "description": "`xlsx` for a spreadsheet; JSON otherwise.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "json",
+                "xlsx"
+              ]
+            }
+          }
+        ]
+      }
+    },
     "/api/v1/member/me/accounts/{id}/transactions": {
       "get": {
         "summary": "One of the caller's accounts: credits and debits, oldest first",
         "tags": [
-          "Member app"
+          "Accounts"
         ],
         "operationId": "getMemberMeAccountsIdTransactions",
         "x-required-permission": "(a member app session)",
@@ -6476,6 +7039,292 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/member/me/deposits": {
+      "post": {
+        "summary": "Pay into one of the caller's accounts",
+        "description": "Recorded as the staff deposit is and routed by the approval matrix with Member as the initiating role; it waits on a chain, never posts at once. Refused (403) until the Society switches deposits from the app on. Cash is refused: choose a bank or mobile money method, with its reference and the Society's bank account from /api/v1/member/reference. 404 unless the account is the caller's own.",
+        "tags": [
+          "Transactions"
+        ],
+        "operationId": "postMemberMeDeposits",
+        "x-required-permission": "(a member app session)",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "deposit"
+                      ],
+                      "properties": {
+                        "deposit": {
+                          "type": "object",
+                          "required": [
+                            "id",
+                            "reference",
+                            "status",
+                            "accountId",
+                            "accountNo",
+                            "accountTypeName",
+                            "amount",
+                            "currency",
+                            "method",
+                            "methodName",
+                            "createdAt"
+                          ],
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "reference": {
+                              "type": "string",
+                              "description": "TX-000001-style."
+                            },
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "deposit"
+                              ]
+                            },
+                            "status": {
+                              "type": "string"
+                            },
+                            "accountId": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "accountNo": {
+                              "type": "string"
+                            },
+                            "accountTypeName": {
+                              "type": "string"
+                            },
+                            "memberId": {
+                              "type": "string",
+                              "format": "uuid",
+                              "nullable": true
+                            },
+                            "customerId": {
+                              "type": "string",
+                              "format": "uuid",
+                              "nullable": true
+                            },
+                            "amount": {
+                              "type": "string"
+                            },
+                            "currency": {
+                              "type": "string"
+                            },
+                            "method": {
+                              "type": "string"
+                            },
+                            "methodName": {
+                              "type": "string"
+                            },
+                            "methodReference": {
+                              "type": "string"
+                            },
+                            "bankAccountId": {
+                              "type": "string",
+                              "format": "uuid",
+                              "nullable": true
+                            },
+                            "bankAccountName": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "reason": {
+                              "type": "string"
+                            },
+                            "receiptNo": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "balanceAfter": {
+                              "type": "string",
+                              "nullable": true,
+                              "description": "What the account stood at once this posted."
+                            },
+                            "capturedById": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "capturedByName": {
+                              "type": "string"
+                            },
+                            "createdAt": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "postedAt": {
+                              "type": "string",
+                              "format": "date-time",
+                              "nullable": true
+                            },
+                            "workflowDefinitionId": {
+                              "type": "string",
+                              "format": "uuid",
+                              "nullable": true
+                            },
+                            "workflowName": {
+                              "type": "string",
+                              "nullable": true,
+                              "description": "The approval chain it was routed to, if any."
+                            },
+                            "currentStepCode": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "currentStepName": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "currentStepRole": {
+                              "type": "string",
+                              "nullable": true
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The Idempotency-Key was already used with a different request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request could not be processed as submitted, or the Idempotency-Key header is missing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "description": "A unique key for this request, chosen by the caller (a UUID will do). Sending the same key with the same body again returns the original result and writes nothing; the same key with a different body is refused with 409.",
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "accountId",
+                  "amount",
+                  "method"
+                ],
+                "properties": {
+                  "accountId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "amount": {
+                    "type": "string",
+                    "description": "Rupees with at most two decimals, e.g. \"500.00\"."
+                  },
+                  "method": {
+                    "type": "string",
+                    "description": "A payment_method code."
+                  },
+                  "methodReference": {
+                    "type": "string"
+                  },
+                  "bankAccountId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "One of the Society's bank accounts from /api/v1/member/reference. Required with the reference where the method touches a bank."
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
                 }
               }
             }
@@ -6754,10 +7603,1033 @@
         }
       }
     },
+    "/api/v1/member/me/transfers": {
+      "post": {
+        "summary": "Move money from one of the caller's accounts to an account here",
+        "description": "Recorded as the staff transfer is and routed by the approval matrix with Member as the initiating role; it waits on a chain, never posts at once. Refused (403) until the Society switches transfers from the app on. The destination is an account on the system, the caller's own or another member's, by id. 404 unless the source is the caller's own.",
+        "tags": [
+          "Transactions"
+        ],
+        "operationId": "postMemberMeTransfers",
+        "x-required-permission": "(a member app session)",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "transfer"
+                      ],
+                      "properties": {
+                        "transfer": {
+                          "type": "object",
+                          "required": [
+                            "id",
+                            "reference",
+                            "status",
+                            "debitLeg"
+                          ],
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "reference": {
+                              "type": "string",
+                              "description": "TR-000001-style."
+                            },
+                            "status": {
+                              "type": "string"
+                            },
+                            "reason": {
+                              "type": "string"
+                            },
+                            "debitLeg": {
+                              "type": "object",
+                              "required": [
+                                "id",
+                                "reference",
+                                "kind",
+                                "status",
+                                "accountId",
+                                "accountNo",
+                                "accountTypeName",
+                                "amount",
+                                "currency",
+                                "method",
+                                "methodName",
+                                "createdAt"
+                              ],
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "format": "uuid"
+                                },
+                                "reference": {
+                                  "type": "string",
+                                  "description": "TX-000001-style."
+                                },
+                                "kind": {
+                                  "type": "string"
+                                },
+                                "status": {
+                                  "type": "string"
+                                },
+                                "accountId": {
+                                  "type": "string",
+                                  "format": "uuid"
+                                },
+                                "accountNo": {
+                                  "type": "string"
+                                },
+                                "accountTypeId": {
+                                  "type": "string",
+                                  "format": "uuid"
+                                },
+                                "accountTypeName": {
+                                  "type": "string"
+                                },
+                                "holderId": {
+                                  "type": "string",
+                                  "format": "uuid"
+                                },
+                                "holderKind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "member",
+                                    "customer"
+                                  ]
+                                },
+                                "holderName": {
+                                  "type": "string"
+                                },
+                                "memberNo": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "amount": {
+                                  "type": "string"
+                                },
+                                "currency": {
+                                  "type": "string"
+                                },
+                                "method": {
+                                  "type": "string"
+                                },
+                                "methodName": {
+                                  "type": "string"
+                                },
+                                "methodReference": {
+                                  "type": "string"
+                                },
+                                "bankAccountId": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "nullable": true
+                                },
+                                "bankAccountName": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "reason": {
+                                  "type": "string"
+                                },
+                                "receiptNo": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "balanceAfter": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "description": "What the account stood at once this posted."
+                                },
+                                "capturedById": {
+                                  "type": "string",
+                                  "format": "uuid"
+                                },
+                                "capturedByName": {
+                                  "type": "string"
+                                },
+                                "createdAt": {
+                                  "type": "string",
+                                  "format": "date-time"
+                                },
+                                "submittedAt": {
+                                  "type": "string",
+                                  "format": "date-time",
+                                  "nullable": true
+                                },
+                                "postedAt": {
+                                  "type": "string",
+                                  "format": "date-time",
+                                  "nullable": true
+                                },
+                                "workflowDefinitionId": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "nullable": true
+                                },
+                                "workflowCode": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "workflowName": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "description": "The approval chain it was routed to, if any."
+                                },
+                                "currentStepCode": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "currentStepName": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "currentStepRole": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "approvalRuleId": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "nullable": true
+                                },
+                                "sourceOfFundFormConfirmed": {
+                                  "type": "boolean"
+                                },
+                                "transferId": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "nullable": true
+                                },
+                                "transferReference": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "legDirection": {
+                                  "type": "string",
+                                  "enum": [
+                                    "credit",
+                                    "debit"
+                                  ],
+                                  "nullable": true
+                                },
+                                "payeeName": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "counterpartAccountId": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "nullable": true
+                                },
+                                "counterpartAccountNo": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "counterpartAccountTypeName": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "counterpartHolderId": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "nullable": true
+                                },
+                                "counterpartHolderName": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "claimantKind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "nominee",
+                                    "other"
+                                  ],
+                                  "nullable": true,
+                                  "description": "A demised claim’s claimant (S-1704)."
+                                },
+                                "claimant": {
+                                  "type": "object",
+                                  "nullable": true,
+                                  "properties": {
+                                    "name": {
+                                      "type": "string"
+                                    },
+                                    "nic": {
+                                      "type": "string"
+                                    },
+                                    "address": {
+                                      "type": "string"
+                                    },
+                                    "relation": {
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                "takafulBenefit": {
+                                  "type": "string",
+                                  "description": "The Takaful benefit a demised claim pays beside the balances; \"0.00\" on every other kind."
+                                }
+                              }
+                            },
+                            "creditLeg": {
+                              "type": "object",
+                              "required": [
+                                "id",
+                                "reference",
+                                "kind",
+                                "status",
+                                "accountId",
+                                "accountNo",
+                                "accountTypeName",
+                                "amount",
+                                "currency",
+                                "method",
+                                "methodName",
+                                "createdAt"
+                              ],
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "format": "uuid"
+                                },
+                                "reference": {
+                                  "type": "string",
+                                  "description": "TX-000001-style."
+                                },
+                                "kind": {
+                                  "type": "string"
+                                },
+                                "status": {
+                                  "type": "string"
+                                },
+                                "accountId": {
+                                  "type": "string",
+                                  "format": "uuid"
+                                },
+                                "accountNo": {
+                                  "type": "string"
+                                },
+                                "accountTypeId": {
+                                  "type": "string",
+                                  "format": "uuid"
+                                },
+                                "accountTypeName": {
+                                  "type": "string"
+                                },
+                                "holderId": {
+                                  "type": "string",
+                                  "format": "uuid"
+                                },
+                                "holderKind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "member",
+                                    "customer"
+                                  ]
+                                },
+                                "holderName": {
+                                  "type": "string"
+                                },
+                                "memberNo": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "amount": {
+                                  "type": "string"
+                                },
+                                "currency": {
+                                  "type": "string"
+                                },
+                                "method": {
+                                  "type": "string"
+                                },
+                                "methodName": {
+                                  "type": "string"
+                                },
+                                "methodReference": {
+                                  "type": "string"
+                                },
+                                "bankAccountId": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "nullable": true
+                                },
+                                "bankAccountName": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "reason": {
+                                  "type": "string"
+                                },
+                                "receiptNo": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "balanceAfter": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "description": "What the account stood at once this posted."
+                                },
+                                "capturedById": {
+                                  "type": "string",
+                                  "format": "uuid"
+                                },
+                                "capturedByName": {
+                                  "type": "string"
+                                },
+                                "createdAt": {
+                                  "type": "string",
+                                  "format": "date-time"
+                                },
+                                "submittedAt": {
+                                  "type": "string",
+                                  "format": "date-time",
+                                  "nullable": true
+                                },
+                                "postedAt": {
+                                  "type": "string",
+                                  "format": "date-time",
+                                  "nullable": true
+                                },
+                                "workflowDefinitionId": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "nullable": true
+                                },
+                                "workflowCode": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "workflowName": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "description": "The approval chain it was routed to, if any."
+                                },
+                                "currentStepCode": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "currentStepName": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "currentStepRole": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "approvalRuleId": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "nullable": true
+                                },
+                                "sourceOfFundFormConfirmed": {
+                                  "type": "boolean"
+                                },
+                                "transferId": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "nullable": true
+                                },
+                                "transferReference": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "legDirection": {
+                                  "type": "string",
+                                  "enum": [
+                                    "credit",
+                                    "debit"
+                                  ],
+                                  "nullable": true
+                                },
+                                "payeeName": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "counterpartAccountId": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "nullable": true
+                                },
+                                "counterpartAccountNo": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "counterpartAccountTypeName": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "counterpartHolderId": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "nullable": true
+                                },
+                                "counterpartHolderName": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "claimantKind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "nominee",
+                                    "other"
+                                  ],
+                                  "nullable": true,
+                                  "description": "A demised claim’s claimant (S-1704)."
+                                },
+                                "claimant": {
+                                  "type": "object",
+                                  "nullable": true,
+                                  "properties": {
+                                    "name": {
+                                      "type": "string"
+                                    },
+                                    "nic": {
+                                      "type": "string"
+                                    },
+                                    "address": {
+                                      "type": "string"
+                                    },
+                                    "relation": {
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                "takafulBenefit": {
+                                  "type": "string",
+                                  "description": "The Takaful benefit a demised claim pays beside the balances; \"0.00\" on every other kind."
+                                }
+                              },
+                              "nullable": true
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The Idempotency-Key was already used with a different request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request could not be processed as submitted, or the Idempotency-Key header is missing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "description": "A unique key for this request, chosen by the caller (a UUID will do). Sending the same key with the same body again returns the original result and writes nothing; the same key with a different body is refused with 409.",
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "sourceAccountId",
+                  "destinationAccountId",
+                  "amount"
+                ],
+                "properties": {
+                  "sourceAccountId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "destinationAccountId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "amount": {
+                    "type": "string",
+                    "description": "Rupees with at most two decimals, e.g. \"500.00\"."
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/member/me/withdrawals": {
+      "post": {
+        "summary": "Ask for money out of one of the caller's accounts",
+        "description": "Recorded as the staff withdrawal is and routed by the approval matrix with Member as the initiating role; it waits on a chain, never posts at once. Refused (403) until the Society switches withdrawals from the app on. The method is how it will be paid out, with its reference where the method requires one. 404 unless the account is the caller's own.",
+        "tags": [
+          "Transactions"
+        ],
+        "operationId": "postMemberMeWithdrawals",
+        "x-required-permission": "(a member app session)",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "withdrawal"
+                      ],
+                      "properties": {
+                        "withdrawal": {
+                          "type": "object",
+                          "required": [
+                            "id",
+                            "reference",
+                            "kind",
+                            "status",
+                            "accountId",
+                            "accountNo",
+                            "accountTypeName",
+                            "amount",
+                            "currency",
+                            "method",
+                            "methodName",
+                            "createdAt"
+                          ],
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "reference": {
+                              "type": "string",
+                              "description": "TX-000001-style."
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "status": {
+                              "type": "string"
+                            },
+                            "accountId": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "accountNo": {
+                              "type": "string"
+                            },
+                            "accountTypeId": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "accountTypeName": {
+                              "type": "string"
+                            },
+                            "holderId": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "holderKind": {
+                              "type": "string",
+                              "enum": [
+                                "member",
+                                "customer"
+                              ]
+                            },
+                            "holderName": {
+                              "type": "string"
+                            },
+                            "memberNo": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "amount": {
+                              "type": "string"
+                            },
+                            "currency": {
+                              "type": "string"
+                            },
+                            "method": {
+                              "type": "string"
+                            },
+                            "methodName": {
+                              "type": "string"
+                            },
+                            "methodReference": {
+                              "type": "string"
+                            },
+                            "bankAccountId": {
+                              "type": "string",
+                              "format": "uuid",
+                              "nullable": true
+                            },
+                            "bankAccountName": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "reason": {
+                              "type": "string"
+                            },
+                            "receiptNo": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "balanceAfter": {
+                              "type": "string",
+                              "nullable": true,
+                              "description": "What the account stood at once this posted."
+                            },
+                            "capturedById": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "capturedByName": {
+                              "type": "string"
+                            },
+                            "createdAt": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "submittedAt": {
+                              "type": "string",
+                              "format": "date-time",
+                              "nullable": true
+                            },
+                            "postedAt": {
+                              "type": "string",
+                              "format": "date-time",
+                              "nullable": true
+                            },
+                            "workflowDefinitionId": {
+                              "type": "string",
+                              "format": "uuid",
+                              "nullable": true
+                            },
+                            "workflowCode": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "workflowName": {
+                              "type": "string",
+                              "nullable": true,
+                              "description": "The approval chain it was routed to, if any."
+                            },
+                            "currentStepCode": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "currentStepName": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "currentStepRole": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "approvalRuleId": {
+                              "type": "string",
+                              "format": "uuid",
+                              "nullable": true
+                            },
+                            "sourceOfFundFormConfirmed": {
+                              "type": "boolean"
+                            },
+                            "transferId": {
+                              "type": "string",
+                              "format": "uuid",
+                              "nullable": true
+                            },
+                            "transferReference": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "legDirection": {
+                              "type": "string",
+                              "enum": [
+                                "credit",
+                                "debit"
+                              ],
+                              "nullable": true
+                            },
+                            "payeeName": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "counterpartAccountId": {
+                              "type": "string",
+                              "format": "uuid",
+                              "nullable": true
+                            },
+                            "counterpartAccountNo": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "counterpartAccountTypeName": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "counterpartHolderId": {
+                              "type": "string",
+                              "format": "uuid",
+                              "nullable": true
+                            },
+                            "counterpartHolderName": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "claimantKind": {
+                              "type": "string",
+                              "enum": [
+                                "nominee",
+                                "other"
+                              ],
+                              "nullable": true,
+                              "description": "A demised claim’s claimant (S-1704)."
+                            },
+                            "claimant": {
+                              "type": "object",
+                              "nullable": true,
+                              "properties": {
+                                "name": {
+                                  "type": "string"
+                                },
+                                "nic": {
+                                  "type": "string"
+                                },
+                                "address": {
+                                  "type": "string"
+                                },
+                                "relation": {
+                                  "type": "string"
+                                }
+                              }
+                            },
+                            "takafulBenefit": {
+                              "type": "string",
+                              "description": "The Takaful benefit a demised claim pays beside the balances; \"0.00\" on every other kind."
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The Idempotency-Key was already used with a different request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request could not be processed as submitted, or the Idempotency-Key header is missing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "description": "A unique key for this request, chosen by the caller (a UUID will do). Sending the same key with the same body again returns the original result and writes nothing; the same key with a different body is refused with 409.",
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "accountId",
+                  "amount",
+                  "method"
+                ],
+                "properties": {
+                  "accountId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "amount": {
+                    "type": "string",
+                    "description": "Rupees with at most two decimals, e.g. \"500.00\"."
+                  },
+                  "method": {
+                    "type": "string",
+                    "description": "How it is paid out: a payment_method code."
+                  },
+                  "methodReference": {
+                    "type": "string",
+                    "description": "Required where the method says so."
+                  },
+                  "bankAccountId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "One of the Society's bank accounts from /api/v1/member/reference. Required with the reference where the method touches a bank."
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/member/reference": {
       "get": {
         "summary": "Read the membership types a person can apply for",
-        "description": "Active membership types with their field configuration, the documents an applicant files from the phone (the signed form is a branch step and is left out), and the fees in force. Public.",
+        "description": "Active membership types with their field configuration, the documents an applicant files from the phone (the signed form is a branch step and is left out), and the fees in force. The Society's bank accounts a member may pay into, by name. Public.",
         "tags": [
           "Member app"
         ],
@@ -6779,9 +8651,33 @@
                     "data": {
                       "type": "object",
                       "required": [
-                        "membershipTypes"
+                        "membershipTypes",
+                        "bankAccounts"
                       ],
                       "properties": {
+                        "bankAccounts": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "id",
+                              "name",
+                              "bankName"
+                            ],
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "format": "uuid"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "bankName": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        },
                         "membershipTypes": {
                           "type": "array",
                           "items": {

@@ -1,0 +1,103 @@
+---
+// Which transactions a member may start from the app (S-2102).
+//
+// Reaching this page needs config.view, like every page under
+// /admin/configuration/ (the prefix rule in authorise.ts). CHANGING needs
+// config.manage.
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import ConfigNav from '@components/ConfigNav.astro';
+import {
+  ConfigError,
+  enabledMemberOperations,
+  setEnabledMemberOperations,
+} from '@lib/config/reference';
+
+const principal = Astro.locals.principal!;
+const canManage = principal.permissions.has('config.manage');
+
+let error: string | null = null;
+let notice: string | null = null;
+
+if (Astro.request.method === 'POST') {
+  if (!canManage) {
+    error = 'You do not have permission to change this.';
+  } else {
+    const form = await Astro.request.formData();
+    try {
+      await setEnabledMemberOperations(form.getAll('operations').map(String), {
+        userId: principal.userId,
+        email: principal.email,
+      });
+      notice = 'Saved.';
+    } catch (err) {
+      if (err instanceof ConfigError) {
+        error = err.message;
+      } else {
+        console.error('[config/member-app]', err);
+        error = 'Something went wrong. Please try again.';
+      }
+    }
+  }
+}
+
+const enabled = await enabledMemberOperations();
+
+const OPERATIONS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: 'deposit', label: 'Deposits' },
+  { value: 'withdrawal', label: 'Withdrawals' },
+  { value: 'transfer', label: 'Transfers' },
+];
+---
+
+<DashboardLayout title="Member app · Al Barakah MCSL" heading="Member app">
+  <div class="mx-auto max-w-5xl space-y-6">
+    <ConfigNav />
+
+    {error && (
+      <p class="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200">
+        {error}
+      </p>
+    )}
+    {notice && (
+      <p class="border-mint-400 bg-mint-50 dark:bg-mint-950 rounded-xl border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
+        {notice}
+      </p>
+    )}
+
+    <section class="space-y-3 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+      <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+        Transactions a member may start from the app
+      </h2>
+      <p class="text-sm text-neutral-500 dark:text-neutral-400">
+        Each one waits on an approval chain. Nothing posts from the app.
+      </p>
+
+      <form method="post" class="space-y-3">
+        <div class="space-y-2">
+          {OPERATIONS.map(op => (
+            <label class="flex items-center gap-x-2 text-sm text-neutral-600 dark:text-neutral-300">
+              <input
+                type="checkbox"
+                name="operations"
+                value={op.value}
+                checked={enabled.includes(op.value as (typeof enabled)[number])}
+                disabled={!canManage}
+                class="text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600"
+              />
+              {op.label}
+            </label>
+          ))}
+        </div>
+
+        {canManage && (
+          <button
+            type="submit"
+            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-semibold text-neutral-800 transition"
+          >
+            Save
+          </button>
+        )}
+      </form>
+    </section>
+  </div>
+</DashboardLayout>

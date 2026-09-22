@@ -2177,6 +2177,62 @@ export async function setNearFloorMargin(
   });
 }
 
+// ---------------------------------------------------------------------------
+// S-2102 · Which transactions a member may start from the app
+// ---------------------------------------------------------------------------
+// Seeded empty by migration 0085: the endpoints exist from day one and
+// refuse until the Society switches each one on. Read on every member write,
+// through the short cache like the rest of the reference configuration.
+export type MemberOperation = 'deposit' | 'withdrawal' | 'transfer';
+export const MEMBER_OPERATIONS: readonly MemberOperation[] = [
+  'deposit',
+  'withdrawal',
+  'transfer',
+];
+const MEMBER_OPERATIONS_KEY = 'member_api.enabled_operations';
+
+function isMemberOperation(value: unknown): value is MemberOperation {
+  return (MEMBER_OPERATIONS as readonly unknown[]).includes(value);
+}
+
+async function readMemberOperations(): Promise<MemberOperation[]> {
+  const result = await query<{ value: unknown }>(
+    `select value from config_entry where key = $1`,
+    [MEMBER_OPERATIONS_KEY]
+  );
+  const value = result.rows[0]?.value;
+  return Array.isArray(value) ? value.filter(isMemberOperation) : [];
+}
+
+export function enabledMemberOperations(): Promise<MemberOperation[]> {
+  return cached('member-operations', readMemberOperations);
+}
+
+export async function setEnabledMemberOperations(
+  operations: readonly string[],
+  actor: Actor
+): Promise<void> {
+  const unknown = operations.find(o => !isMemberOperation(o));
+  if (unknown !== undefined) {
+    throw new ConfigError(`${unknown || 'That'} is not a transaction.`);
+  }
+  const enabled = MEMBER_OPERATIONS.filter(o => operations.includes(o));
+  await withConfigurationActor(actorFor(actor), async client => {
+    await client.query(
+      `insert into config_entry (key, value, value_type, description, updated_by)
+       values (
+         $1, $2::jsonb, 'json',
+         'Which transactions a member may start from the app: any of ' ||
+         '"deposit", "withdrawal" and "transfer". Empty: none.',
+         $3
+       )
+       on conflict (key) do update
+         set value = excluded.value, updated_by = excluded.updated_by`,
+      [MEMBER_OPERATIONS_KEY, JSON.stringify(enabled), actor.userId]
+    );
+  });
+}
+
 // The pre-checks a resignation runs before it can be submitted (S-1703),
 // each its own switch: named when it blocks, and the Society's to turn off.
 // Seeded by migration 0078; the defaults here are read only before it has

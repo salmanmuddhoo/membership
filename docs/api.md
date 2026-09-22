@@ -125,7 +125,14 @@ because an integrator trusts it.
 
 **API** (`/admin/api`) renders the same generated document grouped by
 category, with each endpoint's parameters, request and response schemas, and
-the permission it needs. Because it reads `docs/openapi.json`, it cannot drift
+the permission it needs. The category is the descriptor's tag, and since
+S-2103 the tags follow the thing an integrator is after rather than who is
+calling: an account's balance, history, statement and transactions sit under
+**Accounts** and a deposit, withdrawal, transfer, reversal or exit under
+**Transactions**, whether the caller is an officer with a permission or the
+member app with a session — the permission line says which. **Member app**
+keeps what is only the app's: identity, applications, documents, the
+reference. Because it reads `docs/openapi.json`, it cannot drift
 from the routes: an endpoint missing a descriptor fails the build, and a stale
 committed document fails `pnpm openapi:check`.
 

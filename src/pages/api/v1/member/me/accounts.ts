@@ -8,10 +8,10 @@ const endpoint = defineMemberEndpoint(
     path: '/api/v1/member/me/accounts',
     summary: "The caller's accounts",
     description:
-      'Balance is what the payment that opened the account and any refund ' +
-      'add up to — there is no ledger yet — and null where nothing has been ' +
-      'recorded.',
-    tag: 'Member app',
+      "Every account the caller holds, with the ledger's balance for each " +
+      '(null for an account nothing has ever posted to). Balance, history ' +
+      'and statement per account are under /me/accounts/{id}.',
+    tag: 'Accounts',
     caller: 'member',
     responseSchema: {
       type: 'array',

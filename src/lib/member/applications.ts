@@ -53,7 +53,7 @@ const BRANCH_ONLY_DOCUMENTS = new Set(['signed_form']);
 const SYSTEM_SUBJECT = 'system:member-app';
 let systemUserId: Promise<string> | undefined;
 
-async function systemUser(): Promise<string> {
+export async function systemUser(): Promise<string> {
   systemUserId ??= query<{ id: string }>(
     `select id from app_user where entra_subject = $1`,
     [SYSTEM_SUBJECT]

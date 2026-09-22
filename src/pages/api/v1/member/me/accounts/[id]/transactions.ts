@@ -7,7 +7,7 @@ const endpoint = defineMemberEndpoint(
     method: 'GET',
     path: '/api/v1/member/me/accounts/{id}/transactions',
     summary: "One of the caller's accounts: credits and debits, oldest first",
-    tag: 'Member app',
+    tag: 'Accounts',
     caller: 'member',
     responseSchema: {
       type: 'array',

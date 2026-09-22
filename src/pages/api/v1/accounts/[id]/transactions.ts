@@ -16,7 +16,7 @@ const endpoint = defineEndpoint(
       'Every posted entry on this account, oldest first, as a credit or a ' +
       'debit with a one-line description. For the running balance, the ' +
       'receipt and paging, use /accounts/{id}/history.',
-    tag: 'Payments',
+    tag: 'Accounts',
     permission: 'account.view',
     responseSchema: {
       type: 'object',

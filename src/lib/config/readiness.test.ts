@@ -117,6 +117,7 @@ describe('every Phase 2 setting has a working default (S-1801)', () => {
       'Payment methods',
       'Notification wording',
       'Retention',
+      'Member app',
     ]);
   });
 

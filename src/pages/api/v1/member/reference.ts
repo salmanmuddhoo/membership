@@ -12,6 +12,7 @@ import {
   listChecklists,
   listFeeSchedules,
   listMembershipTypes,
+  offeredBankAccounts,
 } from '@lib/config/reference';
 import { COMPONENT_LABELS } from '@lib/payments/payments';
 
@@ -25,13 +26,26 @@ const endpoint = defineMemberEndpoint(
     description:
       'Active membership types with their field configuration, the ' +
       'documents an applicant files from the phone (the signed form is a ' +
-      'branch step and is left out), and the fees in force. Public.',
+      'branch step and is left out), and the fees in force. The ' +
+      "Society's bank accounts a member may pay into, by name. Public.",
     tag: 'Member app',
     caller: 'public',
     responseSchema: {
       type: 'object',
-      required: ['membershipTypes'],
+      required: ['membershipTypes', 'bankAccounts'],
       properties: {
+        bankAccounts: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['id', 'name', 'bankName'],
+            properties: {
+              id: { type: 'string', format: 'uuid' },
+              name: { type: 'string' },
+              bankName: { type: 'string' },
+            },
+          },
+        },
         membershipTypes: {
           type: 'array',
           items: {
@@ -157,10 +171,11 @@ const endpoint = defineMemberEndpoint(
     },
   },
   async ({ correlationId }) => {
-    const [types, checklists, schedules] = await Promise.all([
+    const [types, checklists, schedules, bankAccounts] = await Promise.all([
       listMembershipTypes(),
       listChecklists(),
       listFeeSchedules(),
+      offeredBankAccounts(),
     ]);
 
     const membershipTypes = types
@@ -206,7 +221,17 @@ const endpoint = defineMemberEndpoint(
         };
       });
 
-    return apiSuccess({ membershipTypes }, correlationId);
+    return apiSuccess(
+      {
+        membershipTypes,
+        bankAccounts: bankAccounts.map(a => ({
+          id: a.id,
+          name: a.name,
+          bankName: a.bankName,
+        })),
+      },
+      correlationId
+    );
   }
 );
 

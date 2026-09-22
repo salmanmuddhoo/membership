@@ -4661,7 +4661,44 @@ are the same endpoints staff use, behind the member's own token, and a
 member-initiated transaction — when the Society switches it on — is subject
 to every rule a staff-initiated one is.
 
-### S-2101 · Balance, statement and history for a member's own accounts
+**Shipped, first increment** (S-2101): `/api/v1/member/me/accounts/{id}/
+balance`, `/history` and `/statement` through `defineMemberEndpoint`, each
+answering with the staff endpoint's own payload. The response schema and
+the mapping now live once, in `src/lib/ledger/api-payloads.ts`, and the
+staff endpoints under `/api/v1/accounts/{id}` were rewritten onto it, so
+there is one shape for a balance, a history page and a statement whoever
+asks. The member endpoint adds one thing: `ownedAccountId`, which resolves
+the account server-side against the session's member and answers not
+found for any other — another member's, a customer's, or none. The
+statement's `format=xlsx` download is offered to the member as it is to
+the officer.
+
+**Shipped, second increment** (S-2102): `POST /api/v1/member/me/deposits`,
+`/withdrawals` and `/transfers`, each the staff transaction — the same
+service function, rules and matrix — captured by the member-app system user
+in the new Member role (0085: a system role assigned to nobody, with no
+permission, there for the matrix to name). The app holds
+`transaction.capture` and never `transaction.post`, so a route that would
+post at once is refused and a member's transaction goes to a chain or
+nowhere: never more lenient than a clerk's. `member_api.enabled_operations`
+(0085, empty by default; Configuration → Member app, `config.manage`; on
+Readiness) switches each of the three on; until then the endpoints exist
+and refuse. A cash deposit is refused outright; `/reference` now names the
+Society's bank accounts so a deposit can say which one it reached; a
+transfer goes to an account here by id, never to a payee outside. Member
+writes demand an `Idempotency-Key` as staff ones do.
+
+**Shipped, third increment** (S-2103) — M21 complete. Every Phase 2
+endpoint is in the generated document already (`pnpm openapi:check` fails
+the build otherwise); what changed is how the explorer groups them. Tags
+now follow the thing, not the caller: an account's balance, history,
+statement and transactions — staff and member alike — are **Accounts**, a
+deposit, withdrawal, transfer, reversal or exit **Transactions**, with the
+permission line on each saying whether it is an officer's permission or a
+member app session. **Member app** keeps identity, applications, documents
+and the reference.
+
+### S-2101 · Balance, statement and history for a member's own accounts ✅
 
 _(API-US-001, API-US-003, FRD 10)_ `Must · 5 · EPIC-26` — `/api/v1/member/
 accounts`, `/balance`, `/statement`, `/history` through `defineMemberEndpoint`
@@ -4669,7 +4706,7 @@ accounts`, `/balance`, `/statement`, `/history` through `defineMemberEndpoint`
 the same service functions as the staff endpoints; the response schema is
 the staff one.
 
-### S-2102 · Per-endpoint switch for member-initiated writes
+### S-2102 · Per-endpoint switch for member-initiated writes ✅
 
 _(API-US-005, API-US-006, FRD 10)_ `Must · 5 · EPIC-26` — `config:
 member_api.enabled_operations`, default none; deposit, withdrawal and
@@ -4678,7 +4715,7 @@ enabled call `resolveRoute()` and the engine exactly as a clerk's submission
 does — the initiating role is "member", which the matrix can route
 differently, never more leniently.
 
-### S-2103 · The API reference covers Phase 2
+### S-2103 · The API reference covers Phase 2 ✅
 
 _(API-US-004)_ `Must · 2 · EPIC-26` — every endpoint above is in the OpenAPI
 document (`pnpm openapi:check` already fails otherwise) and the in-app
