@@ -116,6 +116,12 @@ Amounts are `numeric` in the database and decimal **strings** in TypeScript and
 JSON. Money through a float is a rounding error waiting for a reconciliation to
 find it.
 
+**Demised claims (S-1704)** sit on the same screen: `demised.takaful_benefit`
+in `config_entry`, the Takaful benefit (MUR, default 15,000) paid to the
+claimant beside the balances of the member's accounts, read when a claim is
+submitted and carried on the claim from then. `docs/ledger.md`, "A deceased
+member's claim".
+
 **Resignation checks (S-1703)** sit on the same screen: three switches in
 `config_entry` (`resignation.check_pending_transactions`,
 `resignation.check_unpaid_fees`, `resignation.check_financing`), each a

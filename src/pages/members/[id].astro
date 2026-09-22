@@ -36,6 +36,7 @@ import { approvalCommentsFor } from '@lib/applications/workflow';
 import DocumentViewer from '@components/DocumentViewer.astro';
 import { closuresInFlightFor } from '@lib/ledger/closures';
 import { resignationInFlightFor } from '@lib/ledger/resignations';
+import { demiseInFlightFor } from '@lib/ledger/demises';
 import { statusNotice } from '@lib/members/status';
 
 const principal = Astro.locals.principal!;
@@ -301,6 +302,12 @@ const resigning =
     ? await resignationInFlightFor(member.id)
     : null;
 const canResign = Boolean(member) && canDeposit && !resigning;
+// S-1704: settling a deceased member's entitlements.
+const settling =
+  member && principal.permissions.has('transaction.view')
+    ? await demiseInFlightFor(member.id)
+    : null;
+const canClaim = Boolean(member) && canDeposit && !resigning && !settling;
 const closing = principal.permissions.has('transaction.view')
   ? await closuresInFlightFor(
       member ? { memberId: member.id } : { customerId: customer!.id }
@@ -381,6 +388,22 @@ const pageTitle = member ? member.memberNo : name;
               class="rounded-lg bg-amber-100 px-3 py-1.5 text-sm font-medium text-amber-900 underline dark:bg-amber-950 dark:text-amber-200"
             >
               Resigning · {resigning.reference}
+            </a>
+          )}
+          {canClaim && (
+            <a
+              href={`/members/${recordId}/demise`}
+              class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+            >
+              Demised claim
+            </a>
+          )}
+          {settling && (
+            <a
+              href={`/transactions/${settling.id}`}
+              class="rounded-lg bg-amber-100 px-3 py-1.5 text-sm font-medium text-amber-900 underline dark:bg-amber-950 dark:text-amber-200"
+            >
+              Claim · {settling.reference}
             </a>
           )}
         </div>

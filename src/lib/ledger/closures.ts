@@ -364,9 +364,10 @@ export interface ClosureChecklistItem {
 
 // The kinds of transaction that are a request the officer builds before it
 // goes to its chain, and the signed paper each one needs.
-export const REQUEST_DOCUMENT_CODES: Record<string, string> = {
-  closure: REQUEST_DOCUMENT_CODE,
-  resignation: 'resignation_request',
+export const REQUEST_DOCUMENT_CODES: Record<string, string[]> = {
+  closure: [REQUEST_DOCUMENT_CODE],
+  resignation: ['resignation_request'],
+  demise: ['death_certificate', 'affidavit'],
 };
 
 export function isExitRequest(kind: string): boolean {
@@ -382,22 +383,24 @@ export async function requestChecklist(
   transactionId: string,
   kind: string
 ): Promise<ClosureChecklistItem[]> {
-  const code = REQUEST_DOCUMENT_CODES[kind];
-  if (!code) return [];
+  const codes = REQUEST_DOCUMENT_CODES[kind];
+  if (!codes) return [];
   const [types, filed] = await Promise.all([
     listDocumentTypes(),
     documentsForTransaction(transactionId),
   ]);
-  const request = types.find(t => t.code === code);
-  if (!request) return [];
-  return [
-    {
-      documentTypeId: request.id,
-      documentCode: request.code,
-      documentName: request.name,
-      filed: filed.find(d => d.documentTypeId === request.id) ?? null,
-    },
-  ];
+  return codes.flatMap(code => {
+    const type = types.find(t => t.code === code);
+    if (!type) return [];
+    return [
+      {
+        documentTypeId: type.id,
+        documentCode: type.code,
+        documentName: type.name,
+        filed: filed.find(d => d.documentTypeId === type.id) ?? null,
+      },
+    ];
+  });
 }
 
 export function closureChecklist(

@@ -88,6 +88,28 @@ export const transactionSchema = {
     counterpartAccountTypeName: { type: 'string', nullable: true },
     counterpartHolderId: { type: 'string', format: 'uuid', nullable: true },
     counterpartHolderName: { type: 'string', nullable: true },
+    claimantKind: {
+      type: 'string',
+      enum: ['nominee', 'other'],
+      nullable: true,
+      description: 'A demised claim’s claimant (S-1704).',
+    },
+    claimant: {
+      type: 'object',
+      nullable: true,
+      properties: {
+        name: { type: 'string' },
+        nic: { type: 'string' },
+        address: { type: 'string' },
+        relation: { type: 'string' },
+      },
+    },
+    takafulBenefit: {
+      type: 'string',
+      description:
+        'The Takaful benefit a demised claim pays beside the balances; ' +
+        '"0.00" on every other kind.',
+    },
   },
 };
 

@@ -1,0 +1,540 @@
+---
+// A deceased member's claim while it is the officer's (S-1704): the
+// claimant, the papers, and the submission that sends it to its chain.
+// Once submitted it is reviewed at /transactions/<id> like any
+// transaction, and comes back here only if a reviewer returns it.
+import ChainTimeline from '@components/ChainTimeline.astro';
+import DocumentViewer from '@components/DocumentViewer.astro';
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import { offeredPaymentMethods } from '@lib/config/reference';
+import { checklistComplete, isEditable } from '@lib/ledger/closures';
+import {
+  AFFIDAVIT_NOTE,
+  cancelDemise,
+  claimTotals,
+  demiseChecklist,
+  DemiseError,
+  nomineeFor,
+  submitDemise,
+  updateDemise,
+} from '@lib/ledger/demises';
+import { loadTransaction, transitionsFor } from '@lib/ledger/review';
+import { formatMoney } from '@lib/payments/money';
+import { chainTimeline } from '@lib/workflow/timeline';
+
+const principal = Astro.locals.principal!;
+const { id } = Astro.params;
+let claim = id ? await loadTransaction(id) : null;
+if (!claim || claim.kind !== 'demise') {
+  return new Response('Not found', { status: 404 });
+}
+if (!isEditable(claim.status)) {
+  return Astro.redirect(`/transactions/${claim.id}`);
+}
+if (claim.capturedById !== principal.userId) {
+  return Astro.redirect(`/transactions/${claim.id}`);
+}
+
+// What the file picker offers, matching what the upload service accepts.
+const ACCEPTED_FILES =
+  'image/jpeg,image/png,image/heic,image/webp,application/pdf';
+
+const STEPS = ['details', 'documents', 'submit'] as const;
+type Step = (typeof STEPS)[number];
+const base = `/demises/${claim.id}`;
+const stepHrefs: Record<string, string> = {
+  details: `${base}?step=details`,
+  documents: `${base}?step=documents`,
+  capture: `${base}?step=submit`,
+};
+
+let error: string | null = null;
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const text = (name: string) => String(form.get(name) ?? '');
+  const intent = text('intent');
+  try {
+    if (intent === 'details') {
+      claim = await updateDemise(
+        claim.id,
+        {
+          claimant: {
+            kind: text('kind') === 'nominee' ? 'nominee' : 'other',
+            name: text('name'),
+            nic: text('nic'),
+            address: text('address'),
+            relation: text('relation'),
+          },
+          method: text('method'),
+          methodReference: text('methodReference'),
+          reason: text('reason'),
+        },
+        principal
+      );
+      return Astro.redirect(`${base}?step=documents`);
+    } else if (intent === 'submit') {
+      const submitted = await submitDemise(claim.id, principal);
+      return Astro.redirect(`/transactions/${submitted.id}`);
+    } else if (intent === 'cancel') {
+      await cancelDemise(claim.id, principal);
+      return Astro.redirect(`/members/${claim.holderId}`);
+    }
+  } catch (err) {
+    if (err instanceof DemiseError) {
+      error = err.message;
+    } else {
+      console.error('[demises]', err);
+      error = 'Something went wrong. Please try again.';
+    }
+  }
+}
+
+const requested = Astro.url.searchParams.get('step') ?? 'details';
+const step: Step = (STEPS as readonly string[]).includes(requested)
+  ? (requested as Step)
+  : 'details';
+
+const [checklist, timeline, trail, paymentMethods, totals, nominee] =
+  await Promise.all([
+    demiseChecklist(claim.id),
+    chainTimeline('transaction', claim.id),
+    transitionsFor(claim.id),
+    offeredPaymentMethods(),
+    claimTotals(claim.holderId),
+    nomineeFor(claim.holderId),
+  ]);
+const complete = checklistComplete(checklist);
+const claimant = claim.claimant!;
+const returnComment =
+  claim.status === 'returned'
+    ? [...trail].reverse().find(t => t.toStatus === 'returned')?.comment
+    : null;
+const dateFormat = new Intl.DateTimeFormat('en-GB', {
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+});
+
+const INPUT =
+  'mt-1 block w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100';
+const BUTTON =
+  'bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50';
+const DANGER =
+  'rounded-lg border border-red-300 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950';
+const CARD =
+  'space-y-4 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950';
+---
+
+<DashboardLayout
+  title={`${claim.reference} · Al Barakah MCSL`}
+  heading={`Demised claim ${claim.reference}`}
+>
+  <div class="mx-auto max-w-4xl space-y-6">
+    <ChainTimeline
+      steps={timeline ?? []}
+      hrefs={stepHrefs}
+      label="Claim progress"
+    />
+
+    <div class="-mx-4 flex flex-wrap items-center justify-between gap-2 border-t border-neutral-200/80 bg-neutral-100/95 px-4 py-3 text-sm sm:mx-0 sm:rounded-b-2xl sm:px-3 sm:py-1.5 dark:border-neutral-800/80 dark:bg-neutral-950/95">
+      <a
+        href={`/members/${claim.holderId}`}
+        class="text-neutral-500 underline dark:text-neutral-400"
+      >
+        ← {claim.holderName || 'member'}
+        {claim.memberNo && ` · ${claim.memberNo}`}
+      </a>
+      <span class="rounded bg-neutral-200 px-2 py-0.5 text-xs font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
+        To {claim.payeeName} · {formatMoney(totals.total)}
+      </span>
+    </div>
+
+    {error && (
+      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+        {error}
+      </div>
+    )}
+    {returnComment && (
+      <div class="rounded-lg border border-amber-300 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200">
+        Returned: {returnComment}
+      </div>
+    )}
+
+    {step === 'details' && (
+      <form method="post" data-claimant-form class={CARD}>
+        <h2 class="text-sm font-semibold text-neutral-700 uppercase dark:text-neutral-200">
+          Claimant
+        </h2>
+        <div class="space-y-2 text-sm text-neutral-700 dark:text-neutral-200">
+          {nominee && (
+            <label class="flex items-start gap-3">
+              <input
+                type="radio"
+                name="kind"
+                value="nominee"
+                checked={claim.claimantKind === 'nominee'}
+                class="mt-1"
+              />
+              <span>
+                <span class="font-medium">Nominee: {nominee.name}</span>
+                <span class="block text-xs text-neutral-500 dark:text-neutral-400">
+                  {[nominee.nic, nominee.address].filter(Boolean).join(' · ')}
+                </span>
+              </span>
+            </label>
+          )}
+          <label class="flex items-start gap-3">
+            <input
+              type="radio"
+              name="kind"
+              value="other"
+              checked={claim.claimantKind === 'other'}
+              class="mt-1"
+            />
+            <span class="font-medium">Another person</span>
+          </label>
+        </div>
+        <div
+          data-other-fields
+          class="grid gap-3 sm:grid-cols-2"
+          hidden={claim.claimantKind !== 'other'}
+        >
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            Name
+            <input
+              type="text"
+              name="name"
+              value={claim.claimantKind === 'other' ? claimant.name : ''}
+              class={INPUT}
+            />
+          </label>
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            NIC
+            <input
+              type="text"
+              name="nic"
+              value={claim.claimantKind === 'other' ? claimant.nic : ''}
+              class={INPUT}
+            />
+          </label>
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            Address
+            <input
+              type="text"
+              name="address"
+              value={claim.claimantKind === 'other' ? claimant.address : ''}
+              class={INPUT}
+            />
+          </label>
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            Relation to the member
+            <input
+              type="text"
+              name="relation"
+              value={claim.claimantKind === 'other' ? claimant.relation : ''}
+              class={INPUT}
+            />
+          </label>
+        </div>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            Paid out by
+            <select name="method" class={INPUT}>
+              {paymentMethods.map(method => (
+                <option
+                  value={method.code}
+                  selected={method.code === claim!.method}
+                >
+                  {method.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            Reference (cheque number, transfer reference)
+            <input
+              type="text"
+              name="methodReference"
+              value={claim.methodReference}
+              class={INPUT}
+            />
+          </label>
+        </div>
+        <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+          Note
+          <input
+            type="text"
+            name="reason"
+            value={claim.reason}
+            maxlength="500"
+            class={INPUT}
+          />
+        </label>
+        <input type="hidden" name="intent" value="details" />
+        <div class="flex flex-wrap gap-2 pt-2">
+          <button type="submit" class={BUTTON}>
+            Save and continue
+          </button>
+        </div>
+      </form>
+    )}
+
+    {step === 'documents' && (
+      <section class={CARD}>
+        <h2 class="text-sm font-semibold text-neutral-700 uppercase dark:text-neutral-200">
+          Documents
+        </h2>
+        {checklist.length < 2 && (
+          <p class="text-sm text-red-700 dark:text-red-300">
+            The death certificate or affidavit document type is not configured.
+            Ask an administrator.
+          </p>
+        )}
+        <ul class="space-y-2">
+          {checklist.map(item => (
+            <li class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm dark:border-neutral-800 dark:bg-neutral-900">
+              <span>
+                <span class="font-medium text-neutral-800 dark:text-neutral-100">
+                  {item.documentName}
+                </span>
+                <span class="block text-xs text-neutral-500 dark:text-neutral-400">
+                  {item.filed
+                    ? `${item.filed.fileName} · ${dateFormat.format(item.filed.uploadedAt)}`
+                    : 'Missing'}
+                </span>
+              </span>
+              {item.filed ? (
+                <span class="flex items-center gap-3">
+                  <button
+                    type="button"
+                    data-view-document
+                    data-document-id={item.filed.documentId}
+                    class="font-medium text-neutral-700 underline hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-neutral-100"
+                  >
+                    View
+                  </button>
+                  <button
+                    type="button"
+                    data-remove-document={item.filed.documentId}
+                    class="text-red-700 underline dark:text-red-300"
+                  >
+                    Remove
+                  </button>
+                </span>
+              ) : (
+                <span
+                  class="flex flex-wrap items-center gap-3"
+                  data-upload
+                  data-transaction-id={claim.id}
+                  data-document-type-id={item.documentTypeId}
+                >
+                  <label class="cursor-pointer rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-200 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800">
+                    Upload
+                    <input
+                      type="file"
+                      data-file
+                      accept={ACCEPTED_FILES}
+                      capture="environment"
+                      disabled
+                      class="sr-only"
+                    />
+                  </label>
+                  <span
+                    data-status
+                    class="text-xs text-neutral-500 dark:text-neutral-400"
+                  >
+                    Uploading requires JavaScript.
+                  </span>
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+        <p class="text-xs text-neutral-500 dark:text-neutral-400">
+          {AFFIDAVIT_NOTE}
+        </p>
+        <div class="flex flex-wrap gap-2">
+          <a href={`${base}?step=submit`} class={BUTTON}>
+            Next
+          </a>
+        </div>
+      </section>
+    )}
+
+    {step === 'submit' && (
+      <form method="post" class={CARD}>
+        <h2 class="text-sm font-semibold text-neutral-700 uppercase dark:text-neutral-200">
+          Submit
+        </h2>
+        <dl class="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
+          <dt class="text-neutral-500 dark:text-neutral-400">Claimant</dt>
+          <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+            {claimant.name} · {claimant.relation}
+            <span class="block text-xs font-normal text-neutral-500 dark:text-neutral-400">
+              {[claimant.nic, claimant.address].filter(Boolean).join(' · ')}
+            </span>
+          </dd>
+          <dt class="text-neutral-500 dark:text-neutral-400">Accounts</dt>
+          <dd class="text-neutral-800 dark:text-neutral-100">
+            {totals.accounts
+              .map(
+                a =>
+                  `${a.accountNo} · ${a.typeName} · ${formatMoney(a.balance)}`
+              )
+              .join(', ')}
+          </dd>
+          <dt class="text-neutral-500 dark:text-neutral-400">
+            Takaful benefit
+          </dt>
+          <dd class="text-neutral-800 dark:text-neutral-100">
+            {formatMoney(totals.takafulBenefit)}
+          </dd>
+          <dt class="text-neutral-500 dark:text-neutral-400">Total</dt>
+          <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+            {formatMoney(totals.total)}
+          </dd>
+          <dt class="text-neutral-500 dark:text-neutral-400">Paid out by</dt>
+          <dd class="text-neutral-800 dark:text-neutral-100">
+            {claim.methodName}
+            {claim.methodReference && ` · ${claim.methodReference}`}
+          </dd>
+          <dt class="text-neutral-500 dark:text-neutral-400">Documents</dt>
+          <dd
+            class:list={[
+              complete
+                ? 'text-neutral-800 dark:text-neutral-100'
+                : 'text-red-700 dark:text-red-300',
+            ]}
+          >
+            {complete
+              ? 'Death certificate and affidavit on file'
+              : `${checklist
+                  .filter(i => !i.filed)
+                  .map(i => i.documentName)
+                  .join(', ')} missing`}
+          </dd>
+        </dl>
+        <p class="text-sm text-neutral-600 dark:text-neutral-300">
+          Once submitted, nothing else moves on these accounts until the claim
+          is decided. When it is approved and paid out, every account closes and
+          the membership ends.
+        </p>
+        <input type="hidden" name="intent" value="submit" />
+        <div class="flex flex-wrap gap-2 pt-2">
+          <button type="submit" class={BUTTON} disabled={!complete}>
+            {claim.status === 'returned' ? 'Resubmit' : 'Submit'}
+          </button>
+          <button
+            type="submit"
+            class={DANGER}
+            name="intent"
+            value="cancel"
+            formnovalidate
+          >
+            Withdraw the claim
+          </button>
+        </div>
+      </form>
+    )}
+  </div>
+  <DocumentViewer />
+</DashboardLayout>
+
+<script>
+  import { uploadDocumentBlob } from '@lib/client/document-upload';
+  import {
+    compressImageForUpload,
+    formatBytes,
+  } from '@lib/client/image-compression';
+
+  // The claimant form: the other person's fields only when they are the
+  // claimant.
+  const form = document.querySelector<HTMLFormElement>('[data-claimant-form]');
+  const other = form?.querySelector<HTMLElement>('[data-other-fields]');
+  if (form && other) {
+    const refresh = () => {
+      const picked = form.querySelector<HTMLInputElement>(
+        'input[name="kind"]:checked'
+      );
+      other.hidden = picked?.value !== 'other';
+    };
+    form.addEventListener('change', refresh);
+    refresh();
+  }
+
+  // Filing a paper against the claim: the same three-phase transfer the
+  // application's Documents step uses, through uploadDocumentBlob, so
+  // the backend decides where it goes and confirms it landed.
+  for (const panel of document.querySelectorAll<HTMLElement>('[data-upload]')) {
+    const file = panel.querySelector<HTMLInputElement>('[data-file]');
+    const status = panel.querySelector<HTMLElement>('[data-status]');
+    if (!file || !status) continue;
+    file.disabled = false;
+    status.textContent = '';
+    const say = (message: string) => {
+      status.textContent = message;
+    };
+    file.addEventListener('change', async () => {
+      const picked = file.files?.[0];
+      if (!picked) return;
+      file.disabled = true;
+      say('Preparing…');
+      let chosen = picked;
+      try {
+        chosen = await compressImageForUpload(picked);
+        if (chosen.size < picked.size) {
+          say(
+            `Compressed ${formatBytes(picked.size)} to ${formatBytes(chosen.size)}…`
+          );
+        }
+      } catch {
+        // Nothing here is worth failing an upload over.
+      }
+      try {
+        await uploadDocumentBlob({
+          transactionId: panel.dataset.transactionId,
+          documentTypeId: panel.dataset.documentTypeId ?? '',
+          subject: 'applicant',
+          fileName: chosen.name,
+          blob: chosen,
+          onStatus: message => say(message),
+        });
+        window.location.reload();
+      } catch (error) {
+        say(
+          (error instanceof Error ? error.message : 'The upload failed.') +
+            ' Please try again.'
+        );
+        file.disabled = false;
+        file.value = '';
+      }
+    });
+  }
+
+  for (const button of document.querySelectorAll<HTMLButtonElement>(
+    '[data-remove-document]'
+  )) {
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      try {
+        const response = await fetch('/api/v1/documents/remove', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ documentId: button.dataset.removeDocument }),
+        });
+        if (!response.ok) {
+          const body = await response.json().catch(() => null);
+          throw new Error(body?.error?.message ?? 'It could not be removed.');
+        }
+        window.location.reload();
+      } catch (error) {
+        button.disabled = false;
+        button.textContent =
+          error instanceof Error ? error.message : 'It could not be removed.';
+      }
+    });
+  }
+</script>

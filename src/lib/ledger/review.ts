@@ -106,6 +106,18 @@ export interface TransactionSummary {
   counterpartAccountTypeName: string | null;
   counterpartHolderId: string | null;
   counterpartHolderName: string | null;
+  // A demised claim (S-1704): who is paid, and the benefit beside the
+  // balances. Null on every other kind.
+  claimantKind: 'nominee' | 'other' | null;
+  claimant: Claimant | null;
+  takafulBenefit: string;
+}
+
+export interface Claimant {
+  name: string;
+  nic: string;
+  address: string;
+  relation: string;
 }
 
 // Exported for the listings (history.ts) that read the same shape.
@@ -130,7 +142,7 @@ export const TRANSACTION_SELECT = `
          ws.name as current_step_name, wr.name as current_step_role,
          t.approval_rule_id, t.source_of_fund_form_confirmed,
          t.transfer_id, tr.reference as transfer_reference, t.leg_direction,
-         t.payee_name,
+         t.payee_name, t.claimant_kind, t.claimant, t.takaful_benefit,
          l.account_id as counterpart_account_id,
          coalesce(la.account_no, lm.member_no) as counterpart_account_no,
          lt.name as counterpart_account_type_name,
@@ -203,6 +215,9 @@ export interface TransactionRow {
   transfer_reference: string | null;
   leg_direction: 'credit' | 'debit' | null;
   payee_name: string | null;
+  claimant_kind: 'nominee' | 'other' | null;
+  claimant: Claimant | null;
+  takaful_benefit: string;
   counterpart_account_id: string | null;
   counterpart_account_no: string | null;
   counterpart_account_type_name: string | null;
@@ -254,6 +269,9 @@ export function assembleTransaction(r: TransactionRow): TransactionSummary {
     counterpartAccountTypeName: r.counterpart_account_type_name,
     counterpartHolderId: r.counterpart_holder_id,
     counterpartHolderName: r.counterpart_holder_name,
+    claimantKind: r.claimant_kind,
+    claimant: r.claimant,
+    takafulBenefit: r.takaful_benefit,
   };
 }
 
@@ -580,6 +598,14 @@ export async function reviewTransaction(
         [transaction.accountId]
       );
     }
+    // A claim refused leaves the accounts as they were (S-1704).
+    if (transaction.kind === 'demise' && status === 'rejected') {
+      await client.query(
+        `update account set status = 'active'
+          where member_id = $1 and status = 'closing'`,
+        [transaction.holderId]
+      );
+    }
     // A resignation refused is a membership kept (S-1703): every core
     // account was closing for this request and for nothing else.
     if (transaction.kind === 'resignation' && status === 'rejected') {
@@ -661,6 +687,7 @@ export function needsDisbursement(
     transaction.kind === 'withdrawal' ||
     transaction.kind === 'closure' ||
     transaction.kind === 'resignation' ||
+    transaction.kind === 'demise' ||
     (transaction.kind === 'transfer_leg' && transaction.payeeName !== null)
   );
 }
@@ -758,6 +785,20 @@ export async function postApprovedTransaction(
               set amount = coalesce(
                 (select balance from account_balance where account_id = t.account_id),
                 0)
+            where t.id = $1`,
+          [transaction.id]
+        );
+      }
+      // A claim pays out every account plus the benefit the claim carries
+      // (S-1704).
+      if (transaction.kind === 'demise') {
+        await client.query(
+          `update transaction t
+              set amount = t.takaful_benefit + (
+                select coalesce(sum(coalesce(b.balance, 0)), 0)
+                  from account a
+                  left join account_balance b on b.account_id = a.id
+                 where a.member_id = t.member_id and a.status = 'closing')
             where t.id = $1`,
           [transaction.id]
         );

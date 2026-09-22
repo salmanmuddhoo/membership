@@ -19,6 +19,7 @@ const KIND_WORDS: Record<string, string> = {
   reversal: 'Reversal',
   closure: 'Account closure',
   resignation: 'Resignation',
+  demise: 'Demised claim',
 };
 
 // The holder's contact details: a member's or a customer's, off the

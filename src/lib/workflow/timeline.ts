@@ -236,7 +236,7 @@ async function expectedChain(transaction: {
 }): Promise<WorkflowStep[]> {
   if (!isExitRequest(transaction.kind)) return [];
   const route = await resolveRoute({
-    kind: transaction.kind as 'closure' | 'resignation',
+    kind: transaction.kind as 'closure' | 'resignation' | 'demise',
     accountTypeId: transaction.accountTypeId,
     amountCents: toCents(transaction.amount),
     roleCodes: [],
@@ -258,6 +258,22 @@ export function closurePrelude(
     checklist as Parameters<typeof checklistComplete>[0]
   );
   const missing = checklist.filter(i => i.filed === null);
+  const documents = {
+    key: 'documents',
+    label: 'Documents',
+    done: complete,
+    detail: complete ? undefined : `${missing.length} to file`,
+    problem: !complete,
+  };
+  // A claim (S-1704) has no signature of the member's to take: the
+  // claimant is named, the certificate and the affidavit are filed.
+  if (kind === 'demise') {
+    return {
+      prelude: [{ key: 'details', label: 'Claimant', done: true }, documents],
+      submitLabel: 'Submitted',
+      postedLabel: 'Settled',
+    };
+  }
   return {
     prelude: [
       { key: 'details', label: 'Details', done: true },
@@ -268,13 +284,7 @@ export function closurePrelude(
         detail: complete ? 'Signed request on file' : 'Not signed yet',
         problem: !complete,
       },
-      {
-        key: 'documents',
-        label: 'Documents',
-        done: complete,
-        detail: complete ? undefined : `${missing.length} to file`,
-        problem: !complete,
-      },
+      documents,
     ],
     submitLabel: 'Submitted',
     postedLabel: kind === 'resignation' ? 'Resigned' : 'Closed',
