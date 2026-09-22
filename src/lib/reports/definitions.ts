@@ -509,6 +509,121 @@ const receipts: ReportDefinition = {
   },
 };
 
+// S-1706 · Exits: closures, resignations and demised claims by period, with
+// what each paid out and how long it took. Turnaround is submission to
+// payout — the whole of what the member or claimant waited for — and, for
+// one not paid out, submission to decision or to today.
+const exits: ReportDefinition = {
+  code: 'exits',
+  title: 'Exits',
+  category: 'Money',
+  summary:
+    'Account closures, resignations and demised claims: what was paid out, ' +
+    'to whom, and how long each took from submission to payout.',
+  permission: 'transaction.view',
+  filters: [
+    ...PERIOD,
+    {
+      name: 'kind',
+      label: 'Kind',
+      kind: 'choice',
+      choices: async () => [
+        { value: 'closure', label: 'Account closure' },
+        { value: 'resignation', label: 'Resignation' },
+        { value: 'demise', label: 'Demised claim' },
+      ],
+    },
+  ],
+  async run(filters) {
+    const result = await query<Record<string, string | number>>(
+      `select t.reference as "Reference",
+              case t.kind when 'closure' then 'Account closure'
+                          when 'resignation' then 'Resignation'
+                          else 'Demised claim' end as "Kind",
+              coalesce(m.member_no, '') as "Member no",
+              trim(coalesce(p.values->>'name', '') || ' '
+                   || coalesce(p.values->>'surname', '')) as "Member",
+              case t.kind when 'closure'
+                   then coalesce(a.account_no, m.member_no) || ' · ' || at.name
+                   else 'All' end as "Accounts",
+              coalesce(t.payee_name, '') as "Paid to",
+              t.amount::text as "Amount",
+              t.takaful_benefit::text as "Takaful benefit",
+              t.status as "Status",
+              to_char(t.submitted_at, 'DD Mon YYYY') as "Submitted",
+              to_char(d.occurred_at, 'DD Mon YYYY') as "Decided",
+              to_char(t.posted_at, 'DD Mon YYYY') as "Paid out",
+              case when t.submitted_at is null then null
+                   else extract(day from
+                     coalesce(t.posted_at, d.occurred_at, now()) - t.submitted_at)::int
+                   end as "Days",
+              coalesce(rn.receipt_no, '') as "Receipt"
+         from transaction t
+         join account a on a.id = t.account_id
+         join account_type at on at.id = a.account_type_id
+         left join member m on m.id = t.member_id
+         left join application_party p
+           on p.application_id = m.application_id
+          and p.subject = 'applicant' and p.ordinal = 1
+         left join receipt_number rn on rn.id = t.receipt_number_id
+         left join lateral (
+           select tt.occurred_at from transaction_transition tt
+            where tt.transaction_id = t.id
+              and tt.to_status in ('approved', 'rejected')
+            order by tt.id desc limit 1
+         ) d on true
+        where t.kind in ('closure', 'resignation', 'demise')
+          and t.status <> 'draft'
+          and ($1::date is null or t.submitted_at >= $1::date)
+          and ($2::date is null or t.submitted_at < $2::date + 1)
+          and ($3::text is null or t.kind = $3::text)
+        order by t.submitted_at desc nulls last, t.serial_no desc`,
+      [
+        dateOrNull(filters.from),
+        dateOrNull(filters.to),
+        textOrNull(filters.kind),
+      ]
+    );
+
+    const byKind = new Map<string, { n: number; paid: number }>();
+    for (const row of result.rows) {
+      const kind = String(row.Kind);
+      const entry = byKind.get(kind) ?? { n: 0, paid: 0 };
+      entry.n += 1;
+      if (row.Status === 'posted') entry.paid += Number(row.Amount ?? 0);
+      byKind.set(kind, entry);
+    }
+    const parts = [...byKind.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(
+        ([kind, e]) =>
+          `${e.n} ${kind.toLowerCase()}(s), Rs ${e.paid.toFixed(2)} paid out`
+      )
+      .join('; ');
+
+    return {
+      columns: [
+        { key: 'Reference', label: 'Reference' },
+        { key: 'Kind', label: 'Kind' },
+        { key: 'Member no', label: 'Member no' },
+        { key: 'Member', label: 'Member' },
+        { key: 'Accounts', label: 'Accounts' },
+        { key: 'Paid to', label: 'Paid to' },
+        { key: 'Amount', label: 'Amount', numeric: true },
+        { key: 'Takaful benefit', label: 'Takaful benefit', numeric: true },
+        { key: 'Status', label: 'Status' },
+        { key: 'Submitted', label: 'Submitted' },
+        { key: 'Decided', label: 'Decided' },
+        { key: 'Paid out', label: 'Paid out' },
+        { key: 'Days', label: 'Days', numeric: true },
+        { key: 'Receipt', label: 'Receipt' },
+      ],
+      rows: result.rows,
+      summary: `${result.rows.length} exit(s)` + (parts ? ` — ${parts}.` : '.'),
+    };
+  },
+};
+
 // ---------------------------------------------------------------------------
 // S-907 · Operations and audit
 // ---------------------------------------------------------------------------
@@ -627,6 +742,7 @@ export const REPORTS: ReportDefinition[] = [
   documentsOutstanding,
   payments,
   feeComponents,
+  exits,
   receipts,
   accessAndActions,
   jobs,

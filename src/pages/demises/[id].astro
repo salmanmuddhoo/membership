@@ -65,6 +65,8 @@ if (Astro.request.method === 'POST') {
             nic: text('nic'),
             address: text('address'),
             relation: text('relation'),
+            email: text('email'),
+            mobile: text('mobile'),
           },
           method: text('method'),
           methodReference: text('methodReference'),
@@ -235,6 +237,28 @@ const CARD =
               type="text"
               name="relation"
               value={claim.claimantKind === 'other' ? claimant.relation : ''}
+              class={INPUT}
+            />
+          </label>
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            Email
+            <input
+              type="email"
+              name="email"
+              value={
+                claim.claimantKind === 'other' ? (claimant.email ?? '') : ''
+              }
+              class={INPUT}
+            />
+          </label>
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            Mobile
+            <input
+              type="tel"
+              name="mobile"
+              value={
+                claim.claimantKind === 'other' ? (claimant.mobile ?? '') : ''
+              }
               class={INPUT}
             />
           </label>

@@ -33,6 +33,7 @@ import {
   markReceiptIssued,
 } from '../payments/receipts';
 import { LedgerError } from './ledger';
+import { notifyExit } from './exit-notifications';
 import { notifyReceiptIssued } from './receipt-notifications';
 import { loadTransaction, type TransactionSummary } from './review';
 import {
@@ -514,7 +515,10 @@ export async function submitClosure(
       }
     });
     if (receipt) await notifyReceiptIssued(closure.id);
-    return (await loadTransaction(closure.id))!;
+    const submitted = (await loadTransaction(closure.id))!;
+    // Told it arrived — or, routed nowhere, that it was paid out (S-1705).
+    await notifyExit(submitted, receipt ? 'approved' : 'submitted');
+    return submitted;
   } catch (err) {
     if (receipt) {
       await abandonReceiptNumber(

@@ -531,6 +531,14 @@ the exits report (S-1806) — in the same statement. The `transaction.posted`
 event carries `account_closed`, `membership_ended`, `takaful_benefit` and
 `claimant`. The retention anchor is the same as a resignation's.
 
+Every stage of an exit is told to its member or claimant (S-1705,
+`src/lib/ledger/exit-notifications.ts`, `docs/notifications.md`), and the
+**Exits** report (S-1706, `src/lib/reports/definitions.ts`) lists closures,
+resignations and claims by the period they were submitted in: who, what
+was paid out and to whom, the benefit, the status, and the days from
+submission to payout — or to the decision, or to today, for one not paid
+out.
+
 ## History, across accounts
 
 `listTransactions()` in `src/lib/ledger/history.ts` (S-1506) is one query

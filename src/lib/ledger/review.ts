@@ -24,6 +24,7 @@ import {
 } from '../payments/receipts';
 import { LedgerError, postTransaction } from './ledger';
 import { notifyReceiptIssued } from './receipt-notifications';
+import { notifyExit } from './exit-notifications';
 import type {
   PaymentMethod,
   TransactionKind,
@@ -118,6 +119,11 @@ export interface Claimant {
   nic: string;
   address: string;
   relation: string;
+  // Where the claimant is written to (S-1705): the nominee's as captured
+  // on the application, or as the officer recorded them. Absent means no
+  // address of that kind.
+  email?: string | null;
+  mobile?: string | null;
 }
 
 // Exported for the listings (history.ts) that read the same shape.
@@ -667,6 +673,14 @@ export async function reviewTransaction(
       client
     );
   });
+  // An exit's stages are told to its member or claimant (S-1705): forwarded
+  // to a further step, or refused with the reason. Approval on its own is
+  // not: the payout is what they hear about, at posting.
+  if (status === 'rejected') {
+    await notifyExit(transaction, 'rejected', { comment });
+  } else if (status === 'under_review') {
+    await notifyExit(transaction, 'under_review', { comment });
+  }
   return { status };
 }
 
@@ -852,7 +866,9 @@ export async function postApprovedTransaction(
     throw err;
   }
   await notifyReceiptIssued(id);
-  return (await loadTransaction(id))!;
+  const posted = (await loadTransaction(id))!;
+  await notifyExit(posted, 'approved');
+  return posted;
 }
 
 export interface TransactionTransition {

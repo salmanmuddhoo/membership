@@ -40,6 +40,7 @@ import {
   type ClosureChecklistItem,
 } from './closures';
 import { LedgerError } from './ledger';
+import { notifyExit } from './exit-notifications';
 import { notifyReceiptIssued } from './receipt-notifications';
 import {
   loadTransaction,
@@ -75,6 +76,9 @@ export interface ClaimantInput {
   nic?: string;
   address?: string;
   relation?: string;
+  // Where they are written to (S-1705); either may be left out.
+  email?: string;
+  mobile?: string;
 }
 
 export interface DemiseInput {
@@ -194,6 +198,8 @@ export async function nomineeFor(memberId: string): Promise<Claimant | null> {
     nic: (v.nic ?? '').trim(),
     address: (v.address ?? '').trim(),
     relation: 'Nominee',
+    email: (v.email ?? '').trim() || null,
+    mobile: (v.mobile ?? '').trim() || null,
   };
 }
 
@@ -218,6 +224,8 @@ async function resolvedClaimant(
     nic: (input.nic ?? '').trim(),
     address: (input.address ?? '').trim(),
     relation: (input.relation ?? '').trim(),
+    email: (input.email ?? '').trim() || null,
+    mobile: (input.mobile ?? '').trim() || null,
   };
   const missing = (['name', 'nic', 'address', 'relation'] as const).filter(
     field => claimant[field] === ''
@@ -558,7 +566,10 @@ export async function submitDemise(
       }
     });
     if (receipt) await notifyReceiptIssued(claim.id);
-    return (await loadTransaction(claim.id))!;
+    const submitted = (await loadTransaction(claim.id))!;
+    // Told it arrived — or, routed nowhere, that it was paid out (S-1705).
+    await notifyExit(submitted, receipt ? 'approved' : 'submitted');
+    return submitted;
   } catch (err) {
     if (receipt) {
       await abandonReceiptNumber(
