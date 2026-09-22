@@ -891,6 +891,8 @@ export interface MemberSummary {
   // they hold instead — there is no membership type to name.
   membershipTypeName: string;
   status: string;
+  // When the status last moved (S-1701); null while it never has.
+  statusChangedAt: Date | null;
   name: string;
   joinedAt: Date;
   applicationReference: string | null;
@@ -957,6 +959,7 @@ export async function listMembers(
     identifier: string;
     type_label: string;
     status: string;
+    status_changed_at: Date | null;
     name: string;
     joined_at: Date;
     application_reference: string | null;
@@ -968,7 +971,7 @@ export async function listMembers(
   }>(
     `with rows as (
        select m.id, 'member'::text as kind, m.member_no as identifier,
-              t.name as type_label, m.status,
+              t.name as type_label, m.status, m.status_changed_at,
               ${NAME_SQL} as name, m.joined_at,
               a.reference as application_reference,
               coalesce(
@@ -1027,7 +1030,7 @@ export async function listMembers(
                   where acc.customer_id = c.id),
                 ''
               ) as type_label,
-              c.status,
+              c.status, null::timestamptz as status_changed_at,
               ${NAME_SQL} as name, c.joined_at,
               capp.reference as application_reference,
               coalesce(
@@ -1103,6 +1106,7 @@ export async function listMembers(
       memberNo: r.identifier,
       membershipTypeName: r.type_label,
       status: r.status,
+      statusChangedAt: r.status_changed_at,
       name: r.name || '(unnamed)',
       joinedAt: r.joined_at,
       applicationReference: r.application_reference,
@@ -1125,6 +1129,7 @@ export async function loadMember(id: string): Promise<MemberDetail | null> {
     membership_type_code: string;
     membership_type_id: string;
     status: string;
+    status_changed_at: Date | null;
     name: string;
     joined_at: Date;
     application_reference: string | null;
@@ -1134,6 +1139,7 @@ export async function loadMember(id: string): Promise<MemberDetail | null> {
   }>(
     `select m.id, m.member_no, t.name as membership_type_name,
             t.code as membership_type_code, m.membership_type_id, m.status,
+            m.status_changed_at,
             ${NAME_SQL} as name, m.joined_at,
             a.reference as application_reference,
             m.application_id,
@@ -1185,6 +1191,7 @@ export async function loadMember(id: string): Promise<MemberDetail | null> {
     membershipTypeCode: row.membership_type_code,
     membershipTypeId: row.membership_type_id,
     status: row.status,
+    statusChangedAt: row.status_changed_at,
     name: row.name || '(unnamed)',
     joinedAt: row.joined_at,
     applicationReference: row.application_reference,

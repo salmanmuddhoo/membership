@@ -210,6 +210,303 @@
         }
       }
     },
+    "/api/v1/accounts/{id}/closure": {
+      "post": {
+        "summary": "Start a closure request on an account",
+        "description": "A draft closure request (a transaction of kind \"closure\") naming the reason and how the balance goes back to the holder. Refused for a membership account — Shares and the MSA go together, and taking them away is a resignation — for an account that is not active, for a holder who is not active, and while another request is already on its way for the account. The amount is the balance as it stands; it is read again at submission and at the payout. The signed request is filed against the transaction and the request submitted from the closure page.",
+        "tags": [
+          "Transactions"
+        ],
+        "operationId": "postAccountsIdClosure",
+        "x-required-permission": "transaction.capture",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "closure"
+                      ],
+                      "properties": {
+                        "closure": {
+                          "type": "object",
+                          "required": [
+                            "id",
+                            "reference",
+                            "kind",
+                            "status",
+                            "accountId",
+                            "accountNo",
+                            "accountTypeName",
+                            "amount",
+                            "currency",
+                            "method",
+                            "methodName",
+                            "createdAt"
+                          ],
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "reference": {
+                              "type": "string",
+                              "description": "TX-000001-style."
+                            },
+                            "kind": {
+                              "type": "string"
+                            },
+                            "status": {
+                              "type": "string"
+                            },
+                            "accountId": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "accountNo": {
+                              "type": "string"
+                            },
+                            "accountTypeId": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "accountTypeName": {
+                              "type": "string"
+                            },
+                            "holderId": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "holderKind": {
+                              "type": "string",
+                              "enum": [
+                                "member",
+                                "customer"
+                              ]
+                            },
+                            "holderName": {
+                              "type": "string"
+                            },
+                            "memberNo": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "amount": {
+                              "type": "string"
+                            },
+                            "currency": {
+                              "type": "string"
+                            },
+                            "method": {
+                              "type": "string"
+                            },
+                            "methodName": {
+                              "type": "string"
+                            },
+                            "methodReference": {
+                              "type": "string"
+                            },
+                            "reason": {
+                              "type": "string"
+                            },
+                            "receiptNo": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "balanceAfter": {
+                              "type": "string",
+                              "nullable": true,
+                              "description": "What the account stood at once this posted."
+                            },
+                            "capturedById": {
+                              "type": "string",
+                              "format": "uuid"
+                            },
+                            "capturedByName": {
+                              "type": "string"
+                            },
+                            "createdAt": {
+                              "type": "string",
+                              "format": "date-time"
+                            },
+                            "submittedAt": {
+                              "type": "string",
+                              "format": "date-time",
+                              "nullable": true
+                            },
+                            "postedAt": {
+                              "type": "string",
+                              "format": "date-time",
+                              "nullable": true
+                            },
+                            "workflowDefinitionId": {
+                              "type": "string",
+                              "format": "uuid",
+                              "nullable": true
+                            },
+                            "workflowCode": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "workflowName": {
+                              "type": "string",
+                              "nullable": true,
+                              "description": "The approval chain it was routed to, if any."
+                            },
+                            "currentStepCode": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "currentStepName": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "currentStepRole": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "approvalRuleId": {
+                              "type": "string",
+                              "format": "uuid",
+                              "nullable": true
+                            },
+                            "sourceOfFundFormConfirmed": {
+                              "type": "boolean"
+                            },
+                            "transferId": {
+                              "type": "string",
+                              "format": "uuid",
+                              "nullable": true
+                            },
+                            "transferReference": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "legDirection": {
+                              "type": "string",
+                              "enum": [
+                                "credit",
+                                "debit"
+                              ],
+                              "nullable": true
+                            },
+                            "payeeName": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "counterpartAccountId": {
+                              "type": "string",
+                              "format": "uuid",
+                              "nullable": true
+                            },
+                            "counterpartAccountNo": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "counterpartAccountTypeName": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "counterpartHolderId": {
+                              "type": "string",
+                              "format": "uuid",
+                              "nullable": true
+                            },
+                            "counterpartHolderName": {
+                              "type": "string",
+                              "nullable": true
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "reason",
+                  "method"
+                ],
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "description": "Why the account is closing."
+                  },
+                  "method": {
+                    "type": "string",
+                    "description": "How the balance is paid out: a payment_method code from /api/v1/config/reference."
+                  },
+                  "methodReference": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/accounts/{id}/history": {
       "get": {
         "summary": "Read one account's history",
@@ -2354,7 +2651,7 @@
     "/api/v1/documents/begin-upload": {
       "post": {
         "summary": "Start filing a document",
-        "description": "Records the intent to file a document and returns a short-lived, single-file upload URL. The caller never receives a credential, and never says where the file goes — the folder comes from the application or member it is filed against. Nothing appears on the checklist until commit-upload.",
+        "description": "Records the intent to file a document and returns a short-lived, single-file upload URL. The caller never receives a credential, and never says where the file goes — the folder comes from the application, member or transaction it is filed against. Nothing appears on the checklist until commit-upload.",
         "tags": [
           "Documents"
         ],
@@ -2472,6 +2769,11 @@
                   "memberId": {
                     "type": "string",
                     "format": "uuid"
+                  },
+                  "transactionId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "A request’s own paper, such as the signed closure form: filed in the holder’s folder and named by the transaction reference."
                   },
                   "documentTypeId": {
                     "type": "string",

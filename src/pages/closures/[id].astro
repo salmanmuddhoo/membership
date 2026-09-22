@@ -1,0 +1,356 @@
+---
+// A closure request while it is the officer's (S-1702): the details, the
+// member's signature on the request, what is filed, and the submission
+// that sends it to its chain. Once submitted it is reviewed at
+// /transactions/<id> like any transaction, and comes back here only if a
+// reviewer returns it.
+import ChainTimeline from '@components/ChainTimeline.astro';
+import DocumentViewer from '@components/DocumentViewer.astro';
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import { offeredPaymentMethods } from '@lib/config/reference';
+import {
+  cancelClosure,
+  checklistComplete,
+  closureChecklist,
+  ClosureError,
+  isEditable,
+  submitClosure,
+  updateClosure,
+} from '@lib/ledger/closures';
+import { loadTransaction, transitionsFor } from '@lib/ledger/review';
+import { formatMoney } from '@lib/payments/money';
+import { chainTimeline } from '@lib/workflow/timeline';
+
+const principal = Astro.locals.principal!;
+const { id } = Astro.params;
+let closure = id ? await loadTransaction(id) : null;
+if (!closure || closure.kind !== 'closure') {
+  return new Response('Not found', { status: 404 });
+}
+if (!isEditable(closure.status)) {
+  return Astro.redirect(`/transactions/${closure.id}`);
+}
+// A request is its officer's to build; anyone else reads it as a
+// transaction.
+if (closure.capturedById !== principal.userId) {
+  return Astro.redirect(`/transactions/${closure.id}`);
+}
+
+const STEPS = ['details', 'signature', 'documents', 'submit'] as const;
+type Step = (typeof STEPS)[number];
+const base = `/closures/${closure.id}`;
+const stepHrefs: Record<string, string> = {
+  details: `${base}?step=details`,
+  signature: `${base}?step=signature`,
+  documents: `${base}?step=documents`,
+  capture: `${base}?step=submit`,
+};
+
+let error: string | null = null;
+let notice: string | null = null;
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const text = (name: string) => String(form.get(name) ?? '');
+  const intent = text('intent');
+  try {
+    if (intent === 'details') {
+      closure = await updateClosure(
+        closure.id,
+        {
+          reason: text('reason'),
+          method: text('method'),
+          methodReference: text('methodReference'),
+        },
+        principal
+      );
+      return Astro.redirect(`${base}?step=signature`);
+    } else if (intent === 'submit') {
+      const submitted = await submitClosure(closure.id, principal);
+      return Astro.redirect(`/transactions/${submitted.id}`);
+    } else if (intent === 'cancel') {
+      await cancelClosure(closure.id, principal);
+      return Astro.redirect(`/members/${closure.holderId}`);
+    }
+  } catch (err) {
+    if (err instanceof ClosureError) {
+      error = err.message;
+    } else {
+      console.error('[closures]', err);
+      error = 'Something went wrong. Please try again.';
+    }
+  }
+}
+
+const requested = Astro.url.searchParams.get('step') ?? 'details';
+const step: Step = (STEPS as readonly string[]).includes(requested)
+  ? (requested as Step)
+  : 'details';
+
+const [checklist, timeline, trail, paymentMethods] = await Promise.all([
+  closureChecklist(closure.id),
+  chainTimeline('transaction', closure.id),
+  transitionsFor(closure.id),
+  offeredPaymentMethods(),
+]);
+const complete = checklistComplete(checklist);
+const request = checklist[0] ?? null;
+const returnComment =
+  closure.status === 'returned'
+    ? [...trail].reverse().find(t => t.toStatus === 'returned')?.comment
+    : null;
+const dateFormat = new Intl.DateTimeFormat('en-GB', {
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+});
+
+const INPUT =
+  'mt-1 block w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100';
+const BUTTON =
+  'bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50';
+const LINK =
+  'rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800';
+const DANGER =
+  'rounded-lg border border-red-300 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950';
+const CARD =
+  'space-y-4 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950';
+---
+
+<DashboardLayout
+  title={`${closure.reference} · Al Barakah MCSL`}
+  heading={`Account closure ${closure.reference}`}
+>
+  <div class="mx-auto max-w-4xl space-y-6">
+    <ChainTimeline
+      steps={timeline ?? []}
+      hrefs={stepHrefs}
+      label="Closure progress"
+    />
+
+    <div class="-mx-4 flex flex-wrap items-center justify-between gap-2 border-t border-neutral-200/80 bg-neutral-100/95 px-4 py-3 text-sm sm:mx-0 sm:rounded-b-2xl sm:px-3 sm:py-1.5 dark:border-neutral-800/80 dark:bg-neutral-950/95">
+      <a
+        href={`/members/${closure.holderId}`}
+        class="text-neutral-500 underline dark:text-neutral-400"
+      >
+        ← {closure.holderName || closure.holderKind}
+        {closure.memberNo && ` · ${closure.memberNo}`}
+      </a>
+      <span class="rounded bg-neutral-200 px-2 py-0.5 text-xs font-medium text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
+        {closure.accountNo} · {closure.accountTypeName} ·{' '}
+        {formatMoney(closure.amount)}
+      </span>
+    </div>
+
+    {error && (
+      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+        {error}
+      </div>
+    )}
+    {notice && (
+      <div class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-lg border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
+        {notice}
+      </div>
+    )}
+    {returnComment && (
+      <div class="rounded-lg border border-amber-300 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200">
+        Returned: {returnComment}
+      </div>
+    )}
+
+    {step === 'details' && (
+      <form method="post" class={CARD}>
+        <h2 class="text-sm font-semibold text-neutral-700 uppercase dark:text-neutral-200">
+          Details
+        </h2>
+        <dl class="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
+          <dt class="text-neutral-500 dark:text-neutral-400">Account</dt>
+          <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+            {closure.accountNo} · {closure.accountTypeName}
+          </dd>
+          <dt class="text-neutral-500 dark:text-neutral-400">Balance</dt>
+          <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+            {formatMoney(closure.amount)}
+          </dd>
+        </dl>
+        <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+          Reason
+          <textarea
+            name="reason"
+            rows="3"
+            required
+            maxlength="500"
+            class={INPUT}
+          >{closure.reason}</textarea>
+        </label>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            Balance paid out by
+            <select name="method" class={INPUT}>
+              {paymentMethods.map(method => (
+                <option
+                  value={method.code}
+                  selected={method.code === closure!.method}
+                >
+                  {method.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            Reference (cheque number, transfer reference)
+            <input
+              type="text"
+              name="methodReference"
+              value={closure.methodReference}
+              class={INPUT}
+            />
+          </label>
+        </div>
+        <input type="hidden" name="intent" value="details" />
+        <div class="flex flex-wrap gap-2 pt-2">
+          <button type="submit" class={BUTTON}>
+            Save and continue
+          </button>
+        </div>
+      </form>
+    )}
+
+    {step === 'signature' && (
+      <section class={CARD}>
+        <h2 class="text-sm font-semibold text-neutral-700 uppercase dark:text-neutral-200">
+          Signature
+        </h2>
+        {request?.filed ? (
+          <p class="text-sm text-neutral-700 dark:text-neutral-200">
+            Signed request on file: {request.filed.fileName}, filed{' '}
+            {dateFormat.format(request.filed.uploadedAt)} by{' '}
+            {request.filed.uploadedByName}. Signing again replaces it.
+          </p>
+        ) : (
+          <p class="text-sm text-neutral-700 dark:text-neutral-200">
+            The member signs the request on the next screen, and it is filed
+            here.
+          </p>
+        )}
+        <div class="flex flex-wrap gap-2">
+          <a href={`${base}/form`} class={BUTTON}>
+            {request?.filed ? 'Sign again' : 'Open the request to sign'}
+          </a>
+          <a href={`${base}?step=documents`} class={LINK}>
+            Next
+          </a>
+        </div>
+      </section>
+    )}
+
+    {step === 'documents' && (
+      <section class={CARD}>
+        <h2 class="text-sm font-semibold text-neutral-700 uppercase dark:text-neutral-200">
+          Documents
+        </h2>
+        {checklist.length === 0 ? (
+          <p class="text-sm text-red-700 dark:text-red-300">
+            The closure request document type is not configured. Ask an
+            administrator.
+          </p>
+        ) : (
+          <ul class="space-y-2">
+            {checklist.map(item => (
+              <li class="flex items-center justify-between gap-3 rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm dark:border-neutral-800 dark:bg-neutral-900">
+                <span>
+                  <span class="font-medium text-neutral-800 dark:text-neutral-100">
+                    {item.documentName}
+                  </span>
+                  <span class="block text-xs text-neutral-500 dark:text-neutral-400">
+                    {item.filed
+                      ? `${item.filed.fileName} · ${dateFormat.format(item.filed.uploadedAt)}`
+                      : 'Missing'}
+                  </span>
+                </span>
+                {item.filed ? (
+                  <button
+                    type="button"
+                    data-view-document
+                    data-document-id={item.filed.documentId}
+                    class="shrink-0 font-medium text-neutral-700 underline hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-neutral-100"
+                  >
+                    View
+                  </button>
+                ) : (
+                  <a href={`${base}?step=signature`} class="shrink-0 underline">
+                    Sign
+                  </a>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+        <div class="flex flex-wrap gap-2">
+          <a href={`${base}?step=submit`} class={BUTTON}>
+            Next
+          </a>
+        </div>
+      </section>
+    )}
+
+    {step === 'submit' && (
+      <form method="post" class={CARD}>
+        <h2 class="text-sm font-semibold text-neutral-700 uppercase dark:text-neutral-200">
+          Submit
+        </h2>
+        <dl class="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
+          <dt class="text-neutral-500 dark:text-neutral-400">Account</dt>
+          <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+            {closure.accountNo} · {closure.accountTypeName}
+          </dd>
+          <dt class="text-neutral-500 dark:text-neutral-400">Balance</dt>
+          <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+            {formatMoney(closure.amount)}
+          </dd>
+          <dt class="text-neutral-500 dark:text-neutral-400">Reason</dt>
+          <dd class="text-neutral-800 dark:text-neutral-100">
+            {closure.reason}
+          </dd>
+          <dt class="text-neutral-500 dark:text-neutral-400">Paid out by</dt>
+          <dd class="text-neutral-800 dark:text-neutral-100">
+            {closure.methodName}
+            {closure.methodReference && ` · ${closure.methodReference}`}
+          </dd>
+          <dt class="text-neutral-500 dark:text-neutral-400">Signed request</dt>
+          <dd
+            class:list={[
+              complete
+                ? 'text-neutral-800 dark:text-neutral-100'
+                : 'text-red-700 dark:text-red-300',
+            ]}
+          >
+            {complete ? 'On file' : 'Missing'}
+          </dd>
+        </dl>
+        <p class="text-sm text-neutral-600 dark:text-neutral-300">
+          Once submitted, nothing else moves on this account until the closure
+          is decided.
+        </p>
+        <input type="hidden" name="intent" value="submit" />
+        <div class="flex flex-wrap gap-2 pt-2">
+          <button type="submit" class={BUTTON} disabled={!complete}>
+            {closure.status === 'returned' ? 'Resubmit' : 'Submit'}
+          </button>
+          <button
+            type="submit"
+            class={DANGER}
+            name="intent"
+            value="cancel"
+            formnovalidate
+          >
+            Withdraw the request
+          </button>
+        </div>
+      </form>
+    )}
+  </div>
+  <DocumentViewer />
+</DashboardLayout>

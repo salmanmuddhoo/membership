@@ -223,6 +223,10 @@ export async function ensureFolderPath(
 interface OwnerRow {
   application_id: string | null;
   member_id: string | null;
+  // S-1702: a document about one transaction — the signed closure request
+  // — filed in its holder's folder and named by the transaction reference.
+  transaction_id: string | null;
+  transaction_status: string | null;
   application_status: string | null;
   // The application whose checklist was frozen at capture (officer
   // feedback: a later change to document_checklist_item must not reach an
@@ -245,10 +249,57 @@ interface OwnerRow {
   reference: string;
 }
 
+// A transaction's documents are the officer's to file while the request is
+// theirs — a draft, or one a reviewer returned — exactly as an
+// application's are while it is editable (isEditableStatus).
+function isEditableTransactionStatus(status: string): boolean {
+  return status === 'draft' || status === 'returned';
+}
+
 async function resolveOwner(
   applicationId: string | null,
-  memberId: string | null
+  memberId: string | null,
+  transactionId: string | null = null
 ): Promise<OwnerRow> {
+  if (transactionId) {
+    const result = await query<{
+      reference: string;
+      status: string;
+      member_id: string | null;
+      customer_application_id: string | null;
+    }>(
+      `select t.reference, t.status, t.member_id,
+              c.application_id as customer_application_id
+         from transaction t
+         left join customer c on c.id = t.customer_id
+        where t.id = $1`,
+      [transactionId]
+    );
+    if (result.rowCount === 0) {
+      throw new DocumentError(
+        'That transaction no longer exists.',
+        'not_found'
+      );
+    }
+    const row = result.rows[0];
+    // Filed where the holder's other papers are: a member's own folder, or
+    // for a customer the application folder they were captured under.
+    const holder = row.member_id
+      ? await resolveOwner(null, row.member_id)
+      : await resolveOwner(row.customer_application_id, null);
+    return {
+      application_id: null,
+      member_id: null,
+      transaction_id: transactionId,
+      transaction_status: row.status,
+      application_status: null,
+      checklist_application_id: null,
+      membership_type_code: null,
+      folder_path: holder.folder_path,
+      reference: row.reference,
+    };
+  }
+
   if (applicationId) {
     // Officer feedback: a new application for someone who already had one
     // (an existing member opening another account, S-613; a non-member
@@ -289,6 +340,8 @@ async function resolveOwner(
     return {
       application_id: applicationId,
       member_id: null,
+      transaction_id: null,
+      transaction_status: null,
       application_status: row.status,
       checklist_application_id: applicationId,
       membership_type_code: null,
@@ -331,6 +384,8 @@ async function resolveOwner(
   return {
     application_id: null,
     member_id: memberId,
+    transaction_id: null,
+    transaction_status: null,
     application_status: null,
     checklist_application_id: result.rows[0].application_id,
     membership_type_code: result.rows[0].membership_type_code,
@@ -581,6 +636,60 @@ export async function filedDocumentFor(
   return row ? { documentId: row.document_id, fileName: row.file_name } : null;
 }
 
+export interface TransactionDocument {
+  documentId: string;
+  documentTypeId: string;
+  documentCode: string;
+  documentName: string;
+  state: ChecklistState;
+  fileName: string;
+  uploadedAt: Date;
+  uploadedByName: string;
+}
+
+/**
+ * What is filed against one transaction (S-1702): the signed closure
+ * request today, a resignation's or a claim's papers later. Only live,
+ * committed versions — an upload that never arrived is not a document.
+ */
+export async function documentsForTransaction(
+  transactionId: string
+): Promise<TransactionDocument[]> {
+  const result = await query<{
+    document_id: string;
+    document_type_id: string;
+    document_code: string;
+    document_name: string;
+    state: ChecklistState;
+    file_name: string;
+    committed_at: Date;
+    uploaded_by_name: string;
+  }>(
+    `select d.id as document_id, d.document_type_id, t.code as document_code,
+            t.name as document_name, d.state, v.file_name, v.committed_at,
+            u.display_name as uploaded_by_name
+       from document d
+       join document_type t on t.id = d.document_type_id
+       join document_version v
+         on v.document_id = d.id
+        and v.state = 'committed' and v.superseded_at is null
+       join app_user u on u.id = v.uploaded_by
+      where d.transaction_id = $1
+      order by v.committed_at`,
+    [transactionId]
+  );
+  return result.rows.map(r => ({
+    documentId: r.document_id,
+    documentTypeId: r.document_type_id,
+    documentCode: r.document_code,
+    documentName: r.document_name,
+    state: r.state,
+    fileName: r.file_name,
+    uploadedAt: r.committed_at,
+    uploadedByName: r.uploaded_by_name,
+  }));
+}
+
 /** Whether every required item is Verified — and nothing else may assert it. */
 export function isDocumentComplete(entries: ChecklistEntry[]): boolean {
   return entries
@@ -752,6 +861,7 @@ export async function beginUpload(
   input: {
     applicationId?: string;
     memberId?: string;
+    transactionId?: string;
     documentTypeId: string;
     subject: FieldSubject;
     fileName: string;
@@ -764,8 +874,20 @@ export async function beginUpload(
 ): Promise<BeginUploadResult> {
   const owner = await resolveOwner(
     input.applicationId ?? null,
-    input.memberId ?? null
+    input.memberId ?? null,
+    input.transactionId ?? null
   );
+
+  if (
+    owner.transaction_status &&
+    !isEditableTransactionStatus(owner.transaction_status)
+  ) {
+    throw new DocumentError(
+      'This request has been submitted. Its documents can only be ' +
+        'replaced if it is returned for correction.',
+      'conflict'
+    );
+  }
 
   // Officer feedback: once an application has left the originating officer's
   // hands (status 'new' and beyond), nothing about it — the signature
@@ -825,12 +947,14 @@ export async function beginUpload(
         `select id from document
           where document_type_id = $1 and subject = $2
             and (($3::uuid is not null and application_id = $3::uuid)
-              or ($4::uuid is not null and member_id = $4::uuid))`,
+              or ($4::uuid is not null and member_id = $4::uuid)
+              or ($5::uuid is not null and transaction_id = $5::uuid))`,
         [
           input.documentTypeId,
           input.subject,
           owner.application_id,
           owner.member_id,
+          owner.transaction_id,
         ]
       );
 
@@ -845,13 +969,15 @@ export async function beginUpload(
       } else {
         const created = await client.query<{ id: string }>(
           `insert into document
-             (document_type_id, subject, application_id, member_id, expires_at)
-           values ($1, $2, $3, $4, $5) returning id`,
+             (document_type_id, subject, application_id, member_id,
+              transaction_id, expires_at)
+           values ($1, $2, $3, $4, $5, $6) returning id`,
           [
             input.documentTypeId,
             input.subject,
             owner.application_id,
             owner.member_id,
+            owner.transaction_id,
             input.expiresAt ?? null,
           ]
         );
@@ -950,13 +1076,16 @@ export async function commitUpload(
     intended_expires_at: Date | null;
     uploaded_by: string;
     application_status: string | null;
+    transaction_status: string | null;
   }>(
     `select v.id, v.document_id, v.state, v.sharepoint_path, v.size_bytes,
             v.file_name, v.intended_expires_at, v.uploaded_by,
-            a.status as application_status
+            a.status as application_status,
+            t.status as transaction_status
        from document_version v
        join document d on d.id = v.document_id
        left join membership_application a on a.id = d.application_id
+       left join transaction t on t.id = d.transaction_id
       where v.id = $1`,
     [versionId]
   );
@@ -973,6 +1102,16 @@ export async function commitUpload(
   if (row.application_status && !isEditableStatus(row.application_status)) {
     throw new DocumentError(
       'This application has been submitted. Its documents can only be ' +
+        'replaced if it is returned for correction.',
+      'conflict'
+    );
+  }
+  if (
+    row.transaction_status &&
+    !isEditableTransactionStatus(row.transaction_status)
+  ) {
+    throw new DocumentError(
+      'This request has been submitted. Its documents can only be ' +
         'replaced if it is returned for correction.',
       'conflict'
     );
@@ -1372,13 +1511,16 @@ export async function removeFiledDocument(
         sharepoint_item_id: string | null;
         document_state: string;
         application_status: string | null;
+        transaction_status: string | null;
       }>(
         `select v.id as version_id, v.file_name, v.sharepoint_path,
               v.sharepoint_item_id,
-              d.state as document_state, a.status as application_status
+              d.state as document_state, a.status as application_status,
+              t.status as transaction_status
          from document_version v
          join document d on d.id = v.document_id
          left join membership_application a on a.id = d.application_id
+         left join transaction t on t.id = d.transaction_id
         where v.document_id = $1 and v.state = 'committed'
           and v.superseded_at is null
         for update of v`,
@@ -1397,6 +1539,7 @@ export async function removeFiledDocument(
         sharepoint_item_id: itemId,
         document_state,
         application_status: applicationStatus,
+        transaction_status: transactionStatus,
       } = row.rows[0];
 
       // Officer feedback: once an application has left the originating
@@ -1410,6 +1553,16 @@ export async function removeFiledDocument(
       if (applicationStatus && !isEditableStatus(applicationStatus)) {
         throw new DocumentError(
           'This application has been submitted. Its documents can only be ' +
+            'removed if it is returned for correction.',
+          'refused'
+        );
+      }
+      if (
+        transactionStatus &&
+        !isEditableTransactionStatus(transactionStatus)
+      ) {
+        throw new DocumentError(
+          'This request has been submitted. Its documents can only be ' +
             'removed if it is returned for correction.',
           'refused'
         );

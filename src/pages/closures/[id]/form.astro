@@ -1,0 +1,426 @@
+---
+// The account closure request the member signs (S-1702): a sheet, like
+// the Cash Deposit Form, read on screen, signed on the pad, rasterised and
+// filed against the request. What is filed is this sheet as the member saw
+// it, not a second rendering of it.
+import BaseLayout from '@layouts/BaseLayout.astro';
+import { listDocumentTypes } from '@lib/config/reference';
+import {
+  closureChecklist,
+  isEditable,
+  REQUEST_DOCUMENT_CODE,
+} from '@lib/ledger/closures';
+import { loadTransaction } from '@lib/ledger/review';
+import { loadCustomer, loadMember } from '@lib/members/create';
+import { formatMoney } from '@lib/payments/money';
+
+const principal = Astro.locals.principal!;
+const { id } = Astro.params;
+const closure = id ? await loadTransaction(id) : null;
+if (
+  !closure ||
+  closure.kind !== 'closure' ||
+  !isEditable(closure.status) ||
+  closure.capturedById !== principal.userId
+) {
+  return new Response('Not found', { status: 404 });
+}
+
+const holder =
+  closure.holderKind === 'member'
+    ? await loadMember(closure.holderId)
+    : await loadCustomer(closure.holderId);
+const nic = (holder?.applicantValues?.nic ?? '').trim();
+const documentType = (await listDocumentTypes()).find(
+  t => t.code === REQUEST_DOCUMENT_CODE
+);
+const alreadyFiled = (await closureChecklist(closure.id))[0]?.filed ?? null;
+const back = `/closures/${closure.id}?step=signature`;
+const next = `/closures/${closure.id}?step=documents`;
+const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
+---
+
+<BaseLayout title={`${closure.reference} · Account closure request`}>
+  <div
+    class="form-page"
+    data-transaction-id={closure.id}
+    data-reference={closure.reference}
+    data-document-type-id={documentType?.id ?? ''}
+    data-next={next}
+    data-filed-document-id={alreadyFiled?.documentId ?? ''}
+  >
+    <header class="head">
+      <div>
+        <h1>AL BARAKAH MCSL</h1>
+        <p class="sub">ACCOUNT CLOSURE REQUEST</p>
+      </div>
+      <div class="ref">
+        <p>
+          <strong>{closure.reference}</strong>
+        </p>
+        <p>{dateFormat.format(new Date())}</p>
+      </div>
+    </header>
+
+    <div class="box">
+      <div class="row">
+        <span class="label">NAME:</span>
+        <span class="value">{closure.holderName || <i class="blank" />}</span>
+      </div>
+      <div class="row">
+        <span class="label">MEMBER NO:</span>
+        <span class="value">{closure.memberNo ?? '—'}</span>
+        <span class="label gap">NIC / PASSPORT NO:</span>
+        <span class="value">{nic || <i class="blank" />}</span>
+      </div>
+      <div class="row">
+        <span class="label">ACCOUNT:</span>
+        <span class="value">
+          {closure.accountNo} · {closure.accountTypeName}
+        </span>
+      </div>
+      <div class="row">
+        <span class="label">BALANCE:</span>
+        <span class="value">{formatMoney(closure.amount)}</span>
+      </div>
+      <div class="row">
+        <span class="label">PAID OUT BY:</span>
+        <span class="value">
+          {closure.methodName}
+          {closure.methodReference && ` · ${closure.methodReference}`}
+        </span>
+      </div>
+      <div class="row">
+        <span class="label">REASON:</span>
+        <span class="value">{closure.reason}</span>
+      </div>
+    </div>
+
+    <p class="certify">
+      I request Al Barakah Multipurpose Co-operative Society Limited to close
+      the account named above and to pay me its balance as it stands on the day
+      the closure is approved. I understand that once closed, the account cannot
+      be used again.
+    </p>
+
+    <div class="sign">
+      <p class="label">MEMBER'S SIGNATURE:</p>
+      <div class="sig-pad">
+        <div class="sig-line"></div>
+        <img class="sig-image" data-sig-image alt="" hidden />
+      </div>
+      <div class="sig-controls no-print">
+        <button type="button" data-sig-open>
+          Sign
+        </button>
+        <button type="button" data-sig-clear hidden>
+          Clear
+        </button>
+      </div>
+    </div>
+
+    <p class="field">
+      <span class="label">RECEIVED BY:</span>
+      <span class="value">{principal.displayName || principal.email}</span>
+    </p>
+
+    <div class="actions no-print">
+      <div class="actions-start">
+        <a href={back}>← Back to the request</a>
+      </div>
+      <div class="actions-centre">
+        {documentType && (
+          <button type="button" id="file-form" disabled>
+            Upload to sharepoint
+          </button>
+        )}
+      </div>
+      <div class="actions-end"></div>
+    </div>
+    <p data-status class="status-line no-print" aria-live="polite">
+      {alreadyFiled
+        ? `On file: ${alreadyFiled.fileName}. Signing again replaces it.`
+        : 'Have the member sign, then upload.'}
+    </p>
+  </div>
+</BaseLayout>
+
+<style>
+  /* A sheet a person reads and signs, set in absolute units against white,
+     exactly as the Cash Deposit Form is. */
+  .form-page {
+    max-width: 190mm;
+    margin: 0 auto;
+    padding: 12mm 10mm;
+    background: #fff;
+    color: #111;
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 11pt;
+    line-height: 1.5;
+  }
+  .head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 6mm;
+    margin-bottom: 8mm;
+  }
+  .head h1 {
+    margin: 0;
+    font-size: 15pt;
+    letter-spacing: 1px;
+  }
+  .head .sub {
+    margin: 1mm 0 0;
+    font-size: 12pt;
+    font-weight: bold;
+    letter-spacing: 1px;
+  }
+  .head .ref {
+    text-align: right;
+    font-size: 9pt;
+  }
+  .head .ref p {
+    margin: 0;
+  }
+  .box {
+    border: 1px solid #111;
+    border-bottom: none;
+    margin-bottom: 6mm;
+  }
+  .box .row {
+    border-bottom: 1px solid #111;
+    padding: 2.5mm 3mm;
+  }
+  .label {
+    font-weight: bold;
+  }
+  .label.gap {
+    margin-left: 8mm;
+  }
+  .label + .value {
+    margin-left: 1.5mm;
+  }
+  .value {
+    font-weight: normal;
+  }
+  .blank {
+    display: inline-block;
+    min-width: 60mm;
+    border-bottom: 1px solid #999;
+  }
+  .certify {
+    margin: 0 0 8mm;
+    text-align: justify;
+  }
+  .sign .label {
+    margin: 0 0 2mm;
+  }
+  .sig-pad {
+    position: relative;
+    height: 28mm;
+    border: 1px solid #111;
+    margin-bottom: 2mm;
+  }
+  .sig-line {
+    position: absolute;
+    left: 6mm;
+    right: 6mm;
+    bottom: 6mm;
+    border-bottom: 1px solid #999;
+  }
+  .sig-image {
+    position: absolute;
+    inset: 2mm;
+    width: calc(100% - 4mm);
+    height: calc(100% - 4mm);
+    object-fit: contain;
+  }
+  .sig-controls {
+    display: flex;
+    gap: 3mm;
+    margin-bottom: 6mm;
+  }
+  .sig-controls button,
+  .actions button {
+    font: inherit;
+    padding: 1.5mm 4mm;
+    border: 1px solid #111;
+    background: #fff;
+    cursor: pointer;
+  }
+  .actions button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .field {
+    margin: 0 0 2mm;
+  }
+  .actions {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    margin-top: 10mm;
+    gap: 4mm;
+  }
+  .actions-start {
+    justify-self: start;
+  }
+  .actions-end {
+    justify-self: end;
+  }
+  .actions a {
+    color: #111;
+  }
+  .status-line {
+    margin-top: 3mm;
+    font-size: 9pt;
+    color: #555;
+  }
+  .status-line[data-tone='error'] {
+    color: #b00020;
+  }
+  .capturing .no-print,
+  .capturing .sig-controls {
+    display: none !important;
+  }
+  @media print {
+    .no-print {
+      display: none !important;
+    }
+  }
+</style>
+
+<script>
+  import { renderElementToPdf } from '@lib/client/pdf';
+  import { uploadDocumentBlob } from '@lib/client/document-upload';
+  import { openSignaturePad } from '@lib/client/signature';
+
+  const page = document.querySelector<HTMLElement>('.form-page');
+  const fileButton = document.querySelector<HTMLButtonElement>('#file-form');
+  const statusEl = document.querySelector<HTMLElement>('[data-status]');
+  const sigImage = document.querySelector<HTMLImageElement>('[data-sig-image]');
+  const signButton =
+    document.querySelector<HTMLButtonElement>('[data-sig-open]');
+  const clearButton =
+    document.querySelector<HTMLButtonElement>('[data-sig-clear]');
+
+  if (page && fileButton && sigImage && signButton && clearButton) {
+    const transactionId = page.dataset.transactionId ?? '';
+    const reference = page.dataset.reference ?? '';
+    const documentTypeId = page.dataset.documentTypeId ?? '';
+    const next = page.dataset.next ?? '';
+
+    const say = (message: string, tone: 'info' | 'error' = 'info') => {
+      if (!statusEl) return;
+      statusEl.textContent = message;
+      statusEl.dataset.tone = tone;
+    };
+
+    let signature: string | null = null;
+    const refresh = () => {
+      fileButton.disabled = !signature || documentTypeId === '';
+    };
+    refresh();
+
+    signButton.addEventListener('click', async () => {
+      const result = await openSignaturePad("Member's signature");
+      if (!result) return;
+      signature = result;
+      sigImage.src = result;
+      sigImage.hidden = false;
+      signButton.textContent = 'Re-sign';
+      clearButton.hidden = false;
+      refresh();
+    });
+
+    clearButton.addEventListener('click', () => {
+      signature = null;
+      sigImage.hidden = true;
+      sigImage.removeAttribute('src');
+      signButton.textContent = 'Sign';
+      clearButton.hidden = true;
+      refresh();
+    });
+
+    fileButton.addEventListener('click', () => {
+      if (!signature) return;
+      fileButton.disabled = true;
+      signButton.disabled = true;
+      say('Preparing the form…');
+
+      void (async () => {
+        page.classList.add('capturing');
+        let blob: Blob;
+        try {
+          blob = await renderElementToPdf(page);
+        } catch (error) {
+          page.classList.remove('capturing');
+          say(
+            error instanceof Error
+              ? `Could not prepare the PDF: ${error.message}`
+              : 'Could not prepare the PDF.',
+            'error'
+          );
+          fileButton.disabled = false;
+          signButton.disabled = false;
+          return;
+        }
+        page.classList.remove('capturing');
+
+        // A request signed again replaces the one on file, so "the signed
+        // request" keeps naming one thing.
+        const filedDocumentId = page.dataset.filedDocumentId ?? '';
+        if (filedDocumentId) {
+          say('Removing the copy on file…');
+          try {
+            const response = await fetch('/api/v1/documents/remove', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ documentId: filedDocumentId }),
+            });
+            if (!response.ok) {
+              const body = await response.json().catch(() => null);
+              throw new Error(
+                body?.error?.message ??
+                  'The copy already on file could not be removed.'
+              );
+            }
+            page.dataset.filedDocumentId = '';
+          } catch (error) {
+            say(
+              error instanceof Error
+                ? error.message
+                : 'The copy already on file could not be removed.',
+              'error'
+            );
+            fileButton.disabled = false;
+            signButton.disabled = false;
+            return;
+          }
+        }
+
+        try {
+          await uploadDocumentBlob({
+            transactionId,
+            documentTypeId,
+            subject: 'applicant',
+            fileName: `${reference} - Account closure request.pdf`,
+            blob,
+            onStatus: message => say(message),
+          });
+          window.location.href = next;
+        } catch (error) {
+          say(
+            (error instanceof Error
+              ? error.message
+              : 'The request could not be filed.') + ' Please try again.',
+            'error'
+          );
+          fileButton.disabled = false;
+          signButton.disabled = false;
+        }
+      })();
+    });
+  }
+</script>

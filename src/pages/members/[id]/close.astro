@@ -1,0 +1,179 @@
+---
+// Start closing one of a person's accounts (S-1702): which account, why,
+// and how the balance goes back to them. What this makes is a draft; the
+// member signs the request on the next screen and the officer submits it
+// from there.
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import { offeredPaymentMethods } from '@lib/config/reference';
+import { accountBalance } from '@lib/ledger/ledger';
+import {
+  ClosureError,
+  closuresInFlightFor,
+  startClosure,
+  PERMISSION_CAPTURE,
+} from '@lib/ledger/closures';
+import { loadCustomer, loadMember } from '@lib/members/create';
+import { formatMoney } from '@lib/payments/money';
+
+const principal = Astro.locals.principal!;
+if (!principal.permissions.has(PERMISSION_CAPTURE)) {
+  return Astro.redirect('/denied');
+}
+
+const { id } = Astro.params;
+const member = id ? await loadMember(id) : null;
+const customer = !member && id ? await loadCustomer(id) : null;
+if (!member && !customer) return new Response('Not found', { status: 404 });
+const person = (member ?? customer)!;
+const personLabel = member
+  ? `${member.name} · ${member.memberNo}`
+  : person.name;
+
+const closing = await closuresInFlightFor(
+  member ? { memberId: member.id } : { customerId: customer!.id }
+);
+const closable = await Promise.all(
+  person.accounts
+    .filter(
+      a =>
+        a.status === 'active' &&
+        !('isMembershipDefault' in a && a.isMembershipDefault) &&
+        !closing.has(a.id)
+    )
+    .map(async a => ({
+      ...a,
+      balance: (await accountBalance(a.id))?.balance ?? '0.00',
+    }))
+);
+const paymentMethods = await offeredPaymentMethods();
+const requestedAccount = Astro.url.searchParams.get('account') ?? '';
+
+let values = {
+  accountId:
+    closable.find(a => a.id === requestedAccount)?.id ?? closable[0]?.id ?? '',
+  reason: '',
+  method: paymentMethods[0]?.code ?? '',
+  methodReference: '',
+};
+let error: string | null = null;
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const text = (name: string) => String(form.get(name) ?? '');
+  values = {
+    accountId: text('accountId'),
+    reason: text('reason'),
+    method: text('method'),
+    methodReference: text('methodReference'),
+  };
+  if (!person.accounts.some(a => a.id === values.accountId)) {
+    error = 'Choose which account is closing.';
+  } else {
+    try {
+      const closure = await startClosure(values, principal);
+      return Astro.redirect(`/closures/${closure.id}?step=signature`);
+    } catch (err) {
+      if (err instanceof ClosureError) {
+        error = err.message;
+      } else {
+        console.error('[members/close]', err);
+        error = 'Something went wrong. Please try again.';
+      }
+    }
+  }
+}
+
+const INPUT =
+  'mt-1 block w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100';
+---
+
+<DashboardLayout
+  title="Close an account · Al Barakah MCSL"
+  heading="Close an account"
+>
+  <div class="mx-auto max-w-3xl space-y-6">
+    <a
+      href={`/members/${id}`}
+      class="inline-block text-sm text-neutral-500 underline dark:text-neutral-400"
+    >
+      ← {personLabel}
+    </a>
+
+    {error && (
+      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+        {error}
+      </div>
+    )}
+
+    {closable.length === 0 ? (
+      <p class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-300">
+        No account here can close. Shares and the Multiplier Savings Account go
+        together: leaving them is a resignation.
+      </p>
+    ) : (
+      <form
+        method="post"
+        class="space-y-4 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
+      >
+        <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+          Account
+          <select name="accountId" class={INPUT}>
+            {closable.map(account => (
+              <option
+                value={account.id}
+                selected={account.id === values.accountId}
+              >
+                {account.accountNo} · {account.accountTypeName} ·{' '}
+                {formatMoney(account.balance)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+          Reason
+          <textarea
+            name="reason"
+            rows="3"
+            required
+            maxlength="500"
+            class={INPUT}
+          >{values.reason}</textarea>
+        </label>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            Balance paid out by
+            <select name="method" class={INPUT}>
+              {paymentMethods.map(method => (
+                <option
+                  value={method.code}
+                  selected={method.code === values.method}
+                >
+                  {method.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            Reference (cheque number, transfer reference)
+            <input
+              type="text"
+              name="methodReference"
+              value={values.methodReference}
+              class={INPUT}
+            />
+          </label>
+        </div>
+        <p class="text-xs text-neutral-500 dark:text-neutral-400">
+          The balance is paid out when the closure is approved, as it stands
+          then.
+        </p>
+        <button
+          type="submit"
+          class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
+        >
+          Continue to signature
+        </button>
+      </form>
+    )}
+  </div>
+</DashboardLayout>

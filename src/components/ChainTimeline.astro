@@ -29,9 +29,18 @@ interface Props {
   // Defaults to the membership page's own path, so [id].astro need not pass
   // this at all.
   basePath?: string;
+  // Where a step goes on a record that is not an application (a closure
+  // request, S-1702): by step key. A step with no entry is not a link.
+  hrefs?: Record<string, string>;
 }
 
-const { steps, applicationId, basePath, label = 'Progress' } = Astro.props;
+const {
+  steps,
+  applicationId,
+  basePath,
+  hrefs,
+  label = 'Progress',
+} = Astro.props;
 const base =
   basePath ?? (applicationId ? `/applications/${applicationId}` : '');
 
@@ -101,7 +110,7 @@ const STEP_HREF: Record<string, (base: string, id: string) => string> = {
     {steps.map(step => {
       const href = applicationId
         ? STEP_HREF[step.key]?.(base, applicationId)
-        : undefined;
+        : hrefs?.[step.key];
       const Tag = href ? 'a' : 'div';
       return (
         <li class="flex min-w-[8rem] flex-1 items-stretch sm:min-w-0">

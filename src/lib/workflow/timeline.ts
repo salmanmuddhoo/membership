@@ -13,7 +13,10 @@
 // process (capture, sign, documents, pay, submit, decide), a transaction's
 // come from its chain.
 import { activeChain, type WorkflowStep } from '../config/reference';
+import { closureChecklist, checklistComplete } from '../ledger/closures';
 import { loadTransaction, positionOf, transitionsFor } from '../ledger/review';
+import { resolveRoute } from '../ledger/routing';
+import { toCents } from '../payments/money';
 
 export type StepState =
   // Finished, on the evidence.
@@ -88,6 +91,14 @@ export interface TransactionTimelineInput {
   // Who returned it, for the correction step's detail.
   returnedBy: string | null;
   receiptNo: string | null;
+  // A request built up before it is submitted (a closure, S-1702): the
+  // steps the officer walks first, in order, each with its own test for
+  // being finished. Absent for a transaction recorded in one act.
+  prelude?: PlannedStep[];
+  // What the first and last steps are called: 'Recorded' and 'Posted' for
+  // money moving, 'Submitted' and 'Closed' for a closure.
+  submitLabel?: string;
+  postedLabel?: string;
 }
 
 const ENDED: Record<string, string> = {
@@ -114,13 +125,17 @@ export function transactionTimeline(
     s => s.code === input.rejectedAtStepCode
   );
 
+  // A request still being built (status 'draft') has not been submitted:
+  // the submit step is the one with something to do.
+  const draft = input.status === 'draft';
   const planned: PlannedStep[] = [
+    ...(input.prelude ?? []),
     {
       key: 'capture',
-      label: 'Recorded',
+      label: input.submitLabel ?? 'Recorded',
       // A returned transaction is back with its captor: the first step is
       // the one with something to do.
-      done: !returned && !(ended && rejectedIndex < 0),
+      done: !draft && !returned && !(ended && rejectedIndex < 0),
       detail: returned
         ? input.returnedBy
           ? `Returned by ${input.returnedBy}`
@@ -147,7 +162,7 @@ export function transactionTimeline(
     }),
     {
       key: 'posted',
-      label: 'Posted',
+      label: input.postedLabel ?? 'Posted',
       done: posted,
       detail: posted
         ? (input.receiptNo ?? undefined)
@@ -174,7 +189,11 @@ export async function chainTimeline(
   const [chain, position, trail] = await Promise.all([
     transaction.workflowCode
       ? activeChain(transaction.workflowCode)
-      : Promise.resolve([]),
+      : transaction.status === 'draft'
+        ? // Not routed yet: the chain the matrix would send it to today,
+          // so the officer building a request sees who will decide it.
+          expectedChain(transaction)
+        : Promise.resolve([]),
     positionOf(transaction),
     transitionsFor(transaction.id),
   ]);
@@ -188,6 +207,10 @@ export async function chainTimeline(
     .map(t => t.stepCode!);
   const rejected = [...trail].reverse().find(t => t.toStatus === 'rejected');
   const lastReturn = [...trail].reverse().find(t => t.toStatus === 'returned');
+  const closure =
+    transaction.kind === 'closure'
+      ? closurePrelude(await closureChecklist(transaction.id))
+      : {};
   return transactionTimeline({
     status: transaction.status,
     chain,
@@ -196,5 +219,57 @@ export async function chainTimeline(
     rejectedAtStepCode: rejected?.stepCode ?? null,
     returnedBy: lastReturn?.actorRole ?? null,
     receiptNo: transaction.receiptNo,
+    ...closure,
   });
+}
+
+async function expectedChain(transaction: {
+  kind: string;
+  accountTypeId: string;
+  amount: string;
+}): Promise<WorkflowStep[]> {
+  if (transaction.kind !== 'closure') return [];
+  const route = await resolveRoute({
+    kind: 'closure',
+    accountTypeId: transaction.accountTypeId,
+    amountCents: toCents(transaction.amount),
+    roleCodes: [],
+  });
+  return route.definition ? activeChain(route.definition.code) : [];
+}
+
+/**
+ * A closure's own steps before its chain (S-1702): the details are on the
+ * request from the moment it exists; the signature is the signed request
+ * on file; the documents step reads the same checklist, which today is
+ * that one form. Pure, so the tests can say what each state looks like.
+ */
+export function closurePrelude(
+  checklist: { documentName: string; filed: unknown | null }[]
+): Pick<TransactionTimelineInput, 'prelude' | 'submitLabel' | 'postedLabel'> {
+  const complete = checklistComplete(
+    checklist as Parameters<typeof checklistComplete>[0]
+  );
+  const missing = checklist.filter(i => i.filed === null);
+  return {
+    prelude: [
+      { key: 'details', label: 'Details', done: true },
+      {
+        key: 'signature',
+        label: 'Signature',
+        done: complete,
+        detail: complete ? 'Signed request on file' : 'Not signed yet',
+        problem: !complete,
+      },
+      {
+        key: 'documents',
+        label: 'Documents',
+        done: complete,
+        detail: complete ? undefined : `${missing.length} to file`,
+        problem: !complete,
+      },
+    ],
+    submitLabel: 'Submitted',
+    postedLabel: 'Closed',
+  };
 }

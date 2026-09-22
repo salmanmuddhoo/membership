@@ -74,7 +74,9 @@ then on (S-1303):
 - It **posts whatever the account's status**. A pending HSA or a dormant
   member's Shares still hold the money that was paid in; the status says what
   the holder may do next, not whether history may be written. A new deposit
-  still needs an active account.
+  still needs an active account, and a closure (S-1702) is the one
+  transaction that posts on a `closing` one — it is what the account is
+  closing for.
 - A migrated legacy balance (M7, S-709) is written as a payment with lines,
   so it is carried exactly the same way. There is one source, which is what
   makes "never both" trivially true.
@@ -411,6 +413,51 @@ ledger effect — which is the same outcome the story asks of a draft without
 a `draft` row whose generated reference would burn a number in the
 sequence. The `draft` status stays in the vocabulary for a later capture
 path that saves as it goes. Recorded as decision 17.
+
+## Closing an account
+
+A closure (S-1702, `src/lib/ledger/closures.ts`, migration 0077) is a
+transaction of kind `closure`. The matrix has routed the kind since 0070 —
+always Secretary → President as seeded — so a request rides the same chain,
+queue, trail and chevron as a withdrawal and is paid out through the same
+disbursement step. Only an account that is not the membership's default can
+close here: Shares and the MSA go together, and the refusal says by name
+that taking them away is a resignation (S-1703).
+
+The request has a life before its chain. `startClosure()` writes a draft
+naming the account, the reason (mandatory: it goes on the signed request)
+and how the balance goes back, with the balance as it stands. The member
+signs the request on `/closures/{id}/form`, a sheet rasterised and filed
+against the transaction — `document.transaction_id`, the third owner
+(`docs/documents.md`) — so a member who closes two accounts over the years
+has two signed requests, not one replacing the other. `submitClosure()`
+refuses without it, refuses while any other transaction is still on its way
+on the account, sets the amount to the balance now, puts the account into
+`closing` — every capture path refuses a non-active account, and
+`availableBalance()` counts the closure as a pending debit — and hands the
+routing to `submitTransaction()` or, for a returned request,
+`resubmitTransaction()`. `cancelClosure()` withdraws a draft or a returned
+request and reopens the account; `reviewTransaction()` does the same on a
+rejection. The chevron is `closurePrelude()`'s Details → Signature →
+Documents before Submitted, the chain and Closed (`timeline.ts`); a draft
+shows the chain the matrix would send it to today.
+
+Posting is `postApprovedTransaction()` with a disbursement, as for a
+withdrawal. It reads the balance again into the amount, and
+`post_transaction()` refuses a closure whose amount is not the balance at
+that moment — nothing is left on a closed account, nothing is paid that is
+not there. The floor does not apply: it is what an open account keeps. The
+debit entry (none for an empty account, which still closes) and
+`account.status = 'closed'`, dated, are written in the same statement, and
+the `transaction.posted` event carries `account_closed`. A closed account
+no longer counts against one account of each type per holder (0018, 0027),
+so the member can open another later.
+
+`member.status` is a check constraint since 0077 (S-1701) — pending,
+active, inactive, dormant, resigned, demised — with `status_changed_at`
+beside it; `src/lib/members/status.ts` is the same list for the code and
+the one rule the capture paths already apply: only an active holder
+transacts or opens an account.
 
 ## History, across accounts
 
