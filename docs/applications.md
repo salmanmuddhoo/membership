@@ -647,11 +647,13 @@ cannot be resolved once nobody remembers which entries were Mauritian. Anything
 the normaliser cannot place is **refused** rather than guessed — prefixing +230
 onto nine digits produces something that looks right and can never be dialled.
 
-## Not built yet
+## The API surface
 
-`GET /api/v1/applications/guardian-search` (S-604, above) is the one
-`/api/v1` endpoint applications has today, and it exists to serve the
-capture form's own search widget, not FRD Section 12's public API surface —
-that is still better designed once M4's document flow and M5's payments are
-known. The service layer is already separate from the pages, so adding the
-rest is a wrapper, not a rewrite.
+The two `/api/v1/applications/*` endpoints (`guardian-search`, S-604, and
+`existing-member-search`, S-613) serve the capture form's own search
+widgets. FRD Section 12's public surface is elsewhere, on the same service
+layer: `POST /api/v1/public/applications` (S-908) creates a draft from the
+website through `submitPublicApplication`, on the same capture service the pages use,
+and the member app captures, documents and submits its own under
+`/api/v1/member/applications` (`docs/member-app.md`). `docs/api.md` has how
+every endpoint is declared and documented.

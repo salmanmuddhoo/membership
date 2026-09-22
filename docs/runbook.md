@@ -102,10 +102,14 @@ error.
 
 - A run still `running` with an old start means the container died. The next
   scheduled run resumes from its checkpoint; there is nothing to clear by hand.
+  `job-watch` emails every System Administrator once it has sat for six
+  hours, and once more if the resumed run then fails.
 - A run that is not there at all means the schedule did not fire — check the
-  Container Apps job in Azure.
+  Container Apps job in Azure. `job-watch` cannot see this: it reads what ran,
+  not what was due.
 - `notification-retry` should run every fifteen minutes; `document-expiry`,
-  `minor-majority-transition` and `retention-disposal` daily.
+  `minor-majority-transition`, `retention-disposal`, `ledger-verify` and
+  `dormancy-detection` daily; `job-watch` every few hours.
 
 ### The application is up but every page is slow
 
@@ -327,9 +331,10 @@ restore that has actually been performed and verified against control figures
 
 Recorded so nobody assumes otherwise:
 
-- **Nothing watches the jobs.** A container that dies leaves a `running` row
-  and no alert. **Reports → Scheduled work** shows it to whoever looks.
-  `docs/jobs.md` proposes a job that watches the jobs; it is not built.
+- **Nothing watches for a job that never starts.** `job-watch` (`docs/jobs.md`)
+  emails the System Administrators about a run left open for hours or a job
+  whose last run failed, but a schedule that stops firing leaves no row for
+  it to read. Container Apps' own run history is the check for that.
 - **Nothing alerts on a failed notification.** The counts on **Notifications**
   are visible to whoever opens the page.
 - **Branch protection is off**, by decision of the sole maintainer — see
