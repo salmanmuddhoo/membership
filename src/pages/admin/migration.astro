@@ -17,6 +17,15 @@ import {
   type RowError,
 } from '@lib/migration/members';
 import { fromCents, toCents } from '@lib/payments/money';
+import {
+  BUTTON,
+  CARD,
+  CARD_TITLE,
+  HINT,
+  MUTED,
+  PAGE,
+  SECONDARY_SM,
+} from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 const canMigrate = principal.permissions.has('system.migrate_members');
@@ -143,7 +152,7 @@ const customerCount =
 ---
 
 <DashboardLayout title="Migration · Al Barakah MCSL" heading="Migration">
-  <div class="mx-auto max-w-3xl space-y-6">
+  <div class={PAGE.list}>
     {!canMigrate && (
       <div class="rounded-lg border border-neutral-300 bg-neutral-100 px-4 py-3 text-sm text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200">
         You do not have permission to import members.
@@ -152,17 +161,15 @@ const customerCount =
 
     {canMigrate && (
       <>
-        <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-          <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-            Import from the legacy register
-          </h2>
-          <p class="mt-2 text-sm text-neutral-600 dark:text-neutral-300">
+        <section class={CARD}>
+          <h2 class={CARD_TITLE}>Import from the legacy register</h2>
+          <p class={`${MUTED} mt-2`}>
             Every row is approved immediately — no review, no approval step. Run
             it as many times as needed; each upload is its own batch. A Legacy
             Member Code already on file updates that record instead of creating
             a second one.
           </p>
-          <p class="mt-2 text-sm text-neutral-600 dark:text-neutral-300">
+          <p class={`${MUTED} mt-2`}>
             A row with an AB Number is a member — Shares and the MSA always come
             together, and the number carries over unchanged, never reassigned. A
             row with none, only an account of its own (HSA, Investment, …), is a
@@ -170,20 +177,20 @@ const customerCount =
             leave both blank if it is not yet known, and add it on a later
             upload.
           </p>
-          <p class="mt-2 text-sm text-neutral-600 dark:text-neutral-300">
+          <p class={`${MUTED} mt-2`}>
             Covers {types.map(t => t.name).join(', ')}. A Minor's guardian must
             already be on file — import the guardian first, then the minor with
             just their Member ID; the rest of the guardian's details are filled
             in automatically.
           </p>
-          <p class="mt-2 text-sm text-neutral-600 dark:text-neutral-300">
+          <p class={`${MUTED} mt-2`}>
             NIC, mobile and account numbers must each be unique to one member or
             non-member. Legacy Member Code can be left blank for a member row —
             the AB Number is used instead.
           </p>
           <a
             href="/admin/migration?template=1"
-            class="bg-mint-300 hover:bg-mint-400 mt-4 inline-block rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
+            class={`${BUTTON} mt-4 inline-block`}
           >
             Download the template
           </a>
@@ -231,12 +238,12 @@ const customerCount =
           <section
             class={`rounded-2xl border p-6 ${reconciliation && !reconciliation.passed ? 'border-neutral-200 bg-neutral-100 dark:border-neutral-800 dark:bg-neutral-950' : 'border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950'}`}
           >
-            <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+            <h2 class={CARD_TITLE}>
               {outcome.imported.length} row
               {outcome.imported.length === 1 ? '' : 's'} processed
             </h2>
             {outcome.imported.length > 0 && (
-              <p class="mt-1 text-sm text-neutral-600 dark:text-neutral-300">
+              <p class={`${MUTED} mt-1`}>
                 {memberCount} member{memberCount === 1 ? '' : 's'},{' '}
                 {customerCount} non-member{customerCount === 1 ? '' : 's'}
                 {outcome.totalBalance > 0 && (
@@ -283,10 +290,8 @@ const customerCount =
           </section>
         )}
 
-        <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-          <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-            Upload a filled-in template
-          </h2>
+        <section class={CARD}>
+          <h2 class={CARD_TITLE}>Upload a filled-in template</h2>
           <form
             method="post"
             enctype="multipart/form-data"
@@ -294,7 +299,7 @@ const customerCount =
             data-migration-form
           >
             <div class="flex items-center gap-3">
-              <label class="cursor-pointer rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-200 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800">
+              <label class={`${SECONDARY_SM} cursor-pointer`}>
                 Choose file
                 <input
                   type="file"
@@ -305,10 +310,7 @@ const customerCount =
                   class="sr-only"
                 />
               </label>
-              <span
-                data-migration-filename
-                class="text-sm text-neutral-500 dark:text-neutral-400"
-              >
+              <span data-migration-filename class={HINT}>
                 No file selected
               </span>
             </div>
@@ -342,10 +344,7 @@ const customerCount =
                 </label>
               </div>
             </fieldset>
-            <button
-              type="submit"
-              class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
-            >
+            <button type="submit" class={BUTTON}>
               Import
             </button>
           </form>

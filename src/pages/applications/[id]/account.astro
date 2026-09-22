@@ -69,6 +69,21 @@ import {
 } from '@lib/config/reference';
 import DocumentViewer from '@components/DocumentViewer.astro';
 import DocumentReviewForm from '@components/DocumentReviewForm.astro';
+import {
+  PAGE,
+  CARD,
+  CARD_TITLE,
+  PANEL,
+  HINT,
+  MUTED,
+  LABEL,
+  INPUT,
+  BUTTON,
+  BUTTON_SM,
+  SECONDARY,
+  SECONDARY_SM,
+  DANGER,
+} from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 const canSeeDocuments = principal.permissions.has('document.view');
@@ -652,7 +667,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
   title={`${application.reference} · Al Barakah MCSL`}
   heading={application.reference}
 >
-  <div class="mx-auto max-w-5xl space-y-6">
+  <div class={PAGE.list}>
     <ChainTimeline
       steps={timeline}
       label="Application progress"
@@ -665,10 +680,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       class="sticky z-20 -mx-4 flex flex-wrap items-center justify-between gap-2 border-t border-neutral-200/80 bg-neutral-100/95 px-4 py-3 backdrop-blur-md sm:mx-0 sm:rounded-b-2xl sm:px-3 sm:py-1.5 dark:border-neutral-800/80 dark:bg-neutral-950/95"
       style="top: calc(var(--app-header-height, 3.75rem) + var(--app-timeline-height, 0px))"
     >
-      <a
-        href="/applications"
-        class="inline-block text-sm text-neutral-500 underline dark:text-neutral-400"
-      >
+      <a href="/applications" class={`${HINT} inline-block underline`}>
         ← All applications
       </a>
     </div>
@@ -686,9 +698,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 
     {createdAccounts && (
       <section class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-2xl border p-6">
-        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-          Account opened
-        </h2>
+        <h2 class={CARD_TITLE}>Account opened</h2>
         <p class="mt-1 text-sm text-neutral-700 dark:text-neutral-200">
           <a
             href={`/members/${createdAccounts.id}`}
@@ -702,9 +712,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       </section>
     )}
 
-    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+    <section class={CARD}>
       <div class="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+        <h2 class={CARD_TITLE}>
           Opening an account for {application.existingHolderLabel}
         </h2>
         <span class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
@@ -727,12 +737,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             decision noted and submit again — the payment already recorded still
             stands, so there is nothing to take again.
           </p>
-          <button
-            type="submit"
-            name="intent"
-            value="reopen"
-            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
-          >
+          <button type="submit" name="intent" value="reopen" class={BUTTON}>
             Reopen for correction
           </button>
         </form>
@@ -741,15 +746,10 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 
     {(!isEditable || currentStep === CAPTURE_STEP) &&
       applicantContactFields.length > 0 && (
-        <section
-          class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
-          id="applicant"
-        >
+        <section class={CARD} id="applicant">
           <div data-edit-block data-record-id={contact.recordId}>
             <div class="flex flex-wrap items-start justify-between gap-2">
-              <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-                Applicant details
-              </h2>
+              <h2 class={CARD_TITLE}>Applicant details</h2>
               {canEditContact &&
                 applicantContactFields.some(f => f.editable) && (
                   <button
@@ -848,17 +848,13 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                   class="mb-2 text-sm text-red-700 dark:text-red-300"
                 />
                 <div data-edit-actions hidden class="flex items-center gap-3">
-                  <button
-                    type="button"
-                    data-edit-save
-                    class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
-                  >
+                  <button type="button" data-edit-save class={BUTTON_SM}>
                     Save
                   </button>
                   <button
                     type="button"
                     data-edit-cancel
-                    class="text-sm text-neutral-500 underline dark:text-neutral-400"
+                    class={`${HINT} underline`}
                   >
                     Cancel
                   </button>
@@ -919,7 +915,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                     ? `/applications/${application!.id}/print`
                     : `/applications/${application!.id}/account?step=${DOCUMENTS_STEP}`
                 }
-                class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
+                class={BUTTON}
               >
                 {canSign ? 'Next: sign the form →' : 'Next: upload documents →'}
               </a>
@@ -931,15 +927,10 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     {(!isEditable || currentStep === DOCUMENTS_STEP) &&
       canSeeDocuments &&
       checklist.length > 0 && (
-        <section
-          class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
-          id="documents"
-        >
+        <section class={CARD} id="documents">
           <div class="flex flex-wrap items-baseline justify-between gap-2">
-            <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-              Documents
-            </h2>
-            <p class="text-sm text-neutral-500 dark:text-neutral-400">
+            <h2 class={CARD_TITLE}>Documents</h2>
+            <p class={HINT}>
               {documentsComplete
                 ? 'Every required document has been verified.'
                 : `${requiredOutstanding} required ${
@@ -952,7 +943,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             {checklist.map(entry => (
               <li
                 id={entry.documentId ? `doc-${entry.documentId}` : undefined}
-                class="scroll-mt-24 rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900"
+                class={`${PANEL} scroll-mt-24`}
               >
                 <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
                   <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -990,7 +981,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                           />
                         </label>
                       )}
-                      <label class="cursor-pointer rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-200 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800">
+                      <label class={`${SECONDARY_SM} cursor-pointer`}>
                         Upload
                         <input
                           type="file"
@@ -1095,7 +1086,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                 Source of Fund
               </h3>
               <ul class="mt-2 space-y-2">
-                <li class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-neutral-200 bg-white px-4 py-3 dark:border-neutral-800 dark:bg-neutral-900">
+                <li
+                  class={`${PANEL} flex flex-wrap items-center justify-between gap-3`}
+                >
                   <span class="text-sm text-neutral-800 dark:text-neutral-100">
                     {sourceOfFundFiling.fileName}
                   </span>
@@ -1120,7 +1113,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                     ? `/applications/${application!.id}/print`
                     : `/applications/${application!.id}/account?step=${CAPTURE_STEP}`
                 }
-                class="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                class={SECONDARY}
               >
                 ← Back
               </a>
@@ -1149,14 +1142,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 
     {(!isEditable || currentStep === PAYMENT_STEP) &&
       (livePayment || due || dueProblem) && (
-        <section
-          class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
-          id="payment"
-        >
+        <section class={CARD} id="payment">
           <div class="flex flex-wrap items-baseline justify-between gap-2">
-            <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-              Payment
-            </h2>
+            <h2 class={CARD_TITLE}>Payment</h2>
             {livePayment &&
               (canSeePayments ? (
                 <a
@@ -1166,9 +1154,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                   Receipt {livePayment.receiptNo}
                 </a>
               ) : (
-                <span class="text-sm text-neutral-600 dark:text-neutral-300">
-                  Receipt {livePayment.receiptNo}
-                </span>
+                <span class={MUTED}>Receipt {livePayment.receiptNo}</span>
               ))}
           </div>
 
@@ -1180,7 +1166,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 
           {livePayment && (
             <div class="mt-4">
-              <p class="text-sm text-neutral-600 dark:text-neutral-300">
+              <p class={MUTED}>
                 {canSeePayments
                   ? `${formatMoney(livePayment.totalAmount, livePayment.currency)} · ${livePayment.methodName}`
                   : 'Recorded'}{' '}
@@ -1282,10 +1268,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               <div class="flex flex-wrap gap-3">
                 <label class="text-sm text-neutral-600 dark:text-neutral-300">
                   Method
-                  <select
-                    name="method"
-                    class="mt-1 block rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-                  >
+                  <select name="method" class={INPUT}>
                     {paymentMethods.map(method => (
                       <option
                         value={method.code}
@@ -1309,7 +1292,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                     type="text"
                     name="methodReference"
                     value={paymentFormValues?.methodReference ?? ''}
-                    class="mt-1 block w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                    class={INPUT}
                   />
                 </label>
               </div>
@@ -1335,7 +1318,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                 name="intent"
                 value="record-payment"
                 data-payment-submit
-                class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50"
+                class={BUTTON}
               >
                 Record payment and issue receipt
               </button>
@@ -1346,7 +1329,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             <div class="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800">
               <a
                 href={`/applications/${application!.id}/account?step=${DOCUMENTS_STEP}`}
-                class="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                class={SECONDARY}
               >
                 ← Back
               </a>
@@ -1372,10 +1355,8 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       )}
 
     {(!isEditable || currentStep === SUBMIT_STEP) && actions.length > 0 && (
-      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-          Your next step
-        </h2>
+      <section class={CARD}>
+        <h2 class={CARD_TITLE}>Your next step</h2>
 
         {actions.map(action => {
           const reviewMeta = REVIEW_STEP_META[action.stepCode];
@@ -1386,7 +1367,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                   type="submit"
                   name="intent"
                   value="submit"
-                  class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
+                  class={BUTTON}
                 >
                   Submit for Processing
                 </button>
@@ -1442,12 +1423,12 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 
               {reviewMeta && (
                 <>
-                  <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+                  <label class={LABEL}>
                     Comment
                     <textarea
                       name="comment"
                       rows="3"
-                      class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                      class={INPUT}
                       placeholder={reviewMeta.commentPlaceholder}
                     ></textarea>
                   </label>
@@ -1461,7 +1442,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                           boardReasons.length > 0) ||
                         rejectedDocuments.length > 0
                       }
-                      class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50"
+                      class={BUTTON}
                     >
                       {reviewMeta.forwardLabel}
                     </button>
@@ -1469,7 +1450,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                       type="submit"
                       name="outcome"
                       value={reviewMeta.returnOutcome}
-                      class="rounded-lg border border-red-300 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
+                      class={DANGER}
                     >
                       {reviewMeta.returnLabel}
                     </button>
@@ -1495,10 +1476,8 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     )}
 
     {history.length > 0 && (
-      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-          History
-        </h2>
+      <section class={CARD}>
+        <h2 class={CARD_TITLE}>History</h2>
         <ol class="mt-4 space-y-3">
           {history.map(entry => (
             <li class="border-l-2 border-neutral-300 pl-3 text-sm dark:border-neutral-700">

@@ -24,6 +24,7 @@ import {
 } from '@lib/applications/capture';
 import { loadCustomer, loadMember } from '@lib/members/create';
 import { listAccountTypes, openableAccountTypes } from '@lib/config/reference';
+import { PAGE, CARD, PANEL, HINT, LABEL, INPUT, BUTTON } from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 if (!principal.permissions.has('application.capture')) {
@@ -156,16 +157,13 @@ if (Astro.request.method === 'POST') {
   title="Open an account · Al Barakah MCSL"
   heading="Open an account"
 >
-  <div class="mx-auto max-w-5xl space-y-6">
+  <div class={PAGE.list}>
     <div
       id="application-nav"
       class="sticky z-20 -mx-4 flex flex-wrap items-center gap-2 border-b border-neutral-200/80 bg-neutral-200/95 px-4 py-3 backdrop-blur-md sm:mx-0 sm:rounded-xl sm:border-b-0 sm:px-3 sm:py-1.5 dark:border-neutral-800/80 dark:bg-neutral-900/95"
       style="top: calc(var(--app-header-height, 3.75rem) + var(--app-timeline-height, 0px) + 1.5rem)"
     >
-      <a
-        href="/applications"
-        class="inline-block text-sm text-neutral-500 underline dark:text-neutral-400"
-      >
+      <a href="/applications" class={`${HINT} inline-block underline`}>
         ← All applications
       </a>
     </div>
@@ -177,18 +175,15 @@ if (Astro.request.method === 'POST') {
     )}
 
     {accountTypes.length === 0 ? (
-      <p class="text-sm text-neutral-500 dark:text-neutral-400">
+      <p class={HINT}>
         {holder
           ? `${holderName} already holds every account type available to open.`
           : 'No account type is configured for this yet. Add one under Configuration → Account types.'}
       </p>
     ) : (
-      <form
-        method="post"
-        class="space-y-6 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
-      >
+      <form method="post" class={`${CARD} space-y-6`}>
         {holder && (
-          <div class="rounded-lg border border-neutral-200 bg-white px-4 py-3 text-sm dark:border-neutral-800 dark:bg-neutral-900">
+          <div class={PANEL}>
             <p class="text-neutral-800 dark:text-neutral-100">
               Opening another account for{' '}
               <span class="font-medium">{holderName}</span>
@@ -203,17 +198,13 @@ if (Astro.request.method === 'POST') {
 
         {!holder && (
           <div>
-            <p class="text-sm text-neutral-500 dark:text-neutral-400">
+            <p class={HINT}>
               Their own details are filled in on the next screen — the same
               information a membership application asks for.
             </p>
-            <label class="mt-2 block text-sm text-neutral-600 dark:text-neutral-300">
+            <label class={`${LABEL} mt-2`}>
               Applicant type
-              <select
-                name="customerType"
-                data-customer-type
-                class="mt-1 block w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-              >
+              <select name="customerType" data-customer-type class={INPUT}>
                 <option
                   value="individual"
                   selected={customerType === 'individual'}
@@ -261,10 +252,7 @@ if (Astro.request.method === 'POST') {
           </div>
         </fieldset>
 
-        <button
-          type="submit"
-          class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
-        >
+        <button type="submit" class={BUTTON}>
           Open account
         </button>
       </form>

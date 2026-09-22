@@ -4,6 +4,7 @@
 // transaction; a transfer once, naming the other side.
 import type { TransactionSummary } from '@lib/ledger/review';
 import { formatMoney } from '@lib/payments/money';
+import { FILTER, HINT } from '@lib/ui';
 
 interface Props {
   transactions: TransactionSummary[];
@@ -58,9 +59,9 @@ function otherSide(t: TransactionSummary): string | null {
 const CELL = 'px-2 py-2';
 ---
 
-<div class="overflow-x-auto rounded-2xl border border-neutral-200 bg-neutral-100 p-4 dark:border-neutral-800 dark:bg-neutral-950">
+<div class={`overflow-x-auto ${FILTER}`}>
   {transactions.length === 0 ? (
-    <p class="text-sm text-neutral-500 dark:text-neutral-400">{empty}</p>
+    <p class={HINT}>{empty}</p>
   ) : (
     <table class="w-full text-sm">
       <thead class="text-left text-xs text-neutral-500 uppercase dark:text-neutral-400">

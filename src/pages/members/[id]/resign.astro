@@ -19,6 +19,16 @@ import {
 } from '@lib/ledger/resignations';
 import { loadMember } from '@lib/members/create';
 import { formatMoney, fromCents } from '@lib/payments/money';
+import {
+  PAGE,
+  HINT,
+  CARD,
+  CARD_LABEL,
+  FORM_CARD,
+  LABEL,
+  INPUT,
+  BUTTON,
+} from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 if (!principal.permissions.has(PERMISSION_CAPTURE)) {
@@ -73,17 +83,11 @@ if (Astro.request.method === 'POST') {
     }
   }
 }
-
-const INPUT =
-  'mt-1 block w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100';
 ---
 
 <DashboardLayout title="Resignation · Al Barakah MCSL" heading="Resignation">
-  <div class="mx-auto max-w-3xl space-y-6">
-    <a
-      href={`/members/${member.id}`}
-      class="inline-block text-sm text-neutral-500 underline dark:text-neutral-400"
-    >
+  <div class={PAGE.form}>
+    <a href={`/members/${member.id}`} class={`${HINT} inline-block underline`}>
       ← {member.name} · {member.memberNo}
     </a>
 
@@ -93,10 +97,8 @@ const INPUT =
       </div>
     )}
 
-    <section class="space-y-3 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-      <h2 class="text-sm font-semibold text-neutral-700 uppercase dark:text-neutral-200">
-        Accounts closing
-      </h2>
+    <section class={`${CARD} space-y-3`}>
+      <h2 class={CARD_LABEL}>Accounts closing</h2>
       <ul class="divide-y divide-neutral-200 text-sm dark:divide-neutral-800">
         {accounts.map(account => (
           <li class="flex items-center justify-between py-2">
@@ -120,10 +122,8 @@ const INPUT =
       )}
     </section>
 
-    <section class="space-y-2 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-      <h2 class="text-sm font-semibold text-neutral-700 uppercase dark:text-neutral-200">
-        Checks
-      </h2>
+    <section class={`${CARD} space-y-2`}>
+      <h2 class={CARD_LABEL}>Checks</h2>
       <ul class="space-y-1 text-sm">
         {checks.map(check => (
           <li class="flex flex-wrap items-baseline gap-x-2">
@@ -147,12 +147,8 @@ const INPUT =
       </ul>
     </section>
 
-    <form
-      method="post"
-      data-resignation-form
-      class="space-y-4 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
-    >
-      <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+    <form method="post" data-resignation-form class={FORM_CARD}>
+      <label class={LABEL}>
         Reason
         <textarea
           name="reason"
@@ -208,10 +204,7 @@ const INPUT =
         The balance is paid out when the resignation is approved, as it stands
         then. Both accounts close and the membership ends.
       </p>
-      <button
-        type="submit"
-        class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
-      >
+      <button type="submit" class={BUTTON}>
         Continue to signature
       </button>
     </form>

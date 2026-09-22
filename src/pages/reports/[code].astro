@@ -15,6 +15,16 @@ import {
   reportToWorkbook,
   XLSX_CONTENT_TYPE,
 } from '@lib/reports/export';
+import {
+  BUTTON,
+  CARD,
+  CARD_TITLE,
+  HINT,
+  INPUT,
+  MUTED,
+  PAGE,
+  SECONDARY_SM,
+} from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 const report = reportByCode(Astro.params.code ?? '');
@@ -76,21 +86,16 @@ const exportHref = () => {
   title={`${report.title} · Al Barakah MCSL`}
   heading={report.title}
 >
-  <div class="mx-auto max-w-6xl space-y-6">
-    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-      <p class="text-sm text-neutral-600 dark:text-neutral-300">
-        {report.summary}
-      </p>
+  <div class={PAGE.wide}>
+    <section class={CARD}>
+      <p class={MUTED}>{report.summary}</p>
 
       <form method="get" class="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {report.filters.map(filter => (
           <label class="text-sm text-neutral-600 dark:text-neutral-300">
             {filter.label}
             {filter.kind === 'choice' ? (
-              <select
-                name={filter.name}
-                class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-              >
+              <select name={filter.name} class={INPUT}>
                 <option value="">All</option>
                 {(choices.get(filter.name) ?? []).map(choice => (
                   <option
@@ -106,17 +111,14 @@ const exportHref = () => {
                 type={filter.kind === 'date' ? 'date' : 'text'}
                 name={filter.name}
                 value={filters[filter.name]}
-                class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                class={INPUT}
               />
             )}
           </label>
         ))}
 
         <div class="flex items-end gap-3">
-          <button
-            type="submit"
-            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
-          >
+          <button type="submit" class={BUTTON}>
             Run
           </button>
           <a
@@ -130,29 +132,22 @@ const exportHref = () => {
     </section>
 
     {result === null ? (
-      <p class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 text-sm text-neutral-500 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-400">
+      <p class={`${CARD} ${HINT}`}>
         Choose a period and run it, or ask for everything.
       </p>
     ) : (
-      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+      <section class={CARD}>
         <div class="flex flex-wrap items-center justify-between gap-2">
-          <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-            {result.summary}
-          </h2>
+          <h2 class={CARD_TITLE}>{result.summary}</h2>
           {result.rows.length > 0 && (
-            <a
-              href={exportHref()}
-              class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-200 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
-            >
+            <a href={exportHref()} class={SECONDARY_SM}>
               Download as Excel
             </a>
           )}
         </div>
 
         {result.rows.length === 0 ? (
-          <p class="mt-4 text-sm text-neutral-500 dark:text-neutral-400">
-            Nothing matches.
-          </p>
+          <p class={`${HINT} mt-4`}>Nothing matches.</p>
         ) : (
           <div class="mt-4 overflow-x-auto">
             <table class="w-full text-sm">

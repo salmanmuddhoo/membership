@@ -20,6 +20,17 @@ import {
 import { accountBalance } from '@lib/ledger/ledger';
 import { loadCustomer, loadMember } from '@lib/members/create';
 import { formatMoney } from '@lib/payments/money';
+import {
+  PAGE,
+  MUTED,
+  CARD,
+  CARD_TITLE,
+  FORM_CARD,
+  LABEL,
+  INPUT,
+  SECONDARY_SM,
+  BUTTON,
+} from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 if (!principal.permissions.has(PERMISSION_CAPTURE)) {
@@ -142,14 +153,11 @@ if (Astro.request.method === 'POST') {
     }
   }
 }
-
-const INPUT =
-  'mt-1 block w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100';
 ---
 
 <DashboardLayout title="Deposit · Al Barakah MCSL" heading="Record a deposit">
-  <div class="mx-auto max-w-3xl space-y-6">
-    <p class="flex flex-wrap items-center gap-x-3 text-sm text-neutral-600 dark:text-neutral-300">
+  <div class={PAGE.form}>
+    <p class={`flex flex-wrap items-center gap-x-3 ${MUTED}`}>
       {fromTransactions && (
         <a
           href="/transactions"
@@ -174,13 +182,13 @@ const INPUT =
 
     {deposit ? (
       <section class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-2xl border p-6">
-        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+        <h2 class={CARD_TITLE}>
           {deposit.status === 'posted'
             ? `Deposit ${deposit.reference} posted`
             : `Deposit ${deposit.reference} submitted for approval`}
         </h2>
         {deposit.status !== 'posted' && deposit.currentStepName && (
-          <p class="mt-1 text-sm text-neutral-600 dark:text-neutral-300">
+          <p class={`${MUTED} mt-1`}>
             Waiting for {deposit.currentStepName}
             {deposit.currentStepRole && ` (${deposit.currentStepRole})`}. The
             receipt is issued when it posts.
@@ -219,17 +227,11 @@ const INPUT =
           )}
         </dl>
         <div class="mt-5 flex flex-wrap gap-2">
-          <a
-            href={`/members/${person.id}`}
-            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
-          >
+          <a href={`/members/${person.id}`} class={BUTTON}>
             Back to {member ? 'member' : 'customer'}
           </a>
           {deposit.status !== 'posted' && (
-            <a
-              href={`/transactions/${deposit.id}`}
-              class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
-            >
+            <a href={`/transactions/${deposit.id}`} class={SECONDARY_SM}>
               Follow it
             </a>
           )}
@@ -239,14 +241,14 @@ const INPUT =
                 ? '/transactions/deposit'
                 : `/members/${person.id}/deposit`
             }
-            class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+            class={SECONDARY_SM}
           >
             Record another
           </a>
         </div>
       </section>
     ) : depositable.length === 0 ? (
-      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-300">
+      <section class={`${CARD} text-sm text-neutral-600 dark:text-neutral-300`}>
         {person.status !== 'active'
           ? `This ${member ? 'member' : 'customer'} is ${person.status}, so no deposit can be taken.`
           : 'None of these accounts can take a deposit.'}
@@ -257,7 +259,7 @@ const INPUT =
         data-deposit-form
         data-cash-threshold={cashThreshold}
         data-cash-maximum={cashMax}
-        class="space-y-4 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
+        class={FORM_CARD}
       >
         <input
           type="hidden"
@@ -265,7 +267,7 @@ const INPUT =
           value={values.idempotencyKey}
         />
 
-        <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+        <label class={LABEL}>
           Account
           <select name="accountId" class={INPUT}>
             {accounts.map(account => (
@@ -386,7 +388,7 @@ const INPUT =
             name="intent"
             value="record"
             data-deposit-submit
-            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50"
+            class={BUTTON}
           >
             Post deposit
           </button>
@@ -396,14 +398,11 @@ const INPUT =
             value="request"
             data-request-submit
             hidden
-            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50"
+            class={BUTTON}
           >
             Continue to the Source of Fund form
           </button>
-          <a
-            href={`/members/${person.id}`}
-            class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
-          >
+          <a href={`/members/${person.id}`} class={SECONDARY_SM}>
             Cancel
           </a>
         </div>

@@ -17,6 +17,16 @@ import {
   TRANSACTION_KINDS,
 } from '@lib/config/reference';
 import { formatMoney } from '@lib/payments/money';
+import {
+  PAGE,
+  CARD,
+  CARD_TITLE,
+  HINT,
+  PANEL,
+  INPUT,
+  BUTTON,
+  BUTTON_SM,
+} from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 const canManage = principal.permissions.has('config.manage');
@@ -88,8 +98,6 @@ const KIND_LABELS: Record<string, string> = {
   demise: 'Demised member claim',
 };
 
-const INPUT =
-  'mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100';
 const SMALL_BUTTON =
   'rounded-lg border border-neutral-300 px-2.5 py-1 text-xs font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800';
 ---
@@ -98,7 +106,7 @@ const SMALL_BUTTON =
   title="Approval matrix · Al Barakah MCSL"
   heading="Approval matrix"
 >
-  <div class="mx-auto max-w-5xl space-y-6">
+  <div class={PAGE.list}>
     <ConfigNav />
 
     {error && (
@@ -115,22 +123,20 @@ const SMALL_BUTTON =
     {TRANSACTION_KINDS.map(kind => {
       const own = rules.filter(r => r.kind === kind);
       return (
-        <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-          <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-            {KIND_LABELS[kind]}
-          </h2>
-          <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+        <section class={CARD}>
+          <h2 class={CARD_TITLE}>{KIND_LABELS[kind]}</h2>
+          <p class={`${HINT} mt-1`}>
             Top to bottom, the first rule that fits decides. None fitting sends
             it to the most demanding chain.
           </p>
           {own.length === 0 ? (
-            <p class="mt-3 text-sm text-neutral-500 dark:text-neutral-400">
+            <p class={`${HINT} mt-3`}>
               No rule. Everything of this kind goes for review.
             </p>
           ) : (
             <ol class="mt-4 space-y-3">
               {own.map((rule, index) => (
-                <li class="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+                <li class={PANEL}>
                   <details>
                     <summary class="flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-1 text-sm">
                       <span class="font-medium text-neutral-800 dark:text-neutral-100">
@@ -272,7 +278,7 @@ const SMALL_BUTTON =
                             type="submit"
                             name="intent"
                             value="update"
-                            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+                            class={BUTTON_SM}
                           >
                             Save
                           </button>
@@ -315,10 +321,8 @@ const SMALL_BUTTON =
     })}
 
     {canManage && (
-      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-          Add a rule
-        </h2>
+      <section class={CARD}>
+        <h2 class={CARD_TITLE}>Add a rule</h2>
         <form method="post" class="mt-4 grid gap-3 sm:grid-cols-3">
           <input type="hidden" name="intent" value="create" />
           <input type="hidden" name="isActive" value="on" />
@@ -381,10 +385,7 @@ const SMALL_BUTTON =
             <input type="text" name="note" class={INPUT} />
           </label>
           <div class="sm:col-span-3">
-            <button
-              type="submit"
-              class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
-            >
+            <button type="submit" class={BUTTON}>
               Add rule
             </button>
           </div>

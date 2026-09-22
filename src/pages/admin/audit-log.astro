@@ -10,6 +10,16 @@ import {
   listAuditEvents,
   type AuditEventRow,
 } from '@lib/access/audit';
+import {
+  BUTTON,
+  CARD,
+  CARD_TITLE,
+  HINT,
+  INPUT,
+  PAGE,
+  PANEL,
+  SECONDARY_SM,
+} from '@lib/ui';
 
 const params = Astro.url.searchParams;
 const actor = params.get('actor')?.trim() || '';
@@ -195,11 +205,9 @@ function describeEntry(entry: AuditEventRow): string {
 ---
 
 <DashboardLayout title="Audit log · Al Barakah MCSL" heading="Audit log">
-  <div class="mx-auto max-w-6xl space-y-6">
-    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-      <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-        Filter
-      </h2>
+  <div class={PAGE.wide}>
+    <section class={CARD}>
+      <h2 class={CARD_TITLE}>Filter</h2>
       <form method="get" class="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <label class="text-sm text-neutral-600 dark:text-neutral-300">
           Actor
@@ -208,15 +216,12 @@ function describeEntry(entry: AuditEventRow): string {
             name="actor"
             value={actor}
             placeholder="Name or email"
-            class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+            class={INPUT}
           />
         </label>
         <label class="text-sm text-neutral-600 dark:text-neutral-300">
           Action
-          <select
-            name="action"
-            class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-          >
+          <select name="action" class={INPUT}>
             <option value="">All actions</option>
             {actions.map(a => (
               <option value={a} selected={a === action}>
@@ -227,10 +232,7 @@ function describeEntry(entry: AuditEventRow): string {
         </label>
         <label class="text-sm text-neutral-600 dark:text-neutral-300">
           Record type
-          <select
-            name="entityType"
-            class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-          >
+          <select name="entityType" class={INPUT}>
             <option value="">All record types</option>
             {entityTypes.map(t => (
               <option value={t} selected={t === entityType}>
@@ -246,32 +248,19 @@ function describeEntry(entry: AuditEventRow): string {
             name="entityId"
             value={entityId}
             placeholder="Exact ID"
-            class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+            class={INPUT}
           />
         </label>
         <label class="text-sm text-neutral-600 dark:text-neutral-300">
           From
-          <input
-            type="date"
-            name="from"
-            value={fromRaw}
-            class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-          />
+          <input type="date" name="from" value={fromRaw} class={INPUT} />
         </label>
         <label class="text-sm text-neutral-600 dark:text-neutral-300">
           To
-          <input
-            type="date"
-            name="to"
-            value={toRaw}
-            class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-          />
+          <input type="date" name="to" value={toRaw} class={INPUT} />
         </label>
         <div class="flex items-end gap-2 lg:col-span-3">
-          <button
-            type="submit"
-            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
-          >
+          <button type="submit" class={BUTTON}>
             Filter
           </button>
           {(actor || action || entityType || entityId || fromRaw || toRaw) && (
@@ -286,26 +275,24 @@ function describeEntry(entry: AuditEventRow): string {
       </form>
     </section>
 
-    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+    <section class={CARD}>
       <div class="flex flex-wrap items-center justify-between gap-2">
-        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+        <h2 class={CARD_TITLE}>
           {total} entr{total === 1 ? 'y' : 'ies'}
         </h2>
         {totalPages > 1 && (
-          <p class="text-sm text-neutral-500 dark:text-neutral-400">
+          <p class={HINT}>
             Page {page} of {totalPages}
           </p>
         )}
       </div>
 
       {events.length === 0 ? (
-        <p class="mt-4 text-sm text-neutral-500 dark:text-neutral-400">
-          Nothing matches those filters.
-        </p>
+        <p class={`${HINT} mt-4`}>Nothing matches those filters.</p>
       ) : (
         <ul class="mt-4 space-y-2">
           {events.map(entry => (
-            <li class="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+            <li class={PANEL}>
               <p class="text-sm font-medium text-neutral-800 dark:text-neutral-100">
                 {describeEntry(entry)}
               </p>
@@ -321,20 +308,14 @@ function describeEntry(entry: AuditEventRow): string {
       {totalPages > 1 && (
         <div class="mt-4 flex items-center justify-between gap-2 text-sm">
           {page > 1 ? (
-            <a
-              href={pageHref(page - 1)}
-              class="rounded-lg border border-neutral-300 px-3 py-1.5 font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
-            >
+            <a href={pageHref(page - 1)} class={SECONDARY_SM}>
               ← Newer
             </a>
           ) : (
             <span />
           )}
           {page < totalPages && (
-            <a
-              href={pageHref(page + 1)}
-              class="rounded-lg border border-neutral-300 px-3 py-1.5 font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
-            >
+            <a href={pageHref(page + 1)} class={SECONDARY_SM}>
               Older →
             </a>
           )}

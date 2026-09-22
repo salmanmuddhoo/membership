@@ -7,6 +7,7 @@ import DashboardLayout from '@layouts/DashboardLayout.astro';
 import { listAccountTypes } from '@lib/config/reference';
 import { PERMISSION_CAPTURE } from '@lib/ledger/deposits';
 import { findAccountByNumber } from '@lib/ledger/lookup';
+import { PAGE, FORM_CARD, HINT, LABEL, INPUT, BUTTON } from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 if (!principal.permissions.has(PERMISSION_CAPTURE)) {
@@ -32,17 +33,11 @@ if (chosen && number.trim()) {
 } else if (typeId && !chosen) {
   error = 'Choose an account type that accepts deposits.';
 }
-
-const INPUT =
-  'mt-1 block w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100';
 ---
 
 <DashboardLayout title="Deposit · Al Barakah MCSL" heading="Deposit">
-  <div class="mx-auto max-w-2xl space-y-6">
-    <a
-      href="/transactions"
-      class="inline-block text-sm text-neutral-500 underline dark:text-neutral-400"
-    >
+  <div class={PAGE.form}>
+    <a href="/transactions" class={`inline-block ${HINT} underline`}>
       ← Transactions
     </a>
 
@@ -52,11 +47,7 @@ const INPUT =
       </div>
     )}
 
-    <form
-      method="get"
-      data-deposit-lookup
-      class="space-y-4 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
-    >
+    <form method="get" data-deposit-lookup class={FORM_CARD}>
       <fieldset>
         <legend class="text-sm text-neutral-600 dark:text-neutral-300">
           Account
@@ -83,7 +74,7 @@ const INPUT =
         </div>
       </fieldset>
 
-      <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+      <label class={LABEL}>
         <span data-number-label>Member number</span>
         <input
           type="text"
@@ -98,10 +89,7 @@ const INPUT =
         />
       </label>
 
-      <button
-        type="submit"
-        class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
-      >
+      <button type="submit" class={BUTTON}>
         Find account
       </button>
     </form>

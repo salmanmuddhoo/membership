@@ -12,6 +12,17 @@ import {
 } from '@lib/ledger/deposit-requests';
 import { DepositError, loadDeposit } from '@lib/ledger/deposits';
 import { formatMoney } from '@lib/payments/money';
+import {
+  PAGE,
+  FORM_CARD,
+  CARD_LABEL,
+  MUTED,
+  LABEL,
+  INPUT,
+  BUTTON,
+  SECONDARY,
+  DANGER,
+} from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 const { id } = Astro.params;
@@ -78,24 +89,13 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
   hour: '2-digit',
   minute: '2-digit',
 });
-
-const INPUT =
-  'mt-1 block w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100';
-const BUTTON =
-  'bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50';
-const LINK =
-  'rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800';
-const DANGER =
-  'rounded-lg border border-red-300 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950';
-const CARD =
-  'space-y-4 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950';
 ---
 
 <DashboardLayout
   title={`${deposit.reference} · Al Barakah MCSL`}
   heading={`Cash deposit ${deposit.reference}`}
 >
-  <div class="mx-auto max-w-4xl space-y-6">
+  <div class={PAGE.detail}>
     <div class="-mx-4 flex flex-wrap items-center justify-between gap-2 border-t border-neutral-200/80 bg-neutral-100/95 px-4 py-3 text-sm sm:mx-0 sm:rounded-b-2xl sm:px-3 sm:py-1.5 dark:border-neutral-800/80 dark:bg-neutral-950/95">
       <a
         href={`/members/${deposit.memberId ?? deposit.customerId}`}
@@ -116,17 +116,15 @@ const CARD =
     )}
 
     {step === 'details' && (
-      <form method="post" class={CARD}>
-        <h2 class="text-sm font-semibold text-neutral-700 uppercase dark:text-neutral-200">
-          Details
-        </h2>
+      <form method="post" class={FORM_CARD}>
+        <h2 class={CARD_LABEL}>Details</h2>
         <dl class="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
           <dt class="text-neutral-500 dark:text-neutral-400">Account</dt>
           <dd class="font-medium text-neutral-800 dark:text-neutral-100">
             {deposit.accountNo} · {deposit.accountTypeName}
           </dd>
         </dl>
-        <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+        <label class={LABEL}>
           Amount (Rs)
           <input
             type="text"
@@ -137,7 +135,7 @@ const CARD =
             class={INPUT}
           />
         </label>
-        <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+        <label class={LABEL}>
           Reason
           <input
             type="text"
@@ -164,10 +162,8 @@ const CARD =
     )}
 
     {step === 'signature' && (
-      <section class={CARD}>
-        <h2 class="text-sm font-semibold text-neutral-700 uppercase dark:text-neutral-200">
-          Signature
-        </h2>
+      <section class={FORM_CARD}>
+        <h2 class={CARD_LABEL}>Signature</h2>
         {!item ? (
           <p class="text-sm text-red-700 dark:text-red-300">
             The Source of Fund form document type is not configured. Ask an
@@ -183,7 +179,7 @@ const CARD =
               <a href={`${base}/form`} class={BUTTON}>
                 Open the form to sign
               </a>
-              <a href={`${base}?step=submit`} class={LINK}>
+              <a href={`${base}?step=submit`} class={SECONDARY}>
                 Next
               </a>
             </div>
@@ -204,7 +200,7 @@ const CARD =
               <a href={`${base}/form`} class={BUTTON}>
                 Sign again
               </a>
-              <a href={`${base}?step=submit`} class={LINK}>
+              <a href={`${base}?step=submit`} class={SECONDARY}>
                 Next
               </a>
             </div>
@@ -214,10 +210,8 @@ const CARD =
     )}
 
     {step === 'submit' && (
-      <form method="post" class={CARD}>
-        <h2 class="text-sm font-semibold text-neutral-700 uppercase dark:text-neutral-200">
-          Submit
-        </h2>
+      <form method="post" class={FORM_CARD}>
+        <h2 class={CARD_LABEL}>Submit</h2>
         <dl class="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
           <dt class="text-neutral-500 dark:text-neutral-400">Account</dt>
           <dd class="font-medium text-neutral-800 dark:text-neutral-100">
@@ -257,9 +251,7 @@ const CARD =
           </button>
         </div>
         {!canSubmit && (
-          <p class="text-sm text-neutral-600 dark:text-neutral-300">
-            The Source of Fund form must be verified first.
-          </p>
+          <p class={MUTED}>The Source of Fund form must be verified first.</p>
         )}
       </form>
     )}

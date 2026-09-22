@@ -8,6 +8,16 @@ import {
   listRoles,
   setRolePermissions,
 } from '@lib/admin/roles';
+import {
+  BUTTON,
+  BUTTON_SM,
+  CARD,
+  CARD_TITLE,
+  DANGER_SM,
+  HINT,
+  PAGE,
+  PANEL,
+} from '@lib/ui';
 
 // Server-rendered forms rather than a client-side fetch of our own API. For an
 // internal administration screen that is the better trade: it works without
@@ -133,7 +143,7 @@ const permissionGroups = groupPermissions(allPermissions);
 ---
 
 <DashboardLayout title="Roles · Al Barakah MCSL" heading="Roles">
-  <div class="mx-auto max-w-5xl space-y-6">
+  <div class={PAGE.list}>
     {error && (
       <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
         {error}
@@ -145,14 +155,12 @@ const permissionGroups = groupPermissions(allPermissions);
       </div>
     )}
 
-    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-      <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-        Roles
-      </h2>
+    <section class={CARD}>
+      <h2 class={CARD_TITLE}>Roles</h2>
 
       <div class="mt-5 space-y-4">
         {roles.map(role => (
-          <details class="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+          <details class={PANEL}>
             <summary class="flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-1">
               <span class="font-medium text-neutral-800 dark:text-neutral-100">
                 {role.name}
@@ -173,9 +181,7 @@ const permissionGroups = groupPermissions(allPermissions);
             </summary>
 
             {role.description && (
-              <p class="mt-3 text-sm text-neutral-500 dark:text-neutral-400">
-                {role.description}
-              </p>
+              <p class={`${HINT} mt-3`}>{role.description}</p>
             )}
 
             <form method="post" class="mt-4 space-y-3">
@@ -220,7 +226,7 @@ const permissionGroups = groupPermissions(allPermissions);
                     type="submit"
                     name="intent"
                     value="permissions"
-                    class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+                    class={BUTTON_SM}
                   >
                     Save permissions
                   </button>
@@ -229,7 +235,7 @@ const permissionGroups = groupPermissions(allPermissions);
                       type="submit"
                       name="intent"
                       value="delete"
-                      class="rounded-lg border border-red-300 px-3 py-1.5 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
+                      class={DANGER_SM}
                     >
                       Delete role
                     </button>
@@ -243,10 +249,8 @@ const permissionGroups = groupPermissions(allPermissions);
     </section>
 
     {canManage && (
-      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-          Add a role
-        </h2>
+      <section class={CARD}>
+        <h2 class={CARD_TITLE}>Add a role</h2>
 
         <form method="post" class="mt-4 space-y-4">
           <input type="hidden" name="intent" value="create" />
@@ -317,10 +321,7 @@ const permissionGroups = groupPermissions(allPermissions);
             ))}
           </fieldset>
 
-          <button
-            type="submit"
-            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
-          >
+          <button type="submit" class={BUTTON}>
             Create role
           </button>
         </form>

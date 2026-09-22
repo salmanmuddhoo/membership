@@ -13,6 +13,7 @@ import {
   DetailsRequestError,
   listDetailsRequests,
 } from '@lib/members/details-requests';
+import { PAGE, CARD, CARD_TITLE, HINT, INPUT_BARE, SECONDARY } from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 const canVerify = principal.permissions.has('member.details_verify');
@@ -70,7 +71,7 @@ function display(value: string, dataType: string): string {
   title="Details updates · Al Barakah MCSL"
   heading="Details updates"
 >
-  <div class="mx-auto max-w-4xl space-y-6">
+  <div class={PAGE.list}>
     {error && (
       <p class="rounded-lg border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950 dark:text-rose-200">
         {error}
@@ -82,11 +83,9 @@ function display(value: string, dataType: string): string {
       </p>
     )}
 
-    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-      <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-        Waiting to be verified
-      </h2>
-      <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+    <section class={CARD}>
+      <h2 class={CARD_TITLE}>Waiting to be verified</h2>
+      <p class={`${HINT} mt-1`}>
         {pending.length === 0
           ? 'Nothing waiting. Updates members send from the app appear here.'
           : `${pending.length} member${pending.length === 1 ? '' : 's'} sent an update. Check each change against the evidence it needs before applying it.`}
@@ -103,7 +102,7 @@ function display(value: string, dataType: string): string {
                 >
                   {request.memberName}
                 </a>
-                <span class="ml-2 text-sm text-neutral-500 dark:text-neutral-400">
+                <span class={`${HINT} ml-2`}>
                   {request.memberNo} · {request.membershipTypeName}
                 </span>
               </div>
@@ -160,21 +159,16 @@ function display(value: string, dataType: string): string {
                       name="comment"
                       required
                       placeholder="What the member needs to do"
-                      class="focus:border-mint-400 focus:ring-mint-400 mt-1 block w-72 rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm text-neutral-800 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                      class={`${INPUT_BARE} mt-1 block w-72 text-neutral-800`}
                     />
                   </label>
-                  <button
-                    type="submit"
-                    class="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
-                  >
+                  <button type="submit" class={SECONDARY}>
                     Decline
                   </button>
                 </form>
               </div>
             ) : (
-              <p class="mt-4 text-sm text-neutral-500 dark:text-neutral-400">
-                You can see this, but not act on it.
-              </p>
+              <p class={`${HINT} mt-4`}>You can see this, but not act on it.</p>
             )}
           </article>
         ))}
@@ -182,10 +176,8 @@ function display(value: string, dataType: string): string {
     </section>
 
     {decided.length > 0 && (
-      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-          Already decided
-        </h2>
+      <section class={CARD}>
+        <h2 class={CARD_TITLE}>Already decided</h2>
         <div class="mt-4 overflow-x-auto">
           <table class="w-full text-sm">
             <thead>

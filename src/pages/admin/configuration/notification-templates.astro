@@ -15,6 +15,16 @@ import {
   updateNotificationTemplate,
   type NotificationChannel,
 } from '@lib/notifications/templates';
+import {
+  PAGE,
+  CARD,
+  CARD_TITLE,
+  HINT,
+  PANEL,
+  LABEL,
+  INPUT,
+  BUTTON,
+} from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 const canManage = principal.permissions.has('config.manage');
@@ -119,7 +129,7 @@ for (const template of templates) {
   title="Notification wording · Al Barakah MCSL"
   heading="Notification wording"
 >
-  <div class="mx-auto max-w-5xl space-y-6">
+  <div class={PAGE.list}>
     <ConfigNav />
 
     {error && (
@@ -140,10 +150,8 @@ for (const template of templates) {
     )}
 
     {[...byEvent.entries()].map(([eventCode, group]) => (
-      <section class="space-y-3 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-          {eventLabel(eventCode)}
-        </h2>
+      <section class={`${CARD} space-y-3`}>
+        <h2 class={CARD_TITLE}>{eventLabel(eventCode)}</h2>
 
         {(placeholdersForEvent(eventCode) ?? []).length > 0 && (
           <p class="flex flex-wrap items-center gap-1.5 text-xs text-neutral-500 dark:text-neutral-400">
@@ -172,10 +180,7 @@ for (const template of templates) {
           )}
 
         {group.map(template => (
-          <form
-            method="post"
-            class="space-y-3 rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900"
-          >
+          <form method="post" class={`${PANEL} space-y-3`}>
             <input type="hidden" name="id" value={template.id} />
 
             <div class="flex flex-wrap items-center justify-between gap-2">
@@ -195,38 +200,38 @@ for (const template of templates) {
             </div>
 
             {template.channel === 'email' && (
-              <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+              <label class={LABEL}>
                 Subject
                 <input
                   type="text"
                   name="subject"
                   value={template.subject ?? ''}
                   disabled={!canManage}
-                  class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-950 dark:text-neutral-100"
+                  class={INPUT}
                 />
               </label>
             )}
 
             {template.channel === 'whatsapp' && (
               <div class="grid gap-3 sm:grid-cols-3">
-                <label class="block text-sm text-neutral-600 sm:col-span-2 dark:text-neutral-300">
+                <label class={`${LABEL} sm:col-span-2`}>
                   WhatsApp template name
                   <input
                     type="text"
                     name="providerTemplateName"
                     value={template.providerTemplateName ?? ''}
                     disabled={!canManage}
-                    class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-950 dark:text-neutral-100"
+                    class={INPUT}
                   />
                 </label>
-                <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+                <label class={LABEL}>
                   Language
                   <input
                     type="text"
                     name="providerTemplateLanguage"
                     value={template.providerTemplateLanguage}
                     disabled={!canManage}
-                    class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-950 dark:text-neutral-100"
+                    class={INPUT}
                   />
                 </label>
               </div>
@@ -248,21 +253,18 @@ for (const template of templates) {
               </label>
             )}
 
-            <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+            <label class={LABEL}>
               Message
               <textarea
                 name="body"
                 rows={template.channel === 'email' ? 8 : 4}
                 disabled={!canManage}
-                class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 font-mono text-sm dark:border-neutral-600 dark:bg-neutral-950 dark:text-neutral-100"
+                class={`${INPUT} font-mono`}
               >{template.body}</textarea>
             </label>
 
             {canManage && (
-              <button
-                type="submit"
-                class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
-              >
+              <button type="submit" class={BUTTON}>
                 Save
               </button>
             )}
@@ -272,9 +274,7 @@ for (const template of templates) {
     ))}
 
     {templates.length === 0 && (
-      <p class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 text-sm text-neutral-500 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-400">
-        No notification wording has been set up.
-      </p>
+      <p class={`${CARD} ${HINT}`}>No notification wording has been set up.</p>
     )}
   </div>
 </DashboardLayout>

@@ -17,6 +17,7 @@ import {
   summarise,
   type ReadinessItem,
 } from '@lib/config/readiness';
+import { PAGE, CARD, CARD_TITLE } from '@lib/ui';
 
 const items = await readiness();
 const summary = summarise(items);
@@ -38,7 +39,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 ---
 
 <DashboardLayout title="Readiness · Al Barakah MCSL" heading="Readiness">
-  <div class="mx-auto max-w-5xl space-y-6">
+  <div class={PAGE.list}>
     <ConfigNav />
 
     <p
@@ -54,10 +55,8 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     </p>
 
     {[...groups].map(([group, groupItems]) => (
-      <section class="space-y-3 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-          {group}
-        </h2>
+      <section class={`${CARD} space-y-3`}>
+        <h2 class={CARD_TITLE}>{group}</h2>
 
         <div class="overflow-x-auto">
           <table class="mt-4 w-full text-sm">

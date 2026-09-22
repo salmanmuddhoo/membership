@@ -5,6 +5,7 @@
 // `window.appAlert` and `window.confirmedSubmit` (declared in env.d.ts) are
 // what the rest of the app calls instead; this is the one dialog element
 // and script backing all three, so there is only ever one on screen.
+import { SECONDARY_SM } from '@lib/ui';
 ---
 
 <dialog
@@ -13,11 +14,7 @@
 >
   <p data-confirm-message class="text-sm whitespace-pre-line"></p>
   <div class="mt-5 flex justify-end gap-2">
-    <button
-      type="button"
-      data-confirm-cancel
-      class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
-    >
+    <button type="button" data-confirm-cancel class={SECONDARY_SM}>
       Cancel
     </button>
     <button

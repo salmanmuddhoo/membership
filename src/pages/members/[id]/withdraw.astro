@@ -18,6 +18,17 @@ import {
 } from '@lib/ledger/withdrawals';
 import { loadCustomer, loadMember } from '@lib/members/create';
 import { formatMoney } from '@lib/payments/money';
+import {
+  PAGE,
+  MUTED,
+  CARD,
+  CARD_TITLE,
+  FORM_CARD,
+  LABEL,
+  INPUT,
+  SECONDARY_SM,
+  BUTTON,
+} from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 if (!principal.permissions.has(PERMISSION_CAPTURE)) {
@@ -108,17 +119,14 @@ if (Astro.request.method === 'POST') {
     }
   }
 }
-
-const INPUT =
-  'mt-1 block w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100';
 ---
 
 <DashboardLayout
   title="Withdrawal · Al Barakah MCSL"
   heading="Record a withdrawal"
 >
-  <div class="mx-auto max-w-3xl space-y-6">
-    <p class="flex flex-wrap items-center gap-x-3 text-sm text-neutral-600 dark:text-neutral-300">
+  <div class={PAGE.form}>
+    <p class={`flex flex-wrap items-center gap-x-3 ${MUTED}`}>
       {fromTransactions && (
         <a
           href="/transactions"
@@ -143,13 +151,13 @@ const INPUT =
 
     {withdrawal ? (
       <section class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-2xl border p-6">
-        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+        <h2 class={CARD_TITLE}>
           {withdrawal.status === 'posted'
             ? `Withdrawal ${withdrawal.reference} paid out`
             : `Withdrawal ${withdrawal.reference} submitted for approval`}
         </h2>
         {withdrawal.status !== 'posted' && withdrawal.currentStepName && (
-          <p class="mt-1 text-sm text-neutral-600 dark:text-neutral-300">
+          <p class={`${MUTED} mt-1`}>
             Waiting for {withdrawal.currentStepName}
             {withdrawal.currentStepRole && ` (${withdrawal.currentStepRole})`}.
             It is paid out once approved.
@@ -188,17 +196,11 @@ const INPUT =
           )}
         </dl>
         <div class="mt-5 flex flex-wrap gap-2">
-          <a
-            href={`/members/${person.id}`}
-            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
-          >
+          <a href={`/members/${person.id}`} class={BUTTON}>
             Back to {member ? 'member' : 'customer'}
           </a>
           {withdrawal.status !== 'posted' && (
-            <a
-              href={`/transactions/${withdrawal.id}`}
-              class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
-            >
+            <a href={`/transactions/${withdrawal.id}`} class={SECONDARY_SM}>
               Follow it
             </a>
           )}
@@ -208,31 +210,27 @@ const INPUT =
                 ? '/transactions/withdrawal'
                 : `/members/${person.id}/withdraw`
             }
-            class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+            class={SECONDARY_SM}
           >
             Record another
           </a>
         </div>
       </section>
     ) : withdrawable.length === 0 ? (
-      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-300">
+      <section class={`${CARD} text-sm text-neutral-600 dark:text-neutral-300`}>
         {person.status !== 'active'
           ? `This ${member ? 'member' : 'customer'} is ${person.status}, so nothing can be withdrawn.`
           : 'None of these accounts allows a withdrawal.'}
       </section>
     ) : (
-      <form
-        method="post"
-        data-withdrawal-form
-        class="space-y-4 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
-      >
+      <form method="post" data-withdrawal-form class={FORM_CARD}>
         <input
           type="hidden"
           name="idempotencyKey"
           value={values.idempotencyKey}
         />
 
-        <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+        <label class={LABEL}>
           Account
           <select name="accountId" class={INPUT}>
             {accounts.map(account => (
@@ -336,16 +334,10 @@ const INPUT =
         </div>
 
         <div class="flex flex-wrap gap-2 pt-2">
-          <button
-            type="submit"
-            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
-          >
+          <button type="submit" class={BUTTON}>
             Record withdrawal
           </button>
-          <a
-            href={`/members/${person.id}`}
-            class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
-          >
+          <a href={`/members/${person.id}`} class={SECONDARY_SM}>
             Cancel
           </a>
         </div>

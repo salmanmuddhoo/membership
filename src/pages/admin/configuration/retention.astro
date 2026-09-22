@@ -21,6 +21,7 @@ import {
   MINIMUM_PERIOD_MONTHS,
   type RetentionClass,
 } from '@lib/retention/policy';
+import { PAGE, CARD, PANEL, HINT, INPUT_BARE, BUTTON_SM } from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 const canManage = principal.permissions.has('retention.manage');
@@ -74,7 +75,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 ---
 
 <DashboardLayout title="Retention · Al Barakah MCSL" heading="Retention">
-  <div class="mx-auto max-w-5xl space-y-6">
+  <div class={PAGE.list}>
     <ConfigNav />
 
     {error && (
@@ -99,11 +100,11 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       undo. Leave a period empty to keep those records indefinitely.
     </p>
 
-    <section class="space-y-3 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+    <section class={`${CARD} space-y-3`}>
       {due.map(item => (
         <form
           method="post"
-          class="flex flex-wrap items-end justify-between gap-4 rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900"
+          class={`${PANEL} flex flex-wrap items-end justify-between gap-4`}
         >
           <input type="hidden" name="code" value={item.code} />
 
@@ -111,7 +112,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             <span class="block font-medium text-neutral-800 dark:text-neutral-100">
               {item.label}
             </span>
-            <span class="mt-1 block text-sm text-neutral-500 dark:text-neutral-400">
+            <span class={`${HINT} mt-1 block`}>
               {item.periodMonths === null
                 ? 'Kept indefinitely'
                 : item.dueCount === 0
@@ -132,15 +133,12 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               inputmode="numeric"
               placeholder="—"
               disabled={!canManage}
-              class="mt-1 block w-28 rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-950 dark:text-neutral-100"
+              class={`${INPUT_BARE} mt-1 block w-28`}
             />
           </label>
 
           {canManage && (
-            <button
-              type="submit"
-              class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-semibold text-neutral-800 transition"
-            >
+            <button type="submit" class={BUTTON_SM}>
               Save
             </button>
           )}

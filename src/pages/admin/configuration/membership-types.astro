@@ -11,6 +11,17 @@ import {
   setMembershipTypeReferences,
   setNomineeCount,
 } from '@lib/config/reference';
+import {
+  PAGE,
+  CARD,
+  CARD_TITLE,
+  HINT,
+  PANEL,
+  INPUT,
+  INPUT_BARE,
+  BUTTON,
+  BUTTON_SM,
+} from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 const canManage = principal.permissions.has('config.manage');
@@ -109,7 +120,7 @@ const SUBJECT_LABELS: Record<string, string> = {
   title="Membership types · Al Barakah MCSL"
   heading="Membership types"
 >
-  <div class="mx-auto max-w-5xl space-y-6">
+  <div class={PAGE.list}>
     <ConfigNav />
 
     {error && (
@@ -124,11 +135,9 @@ const SUBJECT_LABELS: Record<string, string> = {
     )}
 
     {types.map(type => (
-      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+      <section class={CARD}>
         <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-            {type.name}
-          </h2>
+          <h2 class={CARD_TITLE}>{type.name}</h2>
           <code class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
             {type.code}
           </code>
@@ -138,19 +147,13 @@ const SUBJECT_LABELS: Record<string, string> = {
             </span>
           )}
         </div>
-        <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
-          {type.description}
-        </p>
+        <p class={`${HINT} mt-1`}>{type.description}</p>
 
         <form method="post" class="mt-4 grid gap-3 sm:grid-cols-2">
           <input type="hidden" name="typeId" value={type.id} />
           <label class="text-sm text-neutral-600 dark:text-neutral-300">
             Document checklist
-            <select
-              name="checklistId"
-              disabled={!canManage}
-              class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-            >
+            <select name="checklistId" disabled={!canManage} class={INPUT}>
               <option value="">— none —</option>
               {checklists.map(c => (
                 <option value={c.id} selected={c.id === type.checklistId}>
@@ -165,7 +168,7 @@ const SUBJECT_LABELS: Record<string, string> = {
               <select
                 name="nonMemberChecklistId"
                 disabled={!canManage}
-                class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                class={INPUT}
               >
                 <option value="">— none —</option>
                 {checklists.map(c => (
@@ -181,11 +184,7 @@ const SUBJECT_LABELS: Record<string, string> = {
           )}
           <label class="text-sm text-neutral-600 dark:text-neutral-300">
             Fee schedule
-            <select
-              name="feeScheduleId"
-              disabled={!canManage}
-              class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-            >
+            <select name="feeScheduleId" disabled={!canManage} class={INPUT}>
               <option value="">— none —</option>
               {schedules.map(s => (
                 <option value={s.id} selected={s.id === type.feeScheduleId}>
@@ -200,7 +199,7 @@ const SUBJECT_LABELS: Record<string, string> = {
                 type="submit"
                 name="intent"
                 value="references"
-                class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+                class={BUTTON}
               >
                 Save links
               </button>
@@ -220,7 +219,7 @@ const SUBJECT_LABELS: Record<string, string> = {
                 max="10"
                 value={type.nomineeCount}
                 disabled={!canManage}
-                class="mt-1 block w-24 rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                class={`${INPUT_BARE} mt-1 block w-24`}
               />
             </label>
             {canManage && (
@@ -228,7 +227,7 @@ const SUBJECT_LABELS: Record<string, string> = {
                 type="submit"
                 name="intent"
                 value="nomineeCount"
-                class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+                class={BUTTON_SM}
               >
                 Save nominee count
               </button>
@@ -248,7 +247,7 @@ const SUBJECT_LABELS: Record<string, string> = {
               placeholder="none"
               value={type.majorityAge ?? ''}
               disabled={!canManage}
-              class="mt-1 block w-24 rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+              class={`${INPUT_BARE} mt-1 block w-24`}
             />
           </label>
           <label class="text-sm text-neutral-600 dark:text-neutral-300">
@@ -256,7 +255,7 @@ const SUBJECT_LABELS: Record<string, string> = {
             <select
               name="majorityTransitionTypeId"
               disabled={!canManage}
-              class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+              class={INPUT}
             >
               <option value="">— no automatic transition —</option>
               {types
@@ -276,14 +275,14 @@ const SUBJECT_LABELS: Record<string, string> = {
               type="submit"
               name="intent"
               value="majorityTransition"
-              class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+              class={BUTTON_SM}
             >
               Save majority transition
             </button>
           )}
         </form>
 
-        <details class="mt-4 rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+        <details class={`${PANEL} mt-4`}>
           <summary class="cursor-pointer text-sm font-medium text-neutral-700 dark:text-neutral-200">
             Form fields ({type.fields.length})
           </summary>
@@ -362,7 +361,7 @@ const SUBJECT_LABELS: Record<string, string> = {
                 type="submit"
                 name="intent"
                 value="fields"
-                class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+                class={BUTTON_SM}
               >
                 Save field rules
               </button>

@@ -9,6 +9,7 @@
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import { reconcileReceipts, type ExceptionKind } from '@lib/payments/receipts';
 import { formatMoney } from '@lib/payments/money';
+import { PAGE, CARD, CARD_TITLE, HINT, MUTED, INPUT, BUTTON } from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 if (!principal.permissions.has('receipt.reconcile')) {
@@ -60,19 +61,11 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
   title="Receipt reconciliation · Al Barakah MCSL"
   heading="Receipt reconciliation"
 >
-  <div class="mx-auto max-w-4xl space-y-6">
-    <form
-      method="get"
-      class="flex flex-wrap items-end gap-3 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
-    >
+  <div class={PAGE.list}>
+    <form method="get" class={`flex flex-wrap items-end gap-3 ${CARD}`}>
       <label class="text-sm text-neutral-600 dark:text-neutral-300">
         From
-        <input
-          type="date"
-          name="from"
-          value={asDate(from)}
-          class="mt-1 block rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-        />
+        <input type="date" name="from" value={asDate(from)} class={INPUT} />
       </label>
       <label class="text-sm text-neutral-600 dark:text-neutral-300">
         To
@@ -80,34 +73,27 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           type="date"
           name="to"
           value={asDate(toInclusive)}
-          class="mt-1 block rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+          class={INPUT}
         />
       </label>
-      <button
-        type="submit"
-        class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
-      >
+      <button type="submit" class={BUTTON}>
         Show
       </button>
     </form>
 
-    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+    <section class={CARD}>
       <div class="grid gap-4 sm:grid-cols-3">
         <div>
           <p class="text-2xl font-bold text-neutral-800 tabular-nums dark:text-neutral-100">
             {period.issuedCount}
           </p>
-          <p class="text-sm text-neutral-500 dark:text-neutral-400">
-            receipts issued
-          </p>
+          <p class={HINT}>receipts issued</p>
         </div>
         <div>
           <p class="text-2xl font-bold text-neutral-800 tabular-nums dark:text-neutral-100">
             {formatMoney(period.issuedTotal)}
           </p>
-          <p class="text-sm text-neutral-500 dark:text-neutral-400">
-            net of refunds
-          </p>
+          <p class={HINT}>net of refunds</p>
         </div>
         <div>
           <p class="text-2xl font-bold text-neutral-800 tabular-nums dark:text-neutral-100">
@@ -115,22 +101,18 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               ? '—'
               : `${period.firstSerial}–${period.lastSerial}`}
           </p>
-          <p class="text-sm text-neutral-500 dark:text-neutral-400">
-            numbers allocated
-          </p>
+          <p class={HINT}>numbers allocated</p>
         </div>
       </div>
     </section>
 
-    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-      <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-        Exceptions
-      </h2>
+    <section class={CARD}>
+      <h2 class={CARD_TITLE}>Exceptions</h2>
 
       {period.exceptions.length === 0 ? (
         /* Said in words. An empty table would read the same whether the
              sequence is clean or the query found nothing to look at. */
-        <p class="mt-3 text-sm text-neutral-600 dark:text-neutral-300">
+        <p class={`mt-3 ${MUTED}`}>
           {period.firstSerial === null
             ? 'No receipt numbers were allocated in this period.'
             : `Every number from ${period.firstSerial} to ${period.lastSerial} is accounted for. No gaps, no duplicates, no voids.`}
