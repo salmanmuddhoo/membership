@@ -39,9 +39,15 @@ export class DormancyError extends Error {
 // When something last moved on a member's accounts, or the day they
 // joined. One expression, used by the job and by the report so the two can
 // never disagree about who is close.
+//
+// Officer feedback: never earlier than the day the record came into this
+// system (m.created_at). A migrated member's Joined Date is from the old
+// register, which brought no activity with it; one with nothing to carry
+// (0 balances) was otherwise marked dormant the first night.
 export const LAST_ACTIVITY_SQL = `
   greatest(
     m.joined_at,
+    m.created_at,
     (select max(e.posted_at)
        from account_entry e
        join account a on a.id = e.account_id

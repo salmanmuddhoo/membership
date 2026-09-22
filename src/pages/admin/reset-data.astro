@@ -86,7 +86,9 @@ const counts = isTestEnvironment && !done ? await countsBeforeReset() : null;
         <p class="mt-2 text-sm text-red-800 dark:text-red-200">
           {counts.members} member{counts.members === 1 ? '' : 's'},{' '}
           {counts.applications} application
-          {counts.applications === 1 ? '' : 's'}, {counts.payments} payment
+          {counts.applications === 1 ? '' : 's'}, {counts.transactions}{' '}
+          transaction{counts.transactions === 1 ? '' : 's'}, {counts.payments}{' '}
+          payment
           {counts.payments === 1 ? '' : 's'} and {counts.documents} document
           {counts.documents === 1 ? '' : 's'} — and the record of who did what
           to any of them. This cannot be undone.

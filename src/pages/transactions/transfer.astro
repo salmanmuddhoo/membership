@@ -5,7 +5,12 @@
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import { listAccountTypes } from '@lib/config/reference';
 import { PERMISSION_CAPTURE } from '@lib/ledger/transfers';
-import { findAccountByNumber } from '@lib/ledger/lookup';
+import AccountMatches from '@components/AccountMatches.astro';
+import {
+  findAccountByNumber,
+  findAccountsByName,
+  type FoundAccount,
+} from '@lib/ledger/lookup';
 import {
   PAGE,
   FORM_CARD,
@@ -29,6 +34,10 @@ const number = Astro.url.searchParams.get('number') ?? '';
 const chosen = transferable.find(t => t.id === typeId) ?? null;
 
 let error: string | null = null;
+// Officer feedback: a number, or the holder's name. A number that matches
+// goes straight to the form; otherwise the name is looked up, and one match
+// goes straight there too, several are listed to pick from.
+let matches: FoundAccount[] = [];
 if (chosen && number.trim()) {
   const found = await findAccountByNumber(chosen.id, number);
   if (found) {
@@ -36,7 +45,16 @@ if (chosen && number.trim()) {
       `/members/${found.holderId}/transfer?account=${found.accountId}&from=transactions`
     );
   }
-  error = `No ${chosen.name} account ${number.trim().toUpperCase()}.`;
+  matches = await findAccountsByName(chosen.id, number);
+  if (matches.length === 1) {
+    const only = matches[0];
+    return Astro.redirect(
+      `/members/${only.holderId}/transfer?account=${only.accountId}&from=transactions`
+    );
+  }
+  if (matches.length === 0) {
+    error = `No ${chosen.name} account ${number.trim()}, and no holder by that name.`;
+  }
 } else if (typeId && !chosen) {
   error = 'Choose an account type that allows transfers.';
 }
@@ -78,7 +96,7 @@ if (chosen && number.trim()) {
       </fieldset>
 
       <label class={LABEL}>
-        <span data-number-label>Member number</span>
+        <span data-number-label>Member number or name</span>
         <input
           type="text"
           name="number"
@@ -96,6 +114,10 @@ if (chosen && number.trim()) {
         Find account
       </button>
     </form>
+
+    {matches.length > 1 && (
+      <AccountMatches matches={matches} action="transfer" />
+    )}
   </div>
 </DashboardLayout>
 
@@ -114,7 +136,10 @@ if (chosen && number.trim()) {
       );
       const own = chosen?.dataset.membershipDefault === 'true';
       const prefix = chosen?.dataset.prefix || 'HSA';
-      if (label) label.textContent = own ? 'Member number' : 'Account number';
+      if (label)
+        label.textContent = own
+          ? 'Member number or name'
+          : 'Account number or name';
       if (input) input.placeholder = own ? 'AB0001' : `${prefix}0001`;
     };
     for (const radio of form.querySelectorAll('input[name="type"]')) {

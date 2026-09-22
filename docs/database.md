@@ -36,7 +36,10 @@ truncate every table above, `audit_event` included — a `SECURITY DEFINER`
 function, since `albarakah_app` cannot, and each guard trigger now checks a
 flag that function sets for the length of its own transaction and nothing
 else ever sets. It exists to let a System Administrator wipe a **test**
-environment back to empty; `resetAllTestData()` (`src/lib/admin/reset.ts`)
+environment back to empty — every application, member, transaction,
+receipt, cash session, message sent and audit row, with every number
+sequence restarted (migration 0094 widened it to the message log, the
+cash sessions and the reference counters 0084 left behind); `resetAllTestData()` (`src/lib/admin/reset.ts`)
 refuses outright unless `PUBLIC_APP_ENV` marks the deployment as non-production
 — see `docs/environments.md` — before this function is ever called. See
 `scripts/schema.test.ts` and `src/lib/admin/reset.test.ts` for what stays

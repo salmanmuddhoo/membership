@@ -12,7 +12,6 @@ import {
 } from '@lib/config/reference';
 import { checklistComplete, isEditable } from '@lib/ledger/closures';
 import {
-  AFFIDAVIT_NOTE,
   cancelDemise,
   claimTotals,
   demiseChecklist,
@@ -403,9 +402,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             </li>
           ))}
         </ul>
-        <p class="text-xs text-neutral-500 dark:text-neutral-400">
-          {AFFIDAVIT_NOTE}
-        </p>
         <div class="flex flex-wrap gap-2">
           <a href={`${base}?step=submit`} class={BUTTON}>
             Next

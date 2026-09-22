@@ -68,8 +68,6 @@ export class DemiseError extends Error {
 
 export const PERMISSION_CAPTURE = 'transaction.capture';
 export const PERMISSION_POST = 'transaction.post';
-export const AFFIDAVIT_NOTE =
-  'Whether the affidavit is the right legal instrument is the reviewer’s call.';
 
 export interface ClaimantInput {
   kind: 'nominee' | 'other';

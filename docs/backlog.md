@@ -2871,7 +2871,10 @@ point 3 is closed by the default the backlog assumed.
 
 **Shipped as M22** (S-804, S-805, S-806). Activity is anything that moved
 money on a member's accounts — a posted ledger entry or a fee payment —
-with the day they joined as the floor; one SQL expression
+with the day they joined as the floor (and, since officer feedback, never
+before the day the record came into this system: a migrated member's old
+Joined Date made one with nothing to carry dormant the first night;
+migration 0093 reactivated those, audited); one SQL expression
 (`LAST_ACTIVITY_SQL`, `src/lib/members/dormancy.ts`) says so for the job
 and the report alike. The nightly **`dormancy-detection`** job marks an
 active member dormant after `dormancy.months` of nothing (migration 0086,

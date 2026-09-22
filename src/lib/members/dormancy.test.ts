@@ -72,7 +72,12 @@ let officer: Principal;
 let clerk: Principal;
 const actor = { userId: '', email: 'officer@albarakah.mu' };
 
-async function memberWithMsa(memberNo: string, name: string, joinedAt: Date) {
+async function memberWithMsa(
+  memberNo: string,
+  name: string,
+  joinedAt: Date,
+  createdAt?: Date
+) {
   const type = await run(
     appUrl,
     `select id from membership_type where code = 'individual'`
@@ -98,9 +103,18 @@ async function memberWithMsa(memberNo: string, name: string, joinedAt: Date) {
   );
   const member = await run(
     appUrl,
-    `insert into member (member_no, application_id, membership_type_id, joined_at)
-     values ($1, $2, $3, $4) returning id`,
-    [memberNo, application.rows[0].id, type.rows[0].id, joinedAt]
+    `insert into member
+       (member_no, application_id, membership_type_id, joined_at, created_at)
+     values ($1, $2, $3, $4, $5) returning id`,
+    // In this system since they joined, unless told otherwise — a migrated
+    // member arrives today with the old register's Joined Date.
+    [
+      memberNo,
+      application.rows[0].id,
+      type.rows[0].id,
+      joinedAt,
+      createdAt ?? joinedAt,
+    ]
   );
   const account = await run(
     appUrl,
@@ -113,6 +127,7 @@ async function memberWithMsa(memberNo: string, name: string, joinedAt: Date) {
 }
 
 let quiet: { memberId: string; msa: string }; // joined long ago, nothing since
+let migrated: { memberId: string; msa: string }; // old Joined Date, arrived today
 let recent: { memberId: string; msa: string }; // joined long ago, deposited lately
 let fresh: { memberId: string; msa: string }; // joined two months ago
 
@@ -157,6 +172,12 @@ beforeAll(async () => {
   quiet = await memberWithMsa('AB0001', 'Quiet', monthsAgo(20));
   recent = await memberWithMsa('AB0002', 'Recent', monthsAgo(20));
   fresh = await memberWithMsa('AB0003', 'Fresh', monthsAgo(2));
+  migrated = await memberWithMsa(
+    'AB0004',
+    'Migrated',
+    monthsAgo(60),
+    new Date()
+  );
 
   const { deposits } = await load();
   await deposits.recordDeposit(
@@ -234,9 +255,11 @@ describe('dormancy (S-804, S-805, S-806)', () => {
     const wide = await report.run({ within: '11' });
     expect(wide.rows.map(r => r['Member no'])).toEqual(['AB0001', 'AB0003']);
     const everyone = await report.run({ view: 'active' });
+    // Migrated arrived today, before Recent's deposit: both a full twelve.
     expect(everyone.rows.map(r => r['Member no'])).toEqual([
       'AB0001',
       'AB0003',
+      'AB0004',
       'AB0002',
     ]);
     expect(await report.run({ view: 'dormant' })).toMatchObject({ rows: [] });
@@ -253,6 +276,9 @@ describe('dormancy (S-804, S-805, S-806)', () => {
     });
     expect((await statusOf(recent.memberId)).status).toBe('active');
     expect((await statusOf(fresh.memberId)).status).toBe('active');
+    // Joined years ago in the old register, but only just arrived here: the
+    // quiet is counted from the day the record came into this system.
+    expect((await statusOf(migrated.memberId)).status).toBe('active');
 
     const trail = await run(
       appUrl,

@@ -83,15 +83,8 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
         </div>
       ))}
       <div class="row">
-        <span class="label">TOTAL PAID OUT:</span>
+        <span class="label">TOTAL TO BE PAID OUT:</span>
         <span class="value">{formatMoney(total)}</span>
-      </div>
-      <div class="row">
-        <span class="label">PAID OUT BY:</span>
-        <span class="value">
-          {request.methodName}
-          {request.methodReference && ` · ${request.methodReference}`}
-        </span>
       </div>
       <div class="row">
         <span class="label">REASON:</span>

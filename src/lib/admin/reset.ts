@@ -37,6 +37,7 @@ export interface ResetCounts {
   applications: number;
   payments: number;
   documents: number;
+  transactions: number;
 }
 
 // What the confirmation screen shows before anyone commits to the button —
@@ -47,12 +48,14 @@ export async function countsBeforeReset(): Promise<ResetCounts> {
     applications: string;
     payments: string;
     documents: string;
+    transactions: string;
   }>(
     `select
        (select count(*) from member)                as members,
        (select count(*) from membership_application) as applications,
        (select count(*) from payment)                as payments,
-       (select count(*) from document)                as documents`
+       (select count(*) from document)                as documents,
+       (select count(*) from transaction)             as transactions`
   );
   const row = result.rows[0];
   return {
@@ -60,6 +63,7 @@ export async function countsBeforeReset(): Promise<ResetCounts> {
     applications: Number(row.applications),
     payments: Number(row.payments),
     documents: Number(row.documents),
+    transactions: Number(row.transactions),
   };
 }
 
