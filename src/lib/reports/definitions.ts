@@ -13,6 +13,7 @@
 //
 // A report reads. Nothing here writes, and nothing takes a value the caller
 // supplies into SQL except as a bound parameter.
+import { nearFloorMargin } from '../config/reference';
 import { query } from '../db/pool';
 
 export type FilterKind = 'date' | 'text' | 'choice';
@@ -78,6 +79,54 @@ const accountTypeChoices = async () => {
   );
   return result.rows.map(r => ({ value: r.code, label: r.name }));
 };
+
+const paymentMethodChoices = async () => {
+  const result = await query<{ code: string; name: string }>(
+    'select code, name from payment_method where is_active order by sort_order, name'
+  );
+  return result.rows.map(r => ({ value: r.code, label: r.name }));
+};
+
+// A transaction's kind as the officer says it. A transfer is one thing
+// with two legs (S-1504); the reports show its debit leg and call it a
+// transfer.
+const KIND_WORDS: Record<string, string> = {
+  deposit: 'Deposit',
+  withdrawal: 'Withdrawal',
+  transfer_leg: 'Transfer',
+  reversal: 'Reversal',
+  closure: 'Account closure',
+  resignation: 'Resignation',
+  demise: 'Demised claim',
+};
+const kindChoices = async () =>
+  Object.entries(KIND_WORDS).map(([value, label]) => ({
+    value: value === 'transfer_leg' ? 'transfer' : value,
+    label,
+  }));
+
+// The states an account can be in (migration 0077).
+const ACCOUNT_STATUSES = [
+  'pending',
+  'active',
+  'inactive',
+  'dormant',
+  'frozen',
+  'closing',
+  'closed',
+] as const;
+const accountStatusChoices = async () =>
+  ACCOUNT_STATUSES.map(value => ({
+    value,
+    label: value.charAt(0).toUpperCase() + value.slice(1),
+  }));
+
+// A money bound typed into a filter, or nothing: anything that is not an
+// amount reads as no bound rather than as a refusal.
+function amountOrNull(value: string | undefined): string | null {
+  const trimmed = (value ?? '').trim().replace(/,/g, '');
+  return /^\d+(\.\d{1,2})?$/.test(trimmed) ? trimmed : null;
+}
 
 // The component codes are configuration (S-207) but their wording is the
 // Society's own, and the same table the fee screen uses.
@@ -204,11 +253,14 @@ const applications: ReportDefinition = {
   },
 };
 
+// S-1806: the balance and status filters, and the balance itself, so the
+// same report answers "which accounts hold over Rs 100,000" and "which are
+// closing" without a second definition.
 const accounts: ReportDefinition = {
   code: 'accounts',
   title: 'Accounts',
   category: 'Membership',
-  summary: 'Accounts open, by product and holder.',
+  summary: 'Accounts open, by product, holder, status and balance.',
   permission: 'member.view',
   filters: [
     ...PERIOD,
@@ -218,12 +270,21 @@ const accounts: ReportDefinition = {
       kind: 'choice',
       choices: accountTypeChoices,
     },
+    {
+      name: 'status',
+      label: 'Status',
+      kind: 'choice',
+      choices: accountStatusChoices,
+    },
+    { name: 'balanceFrom', label: 'Balance from', kind: 'text' },
+    { name: 'balanceTo', label: 'Balance to', kind: 'text' },
   ],
   async run(filters) {
     const result = await query<Record<string, string>>(
-      `select coalesce(a.account_no, '') as "Account no",
+      `select coalesce(a.account_no, m.member_no, '') as "Account no",
               t.name                     as "Type",
               a.status                   as "Status",
+              coalesce(b.balance, 0)::text as "Balance",
               to_char(a.opened_at, 'DD Mon YYYY') as "Opened",
               coalesce(m.member_no, '')  as "Member no",
               case when a.opened_via_migration then 'Migration' else 'Application' end
@@ -233,29 +294,112 @@ const accounts: ReportDefinition = {
          from account a
          join account_type t on t.id = a.account_type_id
          left join member m on m.id = a.member_id
+         left join account_balance b on b.account_id = a.id
         where ($1::date is null or a.opened_at >= $1::date)
           and ($2::date is null or a.opened_at < $2::date + 1)
           and ($3::text is null or t.code = $3::text)
+          and ($4::text is null or a.status = $4::text)
+          and ($5::numeric is null or coalesce(b.balance, 0) >= $5::numeric)
+          and ($6::numeric is null or coalesce(b.balance, 0) <= $6::numeric)
         order by a.opened_at desc`,
       [
         dateOrNull(filters.from),
         dateOrNull(filters.to),
         textOrNull(filters.type),
+        textOrNull(filters.status),
+        amountOrNull(filters.balanceFrom),
+        amountOrNull(filters.balanceTo),
       ]
     );
 
+    const total = result.rows.reduce(
+      (sum, row) => sum + Number(row.Balance ?? 0),
+      0
+    );
     return {
       columns: [
         { key: 'Account no', label: 'Account no' },
         { key: 'Type', label: 'Type' },
         { key: 'Member no', label: 'Member no' },
         { key: 'Status', label: 'Status' },
+        { key: 'Balance', label: 'Balance', numeric: true },
         { key: 'Opened', label: 'Opened' },
         { key: 'Opened by', label: 'Opened by' },
         { key: 'Default', label: 'Default' },
       ],
       rows: result.rows,
-      summary: `${result.rows.length} account(s).`,
+      summary: `${result.rows.length} account(s), Rs ${total.toFixed(2)} held.`,
+    };
+  },
+};
+
+// S-1806 · Accounts at or near their floor: the holders the near-floor
+// advisory (S-1803) writes to, as a list — with the margin as a filter so a
+// manager can widen it without changing the setting members are told at.
+const accountsNearFloor: ReportDefinition = {
+  code: 'accounts-near-floor',
+  title: 'Accounts near their minimum',
+  category: 'Money',
+  summary:
+    'Open accounts standing at, below or within a margin of the minimum ' +
+    'balance their type sets.',
+  permission: 'account.view',
+  filters: [
+    {
+      name: 'type',
+      label: 'Account type',
+      kind: 'choice',
+      choices: accountTypeChoices,
+    },
+    { name: 'margin', label: 'Within (Rs)', kind: 'text' },
+  ],
+  async run(filters) {
+    // The setting the advisory uses is the default margin; a figure typed
+    // here is for this run only.
+    const margin = amountOrNull(filters.margin) ?? (await nearFloorMargin());
+    const result = await query<Record<string, string | number>>(
+      `select coalesce(a.account_no, m.member_no, '') as "Account no",
+              t.name as "Type",
+              coalesce(m.member_no, '') as "Member no",
+              trim(coalesce(p.values->>'name', '') || ' '
+                   || coalesce(p.values->>'surname', '')) as "Holder",
+              a.status as "Status",
+              coalesce(b.balance, 0)::text as "Balance",
+              t.minimum_balance::text as "Minimum",
+              (coalesce(b.balance, 0) - t.minimum_balance)::text as "Headroom",
+              case when coalesce(b.balance, 0) <= t.minimum_balance
+                   then 'Yes' else 'No' end as "At minimum"
+         from account a
+         join account_type t on t.id = a.account_type_id
+         left join account_balance b on b.account_id = a.id
+         left join member m on m.id = a.member_id
+         left join customer c on c.id = a.customer_id
+         left join application_party p
+           on p.application_id = coalesce(m.application_id, c.application_id)
+          and p.subject = 'applicant' and p.ordinal = 1
+        where a.status not in ('closed', 'pending')
+          and coalesce(b.balance, 0) - t.minimum_balance <= $1::numeric
+          and ($2::text is null or t.code = $2::text)
+        order by coalesce(b.balance, 0) - t.minimum_balance, a.account_no`,
+      [margin, textOrNull(filters.type)]
+    );
+    const atFloor = result.rows.filter(r => r['At minimum'] === 'Yes').length;
+    return {
+      columns: [
+        { key: 'Account no', label: 'Account no' },
+        { key: 'Type', label: 'Type' },
+        { key: 'Member no', label: 'Member no' },
+        { key: 'Holder', label: 'Holder' },
+        { key: 'Status', label: 'Status' },
+        { key: 'Balance', label: 'Balance', numeric: true },
+        { key: 'Minimum', label: 'Minimum', numeric: true },
+        { key: 'Headroom', label: 'Headroom', numeric: true },
+        { key: 'At minimum', label: 'At minimum' },
+      ],
+      rows: result.rows,
+      summary:
+        `${result.rows.length} account(s) within Rs ${Number(margin).toFixed(2)} ` +
+        `of their minimum, ${atFloor} at or below it.`,
     };
   },
 };
@@ -509,6 +653,232 @@ const receipts: ReportDefinition = {
   },
 };
 
+// S-1806 · Transactions: everything recorded in a period, by kind, method
+// and officer. A transfer shows once, as its debit leg; a draft is not a
+// transaction yet. The period is the day it was recorded, since a pending
+// one has no other date.
+const transactions: ReportDefinition = {
+  code: 'transactions',
+  title: 'Transactions',
+  category: 'Money',
+  summary:
+    'Every deposit, withdrawal, transfer, reversal and exit recorded in a ' +
+    'period: by kind, method and officer, with what became of each.',
+  permission: 'transaction.view',
+  filters: [
+    ...PERIOD,
+    { name: 'kind', label: 'Kind', kind: 'choice', choices: kindChoices },
+    {
+      name: 'method',
+      label: 'Method',
+      kind: 'choice',
+      choices: paymentMethodChoices,
+    },
+    { name: 'officer', label: 'Officer', kind: 'text' },
+  ],
+  async run(filters) {
+    const kind = textOrNull(filters.kind);
+    const result = await query<Record<string, string | number>>(
+      `select t.reference as "Reference",
+              case t.kind when 'deposit' then 'Deposit'
+                          when 'withdrawal' then 'Withdrawal'
+                          when 'transfer_leg' then 'Transfer'
+                          when 'reversal' then 'Reversal'
+                          when 'closure' then 'Account closure'
+                          when 'resignation' then 'Resignation'
+                          else 'Demised claim' end as "Kind",
+              coalesce(m.member_no, '') as "Member no",
+              trim(coalesce(p.values->>'name', '') || ' '
+                   || coalesce(p.values->>'surname', '')) as "Holder",
+              coalesce(a.account_no, m.member_no, '') || ' · ' || at.name
+                as "Account",
+              pm.name as "Method",
+              t.amount::text as "Amount",
+              t.status as "Status",
+              to_char(t.created_at, 'DD Mon YYYY HH24:MI') as "Recorded",
+              u.display_name as "Officer",
+              to_char(t.posted_at, 'DD Mon YYYY') as "Posted",
+              coalesce(rn.receipt_no, '') as "Receipt"
+         from transaction t
+         join account a on a.id = t.account_id
+         join account_type at on at.id = a.account_type_id
+         join payment_method pm on pm.code = t.method
+         join app_user u on u.id = t.captured_by
+         left join member m on m.id = t.member_id
+         left join customer c on c.id = t.customer_id
+         left join application_party p
+           on p.application_id = coalesce(m.application_id, c.application_id)
+          and p.subject = 'applicant' and p.ordinal = 1
+         left join receipt_number rn on rn.id = t.receipt_number_id
+        where t.status <> 'draft'
+          and t.leg_direction is distinct from 'credit'
+          and ($1::date is null or t.created_at >= $1::date)
+          and ($2::date is null or t.created_at < $2::date + 1)
+          and ($3::text is null
+               or t.kind = $3::text
+               or ($3::text = 'transfer' and t.kind = 'transfer_leg'))
+          and ($4::text is null or t.method = $4::text)
+          and ($5::text is null or u.display_name ilike '%' || $5::text || '%')
+        order by t.created_at desc, t.serial_no desc`,
+      [
+        dateOrNull(filters.from),
+        dateOrNull(filters.to),
+        kind,
+        textOrNull(filters.method),
+        textOrNull(filters.officer),
+      ]
+    );
+
+    // What was actually posted, by kind: the figures a period is closed on.
+    const byKind = new Map<string, number>();
+    for (const row of result.rows) {
+      if (row.Status !== 'posted') continue;
+      const k = String(row.Kind);
+      byKind.set(k, (byKind.get(k) ?? 0) + Number(row.Amount ?? 0));
+    }
+    const posted = [...byKind.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([k, amount]) => `${k} Rs ${amount.toFixed(2)}`)
+      .join(', ');
+
+    return {
+      columns: [
+        { key: 'Reference', label: 'Reference' },
+        { key: 'Kind', label: 'Kind' },
+        { key: 'Member no', label: 'Member no' },
+        { key: 'Holder', label: 'Holder' },
+        { key: 'Account', label: 'Account' },
+        { key: 'Method', label: 'Method' },
+        { key: 'Amount', label: 'Amount', numeric: true },
+        { key: 'Status', label: 'Status' },
+        { key: 'Recorded', label: 'Recorded' },
+        { key: 'Officer', label: 'Officer' },
+        { key: 'Posted', label: 'Posted' },
+        { key: 'Receipt', label: 'Receipt' },
+      ],
+      rows: result.rows,
+      summary:
+        `${result.rows.length} transaction(s)` +
+        (posted ? ` — posted: ${posted}.` : '.'),
+    };
+  },
+};
+
+// S-1806 · Approvals: what is waiting on a step and for how long, and how
+// long the decided ones took. Age is submission to now for one still on
+// its chain, submission to decision for one decided; the step named is
+// the one it was left at (positionOf reads the chain as it is now, but a
+// report is about the record).
+const pendingApprovals: ReportDefinition = {
+  code: 'pending-approvals',
+  title: 'Approvals',
+  category: 'Operations',
+  summary:
+    'Transactions on an approval chain: which step each waits at and for ' +
+    'how many days, and the turnaround of those already decided.',
+  permission: 'transaction.view',
+  filters: [
+    ...PERIOD,
+    { name: 'kind', label: 'Kind', kind: 'choice', choices: kindChoices },
+  ],
+  async run(filters) {
+    const kind = textOrNull(filters.kind);
+    const result = await query<Record<string, string | number | null>>(
+      `select t.reference as "Reference",
+              case t.kind when 'deposit' then 'Deposit'
+                          when 'withdrawal' then 'Withdrawal'
+                          when 'transfer_leg' then 'Transfer'
+                          when 'closure' then 'Account closure'
+                          when 'resignation' then 'Resignation'
+                          else 'Demised claim' end as "Kind",
+              coalesce(m.member_no, '') as "Member no",
+              trim(coalesce(p.values->>'name', '') || ' '
+                   || coalesce(p.values->>'surname', '')) as "Holder",
+              t.amount::text as "Amount",
+              t.status as "Status",
+              case when t.status in ('submitted', 'under_review', 'returned')
+                   then coalesce(ws.name || ' · ' || r.name, '')
+                   when t.status = 'approved' then 'Payout'
+                   else '' end as "Waiting at",
+              u.display_name as "Officer",
+              to_char(t.submitted_at, 'DD Mon YYYY') as "Submitted",
+              to_char(d.occurred_at, 'DD Mon YYYY') as "Decided",
+              case when t.submitted_at is null then null
+                   else extract(day from
+                     coalesce(d.occurred_at, now()) - t.submitted_at)::int
+                   end as "Days"
+         from transaction t
+         join app_user u on u.id = t.captured_by
+         left join member m on m.id = t.member_id
+         left join customer c on c.id = t.customer_id
+         left join application_party p
+           on p.application_id = coalesce(m.application_id, c.application_id)
+          and p.subject = 'applicant' and p.ordinal = 1
+         left join workflow_step ws
+           on ws.definition_id = t.workflow_definition_id
+          and ws.code = t.current_step_code
+         left join role r on r.id = ws.role_id
+         left join lateral (
+           select tt.occurred_at from transaction_transition tt
+            where tt.transaction_id = t.id
+              and tt.to_status in ('approved', 'rejected')
+            order by tt.id desc limit 1
+         ) d on true
+        where t.workflow_definition_id is not null
+          and t.status <> 'draft'
+          and t.leg_direction is distinct from 'credit'
+          and ($1::date is null or t.submitted_at >= $1::date)
+          and ($2::date is null or t.submitted_at < $2::date + 1)
+          and ($3::text is null
+               or t.kind = $3::text
+               or ($3::text = 'transfer' and t.kind = 'transfer_leg'))
+        order by (t.status in ('submitted', 'under_review', 'returned')) desc,
+                 t.submitted_at asc nulls last`,
+      [dateOrNull(filters.from), dateOrNull(filters.to), kind]
+    );
+
+    const pending = result.rows.filter(r =>
+      ['submitted', 'under_review', 'returned', 'approved'].includes(
+        String(r.Status)
+      )
+    );
+    const decided = result.rows.filter(r => r.Decided !== null);
+    const oldest = pending.reduce(
+      (max, r) => Math.max(max, Number(r.Days ?? 0)),
+      0
+    );
+    const average =
+      decided.length === 0
+        ? null
+        : decided.reduce((sum, r) => sum + Number(r.Days ?? 0), 0) /
+          decided.length;
+
+    return {
+      columns: [
+        { key: 'Reference', label: 'Reference' },
+        { key: 'Kind', label: 'Kind' },
+        { key: 'Member no', label: 'Member no' },
+        { key: 'Holder', label: 'Holder' },
+        { key: 'Amount', label: 'Amount', numeric: true },
+        { key: 'Status', label: 'Status' },
+        { key: 'Waiting at', label: 'Waiting at' },
+        { key: 'Officer', label: 'Officer' },
+        { key: 'Submitted', label: 'Submitted' },
+        { key: 'Decided', label: 'Decided' },
+        { key: 'Days', label: 'Days', numeric: true },
+      ],
+      rows: result.rows,
+      summary:
+        `${pending.length} waiting` +
+        (pending.length ? ` (oldest ${oldest} day(s))` : '') +
+        `; ${decided.length} decided` +
+        (average === null
+          ? '.'
+          : `, ${average.toFixed(1)} day(s) from submission to decision on average.`),
+    };
+  },
+};
+
 // S-1706 · Exits: closures, resignations and demised claims by period, with
 // what each paid out and how long it took. Turnaround is submission to
 // payout — the whole of what the member or claimant waited for — and, for
@@ -742,8 +1112,11 @@ export const REPORTS: ReportDefinition[] = [
   documentsOutstanding,
   payments,
   feeComponents,
+  transactions,
   exits,
   receipts,
+  accountsNearFloor,
+  pendingApprovals,
   accessAndActions,
   jobs,
 ];

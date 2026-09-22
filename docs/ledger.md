@@ -545,6 +545,22 @@ was paid out and to whom, the benefit, the status, and the days from
 submission to payout — or to the decision, or to today, for one not paid
 out.
 
+The rest of FRD 13's reports (S-1806) sit beside it. **Transactions**:
+everything recorded in a period, by kind, method and officer, with its
+status, receipt and posting date and the posted totals by kind in the
+summary; a transfer shows once, as its debit leg, and a draft not at all.
+**Approvals**: everything that went to a chain — which step and role it
+waits at, or "Payout" once approved, the days since submission for one
+still waiting and to the decision for one decided, and the average
+turnaround in the summary. **Accounts near their minimum**: open accounts
+whose balance is within a margin of their type's floor, the configured
+near-floor margin unless a figure is typed, with the headroom and whether
+they are at or below it. The **Accounts** report (S-905) gains a balance
+column and filters by status and by a balance band. Region is not among
+the filters: nothing in the data records one (the regional roles are
+roles, not places), so a filter would be a lie. Cashier reports arrive
+with M20.
+
 ## History, across accounts
 
 `listTransactions()` in `src/lib/ledger/history.ts` (S-1506) is one query
