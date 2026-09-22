@@ -3,15 +3,20 @@ import DashboardLayout from '@layouts/DashboardLayout.astro';
 import ConfigNav from '@components/ConfigNav.astro';
 import {
   ConfigError,
+  DORMANCY_REACTIVATIONS,
   FEE_COMPONENTS,
   cashMaximum,
   cashSourceOfFundChecklist,
   cashSourceOfFundThreshold,
+  dormancyMonths,
+  dormancyReactivation,
   listFeeSchedules,
   nearFloorMargin,
   publishFeeVersion,
   resignationChecks,
   setCashMaximum,
+  setDormancyMonths,
+  setDormancyReactivation,
   setNearFloorMargin,
   setResignationChecks,
   setTakafulBenefit,
@@ -80,6 +85,18 @@ if (Astro.request.method === 'POST') {
           .filter(item => item !== '');
         await setCashSourceOfFundChecklist(items, actor);
         notice = 'Source of Fund checklist updated.';
+      } else if (intent === 'set-dormancy-months') {
+        await setDormancyMonths(
+          String(form.get('dormancyMonths') ?? '').trim(),
+          actor
+        );
+        notice = 'Dormancy threshold updated.';
+      } else if (intent === 'set-dormancy-reactivation') {
+        await setDormancyReactivation(
+          String(form.get('dormancyReactivation') ?? '').trim(),
+          actor
+        );
+        notice = 'Dormancy reactivation rule updated.';
       } else {
         const components = FEE_COMPONENTS.map(code => ({
           code: code as FeeComponentCode,
@@ -115,6 +132,8 @@ const cashMax = await cashMaximum();
 const checks = await resignationChecks();
 const takaful = await takafulBenefit();
 const nearFloor = await nearFloorMargin();
+const dormancy = await dormancyMonths();
+const reactivation = await dormancyReactivation();
 const RESIGNATION_CHECKS: {
   name: keyof typeof checks;
   label: string;
@@ -438,6 +457,64 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             disabled={!canManage}
             class="mt-1 block w-40 rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
           />
+        </label>
+        {canManage && (
+          <button
+            type="submit"
+            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+          >
+            Save
+          </button>
+        )}
+      </form>
+    </section>
+
+    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+      <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+        Dormancy
+      </h2>
+      <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+        A member with no transaction or fee payment for this long is marked
+        dormant each night. 0 turns it off.
+      </p>
+      <form method="post" class="mt-4 flex flex-wrap items-end gap-3">
+        <input type="hidden" name="intent" value="set-dormancy-months" />
+        <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          Months
+          <input
+            type="text"
+            inputmode="numeric"
+            name="dormancyMonths"
+            value={dormancy}
+            disabled={!canManage}
+            class="mt-1 block w-40 rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+          />
+        </label>
+        {canManage && (
+          <button
+            type="submit"
+            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+          >
+            Save
+          </button>
+        )}
+      </form>
+
+      <form method="post" class="mt-4 flex flex-wrap items-end gap-3">
+        <input type="hidden" name="intent" value="set-dormancy-reactivation" />
+        <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          Reactivation
+          <select
+            name="dormancyReactivation"
+            disabled={!canManage}
+            class="mt-1 block rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+          >
+            {DORMANCY_REACTIVATIONS.map(value => (
+              <option value={value} selected={reactivation === value}>
+                {value === 'staff' ? 'By an officer, with a reason' : value}
+              </option>
+            ))}
+          </select>
         </label>
         {canManage && (
           <button

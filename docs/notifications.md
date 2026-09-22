@@ -252,6 +252,18 @@ All three carry `recipient_name`, `kind`, `reference`, `member_name`,
 the placeholder reads "Sign in to open it." A deactivated user is not
 written to, whatever roles they still hold.
 
+## A member's standing
+
+Two events about a membership itself (S-804, S-805, migration 0086),
+email and WhatsApp wording each: `member.dormant`, when the nightly
+dormancy job marks a member dormant — `member_name`, `member_no`,
+`last_activity` (the day, in words) and `months` (the threshold) — and
+`member.reactivated`, when an officer brings them back, with the `reason`
+they gave. The address is the one the member's application recorded; a
+legacy member with no application is marked and reactivated all the same,
+and told nothing. `src/lib/members/dormancy.ts` raises both after the
+status has committed and never failing it.
+
 ## Retrying, and giving up
 
 `notification-retry` (see `docs/jobs.md`) attempts everything whose backoff has

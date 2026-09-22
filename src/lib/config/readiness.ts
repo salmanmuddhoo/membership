@@ -138,6 +138,22 @@ const VALUES: {
     href: FEES,
     render: onOff,
   },
+  {
+    key: 'dormancy.months',
+    label: 'Dormant after',
+    group: 'Amounts',
+    href: FEES,
+    render: value =>
+      Number(value) === 0 ? 'Off' : `${Number(value)} months without activity`,
+  },
+  {
+    key: 'dormancy.reactivation',
+    label: 'Dormancy reactivation',
+    group: 'Amounts',
+    href: FEES,
+    render: value =>
+      value === 'staff' ? 'By an officer, with a reason' : String(value),
+  },
 ];
 
 // Last on the page: what the member app may start (S-2102), read the same

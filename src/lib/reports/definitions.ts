@@ -13,7 +13,8 @@
 //
 // A report reads. Nothing here writes, and nothing takes a value the caller
 // supplies into SQL except as a bound parameter.
-import { nearFloorMargin } from '../config/reference';
+import { dormancyMonths, nearFloorMargin } from '../config/reference';
+import { LAST_ACTIVITY_SQL } from '../members/dormancy';
 import { query } from '../db/pool';
 
 export type FilterKind = 'date' | 'text' | 'choice';
@@ -461,14 +462,119 @@ const documentsOutstanding: ReportDefinition = {
   },
 };
 
+// S-806 · Dormancy (and the dormancy report S-906 named): who is dormant,
+// and who is approaching it — active members whose last activity, by the
+// same expression the nightly job uses, is within a chosen number of
+// months of the threshold. "Last activity" is a posted entry or a fee
+// payment on any of the member's accounts, or the day they joined.
+const DORMANCY_VIEWS = [
+  { value: 'approaching', label: 'Approaching dormancy' },
+  { value: 'dormant', label: 'Dormant' },
+  { value: 'active', label: 'All active, by last activity' },
+] as const;
+const dormancyViewChoices = async () => [...DORMANCY_VIEWS];
+
+// A whole number of months typed into a filter, or the default.
+function monthsOr(value: string | undefined, fallback: number): number {
+  const trimmed = (value ?? '').trim();
+  return /^\d{1,3}$/.test(trimmed) ? Number(trimmed) : fallback;
+}
+
+const dormancy: ReportDefinition = {
+  code: 'dormancy',
+  title: 'Dormancy',
+  category: 'Membership',
+  summary:
+    'Who is dormant, and who is close to it: active members by their last ' +
+    'activity against the dormancy threshold.',
+  permission: 'member.view',
+  filters: [
+    {
+      name: 'view',
+      label: 'Show',
+      kind: 'choice',
+      choices: dormancyViewChoices,
+    },
+    { name: 'within', label: 'Within (months)', kind: 'text' },
+    {
+      name: 'type',
+      label: 'Membership type',
+      kind: 'choice',
+      choices: membershipTypeChoices,
+    },
+  ],
+  async run(filters) {
+    const threshold = await dormancyMonths();
+    const view = textOrNull(filters.view) ?? 'approaching';
+    const within = monthsOr(filters.within, 3);
+    const result = await query<Record<string, string | number | null>>(
+      `with activity as (
+         select m.id, m.member_no, m.status, m.status_changed_at,
+                t.name as type_name, t.code as type_code,
+                trim(coalesce(p.values->>'name', '') || ' ' ||
+                     coalesce(p.values->>'surname', '')) as holder,
+                ${LAST_ACTIVITY_SQL} as last_activity
+           from member m
+           join membership_type t on t.id = m.membership_type_id
+           left join application_party p
+             on p.application_id = m.application_id
+            and p.subject = 'applicant' and p.ordinal = 1
+          where m.status in ('active', 'dormant')
+       )
+       select member_no as "Member no", holder as "Name", type_name as "Type",
+              status as "Status",
+              to_char(last_activity, 'DD Mon YYYY') as "Last activity",
+              (extract(year from age(now(), last_activity)) * 12
+               + extract(month from age(now(), last_activity)))::int
+                as "Months since",
+              case when status = 'dormant'
+                   then to_char(status_changed_at, 'DD Mon YYYY')
+                   else to_char(last_activity
+                                + make_interval(months => $1::int),
+                                'DD Mon YYYY') end
+                as "Dormant on"
+         from activity
+        where ($2::text is null or type_code = $2::text)
+          and case $3::text
+                when 'dormant' then status = 'dormant'
+                when 'active' then status = 'active'
+                else status = 'active'
+                     and $1::int > 0
+                     and last_activity + make_interval(months => $1::int)
+                         <= now() + make_interval(months => $4::int)
+              end
+        order by last_activity, member_no`,
+      [threshold, textOrNull(filters.type), view, within]
+    );
+
+    const label =
+      view === 'dormant'
+        ? 'dormant member(s)'
+        : view === 'active'
+          ? 'active member(s)'
+          : `active member(s) within ${within} month(s) of dormancy`;
+    return {
+      columns: [
+        { key: 'Member no', label: 'Member no' },
+        { key: 'Name', label: 'Name' },
+        { key: 'Type', label: 'Type' },
+        { key: 'Status', label: 'Status' },
+        { key: 'Last activity', label: 'Last activity' },
+        { key: 'Months since', label: 'Months since', numeric: true },
+        { key: 'Dormant on', label: 'Dormant on' },
+      ],
+      rows: result.rows,
+      summary:
+        `${result.rows.length} ${label}` +
+        (threshold > 0
+          ? `; dormant after ${threshold} month(s) without activity.`
+          : '; dormancy detection is off.'),
+    };
+  },
+};
+
 // ---------------------------------------------------------------------------
 // S-906 · Payments and receipts
-//
-// Dormancy is the third thing this story names, and there is nothing to
-// report: dormancy is M8, deferred to Phase 2, so no member has ever been
-// marked dormant and no rule decides it. A report over a state the system does
-// not have would show an empty table that reads as "nobody is dormant" rather
-// than "this is not built yet", which is worse than not offering it.
 // ---------------------------------------------------------------------------
 
 const payments: ReportDefinition = {
@@ -1256,6 +1362,7 @@ const jobs: ReportDefinition = {
 
 export const REPORTS: ReportDefinition[] = [
   members,
+  dormancy,
   applications,
   accounts,
   documentsOutstanding,

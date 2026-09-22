@@ -170,7 +170,7 @@ describe('placeholdersForEvent', () => {
   });
 
   it('knows nothing about an event it does not raise', () => {
-    expect(placeholdersForEvent('member.dormant')).toBeNull();
+    expect(placeholdersForEvent('member.birthday')).toBeNull();
     expect(placeholdersForEvent('nonsense')).toBeNull();
   });
 });

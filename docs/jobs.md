@@ -221,6 +221,30 @@ Run **nightly**, alongside `retention-disposal`.
 pnpm job ledger-verify
 ```
 
+## `dormancy-detection` (S-804, FRD 7.11)
+
+Nothing happening is not a request either. `detectDormancy`
+(`src/lib/members/dormancy.ts`) finds every active member whose last
+activity — a posted ledger entry or a fee payment on any of their accounts,
+or the day they joined if neither — is older than `dormancy.months`
+(Configuration → Fee schedules, seeded 12; 0 turns the job into a no-op),
+marks each dormant with `status_changed_at`, writes one
+`member.dormancy_detected` audit row per member with `actor_user_id` null
+and the job named as the actor, and after the commit tells each member
+(`member.dormant`, email and WhatsApp). The status already blocks
+transactions (S-1501, S-1701); this is what sets it. A member an officer
+reactivates (`member.reactivated`, with a reason) who then does nothing is
+found again.
+
+Not chunked: the number crossing the threshold on any night is small, and
+the whole night's marks are one short transaction. Idempotent by
+construction — a member marked tonight is not active tomorrow. Run
+**nightly**, alongside `ledger-verify`.
+
+```bash
+pnpm job dormancy-detection
+```
+
 ## Recommendation for M7 and M8
 
 - **M7 migration import** — a Manual job. Read the cleansed extract in batches,
@@ -228,10 +252,8 @@ pnpm job ledger-verify
   legacy member code so a repeated chunk updates rather than duplicating. The
   phase-wise plan (members first, finance later) fits naturally as separate job
   names sharing this runner.
-- **M8 dormancy sweep** — a Schedule job, nightly. Decide dormancy per member,
-  write only the ones that changed, and record each change in the audit trail
-  with `actor_user_id` null and an `actorDescription` naming the job — the
-  same shape `minor-majority-transition` (S-610, above) already proves.
+- **M8 dormancy sweep** — built as `dormancy-detection` (above), in exactly
+  the shape `minor-majority-transition` (S-610) proved.
 - **Add a job that watches the jobs.** A `job_run` row still `running` with an
   `updated_at` hours old means a container died and no schedule has picked it up.
   Nothing currently notices. Now that M9's notification layer exists

@@ -286,7 +286,8 @@ benefit, near-floor margin, the three resignation checks), the approval
 matrix and the chain for each of the six kinds, each active account type's
 floor, cap and allowed operations, the payment methods offered, the
 notification wording by subject (receipt, the three exits, a member's
-transactions, staff), the transactions a member may start from the app, and
+transactions, staff, a member's standing), the dormancy threshold and
+reactivation rule, the transactions a member may start from the app, and
 the retention periods — with what each stands at,
 whether a person has changed it since it was seeded and, if so, who and
 when. `readiness.test.ts` asserts that on a fresh database nothing reads as
@@ -319,6 +320,7 @@ is right: nobody at the Society made it.
 | `fee.manage`          | Publish fee versions                                |
 | `bank_account.view`   | See the Society's bank accounts, numbers masked     |
 | `bank_account.manage` | See them whole, and add or change one (S-1901)      |
+| `member.reactivate`   | Reactivate a dormant member, with a reason (S-805)  |
 
 `/admin/configuration/` is guarded by `config.view` as a prefix rule, so a
 section added later is covered without touching the route map. Each page then
@@ -339,6 +341,16 @@ seeds the Member role — a system role assigned to nobody, with no
 permission — so the approval matrix can name it as an initiating role and
 send a member's own transaction to a chain; `docs/member-app.md`,
 "Transactions from the app".
+
+### Dormancy (S-804, S-805, FRD 7.11)
+
+`dormancy.months` and `dormancy.reactivation` (migration 0086), edited on
+Configuration → Fee schedules beside the other amounts. The first is what
+the nightly `dormancy-detection` job measures a member's last activity
+against (seeded 12; 0 turns detection off); the second names how a dormant
+member comes back — `staff`, the only rule built: an officer holding
+`member.reactivate`, on the member's page, with a reason. `docs/jobs.md`
+has the job; `docs/ledger.md`, "Closing an account", the status.
 
 ## Roles seeded here
 

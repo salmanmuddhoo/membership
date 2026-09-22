@@ -465,7 +465,11 @@ so the member can open another later.
 active, inactive, dormant, resigned, demised — with `status_changed_at`
 beside it; `src/lib/members/status.ts` is the same list for the code and
 the one rule the capture paths already apply: only an active holder
-transacts or opens an account.
+transacts or opens an account. `dormant` is set by the nightly
+`dormancy-detection` job after `dormancy.months` without a posted entry or
+a fee payment on any of the member's accounts, and unset by an officer with
+`member.reactivate` and a reason (M22, `src/lib/members/dormancy.ts`,
+`docs/jobs.md`).
 
 ## Resigning
 

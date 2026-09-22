@@ -2856,14 +2856,37 @@ that** the financial position follows the people.
 
 ---
 
-# M8 — Resignation & dormancy — Phase 2
+# M8 — Resignation & dormancy — Phase 2 ✅ dormancy shipped as M22
 
-**Deferred to Phase 2, and now planned there.** Resignation (S-801 to S-803)
+**Deferred to Phase 2, and now built there.** Resignation (S-801 to S-803)
 is superseded in full by M17's S-1703, per the Phase 2 FRD's Section 2 — the
 stories below are kept for the record and are not to be built as written.
-Dormancy (S-804 to S-806) is not in the Phase 2 FRD: Phase 2 makes the status
-real and blocking (S-1701, S-1501) but nothing sets it until these three are
-scheduled. See Phase 2 open point 3.
+Dormancy (S-804 to S-806) is not in the Phase 2 FRD; Phase 2 made the status
+real and blocking (S-1701, S-1501), and M22 is what sets it. Phase 2 open
+point 3 is closed by the default the backlog assumed.
+
+**Shipped as M22** (S-804, S-805, S-806). Activity is anything that moved
+money on a member's accounts — a posted ledger entry or a fee payment —
+with the day they joined as the floor; one SQL expression
+(`LAST_ACTIVITY_SQL`, `src/lib/members/dormancy.ts`) says so for the job
+and the report alike. The nightly **`dormancy-detection`** job marks an
+active member dormant after `dormancy.months` of nothing (migration 0086,
+seeded 12; Configuration → Fee schedules; 0 turns it off): dated, audited
+as `member.dormancy_detected` with the job as the actor, and the member
+told by `member.dormant` (email and WhatsApp wording, editable). A second
+run finds nothing. **Reactivation** is the backlog's default until the
+Society confirms a rule: an officer holding `member.reactivate` (Account
+and Regional Officers, the Regional Manager, the Secretary), on the
+member's page, with a reason that goes on the trail
+(`member.reactivated`) and to the member; `dormancy.reactivation` names
+the rule (`staff`, the only one there is) so another later is a value, not
+a release. Reactivation is itself no activity: a member who comes back and
+does nothing goes dormant again. The **Dormancy** report (Membership;
+`member.view`) lists who is dormant and, by default, the active members
+within a chosen number of months of the threshold, with their last
+activity, months since, and the day they go — or went — dormant; it is
+the dormancy report S-906 left out until there was something to show.
+Both settings are on Readiness.
 
 **Goal:** a member can resign through the approval chain, and dormancy is
 detected rather than noticed.
@@ -2895,7 +2918,7 @@ applications, **so that** one governance model covers both. _(FRD 7.9)_
 - Uses the workflow configuration from M2, with its own definition
 - Segregation of duties applies as it does to applications
 
-### S-804 · Scheduled dormancy detection
+### S-804 · Scheduled dormancy detection ✅
 
 **As** the Society, **I need** dormancy detected automatically, **so that**
 the rule is applied evenly. _(DOR-US-001, FRD 7.11)_
@@ -2904,7 +2927,7 @@ the rule is applied evenly. _(DOR-US-001, FRD 7.11)_
 - Threshold is configuration
 - Runs on the job runner from M1, resumable over a large membership
 
-### S-805 · Configurable reactivation
+### S-805 · Configurable reactivation ✅
 
 **As** an administrator, **I need** the reactivation rule configured, **so
 that** it can change without a release. _(decision 6)_
@@ -2912,7 +2935,7 @@ that** it can change without a release. _(decision 6)_
 
 - **Depends on** the confirmed rule. Default until then: flag for staff action
 
-### S-806 · Approaching-dormancy report
+### S-806 · Approaching-dormancy report ✅
 
 **As** staff, **I need** to see who is close to dormancy, **so that** they can
 be contacted first.
@@ -3055,11 +3078,10 @@ whether anybody is being refused repeatedly. Alongside it, Scheduled work
 shows whether the jobs actually ran, which `docs/jobs.md` notes nothing
 currently notices.
 
-**Not built, and deliberately: the dormancy report S-906 names.** Dormancy is
-M8, deferred to Phase 2, so no member has ever been marked dormant and no rule
-decides it. A report over a state the system does not have would show an empty
-table reading as "nobody is dormant" rather than "this is not built yet",
-which is worse than not offering it. It belongs with M8.
+**The dormancy report S-906 names arrived with M22**, once a rule decided
+dormancy and a job applied it: a report over a state the system did not
+have would have shown an empty table reading as "nobody is dormant" rather
+than "this is not built yet", which is worse than not offering it.
 
 ### S-905 · Membership, document and account reports ✅
 
@@ -4834,25 +4856,25 @@ The FRD closes its own open points. These are the ones the code raises. Each
 has a default the stories are written to, so none blocks the start of M13;
 each should be confirmed before the milestone that consumes it.
 
-| #   | Point                                                       | Needed by    | Default the backlog assumes                                                                                      |
-| --- | ----------------------------------------------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------- |
-| 1   | Which Phase 1 fee components open which balance             | M13 · S-1303 | `shares` → Shares, `msa_deposit` → MSA; entrance, processing, Takaful open nothing                               |
-| 2   | The full `member.status` vocabulary                         | M17 · S-1701 | What the code writes today plus `dormant`, `resigned`, `demised`                                                 |
-| 3   | Dormancy: detection and reactivation (M8's S-804 to S-806)  | M15 · S-1501 | The status exists and blocks; nothing sets it. Detection stays deferred until it is scheduled                    |
-| 4   | Payment method list and which need a reference              | M13 · S-1307 | FRD 6.6's list; cheque, transfers and bank methods require a reference                                           |
-| 5   | HSA / Investment as multi-instance per member               | M13          | One of each type per member (0018) stands; multi-instance is a later migration if wanted                         |
-| 6   | Receipt by email: link or attachment                        | M16 · S-1602 | A link; WhatsApp media is Should                                                                                 |
-| 7   | Whether a pending withdrawal reserves balance               | M15 · S-1502 | Yes: available = balance − pending debits, as a query                                                            |
-| 8   | Transfer to a non-member: where the credit goes             | M15 · S-1504 | Nowhere: debit leg plus disbursement out, no credit leg                                                          |
-| 9   | One API surface for staff and member (API-US-003)           | M21          | Two surfaces on one framework and one engine, as Phase 4 built; the rules are identical, the paths differ        |
-| 10  | Withdrawing from Shares below the holding minimum           | M15 · S-1501 | Refused; resignation is the only way below it                                                                    |
-| 11  | A returned transaction whose amount crosses a matrix band   | M14 · S-1404 | Re-routed by the rule that now applies                                                                           |
-| 12  | Correcting a posted transaction                             | M15 · S-1505 | A reversing transaction, never an edit                                                                           |
-| 13  | Receipt number format and yearly reset (FRD shows RC-2026-) | M16 · S-1601 | `RCT-` continuous, as 0017; prefix becomes configuration; no yearly reset                                        |
-| 14  | Takaful / funeral benefit amount                            | M17 · S-1704 | Rs 15,000, configuration                                                                                         |
-| 15  | Minimum balance floors and approval thresholds per type     | M13 · S-1304 | Shares: the holding minimum; others 0; escalation threshold a single configured amount                           |
-| 16  | Board quorum on President's step for large disbursements    | M14          | 1 — `quorum_count` exists (0022) and can be raised without a release                                             |
-| 17  | Transaction drafts                                          | M15 · S-1505 | Not persisted: a form abandoned before Submit records nothing; the `draft` status stays for a later capture path |
+| #   | Point                                                       | Needed by    | Default the backlog assumes                                                                                                |
+| --- | ----------------------------------------------------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Which Phase 1 fee components open which balance             | M13 · S-1303 | `shares` → Shares, `msa_deposit` → MSA; entrance, processing, Takaful open nothing                                         |
+| 2   | The full `member.status` vocabulary                         | M17 · S-1701 | What the code writes today plus `dormant`, `resigned`, `demised`                                                           |
+| 3   | Dormancy: detection and reactivation (M8's S-804 to S-806)  | M15 · S-1501 | **Closed by M22**: detection nightly after `dormancy.months` of no activity (12); reactivation by an officer with a reason |
+| 4   | Payment method list and which need a reference              | M13 · S-1307 | FRD 6.6's list; cheque, transfers and bank methods require a reference                                                     |
+| 5   | HSA / Investment as multi-instance per member               | M13          | One of each type per member (0018) stands; multi-instance is a later migration if wanted                                   |
+| 6   | Receipt by email: link or attachment                        | M16 · S-1602 | A link; WhatsApp media is Should                                                                                           |
+| 7   | Whether a pending withdrawal reserves balance               | M15 · S-1502 | Yes: available = balance − pending debits, as a query                                                                      |
+| 8   | Transfer to a non-member: where the credit goes             | M15 · S-1504 | Nowhere: debit leg plus disbursement out, no credit leg                                                                    |
+| 9   | One API surface for staff and member (API-US-003)           | M21          | Two surfaces on one framework and one engine, as Phase 4 built; the rules are identical, the paths differ                  |
+| 10  | Withdrawing from Shares below the holding minimum           | M15 · S-1501 | Refused; resignation is the only way below it                                                                              |
+| 11  | A returned transaction whose amount crosses a matrix band   | M14 · S-1404 | Re-routed by the rule that now applies                                                                                     |
+| 12  | Correcting a posted transaction                             | M15 · S-1505 | A reversing transaction, never an edit                                                                                     |
+| 13  | Receipt number format and yearly reset (FRD shows RC-2026-) | M16 · S-1601 | `RCT-` continuous, as 0017; prefix becomes configuration; no yearly reset                                                  |
+| 14  | Takaful / funeral benefit amount                            | M17 · S-1704 | Rs 15,000, configuration                                                                                                   |
+| 15  | Minimum balance floors and approval thresholds per type     | M13 · S-1304 | Shares: the holding minimum; others 0; escalation threshold a single configured amount                                     |
+| 16  | Board quorum on President's step for large disbursements    | M14          | 1 — `quorum_count` exists (0022) and can be raised without a release                                                       |
+| 17  | Transaction drafts                                          | M15 · S-1505 | Not persisted: a form abandoned before Submit records nothing; the `draft` status stays for a later capture path           |
 
 # Phase 4 — Member mobile app (AD-03) ✅ first slice
 
@@ -4891,11 +4913,13 @@ SHOWN, never against the record as it stands — the app sends the whole
 form back, so diffing the other way would write their stale copy over
 anything an officer corrected at the branch while the request waited.
 
-Still open: a balance beyond "opening payment less refund" (needs a
-ledger), a member-facing document viewer, and push or WhatsApp
-notification when an application's status changes or a details update is
-decided (M9) — today the member sees either the next time they open the
-app.
+The balance a member sees is the ledger's since M13, and since M21 the
+app reads the same balance, history and statement payloads the branch
+does and, where the Society switches it on, starts a transaction that
+rides the same matrix. Still open: a member-facing document viewer, and
+push or WhatsApp notification when an application's status changes or a
+details update is decided (M9) — today the member sees either the next
+time they open the app.
 
 # Open values that later stories depend on
 
@@ -4907,6 +4931,6 @@ They must be confirmed before the milestone that consumes them.
 | Minor MSA deposit                              | M5 · S-501   | Not required — **shipped this way**                                                            |
 | Processing fee amount and applicability        | M5 · S-507   | Zero / not applicable — **shipped this way**                                                   |
 | Nominee count and percentage rules             | M6 · S-602   | Single nominee, no percentages — **shipped this way, changeable per type without a release**   |
-| Dormant reactivation rule                      | M8 · S-805   | Flag for staff action                                                                          |
+| Dormant reactivation rule                      | M8 · S-805   | Flag for staff action — **shipped this way** (`dormancy.reactivation`, M22)                    |
 | KYC and audit retention periods                | M10          | Retain indefinitely — now settable on Configuration → Retention (audit: see docs/retention.md) |
 | Whether Abeyance and Manager review are wanted | Post-go-live | Available but disabled                                                                         |
