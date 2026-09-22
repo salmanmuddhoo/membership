@@ -4661,7 +4661,20 @@ are the same endpoints staff use, behind the member's own token, and a
 member-initiated transaction — when the Society switches it on — is subject
 to every rule a staff-initiated one is.
 
-### S-2101 · Balance, statement and history for a member's own accounts
+**Shipped, first increment** (S-2101): `/api/v1/member/me/accounts/{id}/
+balance`, `/history` and `/statement` through `defineMemberEndpoint`, each
+answering with the staff endpoint's own payload. The response schema and
+the mapping now live once, in `src/lib/ledger/api-payloads.ts`, and the
+staff endpoints under `/api/v1/accounts/{id}` were rewritten onto it, so
+there is one shape for a balance, a history page and a statement whoever
+asks. The member endpoint adds one thing: `ownedAccountId`, which resolves
+the account server-side against the session's member and answers not
+found for any other — another member's, a customer's, or none. The
+statement's `format=xlsx` download is offered to the member as it is to
+the officer. **Next:** S-2102, the per-endpoint switch for
+member-initiated writes.
+
+### S-2101 · Balance, statement and history for a member's own accounts ✅
 
 _(API-US-001, API-US-003, FRD 10)_ `Must · 5 · EPIC-26` — `/api/v1/member/
 accounts`, `/balance`, `/statement`, `/history` through `defineMemberEndpoint`

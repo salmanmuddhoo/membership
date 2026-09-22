@@ -205,10 +205,16 @@ export interface AccountTransaction {
   receiptNo: string | null;
 }
 
-export async function accountTransactions(
+/**
+ * The account id, once it is established to be one of the caller's own.
+ * Anything else — another member's, a customer's, no such account, not
+ * even a uuid — is the same not_found: the app never learns that an id it
+ * should not have named exists (S-2101).
+ */
+export async function ownedAccountId(
   principal: MemberPrincipal,
   accountId: string
-): Promise<AccountTransaction[]> {
+): Promise<string> {
   const owned = await query<{ id: string }>(
     `select id from account
       where id = $1::uuid
@@ -220,7 +226,15 @@ export async function accountTransactions(
       principal.customerId,
     ]
   );
-  if (owned.rowCount === 0) throw new ApiError('not_found', 'No such account.');
+  if (!owned.rows[0]) throw new ApiError('not_found', 'No such account.');
+  return owned.rows[0].id;
+}
+
+export async function accountTransactions(
+  principal: MemberPrincipal,
+  accountId: string
+): Promise<AccountTransaction[]> {
+  await ownedAccountId(principal, accountId);
 
   // The ledger's own entries, oldest first (S-1309). Bounded: a statement
   // in the app is the recent past; the full history is the officer's page.

@@ -229,7 +229,10 @@ the pair.
   `defineEndpoint` (S-1310). The older `/accounts/{id}/transactions` keeps
   its shape for the Members list's dialogue and now reads the same entries.
 - **The member app** reads the cache for `/me/accounts` and the entries for
-  `/me/accounts/{id}/transactions` (`docs/member-app.md`).
+  `/me/accounts/{id}/transactions`, and since S-2101 the staff payloads
+  themselves at `/me/accounts/{id}/balance`, `/history` and `/statement`
+  — one schema and one mapping in `src/lib/ledger/api-payloads.ts`, used
+  by both — for the caller's own accounts only (`docs/member-app.md`).
 - **The Members list's Total funds** is the sum of the cache over every
   account the person holds, whichever application opened it.
 
