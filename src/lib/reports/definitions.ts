@@ -47,7 +47,7 @@ export interface ReportResult {
 export interface ReportDefinition {
   code: string;
   title: string;
-  category: 'Membership' | 'Money' | 'Operations';
+  category: 'Membership' | 'Finance' | 'Operations';
   // What question it answers. One line, in the officer's words.
   summary: string;
   permission: string;
@@ -340,7 +340,7 @@ const accounts: ReportDefinition = {
 const accountsNearFloor: ReportDefinition = {
   code: 'accounts-near-floor',
   title: 'Accounts near their minimum',
-  category: 'Money',
+  category: 'Finance',
   summary:
     'Open accounts standing at, below or within a margin of the minimum ' +
     'balance their type sets.',
@@ -580,7 +580,7 @@ const dormancy: ReportDefinition = {
 const payments: ReportDefinition = {
   code: 'payments',
   title: 'Payments received',
-  category: 'Money',
+  category: 'Finance',
   summary: 'What was taken, by whom, and against which application.',
   permission: 'payment.view',
   filters: [...PERIOD, { name: 'method', label: 'Method', kind: 'text' }],
@@ -638,7 +638,7 @@ const payments: ReportDefinition = {
 const feeComponents: ReportDefinition = {
   code: 'fee-components',
   title: 'Income by fee component',
-  category: 'Money',
+  category: 'Finance',
   summary: 'What the money was for — entrance, takaful, shares, processing.',
   permission: 'payment.view',
   filters: PERIOD,
@@ -684,7 +684,7 @@ const feeComponents: ReportDefinition = {
 const receipts: ReportDefinition = {
   code: 'receipts',
   title: 'Receipts issued',
-  category: 'Money',
+  category: 'Finance',
   summary:
     'Every number allocated and what became of it. Gaps and duplicates are ' +
     'audited on the reconciliation page.',
@@ -766,7 +766,7 @@ const receipts: ReportDefinition = {
 const transactions: ReportDefinition = {
   code: 'transactions',
   title: 'Transactions',
-  category: 'Money',
+  category: 'Finance',
   summary:
     'Every deposit, withdrawal, transfer, reversal and exit recorded in a ' +
     'period: by kind, method and officer, with what became of each.',
@@ -996,7 +996,7 @@ const pendingApprovals: ReportDefinition = {
 const cashReconciliation: ReportDefinition = {
   code: 'cash-reconciliation',
   title: 'Daily cash reconciliation',
-  category: 'Money',
+  category: 'Finance',
   summary:
     'Every cash drawer in a period with its float, cash in and out, ' +
     'expected, count and over or short, and any cash moved with no drawer ' +
@@ -1141,7 +1141,7 @@ const cashReconciliation: ReportDefinition = {
 const exits: ReportDefinition = {
   code: 'exits',
   title: 'Exits',
-  category: 'Money',
+  category: 'Finance',
   summary:
     'Account closures, resignations and demised claims: what was paid out, ' +
     'to whom, and how long each took from submission to payout.',

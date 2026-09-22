@@ -2789,7 +2789,9 @@ describe('S-613: starting an additional-account application for an existing memb
           [selectableTypeId],
           officer
         )
-      ).rejects.toThrowError(/active member/);
+      ).rejects.toThrowError(
+        /This member is inactive, so no account can be opened/
+      );
     });
 
     it('refuses a membership-default account type — Shares and the MSA open only on approval', async () => {

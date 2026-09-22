@@ -31,6 +31,16 @@ export function canTransact(status: string): boolean {
   return status === 'active';
 }
 
+// Who may apply for a further account (HSA, Investment, …). An active
+// holder, and — officer direction — a resigned member: they left the
+// membership, not the Society, and keep the accounts that were never the
+// membership's; a further one of those is theirs to open, on their existing
+// record, through the same application. Shares and the MSA are not (that
+// is a rejoin).
+export function canOpenAccount(status: string): boolean {
+  return status === 'active' || status === 'resigned';
+}
+
 // The line the member page shows for a member who cannot transact: what
 // they are, since when, and what that means at the counter. Null for an
 // active member, who needs no line.
@@ -42,5 +52,7 @@ export function statusNotice(
   if (canTransact(status)) return null;
   const label = STATUS_LABELS[status as MemberStatus] ?? status;
   const since = changedAt ? ` since ${format.format(changedAt)}` : '';
-  return `${label}${since}. No transactions and no new accounts.`;
+  return canOpenAccount(status)
+    ? `${label}${since}. No transactions.`
+    : `${label}${since}. No transactions and no new accounts.`;
 }

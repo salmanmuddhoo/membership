@@ -134,8 +134,8 @@ with that account chosen.
 
 **Cash above the Source of Fund threshold is a request, not one act**
 (S-1306, `src/lib/ledger/deposit-requests.ts`, M23). The Society wants the
-Source of Fund form signed, filed and checked by somebody else before that
-money is on an account, and a tick on the capture screen is not that. So
+Source of Fund form signed and filed before that money is on an account,
+and a tick on the capture screen is not that. So
 the deposit page, for cash above `payment.cash_source_of_fund_threshold`,
 continues into a request instead: `startDepositRequest` writes the
 transaction as a `draft` (the account, the amount, the method, checked as
@@ -144,12 +144,13 @@ any deposit is, the cash ceiling included) and posts nothing;
 depositor signs on screen, rasterised and filed against the transaction
 through the same wiring as a closure request (`documents.ts`, owner
 'transaction'; the document type is 0062's `source_of_fund_form`, so a fee
-payment and a deposit share one form). An officer holding
-`document.verify` verifies or rejects it on the transaction page — never
-the officer who recorded the request, the rule an application's papers
-already follow — and only then does `submitDepositRequest` go: the form
-verified, the same rules again, the matrix, the engine, the receipt when it
-posts, `source_of_fund_form_confirmed` set on the row. A draft can be
+payment and a deposit share one form). The officer who recorded it then
+submits it: `submitDepositRequest` needs the signed form on file (and not
+one someone rejected), the same rules again, the matrix, the engine, the
+receipt when it posts, `source_of_fund_form_confirmed` set on the row. M23
+first had a second officer holding `document.verify` check the form; the
+Society dropped that check, so the transaction page offers no Verify on a
+deposit's papers and no queue waits on them. A draft can be
 changed (amount, reason; below the threshold it is refused, because that is
 a direct deposit) or cancelled by its captor.
 
@@ -157,14 +158,8 @@ The deposit page's button for such an amount is **Sign the Source of Fund
 form** and opens the form directly. Once signed, the wizard's Signature
 step shows the filed form with its state, **View** and **Delete**; deleting
 it (`removeFiledDocument`, allowed while the request is a draft) puts the
-Sign button back. Submit says what is missing — the form not yet signed,
-waiting on another officer, or rejected — rather than one line for all
-three. The request reaches the second officer through **Waiting on you**:
-`formsToVerify()` (`review.ts`) lists draft deposits whose form waits
-under review for anyone with `document.verify` other than the captor, and
-`depositRequestsToFinish()` hands the captor back their own once the form
-is verified (submit it) or rejected (sign again). Both count towards the
-queue's number. The API's `POST
+Sign button back. Submit says to sign the form first when there is none.
+The API's `POST
 /api/v1/deposits` keeps its confirmation flag for an integrating surface;
 the screen no longer offers one.
 
@@ -534,8 +529,13 @@ the same way (`openAccountsUnderCustomer`).
 `member.status` is a check constraint since 0077 (S-1701) — pending,
 active, inactive, dormant, resigned, demised — with `status_changed_at`
 beside it; `src/lib/members/status.ts` is the same list for the code and
-the one rule the capture paths already apply: only an active holder
-transacts or opens an account. `dormant` is set by the nightly
+the rules the capture paths apply: only an active holder transacts
+(`canTransact`), and an active holder or a resigned member opens a further
+account (`canOpenAccount`) — a resigned member left the membership, not
+the Society, so an HSA or Investment account is still theirs to open on
+their existing record, from their page, through the same
+additional-account application. Shares and the MSA come back only by
+rejoining. `dormant` is set by the nightly
 `dormancy-detection` job after `dormancy.months` without a posted entry or
 a fee payment on any of the member's accounts, and unset by an officer with
 `member.reactivate` and a reason (M22, `src/lib/members/dormancy.ts`,
@@ -594,6 +594,10 @@ reactivated under their own ids (`reopened_at`, as for a closure), a
 membership-default type they never held opening fresh. The rejoin
 application keeps its APP reference — the AB number already belongs to the
 founding application. Audit: `member.rejoined`, `account.reopened`. The
+application carries the member's own NIC, so the duplicate-NIC check at
+submission (`findNicHolder`) leaves out the member it names, their own
+applications and the customer record they converted from — otherwise
+every rejoin was refused as "already on file" for itself. The
 page's header reads "joined {date} · rejoined {date}" from then on. A
 demised member does not rejoin; a dormant one is reactivated, not
 re-admitted (M22).

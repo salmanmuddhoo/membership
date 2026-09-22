@@ -9,6 +9,7 @@ import type { PoolClient } from 'pg';
 import { recordAudit } from '../access/audit';
 import { query } from '../db/pool';
 import { postOpeningBalances } from '../ledger/ledger';
+import { canOpenAccount } from './status';
 import type {
   Actor,
   Application,
@@ -641,9 +642,9 @@ export async function openAccountsForApplication(
   if (member.rowCount === 0) {
     throw new MemberCreationError('That member no longer exists.');
   }
-  if (member.rows[0].status !== 'active') {
+  if (!canOpenAccount(member.rows[0].status)) {
     throw new MemberCreationError(
-      'This member is no longer active, so no account can be opened for them.'
+      `This member is ${member.rows[0].status}, so no account can be opened for them.`
     );
   }
   const memberNo = member.rows[0].member_no;
@@ -1258,7 +1259,10 @@ export async function listMembers(
                          ) order by act.sort_order, act.name)
                    from account acc
                    join account_type act on act.id = acc.account_type_id
-                  where acc.member_id = m.id),
+                  -- Officer feedback: a closed account (a closure, or the
+                  -- Shares and MSA a resignation closed) is no longer
+                  -- something they hold, so it has no button here.
+                  where acc.member_id = m.id and acc.status <> 'closed'),
                 '[]'
               ) as accounts,
               -- Officer feedback: what the member actually has in the
@@ -1309,7 +1313,7 @@ export async function listMembers(
                          ) order by act.sort_order, act.name)
                    from account acc
                    join account_type act on act.id = acc.account_type_id
-                  where acc.customer_id = c.id),
+                  where acc.customer_id = c.id and acc.status <> 'closed'),
                 '[]'
               ) as accounts,
               -- A customer never has Shares or an MSA (they are not a

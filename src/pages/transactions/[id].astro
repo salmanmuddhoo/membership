@@ -250,9 +250,12 @@ const closureDocuments =
 // A document's own author may not check it — reviewDocument refuses
 // regardless, this only keeps the controls off the screen when they could
 // never work (the same officer-feedback rule the application pages follow).
+// A deposit's Source of Fund form is not checked by anyone else (officer
+// direction): its captor submits on the signed form alone.
 const canVerifyDocuments =
   principal.permissions.has('document.verify') &&
-  transaction.capturedById !== principal.userId;
+  transaction.capturedById !== principal.userId &&
+  transaction.kind !== 'deposit';
 // A deposit request still its captor's to finish (S-1306): the wizard has
 // the amount, the signature and the submission, not this page.
 const canContinueDepositRequest =

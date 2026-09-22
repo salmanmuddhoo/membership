@@ -4,14 +4,15 @@
 // A deposit is one act — recorded and on the ledger before the officer lets
 // go of the button (deposits.ts). Cash above payment.cash_source_of_fund_
 // threshold is the exception: the Society wants the Source of Fund form
-// signed, filed and checked by a second pair of eyes before that money is
-// on an account, and a tick on the capture screen is not that. So such a
-// deposit lives first as a request, the way a closure does (closures.ts):
-// a draft the officer starts, the sheet the depositor signs on screen and
-// files against the transaction (documents.ts, owner 'transaction'), a
-// verification by someone else holding document.verify, and only then the
-// submission — which is the ordinary deposit from there: the matrix, the
-// engine, the receipt.
+// signed and filed before that money is on an account, and a tick on the
+// capture screen is not that. So such a deposit lives first as a request,
+// the way a closure does (closures.ts): a draft the officer starts, the
+// sheet the depositor signs on screen and files against the transaction
+// (documents.ts, owner 'transaction'), and the submission by that same
+// officer — which is the ordinary deposit from there: the matrix, the
+// engine, the receipt. M23 had a second officer verify the form first;
+// the Society has since dropped that check (officer direction), so the
+// signed form on file is enough and no queue waits on it.
 //
 // One control, not two: the threshold and the ceiling are the entries a fee
 // payment reads (applyCashPaymentRules), and the form is the document type
@@ -251,7 +252,8 @@ export async function sourceOfFundItem(
 }
 
 /**
- * Submit the request: the form on file and verified, and from there the
+ * Submit the request: the signed form on file (officer direction: the
+ * officer who recorded it submits it, with no second check), and from there the
  * deposit an officer would have recorded at once — the matrix, the engine,
  * the receipt when it posts.
  */
@@ -275,12 +277,6 @@ export async function submitDepositRequest(
   if (item.filed.state === 'rejected') {
     throw new DepositError(
       'The Source of Fund form was rejected. Sign and file it again.'
-    );
-  }
-  if (item.filed.state !== 'verified') {
-    throw new DepositError(
-      'The Source of Fund form must be verified before the deposit can be ' +
-        'submitted.'
     );
   }
 

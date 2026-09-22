@@ -41,7 +41,7 @@ import DocumentViewer from '@components/DocumentViewer.astro';
 import { closuresInFlightFor } from '@lib/ledger/closures';
 import { resignationInFlightFor } from '@lib/ledger/resignations';
 import { demiseInFlightFor } from '@lib/ledger/demises';
-import { statusNotice } from '@lib/members/status';
+import { canOpenAccount, statusNotice } from '@lib/members/status';
 import {
   DormancyError,
   PERMISSION_REACTIVATE,
@@ -369,7 +369,7 @@ const person = (member ?? customer)!;
 // and approval brings the closed one back rather than opening a second.
 const canOpenAnotherAccount =
   canCapture &&
-  person.status === 'active' &&
+  canOpenAccount(person.status) &&
   openableAccountTypes(
     await listAccountTypes(),
     person.membershipTypeId,
@@ -415,7 +415,7 @@ const reopening = member
   : new Map<string, { id: string; reference: string }>();
 const canReopen = (account: { status: string; accountTypeId: string }) =>
   !!member &&
-  member.status === 'active' &&
+  canOpenAccount(member.status) &&
   canCapture &&
   account.status === 'closed' &&
   !reopening.has(account.accountTypeId);

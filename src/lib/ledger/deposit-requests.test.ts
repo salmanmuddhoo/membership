@@ -56,7 +56,6 @@ async function load() {
     documents: await import('../documents/documents'),
     config: await import('../config/reference'),
     ledger: await import('./ledger'),
-    review: await import('./review'),
   };
 }
 
@@ -247,8 +246,8 @@ describe('a large cash deposit as a request (S-1306)', () => {
     ).toBe(0);
   });
 
-  it('will not submit without the form, nor with it unverified, nor once rejected', async () => {
-    const { requests, documents, review } = await load();
+  it('will not submit without the signed form, nor with a rejected one', async () => {
+    const { requests, documents } = await load();
     await expect(
       requests.submitDepositRequest(requestId, officer)
     ).rejects.toThrowError(/File the signed Source of Fund form/);
@@ -258,24 +257,9 @@ describe('a large cash deposit as a request (S-1306)', () => {
       documentId,
       state: 'under_review',
     });
-    await expect(
-      requests.submitDepositRequest(requestId, officer)
-    ).rejects.toThrowError(/must be verified/);
 
-    // Waiting on a second officer: in their queue, never in the captor's.
-    expect((await review.formsToVerify(secretary)).map(t => t.id)).toContain(
-      requestId
-    );
-    expect((await review.formsToVerify(officer)).map(t => t.id)).not.toContain(
-      requestId
-    );
-    expect(await review.depositRequestsToFinish(officer)).toEqual([]);
-
-    // The officer who recorded it cannot be the one who checks its papers.
-    await expect(
-      documents.reviewDocument(documentId, { outcome: 'verify' }, officer)
-    ).rejects.toThrowError(/You recorded this transaction/);
-
+    // Nobody has to check it any more, but a form someone did reject is
+    // still not one to submit on.
     await documents.reviewDocument(
       documentId,
       { outcome: 'reject', reason: 'Unsigned' },
@@ -284,30 +268,16 @@ describe('a large cash deposit as a request (S-1306)', () => {
     await expect(
       requests.submitDepositRequest(requestId, officer)
     ).rejects.toThrowError(/was rejected/);
-
-    // Checked: out of the verifier's queue, back in the captor's.
-    expect(
-      (await review.formsToVerify(secretary)).map(t => t.id)
-    ).not.toContain(requestId);
-    expect(await review.depositRequestsToFinish(officer)).toEqual([
-      expect.objectContaining({ id: requestId, formState: 'rejected' }),
-    ]);
   });
 
-  it('posts once the form is verified, with its receipt, and the form is on the record', async () => {
-    const { requests, documents, ledger } = await load();
-    // Signed again: a fresh version, checked by the Secretary this time.
+  it('posts once the form is signed, with no second check, with its receipt, and the form is on the record', async () => {
+    const { requests, ledger } = await load();
+    // Signed again, and submitted by the officer who recorded it: the form
+    // on file is enough.
     await run(appUrl, `delete from document where transaction_id = $1`, [
       requestId,
     ]);
-    const documentId = await fileForm(requestId, officer);
-    expect(
-      await documents.reviewDocument(
-        documentId,
-        { outcome: 'verify' },
-        secretary
-      )
-    ).toEqual({ state: 'verified' });
+    await fileForm(requestId, officer);
 
     // The amount may still change while it is a draft, within the rules.
     const edited = await requests.updateDepositRequest(
