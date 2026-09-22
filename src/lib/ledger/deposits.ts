@@ -26,6 +26,8 @@ import {
 } from '../payments/receipts';
 import { LedgerError } from './ledger';
 import { notifyReceiptIssued } from './receipt-notifications';
+import { loadTransaction } from './review';
+import { notifySubmitted } from './transaction-notifications';
 import {
   resolveRoute,
   resubmitTransaction,
@@ -471,6 +473,11 @@ export async function recordDeposit(
     // The member is sent their receipt once it exists (S-1602); a send that
     // fails is on the delivery log, never a failed deposit.
     if (receipt) await notifyReceiptIssued(id);
+    // Posted, the member hears; on a chain, the step's role does (S-1803,
+    // S-1804).
+    await notifySubmitted([await loadTransaction(id)], {
+      byUserId: principal.userId,
+    });
     return (await loadDeposit(id))!;
   } catch (err) {
     if (receipt) {
@@ -615,6 +622,10 @@ export async function resubmitDeposit(
       }
     });
     if (receipt) await notifyReceiptIssued(id);
+    await notifySubmitted([await loadTransaction(id)], {
+      byUserId: principal.userId,
+      resubmitted: true,
+    });
     return (await loadDeposit(id))!;
   } catch (err) {
     if (receipt) {

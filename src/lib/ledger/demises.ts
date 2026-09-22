@@ -41,6 +41,7 @@ import {
 } from './closures';
 import { LedgerError } from './ledger';
 import { notifyExit } from './exit-notifications';
+import { notifySubmitted } from './transaction-notifications';
 import { notifyReceiptIssued } from './receipt-notifications';
 import {
   loadTransaction,
@@ -569,6 +570,11 @@ export async function submitDemise(
     const submitted = (await loadTransaction(claim.id))!;
     // Told it arrived — or, routed nowhere, that it was paid out (S-1705).
     await notifyExit(submitted, receipt ? 'approved' : 'submitted');
+    // The step it waits at hears so too (S-1804).
+    await notifySubmitted([submitted], {
+      byUserId: principal.userId,
+      resubmitted: claim.status === 'returned',
+    });
     return submitted;
   } catch (err) {
     if (receipt) {

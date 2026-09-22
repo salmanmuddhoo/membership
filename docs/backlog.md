@@ -4201,8 +4201,8 @@ entry in it with the running balance, totals and the closing balance;
 `GET /api/v1/accounts/{id}/statement?from&to` returns it, `format=xlsx` as
 the spreadsheet, and `/accounts/{id}/statement` shows it, prints it and
 links the download — month to date until a period is chosen. **Not yet:**
-WhatsApp as a document (S-1602's Should), and the Treasurer's notification
-on void, which is S-1805's.
+WhatsApp as a document (S-1602's Should). The Treasurer's notification on
+void arrived with S-1805 (M18).
 
 ### S-1601 · Every transaction takes a receipt from the one sequence ✅
 
@@ -4440,6 +4440,24 @@ _(RES-US-008, FRD 13)_
 blocked by a value nobody set — and every transaction event reaches the
 people it should, and can be reported on.
 
+**Shipped, first increment** (S-1803, S-1804, S-1805): ten events with
+seeded wording (0081). To the member — `deposit.posted` with the balance,
+`withdrawal.submitted` / `under_review` (with the comment) / `disbursed`
+(method, receipt, balance) / `rejected` (with the reason), `transfer.posted`
+to the holder of each side that is an account here (once when both are
+theirs), and `balance.near_floor` when a posted debit leaves an account
+within `balance.near_floor_margin` (Fee schedules, Rs 500, 0 for none) of
+its type's floor. To the office, by email from `app_user` —
+`transaction.awaiting` to every active holder of the step's role on every
+arrival (submission, forward, resubmission; exits included), except whoever
+sent it there; `transaction.returned` to the captor with the reviewer's
+comment and a link; `receipt.voided` to every other holder of
+`receipt.void` with the reason and the user, for transaction and fee
+receipts alike. `src/lib/ledger/transaction-notifications.ts`,
+`void-notifications.ts`, `src/lib/notifications/staff.ts`;
+`docs/notifications.md`. **Next:** S-1801, S-1802 (readiness), then
+S-1806's reports.
+
 ### S-1801 · Every Phase 2 setting has a working default
 
 **As** an administrator, **I need** to adjust configuration rather than
@@ -4464,7 +4482,7 @@ platform is ready before go-live. _(CFG-US-005, FRD 9)_
   item that has never been changed since it was seeded — "still at
   default" is information, not an error
 
-### S-1803 · Transaction notifications to members
+### S-1803 · Transaction notifications to members ✅
 
 **As** a member, **I need** to be told when my deposit is confirmed, my
 withdrawal is submitted, pending, disbursed or rejected, and my transfer has
@@ -4478,7 +4496,7 @@ completed, **so that** I know without asking. _(NOTIF-US-001, FRD 11.1)_
 - `balance.near_floor` — advisory when a posted transaction leaves an
   account within a configurable margin of its floor
 
-### S-1804 · Notifications to staff
+### S-1804 · Notifications to staff ✅
 
 **As** an approver or captor, **I need** to know when something waits on me
 or has come back to me, **so that** approvals do not stall. _(NOTIF-US-002,
@@ -4489,7 +4507,7 @@ NOTIF-US-003, FRD 11.2)_
   a step; `transaction.returned` to the captor with the comment and a link;
   staff addresses come from `app_user`, which has them
 
-### S-1805 · Treasurer told of a void
+### S-1805 · Treasurer told of a void ✅
 
 _(NOTIF-US-004, FRD 11.2)_ `Must · 1 · EPIC-30` — `receipt.voided`, with
 reason and user, to holders of `receipt.void`.

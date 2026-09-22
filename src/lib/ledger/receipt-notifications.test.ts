@@ -73,6 +73,9 @@ async function load() {
     notify.registerChannel({
       name,
       async send(message) {
+        // Only the receipt's own message is under test here; what a posting
+        // says besides (S-1803) has its own test.
+        if (!/open (your receipt|it) here/i.test(message.body)) return;
         sent.push({
           channel: name,
           recipient: message.recipient,
@@ -215,7 +218,9 @@ describe('a receipt sent to its member (S-1602)', () => {
 
     // On the record against the transaction, so the receipt page can say
     // where it went.
-    const log = await notify.notificationsFor('transaction', deposit.id);
+    const log = (
+      await notify.notificationsFor('transaction', deposit.id)
+    ).filter(n => n.eventCode === 'receipt.issued');
     expect(log).toHaveLength(2);
     expect(log.every(n => n.status === 'sent')).toBe(true);
     expect(log.every(n => n.eventCode === 'receipt.issued')).toBe(true);
@@ -250,7 +255,9 @@ describe('a receipt sent to its member (S-1602)', () => {
     expect(resend.link).toMatch(/\/receipts\/shared\//);
     expect(sent).toHaveLength(4);
     expect(
-      await notify.notificationsFor('transaction', withdrawal.id)
+      (await notify.notificationsFor('transaction', withdrawal.id)).filter(
+        n => n.eventCode === 'receipt.issued'
+      )
     ).toHaveLength(4);
 
     const treasurer = {

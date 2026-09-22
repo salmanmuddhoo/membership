@@ -204,6 +204,54 @@ own address. Placeholders: `recipient_name`, `member_name`, `reference`,
 on the review and rejection events and `method` and `receipt_no` on the
 payout. `src/lib/ledger/exit-notifications.ts` raises them.
 
+## A member's own transactions
+
+The ledger raises seven events about a member's own money (S-1803, M18,
+migration 0081), email and WhatsApp wording each, edited like any other:
+`deposit.posted` once the money is on the account, with the balance;
+`withdrawal.submitted` when a withdrawal reaches its chain,
+`withdrawal.under_review` when a reviewer forwards it, with their comment,
+`withdrawal.disbursed` at the payout, with the method, receipt number and
+balance, `withdrawal.rejected` with the reason; `transfer.posted` to the
+holder of each side that is an account here, naming both accounts and
+that holder's own balance — one message when both sides are theirs, from
+the account the money left; and `balance.near_floor`, an advisory when a
+posted withdrawal or transfer leaves an account within
+`balance.near_floor_margin` (Configuration → Fee schedules, seeded Rs 500,
+0 for none) of its type's minimum balance. A withdrawal resubmitted after
+a return does not tell the member again that it is in.
+
+The address is the one the holder's application recorded, exactly as a
+receipt's. Placeholders: `member_name`, `reference` (a transfer's own),
+`amount` and `account` on every one; `balance` on a posting; `comment` on
+the review and rejection; `method` and `receipt_no` on the payout;
+`from_account` and `to_account` on a transfer; `floor` on the advisory.
+Amounts are bare figures — the wording carries "Rs".
+`src/lib/ledger/transaction-notifications.ts` raises them, after the
+transaction has committed and never failing it.
+
+## The office
+
+Three events go to staff, by email only — `app_user` has an email and
+nothing else (S-1804, S-1805, `src/lib/notifications/staff.ts`):
+
+- `transaction.awaiting`, to every active holder of a step's role when a
+  transaction arrives at that step — on submission, on a reviewer's
+  forward, and on resubmission after a return — except whoever sent it
+  there. Every kind, exits included. Placeholders add `step` and
+  `captured_by`.
+- `transaction.returned`, to the officer who captured it when a reviewer
+  returns it, with `returned_by` and the `comment`.
+- `receipt.voided`, to every active holder of `receipt.void` other than the
+  user who voided, for a transaction's receipt and a fee receipt alike:
+  `receipt_no`, `voided_by` and the `reason`.
+
+All three carry `recipient_name`, `kind`, `reference`, `member_name`,
+`amount`, `account` and `link` — the transaction or receipt page at
+`PUBLIC_APP_URL` (or the origin of `ENTRA_REDIRECT_URI`); with neither set
+the placeholder reads "Sign in to open it." A deactivated user is not
+written to, whatever roles they still hold.
+
 ## Retrying, and giving up
 
 `notification-retry` (see `docs/jobs.md`) attempts everything whose backoff has

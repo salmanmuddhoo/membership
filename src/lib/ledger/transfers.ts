@@ -30,6 +30,7 @@ import {
 import { LedgerError } from './ledger';
 import { notifyReceiptIssued } from './receipt-notifications';
 import { loadTransaction, type TransactionSummary } from './review';
+import { notifySubmitted } from './transaction-notifications';
 import {
   resolveRoute,
   resubmitTransaction,
@@ -473,6 +474,11 @@ export async function recordTransfer(
     });
     const made = (await loadTransfer(transferId))!;
     if (receipt) await notifyReceiptIssued(made.debitLeg.id);
+    // Both holders hear of a posted transfer; a chain's first step hears
+    // it is waiting (S-1803, S-1804).
+    await notifySubmitted([made.debitLeg, made.creditLeg], {
+      byUserId: principal.userId,
+    });
     return made;
   } catch (err) {
     if (receipt) {
@@ -648,7 +654,12 @@ export async function resubmitTransfer(
       }
     });
     if (receipt) await notifyReceiptIssued(leg.id);
-    return (await loadTransfer(leg.transferId!))!;
+    const made = (await loadTransfer(leg.transferId!))!;
+    await notifySubmitted([made.debitLeg, made.creditLeg], {
+      byUserId: principal.userId,
+      resubmitted: true,
+    });
+    return made;
   } catch (err) {
     if (receipt) {
       await abandonReceiptNumber(

@@ -25,6 +25,7 @@ import {
 import { LedgerError, postTransaction } from './ledger';
 import { notifyReceiptIssued } from './receipt-notifications';
 import { notifyExit } from './exit-notifications';
+import { notifyPosted, notifyReviewed } from './transaction-notifications';
 import type {
   PaymentMethod,
   TransactionKind,
@@ -681,6 +682,14 @@ export async function reviewTransaction(
   } else if (status === 'under_review') {
     await notifyExit(transaction, 'under_review', { comment });
   }
+  // The next step's role, the captor it came back to, or a withdrawal's
+  // member (S-1803, S-1804).
+  await notifyReviewed(transaction, {
+    outcome: decision.outcome,
+    comment,
+    by: principal,
+    next: decision.outcome === 'forward' ? position.next : null,
+  });
   return { status };
 }
 
@@ -868,7 +877,21 @@ export async function postApprovedTransaction(
   await notifyReceiptIssued(id);
   const posted = (await loadTransaction(id))!;
   await notifyExit(posted, 'approved');
+  await notifyPosted([posted, await transferCreditLeg(posted)]);
   return posted;
+}
+
+// The other side of a posted transfer, for its holder to be told (S-1803).
+async function transferCreditLeg(
+  t: TransactionSummary
+): Promise<TransactionSummary | null> {
+  if (!t.transferId) return null;
+  const other = await query<{ id: string }>(
+    `select id from transaction
+      where transfer_id = $1 and leg_direction = 'credit'`,
+    [t.transferId]
+  );
+  return other.rows[0] ? loadTransaction(other.rows[0].id) : null;
 }
 
 export interface TransactionTransition {

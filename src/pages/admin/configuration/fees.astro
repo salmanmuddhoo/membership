@@ -8,9 +8,11 @@ import {
   cashSourceOfFundChecklist,
   cashSourceOfFundThreshold,
   listFeeSchedules,
+  nearFloorMargin,
   publishFeeVersion,
   resignationChecks,
   setCashMaximum,
+  setNearFloorMargin,
   setResignationChecks,
   setTakafulBenefit,
   takafulBenefit,
@@ -55,6 +57,12 @@ if (Astro.request.method === 'POST') {
           actor
         );
         notice = 'Takaful benefit updated.';
+      } else if (intent === 'set-near-floor-margin') {
+        await setNearFloorMargin(
+          String(form.get('nearFloorMargin') ?? '').trim(),
+          actor
+        );
+        notice = 'Near-floor margin updated.';
       } else if (intent === 'set-resignation-checks') {
         await setResignationChecks(
           {
@@ -106,6 +114,7 @@ const cashThreshold = await cashSourceOfFundThreshold();
 const cashMax = await cashMaximum();
 const checks = await resignationChecks();
 const takaful = await takafulBenefit();
+const nearFloor = await nearFloorMargin();
 const RESIGNATION_CHECKS: {
   name: keyof typeof checks;
   label: string;
@@ -394,6 +403,38 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             inputmode="decimal"
             name="takafulBenefit"
             value={takaful}
+            disabled={!canManage}
+            class="mt-1 block w-40 rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+          />
+        </label>
+        {canManage && (
+          <button
+            type="submit"
+            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+          >
+            Save
+          </button>
+        )}
+      </form>
+    </section>
+
+    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+      <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+        Near-floor notice
+      </h2>
+      <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+        A withdrawal or transfer that leaves an account within this amount of
+        its minimum balance sends the member a notice. 0 sends none.
+      </p>
+      <form method="post" class="mt-4 flex flex-wrap items-end gap-3">
+        <input type="hidden" name="intent" value="set-near-floor-margin" />
+        <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          Margin (Rs)
+          <input
+            type="text"
+            inputmode="decimal"
+            name="nearFloorMargin"
+            value={nearFloor}
             disabled={!canManage}
             class="mt-1 block w-40 rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
           />

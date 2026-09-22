@@ -13,6 +13,7 @@ import type { Principal } from '../access/principal';
 import { checkSegregation } from '../admin/segregation';
 import { query, withTransaction } from '../db/pool';
 import { loadTransaction, type TransactionSummary } from './review';
+import { KIND_WORDS, notifyReceiptVoided } from './void-notifications';
 
 export class ReceiptError extends Error {
   constructor(
@@ -226,5 +227,22 @@ export async function voidTransactionReceipt(
       client
     );
   });
-  return (await loadTransactionReceipt(transactionId))!;
+  const voided = (await loadTransactionReceipt(transactionId))!;
+  // Whoever else may void hears of it (S-1805).
+  const t = voided.transaction;
+  await notifyReceiptVoided({
+    receiptNo: voided.receiptNo,
+    reference: t.transferReference ?? t.reference,
+    kind: KIND_WORDS[t.kind] ?? t.kind,
+    memberName: t.holderName,
+    amount: t.amount,
+    currency: t.currency,
+    account: `${t.accountNo} · ${t.accountTypeName}`,
+    reason: trimmed,
+    voidedBy: { userId: principal.userId, name: principal.displayName },
+    path: `/receipts/${t.id}`,
+    entityType: 'transaction',
+    entityId: t.id,
+  });
+  return voided;
 }

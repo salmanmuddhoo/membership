@@ -2134,6 +2134,49 @@ export async function setTakafulBenefit(
   });
 }
 
+// The margin (MUR) within which a posted debit sends the holder the
+// balance.near_floor advisory (S-1803): the Society's figure to widen or
+// narrow. Seeded 500 by migration 0081; the default here is read only
+// before it has run. 0 turns the advisory off.
+const NEAR_FLOOR_MARGIN_KEY = 'balance.near_floor_margin';
+const DEFAULT_NEAR_FLOOR_MARGIN = '500';
+
+async function readNearFloorMargin(): Promise<string> {
+  const result = await query<{ value: string }>(
+    `select value::text as value from config_entry where key = $1`,
+    [NEAR_FLOOR_MARGIN_KEY]
+  );
+  return result.rows[0]?.value ?? DEFAULT_NEAR_FLOOR_MARGIN;
+}
+
+export function nearFloorMargin(): Promise<string> {
+  return cached('near-floor-margin', readNearFloorMargin);
+}
+
+export async function setNearFloorMargin(
+  amount: string,
+  actor: Actor
+): Promise<void> {
+  if (!/^\d+(\.\d{1,2})?$/.test(amount.trim())) {
+    throw new ConfigError(`${amount || 'That'} is not an amount in rupees.`);
+  }
+  await withConfigurationActor(actorFor(actor), async client => {
+    await client.query(
+      `insert into config_entry (key, value, value_type, description, updated_by)
+       values (
+         $1, to_jsonb($2::numeric), 'number',
+         'A posted debit that leaves an account within this amount (MUR) ' ||
+         'of its type''s minimum balance sends the holder a ' ||
+         'balance.near_floor advisory. 0 turns the advisory off.',
+         $3
+       )
+       on conflict (key) do update
+         set value = excluded.value, updated_by = excluded.updated_by`,
+      [NEAR_FLOOR_MARGIN_KEY, amount.trim(), actor.userId]
+    );
+  });
+}
+
 // The pre-checks a resignation runs before it can be submitted (S-1703),
 // each its own switch: named when it blocks, and the Society's to turn off.
 // Seeded by migration 0078; the defaults here are read only before it has
