@@ -1491,7 +1491,7 @@ describe('S-609: a quorum above one needs that many distinct sign-offs', () => {
 
 describe('S-308 and S-309: what approval creates', () => {
   it('half-creates nothing when account opening fails', async () => {
-    const { capture, workflow, members, config } = await load();
+    const { capture, workflow, members } = await load();
     const id = await captureComplete();
     await workflow.submitApplication(id, officer);
     await workflow.reviewApplication(
@@ -2184,7 +2184,7 @@ describe('S-611: Regional oversight, enabled or not, gates the chain', () => {
   // still be forwarded on to the Secretary ("central processing") unfixed.
   it('refuses the Regional Manager forwarding while a document they rejected is still rejected', async () => {
     await setRegionalReviewEnabled(true);
-    const { capture, workflow, documents, payments } = await load();
+    const { capture, workflow, documents } = await load();
     const id = await captureComplete();
     await workflow.submitApplication(id, officer);
 
@@ -2423,7 +2423,7 @@ describe('S-611: Regional oversight, enabled or not, gates the chain', () => {
 
   it('marks only the applications that have actually passed the gate', async () => {
     await setRegionalReviewEnabled(true);
-    const { capture, workflow } = await load();
+    const { workflow } = await load();
     const pending = await captureComplete();
     const passed = await captureComplete();
     await workflow.submitApplication(pending, officer);

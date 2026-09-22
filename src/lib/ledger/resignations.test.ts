@@ -86,7 +86,6 @@ let secretary: Principal;
 let president: Principal;
 let member: { id: string; shares: string; msa: string; hsa: string };
 let requestTypeId: string;
-let feeVersionId: string;
 let bankAccountId: string;
 
 function principalFor(

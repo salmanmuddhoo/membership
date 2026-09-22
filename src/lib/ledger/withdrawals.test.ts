@@ -369,7 +369,7 @@ describe('recording a withdrawal', () => {
 
 describe('available, not merely current (S-1502)', () => {
   it('counts what is on its way out, and releases it on rejection', async () => {
-    const { withdrawals, ledger, review } = await load();
+    const { ledger } = await load();
     // Raise the MSA cap so a large withdrawal can go to the chain.
     await configure(
       `update account_type set maximum_transaction_amount = null where code = 'msa'`

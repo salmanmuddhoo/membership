@@ -105,7 +105,6 @@ afterEach(() => {
   process.env = { ...saved };
 });
 
-let clerk: Principal;
 let officer: Principal;
 let treasurer: Principal;
 let secretary: Principal;
@@ -180,12 +179,6 @@ beforeAll(async () => {
                     ('clerk@albarakah.mu', 'clerk')) as g(email, role)
        join app_user u on u.email = g.email
        join role r on r.code = g.role`
-  );
-  clerk = principalFor(
-    byEmail.get('clerk@albarakah.mu'),
-    'clerk@albarakah.mu',
-    ['clerk'],
-    ['transaction.capture', 'transaction.view']
   );
   officer = principalFor(
     byEmail.get('officer@albarakah.mu'),

@@ -23,10 +23,6 @@ import { jsPDF } from 'jspdf';
 
 const A4_WIDTH_MM = 210;
 const A4_HEIGHT_MM = 297;
-// A4 at 96 CSS px/inch, matching the millimetre layout print.astro's own
-// @page rule already targets — so a page break here lands close to where the
-// printed page would have put it too.
-const PX_PER_MM = 96 / 25.4;
 
 export interface RenderOptions {
   // Raised for a screen with fine print or a signature's own detail; the
