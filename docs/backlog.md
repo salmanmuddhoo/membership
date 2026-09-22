@@ -4255,14 +4255,18 @@ a gap means the same thing everywhere. _(RCT-US-001, RCT-US-007, FRD 6.8)_
 **As** an officer, **I need** to send the member their receipt without
 printing it, **so that** they leave with a record. _(RCT-US-002, NOTIF-US-005,
 FRD 6.8, open point 6)_
-`Must · 5 · EPIC-20` — WhatsApp media `Should`, not yet
+`Must · 5 · EPIC-20` — WhatsApp media `Should` ✅
 
 - **Given** a receipt is issued **Then** a `receipt.issued` notification
   (M9 templates) carries a link to `/receipts/{id}`, which the member's own
   sign-in (Phase 4) or a signed, expiring link opens; sent automatically
   when the event's template is active, and re-sendable from the receipt
-- WhatsApp as a document, if the Society's account supports media, is the
-  Should half — the text-and-link message is the Must half
+- WhatsApp as a document is the Should half, built: the receipt as a PDF on
+  the same signed link (`.pdf`), sent as the template's document header —
+  and as an email attachment — where the wording's **Attach the receipt as
+  a PDF** is on (migration 0089). Off by default, because a WhatsApp
+  template only takes a document if Meta registered it with a document
+  header.
 
 ### S-1603 · Void, and the reasons a sequence has holes ✅
 
@@ -4873,7 +4877,7 @@ each should be confirmed before the milestone that consumes it.
 | 3   | Dormancy: detection and reactivation (M8's S-804 to S-806)  | M15 · S-1501 | **Closed by M22**: detection nightly after `dormancy.months` of no activity (12); reactivation by an officer with a reason              |
 | 4   | Payment method list and which need a reference              | M13 · S-1307 | FRD 6.6's list; cheque, transfers and bank methods require a reference                                                                  |
 | 5   | HSA / Investment as multi-instance per member               | M13          | One of each type per member (0018) stands; multi-instance is a later migration if wanted                                                |
-| 6   | Receipt by email: link or attachment                        | M16 · S-1602 | A link; WhatsApp media is Should                                                                                                        |
+| 6   | Receipt by email: link or attachment                        | M16 · S-1602 | A link, and since 0089 the PDF as well where the wording says so (per channel; off by default)                                          |
 | 7   | Whether a pending withdrawal reserves balance               | M15 · S-1502 | Yes: available = balance − pending debits, as a query                                                                                   |
 | 8   | Transfer to a non-member: where the credit goes             | M15 · S-1504 | Nowhere: debit leg plus disbursement out, no credit leg                                                                                 |
 | 9   | One API surface for staff and member (API-US-003)           | M21          | Two surfaces on one framework and one engine, as Phase 4 built; the rules are identical, the paths differ                               |

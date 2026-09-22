@@ -18,7 +18,7 @@ import {
   type NotificationConfig,
 } from '../config';
 import { getAccessToken, getGraphCredentials } from '../documents/graph';
-import type { Channel, OutgoingMessage } from './notify';
+import type { Attachment, Channel, OutgoingMessage } from './notify';
 import type { NotificationChannel } from './templates';
 
 export class NotificationSendError extends Error {
@@ -37,12 +37,49 @@ export class NotificationSendError extends Error {
  * than as the officer is the same bargain documents make: no officer needs a
  * licence, and who caused the send lives in our own outbox.
  */
+/**
+ * The attached document's bytes, fetched from its own signed link. Fetched
+ * at send time rather than carried on the row: the link is what the row
+ * stores, and a retry days later reads the same document the first attempt
+ * would have. A document that cannot be fetched fails the send, visibly,
+ * rather than going out without it.
+ */
+async function fetchAttachment(attachment: Attachment): Promise<Uint8Array> {
+  let response: Response;
+  try {
+    response = await fetch(attachment.url);
+  } catch (error) {
+    throw new NotificationSendError(
+      'The attached document could not be fetched: ' +
+        (error instanceof Error ? error.message : 'unknown error')
+    );
+  }
+  if (!response.ok) {
+    throw new NotificationSendError(
+      `The attached document could not be fetched (HTTP ${response.status}).`
+    );
+  }
+  return new Uint8Array(await response.arrayBuffer());
+}
+
 async function sendThroughGraph(
   message: OutgoingMessage,
   from: string
 ): Promise<void> {
   const credentials = getGraphCredentials();
   const token = await getAccessToken(credentials);
+  const attachments = message.attachment
+    ? [
+        {
+          '@odata.type': '#microsoft.graph.fileAttachment',
+          name: message.attachment.filename,
+          contentType: message.attachment.contentType,
+          contentBytes: Buffer.from(
+            await fetchAttachment(message.attachment)
+          ).toString('base64'),
+        },
+      ]
+    : undefined;
 
   const response = await fetch(
     `${credentials.graphBaseUrl}/users/${encodeURIComponent(from)}/sendMail`,
@@ -60,6 +97,7 @@ async function sendThroughGraph(
           // template editor a way to put markup in a member's inbox.
           body: { contentType: 'Text', content: message.body },
           toRecipients: [{ emailAddress: { address: message.recipient } }],
+          ...(attachments ? { attachments } : {}),
         },
         // The Society's record of what it sent is this system's outbox, which
         // already holds the rendered text. A second copy in a mailbox nobody
@@ -111,6 +149,35 @@ async function sendThroughCloudApi(
   // Meta wants the number in international form without the leading '+'.
   const to = message.recipient.replace(/^\+/, '');
 
+  // A document travels as the template's header (S-1602): Meta fetches it
+  // from the link itself, so nothing is uploaded here. The template must
+  // have been registered with a document header, which is why sending one
+  // is the wording's own switch and not automatic.
+  const components: unknown[] = [];
+  if (message.attachment) {
+    components.push({
+      type: 'header',
+      parameters: [
+        {
+          type: 'document',
+          document: {
+            link: message.attachment.url,
+            filename: message.attachment.filename,
+          },
+        },
+      ],
+    });
+  }
+  if ((message.parameters ?? []).length > 0) {
+    components.push({
+      type: 'body',
+      parameters: (message.parameters ?? []).map(text => ({
+        type: 'text',
+        text,
+      })),
+    });
+  }
+
   let response: Response;
   try {
     response = await fetch(
@@ -128,21 +195,10 @@ async function sendThroughCloudApi(
           template: {
             name: message.providerTemplateName,
             language: { code: message.providerTemplateLanguage ?? 'en' },
-            // Omitted entirely for a template with no variables: Meta rejects
-            // an empty parameter list rather than treating it as none.
-            ...((message.parameters ?? []).length > 0
-              ? {
-                  components: [
-                    {
-                      type: 'body',
-                      parameters: (message.parameters ?? []).map(text => ({
-                        type: 'text',
-                        text,
-                      })),
-                    },
-                  ],
-                }
-              : {}),
+            // Omitted entirely for a template with no variables and no
+            // document: Meta rejects an empty component list rather than
+            // treating it as none.
+            ...(components.length > 0 ? { components } : {}),
           },
         }),
       }
@@ -196,6 +252,8 @@ async function sendThroughGateway(
         to: message.recipient,
         ...(message.subject === null ? {} : { subject: message.subject }),
         message: message.body,
+        // Where the gateway can fetch the document from, when there is one.
+        ...(message.attachment ? { attachment: message.attachment } : {}),
       }),
     });
   } catch (error) {
@@ -224,6 +282,7 @@ function logSend(message: OutgoingMessage): void {
       to: message.recipient,
       subject: message.subject,
       body: message.body,
+      ...(message.attachment ? { attachment: message.attachment } : {}),
     })
   );
 }

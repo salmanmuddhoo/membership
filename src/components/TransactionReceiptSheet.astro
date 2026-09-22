@@ -25,6 +25,8 @@ interface Props {
   // officer may send it again.
   sent?: ReceiptSendRecord[];
   canSend?: boolean;
+  // The sheet as a file, where the page has one to offer (S-1602).
+  pdfHref?: string | null;
 }
 const {
   receipt,
@@ -33,6 +35,7 @@ const {
   shared = false,
   sent = [],
   canSend = false,
+  pdfHref = null,
 } = Astro.props;
 const CHANNEL_WORDS: Record<string, string> = {
   email: 'Email',
@@ -200,6 +203,7 @@ const backHref = `/transactions/${t.id}`;
     <button type="button" id="print">
       Print
     </button>
+    {pdfHref && <a href={pdfHref}>Download PDF</a>}
     {!shared && <a href={backHref}>Back</a>}
   </div>
 </div>
