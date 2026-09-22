@@ -10,6 +10,8 @@ import {
 } from '@lib/config/reference';
 import {
   approvedTransactions,
+  depositRequestsToFinish,
+  formsToVerify,
   pendingTransactions,
   returnedTransactions,
 } from '@lib/ledger/review';
@@ -46,10 +48,16 @@ const kind = (TRANSACTION_KINDS as readonly string[]).includes(requested)
   ? (requested as TransactionKind)
   : undefined;
 
-const [pending, approved, returned] = await Promise.all([
+const [pending, approved, returned, forms, toFinish] = await Promise.all([
   pendingTransactions(principal, { kind }),
   approvedTransactions(principal, { kind }),
   returnedTransactions(principal).then(rows =>
+    kind ? rows.filter(r => r.kind === kind) : rows
+  ),
+  formsToVerify(principal).then(rows =>
+    kind ? rows.filter(r => r.kind === kind) : rows
+  ),
+  depositRequestsToFinish(principal).then(rows =>
     kind ? rows.filter(r => r.kind === kind) : rows
   ),
 ]);
@@ -118,6 +126,22 @@ function waited(since: Date): string {
       {
         title: 'Returned to you',
         rows: returned.map(t => ({ ...t, note: 'Returned' })),
+        empty: null,
+      },
+      {
+        title: 'Source of Fund forms to verify',
+        rows: forms.map(t => ({ ...t, note: 'Verify the form' })),
+        empty: null,
+      },
+      {
+        title: 'Your cash deposits, form checked',
+        rows: toFinish.map(t => ({
+          ...t,
+          note:
+            t.formState === 'verified'
+              ? 'Form verified, submit it'
+              : 'Form rejected, sign it again',
+        })),
         empty: null,
       },
     ].map(

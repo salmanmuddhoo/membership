@@ -56,6 +56,7 @@ async function load() {
     documents: await import('../documents/documents'),
     config: await import('../config/reference'),
     ledger: await import('./ledger'),
+    review: await import('./review'),
   };
 }
 
@@ -247,7 +248,7 @@ describe('a large cash deposit as a request (S-1306)', () => {
   });
 
   it('will not submit without the form, nor with it unverified, nor once rejected', async () => {
-    const { requests, documents } = await load();
+    const { requests, documents, review } = await load();
     await expect(
       requests.submitDepositRequest(requestId, officer)
     ).rejects.toThrowError(/File the signed Source of Fund form/);
@@ -260,6 +261,15 @@ describe('a large cash deposit as a request (S-1306)', () => {
     await expect(
       requests.submitDepositRequest(requestId, officer)
     ).rejects.toThrowError(/must be verified/);
+
+    // Waiting on a second officer: in their queue, never in the captor's.
+    expect((await review.formsToVerify(secretary)).map(t => t.id)).toContain(
+      requestId
+    );
+    expect((await review.formsToVerify(officer)).map(t => t.id)).not.toContain(
+      requestId
+    );
+    expect(await review.depositRequestsToFinish(officer)).toEqual([]);
 
     // The officer who recorded it cannot be the one who checks its papers.
     await expect(
@@ -274,6 +284,14 @@ describe('a large cash deposit as a request (S-1306)', () => {
     await expect(
       requests.submitDepositRequest(requestId, officer)
     ).rejects.toThrowError(/was rejected/);
+
+    // Checked: out of the verifier's queue, back in the captor's.
+    expect(
+      (await review.formsToVerify(secretary)).map(t => t.id)
+    ).not.toContain(requestId);
+    expect(await review.depositRequestsToFinish(officer)).toEqual([
+      expect.objectContaining({ id: requestId, formState: 'rejected' }),
+    ]);
   });
 
   it('posts once the form is verified, with its receipt, and the form is on the record', async () => {

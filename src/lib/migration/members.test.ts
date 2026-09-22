@@ -128,6 +128,15 @@ async function fillSheet(
   // treat as already-occupied and append after — exactly what a person
   // typing into the downloaded template never does.
   const row = sheet.getRow(2);
+  // A row naming an AB Number states both core balances; a fixture that is
+  // not about balances states 0 for each, as an officer would.
+  if (data['AB Number']) {
+    data = {
+      'Shares Balance': '0',
+      'MSA Deposit Balance': '0',
+      ...data,
+    };
+  }
   for (const [header, value] of Object.entries(data)) {
     const col = columnFor.get(header);
     if (col) row.getCell(col).value = value;
@@ -211,6 +220,54 @@ describe('validateRows', () => {
     expect(errors).toEqual([]);
     expect(valid).toHaveLength(1);
     expect(valid[0].values.mobile).toBe('+23057891234');
+  });
+
+  it('requires both core balances on a row with an AB Number, where 0 counts as filled', async () => {
+    const { buildImportTemplate, parseImportFile, validateRows } = await load();
+    const base = {
+      'Legacy Member Code': 'LEG-105',
+      'AB Number': 'AB1105',
+      Surname: 'Ramtoola',
+      Name: 'Zahra',
+      NIC: 'B9999999999995',
+      Gender: 'Female',
+      Address: '1 Church Street',
+      Mobile: '57891239',
+      ...NOMINEE_1,
+    };
+    const blank = await fillSheet(await buildImportTemplate(), 'Individual', {
+      ...base,
+      'Shares Balance': '',
+      'MSA Deposit Balance': '',
+    });
+    const refused = await validateRows(await parseImportFile(blank));
+    expect(refused.valid).toEqual([]);
+    expect(refused.errors[0].message).toMatch(
+      /Shares Balance is required with an AB Number/
+    );
+    expect(refused.errors[0].message).toMatch(
+      /MSA Deposit Balance is required with an AB Number/
+    );
+
+    const zeros = await fillSheet(await buildImportTemplate(), 'Individual', {
+      ...base,
+      'Shares Balance': '0',
+      'MSA Deposit Balance': '0',
+    });
+    const accepted = await validateRows(await parseImportFile(zeros));
+    expect(accepted.errors).toEqual([]);
+    expect(accepted.valid).toHaveLength(1);
+
+    // A non-member's row still leaves them blank.
+    const customer = await fillSheet(
+      await buildImportTemplate(),
+      'Individual',
+      { ...base, 'Legacy Member Code': 'LEG-106', 'AB Number': '' }
+    );
+    const asCustomer = await validateRows(await parseImportFile(customer));
+    expect(asCustomer.errors.map(e => e.message).join(' ')).not.toMatch(
+      /Balance is required with an AB Number/
+    );
   });
 
   it('rejects a row missing a mandatory field', async () => {

@@ -15,6 +15,8 @@ import {
   BUTTON_SM,
   SECONDARY_SM,
   HINT,
+  LINK_CARD,
+  MUTED,
   DANGER_XS,
   LABEL,
   NOTICE_ERROR,
@@ -103,6 +105,8 @@ const created = Astro.url.searchParams.get('created');
 
 const filter = Astro.url.searchParams.get('status') ?? '';
 const search = Astro.url.searchParams.get('q') ?? '';
+// Officer feedback: the applications waiting on this officer, alone.
+const waitingOnly = Astro.url.searchParams.get('waiting') === '1';
 // Officer feedback: 'received' (submitted from the mobile app) used to be
 // visible to any officer who could submit at all — the business wants it
 // handled by specific staff instead (S-303, application.submit_online).
@@ -136,9 +140,11 @@ const [unsortedApplications, types, nonDraftCount, attentionIds] =
 // like any other otherwise, easy to miss on a list sorted only by when it
 // last changed. Array.prototype.sort is stable, so this only moves those
 // rows ahead of everything else; within each group, still newest first.
-const applications = [...unsortedApplications].sort(
-  (a, b) => Number(attentionIds.has(b.id)) - Number(attentionIds.has(a.id))
-);
+const applications = [...unsortedApplications]
+  .filter(a => !waitingOnly || attentionIds.has(a.id))
+  .sort(
+    (a, b) => Number(attentionIds.has(b.id)) - Number(attentionIds.has(a.id))
+  );
 
 // S-611 follow-up: a status names a stage, never the person holding it.
 // 'new' means as many different things as the configured chain has steps
@@ -207,6 +213,18 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 
     {created && <div class={NOTICE_OK}>Application {created} started.</div>}
 
+    {attentionIds.size > 0 && !waitingOnly && (
+      <a href="/applications?waiting=1" class={LINK_CARD}>
+        <span class="font-semibold text-neutral-800 dark:text-neutral-100">
+          Waiting on you
+        </span>
+        <span class={MUTED}>
+          {`${attentionIds.size} application${attentionIds.size === 1 ? '' : 's'}`}
+          {' →'}
+        </span>
+      </a>
+    )}
+
     {canCapture && (
       <section class={CARD}>
         <h2 class={CARD_TITLE}>Start an application</h2>
@@ -243,8 +261,12 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     <section class={CARD}>
       <div class="flex flex-wrap items-center justify-between gap-2">
         <h2 class={`${CARD_TITLE} flex items-center gap-2`}>
-          Applications
-          {nonDraftCount !== null && <span class={PILL}>{nonDraftCount}</span>}
+          {waitingOnly ? 'Waiting on you' : 'Applications'}
+          {waitingOnly ? (
+            <span class={PILL}>{applications.length}</span>
+          ) : (
+            nonDraftCount !== null && <span class={PILL}>{nonDraftCount}</span>
+          )}
         </h2>
         <form method="get" class="flex flex-wrap items-center gap-2">
           <label for="q" class="sr-only">
@@ -272,7 +294,8 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           <button type="submit" class={SECONDARY_SM}>
             Filter
           </button>
-          {(search || filter) && (
+          {waitingOnly && <input type="hidden" name="waiting" value="1" />}
+          {(search || filter || waitingOnly) && (
             <a href="/applications" class={`${HINT} underline`}>
               Clear
             </a>
@@ -284,9 +307,11 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         <p class={`mt-4 ${HINT}`}>
           {search
             ? `Nothing matches "${search}".`
-            : filter
-              ? `No applications with status ${STATUS_LABELS[filter] ?? filter}.`
-              : 'No applications yet.'}
+            : waitingOnly
+              ? 'Nothing is waiting for you.'
+              : filter
+                ? `No applications with status ${STATUS_LABELS[filter] ?? filter}.`
+                : 'No applications yet.'}
         </p>
       ) : (
         <form method="post" id="applications-form" data-confirm-delete>

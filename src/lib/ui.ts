@@ -29,6 +29,10 @@ export const PAGE = {
 
 export const CARD =
   'rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950';
+// A one-line card that is itself a link to a queue ("Waiting on you"):
+// the title on the left, the count and an arrow on the right.
+export const LINK_CARD =
+  'flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-neutral-200 bg-neutral-100 px-6 py-4 transition hover:border-mint-400 hover:bg-white dark:border-neutral-800 dark:bg-neutral-950 dark:hover:border-mint-700 dark:hover:bg-neutral-900';
 // A form that is a card: the same card, with its fields spaced.
 export const FORM_CARD = `space-y-4 ${CARD}`;
 export const FILTER =

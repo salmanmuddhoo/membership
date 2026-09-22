@@ -151,7 +151,20 @@ already follow — and only then does `submitDepositRequest` go: the form
 verified, the same rules again, the matrix, the engine, the receipt when it
 posts, `source_of_fund_form_confirmed` set on the row. A draft can be
 changed (amount, reason; below the threshold it is refused, because that is
-a direct deposit) or cancelled by its captor. The API's `POST
+a direct deposit) or cancelled by its captor.
+
+The deposit page's button for such an amount is **Sign the Source of Fund
+form** and opens the form directly. Once signed, the wizard's Signature
+step shows the filed form with its state, **View** and **Delete**; deleting
+it (`removeFiledDocument`, allowed while the request is a draft) puts the
+Sign button back. Submit says what is missing — the form not yet signed,
+waiting on another officer, or rejected — rather than one line for all
+three. The request reaches the second officer through **Waiting on you**:
+`formsToVerify()` (`review.ts`) lists draft deposits whose form waits
+under review for anyone with `document.verify` other than the captor, and
+`depositRequestsToFinish()` hands the captor back their own once the form
+is verified (submit it) or rejected (sign again). Both count towards the
+queue's number. The API's `POST
 /api/v1/deposits` keeps its confirmation flag for an integrating surface;
 the screen no longer offers one.
 

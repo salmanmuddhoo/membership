@@ -391,6 +391,12 @@ export async function buildImportTemplate(): Promise<Buffer> {
     // Note on the Joined Date column (column 3) and Date of Birth column
     // (wherever it falls in the applicant fields block).
     sheet.getCell(1, 3).note = 'Format: YYYY-MM-DD (e.g. 2000-06-15)';
+    // Not starred: required only on a row with an AB Number, and left blank
+    // on a non-member's row.
+    for (const column of [SHARES_BALANCE_COLUMN, MSA_BALANCE_COLUMN]) {
+      sheet.getCell(1, headers.indexOf(column) + 1).note =
+        'Required when AB Number is filled. Enter 0 if there is no balance.';
+    }
     const dobIndex = fields.findIndex(f => f.fieldKey === 'date_of_birth');
     if (dobIndex >= 0) {
       sheet.getCell(1, 4 + dobIndex).note =
@@ -528,9 +534,9 @@ export async function parseImportFile(buffer: Buffer): Promise<ParsedRow[]> {
         abNumberColumn = colNumber;
       } else if (header === JOINED_COLUMN) {
         joinedColumn = colNumber;
-      } else if (header === SHARES_BALANCE_COLUMN) {
+      } else if (bareHeader === SHARES_BALANCE_COLUMN) {
         sharesBalanceColumn = colNumber;
-      } else if (header === MSA_BALANCE_COLUMN) {
+      } else if (bareHeader === MSA_BALANCE_COLUMN) {
         msaBalanceColumn = colNumber;
       } else if (extraNumberByLabel.has(header)) {
         extraNumberColumns.set(colNumber, extraNumberByLabel.get(header)!);
@@ -1191,6 +1197,21 @@ export async function validateRows(
       'MSA Deposit Balance',
       problems
     );
+    // Officer direction: a member's two balances are part of what the old
+    // register says about them, so a row naming an AB Number states both —
+    // 0 where there is nothing — rather than leaving either to be guessed.
+    if (abGiven) {
+      if (row.sharesBalance.trim() === '') {
+        problems.push(
+          'Shares Balance is required with an AB Number (0 if none).'
+        );
+      }
+      if (row.msaBalance.trim() === '') {
+        problems.push(
+          'MSA Deposit Balance is required with an AB Number (0 if none).'
+        );
+      }
+    }
     if (!abGiven && (sharesBalance !== '' || msaBalance !== '')) {
       problems.push(
         'Shares Balance and MSA Deposit Balance need an AB Number — only ' +
@@ -1620,8 +1641,16 @@ export async function importMembers(
             );
           }
 
-          const shares = row.sharesBalance || null;
-          const msaDeposit = row.msaBalance || null;
+          // A stated 0 is "nothing held": no line, and no receipt used up
+          // on a zero payment.
+          const shares =
+            row.sharesBalance && toCents(row.sharesBalance) > 0
+              ? row.sharesBalance
+              : null;
+          const msaDeposit =
+            row.msaBalance && toCents(row.msaBalance) > 0
+              ? row.msaBalance
+              : null;
           const accountLines = toBalanceLines(row.accountEntries);
           let feeVersionId: string | null = null;
           if (hasMigrationBalance({ shares, msaDeposit, accountLines })) {
