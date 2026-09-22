@@ -18,7 +18,7 @@ import {
   type WorkflowDefinition,
   type WorkflowStep,
 } from '../config/reference';
-import { toCents } from '../payments/money';
+import { formatMoney, fromCents, toCents } from '../payments/money';
 import { postTransaction, type LedgerActor } from './ledger';
 
 export interface RouteInput {
@@ -112,6 +112,84 @@ export async function resolveRoute(input: RouteInput): Promise<Route> {
     definition: firstStep ? definition : null,
     firstStep,
   };
+}
+
+// The amounts a kind of transaction routes differently at, for one account
+// type and one officer (the timeline experience): every band the matrix
+// draws between its rules, each with the chain a transaction in it goes
+// through — none for one that posts at once. Read off resolveRoute itself
+// at each boundary the rules mention, so this can never say something the
+// submit would not do.
+export interface RouteBand {
+  // Inclusive, in cents; toCents null means "and above".
+  fromCents: number;
+  toCents: number | null;
+  // The enabled steps it waits at, in order; empty when it posts at once.
+  chain: WorkflowStep[];
+  definitionCode: string | null;
+}
+
+export async function routeBands(
+  input: Omit<RouteInput, 'amountCents'>
+): Promise<RouteBand[]> {
+  const rules = (await listApprovalRules()).filter(
+    r =>
+      r.kind === input.kind &&
+      r.isActive &&
+      (!r.accountTypeId || r.accountTypeId === input.accountTypeId) &&
+      (!r.initiatingRoleCode || input.roleCodes.includes(r.initiatingRoleCode))
+  );
+  // Every boundary a rule draws, from one cent up: a rule's floor, and the
+  // cent above its ceiling.
+  const cuts = new Set<number>([1]);
+  for (const rule of rules) {
+    cuts.add(Math.max(1, toCents(rule.amountFrom)));
+    if (rule.amountTo !== null) cuts.add(toCents(rule.amountTo) + 1);
+  }
+  const starts = [...cuts].sort((a, b) => a - b);
+
+  const bands: RouteBand[] = [];
+  for (let i = 0; i < starts.length; i++) {
+    const fromCents = starts[i];
+    const toCents_ = i + 1 < starts.length ? starts[i + 1] - 1 : null;
+    const route = await resolveRoute({ ...input, amountCents: fromCents });
+    const definitionCode = route.definition?.code ?? null;
+    const last = bands[bands.length - 1];
+    if (last && last.definitionCode === definitionCode) {
+      // The same chain on both sides of a boundary is one band.
+      last.toCents = toCents_;
+      continue;
+    }
+    bands.push({
+      fromCents,
+      toCents: toCents_,
+      chain: definitionCode ? await activeChain(definitionCode) : [],
+      definitionCode,
+    });
+  }
+  return bands;
+}
+
+// One line an officer reads above the timeline: which amounts, and what
+// happens to them.
+export function describeBand(band: RouteBand): string {
+  const rs = (cents: number) =>
+    `Rs ${formatMoney(fromCents(cents)).replace(/^[A-Z]{3}\s*/, '')}`;
+  const range =
+    band.fromCents <= 1 && band.toCents === null
+      ? 'Any amount'
+      : band.fromCents <= 1
+        ? `Up to ${rs(band.toCents!)}`
+        : band.toCents === null
+          ? `${rs(band.fromCents)} and above`
+          : `${rs(band.fromCents)} to ${rs(band.toCents)}`;
+  if (band.chain.length === 0) {
+    return `${range}: posted at once, no review needed.`;
+  }
+  const steps = band.chain
+    .map(s => (s.roleName ? `${s.name} (${s.roleName})` : s.name))
+    .join(', then ');
+  return `${range}: ${steps}.`;
 }
 
 export interface Submission {

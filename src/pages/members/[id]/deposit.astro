@@ -19,7 +19,9 @@ import {
 } from '@lib/ledger/deposits';
 import { accountBalance } from '@lib/ledger/ledger';
 import { loadCustomer, loadMember } from '@lib/members/create';
-import { formatMoney } from '@lib/payments/money';
+import { formatMoney, toCents } from '@lib/payments/money';
+import { routePreviewGroups } from '@lib/workflow/timeline';
+import RoutePreview from '@components/RoutePreview.astro';
 import {
   PAGE,
   MUTED,
@@ -155,6 +157,16 @@ if (Astro.request.method === 'POST') {
     }
   }
 }
+// The timeline experience: what will happen to this transaction, by
+// account and amount, drawn over the form before it is recorded.
+const routeGroups = await routePreviewGroups(
+  'deposit',
+  depositable,
+  principal.roles
+);
+const initialCents = /^\d{1,12}(\.\d{1,2})?$/.test(values.amount ?? '')
+  ? toCents(values.amount)
+  : null;
 ---
 
 <DashboardLayout title="Deposit · Al Barakah MCSL" heading="Record a deposit">
@@ -252,153 +264,161 @@ if (Astro.request.method === 'POST') {
           : 'None of these accounts can take a deposit.'}
       </section>
     ) : (
-      <form
-        method="post"
-        data-deposit-form
-        data-cash-threshold={cashThreshold}
-        data-cash-maximum={cashMax}
-        class={FORM_CARD}
-      >
-        <input
-          type="hidden"
-          name="idempotencyKey"
-          value={values.idempotencyKey}
+      <>
+        <RoutePreview
+          groups={routeGroups}
+          accountField="accountId"
+          initialAccountId={values.accountId}
+          initialAmountCents={initialCents}
         />
+        <form
+          method="post"
+          data-deposit-form
+          data-cash-threshold={cashThreshold}
+          data-cash-maximum={cashMax}
+          class={FORM_CARD}
+        >
+          <input
+            type="hidden"
+            name="idempotencyKey"
+            value={values.idempotencyKey}
+          />
 
-        <label class={LABEL}>
-          Account
-          <select name="accountId" class={INPUT}>
-            {accounts.map(account => (
-              <option
-                value={account.id}
-                selected={account.id === values.accountId}
-                disabled={
-                  !(account.status === 'active' && account.acceptsDeposits)
-                }
-              >
-                {account.accountNo} · {account.accountTypeName} ·{' '}
-                {formatMoney(account.balance)}
-                {account.status !== 'active'
-                  ? ` · ${account.status}`
-                  : account.acceptsDeposits
-                    ? ''
-                    : ' · no deposits'}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <div class="grid gap-3 sm:grid-cols-2">
           <label class={LABEL}>
-            Amount (Rs)
-            <input
-              type="text"
-              inputmode="decimal"
-              name="amount"
-              required
-              value={values.amount}
-              data-amount
-              class={INPUT}
-            />
-          </label>
-          <label class={LABEL}>
-            Method
-            <select name="method" class={INPUT}>
-              {paymentMethods.map(method => (
-                <option
-                  value={method.code}
-                  data-cash={method.isCash ? 'true' : 'false'}
-                  data-requires-reference={
-                    method.requiresReference ? 'true' : 'false'
-                  }
-                  data-touches-bank={method.touchesBank ? 'true' : 'false'}
-                  selected={method.code === values.method}
-                >
-                  {method.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label data-method-reference-field class={LABEL}>
-            Reference (cheque number, transfer reference)
-            <input
-              type="text"
-              name="methodReference"
-              value={values.methodReference}
-              class={INPUT}
-            />
-          </label>
-          <label data-bank-account-field class={LABEL}>
-            Bank account
-            <select name="bankAccountId" class={INPUT}>
-              <option value="">Choose…</option>
-              {bankAccounts.map(account => (
+            Account
+            <select name="accountId" class={INPUT}>
+              {accounts.map(account => (
                 <option
                   value={account.id}
-                  selected={account.id === values.bankAccountId}
+                  selected={account.id === values.accountId}
+                  disabled={
+                    !(account.status === 'active' && account.acceptsDeposits)
+                  }
                 >
-                  {account.name} · {account.bankName}
+                  {account.accountNo} · {account.accountTypeName} ·{' '}
+                  {formatMoney(account.balance)}
+                  {account.status !== 'active'
+                    ? ` · ${account.status}`
+                    : account.acceptsDeposits
+                      ? ''
+                      : ' · no deposits'}
                 </option>
               ))}
             </select>
           </label>
-          <label class={LABEL}>
-            Note
-            <input
-              type="text"
-              name="reason"
-              value={values.reason}
-              maxlength="200"
-              class={INPUT}
-            />
-          </label>
-        </div>
 
-        <div
-          data-cash-reminder
-          hidden
-          class="space-y-2 rounded-lg border border-amber-300 px-3 py-3 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200"
-        >
-          <p class="font-medium">
-            Cash above {formatMoney(cashThreshold)} needs the Source of Fund
-            form.
-          </p>
-        </div>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label class={LABEL}>
+              Amount (Rs)
+              <input
+                type="text"
+                inputmode="decimal"
+                name="amount"
+                required
+                value={values.amount}
+                data-amount
+                class={INPUT}
+              />
+            </label>
+            <label class={LABEL}>
+              Method
+              <select name="method" class={INPUT}>
+                {paymentMethods.map(method => (
+                  <option
+                    value={method.code}
+                    data-cash={method.isCash ? 'true' : 'false'}
+                    data-requires-reference={
+                      method.requiresReference ? 'true' : 'false'
+                    }
+                    data-touches-bank={method.touchesBank ? 'true' : 'false'}
+                    selected={method.code === values.method}
+                  >
+                    {method.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label data-method-reference-field class={LABEL}>
+              Reference (cheque number, transfer reference)
+              <input
+                type="text"
+                name="methodReference"
+                value={values.methodReference}
+                class={INPUT}
+              />
+            </label>
+            <label data-bank-account-field class={LABEL}>
+              Bank account
+              <select name="bankAccountId" class={INPUT}>
+                <option value="">Choose…</option>
+                {bankAccounts.map(account => (
+                  <option
+                    value={account.id}
+                    selected={account.id === values.bankAccountId}
+                  >
+                    {account.name} · {account.bankName}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label class={LABEL}>
+              Note
+              <input
+                type="text"
+                name="reason"
+                value={values.reason}
+                maxlength="200"
+                class={INPUT}
+              />
+            </label>
+          </div>
 
-        <p
-          data-cash-maximum-warning
-          hidden
-          class="rounded-lg border border-red-300 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:text-red-200"
-        >
-          Cash deposits above {formatMoney(cashMax)} are not authorised. Use
-          another method, or split the deposit.
-        </p>
-
-        <div class="flex flex-wrap gap-2 pt-2">
-          <button
-            type="submit"
-            name="intent"
-            value="record"
-            data-deposit-submit
-            class={BUTTON}
-          >
-            Post deposit
-          </button>
-          <button
-            type="submit"
-            name="intent"
-            value="request"
-            data-request-submit
+          <div
+            data-cash-reminder
             hidden
-            class={BUTTON}
+            class="space-y-2 rounded-lg border border-amber-300 px-3 py-3 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200"
           >
-            Continue to the Source of Fund form
-          </button>
-          <a href={`/members/${person.id}`} class={SECONDARY_SM}>
-            Cancel
-          </a>
-        </div>
-      </form>
+            <p class="font-medium">
+              Cash above {formatMoney(cashThreshold)} needs the Source of Fund
+              form.
+            </p>
+          </div>
+
+          <p
+            data-cash-maximum-warning
+            hidden
+            class="rounded-lg border border-red-300 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:text-red-200"
+          >
+            Cash deposits above {formatMoney(cashMax)} are not authorised. Use
+            another method, or split the deposit.
+          </p>
+
+          <div class="flex flex-wrap gap-2 pt-2">
+            <button
+              type="submit"
+              name="intent"
+              value="record"
+              data-deposit-submit
+              class={BUTTON}
+            >
+              Post deposit
+            </button>
+            <button
+              type="submit"
+              name="intent"
+              value="request"
+              data-request-submit
+              hidden
+              class={BUTTON}
+            >
+              Continue to the Source of Fund form
+            </button>
+            <a href={`/members/${person.id}`} class={SECONDARY_SM}>
+              Cancel
+            </a>
+          </div>
+        </form>
+      </>
     )}
   </div>
 </DashboardLayout>

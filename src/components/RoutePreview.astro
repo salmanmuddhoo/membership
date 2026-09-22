@@ -1,0 +1,107 @@
+---
+// What happens to the transaction being recorded (the timeline experience):
+// the same chevron the transaction page shows once it exists, drawn ahead
+// of time over the form, with one line above it saying which amounts go
+// this way. One block per band the matrix draws for each account the
+// officer may choose; the script shows the block for the account and
+// amount typed, so the officer sees the review a larger amount will need
+// before they press Record. Every rule stays server-side — this is a
+// picture of routing's own answer (routePreviewGroups), not a copy of it.
+import ChainTimeline from '@components/ChainTimeline.astro';
+import type { RoutePreviewGroup } from '@lib/workflow/timeline';
+import { MUTED } from '@lib/ui';
+
+interface Props {
+  groups: RoutePreviewGroup[];
+  // The form fields the preview follows, by name.
+  accountField: string;
+  amountField?: string;
+  // What the form holds now, so the first paint is right without the script.
+  initialAccountId?: string;
+  initialAmountCents?: number | null;
+}
+const {
+  groups,
+  accountField,
+  amountField = 'amount',
+  initialAccountId,
+  initialAmountCents = null,
+} = Astro.props;
+
+const initialGroup =
+  groups.find(g => g.accountId === initialAccountId) ?? groups[0] ?? null;
+const initialBand =
+  initialGroup?.bands.find(
+    b =>
+      initialAmountCents !== null &&
+      b.fromCents <= initialAmountCents &&
+      (b.toCents === null || initialAmountCents <= b.toCents)
+  ) ??
+  initialGroup?.bands[0] ??
+  null;
+---
+
+{groups.length > 0 && (
+  <div
+    data-route-preview
+    data-account-field={accountField}
+    data-amount-field={amountField}
+    class="space-y-2"
+  >
+    {groups.map(group =>
+      group.bands.map(band => (
+        <section
+          data-route-band
+          data-account={group.accountId}
+          data-from={band.fromCents}
+          data-to={band.toCents ?? ''}
+          hidden={!(group === initialGroup && band === initialBand)}
+          class="space-y-2"
+        >
+          <p class={MUTED}>{band.summary}</p>
+          <ChainTimeline steps={band.steps} label="What happens next" />
+        </section>
+      ))
+    )}
+  </div>
+)}
+
+<script>
+  const preview = document.querySelector<HTMLElement>('[data-route-preview]');
+  if (preview) {
+    const form =
+      preview.parentElement?.querySelector('form') ??
+      document.querySelector('form');
+    const accountInput = document.querySelector<
+      HTMLSelectElement | HTMLInputElement
+    >(`[name="${preview.dataset.accountField}"]`);
+    const amountInput = document.querySelector<HTMLInputElement>(
+      `[name="${preview.dataset.amountField}"]`
+    );
+    const bands = [
+      ...preview.querySelectorAll<HTMLElement>('[data-route-band]'),
+    ];
+    const toCents = (value: string): number | null => {
+      const trimmed = value.trim();
+      if (!/^\d{1,12}(\.\d{1,2})?$/.test(trimmed)) return null;
+      const [whole, fraction = ''] = trimmed.split('.');
+      return Number(whole) * 100 + Number(fraction.padEnd(2, '0'));
+    };
+    const show = () => {
+      const account = accountInput?.value ?? '';
+      const cents = amountInput ? toCents(amountInput.value) : null;
+      const mine = bands.filter(b => b.dataset.account === account);
+      const match =
+        mine.find(b => {
+          if (cents === null) return false;
+          const from = Number(b.dataset.from);
+          const to = b.dataset.to === '' ? null : Number(b.dataset.to);
+          return cents >= from && (to === null || cents <= to);
+        }) ?? mine[0];
+      for (const b of bands) b.hidden = b !== match;
+    };
+    accountInput?.addEventListener('change', show);
+    amountInput?.addEventListener('input', show);
+    void form;
+  }
+</script>

@@ -19,7 +19,9 @@ import {
   type TransferDestination,
 } from '@lib/ledger/transfers';
 import { loadCustomer, loadMember } from '@lib/members/create';
-import { formatMoney } from '@lib/payments/money';
+import { formatMoney, toCents } from '@lib/payments/money';
+import { routePreviewGroups } from '@lib/workflow/timeline';
+import RoutePreview from '@components/RoutePreview.astro';
 import {
   PAGE,
   MUTED,
@@ -184,6 +186,16 @@ if (Astro.request.method === 'POST') {
 
 const RADIO =
   'text-mint-500 focus:ring-mint-400 rounded-full border-neutral-300 dark:border-neutral-600';
+// The timeline experience: what will happen to this transaction, by
+// account and amount, drawn over the form before it is recorded.
+const routeGroups = await routePreviewGroups(
+  'transfer',
+  sources,
+  principal.roles
+);
+const initialCents = /^\d{1,12}(\.\d{1,2})?$/.test(values.amount ?? '')
+  ? toCents(values.amount)
+  : null;
 ---
 
 <DashboardLayout title="Transfer · Al Barakah MCSL" heading="Record a transfer">
@@ -281,210 +293,224 @@ const RADIO =
           : 'None of these accounts allows a transfer out.'}
       </section>
     ) : (
-      <form method="post" data-transfer-form class={FORM_CARD}>
-        <input
-          type="hidden"
-          name="idempotencyKey"
-          value={values.idempotencyKey}
+      <>
+        <RoutePreview
+          groups={routeGroups}
+          accountField="sourceAccountId"
+          initialAccountId={values.sourceAccountId}
+          initialAmountCents={initialCents}
         />
-
-        <label class={LABEL}>
-          From
-          <select name="sourceAccountId" class={INPUT}>
-            {accounts.map(account => (
-              <option
-                value={account.id}
-                selected={account.id === values.sourceAccountId}
-                disabled={
-                  !(account.status === 'active' && account.allowsTransfer)
-                }
-                data-available={account.available}
-                data-floor={account.floor}
-              >
-                {account.accountNo} · {account.accountTypeName} ·{' '}
-                {formatMoney(account.balance)}
-                {account.pendingDebits !== '0.00' &&
-                  ` · ${formatMoney(account.available)} available`}
-                {account.status !== 'active'
-                  ? ` · ${account.status}`
-                  : account.allowsTransfer
-                    ? ''
-                    : ' · no transfers'}
-              </option>
-            ))}
-          </select>
-        </label>
-        <p
-          data-available-note
-          class="text-xs text-neutral-500 dark:text-neutral-400"
-        ></p>
-
-        <label class={LABEL}>
-          Amount (Rs)
+        <form method="post" data-transfer-form class={FORM_CARD}>
           <input
-            type="text"
-            inputmode="decimal"
-            name="amount"
-            required
-            value={values.amount}
-            class={INPUT}
+            type="hidden"
+            name="idempotencyKey"
+            value={values.idempotencyKey}
           />
-        </label>
 
-        <fieldset class="space-y-3">
-          <legend class="text-sm text-neutral-600 dark:text-neutral-300">
-            To
-          </legend>
-          <label class={CHECK_LABEL}>
-            <input
-              type="radio"
-              name="destinationKind"
-              value="own"
-              checked={values.destinationKind === 'own'}
-              class={RADIO}
-            />
-            Another of {member ? 'their' : 'the customer’s'} accounts
-          </label>
-          <div data-destination="own" class="pl-6">
-            <select name="ownAccountId" class={INPUT}>
-              {ownTargets.map(account => (
+          <label class={LABEL}>
+            From
+            <select name="sourceAccountId" class={INPUT}>
+              {accounts.map(account => (
                 <option
                   value={account.id}
-                  selected={account.id === values.ownAccountId}
+                  selected={account.id === values.sourceAccountId}
+                  disabled={
+                    !(account.status === 'active' && account.allowsTransfer)
+                  }
+                  data-available={account.available}
+                  data-floor={account.floor}
                 >
                   {account.accountNo} · {account.accountTypeName} ·{' '}
                   {formatMoney(account.balance)}
+                  {account.pendingDebits !== '0.00' &&
+                    ` · ${formatMoney(account.available)} available`}
+                  {account.status !== 'active'
+                    ? ` · ${account.status}`
+                    : account.allowsTransfer
+                      ? ''
+                      : ' · no transfers'}
                 </option>
               ))}
             </select>
-          </div>
-          <label class={CHECK_LABEL}>
-            <input
-              type="radio"
-              name="destinationKind"
-              value="other"
-              checked={values.destinationKind === 'other'}
-              class={RADIO}
-            />
-            Another member’s or customer’s account
           </label>
-          <div data-destination="other" class="grid gap-3 pl-6 sm:grid-cols-2">
-            <label class={LABEL}>
-              Account type
-              <select name="otherTypeId" class={INPUT}>
-                {lookupTypes.map(type => (
-                  <option
-                    value={type.id}
-                    selected={type.id === values.otherTypeId}
-                    data-membership-default={
-                      type.isMembershipDefault ? 'true' : 'false'
-                    }
-                    data-prefix={type.numberPrefix ?? ''}
-                  >
-                    {type.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label class={LABEL}>
-              <span data-number-label>Member number</span>
-              <input
-                type="text"
-                name="otherNumber"
-                autocomplete="off"
-                value={values.otherNumber}
-                data-number
-                placeholder="AB0001"
-                class={INPUT}
-              />
-            </label>
-          </div>
-          <label class={CHECK_LABEL}>
+          <p
+            data-available-note
+            class="text-xs text-neutral-500 dark:text-neutral-400"
+          ></p>
+
+          <label class={LABEL}>
+            Amount (Rs)
             <input
-              type="radio"
-              name="destinationKind"
-              value="payee"
-              checked={values.destinationKind === 'payee'}
-              class={RADIO}
+              type="text"
+              inputmode="decimal"
+              name="amount"
+              required
+              value={values.amount}
+              class={INPUT}
             />
-            Someone without an account here
           </label>
-          <div data-destination="payee" class="grid gap-3 pl-6 sm:grid-cols-2">
-            <label class={`${LABEL} sm:col-span-2`}>
-              Paid to
+
+          <fieldset class="space-y-3">
+            <legend class="text-sm text-neutral-600 dark:text-neutral-300">
+              To
+            </legend>
+            <label class={CHECK_LABEL}>
               <input
-                type="text"
-                name="payeeName"
-                value={values.payeeName}
-                maxlength="200"
-                class={INPUT}
+                type="radio"
+                name="destinationKind"
+                value="own"
+                checked={values.destinationKind === 'own'}
+                class={RADIO}
               />
+              Another of {member ? 'their' : 'the customer’s'} accounts
             </label>
-            <label class={LABEL}>
-              Paid by
-              <select name="method" class={INPUT}>
-                {paymentMethods.map(method => (
-                  <option
-                    value={method.code}
-                    data-requires-reference={
-                      method.requiresReference || method.touchesBank
-                        ? 'true'
-                        : 'false'
-                    }
-                    data-touches-bank={method.touchesBank ? 'true' : 'false'}
-                    selected={method.code === values.method}
-                  >
-                    {method.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label data-method-reference-field class={LABEL}>
-              Reference (cheque number, transfer reference)
-              <input
-                type="text"
-                name="methodReference"
-                value={values.methodReference}
-                class={INPUT}
-              />
-            </label>
-            <label data-bank-account-field class={LABEL}>
-              Bank account
-              <select name="bankAccountId" class={INPUT}>
-                <option value="">Choose…</option>
-                {bankAccounts.map(account => (
+            <div data-destination="own" class="pl-6">
+              <select name="ownAccountId" class={INPUT}>
+                {ownTargets.map(account => (
                   <option
                     value={account.id}
-                    selected={account.id === values.bankAccountId}
+                    selected={account.id === values.ownAccountId}
                   >
-                    {account.name} · {account.bankName}
+                    {account.accountNo} · {account.accountTypeName} ·{' '}
+                    {formatMoney(account.balance)}
                   </option>
                 ))}
               </select>
+            </div>
+            <label class={CHECK_LABEL}>
+              <input
+                type="radio"
+                name="destinationKind"
+                value="other"
+                checked={values.destinationKind === 'other'}
+                class={RADIO}
+              />
+              Another member’s or customer’s account
             </label>
+            <div
+              data-destination="other"
+              class="grid gap-3 pl-6 sm:grid-cols-2"
+            >
+              <label class={LABEL}>
+                Account type
+                <select name="otherTypeId" class={INPUT}>
+                  {lookupTypes.map(type => (
+                    <option
+                      value={type.id}
+                      selected={type.id === values.otherTypeId}
+                      data-membership-default={
+                        type.isMembershipDefault ? 'true' : 'false'
+                      }
+                      data-prefix={type.numberPrefix ?? ''}
+                    >
+                      {type.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label class={LABEL}>
+                <span data-number-label>Member number</span>
+                <input
+                  type="text"
+                  name="otherNumber"
+                  autocomplete="off"
+                  value={values.otherNumber}
+                  data-number
+                  placeholder="AB0001"
+                  class={INPUT}
+                />
+              </label>
+            </div>
+            <label class={CHECK_LABEL}>
+              <input
+                type="radio"
+                name="destinationKind"
+                value="payee"
+                checked={values.destinationKind === 'payee'}
+                class={RADIO}
+              />
+              Someone without an account here
+            </label>
+            <div
+              data-destination="payee"
+              class="grid gap-3 pl-6 sm:grid-cols-2"
+            >
+              <label class={`${LABEL} sm:col-span-2`}>
+                Paid to
+                <input
+                  type="text"
+                  name="payeeName"
+                  value={values.payeeName}
+                  maxlength="200"
+                  class={INPUT}
+                />
+              </label>
+              <label class={LABEL}>
+                Paid by
+                <select name="method" class={INPUT}>
+                  {paymentMethods.map(method => (
+                    <option
+                      value={method.code}
+                      data-requires-reference={
+                        method.requiresReference || method.touchesBank
+                          ? 'true'
+                          : 'false'
+                      }
+                      data-touches-bank={method.touchesBank ? 'true' : 'false'}
+                      selected={method.code === values.method}
+                    >
+                      {method.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label data-method-reference-field class={LABEL}>
+                Reference (cheque number, transfer reference)
+                <input
+                  type="text"
+                  name="methodReference"
+                  value={values.methodReference}
+                  class={INPUT}
+                />
+              </label>
+              <label data-bank-account-field class={LABEL}>
+                Bank account
+                <select name="bankAccountId" class={INPUT}>
+                  <option value="">Choose…</option>
+                  {bankAccounts.map(account => (
+                    <option
+                      value={account.id}
+                      selected={account.id === values.bankAccountId}
+                    >
+                      {account.name} · {account.bankName}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          </fieldset>
+
+          <label class={LABEL}>
+            Note
+            <input
+              type="text"
+              name="reason"
+              value={values.reason}
+              maxlength="200"
+              class={INPUT}
+            />
+          </label>
+
+          <div class="flex flex-wrap gap-2 pt-2">
+            <button type="submit" class={BUTTON}>
+              Record transfer
+            </button>
+            <a href={`/members/${person.id}`} class={SECONDARY_SM}>
+              Cancel
+            </a>
           </div>
-        </fieldset>
-
-        <label class={LABEL}>
-          Note
-          <input
-            type="text"
-            name="reason"
-            value={values.reason}
-            maxlength="200"
-            class={INPUT}
-          />
-        </label>
-
-        <div class="flex flex-wrap gap-2 pt-2">
-          <button type="submit" class={BUTTON}>
-            Record transfer
-          </button>
-          <a href={`/members/${person.id}`} class={SECONDARY_SM}>
-            Cancel
-          </a>
-        </div>
-      </form>
+        </form>
+      </>
     )}
   </div>
 </DashboardLayout>
