@@ -4671,8 +4671,23 @@ asks. The member endpoint adds one thing: `ownedAccountId`, which resolves
 the account server-side against the session's member and answers not
 found for any other — another member's, a customer's, or none. The
 statement's `format=xlsx` download is offered to the member as it is to
-the officer. **Next:** S-2102, the per-endpoint switch for
-member-initiated writes.
+the officer.
+
+**Shipped, second increment** (S-2102): `POST /api/v1/member/me/deposits`,
+`/withdrawals` and `/transfers`, each the staff transaction — the same
+service function, rules and matrix — captured by the member-app system user
+in the new Member role (0085: a system role assigned to nobody, with no
+permission, there for the matrix to name). The app holds
+`transaction.capture` and never `transaction.post`, so a route that would
+post at once is refused and a member's transaction goes to a chain or
+nowhere: never more lenient than a clerk's. `member_api.enabled_operations`
+(0085, empty by default; Configuration → Member app, `config.manage`; on
+Readiness) switches each of the three on; until then the endpoints exist
+and refuse. A cash deposit is refused outright; `/reference` now names the
+Society's bank accounts so a deposit can say which one it reached; a
+transfer goes to an account here by id, never to a payee outside. Member
+writes demand an `Idempotency-Key` as staff ones do. **Next:** S-2103, the
+API reference and explorer grouping.
 
 ### S-2101 · Balance, statement and history for a member's own accounts ✅
 
@@ -4682,7 +4697,7 @@ accounts`, `/balance`, `/statement`, `/history` through `defineMemberEndpoint`
 the same service functions as the staff endpoints; the response schema is
 the staff one.
 
-### S-2102 · Per-endpoint switch for member-initiated writes
+### S-2102 · Per-endpoint switch for member-initiated writes ✅
 
 _(API-US-005, API-US-006, FRD 10)_ `Must · 5 · EPIC-26` — `config:
 member_api.enabled_operations`, default none; deposit, withdrawal and

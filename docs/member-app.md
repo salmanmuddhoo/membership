@@ -157,25 +157,28 @@ ones this catches, and it catches them before any handler runs, so the
 answer is a bare 403 with no envelope and no correlation id. Sending the
 header is the whole of what is needed; a body is not.
 
-| Method | Path                                         | Caller | What                                                                                                                                                                    |
-| ------ | -------------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| GET    | `/reference`                                 | public | Active membership types with their fields, applicant-facing checklist (`signed_form` left out — a branch step) and fees in force.                                       |
-| GET    | `/me`                                        | member | Membership, the founding application's parties, and any pending details request.                                                                                        |
-| PUT    | `/me/details`                                | member | A `member_details_request`. 422 on a blank mandatory field or an unplaceable phone; 409 while one is pending; 403 for an applicant. Audit: `member.details.requested`.  |
-| GET    | `/me/accounts`                               | member | Balance from the ledger's cache (S-1309), or null for an account nothing has ever posted to.                                                                            |
-| GET    | `/me/accounts/{id}/transactions`             | member | The ledger's entries, oldest first (`accountEntries`); 404 unless the caller's.                                                                                         |
-| GET    | `/me/accounts/{id}/balance`                  | member | The staff `/accounts/{id}/balance` payload — balance, pending debits, available — for the caller's own account; 404 unless the caller's (S-2101).                       |
-| GET    | `/me/accounts/{id}/history`                  | member | The staff `/accounts/{id}/history` payload, newest first, paged by `before`; 404 unless the caller's.                                                                   |
-| GET    | `/me/accounts/{id}/statement`                | member | The staff `/accounts/{id}/statement` payload for a period (`from`, `to`; the month to date by default), or the spreadsheet with `format=xlsx`; 404 unless the caller's. |
-| GET    | `/me/documents`                              | member | `documentsForMember`. No download URL.                                                                                                                                  |
-| GET    | `/applications`                              | member | Those started from the caller's verified mobile, plus a member's founding one.                                                                                          |
-| POST   | `/applications`                              | member | `startApplication` as the system user; 409 while one is in progress.                                                                                                    |
-| GET    | `/applications/{id}`                         | member | 404 unless the caller's.                                                                                                                                                |
-| DELETE | `/applications/{id}`                         | member | `deleteDraftApplication`; draft only.                                                                                                                                   |
-| PUT    | `/applications/{id}/parties`                 | member | `saveDraft` — never fails on content; only fields the type configures are kept. 409 once submitted.                                                                     |
-| POST   | `/applications/{id}/documents/begin-upload`  | member | `beginUpload` through the same broker as staff (`docs/documents.md`); `checklistItemId` is `<documentTypeId>:<subject>`.                                                |
-| POST   | `/applications/{id}/documents/commit-upload` | member | `commitUpload`; only a version begun on this application.                                                                                                               |
-| POST   | `/applications/{id}/submit`                  | member | `problemsBlockingSubmission` plus every required document not filed, all in one 422; on success `received`. Audit: `membership.application.received`.                   |
+| Method | Path                                         | Caller | What                                                                                                                                                                                    |
+| ------ | -------------------------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/reference`                                 | public | Active membership types with their fields, applicant-facing checklist (`signed_form` left out — a branch step), fees in force, and the Society's bank accounts by name (S-2102).        |
+| GET    | `/me`                                        | member | Membership, the founding application's parties, and any pending details request.                                                                                                        |
+| PUT    | `/me/details`                                | member | A `member_details_request`. 422 on a blank mandatory field or an unplaceable phone; 409 while one is pending; 403 for an applicant. Audit: `member.details.requested`.                  |
+| GET    | `/me/accounts`                               | member | Balance from the ledger's cache (S-1309), or null for an account nothing has ever posted to.                                                                                            |
+| GET    | `/me/accounts/{id}/transactions`             | member | The ledger's entries, oldest first (`accountEntries`); 404 unless the caller's.                                                                                                         |
+| GET    | `/me/accounts/{id}/balance`                  | member | The staff `/accounts/{id}/balance` payload — balance, pending debits, available — for the caller's own account; 404 unless the caller's (S-2101).                                       |
+| GET    | `/me/accounts/{id}/history`                  | member | The staff `/accounts/{id}/history` payload, newest first, paged by `before`; 404 unless the caller's.                                                                                   |
+| GET    | `/me/accounts/{id}/statement`                | member | The staff `/accounts/{id}/statement` payload for a period (`from`, `to`; the month to date by default), or the spreadsheet with `format=xlsx`; 404 unless the caller's.                 |
+| POST   | `/me/deposits`                               | member | A deposit into the caller's own account, captured by the system user in the Member role and routed by the matrix; never cash; 403 until deposits from the app are switched on (S-2102). |
+| POST   | `/me/withdrawals`                            | member | A withdrawal from the caller's own account, the same way; 403 until switched on.                                                                                                        |
+| POST   | `/me/transfers`                              | member | A transfer from the caller's own account to an account here, the same way; 403 until switched on.                                                                                       |
+| GET    | `/me/documents`                              | member | `documentsForMember`. No download URL.                                                                                                                                                  |
+| GET    | `/applications`                              | member | Those started from the caller's verified mobile, plus a member's founding one.                                                                                                          |
+| POST   | `/applications`                              | member | `startApplication` as the system user; 409 while one is in progress.                                                                                                                    |
+| GET    | `/applications/{id}`                         | member | 404 unless the caller's.                                                                                                                                                                |
+| DELETE | `/applications/{id}`                         | member | `deleteDraftApplication`; draft only.                                                                                                                                                   |
+| PUT    | `/applications/{id}/parties`                 | member | `saveDraft` — never fails on content; only fields the type configures are kept. 409 once submitted.                                                                                     |
+| POST   | `/applications/{id}/documents/begin-upload`  | member | `beginUpload` through the same broker as staff (`docs/documents.md`); `checklistItemId` is `<documentTypeId>:<subject>`.                                                                |
+| POST   | `/applications/{id}/documents/commit-upload` | member | `commitUpload`; only a version begun on this application.                                                                                                                               |
+| POST   | `/applications/{id}/submit`                  | member | `problemsBlockingSubmission` plus every required document not filed, all in one 422; on success `received`. Audit: `membership.application.received`.                                   |
 
 The three account reads that arrived with S-2101 are the staff endpoints'
 own payloads: the schema and the mapping live once, in
@@ -234,6 +237,35 @@ as they were, and the field-by-field change — in the audit trail
 **Not built yet:** nothing notifies the member that their update was
 decided; they see it the next time they open the app. That is the same
 push/WhatsApp piece an application status change wants (M9).
+
+## Transactions from the app
+
+A deposit, a withdrawal or a transfer a member starts from the phone
+(S-2102, `src/lib/member/transactions.ts`) is the transaction an officer
+would record at the branch — the same service function, the same account
+rules, the same approval matrix — with two differences.
+
+**Who captures it.** The member-app system user, acting in the Member role
+(migration 0085; assigned to nobody, holding no permission) with
+`transaction.capture` and nothing more. The matrix reads that role, so a
+rule "by Member" at Configuration → Approval matrix, moved above the band
+it would otherwise fall into, routes a member's own transaction to the
+chain of the Society's choosing. Because the app never holds
+`transaction.post`, a route that would post at once is refused with 403
+and "please visit the branch": a member's transaction goes to a chain or it
+goes nowhere, and the officers on that chain decide. It can never be more
+lenient than a clerk's.
+
+**Whether it may be started at all.** `member_api.enabled_operations`, set
+at Configuration → Member app (`config.manage`), lists which of the three
+are on. Empty is the default: the endpoints exist from day one and answer
+403 until switched on, and Readiness shows the setting. A cash deposit is
+refused whatever the switch says — nobody took cash from a phone — so a
+deposit names a bank or mobile money method, its reference and the
+Society's bank account from `/reference`. A transfer goes to an account on
+the system by id, never to a payee outside: that is a withdrawal in another
+name, and the branch's to record. Every write demands an `Idempotency-Key`
+header, as the staff API does.
 
 ## Configuration
 

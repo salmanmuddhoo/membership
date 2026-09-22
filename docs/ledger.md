@@ -258,6 +258,11 @@ act and needs `transaction.post` as well as `transaction.capture`; above it,
 capture alone submits it for review, so a Clerk records a large deposit and
 the Secretary and President decide it.
 
+A transaction the member app starts (S-2102, `docs/member-app.md`) reaches
+the same `resolveRoute` with `roleCodes: ['member']` and a principal that
+may capture but never post, so a rule "by Member" decides its chain and a
+route with no chain is refused rather than posted.
+
 ## Acting on what waits
 
 `src/lib/ledger/review.ts` (S-1403, S-1404). Where a transaction stands is

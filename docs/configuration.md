@@ -286,7 +286,8 @@ benefit, near-floor margin, the three resignation checks), the approval
 matrix and the chain for each of the six kinds, each active account type's
 floor, cap and allowed operations, the payment methods offered, the
 notification wording by subject (receipt, the three exits, a member's
-transactions, staff), and the retention periods — with what each stands at,
+transactions, staff), the transactions a member may start from the app, and
+the retention periods — with what each stands at,
 whether a person has changed it since it was seeded and, if so, who and
 when. `readiness.test.ts` asserts that on a fresh database nothing reads as
 missing and everything reads as still at default.
@@ -328,9 +329,23 @@ a different thing from setting them.
 Treasurer as its owner, and that role gains it in the milestone that gives the
 Treasurer a workload.
 
+### Member app (S-2102, FRD 10)
+
+`member_api.enabled_operations` (migration 0085): which of deposit,
+withdrawal and transfer a member may start from the app, empty by default.
+Configuration → Member app sets it (`config.manage`);
+`enabledMemberOperations()` reads it through the cache. The same migration
+seeds the Member role — a system role assigned to nobody, with no
+permission — so the approval matrix can name it as an initiating role and
+send a member's own transaction to a chain; `docs/member-app.md`,
+"Transactions from the app".
+
 ## Roles seeded here
 
 Migration 0006 deliberately left business roles to "the modules that define what
 they may do". The workflow is that module, so `regional_officer`,
 `regional_manager`, `secretary` and `president` arrive with 0010 — with no
 permissions. What each may do is granted by the milestone that builds it.
+`member` arrives with 0085 and stays without permissions for good: it is the
+role the member app acts in, for the approval matrix to name, not a role a
+person holds.

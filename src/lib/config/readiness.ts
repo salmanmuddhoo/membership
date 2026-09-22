@@ -140,6 +140,22 @@ const VALUES: {
   },
 ];
 
+// Last on the page: what the member app may start (S-2102), read the same
+// way as the amounts but shown after everything the branch itself relies
+// on.
+const MEMBER_APP: typeof VALUES = [
+  {
+    key: 'member_api.enabled_operations',
+    label: 'Transactions from the member app',
+    group: 'Member app',
+    href: '/admin/configuration/member-app',
+    render: value =>
+      Array.isArray(value) && value.length > 0
+        ? value.map(v => KIND_LABELS[String(v)] ?? String(v)).join(', ')
+        : 'None',
+  },
+];
+
 function money(value: unknown): string {
   return formatMoney(String(value)).replace(/^MUR\s*/, 'Rs ');
 }
@@ -187,7 +203,9 @@ function item(
   };
 }
 
-async function plainValues(): Promise<ReadinessItem[]> {
+async function plainValues(
+  definitions: typeof VALUES = VALUES
+): Promise<ReadinessItem[]> {
   const rows = await query<{
     key: string;
     value: unknown;
@@ -205,10 +223,10 @@ async function plainValues(): Promise<ReadinessItem[]> {
        ) h on true
        left join app_user u on u.id = h.changed_by
       where e.key = any($1::text[])`,
-    [VALUES.map(v => v.key)]
+    [definitions.map(v => v.key)]
   );
   const byKey = new Map(rows.rows.map(r => [r.key, r]));
-  return VALUES.map(definition => {
+  return definitions.map(definition => {
     const row = byKey.get(definition.key);
     if (!row) {
       return item({ ...definition, value: '—' }, null, {
@@ -474,6 +492,7 @@ export async function readiness(): Promise<ReadinessItem[]> {
     ...(await paymentMethods()),
     ...(await wording()),
     ...(await retention()),
+    ...(await plainValues(MEMBER_APP)),
   ];
 }
 

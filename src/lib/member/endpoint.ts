@@ -42,6 +42,10 @@ export interface MemberRequestContext<
   correlationId: string;
   clientIp: string | null;
   context: APIContext;
+  // The Idempotency-Key header, present whenever the descriptor says the
+  // endpoint is idempotent (the wrapper refuses the request without one),
+  // and null otherwise — the same contract as the staff API (S-1308).
+  idempotencyKey: string | null;
   // Read and parse the JSON body, or fail as validation_failed.
   body<T>(): Promise<T>;
 }
@@ -209,6 +213,20 @@ export function defineMemberEndpoint<Caller extends 'member' | 'public'>(
         );
       }
 
+      const rawKey = context.request.headers.get('idempotency-key')?.trim();
+      const idempotencyKey = rawKey ? rawKey.slice(0, 128) : null;
+      if (descriptor.idempotent && !idempotencyKey) {
+        return finish(
+          apiError(
+            'validation_failed',
+            correlationId,
+            'An Idempotency-Key header is required.'
+          ),
+          actor,
+          'validation_failed'
+        );
+      }
+
       const body = async <T>(): Promise<T> => {
         const parsed = (await context.request
           .json()
@@ -225,6 +243,7 @@ export function defineMemberEndpoint<Caller extends 'member' | 'public'>(
           correlationId,
           clientIp,
           context,
+          idempotencyKey,
           body,
         });
         return finish(response, actor);
