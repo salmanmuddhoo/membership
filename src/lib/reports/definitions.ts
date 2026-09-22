@@ -441,32 +441,70 @@ const receipts: ReportDefinition = {
   permission: 'payment.view',
   filters: PERIOD,
   async run(filters) {
+    // S-1603: a payment's receipt and a transaction's side by side, with what
+    // each was for, how much, by what method and whose hand — and the void
+    // reason where there is one.
     const result = await query<Record<string, string | number>>(
       `select r.receipt_no as "Receipt",
               r.serial_no::int as "Serial",
               r.state     as "State",
+              case when p.id is not null then p.kind
+                   when t.id is not null then replace(t.kind, '_leg', '')
+                   else '' end as "Kind",
+              coalesce(a.reference, t.reference, '') as "Reference",
+              coalesce(pm.name, tm.name, '') as "Method",
+              coalesce(p.total_amount, t.amount)::text as "Amount",
               to_char(r.allocated_at, 'DD Mon YYYY HH24:MI') as "Allocated",
               coalesce(u.display_name, '') as "Allocated by",
               coalesce(r.reason, '') as "Reason"
          from receipt_number r
          left join app_user u on u.id = r.allocated_by
+         left join payment p on p.receipt_number_id = r.id
+         left join membership_application a on a.id = p.application_id
+         left join payment_method pm on pm.code = p.method
+         left join transaction t on t.receipt_number_id = r.id
+         left join payment_method tm on tm.code = t.method
         where ($1::date is null or r.allocated_at >= $1::date)
           and ($2::date is null or r.allocated_at < $2::date + 1)
         order by r.serial_no`,
       [dateOrNull(filters.from), dateOrNull(filters.to)]
     );
 
+    // Totals of what was issued, by method: the figure a cash box, a bank
+    // slip or a cheque book is checked against.
+    const byMethod = new Map<string, number>();
+    let issued = 0;
+    for (const row of result.rows) {
+      if (row.State !== 'issued') continue;
+      issued += 1;
+      const method = String(row.Method || '—');
+      byMethod.set(
+        method,
+        (byMethod.get(method) ?? 0) + Number(row.Amount ?? 0)
+      );
+    }
+    const totals = [...byMethod.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([method, amount]) => `${method} ${amount.toFixed(2)}`)
+      .join(', ');
+
     return {
       columns: [
         { key: 'Receipt', label: 'Receipt' },
         { key: 'Serial', label: 'Serial', numeric: true },
         { key: 'State', label: 'State' },
+        { key: 'Kind', label: 'Kind' },
+        { key: 'Reference', label: 'Reference' },
+        { key: 'Method', label: 'Method' },
+        { key: 'Amount', label: 'Amount', numeric: true },
         { key: 'Allocated', label: 'Allocated' },
         { key: 'Allocated by', label: 'Allocated by' },
         { key: 'Reason', label: 'Reason' },
       ],
       rows: result.rows,
-      summary: `${result.rows.length} receipt number(s).`,
+      summary:
+        `${result.rows.length} receipt number(s), ${issued} issued` +
+        (totals ? ` — ${totals}.` : '.'),
     };
   },
 };

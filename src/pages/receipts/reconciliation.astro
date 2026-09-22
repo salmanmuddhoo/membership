@@ -157,9 +157,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             {period.exceptions.map(exception => (
               <tr class="border-b border-neutral-200 align-top dark:border-neutral-800">
                 <td class="py-2 font-medium text-neutral-800 tabular-nums dark:text-neutral-100">
-                  {exception.paymentId ? (
+                  {exception.paymentId || exception.transactionId ? (
                     <a
-                      href={`/receipts/${exception.paymentId}`}
+                      href={`/receipts/${exception.paymentId ?? exception.transactionId}`}
                       class="underline"
                     >
                       {exception.receiptNo}

@@ -4174,7 +4174,21 @@ started, a member can be given one without a printer, and any account's
 statement can be read or exported from the same endpoint the future app will
 call.
 
-### S-1601 · Every transaction takes a receipt from the one sequence
+**Shipped, first increment** (S-1601, S-1603): every transaction has taken
+its receipt from the one sequence since M13, issued when it posts; what
+arrives is the rest of the receipt's life. `/receipts/{id}` renders a
+transaction's receipt from the transaction alone — deposit, withdrawal,
+transfer with both sides on the one sheet, reversal — with prints recorded
+(0075) so a reprint says so. Void withdraws the number with a reason, the
+Treasurer's act and never the captor's, and leaves the transaction posted;
+it is an event on the stream. The reconciliation lists voided transaction
+receipts beside payment ones and counts transactions in the period's total
+by direction; the receipts report gains kind, reference, method, amount and
+the void reason, with totals by method. **Not yet:** the receipt by email or
+WhatsApp (S-1602), the statement (S-1604), and the Treasurer's notification
+on void, which is S-1805's.
+
+### S-1601 · Every transaction takes a receipt from the one sequence ✅
 
 **As** the Treasurer, **I need** deposits, withdrawals, transfers and
 disbursements receipted in the same `RCT-` sequence as payments, **so that**
@@ -4202,7 +4216,7 @@ FRD 6.8, open point 6)_
 - WhatsApp as a document, if the Society's account supports media, is the
   Should half — the text-and-link message is the Must half
 
-### S-1603 · Void, and the reasons a sequence has holes
+### S-1603 · Void, and the reasons a sequence has holes ✅
 
 **As** the Treasurer, **I need** to void a wrong receipt with a reason and to
 see every gap and void in one report, **so that** the sequence stays

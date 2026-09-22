@@ -302,6 +302,34 @@ the rule that would apply to a first submission applies now (decision 11):
 the first step of the new chain, or posted at once, which a Clerk without
 `transaction.post` is refused.
 
+## Receipts
+
+Every transaction that posts takes its receipt from `receipt_number`, the one
+sequence payments have used since 0017 (S-1601, FRD 6.8): a deposit and a
+withdrawal when they post, a chained one at disbursement, a transfer on its
+debit leg — the two legs share one receipt — and a reversal on its own. The
+number is allocated as a committed row before the post and issued inside it,
+exactly as a payment's (`docs/payments.md`), so a number that never became a
+receipt shows in the sequence with its reason. A transaction still on its
+chain has no receipt yet.
+
+`/receipts/{id}` answers to a transaction's id, its number's id or the number
+itself and renders the sheet from the transaction alone
+(`src/lib/ledger/receipts.ts`, `TransactionReceiptSheet.astro`): who,
+which account, the other side of a transfer or the payee, the method, who
+recorded and who posted, the amount and the balance after. Printing is
+recorded on `receipt_print` (0075), so a reprint says so, as a payment's does.
+
+**Void** (S-1603) withdraws the number with a reason — `receipt.void`, the
+Treasurer's, never the officer who captured it — and leaves the transaction
+posted: the money moved, and undoing that is a reversal. The void is a
+`transaction.voided` event on the stream and a row on the audit trail. The
+reconciliation page lists a voided transaction receipt beside a voided
+payment receipt, opening the transaction, and counts a transaction's receipt
+in the period's total by the direction of its entry (a leg between two
+accounts here counts nothing). The receipts report shows kind, reference,
+method, amount and the void reason, with totals by method.
+
 ## Who may do what
 
 `transaction.capture` records; `transaction.post` posts directly below the
