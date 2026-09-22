@@ -25,7 +25,6 @@ import {
   DANGER,
   NOTICE_ERROR,
   PANEL,
-  PILL,
   PILL_WARN,
   SECONDARY_SM,
   DANGER_SM,
@@ -94,7 +93,7 @@ const step: Step = (STEPS as readonly string[]).includes(requested)
 
 const item = await sourceOfFundItem(deposit.id);
 const filed = item?.filed ?? null;
-const canSubmit = filed?.state === 'verified';
+const canSubmit = !!filed && filed.state !== 'rejected';
 
 const dateFormat = new Intl.DateTimeFormat('en-GB', {
   day: 'numeric',
@@ -200,13 +199,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                 </p>
               </div>
               <div class="flex shrink-0 flex-wrap items-center gap-2">
-                <span class={filed.state === 'rejected' ? PILL_WARN : PILL}>
-                  {filed.state === 'verified'
-                    ? 'Verified'
-                    : filed.state === 'rejected'
-                      ? 'Rejected'
-                      : 'Waiting to be verified'}
-                </span>
+                {filed.state === 'rejected' && (
+                  <span class={PILL_WARN}>Rejected</span>
+                )}
                 <button
                   type="button"
                   data-view-document
@@ -297,13 +292,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               Delete it and sign again
             </a>
           </p>
-        ) : (
-          !canSubmit && (
-            <p class={MUTED}>
-              Waiting for another officer to verify the Source of Fund form.
-            </p>
-          )
-        )}
+        ) : null}
       </form>
     )}
   </div>

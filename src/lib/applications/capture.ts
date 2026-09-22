@@ -19,6 +19,7 @@ import {
 } from '../documents/documents';
 import type { Principal } from '../access/principal';
 import { toInternational, PhoneFormatError } from './phone';
+import { canOpenAccount } from '../members/status';
 
 export class ApplicationError extends Error {
   constructor(
@@ -304,7 +305,8 @@ export async function searchExistingMembers(
        left join membership_application a on a.id = m.application_id
        left join application_party p
          on p.application_id = a.id and p.subject = 'applicant' and p.ordinal = 1
-      where m.status = 'active'
+      -- A resigned member still opens a further account (canOpenAccount).
+      where m.status in ('active', 'resigned')
         and (strpos(lower(coalesce(p.values->>'surname', '')), lower($1)) > 0
              or strpos(lower(coalesce(p.values->>'name', '')), lower($1)) > 0
              or strpos(lower(coalesce(p.values->>'nic', '')), lower($1)) > 0
@@ -443,9 +445,9 @@ export async function startAdditionalAccountApplication(
     if (member.rowCount === 0) {
       throw new ApplicationError('That member no longer exists.', 'not_found');
     }
-    if (member.rows[0].status !== 'active') {
+    if (!canOpenAccount(member.rows[0].status)) {
       throw new ApplicationError(
-        'Only an active member may open a new account.'
+        `This member is ${member.rows[0].status}, so no account can be opened for them.`
       );
     }
 
@@ -1683,7 +1685,12 @@ export async function guardianOf(
 async function findNicHolder(
   nic: string,
   excludeApplicationId: string,
-  excludeCustomerId: string | null = null
+  excludeCustomerId: string | null = null,
+  // M26: a rejoin application names the member it re-admits, and carries
+  // their own NIC because it IS them — neither that member, nor the
+  // applications that are theirs, nor the customer record they converted
+  // from, is someone else holding it.
+  excludeMemberId: string | null = null
 ): Promise<{ label: string } | null> {
   const member = await query<{ member_no: string }>(
     `select m.member_no
@@ -1692,8 +1699,9 @@ async function findNicHolder(
          on p.application_id = m.application_id
         and p.subject = 'applicant' and p.ordinal = 1
       where lower(p.values->>'nic') = lower($1)
+        and ($2::uuid is null or m.id <> $2::uuid)
       limit 1`,
-    [nic]
+    [nic, excludeMemberId]
   );
   if (member.rowCount! > 0) {
     return { label: `member ${member.rows[0].member_no}` };
@@ -1708,8 +1716,9 @@ async function findNicHolder(
         and p.subject = 'applicant' and p.ordinal = 1
       where lower(p.values->>'nic') = lower($1)
         and ($2::uuid is null or c.id <> $2::uuid)
+        and ($3::uuid is null or c.status <> 'converted')
       limit 1`,
-    [nic, excludeCustomerId]
+    [nic, excludeCustomerId, excludeMemberId]
   );
   if (customer.rowCount! > 0) {
     const name = (customer.rows[0].name ?? '').trim();
@@ -1731,9 +1740,18 @@ async function findNicHolder(
         and ($3::uuid is null
              or a.id is distinct from
                 (select c.application_id from customer c where c.id = $3::uuid))
+        and ($4::uuid is null
+             or not (a.rejoins_member_id is not distinct from $4::uuid
+                     or a.id in (select m.application_id from member m
+                                  where m.id = $4::uuid)
+                     or a.id in (select r.founding from (
+                          select coalesce(s.folder_application_id, s.id)
+                                   as founding
+                            from membership_application s
+                           where s.rejoins_member_id = $4::uuid) r)))
       order by a.created_at
       limit 1`,
-    [nic, excludeApplicationId, excludeCustomerId]
+    [nic, excludeApplicationId, excludeCustomerId, excludeMemberId]
   );
   if (application.rowCount! > 0) {
     return { label: `application ${application.rows[0].reference}` };
@@ -1957,7 +1975,10 @@ export async function problemsBlockingSubmission(
       const holder = await findNicHolder(
         nic,
         application.id,
-        excludeCustomerId
+        excludeCustomerId,
+        application.applicationKind === 'membership'
+          ? application.rejoinsMemberId
+          : null
       );
       if (holder) {
         problems.push({

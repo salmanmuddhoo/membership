@@ -432,74 +432,6 @@ export async function pendingTransactions(
 }
 
 /**
- * A large cash deposit's Source of Fund form waiting on a second officer
- * (S-1306, M23): the draft cannot be submitted until someone holding
- * document.verify — never its captor — has checked the signed form. Without
- * this the form sat on a transaction no queue listed, and nobody could find
- * it to verify. Waiting since the form was filed.
- */
-export async function formsToVerify(
-  principal: Principal
-): Promise<(TransactionSummary & { waitingSince: Date })[]> {
-  if (!principal.permissions.has('document.verify')) return [];
-  const result = await query<TransactionRow & { filed_at: Date }>(
-    `${TRANSACTION_SELECT.replace(
-      /^\s*select\s/i,
-      `select (select max(v.committed_at)
-                 from document d
-                 join document_version v on v.document_id = d.id
-                where d.transaction_id = t.id and v.state = 'committed'
-                  and v.superseded_at is null) as filed_at, `
-    )}
-      where t.kind = 'deposit' and t.status = 'draft'
-        and t.captured_by <> $1
-        and exists (
-          select 1 from document d
-            join document_version v on v.document_id = d.id
-           where d.transaction_id = t.id and d.state = 'under_review'
-             and v.state = 'committed' and v.superseded_at is null)
-      order by t.created_at, t.serial_no`,
-    [principal.userId]
-  );
-  return result.rows.map(row => ({
-    ...assembleTransaction(row),
-    waitingSince: row.filed_at ?? row.created_at,
-  }));
-}
-
-/**
- * The other half of formsToVerify: this officer's own deposit requests whose
- * form has been checked, verified (submit it) or rejected (sign it again).
- */
-export async function depositRequestsToFinish(
-  principal: Principal
-): Promise<(TransactionSummary & { waitingSince: Date; formState: string })[]> {
-  const result = await query<
-    TransactionRow & { form_state: string; checked_at: Date | null }
-  >(
-    `${TRANSACTION_SELECT.replace(
-      /^\s*select\s/i,
-      'select d.state as form_state, d.updated_at as checked_at, '
-    )}
-      join document d on d.transaction_id = t.id
-                     and d.state in ('verified', 'rejected')
-      where t.kind = 'deposit' and t.status = 'draft'
-        and t.captured_by = $1
-        and exists (
-          select 1 from document_version v
-           where v.document_id = d.id and v.state = 'committed'
-             and v.superseded_at is null)
-      order by t.created_at, t.serial_no`,
-    [principal.userId]
-  );
-  return result.rows.map(row => ({
-    ...assembleTransaction(row),
-    waitingSince: row.checked_at ?? row.created_at,
-    formState: row.form_state,
-  }));
-}
-
-/**
  * S-1404 · What came back to this officer to correct: their own captures a
  * reviewer returned. Nobody else's queue — a returned transaction is
  * editable by its captor alone.
@@ -558,23 +490,15 @@ export async function approvedTransactions(
 export async function pendingTransactionCount(
   principal: Principal
 ): Promise<number> {
-  const [pending, approved, returned, forms, toFinish] = await Promise.all([
+  const [pending, approved, returned] = await Promise.all([
     principal.permissions.has(PERMISSION_REVIEW) ||
     principal.permissions.has(PERMISSION_APPROVE)
       ? pendingTransactions(principal)
       : [],
     approvedTransactions(principal),
     returnedTransactions(principal),
-    formsToVerify(principal),
-    depositRequestsToFinish(principal),
   ]);
-  return (
-    pending.length +
-    approved.length +
-    returned.length +
-    forms.length +
-    toFinish.length
-  );
+  return pending.length + approved.length + returned.length;
 }
 
 export interface Decision {

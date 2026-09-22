@@ -21,7 +21,7 @@ for (const report of available) {
 
 // Membership first, then money, then how the system itself is running —
 // the order an officer thinks in.
-const ORDER = ['Membership', 'Money', 'Operations'];
+const ORDER = ['Membership', 'Finance', 'Operations'];
 const categories = [...byCategory.entries()].sort(
   (a, b) => ORDER.indexOf(a[0]) - ORDER.indexOf(b[0])
 );

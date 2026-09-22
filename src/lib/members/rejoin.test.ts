@@ -250,6 +250,10 @@ describe('rejoining (M26)', () => {
       p => p.subject === 'applicant' && p.ordinal === 1
     );
     expect(applicant?.values).toMatchObject({ name: 'Amina', surname: 'Test' });
+    // Their own NIC, on file for them, is not someone else's: the rejoin
+    // application is not refused as a duplicate of the member it re-admits.
+    const problems = await capture.problemsBlockingSubmission(application!);
+    expect(problems.map(p => p.label).join(' ')).not.toMatch(/already on file/);
     const folder = await run(
       appUrl,
       `select folder_application_id from membership_application where id = $1`,
@@ -377,5 +381,60 @@ describe('reopening a closed account (M26)', () => {
         create.openAccountsForApplication(client, second, actor)
       )
     ).rejects.toThrowError(/already has Hajj Savings open/);
+  });
+});
+
+describe('a resigned member opening a further account', () => {
+  it('opens through the same application, under their existing record, and the list shows only what they hold', async () => {
+    const { capture, create, pool } = await load();
+    await configure(
+      `insert into account_type
+         (code, name, category, number_prefix, sort_order)
+       values ('inv', 'Investment', 'investment', 'INV', 6)`
+    );
+    const invTypeId = (
+      await run(appUrl, `select id from account_type where code = 'inv'`)
+    ).rows[0].id;
+    await resign();
+
+    // The list: a closed account has no badge.
+    const listed = (await create.listMembers({ search: member.memberNo }))
+      .members[0];
+    expect(listed.accountBadges.map((b: { code: string }) => b.code)).toEqual([
+      'hsa',
+    ]);
+
+    const started = await capture.startAdditionalAccountApplication(
+      member.id,
+      [invTypeId],
+      actor
+    );
+    const application = (await capture.loadApplication(started.id))!;
+    const opened = await pool.withTransaction(client =>
+      create.openAccountsForApplication(client, application, actor)
+    );
+    expect(opened).toMatchObject({ id: member.id, memberNo: member.memberNo });
+    expect(opened.accounts).toEqual([
+      expect.objectContaining({ typeCode: 'inv', accountNo: 'INV0001' }),
+    ]);
+    // Still resigned: a further account is not a rejoin.
+    expect((await memberRow()).status).toBe('resigned');
+    const after = (await create.listMembers({ search: member.memberNo }))
+      .members[0];
+    expect(
+      after.accountBadges.map((b: { code: string }) => b.code).sort()
+    ).toEqual(['hsa', 'inv']);
+
+    // Shares and the MSA are not opened this way: that is a rejoin.
+    const sharesTypeId = (
+      await run(appUrl, `select id from account_type where code = 'shares'`)
+    ).rows[0].id;
+    await expect(
+      capture.startAdditionalAccountApplication(
+        member.id,
+        [sharesTypeId],
+        actor
+      )
+    ).rejects.toThrowError(/no longer available to open this way/);
   });
 });

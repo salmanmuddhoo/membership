@@ -3059,7 +3059,7 @@ silent failure is not mistaken for a member ignoring us.
   is visible until it succeeds or is abandoned
 
 **Shipped** (S-905, S-906, S-907): nine reports, at **Reports**, in three
-groups — Membership, Money and Operations.
+groups — Membership, Finance and Operations.
 
 One shape for all of them, so the page renders any report without knowing
 which and adding one is a definition rather than a screen. Every report offers
@@ -3607,7 +3607,7 @@ M14's post and approve actions and S-1505's void do. M13's one open end
 was S-1306's filed Source of Fund document for a deposit, closed by M23.
 
 **Officer feedback, after M13:** a **Transactions** page (sidebar, under
-Money) with a card per kind — Deposit, Withdrawal, Transfer, Resignation,
+Finance) with a card per kind — Deposit, Withdrawal, Transfer, Resignation,
 Closure, Demise; only Deposit is live, the others are on the page already,
 unavailable, so the shape does not change as they arrive. Deposit there
 starts from the account type and its number — the member's AB number for
@@ -3795,10 +3795,9 @@ FRD 6.2)_
 **Completed by M23.** Cash above the threshold is a request
 (`src/lib/ledger/deposit-requests.ts`): a draft the officer starts, the
 Source of Fund form — 0062's own document type — signed on screen and
-filed against the transaction, verified by somebody else holding
-`document.verify` on the transaction page (the recording officer is
-refused, as an application's captor is), and only then submitted: the
-matrix, the engine, the receipt. A draft's amount and reason can change
+filed against the transaction, and then submitted by the officer who
+recorded it: the matrix, the engine, the receipt. (M23 first required a
+second officer to verify the form; the Society has since dropped that.) A draft's amount and reason can change
 while it is the officer's, and it can be cancelled; the deposit page
 continues into the request instead of offering a tick. Open point 17's
 "later capture path" for the `draft` status is this one.
@@ -4662,7 +4661,7 @@ session with its count and over or short. No region or branch: nothing in
 the data has one.
 
 **Shipped, second increment** (S-2003) — M20 complete. **Daily cash
-reconciliation** (`cash.view`, under Reports → Money): every drawer in a
+reconciliation** (`cash.view`, under Reports → Finance): every drawer in a
 period — day, cashier, opened and closed, float, cash in, cash out,
 expected, counted, over or short, movements, note — and, by day and by
 whoever moved it, the cash that went through no drawer at all, so nothing
@@ -5002,7 +5001,11 @@ needs (Deposit, Close, Resign) were already gone with the status; the
 "already holds" check and the offer of types to open now ignore a closed
 account. `docs/ledger.md` under Closing an account and Resigning has the
 detail; `src/lib/members/rejoin.test.ts` proves both paths against the
-migrations.
+migrations. Since then: a rejoin application is no longer refused as a
+duplicate of the member's own NIC; a resigned member opens a further
+account (HSA, Investment) from their page without rejoining
+(`canOpenAccount`); and the members list shows no badge for a closed
+account.
 
 # Open values that later stories depend on
 
