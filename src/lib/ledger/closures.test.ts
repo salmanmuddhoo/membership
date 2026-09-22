@@ -40,6 +40,13 @@ async function run(url: string, sql: string, params: unknown[] = []) {
   }
 }
 
+async function configure(sql: string) {
+  await run(
+    appUrl,
+    `begin; set local albarakah.actor_description = 'closures.test'; ${sql}; commit;`
+  );
+}
+
 let openPool: typeof import('../db/pool') | null = null;
 
 async function closeOpenPool() {
@@ -78,6 +85,7 @@ let secretary: Principal;
 let president: Principal;
 let member: { id: string; shares: string; msa: string; hsa: string };
 let requestTypeId: string;
+let bankAccountId: string;
 
 function principalFor(
   userId: string,
@@ -246,6 +254,14 @@ beforeAll(async () => {
       `select id from document_type where code = 'closure_request'`
     )
   ).rows[0].id;
+
+  await configure(
+    `insert into bank_account (code, name, bank_name, account_number)
+     values ('mcb', 'MCB current', 'MCB', '000123456789')`
+  );
+  bankAccountId = (
+    await run(appUrl, `select id from bank_account where code = 'mcb'`)
+  ).rows[0].id;
 }, 60_000);
 
 afterAll(async () => {
@@ -335,6 +351,7 @@ describe('a closure request (S-1702)', () => {
         reason: 'Moving abroad',
         method: 'bank_transfer',
         methodReference: 'MCB 4471',
+        bankAccountId,
       },
       clerk
     );
@@ -395,6 +412,7 @@ describe('a closure request (S-1702)', () => {
         amount: '150000',
         method: 'bank_transfer',
         methodReference: 'MCB 9001',
+        bankAccountId,
       },
       officer
     );

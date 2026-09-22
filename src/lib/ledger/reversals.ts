@@ -125,9 +125,10 @@ export async function reverseTransaction(
           `insert into transaction
              (kind, member_id, customer_id, account_id, amount, method,
               method_reference, reason, status, receipt_number_id,
-              captured_by, reverses_id, submitted_at)
+              captured_by, reverses_id, submitted_at, bank_account_id)
            select 'reversal', member_id, customer_id, account_id, amount,
-                  method, method_reference, $2, 'submitted', $3, $4, id, now()
+                  method, method_reference, $2, 'submitted', $3, $4, id, now(),
+                  bank_account_id
              from transaction where id = $1
            returning id, reference`,
           [target.id, reason, index === 0 ? receipt.id : null, principal.userId]

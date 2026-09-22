@@ -22,7 +22,7 @@ import {
   allocateReceiptNumber,
   markReceiptIssued,
 } from '../payments/receipts';
-import { resolveBankAccount } from './bank-accounts';
+import { requireBankAccount, resolveBankAccount } from './bank-accounts';
 import { LedgerError, postTransaction } from './ledger';
 import { notifyReceiptIssued } from './receipt-notifications';
 import { notifyExit } from './exit-notifications';
@@ -795,6 +795,11 @@ export async function postApprovedTransaction(
           message => new ReviewError(message)
         ),
       };
+      requireBankAccount(
+        method,
+        paidBy.bankAccountId,
+        message => new ReviewError(message)
+      );
     } catch (err) {
       if (err instanceof PaymentError) throw new ReviewError(err.message);
       throw err;

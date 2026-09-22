@@ -87,6 +87,7 @@ let president: Principal;
 let member: { id: string; shares: string; msa: string; hsa: string };
 let certificateTypeId: string;
 let affidavitTypeId: string;
+let bankAccountId: string;
 
 function principalFor(
   userId: string,
@@ -256,6 +257,14 @@ beforeAll(async () => {
     await run(appUrl, `select id from document_type where code = 'affidavit'`)
   ).rows[0].id;
 
+  await configure(
+    `insert into bank_account (code, name, bank_name, account_number)
+     values ('mcb', 'MCB current', 'MCB', '000123456789')`
+  );
+  bankAccountId = (
+    await run(appUrl, `select id from bank_account where code = 'mcb'`)
+  ).rows[0].id;
+
   // Money on every account: Shares 8,000, MSA 12,000, HSA 1,000.
   const { deposits } = await load();
   for (const [accountId, amount] of [
@@ -329,6 +338,7 @@ describe('a demised claim (S-1704)', () => {
         claimant: { kind: 'nominee' },
         method: 'bank_transfer',
         methodReference: 'MCB 9',
+        bankAccountId,
       },
       clerk
     );

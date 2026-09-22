@@ -68,6 +68,14 @@ const create = defineEndpoint(
               description:
                 'Required where the method says so, when it posts at once.',
             },
+            bankAccountId: {
+              type: 'string',
+              format: 'uuid',
+              description:
+                'With kind "payee": one of the Society\'s bank accounts. ' +
+                'Required where the method touches a bank, when it posts at ' +
+                'once; otherwise given at disbursement.',
+            },
           },
         },
         reason: { type: 'string' },
@@ -102,6 +110,7 @@ const create = defineEndpoint(
         payeeName?: unknown;
         method?: unknown;
         methodReference?: unknown;
+        bankAccountId?: unknown;
       };
       reason?: unknown;
     }>();
@@ -114,6 +123,7 @@ const create = defineEndpoint(
             payeeName: text(raw.payeeName),
             method: text(raw.method),
             methodReference: text(raw.methodReference),
+            bankAccountId: text(raw.bankAccountId),
           }
         : { kind: 'account', accountId: text(raw.accountId) };
     try {

@@ -563,15 +563,23 @@ with M20.
 
 ## The Society's bank accounts
 
-Where the money went or came from, on the Society's side (S-1901, FRD 15):
-`transaction.bank_account_id` names one of the accounts configured at
-Configuration → Bank accounts, optional in this increment and mandatory
-wherever the method touches a bank from S-1902. A deposit, a withdrawal
-and a transfer to a payee take it at capture; a chained withdrawal or exit
-takes it at disbursement, beside the method and reference. The ledger
-refuses anything but an active account of the Society's. Each account's
-balance is derived from the posted transactions naming it
-(`src/lib/ledger/bank-accounts.ts`, `docs/configuration.md`).
+Where the money went or came from, on the Society's side (S-1901, S-1902,
+FRD 15): `transaction.bank_account_id` names one of the accounts
+configured at Configuration → Bank accounts, and wherever the method
+touches a bank it is mandatory together with the method reference — the
+two things a bank statement is matched on. A deposit says at capture (its
+method is final then, chain or no chain); a withdrawal, a transfer to a
+payee and an exit say at capture when they post at once and at
+disbursement otherwise, beside the method and reference; a reversal
+inherits the original's. `requireBankAccount()` in
+`src/lib/ledger/bank-accounts.ts` is the rule at every one of those
+points, in the caller's own words, and `post_transaction` (0083) is the
+guarantee underneath: it refuses to post money through a bank without
+both, whatever path the transaction took. The posting's `financial_event`
+payload carries `bank_account_id` beside `method_reference`, which is what
+Phase 5's reconciliation reads. The ledger refuses anything but an active
+account of the Society's. Each account's balance is derived from the
+posted transactions naming it (`docs/configuration.md`).
 
 ## History, across accounts
 

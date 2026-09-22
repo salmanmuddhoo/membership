@@ -25,7 +25,7 @@ import {
   allocateReceiptNumber,
   markReceiptIssued,
 } from '../payments/receipts';
-import { resolveBankAccount } from './bank-accounts';
+import { requireBankAccount, resolveBankAccount } from './bank-accounts';
 import { availableBalance, LedgerError } from './ledger';
 import { notifyReceiptIssued } from './receipt-notifications';
 import { loadTransaction, type TransactionSummary } from './review';
@@ -285,6 +285,10 @@ export async function recordWithdrawal(
     amountCents,
     roleCodes: principal.roles,
   });
+  const bankAccountId = await resolveBankAccount(
+    input.bankAccountId,
+    message => new WithdrawalError(message)
+  );
   if (!route.definition) {
     if (!principal.permissions.has(PERMISSION_POST)) {
       throw new WithdrawalError(
@@ -300,11 +304,14 @@ export async function recordWithdrawal(
       if (err instanceof PaymentError) throw new WithdrawalError(err.message);
       throw err;
     }
+    // And through which bank account, where the method touches one
+    // (S-1902); a chained withdrawal says at disbursement.
+    requireBankAccount(
+      method,
+      bankAccountId,
+      message => new WithdrawalError(message)
+    );
   }
-  const bankAccountId = await resolveBankAccount(
-    input.bankAccountId,
-    message => new WithdrawalError(message)
-  );
   const receipt = route.definition
     ? null
     : await allocateReceiptNumber(principal.userId);
@@ -454,6 +461,10 @@ export async function resubmitWithdrawal(
     amountCents,
     roleCodes: principal.roles,
   });
+  const bankAccountId = await resolveBankAccount(
+    input.bankAccountId,
+    message => new WithdrawalError(message)
+  );
   if (!route.definition) {
     if (!principal.permissions.has(PERMISSION_POST)) {
       throw new WithdrawalError(
@@ -468,11 +479,14 @@ export async function resubmitWithdrawal(
       if (err instanceof PaymentError) throw new WithdrawalError(err.message);
       throw err;
     }
+    // And through which bank account, where the method touches one
+    // (S-1902); a chained withdrawal says at disbursement.
+    requireBankAccount(
+      method,
+      bankAccountId,
+      message => new WithdrawalError(message)
+    );
   }
-  const bankAccountId = await resolveBankAccount(
-    input.bankAccountId,
-    message => new WithdrawalError(message)
-  );
   const receipt = route.definition
     ? null
     : await allocateReceiptNumber(principal.userId);

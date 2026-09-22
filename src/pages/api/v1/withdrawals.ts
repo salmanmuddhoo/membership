@@ -51,6 +51,8 @@ export const transactionSchema = {
     method: { type: 'string' },
     methodName: { type: 'string' },
     methodReference: { type: 'string' },
+    bankAccountId: { type: 'string', format: 'uuid', nullable: true },
+    bankAccountName: { type: 'string', nullable: true },
     reason: { type: 'string' },
     receiptNo: { type: 'string', nullable: true },
     balanceAfter: {
@@ -152,6 +154,14 @@ const create = defineEndpoint(
           description:
             'Required where the method says so, when it is paid out at once.',
         },
+        bankAccountId: {
+          type: 'string',
+          format: 'uuid',
+          description:
+            "One of the Society's bank accounts (bank_account.view lists " +
+            'them). Required where the method touches a bank, when it is ' +
+            'paid out at once; otherwise given at disbursement.',
+        },
         reason: { type: 'string' },
       },
     },
@@ -167,6 +177,7 @@ const create = defineEndpoint(
       amount?: unknown;
       method?: unknown;
       methodReference?: unknown;
+      bankAccountId?: unknown;
       reason?: unknown;
     }>();
     const text = (v: unknown) => (typeof v === 'string' ? v : '');
@@ -177,6 +188,7 @@ const create = defineEndpoint(
           amount: text(input.amount),
           method: text(input.method),
           methodReference: text(input.methodReference),
+          bankAccountId: text(input.bankAccountId),
           reason: text(input.reason),
           idempotencyKey: idempotencyKey ?? undefined,
         },

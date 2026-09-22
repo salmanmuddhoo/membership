@@ -87,6 +87,7 @@ let president: Principal;
 let member: { id: string; shares: string; msa: string; hsa: string };
 let requestTypeId: string;
 let feeVersionId: string;
+let bankAccountId: string;
 
 function principalFor(
   userId: string,
@@ -248,6 +249,14 @@ beforeAll(async () => {
     )
   ).rows[0].id;
 
+  await configure(
+    `insert into bank_account (code, name, bank_name, account_number)
+     values ('mcb', 'MCB current', 'MCB', '000123456789')`
+  );
+  bankAccountId = (
+    await run(appUrl, `select id from bank_account where code = 'mcb'`)
+  ).rows[0].id;
+
   // Money on every account: Shares 8,000, MSA 12,000, HSA 1,000.
   const { deposits } = await load();
   for (const [accountId, amount] of [
@@ -284,6 +293,7 @@ describe('the pre-checks (S-1703)', () => {
         amount: '150000',
         method: 'bank_transfer',
         methodReference: 'MCB 1',
+        bankAccountId,
       },
       officer
     );
@@ -379,6 +389,7 @@ describe('a resignation (S-1703)', () => {
         reason: 'Moving abroad',
         method: 'bank_transfer',
         methodReference: 'MCB 4471',
+        bankAccountId,
       },
       clerk
     );
@@ -459,6 +470,7 @@ describe('a resignation (S-1703)', () => {
         reason: 'Moving abroad in October',
         method: 'bank_transfer',
         methodReference: 'MCB 4471',
+        bankAccountId,
       },
       clerk
     );
@@ -477,6 +489,7 @@ describe('a resignation (S-1703)', () => {
     const posted = await review.postApprovedTransaction(draft.id, treasurer, {
       method: 'bank_transfer',
       methodReference: 'MCB 4471',
+      bankAccountId,
     });
     expect(posted.status).toBe('posted');
     expect(posted.amount).toBe('20000.00');

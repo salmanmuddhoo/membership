@@ -38,6 +38,7 @@ import {
   type ClosureChecklistItem,
 } from './closures';
 import { LedgerError } from './ledger';
+import { requireBankAccount, resolveBankAccount } from './bank-accounts';
 import { notifyExit } from './exit-notifications';
 import { notifySubmitted } from './transaction-notifications';
 import { notifyReceiptIssued } from './receipt-notifications';
@@ -69,6 +70,9 @@ export interface ResignationInput {
   // How the combined balance goes back to the member.
   method: string;
   methodReference?: string;
+  // Which of the Society's bank accounts it is paid from (S-1902), where
+  // the method touches one.
+  bankAccountId?: string;
 }
 
 export type ResignationEdit = Omit<ResignationInput, 'memberId'>;
@@ -492,6 +496,11 @@ export async function submitResignation(
       if (err instanceof PaymentError) throw new ResignationError(err.message);
       throw err;
     }
+    requireBankAccount(
+      method,
+      request.bankAccountId,
+      message => new ResignationError(message)
+    );
   }
   const receipt = route.definition
     ? null

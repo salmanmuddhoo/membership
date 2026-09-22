@@ -40,6 +40,7 @@ import {
   type ClosureChecklistItem,
 } from './closures';
 import { LedgerError } from './ledger';
+import { requireBankAccount, resolveBankAccount } from './bank-accounts';
 import { notifyExit } from './exit-notifications';
 import { notifySubmitted } from './transaction-notifications';
 import { notifyReceiptIssued } from './receipt-notifications';
@@ -88,6 +89,9 @@ export interface DemiseInput {
   // How the total goes to the claimant.
   method: string;
   methodReference?: string;
+  // Which of the Society's bank accounts it is paid from (S-1902), where
+  // the method touches one.
+  bankAccountId?: string;
   reason?: string;
 }
 
@@ -359,14 +363,19 @@ export async function startDemise(
   const method = await checkedMethod(input.method);
   const reason = checkedReason(input.reason);
   const totals = await claimTotals(input.memberId);
+  const bankAccountId = await resolveBankAccount(
+    input.bankAccountId,
+    message => new DemiseError(message)
+  );
 
   const id = await withTransaction(async client => {
     const inserted = await client.query<{ id: string; reference: string }>(
       `insert into transaction
          (kind, member_id, account_id, amount, method, method_reference,
           reason, status, captured_by, payee_name, claimant_kind, claimant,
-          takaful_benefit)
-       values ('demise', $1, $2, $3, $4, $5, $6, 'draft', $7, $8, $9, $10, $11)
+          takaful_benefit, bank_account_id)
+       values ('demise', $1, $2, $3, $4, $5, $6, 'draft', $7, $8, $9, $10, $11,
+               $12)
        returning id, reference`,
       [
         input.memberId,
@@ -380,6 +389,7 @@ export async function startDemise(
         input.claimant.kind,
         JSON.stringify(claimant),
         totals.takafulBenefit,
+        bankAccountId,
       ]
     );
     const { id, reference } = inserted.rows[0];
@@ -418,11 +428,16 @@ export async function updateDemise(
   const method = await checkedMethod(edit.method);
   const methodReference = (edit.methodReference ?? '').trim() || null;
   const reason = checkedReason(edit.reason);
+  const bankAccountId = await resolveBankAccount(
+    edit.bankAccountId,
+    message => new DemiseError(message)
+  );
   await withTransaction(async client => {
     await client.query(
       `update transaction
           set payee_name = $2, claimant_kind = $3, claimant = $4,
-              method = $5, method_reference = $6, reason = $7
+              method = $5, method_reference = $6, reason = $7,
+              bank_account_id = $8
         where id = $1`,
       [
         claim.id,
@@ -432,6 +447,7 @@ export async function updateDemise(
         method.code,
         methodReference,
         reason,
+        bankAccountId,
       ]
     );
     await recordAudit(
@@ -524,6 +540,11 @@ export async function submitDemise(
       if (err instanceof PaymentError) throw new DemiseError(err.message);
       throw err;
     }
+    requireBankAccount(
+      method,
+      claim.bankAccountId,
+      message => new DemiseError(message)
+    );
   }
   const receipt = route.definition
     ? null

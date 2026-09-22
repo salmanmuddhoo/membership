@@ -180,10 +180,15 @@ read off the posting's own `financial_event` row — leaving out a transfer
 between two accounts here, which moves nothing at the bank. There is no
 second ledger to drift from the first.
 
-`transaction.bank_account_id` is nullable in this increment: a deposit, a
-withdrawal, a transfer to a payee and a disbursement may name one, and the
-ledger refuses anything but an active account of the Society's. S-1902
-makes it mandatory wherever the method touches a bank.
+`transaction.bank_account_id` is mandatory, with the method reference,
+wherever the method touches a bank (S-1902, `payment_method.touches_bank`):
+a deposit says at capture, its method being final then; a withdrawal, a
+transfer to a payee and an exit say at capture when they post at once and
+at disbursement otherwise; a reversal inherits the original's. The
+application asks in each form and each endpoint, and `post_transaction`
+(0083) refuses to post money through a bank without both — the guarantee
+underneath whatever path a transaction took. The ledger refuses anything
+but an active account of the Society's.
 
 ### Approval matrix (S-1401, FRD 6.5, 9, 17)
 

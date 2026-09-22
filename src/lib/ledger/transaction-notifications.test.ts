@@ -112,6 +112,7 @@ let secretary: Principal;
 let president: Principal;
 let amina: { id: string; msa: string; edu: string };
 let bilal: { id: string; msa: string };
+let bankAccountId: string;
 
 function principalFor(
   userId: string,
@@ -282,6 +283,14 @@ beforeAll(async () => {
   );
   bilal = { id: bilalId, msa: await open(bilalId, 'msa', null) };
 
+  await configure(
+    `insert into bank_account (code, name, bank_name, account_number)
+     values ('mcb', 'MCB current', 'MCB', '000123456789')`
+  );
+  bankAccountId = (
+    await run(appUrl, `select id from bank_account where code = 'mcb'`)
+  ).rows[0].id;
+
   const { deposits } = await load();
   await deposits.recordDeposit(
     {
@@ -289,6 +298,7 @@ beforeAll(async () => {
       amount: '90000',
       method: 'bank_transfer',
       methodReference: 'OPEN-1',
+      bankAccountId,
     },
     officer
   );
@@ -298,6 +308,7 @@ beforeAll(async () => {
       amount: '90000',
       method: 'bank_transfer',
       methodReference: 'OPEN-2',
+      bankAccountId,
     },
     officer
   );
@@ -516,6 +527,7 @@ describe('the office hears what waits on it (S-1804)', () => {
     const posted = await review.postApprovedTransaction(large.id, treasurer, {
       method: 'bank_transfer',
       methodReference: 'MU00 1234',
+      bankAccountId,
     });
     const after = await eventsFor(large.id);
     expect(after.filter(e => e.startsWith('withdrawal.disbursed'))).toEqual([
@@ -539,6 +551,7 @@ describe('the office hears what waits on it (S-1804)', () => {
         amount: '100000',
         method: 'bank_transfer',
         methodReference: 'TOP-UP',
+        bankAccountId,
       },
       officer
     );

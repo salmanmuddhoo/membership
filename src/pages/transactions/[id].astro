@@ -11,6 +11,7 @@ import {
   cashMaximum,
   cashSourceOfFundThreshold,
   listAccountTypes,
+  offeredBankAccounts,
   offeredPaymentMethods,
 } from '@lib/config/reference';
 import {
@@ -103,7 +104,11 @@ if (Astro.request.method === 'POST') {
         transaction.id,
         principal,
         needsDisbursement(transaction)
-          ? { method: text('method'), methodReference: text('methodReference') }
+          ? {
+              method: text('method'),
+              methodReference: text('methodReference'),
+              bankAccountId: text('bankAccountId'),
+            }
           : undefined
       );
       notice = posted.receiptNo
@@ -123,6 +128,7 @@ if (Astro.request.method === 'POST') {
         amount: text('amount'),
         method: text('method'),
         methodReference: text('methodReference'),
+        bankAccountId: text('bankAccountId'),
         reason: text('reason'),
       };
       const result =
@@ -240,6 +246,8 @@ const accounts = (person?.accounts ?? []).map(a => ({
 }));
 const paymentMethods =
   canEdit || (canPost && disburses) ? await offeredPaymentMethods() : [];
+const bankAccounts =
+  canEdit || (canPost && disburses) ? await offeredBankAccounts() : [];
 
 const cashThreshold =
   canEdit && isDeposit ? await cashSourceOfFundThreshold() : '';
@@ -572,6 +580,7 @@ const DANGER =
                         ? 'true'
                         : 'false'
                     }
+                    data-touches-bank={method.touchesBank ? 'true' : 'false'}
                     selected={method.code === transaction!.method}
                   >
                     {method.name}
@@ -590,6 +599,23 @@ const DANGER =
                 value={transaction.methodReference}
                 class={INPUT}
               />
+            </label>
+            <label
+              data-bank-account-field
+              class="text-sm text-neutral-600 dark:text-neutral-300"
+            >
+              Bank account
+              <select name="bankAccountId" class={INPUT}>
+                <option value="">Choose…</option>
+                {bankAccounts.map(account => (
+                  <option
+                    value={account.id}
+                    selected={account.id === transaction!.bankAccountId}
+                  >
+                    {account.name} · {account.bankName}
+                  </option>
+                ))}
+              </select>
             </label>
           </div>
         )}
@@ -654,6 +680,7 @@ const DANGER =
                   {paymentMethods.map(method => (
                     <option
                       value={method.code}
+                      data-touches-bank={method.touchesBank ? 'true' : 'false'}
                       selected={method.code === transaction!.method}
                     >
                       {method.name}
@@ -669,6 +696,23 @@ const DANGER =
                   value={transaction.methodReference}
                   class={INPUT}
                 />
+              </label>
+              <label
+                data-bank-account-field
+                class="text-sm text-neutral-600 dark:text-neutral-300"
+              >
+                Bank account
+                <select name="bankAccountId" class={INPUT}>
+                  <option value="">Choose…</option>
+                  {bankAccounts.map(account => (
+                    <option
+                      value={account.id}
+                      selected={account.id === transaction!.bankAccountId}
+                    >
+                      {account.name} · {account.bankName}
+                    </option>
+                  ))}
+                </select>
               </label>
             </>
           )}
@@ -745,6 +789,7 @@ const DANGER =
                       ? 'true'
                       : 'false'
                   }
+                  data-touches-bank={method.touchesBank ? 'true' : 'false'}
                   selected={method.code === transaction!.method}
                 >
                   {method.name}
@@ -763,6 +808,23 @@ const DANGER =
               value={transaction.methodReference}
               class={INPUT}
             />
+          </label>
+          <label
+            data-bank-account-field
+            class="text-sm text-neutral-600 dark:text-neutral-300"
+          >
+            Bank account
+            <select name="bankAccountId" class={INPUT}>
+              <option value="">Choose…</option>
+              {bankAccounts.map(account => (
+                <option
+                  value={account.id}
+                  selected={account.id === transaction!.bankAccountId}
+                >
+                  {account.name} · {account.bankName}
+                </option>
+              ))}
+            </select>
           </label>
           <label class="text-sm text-neutral-600 dark:text-neutral-300">
             Note
@@ -904,10 +966,35 @@ const DANGER =
     const field = disbursement.querySelector<HTMLElement>(
       '[data-method-reference-field]'
     );
+    const bankField = disbursement.querySelector<HTMLElement>(
+      '[data-bank-account-field]'
+    );
     const sync = () => {
+      const selected = select?.selectedOptions[0];
       if (field) {
-        field.hidden =
-          select?.selectedOptions[0]?.dataset.requiresReference !== 'true';
+        field.hidden = selected?.dataset.requiresReference !== 'true';
+      }
+      if (bankField) {
+        bankField.hidden = selected?.dataset.touchesBank !== 'true';
+      }
+    };
+    select?.addEventListener('change', sync);
+    sync();
+  }
+
+  const transferEdit = document.querySelector<HTMLFormElement>(
+    '[data-transfer-edit-form]'
+  );
+  if (transferEdit) {
+    const select =
+      transferEdit.querySelector<HTMLSelectElement>('[name="method"]');
+    const bankField = transferEdit.querySelector<HTMLElement>(
+      '[data-bank-account-field]'
+    );
+    const sync = () => {
+      if (bankField) {
+        bankField.hidden =
+          select?.selectedOptions[0]?.dataset.touchesBank !== 'true';
       }
     };
     select?.addEventListener('change', sync);
@@ -930,6 +1017,9 @@ const DANGER =
     const referenceField = form.querySelector<HTMLElement>(
       '[data-method-reference-field]'
     );
+    const bankField = form.querySelector<HTMLElement>(
+      '[data-bank-account-field]'
+    );
     const reminder = form.querySelector<HTMLElement>('[data-cash-reminder]');
     const confirm = form.querySelector<HTMLInputElement>(
       '[data-cash-form-confirm]'
@@ -946,6 +1036,9 @@ const DANGER =
       const cents = toCents(amountInput?.value);
       if (referenceField) {
         referenceField.hidden = selected?.dataset.requiresReference !== 'true';
+      }
+      if (bankField) {
+        bankField.hidden = selected?.dataset.touchesBank !== 'true';
       }
       const overMaximum =
         isCash &&

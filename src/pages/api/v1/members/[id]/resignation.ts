@@ -49,6 +49,14 @@ const create = defineEndpoint(
             '/api/v1/config/reference.',
         },
         methodReference: { type: 'string' },
+        bankAccountId: {
+          type: 'string',
+          format: 'uuid',
+          description:
+            "One of the Society's bank accounts. Required where the method " +
+            'touches a bank, when it posts at once; otherwise given at ' +
+            'disbursement.',
+        },
       },
     },
     responseSchema: {
@@ -62,6 +70,7 @@ const create = defineEndpoint(
       reason?: unknown;
       method?: unknown;
       methodReference?: unknown;
+      bankAccountId?: unknown;
     }>();
     const text = (v: unknown) => (typeof v === 'string' ? v : '');
     try {
@@ -71,6 +80,7 @@ const create = defineEndpoint(
           reason: text(input.reason),
           method: text(input.method),
           methodReference: text(input.methodReference),
+          bankAccountId: text(input.bankAccountId),
         },
         principal
       );

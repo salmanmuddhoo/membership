@@ -27,7 +27,7 @@ import {
   allocateReceiptNumber,
   markReceiptIssued,
 } from '../payments/receipts';
-import { resolveBankAccount } from './bank-accounts';
+import { requireBankAccount, resolveBankAccount } from './bank-accounts';
 import { LedgerError } from './ledger';
 import { notifyReceiptIssued } from './receipt-notifications';
 import { loadTransaction, type TransactionSummary } from './review';
@@ -289,7 +289,14 @@ async function paidBy(destination: TransferDestination, postsNow: boolean) {
   );
   try {
     const method = await offeredMethod(destination.method);
-    if (postsNow) requireReference(method, destination.methodReference);
+    if (postsNow) {
+      requireReference(method, destination.methodReference);
+      requireBankAccount(
+        method,
+        bankAccountId,
+        message => new TransferError(message)
+      );
+    }
     return {
       code: method.code,
       reference: (destination.methodReference ?? '').trim() || null,
@@ -513,9 +520,11 @@ export async function recordTransfer(
 export interface TransferEdit {
   amount: string;
   reason?: string;
-  // For a payee leg only: how it is to be paid out.
+  // For a payee leg only: how it is to be paid out, and from which of the
+  // Society's bank accounts (S-1902).
   method?: string;
   methodReference?: string;
+  bankAccountId?: string;
 }
 
 /**
@@ -587,6 +596,7 @@ export async function resubmitTransfer(
           payeeName: leg.payeeName ?? '',
           method: input.method ?? leg.method,
           methodReference: input.methodReference ?? leg.methodReference,
+          bankAccountId: input.bankAccountId ?? leg.bankAccountId ?? undefined,
         },
     !route.definition
   );

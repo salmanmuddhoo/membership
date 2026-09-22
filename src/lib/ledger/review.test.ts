@@ -41,6 +41,13 @@ async function run(url: string, sql: string, params: unknown[] = []) {
   }
 }
 
+async function configure(sql: string) {
+  await run(
+    appUrl,
+    `begin; set local albarakah.actor_description = 'review.test'; ${sql}; commit;`
+  );
+}
+
 let openPool: typeof import('../db/pool') | null = null;
 
 async function closeOpenPool() {
@@ -78,6 +85,7 @@ let admin: { userId: string; email: string };
 let memberId: string;
 let shares: string;
 let msa: string;
+let bankAccountId: string;
 
 function principalFor(
   userId: string,
@@ -185,6 +193,14 @@ beforeAll(async () => {
     ).rows[0].id;
   shares = await open('shares');
   msa = await open('msa');
+
+  await configure(
+    `insert into bank_account (code, name, bank_name, account_number)
+     values ('mcb', 'MCB current', 'MCB', '000123456789')`
+  );
+  bankAccountId = (
+    await run(appUrl, `select id from bank_account where code = 'mcb'`)
+  ).rows[0].id;
 }, 60_000);
 
 afterAll(async () => {
@@ -221,6 +237,7 @@ describe('the queue', () => {
         amount: '250000',
         method: 'bank_transfer',
         methodReference: 'BT-1',
+        bankAccountId,
       },
       clerk
     );
@@ -322,6 +339,7 @@ describe('the queue', () => {
         amount: '150000',
         method: 'bank_transfer',
         methodReference: 'BT-2',
+        bankAccountId,
       },
       officer
     );
@@ -402,6 +420,7 @@ describe('the queue', () => {
         amount: '120000',
         method: 'bank_transfer',
         methodReference: 'BT-3',
+        bankAccountId,
       },
       clerk
     );
@@ -443,6 +462,7 @@ describe('the queue', () => {
           amount: '120000',
           method: 'bank_transfer',
           methodReference: 'BT-3',
+          bankAccountId,
         },
         clerk
       )
@@ -456,6 +476,7 @@ describe('return, edit, resubmit (S-1404)', () => {
     amount,
     method: 'bank_transfer',
     methodReference: reference,
+    bankAccountId,
     reason: 'Corrected',
   });
 
@@ -467,6 +488,7 @@ describe('return, edit, resubmit (S-1404)', () => {
         amount: '200000',
         method: 'bank_transfer',
         methodReference: 'BT-4',
+        bankAccountId,
       },
       clerk
     );
@@ -574,6 +596,7 @@ describe('return, edit, resubmit (S-1404)', () => {
         amount: '130000',
         method: 'bank_transfer',
         methodReference: 'BT-5',
+        bankAccountId,
       },
       officer
     );
@@ -590,6 +613,7 @@ describe('return, edit, resubmit (S-1404)', () => {
         amount: '13000',
         method: 'bank_transfer',
         methodReference: 'BT-5',
+        bankAccountId,
       },
       officer
     );
@@ -615,6 +639,7 @@ describe('return, edit, resubmit (S-1404)', () => {
         amount: '101000',
         method: 'bank_transfer',
         methodReference: 'BT-6',
+        bankAccountId,
       },
       clerk
     );
@@ -663,6 +688,7 @@ describe('return, edit, resubmit (S-1404)', () => {
         amount: '300000',
         method: 'bank_transfer',
         methodReference: 'BT-7',
+        bankAccountId,
       },
       clerk
     );
@@ -679,6 +705,7 @@ describe('return, edit, resubmit (S-1404)', () => {
           amount: '300000',
           method: 'bank_transfer',
           methodReference: 'BT-7',
+          bankAccountId,
         },
         clerk
       )
@@ -695,6 +722,7 @@ describe('the chain is read live (S-1402)', () => {
         amount: '400000',
         method: 'bank_transfer',
         methodReference: 'BT-8',
+        bankAccountId,
       },
       clerk
     );
@@ -737,6 +765,7 @@ describe('the chain is read live (S-1402)', () => {
         amount: '500000',
         method: 'bank_transfer',
         methodReference: 'BT-9',
+        bankAccountId,
       },
       clerk
     );
@@ -758,6 +787,7 @@ describe('the chain is read live (S-1402)', () => {
           amount: '500000',
           method: 'bank_transfer',
           methodReference: 'BT-9',
+          bankAccountId,
         },
         clerk
       );
@@ -789,6 +819,7 @@ describe('the chevron reads the live chain (S-1405)', () => {
         amount: '600000',
         method: 'bank_transfer',
         methodReference: 'BT-10',
+        bankAccountId,
       },
       clerk
     );
