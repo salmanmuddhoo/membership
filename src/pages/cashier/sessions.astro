@@ -48,7 +48,9 @@ const cashierId = params.get('cashierId') || null;
 const [sessions, cashiers] = await Promise.all([
   listSessions({ from, to, cashierId }),
   query<{ id: string; display_name: string }>(
-    `select id, display_name from app_user where is_active order by display_name`
+    `select id, display_name from app_user
+     where is_active and (entra_subject is null or entra_subject not like 'system:%')
+     order by display_name`
   ),
 ]);
 

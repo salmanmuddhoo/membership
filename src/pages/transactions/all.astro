@@ -6,6 +6,7 @@ import DashboardLayout from '@layouts/DashboardLayout.astro';
 import TransactionTable from '@components/TransactionTable.astro';
 import { listTransactions } from '@lib/ledger/history';
 import type { TransactionRowKind } from '@lib/config/reference';
+import { STATUS_LABELS } from '@lib/ledger/labels';
 import { PAGE, FILTER, INPUT, HINT, BUTTON_SM, SECONDARY_SM } from '@lib/ui';
 
 const KINDS: [TransactionRowKind, string][] = [
@@ -17,13 +18,16 @@ const KINDS: [TransactionRowKind, string][] = [
   ['demise', 'Demised claim'],
   ['reversal', 'Reversal'],
 ];
-const STATUSES = [
-  'submitted',
-  'under_review',
-  'approved',
-  'posted',
-  'returned',
-  'rejected',
+// The table reads a posted row as Posted (money in) or Disbursed (money
+// out), so the filter offers the same two (QA-19).
+const STATUSES: [string, string][] = [
+  ['submitted', STATUS_LABELS.submitted],
+  ['under_review', STATUS_LABELS.under_review],
+  ['approved', STATUS_LABELS.approved],
+  ['posted', STATUS_LABELS.posted],
+  ['disbursed', 'Disbursed'],
+  ['returned', STATUS_LABELS.returned],
+  ['rejected', STATUS_LABELS.rejected],
 ];
 const principal = Astro.locals.principal!;
 // Officer feedback: a Regional Officer or Manager sees the transactions they
@@ -45,7 +49,15 @@ const result = await listTransactions({
   kind: KINDS.some(([k]) => k === kind)
     ? (kind as TransactionRowKind)
     : undefined,
-  status: STATUSES.includes(status) ? status : undefined,
+  ...(status === 'disbursed'
+    ? { status: 'posted', direction: 'out' as const }
+    : status === 'posted'
+      ? { status: 'posted', direction: 'in' as const }
+      : {
+          status: STATUSES.some(([code]) => code === status)
+            ? status
+            : undefined,
+        }),
   from: asDate(from, false),
   to: asDate(to, true),
   page,
@@ -86,9 +98,9 @@ const pageHref = (n: number) => {
         Status
         <select name="status" class={INPUT}>
           <option value="">All</option>
-          {STATUSES.map(s => (
-            <option value={s} selected={s === status}>
-              {s.replace('_', ' ')}
+          {STATUSES.map(([code, label]) => (
+            <option value={code} selected={code === status}>
+              {label}
             </option>
           ))}
         </select>

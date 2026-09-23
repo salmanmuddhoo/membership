@@ -21,6 +21,7 @@ import {
 } from '../config/reference';
 import { LAST_ACTIVITY_SQL } from '../members/dormancy';
 import { query } from '../db/pool';
+import { formatMoney } from '../payments/money';
 import { APPLICATION_STATUS_LABELS } from '../applications/status-labels';
 import {
   returnedByLabelsFor,
@@ -76,6 +77,13 @@ function dateOrNull(value: string | undefined): string | null {
 function textOrNull(value: string | undefined): string | null {
   const trimmed = (value ?? '').trim();
   return trimmed === '' ? null : trimmed;
+}
+
+// A running total (built from Number addition, so it can carry more than two
+// decimal places) as it reads everywhere else on screen — MUR 41,700.00,
+// never the bare "41700.00" a summary line used to read.
+function rs(total: number): string {
+  return formatMoney(total.toFixed(2));
 }
 
 const membershipTypeChoices = async () => {
@@ -179,7 +187,7 @@ const members: ReportDefinition = {
     const result = await query<Record<string, string>>(
       `select m.member_no        as "Member no",
               t.name             as "Type",
-              m.status           as "Status",
+              initcap(m.status)  as "Status",
               to_char(m.joined_at, 'DD Mon YYYY') as "Joined",
               coalesce(m.legacy_code, '')         as "Legacy code",
               trim(coalesce(p.values->>'name', '') || ' ' ||
@@ -298,7 +306,12 @@ const applications: ReportDefinition = {
               a.reference    as "Reference",
               trim(coalesce(p.values->>'name', '') || ' ' ||
                    coalesce(p.values->>'surname', '')) as "Applicant",
-              a.application_kind as "Kind",
+              case a.application_kind
+                when 'membership' then 'Membership'
+                when 'additional_account' then 'Additional account'
+                when 'customer_account' then 'Customer account'
+                else initcap(replace(a.application_kind, '_', ' ')) end
+                as "Kind",
               coalesce(t.name, '') as "Type",
               a.status       as "StatusCode",
               to_char(a.created_at, 'DD Mon YYYY') as "Started",
@@ -385,7 +398,7 @@ const accounts: ReportDefinition = {
     const result = await query<Record<string, string>>(
       `select coalesce(a.account_no, m.member_no, '') as "Account no",
               t.name                     as "Type",
-              a.status                   as "Status",
+              initcap(a.status)          as "Status",
               coalesce(b.balance, 0)::text as "Balance",
               to_char(a.opened_at, 'DD Mon YYYY') as "Opened",
               coalesce(m.member_no, '')  as "Member no",
@@ -430,7 +443,7 @@ const accounts: ReportDefinition = {
         { key: 'Default', label: 'Default' },
       ],
       rows: result.rows,
-      summary: `${result.rows.length} account(s), Rs ${total.toFixed(2)} held.`,
+      summary: `${result.rows.length} account(s), ${rs(total)} held.`,
     };
   },
 };
@@ -465,7 +478,7 @@ const accountsNearFloor: ReportDefinition = {
               coalesce(m.member_no, '') as "Member no",
               trim(coalesce(p.values->>'name', '') || ' '
                    || coalesce(p.values->>'surname', '')) as "Holder",
-              a.status as "Status",
+              initcap(a.status) as "Status",
               coalesce(b.balance, 0)::text as "Balance",
               t.minimum_balance::text as "Minimum",
               (coalesce(b.balance, 0) - t.minimum_balance)::text as "Headroom",
@@ -500,7 +513,7 @@ const accountsNearFloor: ReportDefinition = {
       ],
       rows: result.rows,
       summary:
-        `${result.rows.length} account(s) within Rs ${Number(margin).toFixed(2)} ` +
+        `${result.rows.length} account(s) within ${rs(Number(margin))} ` +
         `of their minimum, ${atFloor} at or below it.`,
     };
   },
@@ -526,15 +539,27 @@ const documentsOutstanding: ReportDefinition = {
     const result = await query<Record<string, string>>(
       `select t.name        as "Document",
               d.subject      as "Subject",
-              d.state        as "State",
+              case d.state when 'under_review' then 'Under review'
+                           when 'rejected' then 'Rejected'
+                           when 'expired' then 'Expired'
+                           when 'verified' then 'Verified'
+                           when 'uploaded' then 'Uploaded'
+                           else initcap(replace(d.state, '_', ' ')) end
+                as "State",
               coalesce(a.reference, '') as "Application",
-              coalesce(m.member_no, '') as "Member no",
+              -- A closure, resignation or claim files its papers against
+              -- the transaction, not an application: named by it and by
+              -- its member, so the row can be chased (QA-09).
+              coalesce(tx.reference, '') as "Transaction",
+              coalesce(m.member_no, tm.member_no, '') as "Member no",
               coalesce(to_char(d.expires_at, 'DD Mon YYYY'), '') as "Expires",
               coalesce(d.rejection_reason, '') as "Reason"
          from document d
          join document_type t on t.id = d.document_type_id
          left join membership_application a on a.id = d.application_id
          left join member m on m.id = d.member_id
+         left join transaction tx on tx.id = d.transaction_id
+         left join member tm on tm.id = tx.member_id
         where (
                 d.state in ('under_review', 'rejected', 'expired')
                 or (
@@ -553,6 +578,7 @@ const documentsOutstanding: ReportDefinition = {
         { key: 'Subject', label: 'Subject' },
         { key: 'State', label: 'State' },
         { key: 'Application', label: 'Application' },
+        { key: 'Transaction', label: 'Transaction' },
         { key: 'Member no', label: 'Member no' },
         { key: 'Expires', label: 'Expires' },
         { key: 'Reason', label: 'Reason' },
@@ -606,7 +632,10 @@ const dormancy: ReportDefinition = {
   ],
   async run(filters) {
     const threshold = await dormancyMonths();
-    const view = textOrNull(filters.view) ?? 'approaching';
+    // Show = All (no choice) is every member the report covers, dormant
+    // ones included; it used to fall back to "approaching", so All showed
+    // "Nothing matches" beside a dormant member (QA-30).
+    const view = textOrNull(filters.view) ?? 'all';
     const within = monthsOr(filters.within, 3);
     const result = await query<Record<string, string | number | null>>(
       `with activity as (
@@ -623,7 +652,7 @@ const dormancy: ReportDefinition = {
           where m.status in ('active', 'dormant')
        )
        select member_no as "Member no", holder as "Name", type_name as "Type",
-              status as "Status",
+              initcap(status) as "Status",
               to_char(last_activity, 'DD Mon YYYY') as "Last activity",
               (extract(year from age(now(), last_activity)) * 12
                + extract(month from age(now(), last_activity)))::int
@@ -639,6 +668,7 @@ const dormancy: ReportDefinition = {
           and case $3::text
                 when 'dormant' then status = 'dormant'
                 when 'active' then status = 'active'
+                when 'all' then true
                 else status = 'active'
                      and $1::int > 0
                      and last_activity + make_interval(months => $1::int)
@@ -649,11 +679,13 @@ const dormancy: ReportDefinition = {
     );
 
     const label =
-      view === 'dormant'
-        ? 'dormant member(s)'
-        : view === 'active'
-          ? 'active member(s)'
-          : `active member(s) within ${within} month(s) of dormancy`;
+      view === 'all'
+        ? 'member(s), active and dormant'
+        : view === 'dormant'
+          ? 'dormant member(s)'
+          : view === 'active'
+            ? 'active member(s)'
+            : `active member(s) within ${within} month(s) of dormancy`;
     return {
       columns: [
         { key: 'Member no', label: 'Member no' },
@@ -689,8 +721,8 @@ const payments: ReportDefinition = {
     const result = await query<Record<string, string | number>>(
       `select coalesce(r.receipt_no, '') as "Receipt",
               to_char(p.received_at, 'DD Mon YYYY') as "Received",
-              p.kind      as "Kind",
-              p.method    as "Method",
+              initcap(p.kind) as "Kind",
+              pm.name     as "Method",
               p.total_amount::float8 as "Amount",
               coalesce(a.reference, '') as "Application",
               u.display_name as "Recorded by",
@@ -698,6 +730,7 @@ const payments: ReportDefinition = {
          from payment p
          left join receipt_number r on r.id = p.receipt_number_id
          left join membership_application a on a.id = p.application_id
+         join payment_method pm on pm.code = p.method
          join app_user u on u.id = p.recorded_by
         where ($1::date is null or p.received_at >= $1::date)
           and ($2::date is null or p.received_at < $2::date + 1)
@@ -728,10 +761,7 @@ const payments: ReportDefinition = {
         { key: 'Amount', label: 'Amount', numeric: true },
       ],
       rows: result.rows,
-      summary:
-        `${result.rows.length} payment(s), ` +
-        `Rs ${total.toLocaleString('en-MU', { minimumFractionDigits: 2 })} ` +
-        'excluding voided.',
+      summary: `${result.rows.length} payment(s), ${rs(total)} excluding voided.`,
     };
   },
 };
@@ -749,7 +779,12 @@ const feeComponents: ReportDefinition = {
     // payment by the number of versions the Society has ever published. The
     // code is the stable thing; the label belongs on screen.
     const result = await query<Record<string, string | number>>(
-      `select l.component_code as "code",
+      //
+      // A payment's account lines too — the opening deposit of an account
+      // opened on an application (an HSA, say), under its account type's
+      // name. Without them this report came to less than Payments received
+      // for the same period by exactly those amounts (QA-08).
+      `select l.component_code as "code", null::text as "account",
               count(*)::int as "Payments",
               sum(l.amount)::float8 as "Amount"
          from payment_line l
@@ -758,12 +793,24 @@ const feeComponents: ReportDefinition = {
           and ($1::date is null or p.received_at >= $1::date)
           and ($2::date is null or p.received_at < $2::date + 1)
         group by l.component_code
-        order by l.component_code`,
+       union all
+       select null, ty.name, count(*)::int, sum(al.amount)::float8
+         from payment_account_line al
+         join payment p on p.id = al.payment_id
+         join account_type ty on ty.id = al.account_type_id
+        where p.voided_at is null
+          and ($1::date is null or p.received_at >= $1::date)
+          and ($2::date is null or p.received_at < $2::date + 1)
+        group by ty.name
+        order by 1 nulls last, 2`,
       [dateOrNull(filters.from), dateOrNull(filters.to)]
     );
 
     const rows = result.rows.map(r => ({
-      Component: COMPONENT_LABELS[String(r.code)] ?? String(r.code),
+      Component:
+        r.account !== null
+          ? String(r.account)
+          : (COMPONENT_LABELS[String(r.code)] ?? String(r.code)),
       Payments: r.Payments,
       Amount: r.Amount,
     }));
@@ -777,7 +824,7 @@ const feeComponents: ReportDefinition = {
         { key: 'Amount', label: 'Amount', numeric: true },
       ],
       rows,
-      summary: `Rs ${total.toLocaleString('en-MU', { minimumFractionDigits: 2 })} in total.`,
+      summary: `${rs(total)} in total.`,
     };
   },
 };
@@ -798,10 +845,12 @@ const receipts: ReportDefinition = {
     const result = await query<Record<string, string | number>>(
       `select r.receipt_no as "Receipt",
               r.serial_no::int as "Serial",
-              r.state     as "State",
-              case when p.id is not null then p.kind
-                   when t.id is not null then replace(t.kind, '_leg', '')
-                   else '' end as "Kind",
+              initcap(r.state) as "State",
+              initcap(replace(
+                case when p.id is not null then p.kind
+                     when t.id is not null then replace(t.kind, '_leg', '')
+                     else '' end,
+                '_', ' ')) as "Kind",
               coalesce(a.reference, t.reference, '') as "Reference",
               coalesce(pm.name, tm.name, '') as "Method",
               coalesce(p.total_amount, t.amount)::text as "Amount",
@@ -813,7 +862,12 @@ const receipts: ReportDefinition = {
          left join payment p on p.receipt_number_id = r.id
          left join membership_application a on a.id = p.application_id
          left join payment_method pm on pm.code = p.method
-         left join transaction t on t.receipt_number_id = r.id
+         -- Not a new member's opening deposits: they are the fee receipt
+         -- under its own number, already the row above (QA-03).
+         left join transaction t
+           on t.receipt_number_id = r.id
+          and t.payment_line_id is null
+          and t.payment_account_line_id is null
          left join payment_method tm on tm.code = t.method
         where ($1::date is null or r.allocated_at >= $1::date)
           and ($2::date is null or r.allocated_at < $2::date + 1)
@@ -826,7 +880,7 @@ const receipts: ReportDefinition = {
     const byMethod = new Map<string, number>();
     let issued = 0;
     for (const row of result.rows) {
-      if (row.State !== 'issued') continue;
+      if (row.State !== 'Issued') continue;
       issued += 1;
       const method = String(row.Method || '—');
       byMethod.set(
@@ -836,7 +890,7 @@ const receipts: ReportDefinition = {
     }
     const totals = [...byMethod.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([method, amount]) => `${method} ${amount.toFixed(2)}`)
+      .map(([method, amount]) => `${method} ${rs(amount)}`)
       .join(', ');
 
     return {
@@ -886,7 +940,7 @@ const transactions: ReportDefinition = {
   async run(filters) {
     const kind = textOrNull(filters.kind);
     const result = await query<Record<string, string | number>>(
-      `select t.reference as "Reference",
+      `select coalesce(tr.reference, t.reference) as "Reference",
               case t.kind when 'deposit' then 'Deposit'
                           when 'withdrawal' then 'Withdrawal'
                           when 'transfer_leg' then 'Transfer'
@@ -901,12 +955,20 @@ const transactions: ReportDefinition = {
                 as "Account",
               pm.name as "Method",
               t.amount::text as "Amount",
-              t.status as "Status",
+              case when t.status = 'posted'
+                        and (t.kind in
+                               ('withdrawal', 'closure', 'resignation', 'demise')
+                             or (t.kind = 'transfer_leg'
+                                 and t.payee_name is not null))
+                   then 'Disbursed'
+                   when t.status = 'posted' then 'Posted'
+                   else initcap(replace(t.status, '_', ' ')) end as "Status",
               to_char(t.created_at, 'DD Mon YYYY HH24:MI') as "Recorded",
               u.display_name as "Officer",
               to_char(t.posted_at, 'DD Mon YYYY') as "Posted",
               coalesce(rn.receipt_no, '') as "Receipt"
          from transaction t
+         left join transfer tr on tr.id = t.transfer_id
          join account a on a.id = t.account_id
          join account_type at on at.id = a.account_type_id
          join payment_method pm on pm.code = t.method
@@ -936,16 +998,17 @@ const transactions: ReportDefinition = {
       ]
     );
 
-    // What was actually posted, by kind: the figures a period is closed on.
+    // What was actually posted or disbursed, by kind: the figures a period
+    // is closed on.
     const byKind = new Map<string, number>();
     for (const row of result.rows) {
-      if (row.Status !== 'posted') continue;
+      if (row.Status !== 'Posted' && row.Status !== 'Disbursed') continue;
       const k = String(row.Kind);
       byKind.set(k, (byKind.get(k) ?? 0) + Number(row.Amount ?? 0));
     }
     const posted = [...byKind.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([k, amount]) => `${k} Rs ${amount.toFixed(2)}`)
+      .map(([k, amount]) => `${k} ${rs(amount)}`)
       .join(', ');
 
     return {
@@ -991,7 +1054,7 @@ const pendingApprovals: ReportDefinition = {
   async run(filters) {
     const kind = textOrNull(filters.kind);
     const result = await query<Record<string, string | number | null>>(
-      `select t.reference as "Reference",
+      `select coalesce(tr.reference, t.reference) as "Reference",
               case t.kind when 'deposit' then 'Deposit'
                           when 'withdrawal' then 'Withdrawal'
                           when 'transfer_leg' then 'Transfer'
@@ -1002,7 +1065,13 @@ const pendingApprovals: ReportDefinition = {
               trim(coalesce(p.values->>'name', '') || ' '
                    || coalesce(p.values->>'surname', '')) as "Holder",
               t.amount::text as "Amount",
-              t.status as "Status",
+              case when t.status = 'posted'
+                        and (t.kind in
+                               ('withdrawal', 'closure', 'resignation', 'demise')
+                             or (t.kind = 'transfer_leg'
+                                 and t.payee_name is not null))
+                   then 'Disbursed'
+                   else initcap(replace(t.status, '_', ' ')) end as "Status",
               case when t.status in ('submitted', 'under_review', 'returned')
                    then coalesce(ws.name || ' · ' || r.name, '')
                    when t.status = 'approved' then 'Payout'
@@ -1015,6 +1084,7 @@ const pendingApprovals: ReportDefinition = {
                      coalesce(d.occurred_at, now()) - t.submitted_at)::int
                    end as "Days"
          from transaction t
+         left join transfer tr on tr.id = t.transfer_id
          join app_user u on u.id = t.captured_by
          left join member m on m.id = t.member_id
          left join customer c on c.id = t.customer_id
@@ -1045,7 +1115,7 @@ const pendingApprovals: ReportDefinition = {
     );
 
     const pending = result.rows.filter(r =>
-      ['submitted', 'under_review', 'returned', 'approved'].includes(
+      ['Submitted', 'Under review', 'Returned', 'Approved'].includes(
         String(r.Status)
       )
     );
@@ -1119,6 +1189,10 @@ const cashReconciliation: ReportDefinition = {
             and fe.event_type = 'transaction.posted'
            join payment_method pm on pm.code = t.method
           where t.status = 'posted' and pm.is_cash
+            -- A new member's opening deposits are their fee receipt,
+            -- counted below as the receipt itself (QA-02, 0096).
+            and t.payment_line_id is null
+            and t.payment_account_line_id is null
          union all
          select p.cash_session_id, p.recorded_by, p.received_at,
                 case p.kind when 'refund' then 0 else p.total_amount end,
@@ -1214,22 +1288,22 @@ const cashReconciliation: ReportDefinition = {
       rows: result.rows,
       summary:
         `${drawers.length} drawer(s): ${closed.length} closed, ` +
-        `${drawers.length - closed.length} open; cash in Rs ` +
-        `${sum(drawers, 'Cash in').toFixed(2)}, out Rs ` +
-        `${sum(drawers, 'Cash out').toFixed(2)}` +
+        `${drawers.length - closed.length} open; cash in ` +
+        `${rs(sum(drawers, 'Cash in'))}, out ` +
+        `${rs(sum(drawers, 'Cash out'))}` +
         (closed.length
-          ? `; counted Rs ${sum(closed, 'Counted').toFixed(2)} against Rs ` +
-            `${sum(closed, 'Expected').toFixed(2)} expected, ` +
+          ? `; counted ${rs(sum(closed, 'Counted'))} against ` +
+            `${rs(sum(closed, 'Expected'))} expected, ` +
             (overShort === 0
               ? 'no difference'
               : overShort > 0
-                ? `over by Rs ${overShort.toFixed(2)}`
-                : `short by Rs ${(-overShort).toFixed(2)}`)
+                ? `over by ${rs(overShort)}`
+                : `short by ${rs(-overShort)}`)
           : '') +
         (outside.length
           ? `. ${sum(outside, 'Movements')} cash movement(s) with no drawer ` +
-            `open: Rs ${sum(outside, 'Cash in').toFixed(2)} in, Rs ` +
-            `${sum(outside, 'Cash out').toFixed(2)} out.`
+            `open: ${rs(sum(outside, 'Cash in'))} in, ` +
+            `${rs(sum(outside, 'Cash out'))} out.`
           : '.'),
     };
   },
@@ -1275,7 +1349,8 @@ const exits: ReportDefinition = {
               coalesce(t.payee_name, '') as "Paid to",
               t.amount::text as "Amount",
               t.takaful_benefit::text as "Takaful benefit",
-              t.status as "Status",
+              case when t.status = 'posted' then 'Disbursed'
+                   else initcap(replace(t.status, '_', ' ')) end as "Status",
               to_char(t.submitted_at, 'DD Mon YYYY') as "Submitted",
               to_char(d.occurred_at, 'DD Mon YYYY') as "Decided",
               to_char(t.posted_at, 'DD Mon YYYY') as "Paid out",
@@ -1316,14 +1391,13 @@ const exits: ReportDefinition = {
       const kind = String(row.Kind);
       const entry = byKind.get(kind) ?? { n: 0, paid: 0 };
       entry.n += 1;
-      if (row.Status === 'posted') entry.paid += Number(row.Amount ?? 0);
+      if (row.Status === 'Disbursed') entry.paid += Number(row.Amount ?? 0);
       byKind.set(kind, entry);
     }
     const parts = [...byKind.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
       .map(
-        ([kind, e]) =>
-          `${e.n} ${kind.toLowerCase()}(s), Rs ${e.paid.toFixed(2)} paid out`
+        ([kind, e]) => `${e.n} ${kind.toLowerCase()}(s), ${rs(e.paid)} paid out`
       )
       .join('; ');
 
@@ -1423,7 +1497,7 @@ const jobs: ReportDefinition = {
   async run(filters) {
     const result = await query<Record<string, string | number>>(
       `select j.job_name as "Job",
-              j.status    as "Status",
+              initcap(j.status) as "Status",
               j.attempt::int as "Attempt",
               j.processed_count::int as "Processed",
               to_char(j.started_at, 'DD Mon YYYY HH24:MI') as "Started",
@@ -1441,7 +1515,7 @@ const jobs: ReportDefinition = {
     // A run still 'running' with an old start is a container that died, which
     // docs/jobs.md notes nothing currently notices. Here it is at least
     // visible to somebody who looks.
-    const failed = result.rows.filter(r => r.Status === 'failed').length;
+    const failed = result.rows.filter(r => r.Status === 'Failed').length;
 
     return {
       columns: [

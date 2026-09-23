@@ -5,6 +5,7 @@
 // Treasurer works from. The Treasurer's controls are on screen only — the
 // paper carries the receipt and nothing else.
 import BaseLayout from '@layouts/BaseLayout.astro';
+import { query } from '@lib/db/pool';
 import '@styles/receipt.css';
 import {
   loadPayment,
@@ -40,7 +41,30 @@ const principal = Astro.locals.principal!;
 const canRefund = principal.permissions.has('payment.refund');
 const canVoid = principal.permissions.has('payment.void');
 
-const { id } = Astro.params;
+const { id: param } = Astro.params;
+// By its number, as printed and as an officer types it (QA-06): the
+// receipt behind it, a fee receipt or a transaction's. Anything that is
+// neither a number nor an id is simply not found, rather than handed to a
+// uuid column that throws on it.
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+if (param && /^RCT-\d+$/i.test(param)) {
+  const found = await query<{ id: string }>(
+    `select coalesce(p.id, t.id) as id
+       from receipt_number r
+       left join payment p on p.receipt_number_id = r.id
+       left join transaction t
+         on t.receipt_number_id = r.id
+        and t.payment_line_id is null
+        and t.payment_account_line_id is null
+      where r.receipt_no = upper($1) and coalesce(p.id, t.id) is not null
+      order by t.created_at nulls first
+      limit 1`,
+    [param]
+  );
+  if (found.rows[0]) return Astro.redirect(`/receipts/${found.rows[0].id}`);
+  return new Response('Not found', { status: 404 });
+}
+const id = param && UUID.test(param) ? param : undefined;
 let payment = id ? await loadPayment(id) : null;
 // A transaction's receipt shares this page and its sheet (S-1601): the id
 // is the transaction's, or the number's.

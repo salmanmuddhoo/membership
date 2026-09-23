@@ -1,0 +1,31 @@
+---
+// Shown for a record that no longer exists (the pages that look one up by
+// id) and for a URL that matches no route at all (QA-14). Reached two
+// ways: Astro's own routing falls back to this file for an unmatched path,
+// and src/middleware.ts rewrites here when a page's own 404 response comes
+// back as plain text (see the guard in src/middleware.ts for why).
+//
+// It stays inside the normal dashboard chrome — the sidebar and the way
+// back — rather than the bare "Not found" text a plain Response produces,
+// which had no menu and no way out.
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import { BUTTON, CARD, CARD_TITLE, HINT, PAGE } from '@lib/ui';
+
+Astro.response.status = 404;
+---
+
+<DashboardLayout title="Not found · Al Barakah MCSL" heading="Not found">
+  <div class={PAGE.form}>
+    <div class={`${CARD} text-center`}>
+      <h2 class={CARD_TITLE}>Not found</h2>
+      <p class={`mt-2 ${HINT}`}>
+        This page does not exist, or what it showed has been removed.
+      </p>
+      <div class="mt-6 flex justify-center">
+        <a href="/dashboard" class={BUTTON}>
+          Back to dashboard
+        </a>
+      </div>
+    </div>
+  </div>
+</DashboardLayout>

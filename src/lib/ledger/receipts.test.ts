@@ -379,7 +379,7 @@ describe('voiding a transaction receipt (S-1603)', () => {
     });
     const kinds = result.rows.map(r => r.Kind);
     expect(kinds).toEqual(
-      expect.arrayContaining(['deposit', 'withdrawal', 'transfer'])
+      expect.arrayContaining(['Deposit', 'Withdrawal', 'Transfer'])
     );
     expect(result.columns.map(c => c.key)).toEqual(
       expect.arrayContaining([

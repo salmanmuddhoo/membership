@@ -5094,6 +5094,48 @@ name (`rolesHoldingPermission`, `src/lib/access/holders.ts`).
 - **The Deposit, Withdrawal and Transfer lookups** suggest matching
   accounts, by number or by holder name, as the officer types.
 
+# Regression run fixes (QA-01 to QA-38) ✅
+
+The manual regression run of 23 September 2026 reported 38 findings. Fixed
+here, with the business's decisions where the report left a choice open:
+
+- **Money.** Back, then Post, no longer records a deposit, withdrawal or
+  transfer twice: the key a form was posted with is put back when the
+  officer returns by Back (`IdempotencyKeyField`). A new member's opening
+  deposits, carried from the fee receipt, count once — not again on the
+  approver's drawer or the cash reconciliation (migration 0096) — and share
+  the receipt's number without reading as a duplicate. An exit that has paid
+  out is never offered Reverse (undoing it is a rejoin or a reopen), and a
+  reversal on a closed account says so in words. A transfer is known by its
+  TR reference on the list, the statement, the receipt and the detail page;
+  the TX reference stays each leg's key for the audit trail. An exit's last
+  step is **Disbursement** and its button **Disburse**, like any money paid
+  out (business decision); "Received from" on a Minor's or a Corporate
+  member's deposit names the guardian or the contact person.
+- **Applications.** Autosave is back, on leaving a changed field and on
+  leaving the page (business decision; see docs/applications.md). An
+  approved application no longer flags its own member's NIC; a choice sent
+  in another case ("female") is stored as the form writes it; the guardian
+  search offers active members and applications in progress, never a
+  resigned member; a President who has signed off on a quorum step is not
+  offered Approve again.
+- **Configuration and jobs.** Reactivating a member counts as activity, so
+  the next dormancy run leaves them active. A migration import checks its
+  control totals against the file before anything is written. A new
+  approval-matrix rule goes first (business decision). The Regional Manager
+  handles applications sent from the app, end to end (migration 0097,
+  business decision). A built server reads its own settings: what `.env`
+  held at build time never overrides them (`pickEnv`).
+- **Screens.** Status codes read as words, amounts as MUR 1,234.00, a
+  missing page has a proper not-found page, documents reports name the
+  transaction, SharePoint being unreachable says so, the filed file's
+  version follows what was filed rather than every attempt, and the
+  remaining labels and print layouts are corrected.
+
+Not changed, by decision: WhatsApp template names (QA-33) are for the
+Society to set to what Meta approves; the member app's own findings
+(QA-35 to QA-37) belong to its repository.
+
 # Open values that later stories depend on
 
 Each is absorbed by configuration, so none blocks the start of development.

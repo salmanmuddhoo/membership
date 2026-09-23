@@ -191,25 +191,26 @@ describe('an administrator changes the matrix', () => {
       },
       actor
     );
-    // Added last, so it does not match yet; moved to the top, it does.
+    // Added first, so it matches at once; moved below the bands, it no
+    // longer does.
     const before = await routing.resolveRoute({
       kind: 'deposit',
       accountTypeId: msa,
       amountCents: cents(10),
       roleCodes: ['clerk'],
     });
-    expect(before.definition).toBeNull();
+    expect(before.rule?.id).toBe(id);
+    expect(before.definition?.code).toBe('transaction_deposit');
 
-    await config.moveApprovalRule(id, 'up', actor);
-    await config.moveApprovalRule(id, 'up', actor);
+    await config.moveApprovalRule(id, 'down', actor);
+    await config.moveApprovalRule(id, 'down', actor);
     const clerkOnMsa = await routing.resolveRoute({
       kind: 'deposit',
       accountTypeId: msa,
       amountCents: cents(10),
       roleCodes: ['clerk'],
     });
-    expect(clerkOnMsa.rule?.id).toBe(id);
-    expect(clerkOnMsa.definition?.code).toBe('transaction_deposit');
+    expect(clerkOnMsa.definition).toBeNull();
 
     // Not a Clerk, or not the MSA: the rule does not fit and the next does.
     const officerOnMsa = await routing.resolveRoute({

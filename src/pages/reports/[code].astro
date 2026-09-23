@@ -9,7 +9,11 @@
 // whole of /reports, and a URL typed by hand must not be a way past the
 // permission that governs the data underneath.
 import DashboardLayout from '@layouts/DashboardLayout.astro';
-import { reportByCode, type FilterValues } from '@lib/reports/definitions';
+import {
+  reportByCode,
+  type FilterValues,
+  type ReportColumn,
+} from '@lib/reports/definitions';
 import {
   reportFileName,
   reportToWorkbook,
@@ -83,6 +87,27 @@ const exportHref = () => {
   const next = new URLSearchParams(params);
   next.set('export', 'xlsx');
   return `/reports/${report.code}?${next.toString()}`;
+};
+
+// A numeric column of money (Rs), not a count (payments, days, movements): a
+// figure like this reads with thousands separated and two decimals on
+// screen, the same as everywhere else money is shown. The export keeps the
+// bare number — a spreadsheet is summed, not read.
+const MONEY_COLUMN =
+  /amount|balance|total|float|cash in|cash out|expected|counted|over.?short|held|minimum|headroom|benefit/i;
+const isMoneyColumn = (column: ReportColumn) =>
+  Boolean(column.numeric) && MONEY_COLUMN.test(column.label);
+const amountFormat = new Intl.NumberFormat('en-GB', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+const cellText = (column: ReportColumn, value: string | number | null) => {
+  if (value === null) return '';
+  if (isMoneyColumn(column)) {
+    const asNumber = Number(value);
+    if (Number.isFinite(asNumber)) return amountFormat.format(asNumber);
+  }
+  return value;
 };
 ---
 
@@ -192,7 +217,7 @@ const exportHref = () => {
                             : undefined
                         }
                       >
-                        {row[column.key] ?? ''}
+                        {cellText(column, row[column.key] ?? null)}
                       </td>
                     ))}
                   </tr>

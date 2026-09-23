@@ -31,6 +31,7 @@ import {
   getAccessToken,
   getGraphConfig,
   GraphError,
+  reachGraph,
   type GraphConfig,
 } from './graph';
 
@@ -142,7 +143,7 @@ export async function createUploadTicket(
   const itemPath = `${request.folderPath}/${fileName}`;
   const token = await getAccessToken(config);
 
-  const response = await fetch(
+  const response = await reachGraph(
     `${config.graphBaseUrl}/drives/${config.driveId}/root:/${encodeURI(itemPath)}:/createUploadSession`,
     {
       method: 'POST',

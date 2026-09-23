@@ -1422,7 +1422,18 @@ export function normalise(
         throw error;
       }
     } else if (field.dataType === 'choice') {
-      if (field.choices.length > 0 && !field.choices.includes(raw)) {
+      // A choice matched regardless of case, and stored as the choice is
+      // written: the member app sends "female", the form knows "Female"
+      // (QA-25). Stored raw, it showed as blank on the officer's form, and
+      // saving that form lost it.
+      const canonical = field.choices.find(
+        choice => choice.toLowerCase() === raw.toLowerCase()
+      );
+      if (canonical) {
+        out[field.fieldKey] = canonical;
+        continue;
+      }
+      if (field.choices.length > 0) {
         errors.push({
           subject: field.subject,
           ordinal: 1,
@@ -1758,8 +1769,11 @@ async function findNicHolder(
         and p.subject = 'applicant' and p.ordinal = 1
       where lower(p.values->>'nic') = lower($1)
         and ($2::uuid is null or m.id <> $2::uuid)
+        -- The member this very application became once approved: it is
+        -- the applicant, not someone else holding the NIC (QA-07).
+        and m.application_id is distinct from $3::uuid
       limit 1`,
-    [nic, excludeMemberId]
+    [nic, excludeMemberId, excludeApplicationId]
   );
   if (member.rowCount! > 0) {
     return { label: `member ${member.rows[0].member_no}` };
@@ -1775,8 +1789,9 @@ async function findNicHolder(
       where lower(p.values->>'nic') = lower($1)
         and ($2::uuid is null or c.id <> $2::uuid)
         and ($3::uuid is null or c.status <> 'converted')
+        and c.application_id is distinct from $4::uuid
       limit 1`,
-    [nic, excludeCustomerId, excludeMemberId]
+    [nic, excludeCustomerId, excludeMemberId, excludeApplicationId]
   );
   if (customer.rowCount! > 0) {
     const name = (customer.rows[0].name ?? '').trim();
@@ -1866,6 +1881,11 @@ export async function searchGuardianCandidates(
        left join application_party p
          on p.application_id = a.id and p.subject = 'applicant' and p.ordinal = 1
       where t.code = 'individual'
+        -- Only a member who can be linked: submission refuses any other
+        -- (problemsBlockingSubmission), so offering a resigned or dormant
+        -- one only to refuse it later helps nobody (QA-27). Their rejoin
+        -- application, if one is under way, is offered by the second half.
+        and m.status = 'active'
         and (strpos(lower(coalesce(p.values->>'surname', '')), lower($1)) > 0
              or strpos(lower(coalesce(p.values->>'name', '')), lower($1)) > 0
              or strpos(lower(coalesce(p.values->>'nic', '')), lower($1)) > 0

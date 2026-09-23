@@ -2730,8 +2730,11 @@ export async function createApprovalRule(
       `insert into approval_rule
          (kind, account_type_id, initiating_role_id, amount_from, amount_to,
           workflow_definition_id, note, is_active, sort_order)
+       -- First, not last (QA-29): the first rule that matches decides, so
+       -- a rule added below the general amount bands could never apply.
+       -- The administrator moves it down from here if it should not win.
        values ($1, $2, $3, $4, $5, $6, $7, $8,
-               coalesce((select max(sort_order) + 10 from approval_rule
+               coalesce((select min(sort_order) - 10 from approval_rule
                           where kind = $1), 10))
        returning id`,
       [

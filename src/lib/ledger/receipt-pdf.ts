@@ -62,8 +62,11 @@ export function receiptFacts(
   const rows: { label: string; value: string }[] = [
     {
       label: moneyIn ? 'Received from' : 'Paid to',
-      value: t.payeeName || holder,
+      value: t.payeeName || receipt.depositorName || holder,
     },
+    ...(receipt.depositorName
+      ? [{ label: 'On behalf of', value: holder }]
+      : []),
     { label: 'Account', value: `${t.accountNo} · ${t.accountTypeName}` },
   ];
   if (otherSide && !t.payeeName) {
@@ -80,7 +83,7 @@ export function receiptFacts(
   }
   rows.push({
     label: 'Transaction',
-    value: [t.reference, t.transferReference].filter(Boolean).join(' · '),
+    value: t.displayReference,
   });
   if (t.method !== 'internal_transfer') {
     rows.push({

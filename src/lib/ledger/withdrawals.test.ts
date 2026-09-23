@@ -291,17 +291,17 @@ describe('recording a withdrawal', () => {
     // More than is there.
     await expect(
       attempt({ accountId: msa, amount: '28000.01', method: 'cash' })
-    ).rejects.toThrowError(/Only 28000.00 is available/);
+    ).rejects.toThrowError(/Only MUR 28,000.00 is available/);
     // The floor (decision 12): Shares keeps its 5,000.
     await expect(
       attempt({ accountId: shares, amount: '3000.01', method: 'cash' })
     ).rejects.toThrowError(
-      /must keep at least 5000.00; only 3000.00 can be withdrawn/
+      /must keep at least MUR 5,000.00; only MUR 3,000.00 can be withdrawn/
     );
     // The type's maximum.
     await expect(
       attempt({ accountId: msa, amount: '20000.01', method: 'cash' })
-    ).rejects.toThrowError(/cannot exceed 20000.00/);
+    ).rejects.toThrowError(/cannot exceed MUR 20,000.00/);
     // The method's reference, because it pays out now.
     await expect(
       attempt({

@@ -10,13 +10,14 @@ import {
   buildImportTemplate,
   checksumBuffer,
   eligibleMembershipTypesForMigration,
+  fileBalanceCents,
   importMembers,
   parseImportFile,
   validateRows,
   type ImportOutcome,
   type RowError,
 } from '@lib/migration/members';
-import { fromCents, toCents } from '@lib/payments/money';
+import { formatMoney, fromCents, toCents } from '@lib/payments/money';
 import {
   BUTTON,
   CARD,
@@ -53,6 +54,10 @@ let rowErrors: RowError[] = [];
 let outcome: ImportOutcome | null = null;
 // S-710 reconciliation — set when the operator supplies a control total and
 // it does not match what was actually imported.
+// What the uploaded file carries, every balance on every row — shown
+// rather than what a run happened to write, which on a re-upload leaves
+// out the balances already on file and read as a different total (QA-22).
+let fileBalance = 0;
 let reconciliation: {
   expectedRows: number | null;
   expectedBalance: number | null; // in cents
@@ -84,11 +89,50 @@ if (Astro.request.method === 'POST') {
           error = 'No rows were found in that file.';
         } else {
           const { valid, errors } = await validateRows(rows);
-          if (errors.length > 0) {
+          // S-710 control totals, checked against the file before anything
+          // is written (QA-22): a mismatch means the file is not the one
+          // the totals describe, and importing it first — then saying so —
+          // left the operator to undo rows by hand.
+          const expectedRows = expectedRowsRaw ? Number(expectedRowsRaw) : null;
+          let expectedBalance: number | null = null;
+          let totalsUnreadable = false;
+          if (expectedRows !== null && !Number.isInteger(expectedRows)) {
+            totalsUnreadable = true;
+          }
+          if (expectedBalanceRaw) {
+            try {
+              expectedBalance = toCents(expectedBalanceRaw);
+            } catch {
+              totalsUnreadable = true;
+            }
+          }
+          fileBalance = fileBalanceCents(rows);
+          const messages: string[] = [];
+          if (expectedRows !== null && rows.length !== expectedRows) {
+            messages.push(
+              `Expected ${expectedRows} row${expectedRows === 1 ? '' : 's'}, the file has ${rows.length}.`
+            );
+          }
+          if (expectedBalance !== null && fileBalance !== expectedBalance) {
+            messages.push(
+              `Expected balance ${formatMoney(fromCents(expectedBalance))}, the file has ${formatMoney(fromCents(fileBalance))}.`
+            );
+          }
+          if (totalsUnreadable) {
+            error =
+              'Enter the expected rows as a whole number and the expected balance as an amount.';
+          } else if (errors.length > 0) {
             rowErrors = errors;
             error =
               `${errors.length} row${errors.length === 1 ? '' : 's'} ` +
               'need fixing before anything is imported. Nothing was written.';
+          } else if (messages.length > 0) {
+            reconciliation = {
+              expectedRows,
+              expectedBalance,
+              passed: false,
+              messages,
+            };
           } else {
             outcome = await importMembers(
               valid,
@@ -96,42 +140,12 @@ if (Astro.request.method === 'POST') {
               principal.permissions,
               checksum
             );
-
-            // S-710: compare against operator-supplied control totals.
-            const expectedRows = expectedRowsRaw
-              ? parseInt(expectedRowsRaw, 10)
-              : null;
-            let expectedBalance: number | null = null;
-            if (expectedBalanceRaw) {
-              try {
-                expectedBalance = toCents(expectedBalanceRaw);
-              } catch {
-                // Ignore a non-numeric entry — treat as no control total.
-              }
-            }
             if (expectedRows !== null || expectedBalance !== null) {
-              const messages: string[] = [];
-              if (
-                expectedRows !== null &&
-                outcome.imported.length !== expectedRows
-              ) {
-                messages.push(
-                  `Expected ${expectedRows} row${expectedRows === 1 ? '' : 's'}, imported ${outcome.imported.length}.`
-                );
-              }
-              if (
-                expectedBalance !== null &&
-                outcome.totalBalance !== expectedBalance
-              ) {
-                messages.push(
-                  `Expected balance Rs ${fromCents(expectedBalance)}, imported Rs ${fromCents(outcome.totalBalance)}.`
-                );
-              }
               reconciliation = {
                 expectedRows,
                 expectedBalance,
-                passed: messages.length === 0,
-                messages,
+                passed: true,
+                messages: [],
               };
             }
           }
@@ -217,9 +231,11 @@ const customerCount =
           </section>
         )}
 
-        {outcome && reconciliation && !reconciliation.passed && (
+        {reconciliation && !reconciliation.passed && (
           <section class={CARD_DANGER}>
-            <h2 class={CARD_DANGER_TITLE}>Reconciliation failed</h2>
+            <h2 class={CARD_DANGER_TITLE}>
+              Reconciliation failed. Nothing was written.
+            </h2>
             <ul class="mt-2 space-y-1 text-sm text-red-800 dark:text-red-200">
               {reconciliation.messages.map(m => (
                 <li>{m}</li>
@@ -240,8 +256,8 @@ const customerCount =
               <p class={`${MUTED} mt-1`}>
                 {memberCount} member{memberCount === 1 ? '' : 's'},{' '}
                 {customerCount} non-member{customerCount === 1 ? '' : 's'}
-                {outcome.totalBalance > 0 && (
-                  <> · Rs {fromCents(outcome.totalBalance)} total balance</>
+                {fileBalance > 0 && (
+                  <> · {formatMoney(fromCents(fileBalance))} total balance</>
                 )}
               </p>
             )}

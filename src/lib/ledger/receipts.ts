@@ -14,6 +14,7 @@ import { checkSegregation } from '../admin/segregation';
 import { query, withTransaction } from '../db/pool';
 import { loadTransaction, type TransactionSummary } from './review';
 import { KIND_WORDS, notifyReceiptVoided } from './void-notifications';
+import { depositorForApplication } from '../applications/depositor';
 
 export class ReceiptError extends Error {
   constructor(
@@ -40,6 +41,11 @@ export interface TransactionReceipt {
   // transaction that posted at once).
   capturedByRole: string | null;
   postedByName: string | null;
+  // Who handed the money over, where that is not the holder: a Minor's
+  // guardian, a Corporate member's contact person (QA-23) — the same rule
+  // the fee receipt and the Cash Deposit Form follow (depositorFor). Null
+  // for anything but money in, and where it is the holder themselves.
+  depositorName: string | null;
 }
 
 // By the transaction's id, its receipt number's id, or the receipt number
@@ -76,6 +82,23 @@ export async function loadTransactionReceipt(
   if (!row || (row.state !== 'issued' && row.state !== 'void')) return null;
   const transaction = await loadTransaction(row.transaction_id);
   if (!transaction) return null;
+  let depositorName: string | null = null;
+  if (transaction.kind === 'deposit' && !transaction.payeeName) {
+    const holder = await query<{ application_id: string | null }>(
+      `select coalesce(m.application_id, c.application_id) as application_id
+         from transaction t
+         left join member m on m.id = t.member_id
+         left join customer c on c.id = t.customer_id
+        where t.id = $1`,
+      [transaction.id]
+    );
+    const depositor = await depositorForApplication(
+      holder.rows[0]?.application_id ?? null
+    );
+    if (depositor.name && depositor.name !== transaction.holderName) {
+      depositorName = depositor.name;
+    }
+  }
   return {
     transaction,
     receiptNumberId: row.receipt_number_id,
@@ -85,6 +108,7 @@ export async function loadTransactionReceipt(
     voidedAt: row.state === 'void' ? row.settled_at : null,
     capturedByRole: row.captured_by_role,
     postedByName: row.posted_by_name,
+    depositorName,
   };
 }
 

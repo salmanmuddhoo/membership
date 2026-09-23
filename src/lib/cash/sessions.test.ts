@@ -391,22 +391,22 @@ describe('the cash drawer (S-2001, S-2002)', () => {
       Movements: 1,
     });
     expect(result.summary).toBe(
-      '2 drawer(s): 1 closed, 1 open; cash in Rs 9500.00, out Rs 300.00; ' +
-        'counted Rs 14150.00 against Rs 14200.00 expected, short by Rs 50.00. ' +
-        '1 cash movement(s) with no drawer open: Rs 50.00 in, Rs 0.00 out.'
+      '2 drawer(s): 1 closed, 1 open; cash in MUR 9,500.00, out MUR 300.00; ' +
+        'counted MUR 14,150.00 against MUR 14,200.00 expected, short by MUR 50.00. ' +
+        '1 cash movement(s) with no drawer open: MUR 50.00 in, MUR 0.00 out.'
     );
 
     // By cashier, and outside the period.
     const mine = await report.run({ cashier: 'treas' });
     expect(mine.rows).toHaveLength(1);
     expect(mine.summary).toBe(
-      '0 drawer(s): 0 closed, 0 open; cash in Rs 0.00, out Rs 0.00. ' +
-        '1 cash movement(s) with no drawer open: Rs 50.00 in, Rs 0.00 out.'
+      '0 drawer(s): 0 closed, 0 open; cash in MUR 0.00, out MUR 0.00. ' +
+        '1 cash movement(s) with no drawer open: MUR 50.00 in, MUR 0.00 out.'
     );
     const none = await report.run({ from: '2000-01-01', to: '2000-01-02' });
     expect(none.rows).toEqual([]);
     expect(none.summary).toBe(
-      '0 drawer(s): 0 closed, 0 open; cash in Rs 0.00, out Rs 0.00.'
+      '0 drawer(s): 0 closed, 0 open; cash in MUR 0.00, out MUR 0.00.'
     );
 
     // A fee receipt voided after the drawer closed: the record stands, the

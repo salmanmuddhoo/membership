@@ -4,6 +4,7 @@ import { listMembers, type MemberListAccount } from '@lib/members/create';
 import { countPendingDetailsRequests } from '@lib/members/details-requests';
 import { listAccountTypes } from '@lib/config/reference';
 import { formatMoney } from '@lib/payments/money';
+import { statusLabel } from '@lib/members/labels';
 import {
   PAGE,
   CARD,
@@ -188,7 +189,7 @@ function accountButtonClasses(account: MemberListAccount): string {
                   <td
                     class={`${TD} text-neutral-600 dark:text-neutral-300 ${ROW_HOVER}`}
                   >
-                    {m.status}
+                    {statusLabel(m.status)}
                   </td>
                   <td
                     class={`${TD} text-xs text-neutral-500 dark:text-neutral-400 ${ROW_HOVER}`}
@@ -321,6 +322,13 @@ function accountButtonClasses(account: MemberListAccount): string {
 
   if (dialog && dialogName && dialogNo && dialogBody && dialogClose) {
     dialogClose.addEventListener('click', () => dialog.close());
+    // QA-15: a click on the backdrop closes the dialog too, not only Escape
+    // and Close. A click landing on the dialog's own content bubbles with a
+    // target inside it; one on the backdrop bubbles with the dialog element
+    // itself as the target, which is how the two are told apart here.
+    dialog.addEventListener('click', e => {
+      if (e.target === dialog) dialog.close();
+    });
 
     const amountFormat = (amount: string) =>
       Number(amount).toLocaleString('en-US', {

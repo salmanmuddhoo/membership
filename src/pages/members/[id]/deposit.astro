@@ -2,6 +2,7 @@
 // Record a deposit into one of a member's (or a customer's) accounts
 // (S-1305, S-1306, S-1308). The rules are ledger/deposits.ts's; this page
 // gathers the form, shows what was refused, and shows the receipt.
+import IdempotencyKeyField from '@components/IdempotencyKeyField.astro';
 import { canTransact } from '@lib/members/status';
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import {
@@ -152,7 +153,13 @@ if (Astro.request.method === 'POST') {
       );
     } catch (err) {
       if (err instanceof DepositError) {
-        error = err.message;
+        // A conflict here is this form posted a second time — Back, then
+        // a change and Post again — under the key it was first posted
+        // with (QA-01). The key is not something the officer knows about.
+        error =
+          err.reason === 'conflict'
+            ? 'This deposit was already recorded. Open a new deposit form to record another.'
+            : err.message;
       } else {
         console.error('[members/deposit]', err);
         error = 'Something went wrong. Please try again.';
@@ -281,11 +288,7 @@ const initialCents = /^\d{1,12}(\.\d{1,2})?$/.test(values.amount ?? '')
           data-cash-maximum={cashMax}
           class={FORM_CARD}
         >
-          <input
-            type="hidden"
-            name="idempotencyKey"
-            value={values.idempotencyKey}
-          />
+          <IdempotencyKeyField value={values.idempotencyKey} />
 
           <label class={LABEL}>
             Account

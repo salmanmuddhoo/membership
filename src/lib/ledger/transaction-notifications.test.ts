@@ -674,15 +674,15 @@ describe('the Section 13 reports (S-1806)', () => {
     expect(cash.rows.length).toBeGreaterThan(0);
     expect(cash.rows.every(r => r.Method === 'Cash')).toBe(true);
     expect(cash.rows.every(r => r.Officer === 'Officer')).toBe(true);
-    const refused = all.rows.find(r => r.Status === 'rejected');
+    const refused = all.rows.find(r => r.Status === 'Rejected');
     expect(refused).toMatchObject({
       Kind: 'Withdrawal',
       Amount: '110000.00',
       Posted: null,
       Receipt: '',
     });
-    expect(all.summary).toMatch(/posted: Deposit Rs 28[0-9,]*\.00/);
-    expect(all.summary).toContain('Withdrawal Rs 120600.00');
+    expect(all.summary).toMatch(/posted: Deposit MUR 28[0-9,]*\.00/);
+    expect(all.summary).toContain('Withdrawal MUR 120,600.00');
     const none = await report.run({ from: '2000-01-01', to: '2000-01-02' });
     expect(none.rows).toEqual([]);
     expect(none.summary).toBe('0 transaction(s).');
@@ -700,14 +700,17 @@ describe('the Section 13 reports (S-1806)', () => {
       Reference: waiting.reference,
       Kind: 'Withdrawal',
       Holder: 'Amina Test',
-      Status: 'submitted',
+      Status: 'Submitted',
       'Waiting at': 'Secretary review · Secretary',
       Officer: 'Officer',
       Decided: null,
       Days: 0,
     });
     const decided = result.rows.filter(r => r.Decided !== null);
-    expect(decided.map(r => r.Status).sort()).toEqual(['posted', 'rejected']);
+    expect(decided.map(r => r.Status).sort()).toEqual([
+      'Disbursed',
+      'Rejected',
+    ]);
     expect(decided.every(r => r['Waiting at'] === '')).toBe(true);
     expect(result.summary).toBe(
       '1 waiting (oldest 0 day(s)); 2 decided, 0.0 day(s) from submission to decision on average.'
@@ -731,7 +734,7 @@ describe('the Section 13 reports (S-1806)', () => {
         Type: 'Education Savings',
         'Member no': expect.any(String),
         Holder: 'Amina Test',
-        Status: 'active',
+        Status: 'Active',
         Balance: '1300.00',
         Minimum: '1000.00',
         Headroom: '300.00',
@@ -739,7 +742,7 @@ describe('the Section 13 reports (S-1806)', () => {
       },
     ]);
     expect(near.summary).toBe(
-      '1 account(s) within Rs 500.00 of their minimum, 0 at or below it.'
+      '1 account(s) within MUR 500.00 of their minimum, 0 at or below it.'
     );
     expect((await report.run({ margin: '10' })).rows).toEqual([]);
     const wide = await report.run({ margin: '200,000' });
@@ -753,7 +756,7 @@ describe('the Section 13 reports (S-1806)', () => {
     const report = reports.reportByCode('accounts')!;
     const active = await report.run({ status: 'active' });
     expect(active.rows).toHaveLength(3);
-    expect(active.summary).toMatch(/^3 account\(s\), Rs \d+\.\d\d held\.$/);
+    expect(active.summary).toMatch(/^3 account\(s\), MUR [\d,]+\.\d\d held\.$/);
     const rich = await report.run({ balanceFrom: '100000' });
     expect(rich.rows).toHaveLength(1);
     expect(rich.rows[0].Type).toBe('Multiplier Savings Account');

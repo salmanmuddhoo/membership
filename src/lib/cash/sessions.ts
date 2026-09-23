@@ -206,6 +206,9 @@ export async function drawerFigures(sessionId: string): Promise<DrawerFigures> {
          on fe.transaction_id = t.id and fe.event_type = 'transaction.posted'
        left join receipt_number rn on rn.id = t.receipt_number_id
       where t.cash_session_id = $1 and t.status = 'posted'
+        -- Carried from a fee receipt, which is already in the drawer as
+        -- itself (QA-02, 0096).
+        and t.payment_line_id is null and t.payment_account_line_id is null
      union all
      select 'payment', p.id, coalesce(a.reference, ''),
             case p.kind when 'refund' then 'Fee refund' else 'Fee receipt' end,

@@ -467,7 +467,7 @@ describe('a resignation (S-1703)', () => {
       ['capture', 'Submitted', 'current'],
       ['secretary_review', 'Secretary review', 'todo'],
       ['president_decision', 'President decision', 'todo'],
-      ['posted', 'Resigned', 'todo'],
+      ['posted', 'Disbursement', 'todo'],
     ]);
 
     const submitted = await resignations.submitResignation(draft.id, clerk);

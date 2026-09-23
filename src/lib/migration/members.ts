@@ -1474,6 +1474,33 @@ function rowBalance(row: ValidatedRow): number {
   return cents;
 }
 
+/**
+ * The balance a file carries, in cents: every Shares, MSA and account
+ * balance on every row, whether or not the record is already on file. The
+ * control total the operator types comes from the old register, which knows
+ * nothing about what an earlier run already imported — so this, not what a
+ * run ends up writing, is what it is compared with (QA-22).
+ */
+export function fileBalanceCents(rows: ParsedRow[]): number {
+  let cents = 0;
+  for (const row of rows) {
+    for (const amount of [
+      row.sharesBalance,
+      row.msaBalance,
+      ...Object.values(row.accountBalances),
+    ]) {
+      if (amount.trim() === '') continue;
+      try {
+        cents += toCents(amount);
+      } catch {
+        // Not an amount: validateRows names the row and the column, and
+        // nothing is imported while it does.
+      }
+    }
+  }
+  return cents;
+}
+
 export async function importMembers(
   rows: ValidatedRow[],
   actor: Actor,

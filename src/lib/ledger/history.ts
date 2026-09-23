@@ -20,6 +20,10 @@ export interface HistoryFilter {
   capturedBy?: string;
   kind?: TransactionRowKind;
   status?: string;
+  // Money out or money in — the split the screen makes between Disbursed
+  // and Posted (paysOut, labels.ts), so a posted row can be filtered the
+  // way it reads (QA-19).
+  direction?: 'out' | 'in';
   // Inclusive dates, on when the transaction was recorded.
   from?: Date;
   to?: Date;
@@ -54,6 +58,11 @@ export async function listTransactions(
     where.push(`t.captured_by = ${add(filter.capturedBy)}`);
   if (filter.kind) where.push(`t.kind = ${add(filter.kind)}`);
   if (filter.status) where.push(`t.status = ${add(filter.status)}`);
+  if (filter.direction) {
+    const out = `(t.kind in ('withdrawal', 'closure', 'resignation', 'demise')
+        or (t.kind = 'transfer_leg' and t.payee_name is not null))`;
+    where.push(filter.direction === 'out' ? out : `not ${out}`);
+  }
   if (filter.from) where.push(`t.created_at >= ${add(filter.from)}`);
   if (filter.to) where.push(`t.created_at <= ${add(filter.to)}`);
   // A transfer once: the credit leg is left out when its debit leg is in

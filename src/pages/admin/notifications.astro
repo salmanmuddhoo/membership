@@ -149,28 +149,51 @@ const STATUS_CLASSES: Record<NotificationStatus, string> = {
 };
 
 // What a message is about, in the words the officer uses for it. The event
-// code is the system's name for the thing, not a person's.
+// code is the system's name for the thing, not a person's. Kept in step
+// with the canonical labels on Configuration -> Notification wording
+// (src/pages/admin/configuration/notification-templates.astro); anything
+// that page does not name falls back to a sentence-cased code.
+const EVENT_LABELS: Record<string, string> = {
+  'application.submitted': 'Application received',
+  'application.returned': 'Application returned for correction',
+  'application.approved': 'Membership approved',
+  'application.rejected': 'Application not approved',
+  'account.submitted': 'Account application received',
+  'account.returned': 'Account application returned for correction',
+  'account.approved': 'Account opened',
+  'account.rejected': 'Account application not approved',
+  'receipt.issued': 'Receipt issued',
+  'closure.submitted': 'Account closure received',
+  'closure.under_review': 'Account closure under review',
+  'closure.approved': 'Account closed and paid out',
+  'closure.rejected': 'Account closure not approved',
+  'resignation.submitted': 'Resignation received',
+  'resignation.under_review': 'Resignation under review',
+  'resignation.approved': 'Resignation approved and paid out',
+  'resignation.rejected': 'Resignation not approved',
+  'demised.submitted': 'Demised claim received',
+  'demised.under_review': 'Demised claim under review',
+  'demised.approved': 'Demised claim paid out',
+  'demised.rejected': 'Demised claim not approved',
+  'deposit.posted': 'Deposit received',
+  'withdrawal.submitted': 'Withdrawal received',
+  'withdrawal.under_review': 'Withdrawal under review',
+  'withdrawal.disbursed': 'Withdrawal paid out',
+  'withdrawal.rejected': 'Withdrawal not approved',
+  'transfer.posted': 'Transfer completed',
+  'balance.near_floor': 'Balance near its minimum',
+  'transaction.awaiting': 'Staff: transaction awaiting a step',
+  'transaction.returned': 'Staff: transaction returned to its captor',
+  'receipt.voided': 'Staff: receipt voided',
+};
+
+function sentenceCase(eventCode: string): string {
+  const words = eventCode.split('.').join(' ');
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
 function describeEventCode(eventCode: string): string {
-  switch (eventCode) {
-    case 'application.submitted':
-      return 'Application received';
-    case 'application.returned':
-      return 'Application returned for correction';
-    case 'application.approved':
-      return 'Membership approved';
-    case 'application.rejected':
-      return 'Application not approved';
-    case 'account.submitted':
-      return 'Account application received';
-    case 'account.returned':
-      return 'Account application returned for correction';
-    case 'account.approved':
-      return 'Account opened';
-    case 'account.rejected':
-      return 'Account application not approved';
-    default:
-      return eventCode.replace(/\./g, ' · ');
-  }
+  return EVENT_LABELS[eventCode] ?? sentenceCase(eventCode);
 }
 
 const describeEvent = (row: NotificationLogRow) =>

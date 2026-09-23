@@ -208,7 +208,9 @@ describe('a closure request', () => {
     });
     expect(steps.find(s => s.key === 'signature')?.problem).toBe(true);
     expect(steps.find(s => s.key === 'capture')?.label).toBe('Submitted');
-    expect(steps.find(s => s.key === 'posted')?.label).toBe('Closed');
+    // The pure prelude names no last step of its own (QA-10); the page
+    // passes finalStepLabel, which says Disbursement for an exit.
+    expect(steps.find(s => s.key === 'posted')?.label).toBe('Posted');
   });
 
   it('has the submission next once the request is signed, and everything done once closed', () => {

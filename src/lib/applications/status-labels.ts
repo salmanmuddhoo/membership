@@ -9,9 +9,12 @@ export const APPLICATION_STATUS_LABELS: Record<string, string> = {
   // rather than for where it came from.
   received: 'Received online',
   new: 'New',
-  // No enabled step produces 'submitted_for_review' (migration 0011: the
-  // Secretary acts on New directly), so it is not offered as a filter; an
-  // application somehow at it shows its code.
+  // No enabled step produces this in the default chain (migration 0011: the
+  // Secretary acts on New directly) — only a Secretary review re-enabled
+  // after being configured off would ever leave an application here — but
+  // the label is kept so that rare case reads like the rest of the chain
+  // rather than as a raw code.
+  submitted_for_review: 'With the Secretary',
   submitted_for_approval: 'Submit for Approval',
   rejected: 'Rejected',
   returned: 'Returned for Correction',

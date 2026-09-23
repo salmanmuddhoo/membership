@@ -3,6 +3,7 @@
 // (S-1501, S-1502). The rules are ledger/withdrawals.ts's; this page gathers
 // the form, shows the balance and what is available beside it, and shows
 // the receipt or the step it waits at.
+import IdempotencyKeyField from '@components/IdempotencyKeyField.astro';
 import { canTransact } from '@lib/members/status';
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import {
@@ -116,7 +117,13 @@ if (Astro.request.method === 'POST') {
       withdrawal = await recordWithdrawal(values, principal);
     } catch (err) {
       if (err instanceof WithdrawalError) {
-        error = err.message;
+        // A conflict here is this form posted a second time — Back, then
+        // a change and Post again — under the key it was first posted
+        // with (QA-01). The key is not something the officer knows about.
+        error =
+          err.reason === 'conflict'
+            ? 'This withdrawal was already recorded. Open a new withdrawal form to record another.'
+            : err.message;
       } else {
         console.error('[members/withdraw]', err);
         error = 'Something went wrong. Please try again.';
@@ -242,11 +249,7 @@ const initialCents = /^\d{1,12}(\.\d{1,2})?$/.test(values.amount ?? '')
           initialAmountCents={initialCents}
         />
         <form method="post" data-withdrawal-form class={FORM_CARD}>
-          <input
-            type="hidden"
-            name="idempotencyKey"
-            value={values.idempotencyKey}
-          />
+          <IdempotencyKeyField value={values.idempotencyKey} />
 
           <label class={LABEL}>
             Account

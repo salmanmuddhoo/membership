@@ -21,7 +21,11 @@ export type Decision =
 // Routes that require no permission beyond being a signed-in, active user.
 // Kept explicit and small: everything here is readable by every member of
 // staff, so each entry should be obviously harmless.
-const OPEN_TO_ALL_USERS: ReadonlySet<string> = new Set(['/dashboard']);
+//
+// /404 is here so the not-found page middleware rewrites to (see
+// src/middleware.ts) never itself hits an authorisation refusal — every
+// signed-in user is allowed to be told a record or a URL does not exist.
+const OPEN_TO_ALL_USERS: ReadonlySet<string> = new Set(['/dashboard', '/404']);
 
 // The permission each protected route requires. A route absent from both this
 // map and the set above is undeclared, and undeclared means denied.

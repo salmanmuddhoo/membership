@@ -18,6 +18,7 @@ function receipt(overrides: Record<string, unknown> = {}): TransactionReceipt {
     voidedAt: null,
     capturedByRole: 'Account Officer',
     postedByName: 'Zainab Officer',
+    depositorName: null,
     transaction: {
       id: 'tx',
       reference: 'DEP-2026-000045',
@@ -39,6 +40,7 @@ function receipt(overrides: Record<string, unknown> = {}): TransactionReceipt {
       postedAt: new Date('2026-09-22T08:05:00Z'),
       balanceAfter: '12000.00',
       transferReference: null,
+      displayReference: 'DEP-2026-000045',
       legDirection: null,
       payeeName: null,
       counterpartAccountNo: null,
@@ -78,6 +80,7 @@ describe('the receipt as a PDF', () => {
         method: 'internal_transfer',
         legDirection: 'debit',
         transferReference: 'TRF-2026-000009',
+        displayReference: 'TRF-2026-000009',
         counterpartHolderName: 'Yusuf Test',
         counterpartAccountNo: 'MSA-0002',
         counterpartAccountTypeName: 'Member Savings Account',
@@ -93,7 +96,8 @@ describe('the receipt as a PDF', () => {
     expect(rows[2].value).toBe(
       'Yusuf Test · MSA-0002 · Member Savings Account'
     );
-    expect(rows[3].value).toBe('DEP-2026-000045 · TRF-2026-000009');
+    // A transfer by its own reference alone (QA-11).
+    expect(rows[3].value).toBe('TRF-2026-000009');
 
     const paid = receiptFacts(
       receipt({ kind: 'withdrawal', payeeName: 'Ismail Nominee' })

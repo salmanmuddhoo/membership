@@ -10,6 +10,7 @@ import { pendingTransactionCount } from '@lib/ledger/review';
 const LOGIN_PATH = '/login';
 const HOME_PATH = '/dashboard';
 const DENIED_PATH = '/denied';
+const NOT_FOUND_PATH = '/404';
 const API_PREFIX = '/api/';
 // The member app's surface. No staff cookie is ever presented here: a public
 // endpoint has no caller to resolve, and a member endpoint resolves its own
@@ -61,6 +62,22 @@ function clientAddress(headers: Headers): string | null {
   if (!forwarded) return null;
   const first = forwarded.split(',')[0]?.trim();
   return first && first.length <= 45 ? first : null;
+}
+
+// A page that looked a record up and did not find it returns a bare
+// `new Response('Not found', { status: 404 })` (about three dozen pages do
+// this — members, transactions, applications, and the rest of the pages
+// that open on an id). That is HTTP-correct but has none of the app's
+// chrome: no menu, no way back, plain text in the browser's default font.
+// Recognised by content-type rather than by pathname, so it catches every
+// one of those pages without listing them, and never mistakes an actual
+// rendered page — which answers text/html — for one of them. A Response
+// built from a string body carries `text/plain;charset=UTF-8` unless the
+// page set its own Content-Type, and nothing here does.
+function isPlainTextNotFound(response: Response): boolean {
+  if (response.status !== 404) return false;
+  const contentType = response.headers.get('content-type');
+  return contentType === null || contentType.startsWith('text/plain');
 }
 
 // Central authentication and authorisation guard. Runs for every page request:
@@ -200,7 +217,31 @@ const guard = defineMiddleware(async (context, next) => {
     });
   }
 
-  return next();
+  const response = await next();
+
+  // Swap a bare "Not found" for the app's own not-found page, still at 404,
+  // so the officer keeps the sidebar and a way back instead of monospace
+  // text with neither. `context.rewrite` re-enters this same middleware
+  // with pathname set to /404 (declared in OPEN_TO_ALL_USERS, so it is never
+  // itself denied) and renders that page with `context.locals.principal`
+  // already set above, which is how its layout still shows who is signed
+  // in. The `pathname !== NOT_FOUND_PATH` guard, and the fact that the
+  // rendered page answers text/html rather than text/plain, are what stop
+  // that re-entry from rewriting again.
+  if (pathname !== NOT_FOUND_PATH && isPlainTextNotFound(response)) {
+    const notFoundPage = await context.rewrite(NOT_FOUND_PATH);
+    // Rendering a page through `rewrite` resets the response status to 200
+    // before the page's own frontmatter can set it back to 404 — set
+    // explicitly here so a future edit to src/pages/404.astro can never
+    // silently turn this into a 200.
+    return new Response(notFoundPage.body, {
+      status: 404,
+      statusText: notFoundPage.statusText,
+      headers: notFoundPage.headers,
+    });
+  }
+
+  return response;
 });
 
 // Response headers, on every response this app produces.

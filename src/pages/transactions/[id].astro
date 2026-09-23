@@ -28,6 +28,7 @@ import {
   ReversalError,
   reversalOf,
   reverseTransaction,
+  EXIT_KINDS,
 } from '@lib/ledger/reversals';
 import { resubmitTransfer, TransferError } from '@lib/ledger/transfers';
 import { resubmitWithdrawal, WithdrawalError } from '@lib/ledger/withdrawals';
@@ -111,7 +112,7 @@ if (Astro.request.method === 'POST') {
         { outcome, comment: text('comment') },
         principal
       );
-      notice = `${transaction.reference} ${transactionStatusLabel({ ...transaction, status: result.status }).toLowerCase()}.`;
+      notice = `${transaction.displayReference} ${transactionStatusLabel({ ...transaction, status: result.status }).toLowerCase()}.`;
     } else if (intent === 'post') {
       // A withdrawal says how it was paid out (S-1503); a deposit already
       // said how it arrived.
@@ -128,8 +129,8 @@ if (Astro.request.method === 'POST') {
       );
       const word = needsDisbursement(transaction) ? 'disbursed' : 'posted';
       notice = posted.receiptNo
-        ? `${transaction.reference} ${word}. Receipt ${posted.receiptNo}.`
-        : `${transaction.reference} ${word}.`;
+        ? `${transaction.displayReference} ${word}. Receipt ${posted.receiptNo}.`
+        : `${transaction.displayReference} ${word}.`;
     } else if (intent === 'reverse') {
       const result = await reverseTransaction(
         transaction.id,
@@ -137,7 +138,7 @@ if (Astro.request.method === 'POST') {
         principal
       );
       const refs = result.reversals.map(r => r.reference).join(' and ');
-      notice = `${transaction.reference} reversed by ${refs}. Receipt ${result.reversals[0]?.receiptNo ?? ''}.`;
+      notice = `${transaction.displayReference} reversed by ${refs}. Receipt ${result.reversals[0]?.receiptNo ?? ''}.`;
     } else if (intent === 'verify-document' || intent === 'reject-document') {
       const outcome = intent === 'verify-document' ? 'verify' : 'reject';
       const result = await reviewDocument(
@@ -174,8 +175,8 @@ if (Astro.request.method === 'POST') {
               );
       notice =
         result.status === 'posted'
-          ? `${transaction.reference} posted. Receipt ${result.receiptNo}.`
-          : `${transaction.reference} sent back for ${result.currentStepName ?? 'review'}.`;
+          ? `${transaction.displayReference} posted. Receipt ${result.receiptNo}.`
+          : `${transaction.displayReference} sent back for ${result.currentStepName ?? 'review'}.`;
     }
   } catch (err) {
     if (
@@ -207,9 +208,11 @@ const reversedBy =
   transaction.status === 'posted' && transaction.kind !== 'reversal'
     ? await reversalOf(transaction.id)
     : null;
+// Nor is an exit: it closed the accounts it paid out of (QA-04).
 const canReverse =
   transaction.status === 'posted' &&
   transaction.kind !== 'reversal' &&
+  !(EXIT_KINDS as readonly string[]).includes(transaction.kind) &&
   transaction.legDirection !== 'credit' &&
   !reversedBy &&
   principal.permissions.has(PERMISSION_REVERSE);
@@ -320,8 +323,8 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 ---
 
 <DashboardLayout
-  title={`${transaction.reference} · Al Barakah MCSL`}
-  heading={`${KIND_LABELS[transaction.kind] ?? transaction.kind} ${transaction.reference}`}
+  title={`${transaction.displayReference} · Al Barakah MCSL`}
+  heading={`${KIND_LABELS[transaction.kind] ?? transaction.kind} ${transaction.displayReference}`}
 >
   <div class={PAGE.detail}>
     <ChainTimeline steps={timeline} label="Transaction progress" />
@@ -403,11 +406,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                 </>
               ) : (
                 transaction.payeeName
-              )}
-              {transaction.transferReference && (
-                <span class="block text-xs text-neutral-500 dark:text-neutral-400">
-                  Transfer {transaction.transferReference}
-                </span>
               )}
             </dd>
           </>
@@ -730,15 +728,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         )}
         <input type="hidden" name="intent" value="post" />
         <button type="submit" class={BUTTON}>
-          {isDemise
-            ? 'Pay out and settle'
-            : isResignation
-              ? 'Pay out and resign'
-              : isClosure
-                ? 'Pay out and close'
-                : disburses
-                  ? 'Disburse'
-                  : 'Post'}
+          {disburses ? 'Disburse' : 'Post'}
         </button>
       </form>
     )}
