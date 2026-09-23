@@ -65,6 +65,7 @@ async function load() {
   openPool = await import('../db/pool');
   return {
     closures: await import('./closures'),
+    claimants: await import('./claimants'),
     deposits: await import('./deposits'),
     withdrawals: await import('./withdrawals'),
     review: await import('./review'),
@@ -635,7 +636,7 @@ describe('a closure request (S-1702)', () => {
 
 describe('a closure on a death (business decision)', () => {
   it("pays a deceased non-member's balance to their nominee or another person, on a death certificate, and marks them deceased once nothing is left open", async () => {
-    const { closures, deposits, review, timeline } = await load();
+    const { closures, claimants, deposits, review, timeline } = await load();
     const individual = (
       await run(
         appUrl,
@@ -747,18 +748,51 @@ describe('a closure on a death (business decision)', () => {
       )
     ).rejects.toThrowError(/Enter the claimant’s NIC, address, relation/);
 
-    // The nominee by default; no signature to take, the certificate instead.
+    await deposits.recordDeposit(
+      { accountId: investment, amount: '1500', method: 'cash' },
+      officer
+    );
+    const accountStatuses = async () =>
+      (
+        await run(
+          appUrl,
+          `select account_no, status from account
+            where customer_id = $1 order by account_no`,
+          [customer]
+        )
+      ).rows.map(r => `${r.account_no} ${r.status}`);
+
+    // The nominee by default; no signature to take, the certificate
+    // instead. One request covers every account, for their sum (0099).
     const first = await closures.startClosure(
       { accountId: hsa, onDeath: { claimant: { kind: 'nominee' } } },
       clerk
     );
     expect(first).toMatchObject({
       kind: 'closure',
-      amount: '3000.00',
+      amount: '4500.00',
       reason: closures.DECEASED_REASON,
       claimantKind: 'nominee',
       payeeName: 'Bilal Test',
     });
+    expect(
+      (await claimants.accountsClosedOnDeath(first.id)).map(a => [
+        a.accountNo,
+        a.amount,
+      ])
+    ).toEqual([
+      ['HSA0900', '3000.00'],
+      ['INV0900', '1500.00'],
+    ]);
+    // Nothing else closes any of them meanwhile.
+    await expect(
+      closures.startClosure(
+        { accountId: investment, reason: 'Moving away' },
+        clerk
+      )
+    ).rejects.toThrowError(new RegExp(`${first.reference} is already closing`));
+    const onPage = await closures.closuresInFlightFor({ customerId: customer });
+    expect([...onPage.keys()].sort()).toEqual([hsa, investment].sort());
     expect(
       (await closures.closureChecklist(first.id)).map(i => i.documentCode)
     ).toEqual(['death_certificate']);
@@ -767,19 +801,30 @@ describe('a closure on a death (business decision)', () => {
     );
     await fileCertificate(first.id);
     await closures.submitClosure(first.id, clerk);
+    expect(await accountStatuses()).toEqual([
+      'HSA0900 closing',
+      'INV0900 closing',
+    ]);
     expect(
       (await timeline.chainTimeline('transaction', first.id))!
         .slice(0, 2)
         .map(s => s.key)
     ).toEqual(['details', 'documents']);
-    const paid = await approveAndPay(first.id);
-    expect(paid).toMatchObject({ status: 'posted', payeeName: 'Bilal Test' });
-    // Something is still open: the record waits.
-    expect(await customerStatus()).toBe('active');
 
-    // The last account, to another person: once it closes, they are marked
-    // deceased.
-    const last = await closures.startClosure(
+    // Refused, every account is open again.
+    await review.reviewTransaction(
+      first.id,
+      { outcome: 'reject', comment: 'Wrong certificate' },
+      secretary
+    );
+    expect(await accountStatuses()).toEqual([
+      'HSA0900 active',
+      'INV0900 active',
+    ]);
+
+    // Again, to another person, and paid: every account closes under the
+    // one transaction, and the record says they died.
+    const second = await closures.startClosure(
       {
         accountId: investment,
         onDeath: {
@@ -794,11 +839,38 @@ describe('a closure on a death (business decision)', () => {
       },
       clerk
     );
-    await fileCertificate(last.id);
-    await closures.submitClosure(last.id, clerk);
-    expect(await approveAndPay(last.id)).toMatchObject({
+    await fileCertificate(second.id);
+    await closures.submitClosure(second.id, clerk);
+    const paid = await approveAndPay(second.id);
+    expect(paid).toMatchObject({
+      status: 'posted',
+      amount: '4500.00',
       payeeName: 'Khadija Test',
     });
+    expect(await accountStatuses()).toEqual([
+      'HSA0900 closed',
+      'INV0900 closed',
+    ]);
+    const entries = await run(
+      appUrl,
+      `select a.account_no, e.amount::text from account_entry e
+         join account a on a.id = e.account_id
+        where e.transaction_id = $1 order by a.account_no`,
+      [second.id]
+    );
+    expect(entries.rows.map(r => [r.account_no, r.amount])).toEqual([
+      ['HSA0900', '3000.00'],
+      ['INV0900', '1500.00'],
+    ]);
+    expect(
+      (await claimants.accountsClosedOnDeath(second.id)).map(a => [
+        a.accountNo,
+        a.amount,
+      ])
+    ).toEqual([
+      ['HSA0900', '3000.00'],
+      ['INV0900', '1500.00'],
+    ]);
     expect(await customerStatus()).toBe('demised');
   });
 });

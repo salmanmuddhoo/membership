@@ -13,6 +13,7 @@
 // Only an account type that is not the membership's default can close
 // here. Shares and the MSA go together, and taking them away is a
 // resignation (S-1703): the refusal says so by name.
+import type { PoolClient } from 'pg';
 import { canTransact } from '../members/status';
 import { recordAudit } from '../access/audit';
 import type { Principal } from '../access/principal';
@@ -94,8 +95,10 @@ export interface ClosureInput {
   bankAccountId?: string;
   // The holder has died (business decision): a non-member's balances go to
   // their nominee, or to another person the officer records, with a death
-  // certificate instead of the holder's signature. A member who dies is
-  // settled by a demised claim instead (demises.ts).
+  // certificate instead of the holder's signature. The request then covers
+  // every account the holder still has, `accountId` among them, and pays
+  // the sum (migration 0099). A member who dies is settled by a demised
+  // claim instead (demises.ts).
   onDeath?: { claimant: ClaimantInput };
 }
 
@@ -189,6 +192,76 @@ async function closureInFlight(
   return result.rows[0] ?? null;
 }
 
+// A closure on a death on its way for this holder, other than the one
+// asking: it covers every account they have, so it is why none of them
+// can start a closure of its own.
+async function deathClosureInFlight(
+  holder: { memberId: string | null; customerId: string | null },
+  excludingId: string | null
+): Promise<{ id: string; reference: string } | null> {
+  const result = await query<{ id: string; reference: string }>(
+    `select id, reference from transaction
+      where kind = 'closure' and claimant_kind is not null
+        and (member_id = $1::uuid or customer_id = $2::uuid)
+        and status = any($3::text[])
+        and ($4::uuid is null or id <> $4::uuid)
+      order by created_at desc limit 1`,
+    [holder.memberId, holder.customerId, IN_FLIGHT, excludingId]
+  );
+  return result.rows[0] ?? null;
+}
+
+export interface DeathAccount {
+  id: string;
+  accountNo: string;
+  accountTypeId: string;
+  typeName: string;
+  status: string;
+  balance: string;
+}
+
+/**
+ * What a closure on a death covers: every account the holder has that is
+ * not closed, with what each holds, and the sum paid to the claimant.
+ */
+export async function accountsOnDeath(holder: {
+  memberId: string | null;
+  customerId: string | null;
+}): Promise<{ accounts: DeathAccount[]; total: string }> {
+  const result = await query<{
+    id: string;
+    account_no: string;
+    account_type_id: string;
+    type_name: string;
+    status: string;
+    balance: string;
+  }>(
+    `select a.id, coalesce(a.account_no, m.member_no) as account_no,
+            a.account_type_id, at.name as type_name, a.status,
+            coalesce(b.balance, 0)::numeric(14, 2)::text as balance
+       from account a
+       join account_type at on at.id = a.account_type_id
+       left join member m on m.id = a.member_id
+       left join account_balance b on b.account_id = a.id
+      where (a.member_id = $1::uuid or a.customer_id = $2::uuid)
+        and a.status <> 'closed'
+      order by at.sort_order, a.opened_at`,
+    [holder.memberId, holder.customerId]
+  );
+  const accounts = result.rows.map(r => ({
+    id: r.id,
+    accountNo: r.account_no,
+    accountTypeId: r.account_type_id,
+    typeName: r.type_name,
+    status: r.status,
+    balance: r.balance,
+  }));
+  return {
+    accounts,
+    total: fromCents(accounts.reduce((sum, a) => sum + toCents(a.balance), 0)),
+  };
+}
+
 // The checks, the first failure named. `existing` is the request being
 // edited or submitted, which is allowed to find the account already
 // closing for it.
@@ -230,6 +303,28 @@ async function refuseUnlessClosable(
       'conflict'
     );
   }
+  const onDeath = await deathClosureInFlight(account, existing?.id ?? null);
+  if (onDeath) {
+    throw new ClosureError(
+      `${onDeath.reference} is already closing this holder's accounts.`,
+      'conflict'
+    );
+  }
+}
+
+// On a death, every account the request covers: each one closable as the
+// one named is (refuseUnlessClosable), so none is dormant or frozen, none
+// is a membership account, and no other closure is on its way for any.
+async function refuseUnlessAllClosable(
+  account: Candidate,
+  existing: TransactionSummary | null
+): Promise<{ accounts: DeathAccount[]; total: string }> {
+  const covered = await accountsOnDeath(account);
+  for (const other of covered.accounts) {
+    if (other.id === account.id) continue;
+    await refuseUnlessClosable(await candidate(other.id), existing);
+  }
+  return covered;
 }
 
 async function checkedMethod(code: string) {
@@ -340,6 +435,9 @@ export async function startClosure(
   const claimant = input.onDeath
     ? await deceasedClaimant(account, input.onDeath.claimant)
     : null;
+  const covered = claimant
+    ? await refuseUnlessAllClosable(account, null)
+    : null;
   const reason = checkedReason(
     claimant ? (input.reason ?? '').trim() || DECEASED_REASON : input.reason
   );
@@ -362,7 +460,7 @@ export async function startClosure(
         account.memberId,
         account.customerId,
         account.id,
-        account.balance,
+        covered?.total ?? account.balance,
         method.code,
         (input.methodReference ?? '').trim() || null,
         reason,
@@ -384,7 +482,10 @@ export async function startClosure(
         newValue: {
           kind: 'closure',
           account_id: account.id,
-          balance: account.balance,
+          balance: covered?.total ?? account.balance,
+          ...(covered
+            ? { account_ids: covered.accounts.map(a => a.id) }
+            : {}),
           method: method.code,
           reason,
           ...(claimant
@@ -570,6 +671,12 @@ export async function submitClosure(
   const closure = await ownedEditable(id, principal);
   const account = await candidate(closure.accountId);
   await refuseUnlessClosable(account, closure);
+  const covered = closure.claimantKind
+    ? await refuseUnlessAllClosable(account, closure)
+    : null;
+  const accountIds = covered
+    ? covered.accounts.map(a => a.id)
+    : [account.id];
   if (!checklistComplete(await closureChecklist(closure.id))) {
     throw new ClosureError(
       closure.claimantKind
@@ -578,21 +685,26 @@ export async function submitClosure(
     );
   }
   const inFlight = await query<{ reference: string }>(
-    `select reference from transaction
-      where account_id = $1 and id <> $2
-        and status in ('submitted', 'under_review', 'approved')
-      order by created_at limit 1`,
-    [account.id, closure.id]
+    `select t.reference, coalesce(a.account_no, m.member_no) as account_no
+       from transaction t
+       join account a on a.id = t.account_id
+       left join member m on m.id = a.member_id
+      where t.account_id = any($1::uuid[]) and t.id <> $2
+        and t.status in ('submitted', 'under_review', 'approved')
+      order by t.created_at limit 1`,
+    [accountIds, closure.id]
   );
   if (inFlight.rowCount) {
+    const { reference, account_no } = inFlight.rows[0];
     throw new ClosureError(
-      `${inFlight.rows[0].reference} is still on its way on this account. ` +
-        'Wait for it to post or be decided.',
+      `${reference} is still on its way on ` +
+        (covered ? account_no : 'this account') +
+        '. Wait for it to post or be decided.',
       'conflict'
     );
   }
 
-  const amountCents = toCents(account.balance);
+  const amountCents = toCents(covered?.total ?? account.balance);
   const method = await checkedMethod(closure.method);
   const route = await resolveRoute({
     kind: 'closure',
@@ -633,8 +745,8 @@ export async function submitClosure(
       );
       await client.query(
         `update account set status = 'closing'
-          where id = $1 and status = 'active'`,
-        [account.id]
+          where id = any($1::uuid[]) and status = 'active'`,
+        [accountIds]
       );
       const submission =
         closure.status === 'returned'
@@ -690,6 +802,32 @@ export async function submitClosure(
 }
 
 /**
+ * A closure withdrawn or refused: what was closing for it is open again —
+ * the one account, or on a death every account of the holder, since while
+ * it was on its way nothing else could close any of them.
+ */
+async function reopenClosingAccounts(
+  client: PoolClient,
+  closure: Pick<TransactionSummary, 'accountId' | 'claimantKind' | 'id'>
+): Promise<void> {
+  if (closure.claimantKind) {
+    await client.query(
+      `update account a set status = 'active'
+         from transaction t
+        where t.id = $1 and a.status = 'closing'
+          and (a.member_id = t.member_id or a.customer_id = t.customer_id)`,
+      [closure.id]
+    );
+    return;
+  }
+  await client.query(
+    `update account set status = 'active'
+      where id = $1 and status = 'closing'`,
+    [closure.accountId]
+  );
+}
+
+/**
  * Withdraw a request that has not been decided: a draft, or one a reviewer
  * returned. The account, if it was closing, is open again.
  */
@@ -704,11 +842,7 @@ export async function cancelClosure(
         where id = $1`,
       [closure.id]
     );
-    await client.query(
-      `update account set status = 'active'
-        where id = $1 and status = 'closing'`,
-      [closure.accountId]
-    );
+    await reopenClosingAccounts(client, closure);
     await client.query(
       `insert into transaction_transition
          (transaction_id, from_status, to_status, step_code, actor_user_id,
@@ -741,7 +875,8 @@ export async function cancelClosure(
 
 /**
  * The closure on its way for each of a holder's accounts, if any — what
- * the member page shows in place of "Close" (S-1702).
+ * the member page shows in place of "Close" (S-1702). A closure on a death
+ * is on its way for every account it covers.
  */
 export async function closuresInFlightFor(holder: {
   memberId?: string;
@@ -753,12 +888,17 @@ export async function closuresInFlightFor(holder: {
     reference: string;
     status: string;
   }>(
-    `select distinct on (account_id) account_id, id, reference, status
-       from transaction
-      where kind = 'closure' and status = any($3::text[])
-        and (($1::uuid is not null and member_id = $1::uuid)
-          or ($2::uuid is not null and customer_id = $2::uuid))
-      order by account_id, created_at desc`,
+    `select distinct on (a.id) a.id as account_id, t.id, t.reference,
+            t.status
+       from transaction t
+       join account a
+         on a.id = t.account_id
+         or (t.claimant_kind is not null and a.status <> 'closed'
+             and (a.member_id = t.member_id or a.customer_id = t.customer_id))
+      where t.kind = 'closure' and t.status = any($3::text[])
+        and (($1::uuid is not null and t.member_id = $1::uuid)
+          or ($2::uuid is not null and t.customer_id = $2::uuid))
+      order by a.id, t.created_at desc`,
     [holder.memberId ?? null, holder.customerId ?? null, IN_FLIGHT]
   );
   return new Map(

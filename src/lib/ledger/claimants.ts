@@ -4,6 +4,7 @@
 // the holder named on their application, or another person in full.
 import type { PoolClient } from 'pg';
 import { recordAudit } from '../access/audit';
+import { query } from '../db/pool';
 import { loadApplication } from '../applications/capture';
 import type { Claimant } from './review';
 
@@ -148,4 +149,57 @@ export async function markDeceasedOnceAllClosed(
     },
     client
   );
+}
+
+export interface AccountClosedOnDeath {
+  id: string;
+  accountNo: string;
+  typeName: string;
+  // What it holds now; once posted, what was paid out of it.
+  amount: string;
+}
+
+/**
+ * The accounts a deceased non-member's closure covers (migration 0099):
+ * every account of the holder it has not closed yet, with its balance —
+ * or, once it has posted, the ones it closed, with what each paid. Those
+ * close in the posting's own statement, so their closing time is its
+ * posting time exactly. Empty for anything but a closure on a death.
+ */
+export async function accountsClosedOnDeath(
+  transactionId: string
+): Promise<AccountClosedOnDeath[]> {
+  const result = await query<{
+    id: string;
+    account_no: string;
+    type_name: string;
+    amount: string;
+  }>(
+    `select a.id, coalesce(a.account_no, m.member_no) as account_no,
+            at.name as type_name,
+            (case when t.status = 'posted'
+                  then coalesce((select sum(e.amount) from account_entry e
+                                  where e.transaction_id = t.id
+                                    and e.account_id = a.id), 0)
+                  else coalesce(b.balance, 0)
+             end)::numeric(14, 2)::text as amount
+       from transaction t
+       join account a
+         on a.member_id = t.member_id or a.customer_id = t.customer_id
+       join account_type at on at.id = a.account_type_id
+       left join member m on m.id = a.member_id
+       left join account_balance b on b.account_id = a.id
+      where t.id = $1 and t.kind = 'closure' and t.claimant_kind is not null
+        and (case when t.status = 'posted' then a.closed_at = t.posted_at
+                  when t.status in ('rejected', 'cancelled') then a.id = t.account_id
+                  else a.status <> 'closed' end)
+      order by at.sort_order, a.opened_at`,
+    [transactionId]
+  );
+  return result.rows.map(r => ({
+    id: r.id,
+    accountNo: r.account_no,
+    typeName: r.type_name,
+    amount: r.amount,
+  }));
 }

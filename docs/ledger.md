@@ -521,12 +521,19 @@ the payout — the same holds for a demised claim.
 
 A closure can also be made **on a death** (business decision): a
 non-member — a customer, or a resigned member — who dies is not eligible
-for a demised claim, and each of their accounts is closed to their
-nominee, or to another person the officer names in full, carried on the
-transaction as a claim carries it (`claimant_kind`, `claimant`,
-`payee_name`; migration 0098). The death certificate is its paper instead
-of the signed request, the notifications go to the claimant, and the
-posting that closes the holder's last open account marks them `demised`
+for a demised claim, and their accounts are closed to their nominee, or to
+another person the officer names in full, carried on the transaction as a
+claim carries it (`claimant_kind`, `claimant`, `payee_name`; migration
+0098). One request covers **every account the holder still has** and pays
+their sum (officer request; migration 0099): the account it was started
+from is only its `account_id`; submitting puts all of them into `closing`,
+nothing else can close any of them meanwhile, a rejection or a withdrawal
+opens them all again, and `post_transaction()` writes one debit per
+account under the one transaction, as a claim does — without the Takaful
+benefit. Every screen, the receipt and the notifications list the accounts
+(`accountsOnDeath()`, `accountsClosedOnDeath()`). The death certificate is
+its paper instead of the signed request, the notifications go to the
+claimant, and the posting marks the holder `demised`
 (`markDeceasedOnceAllClosed()`, `src/lib/ledger/claimants.ts`). A member
 still in the membership is refused: a demised claim settles them.
 

@@ -13,6 +13,7 @@
 import { notify } from '../notifications/notify';
 import { formatMoney } from '../payments/money';
 import { contactForHolder } from './receipt-notifications';
+import { accountsClosedOnDeath } from './claimants';
 import type { TransactionSummary } from './review';
 
 export type ExitHappening =
@@ -38,6 +39,18 @@ export function exitEventCode(kind: string, happening: ExitHappening): string {
  * notification ids written, none when there is nobody to write to or no
  * active wording.
  */
+// The account the wording names — on a death, every account the closure
+// covers (0099).
+async function accountWords(transaction: TransactionSummary): Promise<string> {
+  const covered =
+    transaction.kind === 'closure' && transaction.claimantKind
+      ? await accountsClosedOnDeath(transaction.id)
+      : [];
+  return covered.length > 0
+    ? covered.map(a => `${a.accountNo} · ${a.typeName}`).join(', ')
+    : `${transaction.accountNo} · ${transaction.accountTypeName}`;
+}
+
 export async function notifyExit(
   transaction: TransactionSummary,
   happening: ExitHappening,
@@ -65,7 +78,7 @@ export async function notifyExit(
         recipient_name: recipient.name || transaction.holderName,
         member_name: transaction.holderName,
         reference: transaction.reference,
-        account: `${transaction.accountNo} · ${transaction.accountTypeName}`,
+        account: await accountWords(transaction),
         // The wording carries its own "Rs".
         amount: formatMoney(transaction.amount, transaction.currency).replace(
           /^[A-Z]{3}\s*/,

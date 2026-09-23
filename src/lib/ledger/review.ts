@@ -640,12 +640,18 @@ export async function reviewTransaction(
       [transaction.id, status, nextStep]
     );
     // A closure refused is an account kept (S-1702): it was closing for
-    // this request and for nothing else.
+    // this request and for nothing else — on a death, every account of the
+    // holder was (0099).
     if (transaction.kind === 'closure' && status === 'rejected') {
       await client.query(
-        `update account set status = 'active'
-          where id = $1 and status = 'closing'`,
-        [transaction.accountId]
+        transaction.claimantKind
+          ? `update account a set status = 'active'
+               from transaction t
+              where t.id = $1 and a.status = 'closing'
+                and (a.member_id = t.member_id or a.customer_id = t.customer_id)`
+          : `update account set status = 'active'
+              where id = $1 and status = 'closing'`,
+        [transaction.claimantKind ? transaction.id : transaction.accountId]
       );
     }
     // A claim refused leaves the accounts as they were (S-1704).
@@ -865,12 +871,27 @@ export async function postApprovedTransaction(
       // (S-1702): the figure is read again here, and post_transaction
       // refuses one that does not match, so nothing is left on a closed
       // account and nothing is paid that is not there.
-      if (transaction.kind === 'closure') {
+      if (transaction.kind === 'closure' && !transaction.claimantKind) {
         await client.query(
           `update transaction t
               set amount = coalesce(
                 (select balance from account_balance where account_id = t.account_id),
                 0)
+            where t.id = $1`,
+          [transaction.id]
+        );
+      }
+      // On a death, every account of the holder it put into 'closing'
+      // (0099), paid to the claimant together.
+      if (transaction.kind === 'closure' && transaction.claimantKind) {
+        await client.query(
+          `update transaction t
+              set amount = (
+                select coalesce(sum(coalesce(b.balance, 0)), 0)
+                  from account a
+                  left join account_balance b on b.account_id = a.id
+                 where (a.member_id = t.member_id or a.customer_id = t.customer_id)
+                   and a.status = 'closing')
             where t.id = $1`,
           [transaction.id]
         );
