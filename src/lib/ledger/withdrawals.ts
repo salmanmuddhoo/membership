@@ -241,6 +241,16 @@ export async function refuseUnlessWithdrawable(
   }
 }
 
+// How it is paid out is the Treasurer's to say, at Disburse, when it goes
+// for approval: the officer recording or correcting it is not asked
+// (officer direction). The column wants a method meanwhile, so it holds the
+// first offered until Disburse replaces it; nothing shows it before.
+async function payoutMethod(chained: boolean, code: string | undefined) {
+  return chained && !(code ?? '').trim()
+    ? checkedMethod((await offeredPaymentMethods())[0]?.code ?? '')
+    : checkedMethod(code);
+}
+
 async function checkedMethod(code: string | undefined) {
   try {
     return await offeredMethod(code ?? '');
@@ -288,14 +298,7 @@ export async function recordWithdrawal(
     amountCents,
     roleCodes: principal.roles,
   });
-  // How it is paid out is the Treasurer's to say, at Disburse, when it
-  // goes for approval: the officer recording it is not asked (officer
-  // direction). The column wants a method meanwhile, so it holds the
-  // first offered until Disburse replaces it; nothing shows it before.
-  const method =
-    route.definition && !(input.method ?? '').trim()
-      ? await checkedMethod((await offeredPaymentMethods())[0]?.code ?? '')
-      : await checkedMethod(input.method);
+  const method = await payoutMethod(!!route.definition, input.method);
   const bankAccountId = await resolveBankAccount(
     input.bankAccountId,
     message => new WithdrawalError(message)
@@ -454,7 +457,6 @@ export async function resubmitWithdrawal(
     );
   }
   const amountCents = parseAmount(input.amount);
-  const method = await checkedMethod(input.method);
   const from = await source(input.accountId);
   if (
     from.memberId !==
@@ -472,6 +474,7 @@ export async function resubmitWithdrawal(
     amountCents,
     roleCodes: principal.roles,
   });
+  const method = await payoutMethod(!!route.definition, input.method);
   const bankAccountId = await resolveBankAccount(
     input.bankAccountId,
     message => new WithdrawalError(message)

@@ -634,9 +634,10 @@ describe('disbursing an approved withdrawal (S-1503)', () => {
         clerk
       )
     ).rejects.toThrowError(/paid out at once/);
+    // Still going for approval: how it is paid out is not asked again.
     const resubmitted = await mods.withdrawals.resubmitWithdrawal(
       queued.id,
-      { accountId: msa, amount: '102000', method: 'cash', reason: 'Confirmed' },
+      { accountId: msa, amount: '102000', reason: 'Confirmed' },
       clerk
     );
     expect(resubmitted.status).toBe('submitted');
