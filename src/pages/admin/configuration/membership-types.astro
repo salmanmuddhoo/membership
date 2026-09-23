@@ -304,13 +304,17 @@ const SUBJECT_LABELS: Record<string, string> = {
                     {SUBJECT_LABELS[subject]}
                   </legend>
                   <div class="overflow-x-auto">
-                    <table class={TABLE}>
+                    <table class={TABLE} data-sortable>
                       <thead>
                         <tr class={THEAD}>
                           <th class={TH}>Field</th>
                           <th class={TH}>Type</th>
-                          <th class={TH}>Shown</th>
-                          <th class={TH}>Mandatory</th>
+                          <th class={TH} data-no-sort>
+                            Shown
+                          </th>
+                          <th class={TH} data-no-sort>
+                            Mandatory
+                          </th>
                         </tr>
                       </thead>
                       <tbody>
@@ -376,3 +380,9 @@ const SUBJECT_LABELS: Record<string, string> = {
     ))}
   </div>
 </DashboardLayout>
+
+<script>
+  import { wireSortableTables } from '@lib/client/table-sort';
+
+  wireSortableTables();
+</script>

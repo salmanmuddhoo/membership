@@ -134,7 +134,7 @@ function waited(since: Date): string {
               {group.rows.length === 0 ? (
                 <p class={HINT}>{group.empty}</p>
               ) : (
-                <table class={TABLE}>
+                <table class={TABLE} data-sortable>
                   <thead class={THEAD}>
                     <tr>
                       <th class={TH}>Reference</th>
@@ -159,7 +159,10 @@ function waited(since: Date): string {
                           </a>
                         </td>
                         <td class={TD}>{KIND_LABELS[t.kind]}</td>
-                        <td class={TD}>
+                        <td
+                          class={TD}
+                          data-sort-value={t.holderName || t.holderKind}
+                        >
                           {t.holderName || t.holderKind}
                           {t.memberNo && (
                             <span class="block text-xs text-neutral-500 dark:text-neutral-400">
@@ -170,11 +173,17 @@ function waited(since: Date): string {
                         <td class={TD}>
                           {t.accountNo} · {t.accountTypeName}
                         </td>
-                        <td class={`${TD_NUM} font-medium`}>
+                        <td
+                          class={`${TD_NUM} font-medium`}
+                          data-sort-value={t.amount}
+                        >
                           {formatMoney(t.amount, t.currency)}
                         </td>
                         <td class={TD}>{t.capturedByName}</td>
-                        <td class={`${TD} whitespace-nowrap`}>
+                        <td
+                          class={`${TD} whitespace-nowrap`}
+                          data-sort-value={t.waitingSince.toISOString()}
+                        >
                           <span title={dateFormat.format(t.waitingSince)}>
                             {waited(t.waitingSince)}
                           </span>
@@ -191,3 +200,9 @@ function waited(since: Date): string {
     )}
   </div>
 </DashboardLayout>
+
+<script>
+  import { wireSortableTables } from '@lib/client/table-sort';
+
+  wireSortableTables();
+</script>

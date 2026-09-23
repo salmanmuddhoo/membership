@@ -119,7 +119,7 @@ function overShortClass(value: string | null): string {
       {sessions.length === 0 ? (
         <p class={`${HINT} mt-4`}>No drawers in this period.</p>
       ) : (
-        <table class={`${TABLE} mt-4`}>
+        <table class={`${TABLE} mt-4`} data-sortable>
           <thead>
             <tr
               class={`${THEAD} border-b border-neutral-300 dark:border-neutral-700`}
@@ -140,10 +140,18 @@ function overShortClass(value: string | null): string {
                 <td class={`${TD} text-neutral-800 dark:text-neutral-100`}>
                   {s.cashierName}
                 </td>
-                <td class={`${TD} text-neutral-500 dark:text-neutral-400`}>
+                <td
+                  class={`${TD} text-neutral-500 dark:text-neutral-400`}
+                  data-sort-value={s.openedAt.toISOString()}
+                >
                   {dateFormat.format(s.openedAt)}
                 </td>
-                <td class={TD}>
+                <td
+                  class={TD}
+                  data-sort-value={
+                    s.closedAt ? s.closedAt.toISOString() : undefined
+                  }
+                >
                   {s.closedAt === null ? (
                     <span class="bg-mint-200 dark:bg-mint-900 rounded px-1.5 py-0.5 text-xs text-neutral-800 dark:text-neutral-100">
                       Open
@@ -154,19 +162,29 @@ function overShortClass(value: string | null): string {
                     </span>
                   )}
                 </td>
-                <td class={`${TD_NUM} text-neutral-800 dark:text-neutral-100`}>
+                <td
+                  class={`${TD_NUM} text-neutral-800 dark:text-neutral-100`}
+                  data-sort-value={s.openingFloat}
+                >
                   {formatMoney(s.openingFloat)}
                 </td>
-                <td class={`${TD_NUM} text-neutral-800 dark:text-neutral-100`}>
+                <td
+                  class={`${TD_NUM} text-neutral-800 dark:text-neutral-100`}
+                  data-sort-value={s.expectedAtClose ?? undefined}
+                >
                   {s.expectedAtClose === null
                     ? '—'
                     : formatMoney(s.expectedAtClose)}
                 </td>
-                <td class={`${TD_NUM} text-neutral-800 dark:text-neutral-100`}>
+                <td
+                  class={`${TD_NUM} text-neutral-800 dark:text-neutral-100`}
+                  data-sort-value={s.closingCount ?? undefined}
+                >
                   {s.closingCount === null ? '—' : formatMoney(s.closingCount)}
                 </td>
                 <td
                   class={`${TD_NUM} font-medium ${overShortClass(s.overShort)}`}
+                  data-sort-value={s.overShort ?? undefined}
                 >
                   {s.overShort === null ? '—' : formatMoney(s.overShort)}
                 </td>
@@ -181,3 +199,9 @@ function overShortClass(value: string | null): string {
     </section>
   </div>
 </DashboardLayout>
+
+<script>
+  import { wireSortableTables } from '@lib/client/table-sort';
+
+  wireSortableTables();
+</script>

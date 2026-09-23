@@ -132,7 +132,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             : `Every number from ${period.firstSerial} to ${period.lastSerial} is accounted for. No gaps, no duplicates, no voids.`}
         </p>
       ) : (
-        <table class={`${TABLE} mt-4`}>
+        <table class={`${TABLE} mt-4`} data-sortable>
           <thead>
             <tr
               class={`${THEAD} border-b border-neutral-300 dark:border-neutral-700`}
@@ -180,7 +180,12 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                 <td class={`${TD} text-neutral-600 dark:text-neutral-300`}>
                   {exception.reason || 'Not recorded'}
                 </td>
-                <td class={`${TD} text-neutral-500 dark:text-neutral-400`}>
+                <td
+                  class={`${TD} text-neutral-500 dark:text-neutral-400`}
+                  data-sort-value={
+                    exception.at ? exception.at.toISOString() : ''
+                  }
+                >
                   {exception.at ? dateFormat.format(exception.at) : '—'}
                   {exception.who && ` · ${exception.who}`}
                 </td>
@@ -192,3 +197,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     </section>
   </div>
 </DashboardLayout>
+
+<script>
+  import { wireSortableTables } from '@lib/client/table-sort';
+
+  wireSortableTables();
+</script>

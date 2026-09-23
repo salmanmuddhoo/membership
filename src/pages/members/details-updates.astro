@@ -124,7 +124,7 @@ function display(value: string, dataType: string): string {
               </span>
             </header>
 
-            <table class={`${TABLE} mt-4`}>
+            <table class={`${TABLE} mt-4`} data-sortable>
               <thead>
                 <tr class={THEAD}>
                   <th class={TH}>Field</th>
@@ -195,7 +195,7 @@ function display(value: string, dataType: string): string {
       <section class={CARD}>
         <h2 class={CARD_TITLE}>Already decided</h2>
         <div class="mt-4 overflow-x-auto">
-          <table class={TABLE}>
+          <table class={TABLE} data-sortable>
             <thead>
               <tr class={THEAD}>
                 <th class={TH}>Member</th>
@@ -208,7 +208,10 @@ function display(value: string, dataType: string): string {
             <tbody>
               {decided.map(request => (
                 <tr class={ROW}>
-                  <td class={`${TD} text-neutral-700 dark:text-neutral-200`}>
+                  <td
+                    class={`${TD} text-neutral-700 dark:text-neutral-200`}
+                    data-sort-value={request.memberName}
+                  >
                     <a href={`/members/${request.memberId}`} class="underline">
                       {request.memberName}
                     </a>
@@ -216,7 +219,12 @@ function display(value: string, dataType: string): string {
                       {request.memberNo}
                     </span>
                   </td>
-                  <td class={`${TD} text-neutral-600 dark:text-neutral-300`}>
+                  <td
+                    class={`${TD} text-neutral-600 dark:text-neutral-300`}
+                    data-sort-value={
+                      request.status === 'applied' ? 'Applied' : 'Declined'
+                    }
+                  >
                     {request.status === 'applied' ? 'Applied' : 'Declined'}
                     {request.comment && (
                       <span class="block text-xs text-neutral-500 dark:text-neutral-400">
@@ -229,6 +237,9 @@ function display(value: string, dataType: string): string {
                   </td>
                   <td
                     class={`${TD} text-xs text-neutral-500 dark:text-neutral-400`}
+                    data-sort-value={
+                      request.decidedAt ? request.decidedAt.toISOString() : ''
+                    }
                   >
                     {request.decidedAt
                       ? dateTimeFormat.format(request.decidedAt)
@@ -248,3 +259,9 @@ function display(value: string, dataType: string): string {
     )}
   </div>
 </DashboardLayout>
+
+<script>
+  import { wireSortableTables } from '@lib/client/table-sort';
+
+  wireSortableTables();
+</script>

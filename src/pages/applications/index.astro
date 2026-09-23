@@ -319,11 +319,11 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             </div>
           )}
           <div class="mt-2 overflow-x-auto">
-            <table class={TABLE}>
+            <table class={TABLE} data-sortable>
               <thead>
                 <tr class={THEAD}>
                   {canCapture && (
-                    <th class={TH}>
+                    <th class={TH} data-no-sort>
                       <input
                         type="checkbox"
                         data-select-all
@@ -340,16 +340,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                     ['Captured by', 'capturedBy'],
                     ['Updated', 'updated'],
                   ].map(([label, key]) => (
-                    <th class={TH}>
-                      <button
-                        type="button"
-                        data-sort-key={key}
-                        class="inline-flex items-center gap-1 hover:text-neutral-700 dark:hover:text-neutral-200"
-                      >
-                        {label}
-                        <span data-sort-indicator class="text-[10px]" />
-                      </button>
-                    </th>
+                    <th class={TH}>{label}</th>
                   ))}
                 </tr>
               </thead>
@@ -464,6 +455,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 </DashboardLayout>
 
 <script>
+  import { wireSortableTables } from '@lib/client/table-sort';
   const form = document.getElementById(
     'applications-form'
   ) as HTMLFormElement | null;
@@ -529,49 +521,5 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     });
   }
 
-  // Client-side, against the rows already on the page — the list is capped
-  // at 100 and already loaded, so re-asking the server for the same rows in
-  // a different order would be a round trip spent on nothing new.
-  const table = document.querySelector('table');
-  const tbody = table?.querySelector('tbody');
-  if (table && tbody) {
-    const headerRow = table.querySelector('thead tr');
-    let activeKey: string | null = null;
-    let ascending = true;
-
-    for (const button of table.querySelectorAll<HTMLButtonElement>(
-      '[data-sort-key]'
-    )) {
-      button.addEventListener('click', () => {
-        const key = button.dataset.sortKey ?? '';
-        const th = button.closest('th');
-        const cellIndex = th
-          ? [...(headerRow?.children ?? [])].indexOf(th)
-          : -1;
-        if (cellIndex < 0) return;
-
-        ascending = activeKey === key ? !ascending : true;
-        activeKey = key;
-
-        const rows = [...tbody.querySelectorAll('tr')];
-        rows.sort((a, b) => {
-          const av =
-            a.children[cellIndex]?.getAttribute('data-sort-value') ?? '';
-          const bv =
-            b.children[cellIndex]?.getAttribute('data-sort-value') ?? '';
-          const cmp = av.localeCompare(bv, undefined, { numeric: true });
-          return ascending ? cmp : -cmp;
-        });
-        for (const row of rows) tbody.appendChild(row);
-
-        for (const indicator of table.querySelectorAll(
-          '[data-sort-indicator]'
-        )) {
-          indicator.textContent = '';
-        }
-        const ownIndicator = button.querySelector('[data-sort-indicator]');
-        if (ownIndicator) ownIndicator.textContent = ascending ? '▲' : '▼';
-      });
-    }
-  }
+  wireSortableTables();
 </script>

@@ -107,7 +107,7 @@ const excelHref = `/api/v1/accounts/${id}/statement?from=${shown.from}&to=${show
       </header>
 
       <div class="mt-6 overflow-x-auto">
-        <table class={TABLE}>
+        <table class={TABLE} data-sortable>
           <thead class={THEAD}>
             <tr>
               <th class={TH}>Date</th>
@@ -118,9 +118,11 @@ const excelHref = `/api/v1/accounts/${id}/statement?from=${shown.from}&to=${show
               <th class={`${TH} text-right`}>In</th>
               <th class={`${TH} text-right`}>Balance</th>
             </tr>
-          </thead>
-          <tbody class={TBODY}>
-            <tr class="font-medium">
+            {/* Opening balance is the statement's starting point, not a row
+                among the entries — kept here, in the thead, so sorting the
+                entries below never carries it out of place; styled as a row,
+                not a heading. */}
+            <tr class="text-sm font-medium text-neutral-800 normal-case dark:text-neutral-100">
               <td class={`${TD} whitespace-nowrap`}>{day(statement.from)}</td>
               <td class={TD}></td>
               <td class={TD}>Opening balance</td>
@@ -129,9 +131,14 @@ const excelHref = `/api/v1/accounts/${id}/statement?from=${shown.from}&to=${show
               <td class={TD}></td>
               <td class={TD_NUM}>{formatMoney(statement.openingBalance)}</td>
             </tr>
+          </thead>
+          <tbody class={TBODY}>
             {statement.lines.map(line => (
               <tr>
-                <td class={`${TD} whitespace-nowrap`}>
+                <td
+                  class={`${TD} whitespace-nowrap`}
+                  data-sort-value={line.postedAt.toISOString()}
+                >
                   {dateFormat.format(line.postedAt)}
                 </td>
                 <td class={TD}>
@@ -153,11 +160,15 @@ const excelHref = `/api/v1/accounts/${id}/statement?from=${shown.from}&to=${show
                 <td class={TD}>
                   <code class="text-xs">{line.receiptNo ?? '—'}</code>
                 </td>
-                <td class={TD_NUM}>{line.debit && formatMoney(line.debit)}</td>
-                <td class={TD_NUM}>
+                <td class={TD_NUM} data-sort-value={line.debit}>
+                  {line.debit && formatMoney(line.debit)}
+                </td>
+                <td class={TD_NUM} data-sort-value={line.credit}>
                   {line.credit && formatMoney(line.credit)}
                 </td>
-                <td class={TD_NUM}>{formatMoney(line.balance)}</td>
+                <td class={TD_NUM} data-sort-value={line.balance}>
+                  {formatMoney(line.balance)}
+                </td>
               </tr>
             ))}
             {statement.lines.length === 0 && (
@@ -189,7 +200,11 @@ const excelHref = `/api/v1/accounts/${id}/statement?from=${shown.from}&to=${show
 </DashboardLayout>
 
 <script>
+  import { wireSortableTables } from '@lib/client/table-sort';
+
   document.getElementById('print')?.addEventListener('click', () => {
     window.print();
   });
+
+  wireSortableTables();
 </script>

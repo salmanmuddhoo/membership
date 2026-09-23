@@ -5043,6 +5043,24 @@ rule.
   who holds it, since only its captor can continue or cancel it; the
   member page's "Claim ·" and "Resigning ·" buttons open the wizard while
   it is a draft.
+
+# Officer feedback, round 7 — tables, the closure request, the app ✅
+
+- **Every table sorts** by its column headings: click once for ascending,
+  again for descending, on the rows already on the page
+  (`src/lib/client/table-sort.ts`; a table opts in with `data-sortable`, a
+  heading with no order opts out with `data-no-sort`, and a formatted date
+  or amount carries its raw value in `data-sort-value`).
+- **The closure request's signature step** shows the signed request with
+  View and the red ✕ that deletes it, as the resignation's does (the
+  `remove-form` intent); deleting it means signing again. The demised
+  claim has no signed request of its own, only its papers, which already
+  had the two.
+- **The member app** admits a resigned member while an account of theirs
+  is still open (a non-member holding an HSA or an Investment), and no
+  longer one with no account at all — one rule (`mayUseAppSql`,
+  `src/lib/member/identity.ts`) for the link, the code and the refresh,
+  by officer direction. `docs/member-app.md`.
 - **The Deposit, Withdrawal and Transfer lookups** suggest matching
   accounts, by number or by holder name, as the officer types.
 

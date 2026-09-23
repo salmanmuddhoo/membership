@@ -227,6 +227,18 @@ async function issueChallenge(
  * NIC, per AB Number and per address before the lookup, and one code per
  * AB Number per cooldown window, so a miss costs exactly what a hit does.
  */
+// Who may use the app (officer direction): an active member, or a resigned
+// one who still holds an open account — a non-member with an HSA or an
+// Investment keeps their app; one with no account at all does not. One
+// expression for the link, the code and the refresh, so the three never
+// disagree.
+export function mayUseAppSql(member: string): string {
+  return `(${member}.status = 'active'
+    or (${member}.status = 'resigned'
+        and exists (select 1 from account x
+                     where x.member_id = ${member}.id and x.status = 'active')))`;
+}
+
 export async function linkMember(
   input: { nic: string; abNumber: string },
   origin: RequestOrigin,
@@ -272,7 +284,7 @@ export async function linkMember(
        join membership_application a on a.id = m.application_id
        join application_party p
          on p.application_id = a.id and p.subject = 'applicant' and p.ordinal = 1
-      where m.status = 'active'
+      where ${mayUseAppSql('m')}
         and upper(m.member_no) = $1
         and upper(regexp_replace(coalesce(p.values->>'nic', ''), '\\s', '', 'g')) = $2
       limit 1`,
@@ -629,11 +641,11 @@ export async function verifyOtp(
     );
 
     if (challenge.purpose === 'link_member') {
-      const member = await client.query<{ status: string }>(
-        `select status from member where id = $1`,
+      const member = await client.query<{ may_use: boolean }>(
+        `select ${mayUseAppSql('m')} as may_use from member m where m.id = $1`,
         [challenge.member_id]
       );
-      if (member.rows[0]?.status !== 'active') {
+      if (!member.rows[0]?.may_use) {
         throw new ApiError(
           'not_found',
           'That member record is no longer active. Visit a branch.'
@@ -758,10 +770,10 @@ export async function refreshSession(
 
   const row = await withTransaction(async client => {
     const live = await client.query<
-      SessionRow & { member_status: string | null }
+      SessionRow & { member_may_use: boolean | null }
     >(
       `select s.id, s.mobile, s.member_id, s.customer_id, s.linked_at,
-              m.status as member_status
+              ${mayUseAppSql('m')} as member_may_use
          from member_session s
          left join member m on m.id = s.member_id
         where s.refresh_token_hash = $1
@@ -775,7 +787,7 @@ export async function refreshSession(
 
     // A member who has since left is signed out at the next refresh, not
     // whenever a 90-day token happens to lapse.
-    if (found.member_id && found.member_status !== 'active') {
+    if (found.member_id && !found.member_may_use) {
       await client.query(
         `update member_session set revoked_at = now() where id = $1`,
         [found.id]

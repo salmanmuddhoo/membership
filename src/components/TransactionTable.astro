@@ -63,7 +63,7 @@ const CELL = 'px-2 py-2';
   {transactions.length === 0 ? (
     <p class={HINT}>{empty}</p>
   ) : (
-    <table class={TABLE}>
+    <table class={TABLE} data-sortable>
       <thead class={THEAD}>
         <tr>
           <th class={CELL}>Date</th>
@@ -80,10 +80,13 @@ const CELL = 'px-2 py-2';
       <tbody class={TBODY}>
         {transactions.map(t => (
           <tr class="text-neutral-800 dark:text-neutral-100">
-            <td class={`${CELL} whitespace-nowrap`}>
+            <td
+              class={`${CELL} whitespace-nowrap`}
+              data-sort-value={t.createdAt.toISOString()}
+            >
               {dateFormat.format(t.createdAt)}
             </td>
-            <td class={CELL}>
+            <td class={CELL} data-sort-value={t.reference}>
               <a href={`/transactions/${t.id}`} class="font-medium underline">
                 <code class="text-xs">{t.reference}</code>
               </a>
@@ -96,7 +99,7 @@ const CELL = 'px-2 py-2';
                 </a>
               )}
             </td>
-            <td class={CELL}>
+            <td class={CELL} data-sort-value={KIND_LABELS[t.kind] ?? t.kind}>
               {KIND_LABELS[t.kind] ?? t.kind}
               {otherSide(t) && (
                 <span class="block text-xs text-neutral-500 dark:text-neutral-400">
@@ -110,7 +113,7 @@ const CELL = 'px-2 py-2';
               )}
             </td>
             {showHolder && (
-              <td class={CELL}>
+              <td class={CELL} data-sort-value={t.holderName || t.holderKind}>
                 <a href={`/members/${t.holderId}`} class="underline">
                   {t.holderName || t.holderKind}
                 </a>
@@ -128,12 +131,20 @@ const CELL = 'px-2 py-2';
               {' · '}
               {t.accountTypeName}
             </td>
-            <td class={`${CELL} text-right tabular-nums`}>
+            <td
+              class={`${CELL} text-right tabular-nums`}
+              data-sort-value={
+                direction(t) === 'in' || t.kind === 'reversal' ? t.amount : ''
+              }
+            >
               {direction(t) === 'in' && formatMoney(t.amount, t.currency)}
               {t.kind === 'reversal' &&
                 `(${formatMoney(t.amount, t.currency)})`}
             </td>
-            <td class={`${CELL} text-right tabular-nums`}>
+            <td
+              class={`${CELL} text-right tabular-nums`}
+              data-sort-value={direction(t) === 'out' ? t.amount : ''}
+            >
               {direction(t) === 'out' && formatMoney(t.amount, t.currency)}
             </td>
             <td class={CELL}>{STATUS_LABELS[t.status] ?? t.status}</td>
@@ -144,3 +155,9 @@ const CELL = 'px-2 py-2';
     </table>
   )}
 </div>
+
+<script>
+  import { wireSortableTables } from '@lib/client/table-sort';
+
+  wireSortableTables();
+</script>

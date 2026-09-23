@@ -158,7 +158,7 @@ const exportHref = () => {
           <p class={`${HINT} mt-4`}>Nothing matches.</p>
         ) : (
           <div class="mt-4 overflow-x-auto">
-            <table class={TABLE}>
+            <table class={TABLE} data-sortable>
               <thead>
                 <tr
                   class={`${THEAD} border-b border-neutral-300 dark:border-neutral-700`}
@@ -186,6 +186,11 @@ const exportHref = () => {
                             ? 'text-right tabular-nums'
                             : 'text-left',
                         ]}
+                        data-sort-value={
+                          column.numeric
+                            ? String(row[column.key] ?? '')
+                            : undefined
+                        }
                       >
                         {row[column.key] ?? ''}
                       </td>
@@ -200,3 +205,9 @@ const exportHref = () => {
     )}
   </div>
 </DashboardLayout>
+
+<script>
+  import { wireSortableTables } from '@lib/client/table-sort';
+
+  wireSortableTables();
+</script>

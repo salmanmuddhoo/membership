@@ -70,13 +70,13 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         <h2 class={CARD_TITLE}>{group}</h2>
 
         <div class="overflow-x-auto">
-          <table class={`${TABLE} mt-4`}>
+          <table class={`${TABLE} mt-4`} data-sortable>
             <thead>
               <tr class={THEAD}>
                 <th class={TH}>Setting</th>
                 <th class={TH}>Value</th>
                 <th class={TH}>Last changed</th>
-                <th class={TH}></th>
+                <th class={TH} data-no-sort></th>
               </tr>
             </thead>
             <tbody>
@@ -99,6 +99,11 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                   </td>
                   <td
                     class={`${TD} align-top text-neutral-600 dark:text-neutral-300`}
+                    data-sort-value={
+                      item.state === 'changed' && item.changedAt
+                        ? item.changedAt.toISOString()
+                        : undefined
+                    }
                   >
                     {item.state === 'changed' && item.changedAt && (
                       <span>
@@ -126,3 +131,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     ))}
   </div>
 </DashboardLayout>
+
+<script>
+  import { wireSortableTables } from '@lib/client/table-sort';
+
+  wireSortableTables();
+</script>

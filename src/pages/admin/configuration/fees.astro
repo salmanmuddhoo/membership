@@ -236,7 +236,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           <input type="hidden" name="intent" value="publish-fee-version" />
           <input type="hidden" name="scheduleId" value={schedule.id} />
           <div class="overflow-x-auto">
-            <table class={TABLE}>
+            <table class={TABLE} data-sortable>
               <thead>
                 <tr class={THEAD}>
                   <th class={TH}>Component</th>
@@ -256,7 +256,10 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                       >
                         {COMPONENT_LABELS[code]}
                       </td>
-                      <td class={TD}>
+                      <td
+                        class={TD}
+                        data-sort-value={component?.amount ?? '0.00'}
+                      >
                         <input
                           type="text"
                           inputmode="decimal"
@@ -266,7 +269,12 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                           class={`${INPUT_SM} w-32`}
                         />
                       </td>
-                      <td class={TD}>
+                      <td
+                        class={TD}
+                        data-sort-value={
+                          component?.requirement ?? 'not_applicable'
+                        }
+                      >
                         <select
                           name={`requirement.${code}`}
                           disabled={!canManage}
@@ -537,3 +545,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     </section>
   </div>
 </DashboardLayout>
+
+<script>
+  import { wireSortableTables } from '@lib/client/table-sort';
+
+  wireSortableTables();
+</script>
