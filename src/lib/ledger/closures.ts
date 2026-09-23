@@ -80,8 +80,9 @@ export const IN_FLIGHT = [
 
 export interface ClosureInput {
   accountId: string;
-  // Why the member is closing it. Mandatory: it goes on the signed request.
-  reason: string;
+  // Why the member is closing it. Mandatory: it goes on the signed request
+  // (refused when blank). On a death it may be left out: DECEASED_REASON.
+  reason?: string;
   // How the balance goes back to them. Asked only where the matrix pays it
   // out at once, at the submit step (officer direction, as a withdrawal):
   // left out, the first offered method stands in until the Treasurer
