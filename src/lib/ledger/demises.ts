@@ -18,7 +18,11 @@
 // reviewer's call.
 import { recordAudit } from '../access/audit';
 import type { Principal } from '../access/principal';
-import { loadApplication } from '../applications/capture';
+import {
+  claimantFrom,
+  nomineeOnApplication,
+  type ClaimantInput,
+} from './claimants';
 import { offeredPaymentMethods, takafulBenefit } from '../config/reference';
 import { query, withTransaction } from '../db/pool';
 import {
@@ -69,17 +73,7 @@ export class DemiseError extends Error {
 export const PERMISSION_CAPTURE = 'transaction.capture';
 export const PERMISSION_POST = 'transaction.post';
 
-export interface ClaimantInput {
-  kind: 'nominee' | 'other';
-  // For 'other'. For 'nominee' these come from the application.
-  name?: string;
-  nic?: string;
-  address?: string;
-  relation?: string;
-  // Where they are written to (S-1705); either may be left out.
-  email?: string;
-  mobile?: string;
-}
+export type { ClaimantInput } from './claimants';
 
 export interface DemiseInput {
   memberId: string;
@@ -189,72 +183,19 @@ async function memberFor(
  */
 export async function nomineeFor(memberId: string): Promise<Claimant | null> {
   const member = await memberFor(memberId);
-  if (!member.applicationId) return null;
-  const application = await loadApplication(member.applicationId);
-  const party = application?.parties.find(
-    p => p.subject === 'nominee' && p.ordinal === 1
-  );
-  if (!party) return null;
-  const v = party.values;
-  const name = [v.name, v.surname]
-    .map(part => (part ?? '').trim())
-    .filter(part => part !== '')
-    .join(' ');
-  if (name === '') return null;
-  return {
-    name,
-    nic: (v.nic ?? '').trim(),
-    address: (v.address ?? '').trim(),
-    relation: 'Nominee',
-    email: (v.email ?? '').trim() || null,
-    mobile: (v.mobile ?? '').trim() || null,
-  };
+  return nomineeOnApplication(member.applicationId);
 }
 
 async function resolvedClaimant(
   memberId: string,
   input: ClaimantInput
 ): Promise<Claimant> {
-  if (input.kind === 'nominee') {
-    const nominee = await nomineeFor(memberId);
-    if (!nominee) {
-      throw new DemiseError(
-        'No nominee is on file for this member. Name the claimant.'
-      );
-    }
-    return nominee;
-  }
-  if (input.kind !== 'other') {
-    throw new DemiseError('Say who the claimant is.');
-  }
-  const claimant: Claimant = {
-    name: (input.name ?? '').trim(),
-    nic: (input.nic ?? '').trim(),
-    address: (input.address ?? '').trim(),
-    relation: (input.relation ?? '').trim(),
-    email: (input.email ?? '').trim() || null,
-    mobile: (input.mobile ?? '').trim() || null,
-  };
-  const missing = (['name', 'nic', 'address', 'relation'] as const).filter(
-    field => claimant[field] === ''
+  return claimantFrom(
+    input,
+    input.kind === 'nominee' ? await nomineeFor(memberId) : null,
+    message => new DemiseError(message),
+    'No nominee is on file for this member. Name the claimant.'
   );
-  if (missing.length > 0) {
-    const labels: Record<string, string> = {
-      name: 'name',
-      nic: 'NIC',
-      address: 'address',
-      relation: 'relation to the member',
-    };
-    throw new DemiseError(
-      `Enter the claimant’s ${missing.map(m => labels[m]).join(', ')}.`
-    );
-  }
-  for (const field of ['name', 'nic', 'address', 'relation'] as const) {
-    if (claimant[field].length > 200) {
-      throw new DemiseError(`The claimant’s ${field} is too long.`);
-    }
-  }
-  return claimant;
 }
 
 async function checkedMethod(code: string) {

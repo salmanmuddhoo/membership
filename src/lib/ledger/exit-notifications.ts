@@ -45,8 +45,10 @@ export async function notifyExit(
 ): Promise<string[]> {
   if (!isExitKind(transaction.kind)) return [];
   try {
+    // On a death — a claim, or a deceased non-member's closure — the
+    // claimant is told, never the holder.
     const recipient =
-      transaction.kind === 'demise'
+      transaction.kind === 'demise' || transaction.claimantKind
         ? transaction.claimant
           ? {
               name: transaction.claimant.name,

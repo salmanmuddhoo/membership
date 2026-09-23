@@ -35,6 +35,12 @@ import {
 } from '../payments/receipts';
 import { LedgerError } from './ledger';
 import { requireBankAccount, resolveBankAccount } from './bank-accounts';
+import {
+  claimantFrom,
+  markDeceasedOnceAllClosed,
+  nomineeOnApplication,
+  type ClaimantInput,
+} from './claimants';
 import { notifyExit } from './exit-notifications';
 import { notifySubmitted } from './transaction-notifications';
 import { notifyReceiptIssued } from './receipt-notifications';
@@ -85,9 +91,18 @@ export interface ClosureInput {
   // Which of the Society's bank accounts it is paid from (S-1902), where
   // the method touches one.
   bankAccountId?: string;
+  // The holder has died (business decision): a non-member's balances go to
+  // their nominee, or to another person the officer records, with a death
+  // certificate instead of the holder's signature. A member who dies is
+  // settled by a demised claim instead (demises.ts).
+  onDeath?: { claimant: ClaimantInput };
 }
 
-export type ClosureEdit = Omit<ClosureInput, 'accountId'>;
+export type ClosureEdit = Omit<ClosureInput, 'accountId' | 'onDeath'> & {
+  // A closure on a death only: who is paid, changed while the request is
+  // still the officer's.
+  claimant?: ClaimantInput;
+};
 
 export type Closure = TransactionSummary;
 
@@ -106,6 +121,8 @@ interface Candidate {
   memberId: string | null;
   customerId: string | null;
   holderStatus: string;
+  // Where the holder's details, and so their nominee, are kept.
+  holderApplicationId: string | null;
   balance: string;
 }
 
@@ -120,12 +137,15 @@ async function candidate(accountId: string): Promise<Candidate> {
     member_id: string | null;
     customer_id: string | null;
     holder_status: string;
+    holder_application_id: string | null;
     balance: string;
   }>(
     `select a.id, coalesce(a.account_no, m.member_no) as account_no,
             a.account_type_id, at.name as type_name,
             a.is_membership_default, a.status, a.member_id, a.customer_id,
             coalesce(m.status, c.status) as holder_status,
+            coalesce(m.application_id, c.application_id)
+              as holder_application_id,
             coalesce(b.balance, 0)::numeric(14, 2)::text as balance
        from account a
        join account_type at on at.id = a.account_type_id
@@ -147,6 +167,7 @@ async function candidate(accountId: string): Promise<Candidate> {
     memberId: r.member_id,
     customerId: r.customer_id,
     holderStatus: r.holder_status,
+    holderApplicationId: r.holder_application_id,
     balance: r.balance,
   };
 }
@@ -235,6 +256,28 @@ async function methodOrDefault(code: string | undefined) {
   return checkedMethod(first.code);
 }
 
+// Who a deceased holder's balance goes to (business decision). Only a
+// non-member's: a member still in the membership who dies is settled by a
+// demised claim, which covers every account and adds the Takaful benefit.
+async function deceasedClaimant(account: Candidate, input: ClaimantInput) {
+  if (account.memberId && account.holderStatus === 'active') {
+    throw new ClosureError(
+      'A member who has died is settled by a demised claim.',
+      'conflict'
+    );
+  }
+  return claimantFrom(
+    input,
+    input.kind === 'nominee'
+      ? await nomineeOnApplication(account.holderApplicationId)
+      : null,
+    message => new ClosureError(message),
+    'No nominee is on file. Name who is paid.'
+  );
+}
+
+export const DECEASED_REASON = 'The account holder has died.';
+
 // Shared with a resignation (resignations.ts), which says what is missing
 // in its own words and throws its own error.
 export function checkedReason(
@@ -293,7 +336,12 @@ export async function startClosure(
   }
   const account = await candidate(input.accountId);
   await refuseUnlessClosable(account, null);
-  const reason = checkedReason(input.reason);
+  const claimant = input.onDeath
+    ? await deceasedClaimant(account, input.onDeath.claimant)
+    : null;
+  const reason = checkedReason(
+    claimant ? (input.reason ?? '').trim() || DECEASED_REASON : input.reason
+  );
   const method = await methodOrDefault(input.method);
   const bankAccountId = await resolveBankAccount(
     input.bankAccountId,
@@ -304,8 +352,10 @@ export async function startClosure(
     const inserted = await client.query<{ id: string; reference: string }>(
       `insert into transaction
          (kind, member_id, customer_id, account_id, amount, method,
-          method_reference, reason, status, captured_by, bank_account_id)
-       values ('closure', $1, $2, $3, $4, $5, $6, $7, 'draft', $8, $9)
+          method_reference, reason, status, captured_by, bank_account_id,
+          payee_name, claimant_kind, claimant)
+       values ('closure', $1, $2, $3, $4, $5, $6, $7, 'draft', $8, $9,
+               $10, $11, $12)
        returning id, reference`,
       [
         account.memberId,
@@ -317,6 +367,9 @@ export async function startClosure(
         reason,
         principal.userId,
         bankAccountId,
+        claimant?.name ?? null,
+        claimant ? input.onDeath!.claimant.kind : null,
+        claimant ? JSON.stringify(claimant) : null,
       ]
     );
     const { id, reference } = inserted.rows[0];
@@ -333,6 +386,9 @@ export async function startClosure(
           balance: account.balance,
           method: method.code,
           reason,
+          ...(claimant
+            ? { claimant_kind: input.onDeath!.claimant.kind, claimant }
+            : {}),
         },
       },
       client
@@ -353,7 +409,20 @@ export async function updateClosure(
   principal: Principal
 ): Promise<Closure> {
   const closure = await ownedEditable(id, principal);
-  const reason = checkedReason(edit.reason);
+  // Who is paid, on a death, where the edit names them again.
+  const claimant =
+    edit.claimant && closure.claimantKind
+      ? await deceasedClaimant(
+          await candidate(closure.accountId),
+          edit.claimant
+        )
+      : closure.claimant;
+  const claimantKind = claimant
+    ? (edit.claimant?.kind ?? closure.claimantKind)
+    : null;
+  const reason = checkedReason(
+    claimant ? (edit.reason ?? '').trim() || DECEASED_REASON : edit.reason
+  );
   const method = await checkedMethod(edit.method ?? closure.method);
   const methodReference =
     edit.methodReference === undefined
@@ -370,9 +439,19 @@ export async function updateClosure(
     await client.query(
       `update transaction
           set reason = $2, method = $3, method_reference = $4,
-              bank_account_id = $5
+              bank_account_id = $5, payee_name = $6, claimant_kind = $7,
+              claimant = $8
         where id = $1`,
-      [closure.id, reason, method.code, methodReference, bankAccountId]
+      [
+        closure.id,
+        reason,
+        method.code,
+        methodReference,
+        bankAccountId,
+        claimant?.name ?? null,
+        claimantKind,
+        claimant ? JSON.stringify(claimant) : null,
+      ]
     );
     await recordAudit(
       {
@@ -413,6 +492,8 @@ export const REQUEST_DOCUMENT_CODES: Record<string, string[]> = {
   demise: ['death_certificate', 'affidavit'],
 };
 
+export const DEATH_DOCUMENT_CODES = ['death_certificate'];
+
 export function isExitRequest(kind: string): boolean {
   return kind in REQUEST_DOCUMENT_CODES;
 }
@@ -424,9 +505,15 @@ export function isExitRequest(kind: string): boolean {
  */
 export async function requestChecklist(
   transactionId: string,
-  kind: string
+  kind: string,
+  // A closure on a death: the death certificate, not the holder's
+  // signature.
+  onDeath = false
 ): Promise<ClosureChecklistItem[]> {
-  const codes = REQUEST_DOCUMENT_CODES[kind];
+  const codes =
+    kind === 'closure' && onDeath
+      ? DEATH_DOCUMENT_CODES
+      : REQUEST_DOCUMENT_CODES[kind];
   if (!codes) return [];
   const [types, filed] = await Promise.all([
     listDocumentTypes(),
@@ -446,10 +533,19 @@ export async function requestChecklist(
   });
 }
 
-export function closureChecklist(
+export async function closureChecklist(
   transactionId: string
 ): Promise<ClosureChecklistItem[]> {
-  return requestChecklist(transactionId, 'closure');
+  const onDeath = await query<{ on_death: boolean }>(
+    `select claimant_kind is not null as on_death from transaction
+      where id = $1`,
+    [transactionId]
+  );
+  return requestChecklist(
+    transactionId,
+    'closure',
+    onDeath.rows[0]?.on_death ?? false
+  );
 }
 
 export function checklistComplete(items: ClosureChecklistItem[]): boolean {
@@ -475,7 +571,9 @@ export async function submitClosure(
   await refuseUnlessClosable(account, closure);
   if (!checklistComplete(await closureChecklist(closure.id))) {
     throw new ClosureError(
-      'File the signed closure request before submitting.'
+      closure.claimantKind
+        ? 'File the death certificate before submitting.'
+        : 'File the signed closure request before submitting.'
     );
   }
   const inFlight = await query<{ reference: string }>(
@@ -559,6 +657,9 @@ export async function submitClosure(
             );
       if (submission.posted && receipt) {
         await markReceiptIssued(receipt.id, client);
+      }
+      if (submission.posted) {
+        await markDeceasedOnceAllClosed(client, closure.id, principal);
       }
     });
     if (receipt) await notifyReceiptIssued(closure.id);
