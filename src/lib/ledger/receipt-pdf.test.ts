@@ -19,6 +19,7 @@ function receipt(overrides: Record<string, unknown> = {}): TransactionReceipt {
     capturedByRole: 'Account Officer',
     postedByName: 'Zainab Officer',
     depositorName: null,
+    accountsClosed: [],
     transaction: {
       id: 'tx',
       reference: 'DEP-2026-000045',

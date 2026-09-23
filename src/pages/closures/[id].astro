@@ -20,13 +20,16 @@ import {
   submitClosure,
   updateClosure,
 } from '@lib/ledger/closures';
-import { nomineeOnApplication } from '@lib/ledger/claimants';
+import {
+  accountsClosedOnDeath,
+  nomineeOnApplication,
+} from '@lib/ledger/claimants';
 import { DocumentError, removeFiledDocument } from '@lib/documents/documents';
 import { accountBalance } from '@lib/ledger/ledger';
 import { loadCustomer, loadMember } from '@lib/members/create';
 import { loadTransaction, transitionsFor } from '@lib/ledger/review';
 import { resolveRoute } from '@lib/ledger/routing';
-import { formatMoney, toCents } from '@lib/payments/money';
+import { formatMoney, fromCents, toCents } from '@lib/payments/money';
 import { chainTimeline } from '@lib/workflow/timeline';
 import {
   PAGE,
@@ -45,6 +48,11 @@ import {
   TAG,
   VIEW_BUTTON,
   DELETE_BUTTON,
+  TABLE,
+  THEAD,
+  TH,
+  TD,
+  TD_NUM,
 } from '@lib/ui';
 
 // What the file picker offers, matching what the upload service accepts
@@ -180,6 +188,13 @@ const holder = onDeath
 const nominee = holder
   ? await nomineeOnApplication(holder.applicationId)
   : null;
+// Every account the death closes, with what each holds now (or, once
+// posted, paid) — while in flight, the sum of these is what submitting
+// would post (ledger/closures.ts works it out the same way).
+const deathAccounts = onDeath ? await accountsClosedOnDeath(closure.id) : [];
+const deathTotal = fromCents(
+  deathAccounts.reduce((sum, a) => sum + toCents(a.amount), 0)
+);
 // The balance as it stands now — what submitting would actually post,
 // same as submitClosure (ledger/closures.ts) works out.
 const currentBalance =
@@ -227,8 +242,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         {closure.memberNo && ` · ${closure.memberNo}`}
       </a>
       <span class={TAG}>
-        {closure.accountNo} · {closure.accountTypeName} ·{' '}
-        {formatMoney(closure.amount)}
+        {onDeath
+          ? `${deathAccounts.length} accounts · ${formatMoney(deathTotal)}`
+          : `${closure.accountNo} · ${closure.accountTypeName} · ${formatMoney(closure.amount)}`}
       </span>
     </div>
 
@@ -243,16 +259,44 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     {step === 'details' && (
       <form method="post" data-details-form class={FORM_CARD}>
         <h2 class={CARD_LABEL}>Details</h2>
-        <dl class="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
-          <dt class="text-neutral-500 dark:text-neutral-400">Account</dt>
-          <dd class="font-medium text-neutral-800 dark:text-neutral-100">
-            {closure.accountNo} · {closure.accountTypeName}
-          </dd>
-          <dt class="text-neutral-500 dark:text-neutral-400">Balance</dt>
-          <dd class="font-medium text-neutral-800 dark:text-neutral-100">
-            {formatMoney(closure.amount)}
-          </dd>
-        </dl>
+        {onDeath ? (
+          <div class="space-y-2">
+            <h3 class={CARD_LABEL}>Accounts closing</h3>
+            <table class={TABLE}>
+              <thead>
+                <tr class={THEAD}>
+                  <th class={TH}>Account</th>
+                  <th class={TH}>Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {deathAccounts.map(account => (
+                  <tr>
+                    <td class={TD}>
+                      {account.accountNo} · {account.typeName}
+                    </td>
+                    <td class={TD_NUM}>{formatMoney(account.amount)}</td>
+                  </tr>
+                ))}
+                <tr class="font-semibold">
+                  <td class={TD}>Total</td>
+                  <td class={TD_NUM}>{formatMoney(deathTotal)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <dl class="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
+            <dt class="text-neutral-500 dark:text-neutral-400">Account</dt>
+            <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+              {closure.accountNo} · {closure.accountTypeName}
+            </dd>
+            <dt class="text-neutral-500 dark:text-neutral-400">Balance</dt>
+            <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+              {formatMoney(closure.amount)}
+            </dd>
+          </dl>
+        )}
         <label class={LABEL}>
           Reason
           <textarea
@@ -543,15 +587,46 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     {step === 'submit' && (
       <form method="post" data-closure-submit-form class={FORM_CARD}>
         <h2 class={CARD_LABEL}>Submit</h2>
+        {onDeath && (
+          <div class="space-y-2">
+            <h3 class={CARD_LABEL}>Accounts closing</h3>
+            <table class={TABLE}>
+              <thead>
+                <tr class={THEAD}>
+                  <th class={TH}>Account</th>
+                  <th class={TH}>Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {deathAccounts.map(account => (
+                  <tr>
+                    <td class={TD}>
+                      {account.accountNo} · {account.typeName}
+                    </td>
+                    <td class={TD_NUM}>{formatMoney(account.amount)}</td>
+                  </tr>
+                ))}
+                <tr class="font-semibold">
+                  <td class={TD}>Total</td>
+                  <td class={TD_NUM}>{formatMoney(deathTotal)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )}
         <dl class="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
-          <dt class="text-neutral-500 dark:text-neutral-400">Account</dt>
-          <dd class="font-medium text-neutral-800 dark:text-neutral-100">
-            {closure.accountNo} · {closure.accountTypeName}
-          </dd>
-          <dt class="text-neutral-500 dark:text-neutral-400">Balance</dt>
-          <dd class="font-medium text-neutral-800 dark:text-neutral-100">
-            {formatMoney(closure.amount)}
-          </dd>
+          {!onDeath && (
+            <>
+              <dt class="text-neutral-500 dark:text-neutral-400">Account</dt>
+              <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+                {closure.accountNo} · {closure.accountTypeName}
+              </dd>
+              <dt class="text-neutral-500 dark:text-neutral-400">Balance</dt>
+              <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+                {formatMoney(closure.amount)}
+              </dd>
+            </>
+          )}
           <dt class="text-neutral-500 dark:text-neutral-400">Reason</dt>
           <dd class="text-neutral-800 dark:text-neutral-100">
             {closure.reason}
@@ -634,8 +709,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           </div>
         )}
         <p class={MUTED}>
-          Once submitted, nothing else moves on this account until the closure
-          is decided.
+          {onDeath
+            ? 'Once submitted, nothing else moves on these accounts until the closure is decided.'
+            : 'Once submitted, nothing else moves on this account until the closure is decided.'}
         </p>
         <div class="flex flex-wrap gap-2 pt-2">
           <button

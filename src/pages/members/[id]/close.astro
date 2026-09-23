@@ -8,6 +8,7 @@
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import { accountBalance } from '@lib/ledger/ledger';
 import {
+  accountsOnDeath,
   ClosureError,
   closuresInFlightFor,
   startClosure,
@@ -20,11 +21,17 @@ import {
   PAGE,
   HINT,
   CARD,
+  CARD_LABEL,
   FORM_CARD,
   LABEL,
   INPUT,
   BUTTON,
   NOTICE_ERROR,
+  TABLE,
+  THEAD,
+  TH,
+  TD,
+  TD_NUM,
 } from '@lib/ui';
 
 const principal = Astro.locals.principal!;
@@ -67,6 +74,13 @@ const isNonMember = !member || member.status === 'resigned';
 const nominee = isNonMember
   ? await nomineeOnApplication(person.applicationId)
   : null;
+const onDeathAccounts = isNonMember
+  ? await accountsOnDeath(
+      member
+        ? { memberId: member.id, customerId: null }
+        : { memberId: null, customerId: customer!.id }
+    )
+  : null;
 
 let values = {
   accountId:
@@ -98,14 +112,22 @@ if (Astro.request.method === 'POST') {
     email: text('email'),
     mobile: text('mobile'),
   };
-  if (!person.accounts.some(a => a.id === values.accountId)) {
+  const onDeath = isNonMember && values.cause === 'death';
+  if (!onDeath && !person.accounts.some(a => a.id === values.accountId)) {
     error = 'Choose which account is closing.';
   } else {
-    const onDeath = isNonMember && values.cause === 'death';
+    // On a death, the account is just the lead of the accounts covered —
+    // the select for it is hidden, so fall back to the first covered
+    // account when what was posted (if anything) is not one of them.
+    const accountId = onDeath
+      ? onDeathAccounts?.accounts.some(a => a.id === values.accountId)
+        ? values.accountId
+        : (onDeathAccounts?.accounts[0]?.id ?? values.accountId)
+      : values.accountId;
     try {
       const closure = await startClosure(
         {
-          accountId: values.accountId,
+          accountId,
           reason: values.reason,
           ...(onDeath
             ? {
@@ -158,20 +180,56 @@ if (Astro.request.method === 'POST') {
       </p>
     ) : (
       <form method="post" data-close-form class={FORM_CARD}>
-        <label class={LABEL}>
-          Account
-          <select name="accountId" class={INPUT}>
-            {closable.map(account => (
-              <option
-                value={account.id}
-                selected={account.id === values.accountId}
-              >
-                {account.accountNo} · {account.accountTypeName} ·{' '}
-                {formatMoney(account.balance)}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div
+          data-account-field
+          hidden={isNonMember && values.cause === 'death'}
+        >
+          <label class={LABEL}>
+            Account
+            <select name="accountId" class={INPUT}>
+              {closable.map(account => (
+                <option
+                  value={account.id}
+                  selected={account.id === values.accountId}
+                >
+                  {account.accountNo} · {account.accountTypeName} ·{' '}
+                  {formatMoney(account.balance)}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        {isNonMember && onDeathAccounts && (
+          <div
+            data-death-accounts
+            class="space-y-2"
+            hidden={values.cause !== 'death'}
+          >
+            <h3 class={CARD_LABEL}>Accounts closing</h3>
+            <table class={TABLE}>
+              <thead>
+                <tr class={THEAD}>
+                  <th class={TH}>Account</th>
+                  <th class={TH}>Balance</th>
+                </tr>
+              </thead>
+              <tbody>
+                {onDeathAccounts.accounts.map(account => (
+                  <tr>
+                    <td class={TD}>
+                      {account.accountNo} · {account.typeName}
+                    </td>
+                    <td class={TD_NUM}>{formatMoney(account.balance)}</td>
+                  </tr>
+                ))}
+                <tr class="font-semibold">
+                  <td class={TD}>Total</td>
+                  <td class={TD_NUM}>{formatMoney(onDeathAccounts.total)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )}
         {isNonMember && (
           <div class="space-y-2 text-sm text-neutral-700 dark:text-neutral-200">
             <label class="flex items-start gap-3">
@@ -305,9 +363,13 @@ if (Astro.request.method === 'POST') {
             class={INPUT}
           >{values.reason}</textarea>
         </label>
-        <p class="text-xs text-neutral-500 dark:text-neutral-400">
-          The balance is paid out when the closure is approved, as it stands
-          then.
+        <p
+          data-payout-note
+          class="text-xs text-neutral-500 dark:text-neutral-400"
+        >
+          {isNonMember && values.cause === 'death'
+            ? 'The balances are paid out together when it is approved, as they stand then.'
+            : 'The balance is paid out when the closure is approved, as it stands then.'}
         </p>
         <button type="submit" data-continue-button class={BUTTON}>
           {isNonMember && values.cause === 'death'
@@ -320,30 +382,43 @@ if (Astro.request.method === 'POST') {
 </DashboardLayout>
 
 <script>
-  // Reveals the claimant block, drops the reason from required and swaps
-  // the button's wording the moment "The holder has died" is picked — a
+  // Reveals the claimant block, swaps the Account select for the Accounts
+  // closing list, drops the reason from required and swaps the button's and
+  // payout note's wording the moment "The holder has died" is picked — a
   // visual nudge only, enforced server-side (ledger/closures.ts) whether or
   // not this script runs.
   const form = document.querySelector<HTMLFormElement>('[data-close-form]');
   const claimantBlock = form?.querySelector<HTMLElement>(
     '[data-claimant-block]'
   );
+  const accountField = form?.querySelector<HTMLElement>('[data-account-field]');
+  const deathAccounts = form?.querySelector<HTMLElement>(
+    '[data-death-accounts]'
+  );
   const otherFields = form?.querySelector<HTMLElement>('[data-other-fields]');
   const reason = form?.querySelector<HTMLTextAreaElement>('[name="reason"]');
   const continueButton = form?.querySelector<HTMLButtonElement>(
     '[data-continue-button]'
   );
+  const payoutNote = form?.querySelector<HTMLElement>('[data-payout-note]');
   if (form) {
     const refresh = () => {
       const onDeath =
         form.querySelector<HTMLInputElement>('input[name="cause"]:checked')
           ?.value === 'death';
       if (claimantBlock) claimantBlock.hidden = !onDeath;
+      if (accountField) accountField.hidden = onDeath;
+      if (deathAccounts) deathAccounts.hidden = !onDeath;
       if (reason) reason.required = !onDeath;
       if (continueButton) {
         continueButton.textContent = onDeath
           ? 'Continue to documents'
           : 'Continue to signature';
+      }
+      if (payoutNote) {
+        payoutNote.textContent = onDeath
+          ? 'The balances are paid out together when it is approved, as they stand then.'
+          : 'The balance is paid out when the closure is approved, as it stands then.';
       }
       if (otherFields) {
         const kind = form.querySelector<HTMLInputElement>(

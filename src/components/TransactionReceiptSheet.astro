@@ -134,8 +134,18 @@ const backHref = `/transactions/${t.id}`;
       </div>
     )}
     <div class="row">
-      <dt>Account</dt>
-      <dd>{account}</dd>
+      <dt>{receipt.accountsClosed.length > 0 ? 'Accounts' : 'Account'}</dt>
+      <dd>
+        {receipt.accountsClosed.length > 0
+          ? receipt.accountsClosed.map((a, i) => (
+              <>
+                {i > 0 && <br />}
+                {a.accountNo} · {a.typeName} ·{' '}
+                {formatMoney(a.amount, t.currency)}
+              </>
+            ))
+          : account}
+      </dd>
     </div>
     {otherSide && !t.payeeName && (
       <div class="row">
@@ -181,7 +191,9 @@ const backHref = `/transactions/${t.id}`;
     <tbody>
       <tr>
         <td>
-          {LINES[t.kind] ?? t.kind}
+          {receipt.accountsClosed.length > 0
+            ? 'Accounts closed · balances paid out'
+            : (LINES[t.kind] ?? t.kind)}
           {t.reason && ` · ${t.reason}`}
         </td>
         <td class="amount">{formatMoney(t.amount, t.currency)}</td>
@@ -213,7 +225,7 @@ const backHref = `/transactions/${t.id}`;
 
 {!shared && (canSend || sent.length > 0) && (
   <section class="screen-only panel">
-    <h2>Send to the member</h2>
+    <h2>{t.claimant ? 'Send to the claimant' : 'Send to the member'}</h2>
     {sent.length > 0 ? (
       <ul>
         {sent.map(s => (

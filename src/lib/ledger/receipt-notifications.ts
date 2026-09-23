@@ -59,10 +59,20 @@ export async function notifyReceiptIssued(
   try {
     const receipt = await loadTransactionReceipt(transactionId);
     if (!receipt || receipt.state !== 'issued') return empty;
-    const contact = await contactForHolder(
-      receipt.transaction.holderKind,
-      receipt.transaction.holderId
-    );
+    // On a death — a demised claim, or a deceased non-member's closure —
+    // the receipt is the claimant's, as every other message about it is
+    // (exit-notifications.ts), never the holder's.
+    const claimant = receipt.transaction.claimant;
+    const contact = claimant
+      ? {
+          name: claimant.name,
+          email: claimant.email ?? null,
+          mobile: claimant.mobile ?? null,
+        }
+      : await contactForHolder(
+          receipt.transaction.holderKind,
+          receipt.transaction.holderId
+        );
     if (!contact || (!contact.email && !contact.mobile)) {
       return { ...empty, contact };
     }
@@ -104,7 +114,12 @@ function valuesFor(
     kind: KIND_WORDS[t.kind] ?? t.kind,
     // The wording carries its own "Rs", so the figure goes bare.
     amount: formatMoney(t.amount, t.currency).replace(/^[A-Z]{3}\s*/, ''),
-    account: `${t.accountNo} · ${t.accountTypeName}`,
+    account:
+      receipt.accountsClosed.length > 0
+        ? receipt.accountsClosed
+            .map(a => `${a.accountNo} · ${a.typeName}`)
+            .join(', ')
+        : `${t.accountNo} · ${t.accountTypeName}`,
     // Without an origin or a secret there is no link to give; the wording
     // then says where to ask, rather than carrying a broken address.
     link: link ?? 'Ask at your branch for a printed copy.',

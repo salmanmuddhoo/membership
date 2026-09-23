@@ -12,6 +12,7 @@ import { recordAudit } from '../access/audit';
 import type { Principal } from '../access/principal';
 import { checkSegregation } from '../admin/segregation';
 import { query, withTransaction } from '../db/pool';
+import { accountsClosedOnDeath, type AccountClosedOnDeath } from './claimants';
 import { loadTransaction, type TransactionSummary } from './review';
 import { KIND_WORDS, notifyReceiptVoided } from './void-notifications';
 import { depositorForApplication } from '../applications/depositor';
@@ -46,6 +47,9 @@ export interface TransactionReceipt {
   // the fee receipt and the Cash Deposit Form follow (depositorFor). Null
   // for anything but money in, and where it is the holder themselves.
   depositorName: string | null;
+  // A closure on a death: every account it closed, with what each paid.
+  // Empty for anything else (transaction.claimantKind null).
+  accountsClosed: AccountClosedOnDeath[];
 }
 
 // By the transaction's id, its receipt number's id, or the receipt number
@@ -99,6 +103,10 @@ export async function loadTransactionReceipt(
       depositorName = depositor.name;
     }
   }
+  const accountsClosed =
+    transaction.kind === 'closure' && transaction.claimantKind
+      ? await accountsClosedOnDeath(transaction.id)
+      : [];
   return {
     transaction,
     receiptNumberId: row.receipt_number_id,
@@ -109,6 +117,7 @@ export async function loadTransactionReceipt(
     capturedByRole: row.captured_by_role,
     postedByName: row.posted_by_name,
     depositorName,
+    accountsClosed,
   };
 }
 
