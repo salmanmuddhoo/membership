@@ -341,14 +341,24 @@ caller skips it. Acting also needs the step's configured role, and the
 segregation rules refuse the officer who captured it (0069, 0071).
 
 `/transactions/pending` is one queue for every kind: what waits at a step the
-person's role owns, what is approved for them to post (`transaction.post`),
-and their own captures a reviewer returned. The sidebar badge on
+person's role owns, what is approved for them to pay out or post
+(`transaction.disburse` for money going out, `transaction.post` for money
+coming in), and their own captures a reviewer returned. The sidebar badge on
 Transactions counts the same three, so a badge counts what its own link
 opens — the President's number on Applications stays the applications.
 
-Approval decides; posting moves the money. `postApprovedTransaction()` is a
-separate act by someone with `transaction.post` who did not capture it, and a
-deposit takes its receipt there, since a receipt is issued when money posts.
+Approval decides; paying out or posting moves the money.
+`postApprovedTransaction()` is a separate act by someone who did not capture
+it: **disbursement** (officer direction, migration 0095) for a withdrawal, a
+transfer to a payee, a closure, a resignation or a claim — `transaction.disburse`,
+the Treasurer's, so the Society's chain is Secretary, President, then the
+Treasurer pays out — and posting (`transaction.post`) for an approved
+deposit. Either way the money takes its receipt there, since a receipt is
+issued when money moves. On screen money paid out is "disbursed", never
+"posted" (`transactionStatusLabel`, `src/lib/ledger/labels.ts`), and a
+transaction that pays out ends its chevron in **Disbursement**, naming the
+roles that hold the permission (`rolesHoldingPermission`) — "Treasurer" —
+until it is done.
 
 The strip at the top of the transaction page is the chain as it is now
 (S-1405): `chainTimeline('transaction', id)` in `src/lib/workflow/timeline.ts`
@@ -453,7 +463,9 @@ and links the download.
 
 `transaction.capture` records; `transaction.post` posts directly below the
 escalation threshold, so a deposit — one act — needs both, and posts an
-approved transaction off its chain; `transaction.review` and
+approved deposit off its chain; `transaction.disburse` pays out an approved
+withdrawal, transfer to a payee, closure, resignation or claim (the
+Treasurer's, 0095); `transaction.review` and
 `transaction.approve` act at a chain's steps; `account.view` reads a
 balance or a history; `transaction.view` reads transactions and the queue;
 `receipt.void` voids a receipt. The default mapping and the segregation

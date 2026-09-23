@@ -4,6 +4,7 @@
 // post, or correct and resubmit — and the trail of who did what.
 import ChainTimeline from '@components/ChainTimeline.astro';
 import DocumentViewer from '@components/DocumentViewer.astro';
+import { transactionStatusLabel } from '@lib/ledger/labels';
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import {
   documentsForTransaction,
@@ -36,7 +37,7 @@ import {
   loadTransactionByReference,
   mayActAt,
   needsDisbursement,
-  PERMISSION_POST,
+  permissionToPost,
   positionOf,
   postApprovedTransaction,
   ReviewError,
@@ -87,16 +88,6 @@ const KIND_LABELS: Record<string, string> = {
   resignation: 'Resignation',
   demise: 'Demised claim',
 };
-const STATUS_LABELS: Record<string, string> = {
-  draft: 'Draft',
-  submitted: 'Submitted',
-  under_review: 'Under review',
-  approved: 'Approved',
-  posted: 'Posted',
-  returned: 'Returned',
-  rejected: 'Rejected',
-  cancelled: 'Cancelled',
-};
 
 let error: string | null = null;
 let notice: string | null = null;
@@ -120,7 +111,7 @@ if (Astro.request.method === 'POST') {
         { outcome, comment: text('comment') },
         principal
       );
-      notice = `${transaction.reference} ${STATUS_LABELS[result.status]?.toLowerCase() ?? result.status}.`;
+      notice = `${transaction.reference} ${transactionStatusLabel({ ...transaction, status: result.status }).toLowerCase()}.`;
     } else if (intent === 'post') {
       // A withdrawal says how it was paid out (S-1503); a deposit already
       // said how it arrived.
@@ -135,9 +126,10 @@ if (Astro.request.method === 'POST') {
             }
           : undefined
       );
+      const word = needsDisbursement(transaction) ? 'disbursed' : 'posted';
       notice = posted.receiptNo
-        ? `${transaction.reference} posted. Receipt ${posted.receiptNo}.`
-        : `${transaction.reference} posted.`;
+        ? `${transaction.reference} ${word}. Receipt ${posted.receiptNo}.`
+        : `${transaction.reference} ${word}.`;
     } else if (intent === 'reverse') {
       const result = await reverseTransaction(
         transaction.id,
@@ -223,7 +215,7 @@ const canReverse =
   principal.permissions.has(PERMISSION_REVERSE);
 const canPost =
   transaction.status === 'approved' &&
-  principal.permissions.has(PERMISSION_POST) &&
+  principal.permissions.has(permissionToPost(transaction)) &&
   transaction.capturedById !== principal.userId &&
   transaction.legDirection !== 'credit';
 // A transfer is reviewed, posted and corrected from its debit leg; the
@@ -354,7 +346,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           </a>
         )}
         <span class={TAG}>
-          {STATUS_LABELS[transaction.status] ?? transaction.status}
+          {transactionStatusLabel(transaction)}
           {position && ` · ${position.step.name} (${position.step.roleName})`}
         </span>
       </span>
@@ -687,7 +679,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               : isClosure
                 ? 'Approved. Record how the balance was paid out; the account closes and the receipt is issued now.'
                 : disburses
-                  ? 'Approved. Record how it was paid out; the money moves and the receipt is issued now.'
+                  ? 'Approved. Record how it is paid out; disbursing moves the money and issues the receipt.'
                   : 'Approved. Posting moves the money and issues the receipt.'}
         </p>
         {disburses && (
@@ -745,7 +737,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               : isClosure
                 ? 'Pay out and close'
                 : disburses
-                  ? 'Pay out and post'
+                  ? 'Disburse'
                   : 'Post'}
         </button>
       </form>
@@ -1027,7 +1019,10 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             <li class="border-l-2 border-neutral-300 pl-3 dark:border-neutral-700">
               <p class="text-neutral-800 dark:text-neutral-100">
                 <span class="font-medium">
-                  {STATUS_LABELS[entry.toStatus] ?? entry.toStatus}
+                  {transactionStatusLabel({
+                    ...transaction,
+                    status: entry.toStatus,
+                  })}
                 </span>
                 {' · '}
                 {entry.actorName}

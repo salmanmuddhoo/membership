@@ -10,6 +10,7 @@ import {
 } from '@lib/config/reference';
 import {
   approvedTransactions,
+  needsDisbursement,
   pendingTransactions,
   returnedTransactions,
 } from '@lib/ledger/review';
@@ -111,8 +112,11 @@ function waited(since: Date): string {
         empty: 'Nothing is waiting for you.',
       },
       {
-        title: 'Approved, to post',
-        rows: approved.map(t => ({ ...t, note: 'Approved' })),
+        title: 'Approved, to pay out or post',
+        rows: approved.map(t => ({
+          ...t,
+          note: needsDisbursement(t) ? 'To disburse' : 'To post',
+        })),
         empty: null,
       },
       {

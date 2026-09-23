@@ -108,7 +108,7 @@ beforeAll(async () => {
   officer = principalFor(
     byEmail.get('officer@albarakah.mu'),
     'officer@albarakah.mu',
-    ['transaction.capture', 'transaction.post']
+    ['transaction.capture', 'transaction.post', 'transaction.disburse']
   );
   onlooker = principalFor(
     byEmail.get('viewer@albarakah.mu'),
@@ -272,6 +272,7 @@ describe('recording a deposit', () => {
     const second = principalFor(other.rows[0].id, 'second@albarakah.mu', [
       'transaction.capture',
       'transaction.post',
+      'transaction.disburse',
     ]);
     const theirs = await deposits.recordDeposit(
       { accountId: msa, amount: '250.00', method: 'cash', idempotencyKey: key },

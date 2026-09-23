@@ -224,7 +224,7 @@ const initialCents = /^\d{1,12}(\.\d{1,2})?$/.test(values.amount ?? '')
       <section class={CARD_OK}>
         <h2 class={CARD_TITLE}>
           {transfer.status === 'posted'
-            ? `Transfer ${transfer.reference} posted`
+            ? `Transfer ${transfer.reference} ${transfer.debitLeg.payeeName ? 'paid out' : 'posted'}`
             : `Transfer ${transfer.reference} submitted for approval`}
         </h2>
         {transfer.status !== 'posted' && transfer.debitLeg.currentStepName && (

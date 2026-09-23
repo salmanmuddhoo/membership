@@ -173,13 +173,18 @@ beforeAll(async () => {
     byEmail.get('officer@albarakah.mu'),
     'officer@albarakah.mu',
     ['account_officer'],
-    ['transaction.capture', 'transaction.post', 'transaction.view']
+    [
+      'transaction.capture',
+      'transaction.post',
+      'transaction.disburse',
+      'transaction.view',
+    ]
   );
   treasurer = principalFor(
     byEmail.get('treasurer@albarakah.mu'),
     'treasurer@albarakah.mu',
     ['treasurer'],
-    ['transaction.post', 'transaction.view']
+    ['transaction.post', 'transaction.disburse', 'transaction.view']
   );
   secretary = principalFor(
     byEmail.get('secretary@albarakah.mu'),
@@ -405,7 +410,7 @@ describe('a demised claim (S-1704)', () => {
         'todo',
         'President / Chairperson',
       ],
-      ['posted', 'Settled', 'todo', null],
+      ['posted', 'Settled', 'todo', 'Treasurer'],
     ]);
     await filePaper(draft.id, affidavitTypeId, clerk);
     const checklist = await demises.demiseChecklist(draft.id);

@@ -126,7 +126,12 @@ beforeAll(async () => {
     byEmail.get('officer@albarakah.mu'),
     'officer@albarakah.mu',
     ['account_officer'],
-    ['transaction.capture', 'transaction.post', 'document.verify']
+    [
+      'transaction.capture',
+      'transaction.post',
+      'transaction.disburse',
+      'document.verify',
+    ]
   );
   secretary = principalFor(
     byEmail.get('secretary@albarakah.mu'),

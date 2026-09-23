@@ -2,6 +2,7 @@
 // A list of transactions, whatever kind, wherever it is shown (S-1506): a
 // person's across every account, or the Society's day. One row per
 // transaction; a transfer once, naming the other side.
+import { transactionStatusLabel } from '@lib/ledger/labels';
 import type { TransactionSummary } from '@lib/ledger/review';
 import { formatMoney } from '@lib/payments/money';
 import { FILTER, HINT, TABLE, TBODY, THEAD } from '@lib/ui';
@@ -23,16 +24,6 @@ const KIND_LABELS: Record<string, string> = {
   closure: 'Account closure',
   resignation: 'Resignation',
   demise: 'Demised claim',
-};
-const STATUS_LABELS: Record<string, string> = {
-  draft: 'Draft',
-  submitted: 'Submitted',
-  under_review: 'Under review',
-  approved: 'Approved',
-  posted: 'Posted',
-  returned: 'Returned',
-  rejected: 'Rejected',
-  cancelled: 'Cancelled',
 };
 const dateFormat = new Intl.DateTimeFormat('en-GB', {
   day: 'numeric',
@@ -147,7 +138,7 @@ const CELL = 'px-2 py-2';
             >
               {direction(t) === 'out' && formatMoney(t.amount, t.currency)}
             </td>
-            <td class={CELL}>{STATUS_LABELS[t.status] ?? t.status}</td>
+            <td class={CELL}>{transactionStatusLabel(t)}</td>
             <td class={CELL}>{t.capturedByName}</td>
           </tr>
         ))}

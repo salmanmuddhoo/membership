@@ -129,12 +129,17 @@ beforeAll(async () => {
   officer = make(
     'officer@albarakah.mu',
     ['account_officer'],
-    ['transaction.capture', 'transaction.post', 'transaction.view']
+    [
+      'transaction.capture',
+      'transaction.post',
+      'transaction.disburse',
+      'transaction.view',
+    ]
   );
   treasurer = make(
     'treasurer@albarakah.mu',
     ['treasurer'],
-    ['transaction.post', 'transaction.view']
+    ['transaction.post', 'transaction.disburse', 'transaction.view']
   );
   secretary = make(
     'secretary@albarakah.mu',

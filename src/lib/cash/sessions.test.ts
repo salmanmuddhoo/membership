@@ -122,6 +122,7 @@ beforeAll(async () => {
       'cash.session',
       'transaction.capture',
       'transaction.post',
+      'transaction.disburse',
       'transaction.view',
       'application.capture',
       'payment.record',
@@ -137,6 +138,7 @@ beforeAll(async () => {
       'cash.view',
       'transaction.capture',
       'transaction.post',
+      'transaction.disburse',
       'payment.void',
     ]
   );

@@ -37,6 +37,18 @@ import { offeredMethod, PaymentError } from '../payments/payments';
 export const PERMISSION_REVIEW = 'transaction.review';
 export const PERMISSION_APPROVE = 'transaction.approve';
 export const PERMISSION_POST = 'transaction.post';
+// Disbursement is the Treasurer's (officer direction, migration 0095):
+// paying out what the chain approved — a withdrawal, a transfer to a
+// payee, a closure, a resignation, a claim — is transaction.disburse; an
+// approved deposit (money in) posts under transaction.post as before.
+export const PERMISSION_DISBURSE = 'transaction.disburse';
+
+/** The permission the act after approval needs, for this transaction. */
+export function permissionToPost(
+  transaction: Pick<TransactionSummary, 'kind' | 'payeeName'>
+): string {
+  return needsDisbursement(transaction) ? PERMISSION_DISBURSE : PERMISSION_POST;
+}
 export const PERMISSION_VIEW = 'transaction.view';
 
 // Audit actions. The segregation rules (0069, 0071) key on 'reviewed',
@@ -463,7 +475,12 @@ export async function approvedTransactions(
   principal: Principal,
   filter: { kind?: TransactionKind } = {}
 ): Promise<(TransactionSummary & { waitingSince: Date })[]> {
-  if (!principal.permissions.has(PERMISSION_POST)) return [];
+  if (
+    !principal.permissions.has(PERMISSION_POST) &&
+    !principal.permissions.has(PERMISSION_DISBURSE)
+  ) {
+    return [];
+  }
   const params: unknown[] = [];
   let kindFilter = '';
   if (filter.kind) {
@@ -477,8 +494,13 @@ export async function approvedTransactions(
       order by t.submitted_at, t.serial_no`,
     params
   );
+  // Only the ones this person may pay out or post: the Treasurer sees the
+  // withdrawals and the exits, an Account Officer the deposits.
+  const mine = result.rows.filter(row =>
+    principal.permissions.has(permissionToPost(assembleTransaction(row)))
+  );
   return Promise.all(
-    result.rows.map(async row => ({
+    mine.map(async row => ({
       ...assembleTransaction(row),
       waitingSince: await arrivedAt(row.id, row.submitted_at ?? row.created_at),
     }))
@@ -753,15 +775,17 @@ export async function postApprovedTransaction(
   principal: Principal,
   disbursement?: Disbursement
 ): Promise<TransactionSummary> {
-  if (!principal.permissions.has(PERMISSION_POST)) {
-    throw new ReviewError(
-      'You do not have permission to post transactions.',
-      'forbidden'
-    );
-  }
   const transaction = await loadTransaction(id);
   if (!transaction) {
     throw new ReviewError('That transaction no longer exists.', 'not_found');
+  }
+  if (!principal.permissions.has(permissionToPost(transaction))) {
+    throw new ReviewError(
+      needsDisbursement(transaction)
+        ? 'You do not have permission to disburse.'
+        : 'You do not have permission to post transactions.',
+      'forbidden'
+    );
   }
   if (transaction.status !== 'approved') {
     throw new ReviewError(
