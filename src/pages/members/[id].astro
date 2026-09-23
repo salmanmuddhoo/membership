@@ -9,20 +9,20 @@ import {
   guardianOf,
   rejoinInFlightFor,
   startAdditionalAccountApplication,
+  startCustomerAdditionalAccountApplication,
   startMembershipApplicationFromCustomer,
   startRejoinApplication,
 } from '@lib/applications/capture';
 import { forDisplay } from '@lib/applications/phone';
 import { otherPartyGroups } from '@lib/applications/parties';
 import {
-  paymentsForApplication,
+  paymentsForCustomer,
   paymentsForMember,
   type Payment,
 } from '@lib/payments/payments';
 import { formatMoney } from '@lib/payments/money';
 import {
-  checklistFor,
-  documentsForMember,
+  documentsForPerson,
   filedDocumentFor,
   type MemberDocumentGroup,
 } from '@lib/documents/documents';
@@ -268,18 +268,25 @@ if (Astro.request.method === 'POST') {
         }
       }
     }
-  } else if (intent === 'reopen' && member) {
+  } else if (intent === 'reopen' && (member || customer)) {
     // M26: a closed additional account reopens through the same
-    // additional-account application that opened it, for that one type.
+    // additional-account application that opened it, for that one type —
+    // for a member or, LC-06, a non-member customer alike.
     if (!canCapture) {
       error = 'You do not have permission to do this.';
     } else {
       try {
-        const created = await startAdditionalAccountApplication(
-          member.id,
-          [String(form.get('accountTypeId') ?? '')],
-          { userId: principal.userId, email: principal.email }
-        );
+        const created = member
+          ? await startAdditionalAccountApplication(
+              member.id,
+              [String(form.get('accountTypeId') ?? '')],
+              { userId: principal.userId, email: principal.email }
+            )
+          : await startCustomerAdditionalAccountApplication(
+              customer!.id,
+              [String(form.get('accountTypeId') ?? '')],
+              { userId: principal.userId, email: principal.email }
+            );
         return Astro.redirect(`/applications/${created.id}/account?step=1`);
       } catch (err) {
         if (err instanceof ApplicationError) {
@@ -293,16 +300,14 @@ if (Astro.request.method === 'POST') {
   }
 }
 
-// What has been paid: for a member, including the receipt that admitted
-// them (paymentsForMember reads member_id and, falling back, the
-// application that created them — they did not exist when that one was
-// taken). A customer carries no such member_id-equivalent column on
-// payment; the account-opening receipt is the only one there ever is today,
-// and it is found the same way it was on the application itself.
+// What has been paid, across every application that is this person's
+// (lifecycle test, LC-02): for a member, including the receipt that
+// admitted them (paymentsForMember also reads member_id); for a customer,
+// every account opened or reopened.
 const payments: Payment[] = canSeePayments
   ? member
     ? await paymentsForMember(member.id)
-    : await paymentsForApplication(customer!.applicationId)
+    : await paymentsForCustomer(customer!.id)
   : [];
 
 // Officer feedback: a cash deposit over the threshold was signed for on a
@@ -331,25 +336,15 @@ if (sourceOfFundType) {
 }
 
 // Officer feedback: what has been filed for this person, everywhere it was
-// filed — a member can have more than one application on file (the founding
-// membership application plus any additional_account application since),
-// each carrying its own checklist; a customer only ever has the one. Only
-// what has actually been uploaded — the checklist's own Missing rows belong
-// on the application page, not this summary.
+// filed — every application that is theirs, each carrying its own
+// checklist (lifecycle test, LC-02: a rejoin, a reopen or a converted
+// member's first account was being left out). Only what has actually been
+// uploaded — the checklist's own Missing rows belong on the application
+// page, not this summary.
 const documentGroups: MemberDocumentGroup[] = canSeeDocuments
-  ? member
-    ? await documentsForMember(member.id, member.applicationId)
-    : customer!.applicationId
-      ? [
-          {
-            applicationId: customer!.applicationId,
-            applicationReference: customer!.applicationReference!,
-            entries: (
-              await checklistFor({ applicationId: customer!.applicationId })
-            ).filter(entry => entry.uploadedAt !== null),
-          },
-        ].filter(g => g.entries.length > 0)
-      : []
+  ? await documentsForPerson(
+      member ? { memberId: member.id } : { customerId: customer!.id }
+    )
   : [];
 
 const dateFormat = new Intl.DateTimeFormat('en-GB', {
@@ -381,19 +376,17 @@ const status = (member ?? customer)!.status;
 // offer and the button is gone. Gated on application.capture, like starting
 // any application. Skipped entirely for a converted/inactive record.
 const person = (member ?? customer)!;
-// A closed account is not held (M26): its type is open to apply for again,
-// and approval brings the closed one back rather than opening a second.
+// LC-11: a type of which this person holds a closed account is still held,
+// for this button's purposes — it is reopened from its own row (Reopen)
+// rather than offered again here, which would otherwise show both for the
+// same type.
 const canOpenAnotherAccount =
   canCapture &&
   canOpenAccount(person.status) &&
   openableAccountTypes(
     await listAccountTypes(),
     person.membershipTypeId,
-    new Set(
-      person.accounts
-        .filter(a => a.status !== 'closed')
-        .map(a => a.accountTypeId)
-    )
+    new Set(person.accounts.map(a => a.accountTypeId))
   ).length > 0;
 // S-1305: a deposit into one of their accounts. Gated on transaction.capture
 // (the counter officer's, like payment.record) and on there being an active
@@ -427,14 +420,13 @@ const canRejoin =
 const resignedMember = member?.status === 'resigned';
 // M26: the additional-account applications on their way, by the type each
 // would reopen — a closed account's row links to its own rather than
-// offering to start another.
-const reopening = member
-  ? await accountApplicationsInFlightFor(member.id)
-  : new Map<string, { id: string; reference: string }>();
+// offering to start another. A customer's too (lifecycle test, LC-06).
+const reopening = await accountApplicationsInFlightFor(
+  member ? member.id : { customerId: customer!.id }
+);
 const canReopen = (account: { status: string; accountTypeId: string }) =>
-  !!member &&
-  canOpenAccount(member.status) &&
   canCapture &&
+  canOpenAccount(person.status) &&
   account.status === 'closed' &&
   !reopening.has(account.accountTypeId);
 // S-1702: closing an account that is not the membership's, and the request

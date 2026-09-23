@@ -113,8 +113,8 @@ export interface AdditionalAccountApplication extends ApplicationCommon {
   existingCustomerId: string | null;
   // The member or customer id — whichever owns this, for loading their record.
   existingHolderId: string;
-  // How the holder is named on screen: a member's AB number, or a customer's
-  // own name (a customer has no single number of their own).
+  // How the holder is named on screen: a member's name and AB number, or a
+  // customer's own name (a customer has no single number of their own).
   existingHolderLabel: string;
   // The application their applicant details and documents live on — a member's
   // founding membership application, a customer's originating customer_account
@@ -1072,6 +1072,7 @@ export async function loadApplication(id: string): Promise<Application | null> {
       existing_member_application_id: string | null;
       existing_customer_id: string | null;
       existing_customer_name: string | null;
+      existing_member_name: string | null;
       existing_customer_application_id: string | null;
       source_customer_id: string | null;
       rejoins_member_id: string | null;
@@ -1095,6 +1096,8 @@ export async function loadApplication(id: string): Promise<Application | null> {
             trim(coalesce(cp.values->>'name', '') || ' '
                  || coalesce(cp.values->>'surname', '')) as existing_customer_name,
             cust.application_id as existing_customer_application_id,
+            trim(coalesce(mp.values->>'name', '') || ' '
+                 || coalesce(mp.values->>'surname', '')) as existing_member_name,
             a.source_customer_id, a.rejoins_member_id,
             rj.member_no as rejoins_member_no,
             a.status, a.captured_by,
@@ -1109,6 +1112,9 @@ export async function loadApplication(id: string): Promise<Application | null> {
        left join application_party cp
          on cp.application_id = cust.application_id
         and cp.subject = 'applicant' and cp.ordinal = 1
+       left join application_party mp
+         on mp.application_id = mb.application_id
+        and mp.subject = 'applicant' and mp.ordinal = 1
        join app_user u               on u.id = a.captured_by
       where a.id = $1`,
       [id]
@@ -1153,8 +1159,12 @@ export async function loadApplication(id: string): Promise<Application | null> {
       existingMemberId: row.existing_member_id,
       existingCustomerId: row.existing_customer_id,
       existingHolderId: (row.existing_member_id ?? row.existing_customer_id)!,
+      // A member by name and number, not the number alone (lifecycle
+      // test, LC-08: "Opening an account for AB9104").
       existingHolderLabel: forMember
-        ? row.existing_member_no!
+        ? [row.existing_member_name?.trim(), row.existing_member_no]
+            .filter(Boolean)
+            .join(' · ')
         : row.existing_customer_name?.trim() || 'Non-member',
       existingHolderApplicationId: forMember
         ? row.existing_member_application_id
@@ -1312,8 +1322,11 @@ export async function rejoinInFlightFor(
 // member, by the account type each would open — so a closed account's row
 // can say its reopening is already under way rather than offer it twice.
 export async function accountApplicationsInFlightFor(
-  memberId: string
+  // A member's id, or — a customer reopens too (lifecycle test, LC-06) —
+  // { customerId }.
+  holder: string | { customerId: string }
 ): Promise<Map<string, { id: string; reference: string }>> {
+  const byCustomer = typeof holder !== 'string';
   const result = await query<{
     id: string;
     reference: string;
@@ -1322,10 +1335,11 @@ export async function accountApplicationsInFlightFor(
     `select a.id, a.reference, s.account_type_id
        from membership_application a
        join application_account_selection s on s.application_id = a.id
-      where a.existing_member_id = $1
+      where (case when $2 then a.existing_customer_id
+                  else a.existing_member_id end) = $1
         and a.application_kind = 'additional_account'
         and a.status not in ('approved', 'rejected')`,
-    [memberId]
+    [byCustomer ? holder.customerId : holder, byCustomer]
   );
   return new Map(
     result.rows.map(r => [
@@ -1751,6 +1765,14 @@ export async function guardianOf(
 // included, because it is the same person converting, not a new one. Naming
 // that customer here is what tells this apart from an unrelated application
 // that happens to have typed the same NIC.
+// Who else an NIC is on file for. What comes back names the kind of record
+// so the caller can say what to do about it (lifecycle test, LC-09).
+interface NicHolder {
+  kind: 'member' | 'customer' | 'application';
+  reference: string;
+  status: string;
+}
+
 async function findNicHolder(
   nic: string,
   excludeApplicationId: string,
@@ -1760,9 +1782,9 @@ async function findNicHolder(
   // applications that are theirs, nor the customer record they converted
   // from, is someone else holding it.
   excludeMemberId: string | null = null
-): Promise<{ label: string } | null> {
-  const member = await query<{ member_no: string }>(
-    `select m.member_no
+): Promise<NicHolder | null> {
+  const member = await query<{ member_no: string; status: string }>(
+    `select m.member_no, m.status
        from member m
        join application_party p
          on p.application_id = m.application_id
@@ -1776,12 +1798,16 @@ async function findNicHolder(
     [nic, excludeMemberId, excludeApplicationId]
   );
   if (member.rowCount! > 0) {
-    return { label: `member ${member.rows[0].member_no}` };
+    return {
+      kind: 'member',
+      reference: member.rows[0].member_no,
+      status: member.rows[0].status,
+    };
   }
 
-  const customer = await query<{ name: string | null }>(
+  const customer = await query<{ name: string | null; status: string }>(
     `select trim(coalesce(p.values->>'name', '') || ' '
-                 || coalesce(p.values->>'surname', '')) as name
+                 || coalesce(p.values->>'surname', '')) as name, c.status
        from customer c
        join application_party p
          on p.application_id = c.application_id
@@ -1794,15 +1820,36 @@ async function findNicHolder(
     [nic, excludeCustomerId, excludeMemberId, excludeApplicationId]
   );
   if (customer.rowCount! > 0) {
-    const name = (customer.rows[0].name ?? '').trim();
-    return { label: name ? `non-member ${name}` : 'an existing non-member' };
+    return {
+      kind: 'customer',
+      reference: (customer.rows[0].name ?? '').trim(),
+      status: customer.rows[0].status,
+    };
   }
 
-  // An application already carrying this NIC through the chain. The last
-  // clause drops the source customer's own application, which is the same
-  // person converting rather than a separate claim on the NIC.
-  const application = await query<{ reference: string }>(
-    `select a.reference
+  // An application already carrying this NIC through the chain — unless it
+  // is one of this same person's own. Every application of one person
+  // shares a folder (folder_application_id points at the first of them), so
+  // "theirs" is anything filed under the same root as this application, the
+  // member's or the customer's (lifecycle test, LC-01: a member who started
+  // as a non-member and rejoined once was refused a second rejoin on their
+  // own earlier membership application).
+  const application = await query<{ reference: string; status: string }>(
+    `with own_roots as (
+       select coalesce(o.folder_application_id, o.id) as root
+         from membership_application o
+        where o.id = $2::uuid
+           or ($4::uuid is not null
+               and (o.id = (select m.application_id from member m
+                             where m.id = $4::uuid)
+                    or o.rejoins_member_id = $4::uuid
+                    or o.existing_member_id = $4::uuid))
+           or ($3::uuid is not null
+               and (o.id = (select c.application_id from customer c
+                             where c.id = $3::uuid)
+                    or o.existing_customer_id = $3::uuid))
+     )
+     select a.reference, a.status
        from membership_application a
        join application_party p
          on p.application_id = a.id
@@ -1810,27 +1857,49 @@ async function findNicHolder(
       where lower(p.values->>'nic') = lower($1)
         and a.id <> $2::uuid
         and a.status <> 'rejected'
-        and ($3::uuid is null
-             or a.id is distinct from
-                (select c.application_id from customer c where c.id = $3::uuid))
-        and ($4::uuid is null
-             or not (a.rejoins_member_id is not distinct from $4::uuid
-                     or a.id in (select m.application_id from member m
-                                  where m.id = $4::uuid)
-                     or a.id in (select r.founding from (
-                          select coalesce(s.folder_application_id, s.id)
-                                   as founding
-                            from membership_application s
-                           where s.rejoins_member_id = $4::uuid) r)))
+        and coalesce(a.folder_application_id, a.id)
+              not in (select root from own_roots)
       order by a.created_at
       limit 1`,
     [nic, excludeApplicationId, excludeCustomerId, excludeMemberId]
   );
   if (application.rowCount! > 0) {
-    return { label: `application ${application.rows[0].reference}` };
+    return {
+      kind: 'application',
+      reference: application.rows[0].reference,
+      status: application.rows[0].status,
+    };
   }
 
   return null;
+}
+
+// What the officer is told, by what the NIC is on file for and what they
+// were trying to do (lifecycle test, LC-09): the error names the way in.
+function nicHolderProblem(holder: NicHolder, applicationKind: string): string {
+  const openingAccount = applicationKind !== 'membership';
+  if (holder.kind === 'member') {
+    const who = `member ${holder.reference}`;
+    if (holder.status === 'demised') {
+      return `This NIC is on file for ${who}, who has died.`;
+    }
+    if (openingAccount) {
+      return `This NIC is on file for ${who}. Open the account from their page.`;
+    }
+    if (holder.status === 'resigned') {
+      return `This NIC is on file for ${who}, who resigned. Use Rejoin on their page.`;
+    }
+    return `This NIC is on file for ${who}, who is already a member.`;
+  }
+  if (holder.kind === 'customer') {
+    const who = holder.reference
+      ? `non-member ${holder.reference}`
+      : 'an existing non-member';
+    return openingAccount
+      ? `This NIC is on file for ${who}. Open the account from their page.`
+      : `This NIC is on file for ${who}. Use Apply to become a member on their page.`;
+  }
+  return `This NIC is already on application ${holder.reference}.`;
 }
 
 export interface GuardianCandidate {
@@ -2036,7 +2105,12 @@ export async function problemsBlockingSubmission(
   // reported as missing, if mandatory), and never for a type with no 'nic'
   // field at all (Corporate).
   const applicantFields = fields.get('applicant');
-  if (applicantFields?.some(f => f.fieldKey === 'nic')) {
+  // A decided application is history, not a claim on the NIC: once its
+  // applicant has moved on to a later application (a rejoin, say) it would
+  // otherwise read as clashing with them (lifecycle test, LC-04).
+  const decided =
+    application.status === 'approved' || application.status === 'rejected';
+  if (!decided && applicantFields?.some(f => f.fieldKey === 'nic')) {
     const applicant = application.parties.find(
       p => p.subject === 'applicant' && p.ordinal === 1
     );
@@ -2063,7 +2137,7 @@ export async function problemsBlockingSubmission(
           subject: 'applicant',
           ordinal: 1,
           fieldKey: 'nic',
-          label: `This NIC is already on file for ${holder.label}.`,
+          label: nicHolderProblem(holder, application.applicationKind),
         });
       }
     }

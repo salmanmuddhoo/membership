@@ -41,7 +41,7 @@ const search = Astro.url.searchParams.get('q') ?? '';
 // them in, gets that alignment from the browser's own table layout, no
 // per-row logic needed.
 const [
-  { members, total, memberCount, nonMemberCount, truncated },
+  { members, total, memberCount, nonMemberCount, formerCount, truncated },
   accountTypeColumns,
 ] = await Promise.all([listMembers({ search }), listAccountTypes()]);
 const activeAccountTypeColumns = accountTypeColumns.filter(t => t.isActive);
@@ -132,11 +132,15 @@ function accountButtonClasses(account: MemberListAccount): string {
             ? `No members match “${search}”.`
             : 'No members yet. One is created when an application is approved.'
           : (() => {
-              // Officer feedback: split the count into members (they hold
-              // Shares/MSA) and non-members (only an additional account).
+              // Officer feedback: split the count into members (their
+              // membership is open) and non-members (a customer, or a
+              // resigned member, still holding an open account); LC-10
+              // adds former — a resigned or demised member, or a customer,
+              // with nothing open — shown only when there is one to report.
               const breakdown =
                 `${memberCount} member${memberCount === 1 ? '' : 's'}, ` +
-                `${nonMemberCount} non-member${nonMemberCount === 1 ? '' : 's'}`;
+                `${nonMemberCount} non-member${nonMemberCount === 1 ? '' : 's'}` +
+                (formerCount > 0 ? `, ${formerCount} former` : '');
               return truncated
                 ? `Showing the first ${members.length} of ${total} — ${breakdown}. Search to narrow the list.`
                 : `${breakdown}.`;

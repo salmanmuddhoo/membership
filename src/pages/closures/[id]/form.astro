@@ -73,9 +73,15 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
         <span class="value">{closure.holderName || <i class="blank" />}</span>
       </div>
       <div class="row">
-        <span class="label">MEMBER NO:</span>
-        <span class="value">{closure.memberNo ?? '—'}</span>
-        <span class="label gap">NIC / PASSPORT NO:</span>
+        {closure.memberNo && (
+          <>
+            <span class="label">MEMBER NO:</span>
+            <span class="value">{closure.memberNo}</span>
+          </>
+        )}
+        <span class={closure.memberNo ? 'label gap' : 'label'}>
+          NIC / PASSPORT NO:
+        </span>
         <span class="value">{nic || <i class="blank" />}</span>
       </div>
       <div class="row">
@@ -97,12 +103,11 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
     <p class="certify">
       I request Al Barakah Multipurpose Co-operative Society Limited to close
       the account named above and to pay me its balance as it stands on the day
-      the closure is approved. I understand that once closed, the account cannot
-      be used again.
+      the closure is approved.
     </p>
 
     <div class="sign">
-      <p class="label">MEMBER'S SIGNATURE:</p>
+      <p class="label">ACCOUNT HOLDER'S SIGNATURE:</p>
       <div class="sig-pad">
         <div class="sig-line"></div>
         <img class="sig-image" data-sig-image alt="" hidden />
@@ -138,7 +143,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
     <p data-status class="status-line no-print" aria-live="polite">
       {alreadyFiled
         ? `On file: ${alreadyFiled.fileName}. Signing again replaces it.`
-        : 'Have the member sign, then upload.'}
+        : 'Have the account holder sign, then upload.'}
     </p>
   </div>
 </BaseLayout>
@@ -293,7 +298,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
   import { wireSignedRequestForm } from '@lib/client/signed-request';
 
   wireSignedRequestForm({
-    signatureTitle: "Member's signature",
+    signatureTitle: "Account holder's signature",
     documentLabel: 'Account closure request',
   });
 </script>

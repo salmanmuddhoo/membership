@@ -30,7 +30,10 @@ import {
   listMembershipTypes,
   offeredPaymentMethods,
 } from '@lib/config/reference';
-import { openAccountsForCustomerApplication } from '@lib/members/create';
+import {
+  openAccountsForCustomerApplication,
+  recordForCustomerApplication,
+} from '@lib/members/create';
 import {
   availableActions,
   boardReadiness,
@@ -571,6 +574,25 @@ const signoffs =
     ? await signoffsFor(application!.id)
     : [];
 
+// Next on Applicant details (lifecycle test, LC-03): the page saves, then
+// asks here whether the form may be printed. Only with nothing blocking
+// does it go on to print and sign; otherwise the officer stays on the
+// details with the problem named, instead of having the applicant sign a
+// form that cannot be submitted.
+if (
+  Astro.request.method === 'GET' &&
+  Astro.url.searchParams.get('next') === 'print' &&
+  blocking.length === 0
+) {
+  return Astro.redirect(`/applications/${application!.id}/print`);
+}
+
+// Once approved, the way to the person it created (lifecycle test).
+const recordId =
+  application!.status === 'approved'
+    ? await recordForCustomerApplication(application!.id)
+    : null;
+
 const explainedProblems = blocking.filter(b => {
   const party = application!.parties.find(
     p => p.subject === b.subject && p.ordinal === b.ordinal
@@ -679,7 +701,8 @@ const signedFormFiled = checklist.some(
 
 const timeline = applicationTimeline({
   status: application!.status,
-  mandatoryFieldsOutstanding: blocking.length,
+  mandatoryFieldsOutstanding: blocking.length - explainedProblems.length,
+  valuesToCorrect: explainedProblems.length,
   signedFormFiled,
   requiredDocumentsOutstanding: requiredDocumentsMissing,
   paymentRecorded: livePayment !== null,
@@ -855,7 +878,18 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             </li>
           ))}
         </ul>
+        <a
+          href={`/members/${openedAccounts.id}`}
+          class="mt-2 inline-block text-sm font-medium underline"
+        >
+          Open their record
+        </a>
       </section>
+    )}
+    {!openedAccounts && recordId && (
+      <a href={`/members/${recordId}`} class="text-sm font-medium underline">
+        Open their record
+      </a>
     )}
 
     {explainedProblems.length > 0 && isEditable && (
@@ -1944,8 +1978,10 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         // S-614, phase 8: the print page now, same as [id].astro's own
         // Next — not straight to documents, since there is something to
         // sign first.
+        // The server decides: print when nothing blocks, else the details
+        // again with the problem named (LC-03).
         window.location.assign(
-          window.location.pathname.replace(/\/customer\/?$/, '') + '/print'
+          window.location.pathname.replace(/\/$/, '') + '?step=1&next=print'
         );
       });
     }

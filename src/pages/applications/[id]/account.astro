@@ -146,7 +146,12 @@ let notice: string | null = null;
 let createdAccounts: {
   id: string;
   memberNo: string;
-  accounts: { id: string; typeCode: string; typeName: string }[];
+  accounts: {
+    id: string;
+    typeCode: string;
+    typeName: string;
+    reopened?: boolean;
+  }[];
 } | null = null;
 // Officer feedback: a payment-step error must not reset what was already
 // typed. Set only when record-payment fails; the form falls back to the fee
@@ -326,9 +331,16 @@ if (Astro.request.method === 'POST') {
             `${remaining === 1 ? 'decision' : 'decisions'} before this ` +
             `completes.`;
         } else {
+          // Reopened under its own number, or opened (M26; lifecycle test,
+          // LC-08), for the holder by name.
           notice = result.member
-            ? `Approved. Opened ${result.member.accounts.map(a => a.typeName).join(' and ')} ` +
-              `for ${result.member.memberNo}.`
+            ? `Approved. ${result.member.accounts
+                .map(
+                  a =>
+                    `${a.reopened ? 'Reopened' : 'Opened'} ${a.typeName}` +
+                    (a.accountNo ? ` (${a.accountNo})` : '')
+                )
+                .join(' and ')} for ${application.existingHolderLabel}.`
             : 'Rejected and returned to the originating staff.';
           createdAccounts = result.member ?? null;
         }
@@ -702,13 +714,17 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 
     {createdAccounts && (
       <section class={CARD_OK}>
-        <h2 class={CARD_TITLE}>Account opened</h2>
+        <h2 class={CARD_TITLE}>
+          {createdAccounts.accounts.every(a => a.reopened)
+            ? 'Account reopened'
+            : 'Account opened'}
+        </h2>
         <p class="mt-1 text-sm text-neutral-700 dark:text-neutral-200">
           <a
             href={`/members/${createdAccounts.id}`}
             class="font-medium underline"
           >
-            {createdAccounts.memberNo}
+            {application.existingHolderLabel}
           </a>{' '}
           now holds{' '}
           {createdAccounts.accounts.map(a => a.typeName).join(' and ')}.

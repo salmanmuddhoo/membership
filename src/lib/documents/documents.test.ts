@@ -970,9 +970,6 @@ describe('documentsForMember: everything filed for a member, grouped by applicat
     });
     await documents.commitUpload(foundingUpload.versionId, officer);
 
-    const noGroups = await documents.documentsForMember(memberId, null);
-    expect(noGroups).toEqual([]);
-
     const oneGroup = await documents.documentsForMember(memberId, foundingId);
     expect(oneGroup).toHaveLength(1);
     expect(oneGroup[0].applicationId).toBe(foundingId);

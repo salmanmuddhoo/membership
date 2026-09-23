@@ -38,7 +38,13 @@ export interface CreatedMember {
     typeCode: string;
     typeName: string;
     accountNo?: string;
+    // M26: brought back under its own number rather than opened.
+    reopened?: boolean;
   }[];
+  // M26: an existing member re-admitted, not a new one created.
+  rejoined?: boolean;
+  // Who they are, for the approval page to name them (lifecycle test).
+  name?: string;
 }
 
 /**
@@ -541,7 +547,12 @@ async function rejoinMember(
         application.id
       );
       reopened.add(existing);
-      accounts.push({ id: existing, typeCode: type.code, typeName: type.name });
+      accounts.push({
+        id: existing,
+        typeCode: type.code,
+        typeName: type.name,
+        reopened: true,
+      });
       continue;
     }
     const account = await client.query<{ id: string }>(
@@ -601,7 +612,7 @@ async function rejoinMember(
     { userId: actor.userId, description: actor.email },
     client
   );
-  return { id: memberId, memberNo, accounts };
+  return { id: memberId, memberNo, accounts, rejoined: true };
 }
 
 /**
@@ -739,6 +750,7 @@ export async function openAccountsForApplication(
         typeCode: type.code,
         typeName: type.name,
         accountNo: number.rows[0].account_no,
+        reopened: true,
       });
       continue;
     }
@@ -932,6 +944,7 @@ async function openAccountsUnderCustomer(
         typeCode: type.code,
         typeName: type.name,
         accountNo: number.rows[0].account_no,
+        reopened: true,
       });
       continue;
     }
@@ -1351,23 +1364,30 @@ export async function listMembers(
      )
      select id, kind, identifier, type_label, status, name, joined_at,
             application_reference, accounts, total_funds::numeric(14,2)::text as total_funds,
-            -- Officer direction: a resigned member still holding an open
-            -- account is a non-member, tagged and counted as one.
-            (kind = 'customer'
-              or (status = 'resigned' and json_array_length(accounts) > 0))
-              as non_member,
+            -- LC-10/officer direction: a non-member is a customer, or a
+            -- resigned member, still holding an account that is not closed —
+            -- one with nothing open has nothing left to deal on and is
+            -- "former" instead (counted below, never tagged either way).
+            (
+              (kind = 'customer' and json_array_length(accounts) > 0)
+              or (status = 'resigned' and json_array_length(accounts) > 0)
+            ) as non_member,
             count(*) over () as total_count,
-            -- Officer feedback: the header splits the total into members
-            -- (Shares/MSA holders) and non-members (only an additional
-            -- account). Counted here, after the search filter, so the two
-            -- always add up to the same total the list is showing.
+            -- LC-10: the header splits the total three ways — members
+            -- (holding their membership open), non-members (an account
+            -- open but no membership, or none ever), and former (nothing
+            -- open, membership or account). A resigned or demised member is
+            -- never counted as a member here, whether or not they still
+            -- hold an open account (demised) or hold nothing at all
+            -- (resigned) — see the non_member column above for who counts
+            -- there instead. Counted here, after the search filter, so the
+            -- three always add up to the same total the list is showing.
             count(*) filter (
-              where not (kind = 'customer'
-                or (status = 'resigned' and json_array_length(accounts) > 0))
+              where kind = 'member' and status not in ('resigned', 'demised')
             ) over () as member_count,
             count(*) filter (
-              where kind = 'customer'
-                or (status = 'resigned' and json_array_length(accounts) > 0)
+              where (kind = 'customer' and json_array_length(accounts) > 0)
+                 or (status = 'resigned' and json_array_length(accounts) > 0)
             ) over () as non_member_count
        from rows
       where $1::text is null
@@ -1383,6 +1403,9 @@ export async function listMembers(
     result.rows.length > 0 ? Number(result.rows[0].member_count) : 0;
   const nonMemberCount =
     result.rows.length > 0 ? Number(result.rows[0].non_member_count) : 0;
+  // LC-10: everyone neither a member nor a non-member — a resigned or
+  // demised member with nothing open, or a customer with nothing open.
+  const formerCount = total - memberCount - nonMemberCount;
 
   return {
     members: result.rows.map(r => ({
@@ -1402,6 +1425,7 @@ export async function listMembers(
     total,
     memberCount,
     nonMemberCount,
+    formerCount,
     truncated: result.rows.length < total,
   };
 }
@@ -1625,4 +1649,27 @@ export async function loadCustomer(id: string): Promise<CustomerDetail | null> {
       reopenedAt: a.reopened_at,
     })),
   };
+}
+
+/**
+ * The non-member record an approved customer_account application created,
+ * for its page to link to (lifecycle test: the approved application named
+ * the accounts but offered no way to the person). Follows a conversion: a
+ * customer who has since become a member is found under the member.
+ */
+export async function recordForCustomerApplication(
+  applicationId: string
+): Promise<string | null> {
+  const result = await query<{ id: string }>(
+    `select coalesce(
+              (select m.id from membership_application ma
+                 join member m on m.application_id = ma.id
+                where ma.source_customer_id = c.id
+                order by ma.created_at desc limit 1),
+              c.id) as id
+       from customer c
+      where c.application_id = $1`,
+    [applicationId]
+  );
+  return result.rows[0]?.id ?? null;
 }

@@ -11,6 +11,7 @@
 //   * A receipt number is committed before the payment is attempted, so a
 //     failure leaves a visible gap rather than a silent one. See receipts.ts,
 //     which explains why that is the only design that works.
+import { personApplicationIdsSql } from '../members/applications-of';
 import type { PoolClient } from 'pg';
 import { recordAudit } from '../access/audit';
 import { checkSegregation } from '../admin/segregation';
@@ -473,8 +474,34 @@ export async function paymentsForMember(memberId: string): Promise<Payment[]> {
               select opened_by_application_id from account
                where member_id = $1 and opened_by_application_id is not null
             )
+         -- Every other application that is theirs: the one they joined on
+         -- before a rejoin, the non-member account they started with, each
+         -- reopen (lifecycle test, LC-02).
+         or p.application_id in (${personApplicationIdsSql({ memberId })})
       order by p.received_at`,
     [memberId]
+  );
+  const ids = result.rows.map(r => r.id);
+  const [lines, accountLines] = await Promise.all([
+    linesFor(ids),
+    accountLinesFor(ids),
+  ]);
+  return assemble(result.rows, lines, accountLines);
+}
+
+/**
+ * Everything taken from one non-member, across every application that is
+ * theirs — the account they opened first and each further one or reopen
+ * (lifecycle test, LC-02). A payment never names a customer directly.
+ */
+export async function paymentsForCustomer(
+  customerId: string
+): Promise<Payment[]> {
+  const result = await query<PaymentRow>(
+    `${PAYMENT_SELECT}
+      where p.application_id in (${personApplicationIdsSql({ customerId })})
+      order by p.received_at`,
+    [customerId]
   );
   const ids = result.rows.map(r => r.id);
   const [lines, accountLines] = await Promise.all([
