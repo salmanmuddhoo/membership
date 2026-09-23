@@ -385,3 +385,18 @@ one, so the thumbnail is a generic icon), and resuming a dropped transfer via
 - Expect HEIC from iPads. It is in the allow-list, but a browser cannot preview
   it, so M4 should either convert on the device or accept that the thumbnail is
   a generic icon.
+
+## The document directory
+
+`/documents` (officer feedback; `document.view`, the same permission as
+the member page's own Documents) is a folder per member and non-member
+customer, searchable like the members list, with how much is on file for
+each; `/documents/{id}` is the folder. `src/lib/documents/directory.ts`
+gathers a holder's papers from all three owners a document can have:
+the applications that made them (the founding one and every approved
+additional-account one — a draft's upload is not on file), the member row
+itself (a document carried forward), and their transactions (a signed
+closure or resignation request, a deposit's Source of Fund form). Only a
+document with a committed version counts. Each opens in the viewer; the
+directory files nothing and deletes nothing — that stays with the
+application, wizard or member page the document belongs to.

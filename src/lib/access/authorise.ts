@@ -76,6 +76,10 @@ const ROUTE_PERMISSIONS: ReadonlyArray<readonly [string, string]> = [
   // is not being able to act on it.
   ['/applications/', 'application.view'],
   ['/members/', 'member.view'],
+  // The document directory (officer feedback): every member's filed papers,
+  // reached from the dashboard and the menu. document.view is what the
+  // member page's own Documents already need.
+  ['/documents/', 'document.view'],
   // An account's balance and history (S-1309, S-1311): money has its own
   // permission, held by default by everyone who may see a member, and
   // removable from a role without taking the member's page away.

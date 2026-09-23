@@ -1,42 +1,111 @@
 ---
+// The dashboard (officer feedback): one card per area of the system, each
+// door on it the same door the menu offers — built from the same
+// navigation model (src/lib/navigation.ts), so a role sees on the
+// dashboard exactly what it may reach, and nothing it may not.
 import DashboardLayout from '@layouts/DashboardLayout.astro';
-import { CARD, CARD_TITLE, PAGE } from '@lib/ui';
+import Icon from '@components/ui/icons/Icon.astro';
+import { isProductionEnvironment } from '@lib/config';
+import { pendingActionCount } from '@lib/applications/workflow';
+import { pendingTransactionCount } from '@lib/ledger/review';
+import { NAV_DESCRIPTIONS, navigationFor } from '@lib/navigation';
+import { CARD, CARD_TITLE, HINT, PAGE, PANEL } from '@lib/ui';
 
+const principal = Astro.locals.principal;
 const displayName =
-  Astro.locals.principal?.displayName ||
+  principal?.displayName ||
   Astro.locals.user?.name ||
   Astro.locals.user?.email ||
   '';
+const permissions = principal?.permissions ?? new Set<string>();
+
+// The same counts the sidebar badges show, from the same reads the
+// middleware already started.
+const applicationsBadge =
+  principal && permissions.has('application.view')
+    ? await (Astro.locals.pendingActions ?? pendingActionCount(principal))
+    : 0;
+const transactionsBadge =
+  principal && permissions.has('transaction.view')
+    ? await (Astro.locals.pendingTransactions ??
+        pendingTransactionCount(principal))
+    : 0;
+
+const groups = navigationFor({
+  permissions,
+  applicationsBadge,
+  transactionsBadge,
+  production: isProductionEnvironment(),
+})
+  // The dashboard itself is not a door off the dashboard.
+  .map(group => ({
+    ...group,
+    items: group.items.filter(item => item.href !== '/dashboard'),
+  }))
+  .filter(group => group.items.length > 0);
 ---
 
 <DashboardLayout title="Dashboard · Al Barakah MCSL" heading="Dashboard">
   <div class={PAGE.list}>
-    {/* Welcome */}
     <section class={`${CARD} sm:p-8`}>
       <h2 class={CARD_TITLE}>
         Assalamoualaikoum{displayName ? `, ${displayName}` : ''}
       </h2>
+      {(applicationsBadge > 0 || transactionsBadge > 0) && (
+        <p class={`${HINT} mt-2`}>
+          Waiting on you:{' '}
+          {[
+            applicationsBadge > 0 &&
+              `${applicationsBadge} application${applicationsBadge === 1 ? '' : 's'}`,
+            transactionsBadge > 0 &&
+              `${transactionsBadge} transaction${transactionsBadge === 1 ? '' : 's'}`,
+          ]
+            .filter(Boolean)
+            .join(', ')}
+          .
+        </p>
+      )}
     </section>
 
-    {/* Placeholder module tiles for future work (not yet implemented) */}
-    <div class="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      {[
-        'Membership',
-        'Financing',
-        'Documents',
-        'Approvals',
-        'Reports',
-        'Settings',
-      ].map(name => (
-        <div class="rounded-xl border border-dashed border-neutral-300 bg-neutral-50 p-5 dark:border-neutral-700 dark:bg-neutral-900/50">
-          <p class="text-sm font-medium text-neutral-700 dark:text-neutral-200">
-            {name}
-          </p>
-          <p class="mt-1 text-xs text-neutral-400 dark:text-neutral-500">
-            Coming soon
-          </p>
+    {groups.length === 0 && (
+      <p class={`${CARD} ${HINT}`}>
+        No role has been given to your account yet. Ask an administrator.
+      </p>
+    )}
+
+    {groups.map(group => (
+      <section class={CARD}>
+        {group.label && <h2 class={CARD_TITLE}>{group.label}</h2>}
+        <div class="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {group.items.map(item => (
+            <a
+              href={item.href}
+              class={`${PANEL} hover:border-mint-400 dark:hover:border-mint-700 flex items-start gap-3 transition`}
+            >
+              <span class="bg-mint-100 dark:bg-mint-950 mt-0.5 inline-flex size-9 shrink-0 items-center justify-center rounded-lg text-neutral-700 dark:text-neutral-200">
+                <Icon name={item.icon} class="size-5" />
+              </span>
+              <span class="min-w-0 flex-1">
+                <span class="flex items-center justify-between gap-2">
+                  <span class="font-medium text-neutral-800 dark:text-neutral-100">
+                    {item.label}
+                  </span>
+                  {item.badge && (
+                    <span class="inline-flex min-w-5 items-center justify-center rounded-full bg-red-500 px-1.5 py-0.5 text-xs font-semibold text-white">
+                      {item.badge}
+                    </span>
+                  )}
+                </span>
+                {NAV_DESCRIPTIONS[item.href] && (
+                  <span class={`${HINT} mt-0.5 block`}>
+                    {NAV_DESCRIPTIONS[item.href]}
+                  </span>
+                )}
+              </span>
+            </a>
+          ))}
         </div>
-      ))}
-    </div>
+      </section>
+    ))}
   </div>
 </DashboardLayout>

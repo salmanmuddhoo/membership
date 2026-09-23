@@ -1,0 +1,135 @@
+---
+// The document directory (officer feedback): one folder per member or
+// non-member customer, with how much is on file, opening onto everything
+// filed for them. document.view, like the member page's own Documents.
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import { documentCountsForHolders } from '@lib/documents/directory';
+import { listMembers } from '@lib/members/create';
+import {
+  CARD,
+  CARD_TITLE,
+  HINT,
+  INPUT_BARE,
+  PAGE,
+  PILL,
+  ROW,
+  SECONDARY_SM,
+  TABLE,
+  TD,
+  TD_NUM,
+  TH,
+  THEAD,
+} from '@lib/ui';
+
+const search = Astro.url.searchParams.get('q') ?? '';
+const { members, total, truncated } = await listMembers({ search });
+const counts = await documentCountsForHolders(members.map(m => m.id));
+---
+
+<DashboardLayout title="Documents · Al Barakah MCSL" heading="Documents">
+  <div class={PAGE.list}>
+    <section class={CARD}>
+      <h2 class={CARD_TITLE}>Document directory</h2>
+
+      <form method="get" class="mt-5 flex flex-wrap items-center gap-2">
+        <label for="q" class="sr-only">
+          Search members
+        </label>
+        <input
+          id="q"
+          type="search"
+          name="q"
+          value={search}
+          placeholder="Search by ID or name"
+          class={`${INPUT_BARE} min-w-64 flex-1 text-neutral-800`}
+        />
+        <button type="submit" class={SECONDARY_SM}>
+          Search
+        </button>
+        {search && (
+          <a href="/documents" class={`${HINT} px-2 py-1.5 underline`}>
+            Clear
+          </a>
+        )}
+      </form>
+
+      <p class={`${HINT} mt-3`}>
+        {total === 0
+          ? search
+            ? `No members match “${search}”.`
+            : 'No members yet.'
+          : truncated
+            ? `Showing the first ${members.length} of ${total}. Search to narrow the list.`
+            : `${total} folder${total === 1 ? '' : 's'}.`}
+      </p>
+
+      {members.length > 0 && (
+        <div class="mt-4 overflow-x-auto">
+          <table class={TABLE} data-sortable>
+            <thead>
+              <tr class={THEAD}>
+                <th class={TH}>Name</th>
+                <th class={TH}>Number</th>
+                <th class={TH}>Type</th>
+                <th class={TH}>Status</th>
+                <th class={`${TH} text-right`}>Documents</th>
+              </tr>
+            </thead>
+            <tbody>
+              {members.map(m => (
+                <tr
+                  data-href={`/documents/${m.id}`}
+                  class={`${ROW} group cursor-pointer`}
+                >
+                  <td class={TD}>
+                    <a
+                      href={`/documents/${m.id}`}
+                      class="font-medium text-neutral-800 underline dark:text-neutral-100"
+                    >
+                      {m.name}
+                    </a>
+                    {m.kind === 'customer' && (
+                      <span class={`${PILL} ml-2`}>Non-member</span>
+                    )}
+                  </td>
+                  <td class={TD}>
+                    <code class="text-xs">{m.memberNo || '—'}</code>
+                  </td>
+                  <td class={`${TD} text-neutral-600 dark:text-neutral-300`}>
+                    {m.membershipTypeName}
+                  </td>
+                  <td class={TD}>
+                    <span class={PILL}>{m.status}</span>
+                  </td>
+                  <td
+                    class={TD_NUM}
+                    data-sort-value={String(counts.get(m.id) ?? 0)}
+                  >
+                    {counts.get(m.id) ?? 0}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  </div>
+</DashboardLayout>
+
+<script>
+  import { wireSortableTables } from '@lib/client/table-sort';
+
+  wireSortableTables();
+
+  // The whole row opens the folder; the name is a real link for the
+  // keyboard and for opening in a new tab.
+  for (const row of document.querySelectorAll<HTMLTableRowElement>(
+    'tr[data-href]'
+  )) {
+    row.addEventListener('click', event => {
+      if ((event.target as HTMLElement).closest('a')) return;
+      window.location.href = row.dataset.href!;
+    });
+  }
+</script>
