@@ -10,6 +10,7 @@
 // (S-208), so what an Individual application requires is a matter of
 // configuration, and this module only reports what has and has not been filed
 // against it.
+import { applicationsOfPerson, type Holder } from '../members/applications-of';
 import { isEditableStatus } from '../applications/capture';
 import type { PoolClient } from 'pg';
 import { recordAudit } from '../access/audit';
@@ -567,31 +568,25 @@ export interface MemberDocumentGroup {
 
 export async function documentsForMember(
   memberId: string,
-  foundingApplicationId: string | null
+  // Kept for its callers; every application of theirs is read now.
+  _foundingApplicationId?: string | null
 ): Promise<MemberDocumentGroup[]> {
-  const additional = await query<{ id: string; reference: string }>(
-    `select id, reference from membership_application
-      where existing_member_id = $1 and application_kind = 'additional_account'
-        and status <> 'draft'
-      order by created_at`,
-    [memberId]
+  return documentsForPerson({ memberId });
+}
+
+/**
+ * What has been filed for one person, application by application, across
+ * every application that is theirs (lifecycle test, LC-02): the founding
+ * one, a rejoin, each further account or reopen, and for a converted member
+ * the non-member account they started with. A draft never finished is left
+ * out, as before.
+ */
+export async function documentsForPerson(
+  holder: Holder
+): Promise<MemberDocumentGroup[]> {
+  const applications = (await applicationsOfPerson(holder)).filter(
+    a => a.status !== 'draft'
   );
-
-  const applications: { id: string; reference: string }[] = [];
-  if (foundingApplicationId) {
-    const founding = await query<{ reference: string }>(
-      `select reference from membership_application where id = $1`,
-      [foundingApplicationId]
-    );
-    if (founding.rowCount) {
-      applications.push({
-        id: foundingApplicationId,
-        reference: founding.rows[0].reference,
-      });
-    }
-  }
-  applications.push(...additional.rows);
-
   const groups = await Promise.all(
     applications.map(async application => ({
       applicationId: application.id,

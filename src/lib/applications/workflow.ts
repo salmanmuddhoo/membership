@@ -698,7 +698,11 @@ export interface DecisionResult {
       typeCode: string;
       typeName: string;
       accountNo?: string;
+      // M26: brought back under its own number rather than opened.
+      reopened?: boolean;
     }[];
+    // M26: an existing member re-admitted, not a new one created.
+    rejoined?: boolean;
   };
   // Present when a quorum above one (S-609) has not yet been reached by this
   // sign-off: it was recorded, but the step has not completed and `status`

@@ -82,6 +82,7 @@ async function load() {
   return {
     capture: await import('./capture'),
     config: await import('../config/reference'),
+    applicationsOf: await import('../members/applications-of'),
   };
 }
 
@@ -685,7 +686,7 @@ describe('an applicant’s NIC must not already belong to a member or non-member
       p => p.subject === 'applicant' && p.fieldKey === 'nic'
     );
     expect(nicProblem?.label).toMatch(
-      new RegExp(`already on file for member ${memberNo}`)
+      new RegExp(`on file for member ${memberNo}`)
     );
   });
 
@@ -714,9 +715,7 @@ describe('an applicant’s NIC must not already belong to a member or non-member
     const nicProblem = problems.find(
       p => p.subject === 'applicant' && p.fieldKey === 'nic'
     );
-    expect(nicProblem?.label).toMatch(
-      /already on file for non-member Ismail Peerthum/
-    );
+    expect(nicProblem?.label).toMatch(/on file for non-member Ismail Peerthum/);
   });
 
   // Officer feedback: "opening an additional-account" for someone not yet on
@@ -758,7 +757,7 @@ describe('an applicant’s NIC must not already belong to a member or non-member
       p => p.subject === 'applicant' && p.fieldKey === 'nic'
     );
     expect(nicProblem?.label).toMatch(
-      new RegExp(`already on file for member ${memberNo}`)
+      new RegExp(`on file for member ${memberNo}`)
     );
   });
 
@@ -811,7 +810,7 @@ describe('an applicant’s NIC must not already belong to a member or non-member
       p => p.subject === 'applicant' && p.fieldKey === 'nic'
     );
     expect(nicProblem?.label).toMatch(
-      new RegExp(`already on file for application ${reference}`)
+      new RegExp(`already on application ${reference}`)
     );
   });
 
@@ -872,7 +871,7 @@ describe('an applicant’s NIC must not already belong to a member or non-member
       p => p.subject === 'applicant' && p.fieldKey === 'nic'
     );
     expect(nicProblem?.label).toMatch(
-      new RegExp(`already on file for application ${reference}`)
+      new RegExp(`already on application ${reference}`)
     );
   });
 
@@ -923,6 +922,140 @@ describe('an applicant’s NIC must not already belong to a member or non-member
     expect(
       problems.some(p => p.subject === 'applicant' && p.fieldKey === 'nic')
     ).toBe(false);
+  });
+
+  // Lifecycle test, LC-01 and LC-04: every application of one person shares
+  // a folder. A non-member who became a member, resigned, rejoined and
+  // resigned again rejoins a second time on the same NIC — none of their own
+  // earlier applications is someone else holding it, and a decided one
+  // never reads as a clash.
+  it('reads every application in the person’s own folder as theirs', async () => {
+    const { capture } = await load();
+    const nic = 'N1212121212121';
+    const type = (
+      await run(
+        appUrl,
+        `select id from membership_type where code = 'individual'`
+      )
+    ).rows[0].id;
+    const application = async (
+      kind: string,
+      status: string,
+      extra: { folder?: string; rejoins?: string; sourceCustomer?: string } = {}
+    ) => {
+      const row = await run(
+        appUrl,
+        `insert into membership_application
+           (application_kind, membership_type_id, captured_by, status,
+            folder_application_id, rejoins_member_id, source_customer_id)
+         values ($1, $2, $3, $4, $5, $6, $7) returning id`,
+        [
+          kind,
+          type,
+          officer.userId,
+          status,
+          extra.folder ?? null,
+          extra.rejoins ?? null,
+          extra.sourceCustomer ?? null,
+        ]
+      );
+      await run(
+        appUrl,
+        `insert into application_party (application_id, subject, ordinal, values)
+         values ($1, 'applicant', 1, $2::jsonb)`,
+        [
+          row.rows[0].id,
+          JSON.stringify({ surname: 'Lifecust', name: 'Test', nic }),
+        ]
+      );
+      return row.rows[0].id as string;
+    };
+    // The account they opened first, as a non-member: the folder's root.
+    const first = await application('customer_account', 'approved');
+    const customer = (
+      await run(
+        appUrl,
+        `insert into customer (application_id, status)
+         values ($1, 'converted') returning id`,
+        [first]
+      )
+    ).rows[0].id;
+    const conversion = await application('membership', 'approved', {
+      folder: first,
+      sourceCustomer: customer,
+    });
+    const member = (
+      await run(
+        appUrl,
+        `insert into member (application_id, membership_type_id, status)
+         values ($1, $2, 'resigned') returning id`,
+        [conversion, type]
+      )
+    ).rows[0].id;
+    // Rejoined once, and the member now reads from that application.
+    const rejoined = await application('membership', 'approved', {
+      folder: first,
+      rejoins: member,
+    });
+    await run(appUrl, `update member set application_id = $2 where id = $1`, [
+      member,
+      rejoined,
+    ]);
+
+    const second = await application('membership', 'draft', {
+      folder: first,
+      rejoins: member,
+    });
+    const nicProblems = async (id: string) =>
+      (
+        await capture.problemsBlockingSubmission(
+          (await capture.loadApplication(id))!
+        )
+      ).filter(p => p.subject === 'applicant' && p.fieldKey === 'nic');
+    expect(await nicProblems(second)).toEqual([]);
+    // The approved conversion, looked at after the member moved on.
+    expect(await nicProblems(conversion)).toEqual([]);
+
+    // LC-02: every one of them is the member's, and — from the non-member
+    // record they started as — the customer's too; a stranger's is not.
+    const { applicationsOf } = await load();
+    const ofMember = (
+      await applicationsOf.applicationsOfPerson({ memberId: member })
+    ).map(a => a.id);
+    expect(ofMember).toEqual(
+      expect.arrayContaining([first, conversion, rejoined, second])
+    );
+    expect(
+      (await applicationsOf.applicationsOfPerson({ customerId: customer })).map(
+        a => a.id
+      )
+    ).toEqual(expect.arrayContaining([first, conversion, rejoined, second]));
+
+    // Someone else entirely, on the same NIC, is still refused — and told
+    // how to reach the person on file.
+    const { id: stranger } = await capture.startApplication(
+      'individual',
+      officer
+    );
+    await capture.saveDraft(
+      stranger,
+      [
+        {
+          subject: 'applicant',
+          ordinal: 1,
+          values: { surname: 'Other', name: 'Person', nic },
+        },
+      ],
+      officer
+    );
+    expect((await nicProblems(stranger))[0]?.label).toMatch(
+      /who resigned\. Use Rejoin on their page\./
+    );
+    expect(
+      (await applicationsOf.applicationsOfPerson({ memberId: member })).map(
+        a => a.id
+      )
+    ).not.toContain(stranger);
   });
 
   it('never reads an application’s own applicant as a duplicate of itself', async () => {

@@ -188,6 +188,7 @@ let createdMember: {
   id: string;
   memberNo: string;
   accounts: { id: string; typeCode: string; typeName: string }[];
+  rejoined?: boolean;
 } | null = null;
 // Officer feedback: a payment-step error must not reset what was already
 // typed. Set only when record-payment fails; the form falls back to the fee
@@ -419,9 +420,16 @@ if (Astro.request.method === 'POST') {
             `${remaining === 1 ? 'decision' : 'decisions'} before this ` +
             `completes.`;
         } else {
+          // M26: a rejoin re-admits the member it names and reopens what
+          // the resignation closed — nothing is created (lifecycle test,
+          // LC-07).
           notice = result.member
-            ? `Approved. Member ${result.member.memberNo} created with ` +
-              `${result.member.accounts.map(a => a.typeName).join(' and ')}.`
+            ? result.member.rejoined
+              ? `Approved. Member ${result.member.memberNo} rejoined; ` +
+                `${result.member.accounts.map(a => a.typeName).join(' and ')} ` +
+                `${result.member.accounts.length === 1 ? 'is' : 'are'} active again.`
+              : `Approved. Member ${result.member.memberNo} created with ` +
+                `${result.member.accounts.map(a => a.typeName).join(' and ')}.`
             : 'Rejected and returned to the originating staff.';
           createdMember = result.member ?? null;
         }
@@ -632,6 +640,19 @@ const signedOffByMe = signoffs.some(
 // out is the other kind: a value that IS there but does not stand up (a
 // guardian's Member No. nobody can find, S-604/S-605). That one needs saying,
 // because a red border alone does not explain why a filled-in field is red.
+// Next on Applicant details (lifecycle test, LC-03): the page saves, then
+// asks here whether the form may be printed. Only with nothing blocking
+// does it go on to print and sign; otherwise the officer stays on the
+// details with the problem named, instead of having the applicant sign a
+// form that cannot be submitted.
+if (
+  Astro.request.method === 'GET' &&
+  Astro.url.searchParams.get('next') === 'print' &&
+  blocking.length === 0
+) {
+  return Astro.redirect(`/applications/${application!.id}/print`);
+}
+
 const explainedProblems = blocking.filter(b => {
   const party = application!.parties.find(
     p => p.subject === b.subject && p.ordinal === b.ordinal
@@ -775,7 +796,8 @@ const signedFormFiled = checklist.some(
 
 const timeline = applicationTimeline({
   status: application!.status,
-  mandatoryFieldsOutstanding: blocking.length,
+  mandatoryFieldsOutstanding: blocking.length - explainedProblems.length,
+  valuesToCorrect: explainedProblems.length,
   signedFormFiled,
   requiredDocumentsOutstanding: requiredDocumentsMissing,
   paymentRecorded: livePayment !== null,
@@ -990,7 +1012,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 
     {createdMember && (
       <section class={CARD_OK}>
-        <h2 class={CARD_TITLE}>Member created</h2>
+        <h2 class={CARD_TITLE}>
+          {createdMember.rejoined ? 'Member rejoined' : 'Member created'}
+        </h2>
         <p class="mt-1 text-sm text-neutral-700 dark:text-neutral-200">
           <a
             href={`/members/${createdMember.id}`}
@@ -998,9 +1022,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           >
             {createdMember.memberNo}
           </a>{' '}
-          with {createdMember.accounts.map(a => a.typeName).join(' and ')},
-          opened automatically because the membership was approved. Both carry
-          the member's number.
+          {createdMember.rejoined
+            ? `with ${createdMember.accounts.map(a => a.typeName).join(' and ')} reopened under the same number.`
+            : `with ${createdMember.accounts.map(a => a.typeName).join(' and ')}, opened automatically because the membership was approved. Both carry the member's number.`}
         </p>
       </section>
     )}
@@ -2239,8 +2263,10 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           captureNextButton.disabled = false;
           return;
         }
+        // The server decides: print when nothing blocks, else the details
+        // again with the problem named (LC-03).
         window.location.assign(
-          window.location.pathname.replace(/\/$/, '') + '/print'
+          window.location.pathname.replace(/\/$/, '') + '?step=1&next=print'
         );
       });
     }

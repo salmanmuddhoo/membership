@@ -32,6 +32,10 @@ export interface TimelineInput {
   status: string;
   // Mandatory fields still empty (S-304's own blocking count).
   mandatoryFieldsOutstanding: number;
+  // Filled-in values that do not stand up — an NIC already on file, a
+  // guardian nobody can find. Not "empty", so not counted as such (lifecycle
+  // test, LC-04).
+  valuesToCorrect?: number;
   // The signed form, back from the applicant and filed.
   signedFormFiled: boolean;
   // Required checklist items with nothing filed against them. Counts the
@@ -83,15 +87,21 @@ export function applicationTimeline(input: TimelineInput): TimelineStep[] {
     {
       key: 'capture',
       label: 'Applicant details',
-      done: input.mandatoryFieldsOutstanding === 0,
+      done:
+        input.mandatoryFieldsOutstanding === 0 && !(input.valuesToCorrect ?? 0),
       detail: returned
         ? 'Returned for correction'
         : input.mandatoryFieldsOutstanding > 0
           ? `${input.mandatoryFieldsOutstanding} required ${
               input.mandatoryFieldsOutstanding === 1 ? 'field' : 'fields'
             } empty`
-          : undefined,
-      problem: returned || input.mandatoryFieldsOutstanding > 0,
+          : (input.valuesToCorrect ?? 0) > 0
+            ? `${input.valuesToCorrect} to correct`
+            : undefined,
+      problem:
+        returned ||
+        input.mandatoryFieldsOutstanding > 0 ||
+        (input.valuesToCorrect ?? 0) > 0,
     },
     {
       key: 'sign',

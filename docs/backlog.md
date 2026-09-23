@@ -5179,3 +5179,36 @@ They must be confirmed before the milestone that consumes them.
 | Dormant reactivation rule                      | M8 · S-805   | Flag for staff action — **shipped this way** (`dormancy.reactivation`, M22)                    |
 | KYC and audit retention periods                | M10          | Retain indefinitely — now settable on Configuration → Retention (audit: see docs/retention.md) |
 | Whether Abeyance and Manager review are wanted | Post-go-live | Available but disabled                                                                         |
+
+# Lifecycle test fixes (LC-01 to LC-11) ✅
+
+The lifecycle test of 23 September 2026 took members and non-members through
+opening, closing, resigning, rejoining, reopening and converting, one after
+another on the same records. Fixed:
+
+- **One person, all their applications.** Every application of one person
+  shares a folder (`folder_application_id` names the first). The NIC check
+  now reads anything in the person's own folder as theirs, so someone who
+  started as a non-member, became a member, resigned and rejoined can rejoin
+  again (LC-01). The member page's Payments and Documents read every
+  application in the folder, not only the latest one, so a rejoin, a reopen
+  or a converted member's first account no longer drops earlier receipts and
+  papers (LC-02; `src/lib/members/applications-of.ts`).
+- **Applicant details.** Next asks the server whether the form may be
+  printed, and stays on Applicant details with the problem named when it
+  may not, instead of sending the applicant to sign (LC-03). A decided
+  application no longer checks its NIC, and a value that needs correcting
+  reads "to correct", not "required field empty" (LC-04). The duplicate-NIC
+  message says what to do: Rejoin, open the account from their page, or
+  apply to become a member (LC-09).
+- **Wording.** The closure request is worded for the account holder, shows
+  a member number only for a member, and no longer says a closed account
+  cannot be used again (LC-05). Approving a rejoin says the member rejoined
+  (LC-07). Approving an account application says Reopened or Opened, names
+  the holder, and a non-member's approved application links to their record
+  (LC-08).
+- **Buttons and counts.** A non-member's closed account offers Reopen, as a
+  member's does (LC-06). A type held only by a closed account is reopened
+  from its row, not also offered under Open other account (LC-11). The
+  Members list counts members, non-members and former (a resigned or
+  demised member, or a non-member, with nothing open) (LC-10).
