@@ -3114,7 +3114,10 @@ describe('S-613: starting an additional-account application for an existing memb
       }
       expect(application.applicationKind).toBe('additional_account');
       expect(application.existingMemberId).toBe(member.rows[0].id);
-      expect(application.existingHolderLabel).toBe(memberNo);
+      // Named as well as numbered (lifecycle test, LC-08).
+      expect(application.existingHolderLabel).toBe(
+        `Farah Ramdin · ${memberNo}`
+      );
       expect(application.selectedAccountTypes).toEqual([
         expect.objectContaining({ id: selectableTypeId, code: 'hsa_test' }),
       ]);

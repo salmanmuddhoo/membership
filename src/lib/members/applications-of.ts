@@ -18,6 +18,9 @@ export interface PersonApplication {
   reference: string;
   status: string;
   applicationKind: string;
+  // The one the member or customer row points at: their founding
+  // application, or the rejoin that re-admitted them.
+  isCurrent: boolean;
 }
 
 // The ids, as SQL, for use inside a larger query. $1 is the holder's id.
@@ -46,8 +49,11 @@ export async function applicationsOfPerson(
     reference: string;
     status: string;
     application_kind: string;
+    is_current: boolean;
   }>(
-    `select a.id, a.reference, a.status, a.application_kind
+    `select a.id, a.reference, a.status, a.application_kind,
+            a.id = (select ${'memberId' in holder ? 'application_id from member' : 'application_id from customer'}
+                     where id = $1) as is_current
        from membership_application a
       where a.id in (${personApplicationIdsSql(holder)})
       order by a.created_at`,
@@ -58,5 +64,6 @@ export async function applicationsOfPerson(
     reference: r.reference,
     status: r.status,
     applicationKind: r.application_kind,
+    isCurrent: r.is_current ?? false,
   }));
 }

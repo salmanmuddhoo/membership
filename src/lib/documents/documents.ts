@@ -579,13 +579,14 @@ export async function documentsForMember(
  * every application that is theirs (lifecycle test, LC-02): the founding
  * one, a rejoin, each further account or reopen, and for a converted member
  * the non-member account they started with. A draft never finished is left
- * out, as before.
+ * out, as before — except the one the record itself points at.
  */
 export async function documentsForPerson(
   holder: Holder
 ): Promise<MemberDocumentGroup[]> {
+  // Their own application always; any other only once it is past draft.
   const applications = (await applicationsOfPerson(holder)).filter(
-    a => a.status !== 'draft'
+    a => a.isCurrent || a.status !== 'draft'
   );
   const groups = await Promise.all(
     applications.map(async application => ({
