@@ -155,6 +155,7 @@ beforeAll(async () => {
     permissions: new Set([
       'transaction.capture',
       'transaction.post',
+      'transaction.disburse',
       'member.reactivate',
     ]),
   };

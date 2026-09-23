@@ -120,6 +120,7 @@ function principalFor(userId: string, email: string) {
     permissions: new Set([
       'transaction.capture',
       'transaction.post',
+      'transaction.disburse',
       'transaction.view',
     ]),
   } satisfies Principal;

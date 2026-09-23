@@ -99,7 +99,10 @@ The chain's own permissions arrived with migration 0071 (S-1403):
 `transaction.approve` at the last (approve, reject) — by position on the
 chain, not by step name. The Secretary holds the first and the President
 the second, with `transaction.view` and `account.view` so each can see what
-they act on. Posting an approved transaction stays `transaction.post`.
+they act on. Posting an approved deposit stays `transaction.post`; paying
+out an approved withdrawal, transfer to a payee, closure, resignation or
+claim is `transaction.disburse`, the Treasurer's (migration 0095, officer
+direction: Secretary, President, then the Treasurer disburses).
 
 The segregation rules (`entity_type = 'transaction'`) say the officer who
 captured a transaction may not review it, approve it, post it through a

@@ -5077,6 +5077,20 @@ for them — under the applications that made them, against the member
 directly, and on their transactions (`src/lib/documents/directory.ts`,
 `docs/documents.md`, `docs/access-control.md`).
 
+# Disbursement is the Treasurer's ✅
+
+Officer direction: after the Secretary and the President, the Treasurer
+pays the money out. `transaction.disburse` (migration 0095, the
+Treasurer's) is the act after approval for a withdrawal, a transfer to a
+payee, a closure, a resignation or a claim; `transaction.post` keeps
+posting an approved deposit and posting directly below the threshold. The
+queue shows each person what they may pay out or post. On screen money
+paid out is "disbursed" (`src/lib/ledger/labels.ts`), the button says
+Disburse, and the chevron of a transaction that pays out ends in
+**Disbursement** with the roles holding the permission under it —
+"Treasurer" — read from the roles, so moving the permission moves the
+name (`rolesHoldingPermission`, `src/lib/access/holders.ts`).
+
 - **The Deposit, Withdrawal and Transfer lookups** suggest matching
   accounts, by number or by holder name, as the officer types.
 

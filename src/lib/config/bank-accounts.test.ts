@@ -121,7 +121,12 @@ beforeAll(async () => {
     byEmail.get('officer@albarakah.mu'),
     'officer@albarakah.mu',
     ['account_officer'],
-    ['transaction.capture', 'transaction.post', 'transaction.view']
+    [
+      'transaction.capture',
+      'transaction.post',
+      'transaction.disburse',
+      'transaction.view',
+    ]
   );
   secretary = principalFor(
     byEmail.get('secretary@albarakah.mu'),
@@ -139,7 +144,12 @@ beforeAll(async () => {
     byEmail.get('treasurer@albarakah.mu'),
     'treasurer@albarakah.mu',
     ['treasurer'],
-    ['transaction.post', 'transaction.view', 'receipt.void']
+    [
+      'transaction.post',
+      'transaction.disburse',
+      'transaction.view',
+      'receipt.void',
+    ]
   );
   await configure(
     `update account_type set maximum_transaction_amount = null where code = 'msa'`

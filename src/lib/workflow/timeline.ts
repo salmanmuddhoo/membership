@@ -22,8 +22,17 @@ import {
   isExitRequest,
   requestChecklist,
 } from '../ledger/closures';
+import { rolesHoldingPermission } from '../access/holders';
 import { sourceOfFundItem } from '../ledger/deposit-requests';
-import { loadTransaction, positionOf, transitionsFor } from '../ledger/review';
+import { finalStepLabel } from '../ledger/labels';
+import {
+  loadTransaction,
+  PERMISSION_DISBURSE,
+  PERMISSION_POST,
+  permissionToPost,
+  positionOf,
+  transitionsFor,
+} from '../ledger/review';
 import { describeBand, resolveRoute, routeBands } from '../ledger/routing';
 import { toCents } from '../payments/money';
 
@@ -108,6 +117,9 @@ export interface TransactionTimelineInput {
   // money moving, 'Submitted' and 'Closed' for a closure.
   submitLabel?: string;
   postedLabel?: string;
+  // Who takes the last step — the roles holding the permission it needs
+  // ("Treasurer" under Disbursement) — shown until it is done.
+  postedDetail?: string;
 }
 
 const ENDED: Record<string, string> = {
@@ -175,9 +187,7 @@ export function transactionTimeline(
       done: posted,
       detail: posted
         ? (input.receiptNo ?? undefined)
-        : approved
-          ? 'Approved, to post'
-          : undefined,
+        : (input.postedDetail ?? (approved ? 'Approved, to post' : undefined)),
     },
   ];
   return assignStates(planned);
@@ -192,7 +202,11 @@ export function transactionTimeline(
  */
 export function previewTimeline(
   chain: Pick<WorkflowStep, 'code' | 'name' | 'roleName'>[],
-  labels: { submitLabel?: string; postedLabel?: string } = {}
+  labels: {
+    submitLabel?: string;
+    postedLabel?: string;
+    postedDetail?: string;
+  } = {}
 ): TimelineStep[] {
   return transactionTimeline({
     status: 'draft',
@@ -204,6 +218,9 @@ export function previewTimeline(
     receiptNo: null,
     submitLabel: labels.submitLabel ?? 'Record',
     postedLabel: labels.postedLabel ?? 'Posted',
+    // A chain ends with someone paying out or posting; with none, the
+    // officer recording it does both at once.
+    postedDetail: chain.length > 0 ? labels.postedDetail : undefined,
   });
 }
 
@@ -229,6 +246,16 @@ export async function routePreviewGroups(
   roleCodes: readonly string[]
 ): Promise<RoutePreviewGroup[]> {
   const byType = new Map<string, RoutePreviewBand[]>();
+  // A withdrawal is disbursed by whoever holds transaction.disburse (the
+  // Treasurer); a transfer's payee is not known until the form is filled,
+  // so its preview says Posted and the chevron after submit says which.
+  const labels =
+    kind === 'withdrawal'
+      ? {
+          postedLabel: 'Disbursement',
+          postedDetail: await roleNamesHolding(PERMISSION_DISBURSE),
+        }
+      : { postedDetail: await roleNamesHolding(PERMISSION_POST) };
   for (const typeId of new Set(accounts.map(a => a.accountTypeId))) {
     const bands = await routeBands({ kind, accountTypeId: typeId, roleCodes });
     byType.set(
@@ -238,7 +265,7 @@ export async function routePreviewGroups(
         fromCents: band.fromCents,
         toCents: band.toCents,
         summary: describeBand(band),
-        steps: previewTimeline(band.chain),
+        steps: previewTimeline(band.chain, labels),
       }))
     );
   }
@@ -297,8 +324,22 @@ export async function chainTimeline(
     rejectedAtStepCode: rejected?.stepCode ?? null,
     returnedBy: lastReturn?.actorRole ?? null,
     receiptNo: transaction.receiptNo,
+    // Money paid out ends in Disbursement, by whoever holds the permission
+    // for it (officer direction: the Treasurer); money in ends in Posted.
+    postedLabel: finalStepLabel(transaction),
+    postedDetail:
+      chain.length > 0
+        ? await roleNamesHolding(permissionToPost(transaction))
+        : undefined,
     ...closure,
   });
+}
+
+async function roleNamesHolding(
+  permission: string
+): Promise<string | undefined> {
+  const names = await rolesHoldingPermission(permission);
+  return names.length > 0 ? names.join(' / ') : undefined;
 }
 
 async function expectedChain(transaction: {

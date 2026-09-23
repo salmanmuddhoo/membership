@@ -131,12 +131,17 @@ beforeAll(async () => {
   officer = make(
     'officer@albarakah.mu',
     ['account_officer'],
-    ['transaction.capture', 'transaction.post', 'transaction.view']
+    [
+      'transaction.capture',
+      'transaction.post',
+      'transaction.disburse',
+      'transaction.view',
+    ]
   );
   treasurer = make(
     'treasurer@albarakah.mu',
     ['treasurer'],
-    ['transaction.post', 'transaction.view']
+    ['transaction.post', 'transaction.disburse', 'transaction.view']
   );
   secretary = make(
     'secretary@albarakah.mu',
@@ -469,7 +474,7 @@ describe('disbursing an approved withdrawal (S-1503)', () => {
     ).rejects.toThrowError(/may not post/);
     const presidentWhoPosts = {
       ...president,
-      permissions: new Set(['transaction.post']),
+      permissions: new Set(['transaction.post', 'transaction.disburse']),
     };
     await expect(
       mods.review.postApprovedTransaction(large.id, presidentWhoPosts, {
@@ -628,5 +633,52 @@ describe('disbursing an approved withdrawal (S-1503)', () => {
     expect(resubmitted.status).toBe('submitted');
     expect(resubmitted.amount).toBe('102000.00');
     expect(resubmitted.currentStepCode).toBe('secretary_review');
+  });
+
+  // Officer direction (migration 0095): after the Secretary and the
+  // President, the Treasurer disburses. transaction.post alone posts a
+  // deposit; paying out needs transaction.disburse.
+  it('is disbursed by whoever holds transaction.disburse, never by transaction.post alone', async () => {
+    const mods = await load();
+    const large = await mods.withdrawals.recordWithdrawal(
+      { accountId: msa, amount: '101000', method: 'cash', reason: 'Umrah' },
+      officer
+    );
+    await mods.review.reviewTransaction(
+      large.id,
+      { outcome: 'forward', comment: '' },
+      secretary
+    );
+    await mods.review.reviewTransaction(
+      large.id,
+      { outcome: 'forward', comment: '' },
+      president
+    );
+    const posterOnly = {
+      ...treasurer,
+      permissions: new Set(['transaction.post', 'transaction.view']),
+    };
+    await expect(
+      mods.review.postApprovedTransaction(large.id, posterOnly, {
+        method: 'cash',
+      })
+    ).rejects.toThrowError(/permission to disburse/);
+    // The queue offers it to the disburser, not to a poster.
+    expect(
+      (await mods.review.approvedTransactions(posterOnly)).map(t => t.id)
+    ).not.toContain(large.id);
+    const disburserOnly = {
+      ...treasurer,
+      permissions: new Set(['transaction.disburse', 'transaction.view']),
+    };
+    expect(
+      (await mods.review.approvedTransactions(disburserOnly)).map(t => t.id)
+    ).toContain(large.id);
+    const paid = await mods.review.postApprovedTransaction(
+      large.id,
+      disburserOnly,
+      { method: 'cash' }
+    );
+    expect(paid.status).toBe('posted');
   });
 });
