@@ -119,7 +119,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             : 'Nothing has been posted to this account.'}
         </p>
       ) : (
-        <table class={TABLE}>
+        <table class={TABLE} data-sortable>
           <thead class={THEAD}>
             <tr>
               <th class={TH}>Date</th>
@@ -135,7 +135,10 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           <tbody class={TBODY}>
             {entries.map(entry => (
               <tr class="text-neutral-800 dark:text-neutral-100">
-                <td class={`${TD} whitespace-nowrap`}>
+                <td
+                  class={`${TD} whitespace-nowrap`}
+                  data-sort-value={entry.occurredAt.toISOString()}
+                >
                   {dateFormat.format(entry.occurredAt)}
                 </td>
                 <td class={TD}>
@@ -182,13 +185,26 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                     <code class="text-xs">—</code>
                   )}
                 </td>
-                <td class={TD_NUM}>
+                <td
+                  class={TD_NUM}
+                  data-sort-value={
+                    entry.direction === 'credit' ? entry.amount : undefined
+                  }
+                >
                   {entry.direction === 'credit' && formatMoney(entry.amount)}
                 </td>
-                <td class={TD_NUM}>
+                <td
+                  class={TD_NUM}
+                  data-sort-value={
+                    entry.direction === 'debit' ? entry.amount : undefined
+                  }
+                >
                   {entry.direction === 'debit' && formatMoney(entry.amount)}
                 </td>
-                <td class={`${TD_NUM} font-medium`}>
+                <td
+                  class={`${TD_NUM} font-medium`}
+                  data-sort-value={entry.runningBalance}
+                >
                   {formatMoney(entry.runningBalance)}
                 </td>
               </tr>
@@ -213,3 +229,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
   </div>
   {canSeeDocuments && <DocumentViewer />}
 </DashboardLayout>
+
+<script>
+  import { wireSortableTables } from '@lib/client/table-sort';
+
+  wireSortableTables();
+</script>

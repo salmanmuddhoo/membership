@@ -144,18 +144,23 @@ function accountButtonClasses(account: MemberListAccount): string {
 
       {members.length > 0 && (
         <div class="mt-4 overflow-x-auto">
-          <table class={TABLE}>
+          <table class={TABLE} data-sortable>
             <thead>
               <tr class={THEAD}>
                 <th class={TH}>Name</th>
                 <th class={TH}>Status</th>
                 <th class={TH}>Joined</th>
-                <th
-                  class={TH}
-                  colspan={Math.max(1, activeAccountTypeColumns.length)}
-                >
-                  Accounts
-                </th>
+                {activeAccountTypeColumns.length === 0 ? (
+                  <th class={TH} data-no-sort>
+                    Accounts
+                  </th>
+                ) : (
+                  activeAccountTypeColumns.map((_, i) => (
+                    <th class={TH} data-no-sort>
+                      {i === 0 ? 'Accounts' : ''}
+                    </th>
+                  ))
+                )}
                 {canSeePayments && (
                   <th class={`${TH} text-right`}>Total funds</th>
                 )}
@@ -169,6 +174,7 @@ function accountButtonClasses(account: MemberListAccount): string {
                 >
                   <td
                     class={`${TD} text-neutral-700 dark:text-neutral-200 ${ROW_HOVER}`}
+                    data-sort-value={m.name}
                   >
                     <span class="flex flex-wrap items-center gap-x-2">
                       {m.name}
@@ -186,6 +192,7 @@ function accountButtonClasses(account: MemberListAccount): string {
                   </td>
                   <td
                     class={`${TD} text-xs text-neutral-500 dark:text-neutral-400 ${ROW_HOVER}`}
+                    data-sort-value={m.joinedAt.toISOString()}
                   >
                     {dateFormat.format(m.joinedAt)}
                   </td>
@@ -237,6 +244,7 @@ function accountButtonClasses(account: MemberListAccount): string {
                   {canSeePayments && (
                     <td
                       class={`${TD_NUM} font-medium text-neutral-800 dark:text-neutral-100 ${ROW_HOVER}`}
+                      data-sort-value={m.totalFunds}
                     >
                       {formatMoney(m.totalFunds)}
                     </td>
@@ -281,6 +289,8 @@ function accountButtonClasses(account: MemberListAccount): string {
 </DashboardLayout>
 
 <script>
+  import { wireSortableTables } from '@lib/client/table-sort';
+
   // Officer feedback: the row itself opens the member's full record — the
   // account buttons inside it are their own click target (see below), so a
   // click landing on one of those must not also navigate the row.
@@ -397,4 +407,6 @@ function accountButtonClasses(account: MemberListAccount): string {
       });
     }
   }
+
+  wireSortableTables();
 </script>

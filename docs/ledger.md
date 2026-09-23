@@ -505,7 +505,9 @@ and how the balance goes back, with the balance as it stands. The member
 signs the request on `/closures/{id}/form`, a sheet rasterised and filed
 against the transaction — `document.transaction_id`, the third owner
 (`docs/documents.md`) — so a member who closes two accounts over the years
-has two signed requests, not one replacing the other. `submitClosure()`
+has two signed requests, not one replacing the other. Once signed, the
+Signature step shows the request with View and the red ✕ that deletes it;
+deleting it means signing again. `submitClosure()`
 refuses without it, refuses while any other transaction is still on its way
 on the account, sets the amount to the balance now, puts the account into
 `closing` — every capture path refuses a non-active account, and

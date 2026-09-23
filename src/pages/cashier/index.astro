@@ -159,7 +159,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           {figures!.movements.length === 0 ? (
             <p class={`${HINT} mt-3`}>No cash movements yet.</p>
           ) : (
-            <table class={`${TABLE} mt-4`}>
+            <table class={`${TABLE} mt-4`} data-sortable>
               <thead>
                 <tr
                   class={`${THEAD} border-b border-neutral-300 dark:border-neutral-700`}
@@ -175,7 +175,10 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               <tbody>
                 {figures!.movements.map(m => (
                   <tr class={ROW}>
-                    <td class={`${TD} text-neutral-500 dark:text-neutral-400`}>
+                    <td
+                      class={`${TD} text-neutral-500 dark:text-neutral-400`}
+                      data-sort-value={m.at.toISOString()}
+                    >
                       {dateFormat.format(m.at)}
                     </td>
                     <td class={`${TD} text-neutral-800 dark:text-neutral-100`}>
@@ -191,11 +194,17 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                     </td>
                     <td
                       class={`${TD_NUM} text-neutral-800 dark:text-neutral-100`}
+                      data-sort-value={
+                        m.direction === 'in' ? m.amount : undefined
+                      }
                     >
                       {m.direction === 'in' ? formatMoney(m.amount) : ''}
                     </td>
                     <td
                       class={`${TD_NUM} text-neutral-800 dark:text-neutral-100`}
+                      data-sort-value={
+                        m.direction === 'out' ? m.amount : undefined
+                      }
                     >
                       {m.direction === 'out' ? formatMoney(m.amount) : ''}
                     </td>
@@ -238,3 +247,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     )}
   </div>
 </DashboardLayout>
+
+<script>
+  import { wireSortableTables } from '@lib/client/table-sort';
+
+  wireSortableTables();
+</script>
