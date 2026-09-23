@@ -5109,6 +5109,10 @@ name (`rolesHoldingPermission`, `src/lib/access/holders.ts`).
   request cannot be submitted until there is none. A minor's guardian
   cannot be changed on screen today, so the block lasts until the minor
   leaves or reaches majority.
+- **A demised claim is for members only** (business decision): a
+  non-member, or a resigned member still holding an HSA or Investment, is
+  not eligible, so their page offers no Demised claim. That is how it
+  already worked; nothing changed.
 - **The Deposit, Withdrawal and Transfer lookups** suggest matching
   accounts, by number or by holder name, as the officer types.
 
