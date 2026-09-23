@@ -483,9 +483,7 @@ export async function startClosure(
           kind: 'closure',
           account_id: account.id,
           balance: covered?.total ?? account.balance,
-          ...(covered
-            ? { account_ids: covered.accounts.map(a => a.id) }
-            : {}),
+          ...(covered ? { account_ids: covered.accounts.map(a => a.id) } : {}),
           method: method.code,
           reason,
           ...(claimant
@@ -674,9 +672,7 @@ export async function submitClosure(
   const covered = closure.claimantKind
     ? await refuseUnlessAllClosable(account, closure)
     : null;
-  const accountIds = covered
-    ? covered.accounts.map(a => a.id)
-    : [account.id];
+  const accountIds = covered ? covered.accounts.map(a => a.id) : [account.id];
   if (!checklistComplete(await closureChecklist(closure.id))) {
     throw new ClosureError(
       closure.claimantKind
@@ -684,7 +680,7 @@ export async function submitClosure(
         : 'File the signed closure request before submitting.'
     );
   }
-  const inFlight = await query<{ reference: string }>(
+  const inFlight = await query<{ reference: string; account_no: string }>(
     `select t.reference, coalesce(a.account_no, m.member_no) as account_no
        from transaction t
        join account a on a.id = t.account_id

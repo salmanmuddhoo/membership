@@ -67,7 +67,17 @@ export function receiptFacts(
     ...(receipt.depositorName
       ? [{ label: 'On behalf of', value: holder }]
       : []),
-    { label: 'Account', value: `${t.accountNo} · ${t.accountTypeName}` },
+    receipt.accountsClosed.length > 0
+      ? {
+          label: 'Accounts',
+          value: receipt.accountsClosed
+            .map(
+              a =>
+                `${a.accountNo} · ${a.typeName} · ${formatMoney(a.amount, t.currency)}`
+            )
+            .join('\n'),
+        }
+      : { label: 'Account', value: `${t.accountNo} · ${t.accountTypeName}` },
   ];
   if (otherSide && !t.payeeName) {
     rows.push({
@@ -163,7 +173,14 @@ export function renderReceiptPdf(receipt: TransactionReceipt): ArrayBuffer {
   y += 4;
   doc.line(left, y, right, y);
   y += 8;
-  const line = [LINES[t.kind] ?? t.kind, t.reason].filter(Boolean).join(' · ');
+  const line = [
+    receipt.accountsClosed.length > 0
+      ? 'Accounts closed · balances paid out'
+      : (LINES[t.kind] ?? t.kind),
+    t.reason,
+  ]
+    .filter(Boolean)
+    .join(' · ');
   const amount = formatMoney(t.amount, t.currency);
   doc.text(doc.splitTextToSize(line, right - left - 50) as string[], left, y);
   doc.text(amount, right, y, { align: 'right' });

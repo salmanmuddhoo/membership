@@ -30,6 +30,7 @@ import {
   reverseTransaction,
   EXIT_KINDS,
 } from '@lib/ledger/reversals';
+import { accountsClosedOnDeath } from '@lib/ledger/claimants';
 import { resubmitTransfer, TransferError } from '@lib/ledger/transfers';
 import { resubmitWithdrawal, WithdrawalError } from '@lib/ledger/withdrawals';
 import {
@@ -241,6 +242,12 @@ const isDeposit = transaction.kind === 'deposit';
 // A closure (S-1702) is corrected in its own wizard, not here: the signed
 // request may need signing again.
 const isClosure = transaction.kind === 'closure';
+// A closure on a death covers every account the holder has, not just
+// transaction.accountId (the lead one) — shown as its own list below.
+const closedOnDeathAccounts =
+  isClosure && transaction.claimant
+    ? await accountsClosedOnDeath(transaction.id)
+    : [];
 const isResignation = transaction.kind === 'resignation';
 const isDemise = transaction.kind === 'demise';
 // A request the officer built (a closure, a resignation, a claim): its
@@ -412,14 +419,37 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           </a>
           {transaction.memberNo && ` · ${transaction.memberNo}`}
         </dd>
-        <dt class="text-neutral-500 dark:text-neutral-400">Account</dt>
-        <dd class="font-medium text-neutral-800 dark:text-neutral-100">
-          <a href={`/accounts/${transaction.accountId}`} class="underline">
-            {transaction.accountNo}
-          </a>
-          {' · '}
-          {transaction.accountTypeName}
-        </dd>
+        {isClosure && transaction.claimant ? (
+          <>
+            <dt class="text-neutral-500 dark:text-neutral-400">Accounts</dt>
+            <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+              <ul class="space-y-1">
+                {closedOnDeathAccounts.map(account => (
+                  <li>
+                    <a href={`/accounts/${account.id}`} class="underline">
+                      {account.accountNo}
+                    </a>
+                    {' · '}
+                    {account.typeName}
+                    {' · '}
+                    {formatMoney(account.amount, transaction.currency)}
+                  </li>
+                ))}
+              </ul>
+            </dd>
+          </>
+        ) : (
+          <>
+            <dt class="text-neutral-500 dark:text-neutral-400">Account</dt>
+            <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+              <a href={`/accounts/${transaction.accountId}`} class="underline">
+                {transaction.accountNo}
+              </a>
+              {' · '}
+              {transaction.accountTypeName}
+            </dd>
+          </>
+        )}
         {isTransfer && (
           <>
             <dt class="text-neutral-500 dark:text-neutral-400">
@@ -491,8 +521,8 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         )}
         {/* A closure on a death (business decision): paid to the nominee
             or another person, a death certificate on file — no Takaful
-            benefit, unlike a demised claim, since only this one account is
-            closing. */}
+            benefit, unlike a demised claim. It covers every account the
+            holder has, not just this one, paid to the claimant together. */}
         {isClosure && transaction.claimant && (
           <>
             <dt class="text-neutral-500 dark:text-neutral-400">Paid to</dt>
@@ -655,7 +685,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     {isClosure && transaction.status !== 'posted' && (
       <p class="rounded-lg border border-neutral-300 px-4 py-3 text-sm text-neutral-700 dark:border-neutral-700 dark:text-neutral-200">
         {transaction.claimant
-          ? `Pays the balance to ${transaction.claimant.name} when it is approved, and the account closes with it.`
+          ? `Closes every account above and pays the total to ${transaction.claimant.name} when it is approved.`
           : `Closes ${transaction.accountNo} · ${transaction.accountTypeName}. The balance is paid out when it is approved, as it stands then, and the account closes with it.`}
       </p>
     )}
@@ -731,7 +761,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             : isResignation
               ? 'Approved. Record how the balances were paid out; both accounts close, the membership ends and the receipt is issued now.'
               : isClosure
-                ? 'Approved. Record how the balance was paid out; the account closes and the receipt is issued now.'
+                ? transaction.claimant
+                  ? 'Approved. Record how the claimant was paid; every account closes and the receipt is issued now.'
+                  : 'Approved. Record how the balance was paid out; the account closes and the receipt is issued now.'
                 : disburses
                   ? 'Approved. Record how it is paid out; disbursing moves the money and issues the receipt.'
                   : 'Approved. Posting moves the money and issues the receipt.'}
