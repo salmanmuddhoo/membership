@@ -10,7 +10,6 @@ import {
   DocumentError,
   reviewDocument,
 } from '@lib/documents/documents';
-import { AFFIDAVIT_NOTE } from '@lib/ledger/demises';
 import {
   cashMaximum,
   cashSourceOfFundThreshold,
@@ -582,11 +581,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       </p>
     )}
 
-    {isDemise && (
+    {isDemise && transaction.status !== 'posted' && (
       <p class="rounded-lg border border-neutral-300 px-4 py-3 text-sm text-neutral-700 dark:border-neutral-700 dark:text-neutral-200">
-        {transaction.status !== 'posted' &&
-          `Settles ${transaction.holderName || 'this member'}: every account closes, the total is paid to the claimant when it is approved, and the membership ends with it. `}
-        {AFFIDAVIT_NOTE}
+        {`Settles ${transaction.holderName || 'this member'}: every account closes, the total is paid to the claimant when it is approved, and the membership ends with it.`}
       </p>
     )}
 

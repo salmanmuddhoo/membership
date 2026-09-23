@@ -281,12 +281,34 @@ describe('resetAllTestData', () => {
               nextval('receipt_number_seq') as receipt`
     );
     expect(nextvals.rows[0]).toEqual({ app: '1', member: '1', receipt: '1' });
+    // Transactions and transfers number from the start again too.
+    const ledgerNumbers = await run(
+      ownerUrl,
+      `select nextval('transaction_reference_seq') as transaction,
+              nextval('transfer_reference_seq') as transfer`
+    );
+    expect(ledgerNumbers.rows[0]).toEqual({ transaction: '1', transfer: '1' });
 
     const counters = await run(
       appUrl,
       `select count(*)::int as n from account_number_counter`
     );
     expect(counters.rows[0].n).toBe(0);
+  });
+
+  it('clears every message sent', async () => {
+    const { resetAllTestData } = await load();
+    await run(
+      appUrl,
+      `insert into notification (event_code, channel, recipient, body)
+       values ('receipt.issued', 'email', 'someone@example.com', 'Sent')`
+    );
+    await resetAllTestData(actor);
+    const left = await run(
+      appUrl,
+      `select count(*)::int as n from notification`
+    );
+    expect(left.rows[0].n).toBe(0);
   });
 
   it('leaves exactly one audit row: the reset itself', async () => {

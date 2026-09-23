@@ -130,7 +130,12 @@ a card — Deposit live, the rest arriving with their milestones — and Deposit
 there asks for the account type and its number (the member's own for Shares
 and the MSA, the account's own for an HSA or Investment;
 `findAccountByNumber`, `src/lib/ledger/lookup.ts`), then opens the same form
-with that account chosen.
+with that account chosen. The same box takes the holder's name: every word
+must appear in it (`findAccountsByName`); one match opens the form, several
+are listed to choose from. Withdrawal and Transfer ask the same way. Below
+the cards is the day's transactions table (see
+`docs/access-control.md`); Resignation, Closure and Demise start from the
+member's or account's page, not here.
 
 **Cash above the Source of Fund threshold is a request, not one act**
 (S-1306, `src/lib/ledger/deposit-requests.ts`, M23). The Society wants the
@@ -549,7 +554,10 @@ again or be claimed for as a member, and the Shares and MSA come back
 only by rejoining. Dormant, inactive, pending and demised still move
 nothing. `dormant` is set by the nightly
 `dormancy-detection` job after `dormancy.months` without a posted entry or
-a fee payment on any of the member's accounts, and unset by an officer with
+a fee payment on any of the member's accounts — counted from no earlier
+than the day the record came into this system, so a migrated member's old
+Joined Date does not make them dormant the first night (migration 0093
+put back those it already had) — and unset by an officer with
 `member.reactivate` and a reason (M22, `src/lib/members/dormancy.ts`,
 `docs/jobs.md`).
 
@@ -562,8 +570,9 @@ together and cannot be resigned singly (FRD 7.2), while a Hajj Savings or
 Investment account is untouched and closes, if the member wants it closed,
 on its own request. The request's life before its chain is a closure's —
 `/members/{id}/resign` starts a draft, `/resignations/{id}` is the wizard,
-`/resignations/{id}/form` the sheet the member signs, filed against the
-transaction — and it rides the same chain, queue, trail and chevron
+`/resignations/{id}/form` the sheet the member signs (the accounts and
+the total to be paid out; how it is paid is not asked yet, so not on the
+sheet), filed against the transaction — and it rides the same chain, queue, trail and chevron
 (Details → Signature → Documents → Submitted → the chain → Resigned).
 Once signed, the Signature step shows the signed request with View and a
 red cross that deletes it; deleting it means signing again. The request

@@ -4,8 +4,18 @@
 // later milestone brings are here already, unavailable, so the shape of the
 // page does not change under an officer as they arrive.
 import DashboardLayout from '@layouts/DashboardLayout.astro';
+import TransactionTable from '@components/TransactionTable.astro';
+import { listTransactions } from '@lib/ledger/history';
 import { pendingTransactionCount } from '@lib/ledger/review';
-import { PAGE, CARD, CARD_TITLE, HINT, LINK_CARD, MUTED } from '@lib/ui';
+import {
+  PAGE,
+  CARD,
+  CARD_TITLE,
+  CARD_LABEL,
+  HINT,
+  LINK_CARD,
+  MUTED,
+} from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 const canCapture = principal.permissions.has('transaction.capture');
@@ -16,7 +26,9 @@ const waiting = await (Astro.locals.pendingTransactions ??
   pendingTransactionCount(principal));
 if (!canCapture) return Astro.redirect('/transactions/pending');
 
-const KINDS: { label: string; href: string | null; blurb: string }[] = [
+// The three an officer starts here. Resignations, closures and claims
+// start from the member's own page.
+const KINDS: { label: string; href: string; blurb: string }[] = [
   {
     label: 'Deposit',
     href: '/transactions/deposit',
@@ -32,18 +44,19 @@ const KINDS: { label: string; href: string | null; blurb: string }[] = [
     href: '/transactions/transfer',
     blurb: 'Between accounts, or out.',
   },
-  { label: 'Resignation', href: null, blurb: 'A member leaves the Society.' },
-  {
-    label: 'Closure',
-    href: null,
-    blurb: 'Close an HSA or Investment account.',
-  },
-  {
-    label: 'Demise',
-    href: null,
-    blurb: 'Settle a deceased member’s accounts.',
-  },
 ];
+
+// Today's transactions, under the cards (officer feedback): the day's list,
+// scoped as /transactions/all is — what this officer recorded, unless they
+// hold transaction.view_all.
+const seesAll = principal.permissions.has('transaction.view_all');
+const todayStart = new Date();
+todayStart.setHours(0, 0, 0, 0);
+const today = await listTransactions({
+  capturedBy: seesAll ? undefined : principal.userId,
+  from: todayStart,
+  pageSize: 20,
+});
 ---
 
 <DashboardLayout title="Transactions · Al Barakah MCSL" heading="Transactions">
@@ -59,37 +72,35 @@ const KINDS: { label: string; href: string | null; blurb: string }[] = [
         </span>
       </a>
     )}
-    <a href="/transactions/all" class={LINK_CARD}>
-      <span class="font-semibold text-neutral-800 dark:text-neutral-100">
-        Today’s transactions
-      </span>
-      <span class={MUTED}>Every kind, every status →</span>
-    </a>
+
     <ul class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      {KINDS.map(kind =>
-        kind.href ? (
-          <li>
-            <a
-              href={kind.href}
-              class={`block ${CARD} transition hover:border-mint-400 hover:bg-white dark:hover:border-mint-700 dark:hover:bg-neutral-900`}
-            >
-              <span class={`block ${CARD_TITLE}`}>{kind.label}</span>
-              <span class={`mt-1 block ${HINT}`}>{kind.blurb}</span>
-            </a>
-          </li>
-        ) : (
-          <li
-            aria-disabled="true"
-            class="rounded-2xl border border-dashed border-neutral-300 p-6 opacity-60 dark:border-neutral-700"
+      {KINDS.map(kind => (
+        <li>
+          <a
+            href={kind.href}
+            class={`block ${CARD} transition hover:border-mint-400 hover:bg-white dark:hover:border-mint-700 dark:hover:bg-neutral-900`}
           >
             <span class={`block ${CARD_TITLE}`}>{kind.label}</span>
             <span class={`mt-1 block ${HINT}`}>{kind.blurb}</span>
-            <span class="mt-2 inline-block rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
-              Not yet available
-            </span>
-          </li>
-        )
-      )}
+          </a>
+        </li>
+      ))}
     </ul>
+
+    <section class="space-y-2">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <h2 class={CARD_LABEL}>
+          {seesAll ? 'Today’s transactions' : 'Your transactions today'}
+        </h2>
+        <a href="/transactions/all" class={`${HINT} underline`}>
+          Every day, every status →
+        </a>
+      </div>
+      <TransactionTable
+        transactions={today.transactions}
+        showHolder
+        empty="Nothing recorded today."
+      />
+    </section>
   </div>
 </DashboardLayout>

@@ -226,7 +226,8 @@ pnpm job ledger-verify
 Nothing happening is not a request either. `detectDormancy`
 (`src/lib/members/dormancy.ts`) finds every active member whose last
 activity — a posted ledger entry or a fee payment on any of their accounts,
-or the day they joined if neither — is older than `dormancy.months`
+or the day they joined if neither, and never before the day the record
+came into this system — is older than `dormancy.months`
 (Configuration → Fee schedules, seeded 12; 0 turns the job into a no-op),
 marks each dormant with `status_changed_at`, writes one
 `member.dormancy_detected` audit row per member with `actor_user_id` null
