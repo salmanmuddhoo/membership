@@ -156,18 +156,29 @@ describe('applications report', () => {
     expect(byId.size).toBeGreaterThan(0); // rows are keyed by Reference
   });
 
-  it('filters status as a choice, with Approved offered although the Applications list omits it', async () => {
+  it('filters by where an application stands, with Approved offered although the Applications list omits it', async () => {
     const { reports } = await load();
     const report = reports.reportByCode('applications')!;
     const statusFilter = report.filters.find(f => f.name === 'status')!;
     expect(statusFilter.kind).toBe('choice');
     const choices = await statusFilter.choices!();
     expect(choices).toContainEqual({ value: 'approved', label: 'Approved' });
-    expect(choices).toContainEqual({ value: 'new', label: 'New' });
+    // Officer feedback: a stage per step of the chain in place of the raw
+    // 'new' / 'submitted_for_approval', which say nothing about who holds it.
+    expect(choices).toContainEqual({
+      value: 'with:secretary_review',
+      label: 'With the Secretary',
+    });
+    expect(choices.map(c => c.value)).not.toContain('new');
+    expect(choices.map(c => c.value)).not.toContain('submitted_for_review');
 
     const onlyApproved = await report.run({ status: 'approved' });
     expect(onlyApproved.rows.map(r => r.Applicant)).toEqual([
       'Al Barakah Trading Ltd',
     ]);
+    const withSecretary = await report.run({ status: 'with:secretary_review' });
+    expect(withSecretary.rows.map(r => r.Applicant)).toEqual(['John Doe']);
+    const withRegional = await report.run({ status: 'with:regional_review' });
+    expect(withRegional.rows).toEqual([]);
   });
 });

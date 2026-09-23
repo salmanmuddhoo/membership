@@ -9,7 +9,9 @@ export const APPLICATION_STATUS_LABELS: Record<string, string> = {
   // rather than for where it came from.
   received: 'Received online',
   new: 'New',
-  submitted_for_review: 'Submit for Review',
+  // No enabled step produces 'submitted_for_review' (migration 0011: the
+  // Secretary acts on New directly), so it is not offered as a filter; an
+  // application somehow at it shows its code.
   submitted_for_approval: 'Submit for Approval',
   rejected: 'Rejected',
   returned: 'Returned for Correction',

@@ -61,6 +61,7 @@ import {
   DANGER_SM,
   INPUT_SM,
   NOTICE_ERROR,
+  NOTICE_WARN,
   NOTICE_OK,
   TAG,
   VIEW_BUTTON,
@@ -246,11 +247,17 @@ const isDemise = transaction.kind === 'demise';
 // A request the officer built (a closure, a resignation, a claim): its
 // papers are on it, and it is corrected in its own wizard.
 const isExit = isClosure || isResignation || isDemise;
-const canEditClosure =
+const exitInHand =
   isExit &&
-  (transaction.status === 'returned' || transaction.status === 'draft') &&
+  (transaction.status === 'returned' || transaction.status === 'draft');
+const canEditClosure =
+  exitInHand &&
   transaction.capturedById === principal.userId &&
   principal.permissions.has(PERMISSION_CAPTURE);
+// Officer feedback: a colleague's draft looked stuck — nothing to do on it,
+// and no word on why. Its captor is the only one who can continue or
+// cancel it (the wizard is theirs), so say so.
+const heldByColleague = exitInHand && !canEditClosure;
 const closureDocuments =
   isExit || transaction.kind === 'deposit'
     ? await documentsForTransaction(transaction.id)
@@ -604,6 +611,13 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         Closes {transaction.accountNo} · {transaction.accountTypeName}. The
         balance is paid out when it is approved, as it stands then, and the
         account closes with it.
+      </p>
+    )}
+
+    {heldByColleague && (
+      <p class={NOTICE_WARN}>
+        {transaction.status === 'returned' ? 'Returned to' : 'Draft with'}{' '}
+        {transaction.capturedByName}. Only they can continue or cancel it.
       </p>
     )}
 
