@@ -25,6 +25,11 @@ if (
 ) {
   return new Response('Not found', { status: 404 });
 }
+// A closure on a death has no holder's signature to take — a death
+// certificate is filed instead (business decision).
+if (closure.claimantKind !== null) {
+  return Astro.redirect(`/closures/${closure.id}?step=documents`);
+}
 
 const holder =
   closure.holderKind === 'member'

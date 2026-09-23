@@ -20,8 +20,10 @@ import {
   submitClosure,
   updateClosure,
 } from '@lib/ledger/closures';
+import { nomineeOnApplication } from '@lib/ledger/claimants';
 import { DocumentError, removeFiledDocument } from '@lib/documents/documents';
 import { accountBalance } from '@lib/ledger/ledger';
+import { loadCustomer, loadMember } from '@lib/members/create';
 import { loadTransaction, transitionsFor } from '@lib/ledger/review';
 import { resolveRoute } from '@lib/ledger/routing';
 import { formatMoney, toCents } from '@lib/payments/money';
@@ -36,6 +38,7 @@ import {
   INPUT,
   BUTTON,
   SECONDARY,
+  SECONDARY_SM,
   DANGER,
   NOTICE_ERROR,
   NOTICE_OK,
@@ -43,6 +46,11 @@ import {
   VIEW_BUTTON,
   DELETE_BUTTON,
 } from '@lib/ui';
+
+// What the file picker offers, matching what the upload service accepts
+// (copied from the demise wizard's own Documents step — demises/[id].astro).
+const ACCEPTED_FILES =
+  'image/jpeg,image/png,image/heic,image/webp,application/pdf';
 
 const principal = Astro.locals.principal!;
 const { id } = Astro.params;
@@ -59,8 +67,13 @@ if (closure.capturedById !== principal.userId) {
   return Astro.redirect(`/transactions/${closure.id}`);
 }
 
-const STEPS = ['details', 'signature', 'documents', 'submit'] as const;
-type Step = (typeof STEPS)[number];
+// A closure on a death (business decision): no signature to take, a death
+// certificate filed instead. The step never exists for one.
+const onDeath = closure.claimantKind !== null;
+type Step = 'details' | 'signature' | 'documents' | 'submit';
+const STEPS: Step[] = onDeath
+  ? ['details', 'documents', 'submit']
+  : ['details', 'signature', 'documents', 'submit'];
 const base = `/closures/${closure.id}`;
 const stepHrefs: Record<string, string> = {
   details: `${base}?step=details`,
@@ -78,14 +91,32 @@ if (Astro.request.method === 'POST') {
   const intent = text('intent');
   try {
     if (intent === 'details') {
-      // Only the reason: the payout is the Treasurer's to record at
-      // disbursement, unless the matrix posts the closure at once (below).
+      // The reason and, on a death, who is paid: the payout itself is the
+      // Treasurer's to record at disbursement, unless the matrix posts the
+      // closure at once (below).
       closure = await updateClosure(
         closure.id,
-        { reason: text('reason') },
+        {
+          reason: text('reason'),
+          ...(onDeath
+            ? {
+                claimant: {
+                  kind: text('kind') === 'nominee' ? 'nominee' : 'other',
+                  name: text('name'),
+                  nic: text('nic'),
+                  address: text('address'),
+                  relation: text('relation'),
+                  email: text('email'),
+                  mobile: text('mobile'),
+                },
+              }
+            : {}),
+        },
         principal
       );
-      return Astro.redirect(`${base}?step=signature`);
+      return Astro.redirect(
+        `${base}?step=${onDeath ? 'documents' : 'signature'}`
+      );
     } else if (intent === 'submit') {
       // Where the matrix posts it at once, submitting IS the posting, and
       // the payout is asked here (postsAtOnce, below).
@@ -138,6 +169,17 @@ const [checklist, timeline, trail, paymentMethods, bankAccounts] =
   ]);
 const complete = checklistComplete(checklist);
 const request = checklist[0] ?? null;
+// The claimant, on a death: who is paid now, and the nominee on file (if
+// any), offered again so the officer can switch back to them.
+const claimant = onDeath ? closure.claimant! : null;
+const holder = onDeath
+  ? closure.holderKind === 'member'
+    ? await loadMember(closure.holderId)
+    : await loadCustomer(closure.holderId)
+  : null;
+const nominee = holder
+  ? await nomineeOnApplication(holder.applicationId)
+  : null;
 // The balance as it stands now — what submitting would actually post,
 // same as submitClosure (ledger/closures.ts) works out.
 const currentBalance =
@@ -199,7 +241,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     )}
 
     {step === 'details' && (
-      <form method="post" class={FORM_CARD}>
+      <form method="post" data-details-form class={FORM_CARD}>
         <h2 class={CARD_LABEL}>Details</h2>
         <dl class="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
           <dt class="text-neutral-500 dark:text-neutral-400">Account</dt>
@@ -216,11 +258,119 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           <textarea
             name="reason"
             rows="3"
-            required
+            required={!onDeath}
             maxlength="500"
             class={INPUT}
           >{closure.reason}</textarea>
         </label>
+        {onDeath && (
+          <div class="space-y-3">
+            <h3 class={CARD_LABEL}>Claimant</h3>
+            <div class="space-y-2 text-sm text-neutral-700 dark:text-neutral-200">
+              {nominee && (
+                <label class="flex items-start gap-3">
+                  <input
+                    type="radio"
+                    name="kind"
+                    value="nominee"
+                    checked={closure.claimantKind === 'nominee'}
+                    class="mt-1"
+                  />
+                  <span>
+                    <span class="font-medium">Nominee: {nominee.name}</span>
+                    <span class="block text-xs text-neutral-500 dark:text-neutral-400">
+                      {[nominee.nic, nominee.address]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </span>
+                  </span>
+                </label>
+              )}
+              <label class="flex items-start gap-3">
+                <input
+                  type="radio"
+                  name="kind"
+                  value="other"
+                  checked={closure.claimantKind === 'other'}
+                  class="mt-1"
+                />
+                <span class="font-medium">Another person</span>
+              </label>
+            </div>
+            <div
+              data-other-fields
+              class="grid gap-3 sm:grid-cols-2"
+              hidden={closure.claimantKind !== 'other'}
+            >
+              <label class={LABEL}>
+                Name
+                <input
+                  type="text"
+                  name="name"
+                  value={closure.claimantKind === 'other' ? claimant!.name : ''}
+                  class={INPUT}
+                />
+              </label>
+              <label class={LABEL}>
+                NIC
+                <input
+                  type="text"
+                  name="nic"
+                  value={closure.claimantKind === 'other' ? claimant!.nic : ''}
+                  class={INPUT}
+                />
+              </label>
+              <label class={LABEL}>
+                Address
+                <input
+                  type="text"
+                  name="address"
+                  value={
+                    closure.claimantKind === 'other' ? claimant!.address : ''
+                  }
+                  class={INPUT}
+                />
+              </label>
+              <label class={LABEL}>
+                Relation
+                <input
+                  type="text"
+                  name="relation"
+                  value={
+                    closure.claimantKind === 'other' ? claimant!.relation : ''
+                  }
+                  class={INPUT}
+                />
+              </label>
+              <label class={LABEL}>
+                Email
+                <input
+                  type="email"
+                  name="email"
+                  value={
+                    closure.claimantKind === 'other'
+                      ? (claimant!.email ?? '')
+                      : ''
+                  }
+                  class={INPUT}
+                />
+              </label>
+              <label class={LABEL}>
+                Mobile
+                <input
+                  type="tel"
+                  name="mobile"
+                  value={
+                    closure.claimantKind === 'other'
+                      ? (claimant!.mobile ?? '')
+                      : ''
+                  }
+                  class={INPUT}
+                />
+              </label>
+            </div>
+          </div>
+        )}
         <input type="hidden" name="intent" value="details" />
         <div class="flex flex-wrap gap-2 pt-2">
           <button type="submit" class={BUTTON}>
@@ -294,14 +444,15 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         <h2 class={CARD_LABEL}>Documents</h2>
         {checklist.length === 0 ? (
           <p class="text-sm text-red-700 dark:text-red-300">
-            The closure request document type is not configured. Ask an
-            administrator.
+            {onDeath
+              ? 'The death certificate document type is not configured. Ask an administrator.'
+              : 'The closure request document type is not configured. Ask an administrator.'}
           </p>
         ) : (
           <ul class="space-y-2">
             {checklist.map(item => (
               <li
-                class={`flex items-center justify-between gap-3 ${PANEL} text-sm`}
+                class={`flex flex-wrap items-center justify-between gap-3 ${PANEL} text-sm`}
               >
                 <span>
                   <span class="font-medium text-neutral-800 dark:text-neutral-100">
@@ -314,14 +465,64 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                   </span>
                 </span>
                 {item.filed ? (
-                  <button
-                    type="button"
-                    data-view-document
-                    data-document-id={item.filed.documentId}
-                    class={VIEW_BUTTON}
+                  onDeath ? (
+                    // A death certificate is uploaded straight into the
+                    // request, like the demise wizard's own papers — deleted
+                    // and refiled here rather than through a signed sheet.
+                    <div class="flex shrink-0 items-center gap-2">
+                      <button
+                        type="button"
+                        data-view-document
+                        data-document-id={item.filed.documentId}
+                        class={VIEW_BUTTON}
+                      >
+                        View
+                      </button>
+                      <button
+                        type="button"
+                        data-remove-document={item.filed.documentId}
+                        title="Delete"
+                        aria-label="Remove this document"
+                        class={DELETE_BUTTON}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      data-view-document
+                      data-document-id={item.filed.documentId}
+                      class={VIEW_BUTTON}
+                    >
+                      View
+                    </button>
+                  )
+                ) : onDeath ? (
+                  <span
+                    class="flex flex-wrap items-center gap-3"
+                    data-upload
+                    data-transaction-id={closure.id}
+                    data-document-type-id={item.documentTypeId}
                   >
-                    View
-                  </button>
+                    <label class={`${SECONDARY_SM} cursor-pointer`}>
+                      Upload
+                      <input
+                        type="file"
+                        data-file
+                        accept={ACCEPTED_FILES}
+                        capture="environment"
+                        disabled
+                        class="sr-only"
+                      />
+                    </label>
+                    <span
+                      data-status
+                      class="text-xs text-neutral-500 dark:text-neutral-400"
+                    >
+                      Uploading requires JavaScript.
+                    </span>
+                  </span>
                 ) : (
                   <a href={`${base}?step=signature`} class="shrink-0 underline">
                     Sign
@@ -355,16 +556,41 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           <dd class="text-neutral-800 dark:text-neutral-100">
             {closure.reason}
           </dd>
-          <dt class="text-neutral-500 dark:text-neutral-400">Signed request</dt>
-          <dd
-            class:list={[
-              complete
-                ? 'text-neutral-800 dark:text-neutral-100'
-                : 'text-red-700 dark:text-red-300',
-            ]}
-          >
-            {complete ? 'On file' : 'Missing'}
-          </dd>
+          {onDeath ? (
+            <>
+              <dt class="text-neutral-500 dark:text-neutral-400">Paid to</dt>
+              <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+                {claimant!.name} · {claimant!.relation}
+              </dd>
+              <dt class="text-neutral-500 dark:text-neutral-400">
+                Death certificate
+              </dt>
+              <dd
+                class:list={[
+                  complete
+                    ? 'text-neutral-800 dark:text-neutral-100'
+                    : 'text-red-700 dark:text-red-300',
+                ]}
+              >
+                {complete ? 'On file' : 'Missing'}
+              </dd>
+            </>
+          ) : (
+            <>
+              <dt class="text-neutral-500 dark:text-neutral-400">
+                Signed request
+              </dt>
+              <dd
+                class:list={[
+                  complete
+                    ? 'text-neutral-800 dark:text-neutral-100'
+                    : 'text-red-700 dark:text-red-300',
+                ]}
+              >
+                {complete ? 'On file' : 'Missing'}
+              </dd>
+            </>
+          )}
         </dl>
         {postsAtOnce && (
           <div class="grid gap-3 sm:grid-cols-2">
@@ -445,6 +671,108 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     remove.addEventListener('submit', event => {
       if (!confirm('Delete the signed request? It will need signing again.')) {
         event.preventDefault();
+      }
+    });
+  }
+</script>
+
+<script>
+  // The details form on a death: the other person's fields only when they
+  // are the claimant (demise.astro's own claimant script).
+  const detailsForm = document.querySelector<HTMLFormElement>(
+    '[data-details-form]'
+  );
+  const otherFields = detailsForm?.querySelector<HTMLElement>(
+    '[data-other-fields]'
+  );
+  if (detailsForm && otherFields) {
+    const refresh = () => {
+      const picked = detailsForm.querySelector<HTMLInputElement>(
+        'input[name="kind"]:checked'
+      );
+      otherFields.hidden = picked?.value !== 'other';
+    };
+    detailsForm.addEventListener('change', refresh);
+    refresh();
+  }
+</script>
+
+<script>
+  import { uploadDocumentBlob } from '@lib/client/document-upload';
+  import {
+    compressImageForUpload,
+    formatBytes,
+  } from '@lib/client/image-compression';
+
+  // Filing the death certificate: the same three-phase transfer the demise
+  // wizard's Documents step uses, through uploadDocumentBlob, so the
+  // backend decides where it goes and confirms it landed.
+  for (const panel of document.querySelectorAll<HTMLElement>('[data-upload]')) {
+    const file = panel.querySelector<HTMLInputElement>('[data-file]');
+    const status = panel.querySelector<HTMLElement>('[data-status]');
+    if (!file || !status) continue;
+    file.disabled = false;
+    status.textContent = '';
+    const say = (message: string) => {
+      status.textContent = message;
+    };
+    file.addEventListener('change', async () => {
+      const picked = file.files?.[0];
+      if (!picked) return;
+      file.disabled = true;
+      say('Preparing…');
+      let chosen = picked;
+      try {
+        chosen = await compressImageForUpload(picked);
+        if (chosen.size < picked.size) {
+          say(
+            `Compressed ${formatBytes(picked.size)} to ${formatBytes(chosen.size)}…`
+          );
+        }
+      } catch {
+        // Nothing here is worth failing an upload over.
+      }
+      try {
+        await uploadDocumentBlob({
+          transactionId: panel.dataset.transactionId,
+          documentTypeId: panel.dataset.documentTypeId ?? '',
+          subject: 'applicant',
+          fileName: chosen.name,
+          blob: chosen,
+          onStatus: message => say(message),
+        });
+        window.location.reload();
+      } catch (error) {
+        say(
+          (error instanceof Error ? error.message : 'The upload failed.') +
+            ' Please try again.'
+        );
+        file.disabled = false;
+        file.value = '';
+      }
+    });
+  }
+
+  for (const button of document.querySelectorAll<HTMLButtonElement>(
+    '[data-remove-document]'
+  )) {
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      try {
+        const response = await fetch('/api/v1/documents/remove', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ documentId: button.dataset.removeDocument }),
+        });
+        if (!response.ok) {
+          const body = await response.json().catch(() => null);
+          throw new Error(body?.error?.message ?? 'It could not be removed.');
+        }
+        window.location.reload();
+      } catch (error) {
+        button.disabled = false;
+        button.textContent =
+          error instanceof Error ? error.message : 'It could not be removed.';
       }
     });
   }

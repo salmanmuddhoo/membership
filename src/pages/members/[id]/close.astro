@@ -13,6 +13,7 @@ import {
   startClosure,
   PERMISSION_CAPTURE,
 } from '@lib/ledger/closures';
+import { nomineeOnApplication } from '@lib/ledger/claimants';
 import { loadCustomer, loadMember } from '@lib/members/create';
 import { formatMoney } from '@lib/payments/money';
 import {
@@ -58,10 +59,27 @@ const closable = await Promise.all(
 );
 const requestedAccount = Astro.url.searchParams.get('account') ?? '';
 
+// A closure on a death (business decision) is only for a non-member: a
+// customer, or a member who resigned but kept an account open. A member
+// still active who dies is refused by the library — settled by a demised
+// claim instead — so the choice is not even offered here.
+const isNonMember = !member || member.status === 'resigned';
+const nominee = isNonMember
+  ? await nomineeOnApplication(person.applicationId)
+  : null;
+
 let values = {
   accountId:
     closable.find(a => a.id === requestedAccount)?.id ?? closable[0]?.id ?? '',
   reason: '',
+  cause: 'request',
+  kind: nominee ? 'nominee' : 'other',
+  name: '',
+  nic: '',
+  address: '',
+  relation: '',
+  email: '',
+  mobile: '',
 };
 let error: string | null = null;
 
@@ -71,13 +89,45 @@ if (Astro.request.method === 'POST') {
   values = {
     accountId: text('accountId'),
     reason: text('reason'),
+    cause: text('cause') || 'request',
+    kind: text('kind'),
+    name: text('name'),
+    nic: text('nic'),
+    address: text('address'),
+    relation: text('relation'),
+    email: text('email'),
+    mobile: text('mobile'),
   };
   if (!person.accounts.some(a => a.id === values.accountId)) {
     error = 'Choose which account is closing.';
   } else {
+    const onDeath = isNonMember && values.cause === 'death';
     try {
-      const closure = await startClosure(values, principal);
-      return Astro.redirect(`/closures/${closure.id}?step=signature`);
+      const closure = await startClosure(
+        {
+          accountId: values.accountId,
+          reason: values.reason,
+          ...(onDeath
+            ? {
+                onDeath: {
+                  claimant: {
+                    kind: values.kind === 'nominee' ? 'nominee' : 'other',
+                    name: values.name,
+                    nic: values.nic,
+                    address: values.address,
+                    relation: values.relation,
+                    email: values.email,
+                    mobile: values.mobile,
+                  },
+                },
+              }
+            : {}),
+        },
+        principal
+      );
+      return Astro.redirect(
+        `/closures/${closure.id}?step=${onDeath ? 'documents' : 'signature'}`
+      );
     } catch (err) {
       if (err instanceof ClosureError) {
         error = err.message;
@@ -107,7 +157,7 @@ if (Astro.request.method === 'POST') {
         together: leaving them is a resignation.
       </p>
     ) : (
-      <form method="post" class={FORM_CARD}>
+      <form method="post" data-close-form class={FORM_CARD}>
         <label class={LABEL}>
           Account
           <select name="accountId" class={INPUT}>
@@ -122,12 +172,135 @@ if (Astro.request.method === 'POST') {
             ))}
           </select>
         </label>
+        {isNonMember && (
+          <div class="space-y-2 text-sm text-neutral-700 dark:text-neutral-200">
+            <label class="flex items-start gap-3">
+              <input
+                type="radio"
+                name="cause"
+                value="request"
+                checked={values.cause !== 'death'}
+                class="mt-1"
+              />
+              <span class="font-medium">The holder asked to close it</span>
+            </label>
+            <label class="flex items-start gap-3">
+              <input
+                type="radio"
+                name="cause"
+                value="death"
+                checked={values.cause === 'death'}
+                class="mt-1"
+              />
+              <span class="font-medium">The holder has died</span>
+            </label>
+          </div>
+        )}
+        {isNonMember && (
+          <div
+            data-claimant-block
+            class="space-y-2"
+            hidden={values.cause !== 'death'}
+          >
+            <div class="space-y-2 text-sm text-neutral-700 dark:text-neutral-200">
+              {nominee && (
+                <label class="flex items-start gap-3">
+                  <input
+                    type="radio"
+                    name="kind"
+                    value="nominee"
+                    checked={values.kind !== 'other'}
+                    class="mt-1"
+                  />
+                  <span>
+                    <span class="font-medium">Nominee: {nominee.name}</span>
+                    <span class="block text-xs text-neutral-500 dark:text-neutral-400">
+                      {[nominee.nic, nominee.address]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </span>
+                  </span>
+                </label>
+              )}
+              <label class="flex items-start gap-3">
+                <input
+                  type="radio"
+                  name="kind"
+                  value="other"
+                  checked={values.kind === 'other' || !nominee}
+                  class="mt-1"
+                />
+                <span class="font-medium">Another person</span>
+              </label>
+            </div>
+            <div
+              data-other-fields
+              class="grid gap-3 sm:grid-cols-2"
+              hidden={values.kind !== 'other'}
+            >
+              <label class={LABEL}>
+                Name
+                <input
+                  type="text"
+                  name="name"
+                  value={values.name}
+                  class={INPUT}
+                />
+              </label>
+              <label class={LABEL}>
+                NIC
+                <input
+                  type="text"
+                  name="nic"
+                  value={values.nic}
+                  class={INPUT}
+                />
+              </label>
+              <label class={LABEL}>
+                Address
+                <input
+                  type="text"
+                  name="address"
+                  value={values.address}
+                  class={INPUT}
+                />
+              </label>
+              <label class={LABEL}>
+                Relation
+                <input
+                  type="text"
+                  name="relation"
+                  value={values.relation}
+                  class={INPUT}
+                />
+              </label>
+              <label class={LABEL}>
+                Email
+                <input
+                  type="email"
+                  name="email"
+                  value={values.email}
+                  class={INPUT}
+                />
+              </label>
+              <label class={LABEL}>
+                Mobile
+                <input
+                  type="tel"
+                  name="mobile"
+                  value={values.mobile}
+                  class={INPUT}
+                />
+              </label>
+            </div>
+          </div>
+        )}
         <label class={LABEL}>
           Reason
           <textarea
             name="reason"
             rows="3"
-            required
+            required={!(isNonMember && values.cause === 'death')}
             maxlength="500"
             class={INPUT}
           >{values.reason}</textarea>
@@ -136,10 +309,50 @@ if (Astro.request.method === 'POST') {
           The balance is paid out when the closure is approved, as it stands
           then.
         </p>
-        <button type="submit" class={BUTTON}>
-          Continue to signature
+        <button type="submit" data-continue-button class={BUTTON}>
+          {isNonMember && values.cause === 'death'
+            ? 'Continue to documents'
+            : 'Continue to signature'}
         </button>
       </form>
     )}
   </div>
 </DashboardLayout>
+
+<script>
+  // Reveals the claimant block, drops the reason from required and swaps
+  // the button's wording the moment "The holder has died" is picked — a
+  // visual nudge only, enforced server-side (ledger/closures.ts) whether or
+  // not this script runs.
+  const form = document.querySelector<HTMLFormElement>('[data-close-form]');
+  const claimantBlock = form?.querySelector<HTMLElement>(
+    '[data-claimant-block]'
+  );
+  const otherFields = form?.querySelector<HTMLElement>('[data-other-fields]');
+  const reason = form?.querySelector<HTMLTextAreaElement>('[name="reason"]');
+  const continueButton = form?.querySelector<HTMLButtonElement>(
+    '[data-continue-button]'
+  );
+  if (form) {
+    const refresh = () => {
+      const onDeath =
+        form.querySelector<HTMLInputElement>('input[name="cause"]:checked')
+          ?.value === 'death';
+      if (claimantBlock) claimantBlock.hidden = !onDeath;
+      if (reason) reason.required = !onDeath;
+      if (continueButton) {
+        continueButton.textContent = onDeath
+          ? 'Continue to documents'
+          : 'Continue to signature';
+      }
+      if (otherFields) {
+        const kind = form.querySelector<HTMLInputElement>(
+          'input[name="kind"]:checked'
+        )?.value;
+        otherFields.hidden = kind !== 'other';
+      }
+    };
+    form.addEventListener('change', refresh);
+    refresh();
+  }
+</script>
