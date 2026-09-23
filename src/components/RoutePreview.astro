@@ -8,7 +8,10 @@
 // before they press Record. Every rule stays server-side — this is a
 // picture of routing's own answer (routePreviewGroups), not a copy of it.
 import ChainTimeline from '@components/ChainTimeline.astro';
-import type { RoutePreviewGroup } from '@lib/workflow/timeline';
+import {
+  initialRouteBand,
+  type RoutePreviewGroup,
+} from '@lib/workflow/timeline';
 import { MUTED } from '@lib/ui';
 
 interface Props {
@@ -30,15 +33,11 @@ const {
 
 const initialGroup =
   groups.find(g => g.accountId === initialAccountId) ?? groups[0] ?? null;
-const initialBand =
-  initialGroup?.bands.find(
-    b =>
-      initialAmountCents !== null &&
-      b.fromCents <= initialAmountCents &&
-      (b.toCents === null || initialAmountCents <= b.toCents)
-  ) ??
-  initialGroup?.bands[0] ??
-  null;
+const initialBand = initialRouteBand(
+  groups,
+  initialAccountId,
+  initialAmountCents
+);
 ---
 
 {groups.length > 0 && (
@@ -55,6 +54,7 @@ const initialBand =
           data-account={group.accountId}
           data-from={band.fromCents}
           data-to={band.toCents ?? ''}
+          data-at-once={band.atOnce ? 'true' : 'false'}
           hidden={!(group === initialGroup && band === initialBand)}
           class="space-y-2"
         >
@@ -99,6 +99,13 @@ const initialBand =
           return cents >= from && (to === null || cents <= to);
         }) ?? mine[0];
       for (const b of bands) b.hidden = b !== match;
+      // The form under it may ask different things of the officer when
+      // nothing waits for approval (a withdrawal's payout fields).
+      document.dispatchEvent(
+        new CustomEvent('route-band', {
+          detail: { atOnce: match?.dataset.atOnce === 'true' },
+        })
+      );
     };
     accountInput?.addEventListener('change', show);
     amountInput?.addEventListener('input', show);

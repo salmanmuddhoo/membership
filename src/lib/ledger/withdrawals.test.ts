@@ -436,8 +436,17 @@ describe('available, not merely current (S-1502)', () => {
 describe('disbursing an approved withdrawal (S-1503)', () => {
   it('pays out once approved, by someone who neither captured nor approved it, with the method recorded', async () => {
     const mods = await load();
+    // How it is paid out is not the recording officer's to say when it
+    // goes for approval — the Treasurer says at Disburse. One paid out at
+    // once still needs it.
+    await expect(
+      mods.withdrawals.recordWithdrawal(
+        { accountId: msa, amount: '500', reason: 'Small' },
+        officer
+      )
+    ).rejects.toThrowError(/Choose how it is paid out/);
     const large = await mods.withdrawals.recordWithdrawal(
-      { accountId: msa, amount: '105000', method: 'cash', reason: 'Hajj' },
+      { accountId: msa, amount: '105000', reason: 'Hajj' },
       officer
     );
     expect(large.status).toBe('submitted');
@@ -625,9 +634,10 @@ describe('disbursing an approved withdrawal (S-1503)', () => {
         clerk
       )
     ).rejects.toThrowError(/paid out at once/);
+    // Still going for approval: how it is paid out is not asked again.
     const resubmitted = await mods.withdrawals.resubmitWithdrawal(
       queued.id,
-      { accountId: msa, amount: '102000', method: 'cash', reason: 'Confirmed' },
+      { accountId: msa, amount: '102000', reason: 'Confirmed' },
       clerk
     );
     expect(resubmitted.status).toBe('submitted');

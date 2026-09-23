@@ -26,6 +26,7 @@ import {
   allocateReceiptNumber,
   markReceiptIssued,
 } from '../payments/receipts';
+import { offeredPaymentMethods } from '../config/reference';
 import { requireBankAccount, resolveBankAccount } from './bank-accounts';
 import { availableBalance, LedgerError } from './ledger';
 import { notifyReceiptIssued } from './receipt-notifications';
@@ -57,7 +58,9 @@ export interface WithdrawalInput {
   // How it is, or will be, paid out. The reference the method requires is
   // demanded when it posts at once; a withdrawal going to a chain gives it
   // at disbursement (S-1503).
-  method: string;
+  // Required only when it is paid out at once; one that goes for approval
+  // is paid out by the Treasurer, who says how at Disburse.
+  method?: string;
   methodReference?: string;
   reason?: string;
   idempotencyKey?: string;
@@ -238,9 +241,19 @@ export async function refuseUnlessWithdrawable(
   }
 }
 
-async function checkedMethod(code: string) {
+// How it is paid out is the Treasurer's to say, at Disburse, when it goes
+// for approval: the officer recording or correcting it is not asked
+// (officer direction). The column wants a method meanwhile, so it holds the
+// first offered until Disburse replaces it; nothing shows it before.
+async function payoutMethod(chained: boolean, code: string | undefined) {
+  return chained && !(code ?? '').trim()
+    ? checkedMethod((await offeredPaymentMethods())[0]?.code ?? '')
+    : checkedMethod(code);
+}
+
+async function checkedMethod(code: string | undefined) {
   try {
-    return await offeredMethod(code);
+    return await offeredMethod(code ?? '');
   } catch (err) {
     if (err instanceof PaymentError) {
       throw new WithdrawalError('Choose how it is paid out.');
@@ -276,7 +289,6 @@ export async function recordWithdrawal(
     }
   }
 
-  const method = await checkedMethod(input.method);
   const from = await source(input.accountId);
   await refuseUnlessWithdrawable(from, amountCents);
 
@@ -286,6 +298,7 @@ export async function recordWithdrawal(
     amountCents,
     roleCodes: principal.roles,
   });
+  const method = await payoutMethod(!!route.definition, input.method);
   const bankAccountId = await resolveBankAccount(
     input.bankAccountId,
     message => new WithdrawalError(message)
@@ -444,7 +457,6 @@ export async function resubmitWithdrawal(
     );
   }
   const amountCents = parseAmount(input.amount);
-  const method = await checkedMethod(input.method);
   const from = await source(input.accountId);
   if (
     from.memberId !==
@@ -462,6 +474,7 @@ export async function resubmitWithdrawal(
     amountCents,
     roleCodes: principal.roles,
   });
+  const method = await payoutMethod(!!route.definition, input.method);
   const bankAccountId = await resolveBankAccount(
     input.bankAccountId,
     message => new WithdrawalError(message)

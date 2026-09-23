@@ -46,8 +46,12 @@ import {
   transitionsFor,
 } from '@lib/ledger/review';
 import { loadCustomer, loadMember } from '@lib/members/create';
-import { formatMoney } from '@lib/payments/money';
-import { chainTimeline } from '@lib/workflow/timeline';
+import { formatMoney, toCents } from '@lib/payments/money';
+import {
+  chainTimeline,
+  initialRouteBand,
+  routePreviewGroups,
+} from '@lib/workflow/timeline';
 import {
   PAGE,
   CARD,
@@ -309,6 +313,36 @@ const paymentMethods =
 const bankAccounts =
   canEdit || (canPost && disburses) ? await offeredBankAccounts() : [];
 
+// A returned withdrawal asks how it is paid out only if, as corrected, it
+// is paid out at once; one that goes for approval is paid how the
+// Treasurer says at Disburse. The bands say which, by account and amount.
+const withdrawalBands =
+  canEdit && transaction.kind === 'withdrawal'
+    ? await routePreviewGroups(
+        'withdrawal',
+        accounts.filter(a => a.status === 'active' && a.allowed),
+        principal.roles
+      )
+    : [];
+const editPaidAtOnce =
+  transaction.kind !== 'withdrawal' ||
+  (initialRouteBand(
+    withdrawalBands,
+    transaction.accountId,
+    toCents(transaction.amount)
+  )?.atOnce ??
+    true);
+const withdrawalBandData = JSON.stringify(
+  withdrawalBands.flatMap(g =>
+    g.bands.map(b => ({
+      account: g.accountId,
+      from: b.fromCents,
+      to: b.toCents,
+      atOnce: b.atOnce,
+    }))
+  )
+);
+
 const cashThreshold =
   canEdit && isDeposit ? await cashSourceOfFundThreshold() : '';
 const cashMax = canEdit && isDeposit ? await cashMaximum() : '';
@@ -419,16 +453,19 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         </dt>
         <dd class="font-medium text-neutral-800 dark:text-neutral-100">
           {formatMoney(transaction.amount, transaction.currency)}
-          {transaction.method !== 'internal_transfer' && (
-            <>
-              {' by '}
-              {transaction.methodName}
-              {transaction.methodReference &&
-                ` · ${transaction.methodReference}`}
-              {transaction.bankAccountName &&
-                ` · ${transaction.bankAccountName}`}
-            </>
-          )}
+          {/* How money out was paid is the Treasurer's to say at Disburse;
+              until then there is nothing to show. */}
+          {transaction.method !== 'internal_transfer' &&
+            !(disburses && transaction.status !== 'posted') && (
+              <>
+                {' by '}
+                {transaction.methodName}
+                {transaction.methodReference &&
+                  ` · ${transaction.methodReference}`}
+                {transaction.bankAccountName &&
+                  ` · ${transaction.bankAccountName}`}
+              </>
+            )}
         </dd>
         {isDemise && transaction.claimant && (
           <>
@@ -821,6 +858,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         data-deposit-form
         data-cash-threshold={cashThreshold}
         data-cash-maximum={cashMax}
+        data-route-bands={
+          transaction.kind === 'withdrawal' ? withdrawalBandData : undefined
+        }
         class={FORM_CARD}
       >
         <h2 class={CARD_LABEL}>Correct and resubmit</h2>
@@ -864,9 +904,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               class={INPUT}
             />
           </label>
-          <label class={LABEL}>
+          <label data-payout-field hidden={!editPaidAtOnce} class={LABEL}>
             {isDeposit ? 'Method' : 'Paid by'}
-            <select name="method" class={INPUT}>
+            <select name="method" disabled={!editPaidAtOnce} class={INPUT}>
               {paymentMethods.map(method => (
                 <option
                   value={method.code}
@@ -1119,16 +1159,50 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     const submit = form.querySelector<HTMLButtonElement>(
       '[data-deposit-submit]'
     );
+    // A withdrawal: whether, as corrected, it is paid out at once — the
+    // only case in which how it is paid out is asked here.
+    const bands: {
+      account: string;
+      from: number;
+      to: number | null;
+      atOnce: boolean;
+    }[] = form.dataset.routeBands ? JSON.parse(form.dataset.routeBands) : [];
+    const accountSelect =
+      form.querySelector<HTMLSelectElement>('[name="accountId"]');
+    const payoutField = form.querySelector<HTMLElement>('[data-payout-field]');
+    const paidAtOnce = (cents: number | null): boolean => {
+      if (!form.dataset.routeBands) return true;
+      const mine = bands.filter(b => b.account === accountSelect?.value);
+      const band =
+        mine.find(
+          b =>
+            cents !== null &&
+            cents >= b.from &&
+            (b.to === null || cents <= b.to)
+        ) ?? mine[0];
+      return band?.atOnce ?? true;
+    };
+    // A hidden field is also disabled, so it is not sent.
+    const toggle = (field: HTMLElement | null, show: boolean) => {
+      if (!field) return;
+      field.hidden = !show;
+      for (const input of field.querySelectorAll<
+        HTMLInputElement | HTMLSelectElement
+      >('input, select')) {
+        input.disabled = !show;
+      }
+    };
     const recompute = () => {
       const selected = methodSelect?.selectedOptions[0];
       const isCash = selected?.dataset.cash === 'true';
       const cents = toCents(amountInput?.value);
-      if (referenceField) {
-        referenceField.hidden = selected?.dataset.requiresReference !== 'true';
-      }
-      if (bankField) {
-        bankField.hidden = selected?.dataset.touchesBank !== 'true';
-      }
+      const atOnce = paidAtOnce(cents);
+      toggle(payoutField, atOnce);
+      toggle(
+        referenceField,
+        atOnce && selected?.dataset.requiresReference === 'true'
+      );
+      toggle(bankField, atOnce && selected?.dataset.touchesBank === 'true');
       const overMaximum =
         isCash &&
         cents !== null &&
@@ -1149,6 +1223,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     amountInput?.addEventListener('input', recompute);
     methodSelect?.addEventListener('change', recompute);
     confirm?.addEventListener('change', recompute);
+    accountSelect?.addEventListener('change', recompute);
     recompute();
   }
 </script>

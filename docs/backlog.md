@@ -5091,6 +5091,13 @@ Disburse, and the chevron of a transaction that pays out ends in
 "Treasurer" — read from the roles, so moving the permission moves the
 name (`rolesHoldingPermission`, `src/lib/access/holders.ts`).
 
+- **How a withdrawal is paid out is asked only where it is paid out.**
+  Recording one that goes for approval no longer asks "Paid by" or the
+  bank account (officer direction): the Treasurer says both at Disburse.
+  One the matrix pays out at once still asks, since whoever records it
+  pays it. The form follows the route preview as the account and amount
+  change; until Disburse the method on record is a placeholder the screens
+  and the transactions report do not show.
 - **The Deposit, Withdrawal and Transfer lookups** suggest matching
   accounts, by number or by holder name, as the officer types.
 

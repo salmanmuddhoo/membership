@@ -20,7 +20,7 @@ import {
 } from '@lib/ledger/withdrawals';
 import { loadCustomer, loadMember } from '@lib/members/create';
 import { formatMoney, toCents } from '@lib/payments/money';
-import { routePreviewGroups } from '@lib/workflow/timeline';
+import { initialRouteBand, routePreviewGroups } from '@lib/workflow/timeline';
 import RoutePreview from '@components/RoutePreview.astro';
 import {
   PAGE,
@@ -141,6 +141,12 @@ const routeGroups = await routePreviewGroups(
 const initialCents = /^\d{1,12}(\.\d{1,2})?$/.test(values.amount ?? '')
   ? toCents(values.amount)
   : null;
+// How it is paid out is asked here only when it is paid out here: a
+// withdrawal that goes for approval is paid by the Treasurer, who says how
+// at Disburse. The route preview tells the form which, as the account and
+// the amount change.
+const paidAtOnce =
+  initialRouteBand(routeGroups, values.accountId, initialCents)?.atOnce ?? true;
 ---
 
 <DashboardLayout
@@ -194,9 +200,17 @@ const initialCents = /^\d{1,12}(\.\d{1,2})?$/.test(values.amount ?? '')
           )}
           <dt class="text-neutral-500 dark:text-neutral-400">Amount</dt>
           <dd class="font-medium text-neutral-800 dark:text-neutral-100">
-            {formatMoney(withdrawal.amount, withdrawal.currency)} by{' '}
-            {withdrawal.methodName}
-            {withdrawal.methodReference && ` · ${withdrawal.methodReference}`}
+            {formatMoney(withdrawal.amount, withdrawal.currency)}
+            {/* Only once paid out: one waiting for approval is paid how the
+                Treasurer says at Disburse. */}
+            {withdrawal.status === 'posted' && (
+              <>
+                {' by '}
+                {withdrawal.methodName}
+                {withdrawal.methodReference &&
+                  ` · ${withdrawal.methodReference}`}
+              </>
+            )}
           </dd>
           <dt class="text-neutral-500 dark:text-neutral-400">From</dt>
           <dd class="font-medium text-neutral-800 dark:text-neutral-100">
@@ -248,7 +262,12 @@ const initialCents = /^\d{1,12}(\.\d{1,2})?$/.test(values.amount ?? '')
           initialAccountId={values.accountId}
           initialAmountCents={initialCents}
         />
-        <form method="post" data-withdrawal-form class={FORM_CARD}>
+        <form
+          method="post"
+          data-withdrawal-form
+          data-at-once={paidAtOnce ? 'true' : 'false'}
+          class={FORM_CARD}
+        >
           <IdempotencyKeyField value={values.idempotencyKey} />
 
           <label class={LABEL}>
@@ -294,9 +313,9 @@ const initialCents = /^\d{1,12}(\.\d{1,2})?$/.test(values.amount ?? '')
                 class={INPUT}
               />
             </label>
-            <label class={LABEL}>
+            <label data-payout-field hidden={!paidAtOnce} class={LABEL}>
               Paid by
-              <select name="method" class={INPUT}>
+              <select name="method" disabled={!paidAtOnce} class={INPUT}>
                 {paymentMethods.map(method => (
                   <option
                     value={method.code}
@@ -382,6 +401,18 @@ const initialCents = /^\d{1,12}(\.\d{1,2})?$/.test(values.amount ?? '')
     const bankField = form.querySelector<HTMLElement>(
       '[data-bank-account-field]'
     );
+    const payoutField = form.querySelector<HTMLElement>('[data-payout-field]');
+    // A hidden field is also disabled, so it is not sent: the Treasurer
+    // chooses how at Disburse.
+    const toggle = (field: HTMLElement | null, show: boolean) => {
+      if (!field) return;
+      field.hidden = !show;
+      for (const input of field.querySelectorAll<
+        HTMLInputElement | HTMLSelectElement
+      >('input, select')) {
+        input.disabled = !show;
+      }
+    };
     const money = (value: string) =>
       `Rs ${Number(value).toLocaleString('en-GB', { minimumFractionDigits: 2 })}`;
     const recompute = () => {
@@ -395,14 +426,20 @@ const initialCents = /^\d{1,12}(\.\d{1,2})?$/.test(values.amount ?? '')
             ? `${money(available)} available; the account keeps at least ${money(floor)}, so up to ${money(room.toFixed(2))} can be withdrawn.`
             : `${money(available)} available.`;
       }
+      const atOnce = form.dataset.atOnce === 'true';
       const method = methodSelect?.selectedOptions[0];
-      if (referenceField) {
-        referenceField.hidden = method?.dataset.requiresReference !== 'true';
-      }
-      if (bankField) {
-        bankField.hidden = method?.dataset.touchesBank !== 'true';
-      }
+      toggle(payoutField, atOnce);
+      toggle(
+        referenceField,
+        atOnce && method?.dataset.requiresReference === 'true'
+      );
+      toggle(bankField, atOnce && method?.dataset.touchesBank === 'true');
     };
+    document.addEventListener('route-band', event => {
+      const { atOnce } = (event as CustomEvent<{ atOnce: boolean }>).detail;
+      form.dataset.atOnce = atOnce ? 'true' : 'false';
+      recompute();
+    });
     accountSelect?.addEventListener('change', recompute);
     methodSelect?.addEventListener('change', recompute);
     recompute();

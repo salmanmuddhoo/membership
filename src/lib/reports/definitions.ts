@@ -953,7 +953,14 @@ const transactions: ReportDefinition = {
                    || coalesce(p.values->>'surname', '')) as "Holder",
               coalesce(a.account_no, m.member_no, '') || ' · ' || at.name
                 as "Account",
-              pm.name as "Method",
+              -- Money out is paid how the Treasurer says at Disburse;
+              -- before that the method on record is only a placeholder.
+              case when t.status <> 'posted'
+                        and (t.kind in
+                               ('withdrawal', 'closure', 'resignation', 'demise')
+                             or (t.kind = 'transfer_leg'
+                                 and t.payee_name is not null))
+                   then '' else pm.name end as "Method",
               t.amount::text as "Amount",
               case when t.status = 'posted'
                         and (t.kind in
@@ -986,7 +993,15 @@ const transactions: ReportDefinition = {
           and ($3::text is null
                or t.kind = $3::text
                or ($3::text = 'transfer' and t.kind = 'transfer_leg'))
-          and ($4::text is null or t.method = $4::text)
+          -- Money out not yet paid has only a placeholder method; it is
+          -- found under the method the Treasurer pays it by, once paid.
+          and ($4::text is null
+               or (t.method = $4::text
+                   and not (t.status <> 'posted'
+                            and (t.kind in ('withdrawal', 'closure',
+                                            'resignation', 'demise')
+                                 or (t.kind = 'transfer_leg'
+                                     and t.payee_name is not null)))))
           and ($5::text is null or u.display_name ilike '%' || $5::text || '%')
         order by t.created_at desc, t.serial_no desc`,
       [
