@@ -3,7 +3,9 @@
 // the balance the account stood at after each — the statement S-1601 later
 // exports. Reached from the person's page; paged backwards by sequence.
 import DashboardLayout from '@layouts/DashboardLayout.astro';
+import DocumentViewer from '@components/DocumentViewer.astro';
 import { query } from '@lib/db/pool';
+import { sourceOfFundFormsFor } from '@lib/ledger/deposit-requests';
 import { accountBalance, accountEntries } from '@lib/ledger/ledger';
 import { formatMoney } from '@lib/payments/money';
 import {
@@ -19,6 +21,7 @@ import {
   TH,
   TD,
   TD_NUM,
+  VIEW_BUTTON,
 } from '@lib/ui';
 
 const { id } = Astro.params;
@@ -61,6 +64,13 @@ const [balance, entries] = await Promise.all([
   accountBalance(id!),
   accountEntries(id!, { limit: PAGE_SIZE, beforeSequenceNo: before }),
 ]);
+// Officer feedback: a deposit that needed the Source of Fund form keeps it
+// in reach after it has posted, on its own row.
+const canSeeDocuments =
+  Astro.locals.principal!.permissions.has('document.view');
+const sourceOfFund = canSeeDocuments
+  ? await sourceOfFundFormsFor([...new Set(entries.map(e => e.transactionId))])
+  : new Map<string, string>();
 const oldest = entries[entries.length - 1];
 const nextBefore =
   entries.length === PAGE_SIZE && oldest ? oldest.sequenceNo : null;
@@ -142,6 +152,19 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                   <span class="block text-xs text-neutral-500 dark:text-neutral-400">
                     by {entry.capturedByName}
                   </span>
+                  {sourceOfFund.has(entry.transactionId) && (
+                    <span class="mt-1 flex items-center gap-2 text-xs text-neutral-500 dark:text-neutral-400">
+                      Source of Fund form
+                      <button
+                        type="button"
+                        data-view-document
+                        data-document-id={sourceOfFund.get(entry.transactionId)}
+                        class={VIEW_BUTTON}
+                      >
+                        View
+                      </button>
+                    </span>
+                  )}
                 </td>
                 <td class={TD}>
                   {entry.methodName}
@@ -188,4 +211,5 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       )}
     </div>
   </div>
+  {canSeeDocuments && <DocumentViewer />}
 </DashboardLayout>

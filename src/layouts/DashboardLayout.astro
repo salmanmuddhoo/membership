@@ -208,26 +208,43 @@ const currentPath = Astro.url.pathname;
     aria-label="Sidebar"
   >
     <div class="flex h-full flex-col">
-      <a
-        href="/dashboard"
-        class="flex items-center gap-x-2.5 rounded-lg px-6 py-5 transition hover:bg-neutral-200 dark:hover:bg-neutral-900"
-      >
-        <BrandLogo class="size-9" alt="" />
-        <div class="leading-tight">
-          <span class="block text-sm font-bold text-neutral-800 dark:text-neutral-100">
-            Al Barakah
-          </span>
-          <span class="block text-xs text-neutral-500 dark:text-neutral-400">
-            MCSL
-          </span>
-        </div>
-      </a>
+      <div class="sidebar-header flex items-center justify-between gap-x-2 px-4 py-4">
+        <a
+          href="/dashboard"
+          class="sidebar-brand-link flex min-w-0 items-center gap-x-2.5 rounded-lg px-2 py-1 transition hover:bg-neutral-200 dark:hover:bg-neutral-900"
+        >
+          <BrandLogo class="sidebar-brand-logo size-9 shrink-0" alt="" />
+          <div class="sidebar-brand-text leading-tight">
+            <span class="block text-sm font-bold text-neutral-800 dark:text-neutral-100">
+              Al Barakah
+            </span>
+            <span class="block text-xs text-neutral-500 dark:text-neutral-400">
+              MCSL
+            </span>
+          </div>
+        </a>
+
+        <button
+          id="sidebar-toggle"
+          type="button"
+          class="hidden size-8 shrink-0 items-center justify-center rounded-lg text-neutral-500 transition hover:bg-neutral-200 hover:text-neutral-800 lg:inline-flex dark:text-neutral-400 dark:hover:bg-neutral-900 dark:hover:text-neutral-100"
+          aria-label="Collapse menu"
+          aria-expanded="true"
+          aria-controls="app-sidebar"
+        >
+          <Icon
+            id="sidebar-toggle-icon"
+            name="chevronLeft"
+            class="size-4 shrink-0 transition-transform duration-200"
+          />
+        </button>
+      </div>
 
       <nav class="min-h-0 flex-1 space-y-4 overflow-y-auto px-3 py-2">
         {navGroups.map(group => (
           <div class="space-y-1">
             {group.label && (
-              <p class="px-3 pt-2 pb-1 text-xs font-semibold tracking-wide text-neutral-400 uppercase dark:text-neutral-500">
+              <p class="nav-group-heading px-3 pt-2 pb-1 text-xs font-semibold tracking-wide text-neutral-400 uppercase dark:text-neutral-500">
                 {group.label}
               </p>
             )}
@@ -236,17 +253,26 @@ const currentPath = Astro.url.pathname;
               return (
                 <a
                   href={item.href}
+                  title={item.label}
                   aria-current={active ? 'page' : undefined}
-                  class={`flex items-center gap-x-3 rounded-lg px-3 py-2 text-sm font-medium transition ${
+                  class={`nav-item flex items-center gap-x-3 rounded-lg px-3 py-2 text-sm font-medium transition ${
                     active
                       ? 'bg-mint-300 text-neutral-800'
                       : 'text-neutral-600 hover:bg-neutral-200 hover:text-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800 dark:hover:text-white'
                   }`}
                 >
-                  <Icon name={item.icon} class="size-5 shrink-0" />
-                  <span class="flex-1">{item.label}</span>
+                  <span class="relative flex shrink-0 items-center justify-center">
+                    <Icon name={item.icon} class="size-5 shrink-0" />
+                    {item.badge && (
+                      <span
+                        class="nav-badge-dot absolute -top-1 -end-1 hidden size-2.5 rounded-full bg-red-500 ring-2 ring-neutral-100 dark:ring-neutral-950"
+                        aria-hidden="true"
+                      />
+                    )}
+                  </span>
+                  <span class="nav-label flex-1">{item.label}</span>
                   {item.badge && (
-                    <span class="inline-flex min-w-5 items-center justify-center rounded-full bg-red-500 px-1.5 py-0.5 text-xs font-semibold text-white">
+                    <span class="nav-badge-full inline-flex min-w-5 items-center justify-center rounded-full bg-red-500 px-1.5 py-0.5 text-xs font-semibold text-white">
                       {item.badge}
                     </span>
                   )}
@@ -257,7 +283,7 @@ const currentPath = Astro.url.pathname;
         ))}
       </nav>
 
-      <div class="border-t border-neutral-200 px-6 py-4 dark:border-neutral-800">
+      <div class="sidebar-footer border-t border-neutral-200 px-6 py-4 dark:border-neutral-800">
         <p class="text-xs text-neutral-400 dark:text-neutral-500">
           Internal operations platform
         </p>
@@ -267,7 +293,10 @@ const currentPath = Astro.url.pathname;
 
   {/* Backdrop overlay uses Preline's built-in overlay handling on mobile */}
 
-  <div class="flex min-h-screen w-full flex-col lg:ps-64">
+  <div
+    id="app-main-wrapper"
+    class="flex min-h-screen w-full flex-col transition-[padding-inline-start] duration-200 lg:ps-64"
+  >
     {/* Header */}
     <header
       id="app-header"
@@ -351,4 +380,112 @@ const currentPath = Astro.url.pathname;
       <slot />
     </main>
   </div>
+
+  <style is:inline>
+    /*
+     * Desktop sidebar collapse. Driven by data-sidebar="collapsed" on <html>,
+     * set before paint (see BaseLayout.astro) and toggled by the script below,
+     * so there is no flash of the wrong width on load. Scoped to the lg
+     * breakpoint the sidebar itself already uses — collapsing never applies to
+     * the mobile off-canvas drawer.
+     */
+    @media (min-width: 1024px) {
+      html[data-sidebar='collapsed'] #app-sidebar {
+        width: 4rem;
+      }
+
+      html[data-sidebar='collapsed'] #app-main-wrapper {
+        padding-inline-start: 4rem;
+      }
+
+      html[data-sidebar='collapsed'] .sidebar-header {
+        flex-direction: column;
+        align-items: center;
+        gap: 0.5rem;
+        padding-inline: 0.5rem;
+      }
+
+      html[data-sidebar='collapsed'] .sidebar-brand-logo {
+        width: 1.75rem;
+        height: 1.75rem;
+      }
+
+      html[data-sidebar='collapsed'] .sidebar-brand-text,
+      html[data-sidebar='collapsed'] .nav-group-heading,
+      html[data-sidebar='collapsed'] .nav-badge-full,
+      html[data-sidebar='collapsed'] .sidebar-footer {
+        display: none;
+      }
+
+      html[data-sidebar='collapsed'] .nav-item {
+        justify-content: center;
+        padding-inline: 0.5rem;
+      }
+
+      /* Visually hidden, still read aloud: sr-only, while collapsed. */
+      html[data-sidebar='collapsed'] .nav-label {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border-width: 0;
+      }
+
+      html[data-sidebar='collapsed'] .nav-badge-dot {
+        display: block;
+      }
+
+      html[data-sidebar='collapsed'] #sidebar-toggle-icon {
+        transform: rotate(180deg);
+      }
+    }
+  </style>
+
+  <script is:inline>
+    // Desktop sidebar collapse toggle. The width itself is pure CSS, keyed
+    // off data-sidebar on <html> (see the style block above and
+    // BaseLayout's pre-paint script) — this just flips that attribute,
+    // keeps the toggle button's accessible state in sync, and remembers
+    // the choice. is:inline (rather than a bundled module) so it always
+    // renders straight into the page — the same reasoning as the pre-paint
+    // script.
+    (function () {
+      var html = document.documentElement;
+      var toggle = document.getElementById('sidebar-toggle');
+
+      function syncToggle() {
+        var collapsed = html.dataset.sidebar === 'collapsed';
+        if (!toggle) return;
+        toggle.setAttribute('aria-expanded', String(!collapsed));
+        toggle.setAttribute(
+          'aria-label',
+          collapsed ? 'Expand menu' : 'Collapse menu'
+        );
+      }
+
+      syncToggle();
+
+      if (toggle) {
+        toggle.addEventListener('click', function () {
+          var collapsed = html.dataset.sidebar === 'collapsed';
+          if (collapsed) {
+            delete html.dataset.sidebar;
+          } else {
+            html.dataset.sidebar = 'collapsed';
+          }
+          try {
+            localStorage.setItem('sidebar-collapsed', String(!collapsed));
+          } catch {
+            // localStorage unavailable (private mode, blocked storage) —
+            // the choice just does not persist across visits.
+          }
+          syncToggle();
+        });
+      }
+    })();
+  </script>
 </BaseLayout>

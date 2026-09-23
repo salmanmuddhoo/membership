@@ -13,6 +13,8 @@
 // (payments.ts's applyCashPaymentRules) as "the form was completed". That is
 // checked here from the filed document itself rather than from anything the
 // officer ticks: the only evidence the form exists is the form existing.
+import { VIEW_BUTTON, DELETE_BUTTON } from '@lib/ui';
+
 interface Props {
   applicationId: string;
   cashThreshold: string;
@@ -41,35 +43,39 @@ const { applicationId, cashThreshold, formPath, alreadyFiled } = Astro.props;
   {alreadyFiled ? (
     <>
       <p class="font-medium">Source of Fund form signed and filed</p>
-      <p class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+      <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs">
         <span>{alreadyFiled.fileName}</span>
-        <button
-          type="button"
-          data-view-document
-          data-document-id={alreadyFiled.documentId}
-          class="font-medium underline hover:text-amber-950 dark:hover:text-amber-100"
-        >
-          View
-        </button>
-        {/* A real submit, not a script: deleting a filed document is the
-            page's own delete-document intent, which audits it and takes the
-            file out of SharePoint. formnovalidate because this button has
-            nothing to do with the payment fields around it. */}
-        <button
-          type="submit"
-          name="intent"
-          value="delete-document"
-          formnovalidate
-          class="font-medium underline hover:text-amber-950 dark:hover:text-amber-100"
-        >
-          Delete
-        </button>
-        <input
-          type="hidden"
-          name="documentId"
-          value={alreadyFiled.documentId}
-        />
-      </p>
+        <div class="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            data-view-document
+            data-document-id={alreadyFiled.documentId}
+            class={VIEW_BUTTON}
+          >
+            View
+          </button>
+          {/* A real submit, not a script: deleting a filed document is the
+              page's own delete-document intent, which audits it and takes the
+              file out of SharePoint. formnovalidate because this button has
+              nothing to do with the payment fields around it. */}
+          <button
+            type="submit"
+            name="intent"
+            value="delete-document"
+            formnovalidate
+            title="Delete"
+            aria-label="Delete the signed form"
+            class={DELETE_BUTTON}
+          >
+            ✕
+          </button>
+          <input
+            type="hidden"
+            name="documentId"
+            value={alreadyFiled.documentId}
+          />
+        </div>
+      </div>
       <p class="text-xs">Delete it if the applicant needs to sign again.</p>
     </>
   ) : (

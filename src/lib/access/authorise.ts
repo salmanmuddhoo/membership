@@ -89,6 +89,7 @@ const ROUTE_PERMISSIONS: ReadonlyArray<readonly [string, string]> = [
   ['/transactions/deposit', 'transaction.capture'],
   ['/transactions/withdrawal', 'transaction.capture'],
   ['/transactions/transfer', 'transaction.capture'],
+  ['/transactions/lookup.json', 'transaction.capture'],
   // A closure request being built (S-1702): the officer's own wizard,
   // reached from the member's page. Reviewing one is /transactions/<id>.
   ['/closures/', 'transaction.capture'],

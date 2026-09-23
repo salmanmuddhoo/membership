@@ -88,12 +88,13 @@ import {
   INPUT_SM,
   NOTICE_ERROR,
   NOTICE_OK,
-  SECONDARY_XS,
   SUBTITLE,
   ROW,
   TABLE,
   TD,
   TD_NUM,
+  VIEW_BUTTON,
+  DELETE_BUTTON,
 } from '@lib/ui';
 
 const principal = Astro.locals.principal!;
@@ -998,35 +999,36 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                     </div>
                   )}
 
-                  {canUpload && isEditable && entry.state !== 'missing' && (
-                    <form method="post" data-confirm-delete-document>
-                      <input
-                        type="hidden"
-                        name="documentId"
-                        value={entry.documentId}
-                      />
+                  {entry.uploadedAt && (
+                    <div class="flex shrink-0 items-center gap-2">
                       <button
-                        type="submit"
-                        name="intent"
-                        value="delete-document"
-                        title="Delete this document"
-                        aria-label="Delete this document"
-                        class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-red-600 transition hover:bg-red-100 dark:text-red-400 dark:hover:bg-red-950"
+                        type="button"
+                        data-view-document
+                        data-document-id={entry.documentId}
+                        class={VIEW_BUTTON}
                       >
-                        <svg
-                          class="size-4"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="2"
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          aria-hidden="true"
-                        >
-                          <path d="M18 6 6 18M6 6l12 12" />
-                        </svg>
+                        View
                       </button>
-                    </form>
+                      {canUpload && isEditable && entry.state !== 'missing' && (
+                        <form method="post" data-confirm-delete-document>
+                          <input
+                            type="hidden"
+                            name="documentId"
+                            value={entry.documentId}
+                          />
+                          <button
+                            type="submit"
+                            name="intent"
+                            value="delete-document"
+                            title="Delete"
+                            aria-label="Delete this document"
+                            class={DELETE_BUTTON}
+                          >
+                            ✕
+                          </button>
+                        </form>
+                      )}
+                    </div>
                   )}
                 </div>
 
@@ -1042,14 +1044,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                       {entry.expiresAt &&
                         ` · expires ${dateFormat.format(entry.expiresAt)}`}
                     </span>
-                    <button
-                      type="button"
-                      data-view-document
-                      data-document-id={entry.documentId}
-                      class="font-medium text-neutral-700 underline hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-neutral-100"
-                    >
-                      View
-                    </button>
                   </p>
                 )}
 
@@ -1091,7 +1085,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                     type="button"
                     data-view-document
                     data-document-id={sourceOfFundFiling.documentId}
-                    class={SECONDARY_XS}
+                    class={VIEW_BUTTON}
                   >
                     View
                   </button>

@@ -103,9 +103,6 @@ export const PILL_OUTLINE_WARN =
 // A button that is only an icon, beside a field.
 export const ICON_BUTTON =
   'shrink-0 rounded-lg border border-neutral-300 p-1.5 text-neutral-600 transition hover:bg-neutral-200 dark:border-neutral-600 dark:text-neutral-300 dark:hover:bg-neutral-800';
-// The red cross beside a filed document that deletes it.
-export const ICON_BUTTON_DANGER =
-  'shrink-0 rounded-lg border border-red-300 px-2 py-0.5 text-sm font-semibold text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950';
 // A block of code or a schema, scrolling past a height.
 export const CODE_BLOCK =
   'max-h-72 overflow-auto rounded-lg bg-neutral-100 p-3 text-xs text-neutral-700 dark:bg-neutral-950 dark:text-neutral-300';
@@ -134,15 +131,25 @@ const BUTTON_BASE =
 export const BUTTON = `${BUTTON_BASE} px-4 py-2 text-sm`;
 export const BUTTON_SM = `${BUTTON_BASE} px-3 py-1.5 text-sm`;
 
+// Officer feedback: a secondary button has a white fill, so it reads as a
+// button on a grey card rather than a box drawn round some text.
 const SECONDARY_BASE =
-  'rounded-lg border border-neutral-300 font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800';
+  'rounded-lg border border-neutral-300 bg-white font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800';
 export const SECONDARY = `${SECONDARY_BASE} px-4 py-2 text-sm`;
 export const SECONDARY_SM = `${SECONDARY_BASE} px-3 py-1.5 text-sm`;
 // XS: inside a dense row, where even the small button is too much.
 export const SECONDARY_XS = `${SECONDARY_BASE} px-2.5 py-1 text-xs`;
 
+// A closing or deleting action: red border on a light red fill.
 const DANGER_BASE =
-  'rounded-lg border border-red-300 font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950';
+  'rounded-lg border border-red-300 bg-red-50 font-medium text-red-700 transition hover:bg-red-100 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-950';
 export const DANGER = `${DANGER_BASE} px-4 py-2 text-sm`;
 export const DANGER_SM = `${DANGER_BASE} px-3 py-1.5 text-sm`;
 export const DANGER_XS = `${DANGER_BASE} px-2.5 py-1 text-xs`;
+
+// A filed document's two controls, the same everywhere: View opens it in
+// the viewer, the red ✕ beside it deletes it. The same height, View first,
+// at the right-hand end of the document's row. Only the ✕ glyph goes in
+// DELETE_BUTTON, with an aria-label saying what it deletes.
+export const VIEW_BUTTON = `${SECONDARY_BASE} inline-flex h-7 shrink-0 items-center px-2.5 text-xs`;
+export const DELETE_BUTTON = `${DANGER_BASE} inline-flex h-7 w-7 shrink-0 items-center justify-center text-sm font-semibold`;

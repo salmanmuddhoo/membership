@@ -132,7 +132,11 @@ and the MSA, the account's own for an HSA or Investment;
 `findAccountByNumber`, `src/lib/ledger/lookup.ts`), then opens the same form
 with that account chosen. The same box takes the holder's name: every word
 must appear in it (`findAccountsByName`); one match opens the form, several
-are listed to choose from. Withdrawal and Transfer ask the same way. Below
+are listed to choose from. As it is typed, a list under the box suggests
+the open accounts of the chosen type whose number starts with it or whose
+holder's name holds it (`suggestAccounts`, read from
+`/transactions/lookup.json` under `transaction.capture`); picking one opens
+its form. Withdrawal and Transfer ask the same way. Below
 the cards is the day's transactions table (see
 `docs/access-control.md`); Resignation, Closure and Demise start from the
 member's or account's page, not here.
@@ -264,7 +268,9 @@ the pair.
   ledger says whatever the cache does. `accountEntries()` is the one reader;
   each line carries a description ("Opening deposit" for a carried Phase 1
   line, "Refund" for its reversal, "Deposit", "Reversal of TX-…"), the
-  method, the receipt, the note and who captured it.
+  method, the receipt, the note and who captured it. A deposit that
+  needed the Source of Fund form keeps a View for it on its row after it
+  has posted (`sourceOfFundFormsFor`, for whoever holds `document.view`).
 - **The API**: `GET /api/v1/accounts/{id}/balance` and
   `GET /api/v1/accounts/{id}/history` (paged by `before`), through
   `defineEndpoint` (S-1310). The older `/accounts/{id}/transactions` keeps

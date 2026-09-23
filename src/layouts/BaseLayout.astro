@@ -35,6 +35,18 @@ const {
         document.documentElement.classList.remove('dark');
       }
     </script>
+    {/* Set the desktop sidebar width before paint too, so a collapsed choice
+    from an earlier visit does not flash open first. */}
+    <script is:inline>
+      try {
+        if (localStorage.getItem('sidebar-collapsed') === 'true') {
+          document.documentElement.setAttribute('data-sidebar', 'collapsed');
+        }
+      } catch {
+        // localStorage unavailable (private mode, blocked storage) — the
+        // sidebar just opens expanded, same as on a first visit.
+      }
+    </script>
   </head>
   <body
     class={`flex min-h-screen flex-col bg-neutral-200 text-neutral-800 selection:bg-mint-300 selection:text-neutral-700 dark:bg-neutral-900 dark:text-neutral-200 ${bodyClass}`}

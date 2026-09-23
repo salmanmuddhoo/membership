@@ -122,12 +122,15 @@ if (chosen && number.trim()) {
 </DashboardLayout>
 
 <script>
+  import { wireAccountSuggest } from '@lib/client/account-suggest';
+
   // The label follows the type: a member's own number for Shares and the
   // MSA, the account's own for anything else (migrations 0018, 0027).
   const form = document.querySelector<HTMLFormElement>(
     '[data-transfer-lookup]'
   );
   if (form) {
+    wireAccountSuggest(form, 'transfer');
     const label = form.querySelector<HTMLElement>('[data-number-label]');
     const input = form.querySelector<HTMLInputElement>('[data-number]');
     const update = () => {
