@@ -307,6 +307,7 @@ describe('the pre-checks (S-1703)', () => {
       ['pending_transactions', true, false],
       ['unpaid_fees', true, false],
       ['financing', false, true],
+      ['guardian', true, true],
     ]);
     expect(checks[0].detail).toBe(`${pending.reference} still on its way.`);
     expect(resignations.blockingChecks(checks).map(c => c.code)).toEqual([
@@ -381,6 +382,100 @@ describe('the pre-checks (S-1703)', () => {
         [[member.shares, member.msa]]
       );
     }
+  });
+});
+
+describe('a guardian (officer direction)', () => {
+  it('may not resign while a minor depends on them, whatever the switches say', async () => {
+    const { resignations } = await load();
+    const memberNo = (
+      await run(appUrl, `select member_no from member where id = $1`, [
+        member.id,
+      ])
+    ).rows[0].member_no;
+    const typeId = async (code: string) =>
+      (
+        await run(appUrl, `select id from membership_type where code = $1`, [
+          code,
+        ])
+      ).rows[0].id;
+    const minorType = await typeId('minor');
+    const guardianCheck = async () =>
+      (await resignations.checksFor(member.id)).find(
+        c => c.code === 'guardian'
+      )!;
+    expect(await guardianCheck()).toMatchObject({
+      enabled: true,
+      passed: true,
+    });
+
+    // A minor member naming them by number.
+    const minorApp = await run(
+      appUrl,
+      `insert into membership_application
+         (membership_type_id, captured_by, status)
+       values ($1, $2, 'approved') returning id`,
+      [minorType, officer.userId]
+    );
+    await run(
+      appUrl,
+      `insert into application_party (application_id, subject, ordinal, values)
+       values ($1, 'applicant', 1, '{"name": "Yusuf", "surname": "Test"}'),
+              ($1, 'guardian', 1, $2)`,
+      [minorApp.rows[0].id, JSON.stringify({ member_id: memberNo })]
+    );
+    const minor = await run(
+      appUrl,
+      `insert into member (application_id, membership_type_id)
+       values ($1, $2) returning id, member_no`,
+      [minorApp.rows[0].id, minorType]
+    );
+    const minorNo = minor.rows[0].member_no;
+    let check = await guardianCheck();
+    expect(check.passed).toBe(false);
+    expect(check.detail).toBe(`Guardian of ${minorNo} · Yusuf Test.`);
+    expect(
+      resignations
+        .blockingChecks(await resignations.checksFor(member.id))
+        .map(c => c.code)
+    ).toContain('guardian');
+
+    // Of age and moved to an adult type (S-610): no longer a ward.
+    await run(
+      appUrl,
+      `update member set membership_type_id = $2 where id = $1`,
+      [minor.rows[0].id, await typeId('individual')]
+    );
+    expect((await guardianCheck()).passed).toBe(true);
+
+    // A minor's application still on its way counts too.
+    const pendingApp = await run(
+      appUrl,
+      `insert into membership_application
+         (membership_type_id, captured_by, status)
+       values ($1, $2, 'new') returning id, reference`,
+      [minorType, officer.userId]
+    );
+    await run(
+      appUrl,
+      `insert into application_party (application_id, subject, ordinal, values)
+       values ($1, 'applicant', 1, '{"name": "Maryam", "surname": "Test"}'),
+              ($1, 'guardian', 1, $2)`,
+      [pendingApp.rows[0].id, JSON.stringify({ member_id: memberNo })]
+    );
+    check = await guardianCheck();
+    expect(check.passed).toBe(false);
+    expect(check.detail).toBe(
+      `Guardian of ${pendingApp.rows[0].reference} · Maryam Test.`
+    );
+
+    // Decided against, it no longer does.
+    await run(
+      appUrl,
+      `update membership_application set status = 'rejected' where id = $1`,
+      [pendingApp.rows[0].id]
+    );
+    expect((await guardianCheck()).passed).toBe(true);
   });
 });
 

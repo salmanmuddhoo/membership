@@ -489,6 +489,23 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             </dd>
           </>
         )}
+        {/* A closure on a death (business decision): paid to the nominee
+            or another person, a death certificate on file — no Takaful
+            benefit, unlike a demised claim, since only this one account is
+            closing. */}
+        {isClosure && transaction.claimant && (
+          <>
+            <dt class="text-neutral-500 dark:text-neutral-400">Paid to</dt>
+            <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+              {transaction.claimant.name} · {transaction.claimant.relation}
+              <span class="block text-xs font-normal text-neutral-500 dark:text-neutral-400">
+                {[transaction.claimant.nic, transaction.claimant.address]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </span>
+            </dd>
+          </>
+        )}
         {transaction.reason && (
           <>
             <dt class="text-neutral-500 dark:text-neutral-400">
@@ -506,7 +523,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                 ? 'Source of Fund form'
                 : isDemise
                   ? 'Documents'
-                  : 'Signed request'}
+                  : transaction.claimant
+                    ? 'Death certificate'
+                    : 'Signed request'}
             </dt>
             <dd class="text-neutral-800 dark:text-neutral-100">
               {closureDocuments.length === 0 ? (
@@ -635,9 +654,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 
     {isClosure && transaction.status !== 'posted' && (
       <p class="rounded-lg border border-neutral-300 px-4 py-3 text-sm text-neutral-700 dark:border-neutral-700 dark:text-neutral-200">
-        Closes {transaction.accountNo} · {transaction.accountTypeName}. The
-        balance is paid out when it is approved, as it stands then, and the
-        account closes with it.
+        {transaction.claimant
+          ? `Pays the balance to ${transaction.claimant.name} when it is approved, and the account closes with it.`
+          : `Closes ${transaction.accountNo} · ${transaction.accountTypeName}. The balance is paid out when it is approved, as it stands then, and the account closes with it.`}
       </p>
     )}
 

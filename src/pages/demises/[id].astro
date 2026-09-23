@@ -20,8 +20,9 @@ import {
   submitDemise,
   updateDemise,
 } from '@lib/ledger/demises';
+import { resolveRoute } from '@lib/ledger/routing';
 import { loadTransaction, transitionsFor } from '@lib/ledger/review';
-import { formatMoney } from '@lib/payments/money';
+import { formatMoney, toCents } from '@lib/payments/money';
 import { chainTimeline } from '@lib/workflow/timeline';
 import {
   PAGE,
@@ -74,6 +75,9 @@ if (Astro.request.method === 'POST') {
   const intent = text('intent');
   try {
     if (intent === 'details') {
+      // The claimant and the note only: the payout is the Treasurer's to
+      // record at Disbursement (S-1503), except where the matrix posts the
+      // claim at once — asked instead at the submit step, below.
       claim = await updateDemise(
         claim.id,
         {
@@ -86,15 +90,25 @@ if (Astro.request.method === 'POST') {
             email: text('email'),
             mobile: text('mobile'),
           },
-          method: text('method'),
-          methodReference: text('methodReference'),
-          bankAccountId: text('bankAccountId'),
           reason: text('reason'),
         },
         principal
       );
       return Astro.redirect(`${base}?step=documents`);
     } else if (intent === 'submit') {
+      // Where the matrix posts it at once, submitting IS the posting, and
+      // the payout is asked here (postsAtOnce, below).
+      if (form.has('method')) {
+        claim = await updateDemise(
+          claim.id,
+          {
+            method: text('method'),
+            methodReference: text('methodReference'),
+            bankAccountId: text('bankAccountId'),
+          },
+          principal
+        );
+      }
       const submitted = await submitDemise(claim.id, principal);
       return Astro.redirect(`/transactions/${submitted.id}`);
     } else if (intent === 'cancel') {
@@ -134,6 +148,19 @@ const [
   nomineeFor(claim.holderId),
 ]);
 const complete = checklistComplete(checklist);
+// Posted at once when the matrix routes it nowhere: only then is the payout
+// asked before the posting step, because submitting is the posting
+// (submitDemise routes the same way).
+const postsAtOnce =
+  totals.accounts.length > 0 &&
+  !(
+    await resolveRoute({
+      kind: 'demise',
+      accountTypeId: totals.accounts[0].accountTypeId,
+      amountCents: toCents(totals.total),
+      roleCodes: principal.roles,
+    })
+  ).definition;
 const claimant = claim.claimant!;
 const returnComment =
   claim.status === 'returned'
@@ -275,45 +302,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             />
           </label>
         </div>
-        <div class="grid gap-3 sm:grid-cols-2">
-          <label class={LABEL}>
-            Paid out by
-            <select name="method" class={INPUT}>
-              {paymentMethods.map(method => (
-                <option
-                  value={method.code}
-                  data-touches-bank={method.touchesBank ? 'true' : 'false'}
-                  selected={method.code === claim!.method}
-                >
-                  {method.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label class={LABEL}>
-            Reference (cheque number, transfer reference)
-            <input
-              type="text"
-              name="methodReference"
-              value={claim.methodReference}
-              class={INPUT}
-            />
-          </label>
-          <label data-bank-account-field class={LABEL}>
-            Bank account
-            <select name="bankAccountId" class={INPUT}>
-              <option value="">Choose…</option>
-              {bankAccounts.map(account => (
-                <option
-                  value={account.id}
-                  selected={account.id === claim!.bankAccountId}
-                >
-                  {account.name} · {account.bankName}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
         <label class={LABEL}>
           Note
           <input
@@ -415,7 +403,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     )}
 
     {step === 'submit' && (
-      <form method="post" class={FORM_CARD}>
+      <form method="post" data-demise-submit-form class={FORM_CARD}>
         <h2 class={CARD_LABEL}>Submit</h2>
         <dl class="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
           <dt class="text-neutral-500 dark:text-neutral-400">Claimant</dt>
@@ -444,11 +432,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           <dd class="font-medium text-neutral-800 dark:text-neutral-100">
             {formatMoney(totals.total)}
           </dd>
-          <dt class="text-neutral-500 dark:text-neutral-400">Paid out by</dt>
-          <dd class="text-neutral-800 dark:text-neutral-100">
-            {claim.methodName}
-            {claim.methodReference && ` · ${claim.methodReference}`}
-          </dd>
           <dt class="text-neutral-500 dark:text-neutral-400">Documents</dt>
           <dd
             class:list={[
@@ -465,6 +448,47 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                   .join(', ')} missing`}
           </dd>
         </dl>
+        {postsAtOnce && (
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label class={LABEL}>
+              Paid out by
+              <select name="method" class={INPUT}>
+                {paymentMethods.map(method => (
+                  <option
+                    value={method.code}
+                    data-touches-bank={method.touchesBank ? 'true' : 'false'}
+                    selected={method.code === claim!.method}
+                  >
+                    {method.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label class={LABEL}>
+              Reference (cheque number, transfer reference)
+              <input
+                type="text"
+                name="methodReference"
+                value={claim.methodReference}
+                class={INPUT}
+              />
+            </label>
+            <label data-bank-account-field class={LABEL}>
+              Bank account
+              <select name="bankAccountId" class={INPUT}>
+                <option value="">Choose…</option>
+                {bankAccounts.map(account => (
+                  <option
+                    value={account.id}
+                    selected={account.id === claim!.bankAccountId}
+                  >
+                    {account.name} · {account.bankName}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        )}
         <p class={MUTED}>
           Once submitted, nothing else moves on these accounts until the claim
           is decided. When it is approved and paid out, every account closes and
@@ -507,21 +531,12 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
   // claimant.
   const form = document.querySelector<HTMLFormElement>('[data-claimant-form]');
   const other = form?.querySelector<HTMLElement>('[data-other-fields]');
-  const methodSelect =
-    form?.querySelector<HTMLSelectElement>('[name="method"]');
-  const bankField = form?.querySelector<HTMLElement>(
-    '[data-bank-account-field]'
-  );
   if (form && other) {
     const refresh = () => {
       const picked = form.querySelector<HTMLInputElement>(
         'input[name="kind"]:checked'
       );
       other.hidden = picked?.value !== 'other';
-      const selectedMethod = methodSelect?.selectedOptions[0];
-      if (bankField) {
-        bankField.hidden = selectedMethod?.dataset.touchesBank !== 'true';
-      }
     };
     form.addEventListener('change', refresh);
     refresh();
@@ -598,5 +613,28 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           error instanceof Error ? error.message : 'It could not be removed.';
       }
     });
+  }
+</script>
+
+<script>
+  // A visual nudge only — enforced server-side (ledger/demises.ts) whether
+  // or not this script runs.
+  const form = document.querySelector<HTMLFormElement>(
+    '[data-demise-submit-form]'
+  );
+  if (form) {
+    const methodSelect =
+      form.querySelector<HTMLSelectElement>('[name="method"]');
+    const bankField = form.querySelector<HTMLElement>(
+      '[data-bank-account-field]'
+    );
+    const recompute = () => {
+      const selected = methodSelect?.selectedOptions[0];
+      if (bankField) {
+        bankField.hidden = selected?.dataset.touchesBank !== 'true';
+      }
+    };
+    methodSelect?.addEventListener('change', recompute);
+    recompute();
   }
 </script>

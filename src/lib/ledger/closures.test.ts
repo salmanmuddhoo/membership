@@ -350,14 +350,11 @@ describe('a closure request (S-1702)', () => {
       officer
     );
 
+    // Nothing asked about the payout: it goes for approval, and the
+    // Treasurer says how it was paid at the disbursement. The first offered
+    // method stands in until then.
     const draft = await closures.startClosure(
-      {
-        accountId: member.hsa,
-        reason: 'Moving abroad',
-        method: 'bank_transfer',
-        methodReference: 'MCB 4471',
-        bankAccountId,
-      },
+      { accountId: member.hsa, reason: 'Moving abroad' },
       clerk
     );
     expect(draft).toMatchObject({
@@ -365,7 +362,8 @@ describe('a closure request (S-1702)', () => {
       status: 'draft',
       amount: '2500.00',
       reason: 'Moving abroad',
-      method: 'bank_transfer',
+      method: 'cash',
+      methodReference: '',
     });
     expect((await accountStatus(member.hsa)).status).toBe('active');
     // A second request on the same account, or the officer's own on
@@ -632,5 +630,175 @@ describe('a closure request (S-1702)', () => {
       [request.id]
     );
     expect(entries.rows[0].n).toBe(0);
+  });
+});
+
+describe('a closure on a death (business decision)', () => {
+  it("pays a deceased non-member's balance to their nominee or another person, on a death certificate, and marks them deceased once nothing is left open", async () => {
+    const { closures, deposits, review, timeline } = await load();
+    const individual = (
+      await run(
+        appUrl,
+        `select id from membership_type where code = 'individual'`
+      )
+    ).rows[0].id;
+    const application = await run(
+      appUrl,
+      `insert into membership_application
+         (membership_type_id, captured_by, status)
+       values ($1, $2, 'approved') returning id`,
+      [individual, officer.userId]
+    );
+    await run(
+      appUrl,
+      `insert into application_party (application_id, subject, ordinal, values)
+       values ($1, 'applicant', 1, '{"name": "Idris", "surname": "Test"}'),
+              ($1, 'nominee', 1,
+               '{"name": "Bilal", "surname": "Test", "nic": "B1234567890123",
+                 "address": "2 Test Street"}')`,
+      [application.rows[0].id]
+    );
+    const customer = (
+      await run(
+        appUrl,
+        `insert into customer (application_id) values ($1) returning id`,
+        [application.rows[0].id]
+      )
+    ).rows[0].id;
+    const openFor = async (code: string, no: string) =>
+      (
+        await run(
+          appUrl,
+          `insert into account
+             (customer_id, account_type_id, is_membership_default, status,
+              account_no)
+           select $1, id, false, 'active', $3 from account_type
+            where code = $2
+           returning id`,
+          [customer, code, no]
+        )
+      ).rows[0].id as string;
+    const hsa = await openFor('hsa', 'HSA0900');
+    const investment = await openFor('investment', 'INV0900');
+    await deposits.recordDeposit(
+      { accountId: hsa, amount: '3000', method: 'cash' },
+      officer
+    );
+    const deathCertificate = (
+      await run(
+        appUrl,
+        `select id from document_type where code = 'death_certificate'`
+      )
+    ).rows[0].id;
+    const fileCertificate = (transactionId: string) =>
+      run(
+        appUrl,
+        `with d as (
+           insert into document
+             (document_type_id, subject, transaction_id, state)
+           values ($1, 'applicant', $2, 'under_review') returning id)
+         insert into document_version
+           (document_id, version_no, state, file_name, content_type,
+            size_bytes, sharepoint_path, uploaded_by, committed_at)
+         select d.id, 1, 'committed', 'Death certificate.pdf',
+                'application/pdf', 1234, '/test/death.pdf', $3, now()
+           from d`,
+        [deathCertificate, transactionId, clerk.userId]
+      );
+    const approveAndPay = async (id: string) => {
+      await review.reviewTransaction(
+        id,
+        { outcome: 'forward', comment: '' },
+        secretary
+      );
+      await review.reviewTransaction(
+        id,
+        { outcome: 'forward', comment: '' },
+        president
+      );
+      return review.postApprovedTransaction(id, treasurer, { method: 'cash' });
+    };
+    const customerStatus = async () =>
+      (
+        await run(appUrl, `select status from customer where id = $1`, [
+          customer,
+        ])
+      ).rows[0].status;
+
+    // A member still in the membership is settled by a demised claim.
+    const memberAccount = await openAccount('education');
+    await expect(
+      closures.startClosure(
+        {
+          accountId: memberAccount,
+          onDeath: { claimant: { kind: 'nominee' } },
+        },
+        clerk
+      )
+    ).rejects.toThrowError(/settled by a demised claim/);
+    // Another person is named in full.
+    await expect(
+      closures.startClosure(
+        {
+          accountId: hsa,
+          onDeath: { claimant: { kind: 'other', name: 'Someone' } },
+        },
+        clerk
+      )
+    ).rejects.toThrowError(/Enter the claimant’s NIC, address, relation/);
+
+    // The nominee by default; no signature to take, the certificate instead.
+    const first = await closures.startClosure(
+      { accountId: hsa, onDeath: { claimant: { kind: 'nominee' } } },
+      clerk
+    );
+    expect(first).toMatchObject({
+      kind: 'closure',
+      amount: '3000.00',
+      reason: closures.DECEASED_REASON,
+      claimantKind: 'nominee',
+      payeeName: 'Bilal Test',
+    });
+    expect(
+      (await closures.closureChecklist(first.id)).map(i => i.documentCode)
+    ).toEqual(['death_certificate']);
+    await expect(closures.submitClosure(first.id, clerk)).rejects.toThrowError(
+      /File the death certificate/
+    );
+    await fileCertificate(first.id);
+    await closures.submitClosure(first.id, clerk);
+    expect(
+      (await timeline.chainTimeline('transaction', first.id))!
+        .slice(0, 2)
+        .map(s => s.key)
+    ).toEqual(['details', 'documents']);
+    const paid = await approveAndPay(first.id);
+    expect(paid).toMatchObject({ status: 'posted', payeeName: 'Bilal Test' });
+    // Something is still open: the record waits.
+    expect(await customerStatus()).toBe('active');
+
+    // The last account, to another person: once it closes, they are marked
+    // deceased.
+    const last = await closures.startClosure(
+      {
+        accountId: investment,
+        onDeath: {
+          claimant: {
+            kind: 'other',
+            name: 'Khadija Test',
+            nic: 'K1234567890123',
+            address: '3 Test Street',
+            relation: 'Daughter',
+          },
+        },
+      },
+      clerk
+    );
+    await fileCertificate(last.id);
+    await closures.submitClosure(last.id, clerk);
+    expect(await approveAndPay(last.id)).toMatchObject({
+      payeeName: 'Khadija Test',
+    });
+    expect(await customerStatus()).toBe('demised');
   });
 });

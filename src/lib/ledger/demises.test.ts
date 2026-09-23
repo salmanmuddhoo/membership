@@ -337,25 +337,30 @@ describe('a demised claim (S-1704)', () => {
   it('is a draft with the claimant, submits with the certificate and the affidavit, and posting pays the claimant, closes every account and ends the membership', async () => {
     const { demises, deposits, review, ledger, timeline, config, cache } =
       await load();
+    // Nothing asked about the payout: it goes for approval, and the
+    // Treasurer says how it was paid at the disbursement.
     const draft = await demises.startDemise(
-      {
-        memberId: member.id,
-        claimant: { kind: 'nominee' },
-        method: 'bank_transfer',
-        methodReference: 'MCB 9',
-        bankAccountId,
-      },
+      { memberId: member.id, claimant: { kind: 'nominee' } },
       clerk
     );
     expect(draft).toMatchObject({
       kind: 'demise',
       status: 'draft',
+      method: 'cash',
       amount: '36000.00',
       takafulBenefit: '15000.00',
       claimantKind: 'nominee',
       payeeName: 'Yusuf Test',
     });
     expect(draft.claimant).toMatchObject({ nic: 'Y1234567890123' });
+    // The submit step sends only the payout: the claimant stays as it was.
+    expect(
+      await demises.updateDemise(draft.id, { method: 'cash' }, clerk)
+    ).toMatchObject({
+      claimantKind: 'nominee',
+      payeeName: 'Yusuf Test',
+      method: 'cash',
+    });
     expect(await demises.demiseInFlightFor(member.id)).toMatchObject({
       id: draft.id,
     });

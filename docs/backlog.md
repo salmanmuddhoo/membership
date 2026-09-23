@@ -5098,6 +5098,29 @@ name (`rolesHoldingPermission`, `src/lib/access/holders.ts`).
   pays it. The form follows the route preview as the account and amount
   change; until Disburse the method on record is a placeholder the screens
   and the transactions report do not show.
+- **The same for a closure and a demised claim** (business decision, after
+  the lifecycle test): recording either asks nothing about the payout, as a
+  resignation already did. Only where the matrix pays it out at once does
+  the Submit step ask "Paid by", the reference and the bank account. The
+  signed closure request no longer prints how it will be paid.
+- **A guardian cannot resign while a minor depends on them** (business
+  decision): the resignation's checks name each minor member, minor
+  non-member or minor's application that gives them as guardian, and the
+  request cannot be submitted until there is none. A minor's guardian
+  cannot be changed on screen today, so the block lasts until the minor
+  leaves or reaches majority.
+- **A demised claim is for members only; a non-member's balances go to
+  their nominee** (business decisions). A non-member — a customer, or a
+  resigned member still holding an HSA or Investment — has no Demised
+  claim and no Takaful benefit. When one dies, each account is closed "on
+  a death": Close, then "The holder has died", naming the nominee or
+  another person in full. A death certificate is filed instead of the
+  holder's signature, the chain and the Treasurer's Disburse are a
+  closure's, and the receipt is made out to that person. When the last
+  open account closes this way the record is marked Demised. A member
+  still in the membership who dies is refused this and settled by a
+  demised claim. Migration 0098 lets a closure carry a claimant
+  (`src/lib/ledger/claimants.ts`).
 - **The Deposit, Withdrawal and Transfer lookups** suggest matching
   accounts, by number or by holder name, as the officer types.
 

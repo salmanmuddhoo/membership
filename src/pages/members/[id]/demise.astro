@@ -1,13 +1,11 @@
 ---
 // Start a deceased member's claim (S-1704): who is paid — the nominee the
-// member named, or another person — and how. What this makes is a draft;
-// the death certificate and the affidavit are filed on the next screen and
-// the officer submits it from there.
+// member named, or another person. What this makes is a draft; how the
+// claim is paid out is asked at Disbursement (S-1503), or at submission
+// when the matrix posts it at once. The death certificate and the
+// affidavit are filed on the next screen and the officer submits it from
+// there.
 import DashboardLayout from '@layouts/DashboardLayout.astro';
-import {
-  offeredBankAccounts,
-  offeredPaymentMethods,
-} from '@lib/config/reference';
 import {
   claimTotals,
   demiseInFlightFor,
@@ -42,11 +40,9 @@ if (!member) return new Response('Not found', { status: 404 });
 const inFlight = await demiseInFlightFor(member.id);
 if (inFlight) return Astro.redirect(`/transactions/${inFlight.id}`);
 
-const [nominee, totals, paymentMethods, bankAccounts] = await Promise.all([
+const [nominee, totals] = await Promise.all([
   nomineeFor(member.id),
   claimTotals(member.id),
-  offeredPaymentMethods(),
-  offeredBankAccounts(),
 ]);
 
 let values = {
@@ -57,9 +53,6 @@ let values = {
   relation: '',
   email: '',
   mobile: '',
-  method: paymentMethods[0]?.code ?? '',
-  methodReference: '',
-  bankAccountId: '',
   reason: '',
 };
 let error: string | null = null;
@@ -75,9 +68,6 @@ if (Astro.request.method === 'POST') {
     relation: text('relation'),
     email: text('email'),
     mobile: text('mobile'),
-    method: text('method'),
-    methodReference: text('methodReference'),
-    bankAccountId: text('bankAccountId'),
     reason: text('reason'),
   };
   try {
@@ -93,9 +83,6 @@ if (Astro.request.method === 'POST') {
           email: values.email,
           mobile: values.mobile,
         },
-        method: values.method,
-        methodReference: values.methodReference,
-        bankAccountId: values.bankAccountId,
         reason: values.reason,
       },
       principal
@@ -218,45 +205,6 @@ if (Astro.request.method === 'POST') {
           <input type="tel" name="mobile" value={values.mobile} class={INPUT} />
         </label>
       </div>
-      <div class="grid gap-3 sm:grid-cols-2">
-        <label class={LABEL}>
-          Paid out by
-          <select name="method" class={INPUT}>
-            {paymentMethods.map(method => (
-              <option
-                value={method.code}
-                data-touches-bank={method.touchesBank ? 'true' : 'false'}
-                selected={method.code === values.method}
-              >
-                {method.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label class={LABEL}>
-          Reference (cheque number, transfer reference)
-          <input
-            type="text"
-            name="methodReference"
-            value={values.methodReference}
-            class={INPUT}
-          />
-        </label>
-        <label data-bank-account-field class={LABEL}>
-          Bank account
-          <select name="bankAccountId" class={INPUT}>
-            <option value="">Choose…</option>
-            {bankAccounts.map(account => (
-              <option
-                value={account.id}
-                selected={account.id === values.bankAccountId}
-              >
-                {account.name} · {account.bankName}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
       <label class={LABEL}>
         Note
         <input
@@ -281,21 +229,12 @@ if (Astro.request.method === 'POST') {
 <script>
   const form = document.querySelector<HTMLFormElement>('[data-claimant-form]');
   const other = form?.querySelector<HTMLElement>('[data-other-fields]');
-  const methodSelect =
-    form?.querySelector<HTMLSelectElement>('[name="method"]');
-  const bankField = form?.querySelector<HTMLElement>(
-    '[data-bank-account-field]'
-  );
   if (form && other) {
     const refresh = () => {
       const picked = form.querySelector<HTMLInputElement>(
         'input[name="kind"]:checked'
       );
       other.hidden = picked?.value !== 'other';
-      const selectedMethod = methodSelect?.selectedOptions[0];
-      if (bankField) {
-        bankField.hidden = selectedMethod?.dataset.touchesBank !== 'true';
-      }
     };
     form.addEventListener('change', refresh);
     refresh();

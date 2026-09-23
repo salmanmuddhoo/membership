@@ -25,6 +25,7 @@ import {
 import { requireBankAccount, resolveBankAccount } from './bank-accounts';
 import { LedgerError, postTransaction } from './ledger';
 import { notifyReceiptIssued } from './receipt-notifications';
+import { markDeceasedOnceAllClosed } from './claimants';
 import { notifyExit } from './exit-notifications';
 import { notifyPosted, notifyReviewed } from './transaction-notifications';
 import type {
@@ -909,6 +910,8 @@ export async function postApprovedTransaction(
         { userId: principal.userId, description: principal.email },
         client
       );
+      // A deceased non-member's last account closed: the record says so.
+      await markDeceasedOnceAllClosed(client, transaction.id, principal);
       await markReceiptIssued(receipt.id, client);
       await client.query(
         `insert into transaction_transition

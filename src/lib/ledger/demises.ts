@@ -18,8 +18,12 @@
 // reviewer's call.
 import { recordAudit } from '../access/audit';
 import type { Principal } from '../access/principal';
-import { loadApplication } from '../applications/capture';
-import { takafulBenefit } from '../config/reference';
+import {
+  claimantFrom,
+  nomineeOnApplication,
+  type ClaimantInput,
+} from './claimants';
+import { offeredPaymentMethods, takafulBenefit } from '../config/reference';
 import { query, withTransaction } from '../db/pool';
 import {
   offeredMethod,
@@ -69,23 +73,16 @@ export class DemiseError extends Error {
 export const PERMISSION_CAPTURE = 'transaction.capture';
 export const PERMISSION_POST = 'transaction.post';
 
-export interface ClaimantInput {
-  kind: 'nominee' | 'other';
-  // For 'other'. For 'nominee' these come from the application.
-  name?: string;
-  nic?: string;
-  address?: string;
-  relation?: string;
-  // Where they are written to (S-1705); either may be left out.
-  email?: string;
-  mobile?: string;
-}
+export type { ClaimantInput } from './claimants';
 
 export interface DemiseInput {
   memberId: string;
   claimant: ClaimantInput;
-  // How the total goes to the claimant.
-  method: string;
+  // How the total goes to the claimant. Asked only where the matrix pays
+  // the claim out at once, at the submit step (officer direction, as a
+  // withdrawal): left out, the first offered method stands in until the
+  // Treasurer records the real payout at the disbursement (S-1503).
+  method?: string;
   methodReference?: string;
   // Which of the Society's bank accounts it is paid from (S-1902), where
   // the method touches one.
@@ -93,7 +90,9 @@ export interface DemiseInput {
   reason?: string;
 }
 
-export type DemiseEdit = Omit<DemiseInput, 'memberId'>;
+// Everything optional: what is not given stays as it was (the submit step
+// sends only the payout, for a claim the matrix pays out at once).
+export type DemiseEdit = Partial<Omit<DemiseInput, 'memberId'>>;
 export type Demise = TransactionSummary;
 
 export interface ClaimAccount {
@@ -184,72 +183,19 @@ async function memberFor(
  */
 export async function nomineeFor(memberId: string): Promise<Claimant | null> {
   const member = await memberFor(memberId);
-  if (!member.applicationId) return null;
-  const application = await loadApplication(member.applicationId);
-  const party = application?.parties.find(
-    p => p.subject === 'nominee' && p.ordinal === 1
-  );
-  if (!party) return null;
-  const v = party.values;
-  const name = [v.name, v.surname]
-    .map(part => (part ?? '').trim())
-    .filter(part => part !== '')
-    .join(' ');
-  if (name === '') return null;
-  return {
-    name,
-    nic: (v.nic ?? '').trim(),
-    address: (v.address ?? '').trim(),
-    relation: 'Nominee',
-    email: (v.email ?? '').trim() || null,
-    mobile: (v.mobile ?? '').trim() || null,
-  };
+  return nomineeOnApplication(member.applicationId);
 }
 
 async function resolvedClaimant(
   memberId: string,
   input: ClaimantInput
 ): Promise<Claimant> {
-  if (input.kind === 'nominee') {
-    const nominee = await nomineeFor(memberId);
-    if (!nominee) {
-      throw new DemiseError(
-        'No nominee is on file for this member. Name the claimant.'
-      );
-    }
-    return nominee;
-  }
-  if (input.kind !== 'other') {
-    throw new DemiseError('Say who the claimant is.');
-  }
-  const claimant: Claimant = {
-    name: (input.name ?? '').trim(),
-    nic: (input.nic ?? '').trim(),
-    address: (input.address ?? '').trim(),
-    relation: (input.relation ?? '').trim(),
-    email: (input.email ?? '').trim() || null,
-    mobile: (input.mobile ?? '').trim() || null,
-  };
-  const missing = (['name', 'nic', 'address', 'relation'] as const).filter(
-    field => claimant[field] === ''
+  return claimantFrom(
+    input,
+    input.kind === 'nominee' ? await nomineeFor(memberId) : null,
+    message => new DemiseError(message),
+    'No nominee is on file for this member. Name the claimant.'
   );
-  if (missing.length > 0) {
-    const labels: Record<string, string> = {
-      name: 'name',
-      nic: 'NIC',
-      address: 'address',
-      relation: 'relation to the member',
-    };
-    throw new DemiseError(
-      `Enter the claimant’s ${missing.map(m => labels[m]).join(', ')}.`
-    );
-  }
-  for (const field of ['name', 'nic', 'address', 'relation'] as const) {
-    if (claimant[field].length > 200) {
-      throw new DemiseError(`The claimant’s ${field} is too long.`);
-    }
-  }
-  return claimant;
 }
 
 async function checkedMethod(code: string) {
@@ -261,6 +207,20 @@ async function checkedMethod(code: string) {
     }
     throw err;
   }
+}
+
+// The method given, checked; or, none given, the first one offered, as the
+// stand-in the Treasurer replaces with the real payout (resignations.ts
+// does the same).
+async function methodOrDefault(code: string | undefined) {
+  if (code && code.trim()) return checkedMethod(code);
+  const [first] = await offeredPaymentMethods();
+  if (!first) {
+    throw new DemiseError(
+      'No payment method is configured. Ask an administrator.'
+    );
+  }
+  return checkedMethod(first.code);
 }
 
 function checkedReason(reason: string | undefined): string | null {
@@ -358,7 +318,7 @@ export async function startDemise(
     throw new DemiseError('This member has no account to settle.', 'conflict');
   }
   const claimant = await resolvedClaimant(input.memberId, input.claimant);
-  const method = await checkedMethod(input.method);
+  const method = await methodOrDefault(input.method);
   const reason = checkedReason(input.reason);
   const totals = await claimTotals(input.memberId);
   const bankAccountId = await resolveBankAccount(
@@ -422,14 +382,31 @@ export async function updateDemise(
   principal: Principal
 ): Promise<Demise> {
   const claim = await ownedEditable(id, principal);
-  const claimant = await resolvedClaimant(claim.holderId, edit.claimant);
-  const method = await checkedMethod(edit.method);
-  const methodReference = (edit.methodReference ?? '').trim() || null;
-  const reason = checkedReason(edit.reason);
-  const bankAccountId = await resolveBankAccount(
-    edit.bankAccountId,
-    message => new DemiseError(message)
-  );
+  const claimantKind = edit.claimant?.kind ?? claim.claimantKind;
+  const claimant = edit.claimant
+    ? await resolvedClaimant(claim.holderId, edit.claimant)
+    : claim.claimant;
+  if (!claimant || !claimantKind) {
+    throw new DemiseError('Say who the claimant is.');
+  }
+  // The payout only where one is given (the submit step, for a claim the
+  // matrix pays out at once): what is not given stays as it was.
+  const method = await checkedMethod(edit.method ?? claim.method);
+  const methodReference =
+    edit.methodReference === undefined
+      ? claim.methodReference || null
+      : edit.methodReference.trim() || null;
+  const reason =
+    edit.reason === undefined
+      ? claim.reason || null
+      : checkedReason(edit.reason);
+  const bankAccountId =
+    edit.bankAccountId === undefined
+      ? (claim.bankAccountId ?? null)
+      : await resolveBankAccount(
+          edit.bankAccountId,
+          message => new DemiseError(message)
+        );
   await withTransaction(async client => {
     await client.query(
       `update transaction
@@ -440,7 +417,7 @@ export async function updateDemise(
       [
         claim.id,
         claimant.name,
-        edit.claimant.kind,
+        claimantKind,
         JSON.stringify(claimant),
         method.code,
         methodReference,
@@ -463,7 +440,7 @@ export async function updateDemise(
           reason: claim.reason || null,
         },
         newValue: {
-          claimant_kind: edit.claimant.kind,
+          claimant_kind: claimantKind,
           claimant,
           method: method.code,
           method_reference: methodReference,

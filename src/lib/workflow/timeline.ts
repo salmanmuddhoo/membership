@@ -333,8 +333,13 @@ export async function chainTimeline(
   const lastReturn = [...trail].reverse().find(t => t.toStatus === 'returned');
   const closure = isExitRequest(transaction.kind)
     ? closurePrelude(
-        await requestChecklist(transaction.id, transaction.kind),
-        transaction.kind
+        await requestChecklist(
+          transaction.id,
+          transaction.kind,
+          transaction.claimantKind !== null
+        ),
+        transaction.kind,
+        transaction.claimantKind !== null
       )
     : transaction.kind === 'deposit'
       ? await depositRequestPrelude(transaction.id, transaction.status)
@@ -424,7 +429,9 @@ export function depositPrelude(
  */
 export function closurePrelude(
   checklist: { documentName: string; filed: unknown | null }[],
-  kind: string = 'closure'
+  kind: string = 'closure',
+  // A closure on a death: no signature to take, the certificate filed.
+  onDeath = false
 ): Pick<TransactionTimelineInput, 'prelude' | 'submitLabel'> {
   const complete = checklistComplete(
     checklist as Parameters<typeof checklistComplete>[0]
@@ -439,9 +446,16 @@ export function closurePrelude(
   };
   // A claim (S-1704) has no signature of the member's to take: the
   // claimant is named, the certificate and the affidavit are filed.
-  if (kind === 'demise') {
+  if (kind === 'demise' || onDeath) {
     return {
-      prelude: [{ key: 'details', label: 'Claimant', done: true }, documents],
+      prelude: [
+        {
+          key: 'details',
+          label: kind === 'demise' ? 'Claimant' : 'Details',
+          done: true,
+        },
+        documents,
+      ],
       submitLabel: 'Submitted',
     };
   }

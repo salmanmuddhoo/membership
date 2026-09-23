@@ -512,8 +512,25 @@ close here: Shares and the MSA go together, and the refusal says by name
 that taking them away is a resignation (S-1703).
 
 The request has a life before its chain. `startClosure()` writes a draft
-naming the account, the reason (mandatory: it goes on the signed request)
-and how the balance goes back, with the balance as it stands. The member
+naming the account and the reason (mandatory: it goes on the signed
+request), with the balance as it stands. How the balance goes back is not
+asked (officer direction, as for a resignation): the Treasurer records it
+at the disbursement, and a stand-in method holds the column until then.
+Only where the matrix routes a closure nowhere does the Submit step ask for
+the payout — the same holds for a demised claim.
+
+A closure can also be made **on a death** (business decision): a
+non-member — a customer, or a resigned member — who dies is not eligible
+for a demised claim, and each of their accounts is closed to their
+nominee, or to another person the officer names in full, carried on the
+transaction as a claim carries it (`claimant_kind`, `claimant`,
+`payee_name`; migration 0098). The death certificate is its paper instead
+of the signed request, the notifications go to the claimant, and the
+posting that closes the holder's last open account marks them `demised`
+(`markDeceasedOnceAllClosed()`, `src/lib/ledger/claimants.ts`). A member
+still in the membership is refused: a demised claim settles them.
+
+The member
 signs the request on `/closures/{id}/form`, a sheet rasterised and filed
 against the transaction — `document.transaction_id`, the third owner
 (`docs/documents.md`) — so a member who closes two accounts over the years
@@ -613,7 +630,12 @@ one the import wrote, which opened their Shares and MSA as migrated — paid
 before the system held them and reads "Paid before migration"); and no
 financing outstanding, a hook for Phase 3/4 that
 passes until something records financing, seeded off. A check switched off
-is shown as not checked and never blocks.
+is shown as not checked and never blocks. One check is not a switch
+(officer direction): a guardian may not resign while a minor depends on
+them — a minor member not yet resigned or deceased and still of the Minor
+type, a minor non-member holding an account, or a minor's application on
+its way — matched on the guardian block's Member No. or NIC, as the
+member page's "Guardian of" is.
 
 `submitResignation()` refuses without the signed request or while an
 enabled check fails, sets the amount to what both accounts hold, puts both
