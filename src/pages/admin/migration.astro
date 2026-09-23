@@ -93,9 +93,7 @@ if (Astro.request.method === 'POST') {
           // is written (QA-22): a mismatch means the file is not the one
           // the totals describe, and importing it first — then saying so —
           // left the operator to undo rows by hand.
-          const expectedRows = expectedRowsRaw
-            ? Number(expectedRowsRaw)
-            : null;
+          const expectedRows = expectedRowsRaw ? Number(expectedRowsRaw) : null;
           let expectedBalance: number | null = null;
           let totalsUnreadable = false;
           if (expectedRows !== null && !Number.isInteger(expectedRows)) {

@@ -207,7 +207,12 @@ const AUTO_FILLED_GUARDIAN_FIELDS = new Set([
                       >
                         <option value="">—</option>
                         {field.choices.map(choice => (
-                          <option value={choice} selected={choice.toLowerCase() === value.toLowerCase()}>
+                          <option
+                            value={choice}
+                            selected={
+                              choice.toLowerCase() === value.toLowerCase()
+                            }
+                          >
                             {choice}
                           </option>
                         ))}
@@ -284,7 +289,9 @@ const AUTO_FILLED_GUARDIAN_FIELDS = new Set([
                             {field.choices.map(choice => (
                               <option
                                 value={choice}
-                                selected={choice.toLowerCase() === value.toLowerCase()}
+                                selected={
+                                  choice.toLowerCase() === value.toLowerCase()
+                                }
                               >
                                 {choice}
                               </option>

@@ -240,9 +240,9 @@ describe('dormancy (S-804, S-805, S-806)', () => {
     // Quiet joined 20 months ago with nothing since: 8 months past the
     // threshold already. Recent deposited today; Fresh joined two months
     // ago.
-    const approaching = await report.run({});
+    const approaching = await report.run({ view: 'approaching' });
     expect(approaching.rows.map(r => [r['Member no'], r.Status])).toEqual([
-      ['AB0001', 'active'],
+      ['AB0001', 'Active'],
     ]);
     expect(approaching.rows[0]).toMatchObject({
       Name: 'Quiet Test',
@@ -253,7 +253,7 @@ describe('dormancy (S-804, S-805, S-806)', () => {
     );
     // Fresh joined two months ago, so becomes dormant in ten; Recent
     // deposited today and has the full twelve.
-    const wide = await report.run({ within: '11' });
+    const wide = await report.run({ view: 'approaching', within: '11' });
     expect(wide.rows.map(r => r['Member no'])).toEqual(['AB0001', 'AB0003']);
     const everyone = await report.run({ view: 'active' });
     // Migrated arrived today, before Recent's deposit: both a full twelve.
@@ -365,9 +365,10 @@ describe('dormancy (S-804, S-805, S-806)', () => {
       'member.dormant',
       'member.reactivated',
     ]);
-    // Reactivation is itself no activity: the next run marks them again.
+    // Reactivation counts as activity: the next run leaves them active.
     expect(
       (await dormancy.detectDormancy()).marked.map(m => m.memberNo)
-    ).toEqual(['AB0001']);
+    ).toEqual([]);
+    expect((await statusOf(quiet.memberId)).status).toBe('active');
   });
 });

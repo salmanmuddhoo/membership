@@ -29,8 +29,7 @@ const { value } = Astro.props;
       form.dataset.idempotencyBound = 'yes';
       const slot = STORE + location.pathname;
       const navigation = performance.getEntriesByType('navigation')[0] as
-        | PerformanceNavigationTiming
-        | undefined;
+        PerformanceNavigationTiming | undefined;
       try {
         const kept = sessionStorage.getItem(slot);
         if (navigation?.type === 'back_forward' && kept) field.value = kept;

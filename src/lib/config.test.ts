@@ -211,7 +211,11 @@ describe('pickEnv', () => {
   it('never falls back to a baked value in a built server', async () => {
     const { pickEnv } = await loadConfig();
     expect(
-      pickEnv('DATABASE_URL', {}, { PROD: true, DATABASE_URL: 'postgres://dev' })
+      pickEnv(
+        'DATABASE_URL',
+        {},
+        { PROD: true, DATABASE_URL: 'postgres://dev' }
+      )
     ).toBeUndefined();
     expect(
       pickEnv('PUBLIC_APP_ENV', {}, { PROD: true, PUBLIC_APP_ENV: 'test' })
@@ -221,14 +225,21 @@ describe('pickEnv', () => {
   it('reads .env through the build under astro dev', async () => {
     const { pickEnv } = await loadConfig();
     expect(
-      pickEnv('DATABASE_URL', {}, { PROD: false, DATABASE_URL: 'postgres://dev' })
+      pickEnv(
+        'DATABASE_URL',
+        {},
+        { PROD: false, DATABASE_URL: 'postgres://dev' }
+      )
     ).toBe('postgres://dev');
   });
 
   it('reads what the build carried in the browser, which has no process', async () => {
     const { pickEnv } = await loadConfig();
     expect(
-      pickEnv('PUBLIC_APP_ENV', undefined, { PROD: true, PUBLIC_APP_ENV: 'test' })
+      pickEnv('PUBLIC_APP_ENV', undefined, {
+        PROD: true,
+        PUBLIC_APP_ENV: 'test',
+      })
     ).toBe('test');
   });
 });

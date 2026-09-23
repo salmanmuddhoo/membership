@@ -32,10 +32,7 @@ export class GraphError extends Error {
   constructor(
     message: string,
     readonly reason:
-      | 'not_configured'
-      | 'auth_failed'
-      | 'request_failed'
-      | 'unreachable',
+      'not_configured' | 'auth_failed' | 'request_failed' | 'unreachable',
     // The HTTP status Graph gave, when there was one.
     readonly status?: number
   ) {

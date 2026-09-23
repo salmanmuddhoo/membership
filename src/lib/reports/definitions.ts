@@ -1065,7 +1065,13 @@ const pendingApprovals: ReportDefinition = {
               trim(coalesce(p.values->>'name', '') || ' '
                    || coalesce(p.values->>'surname', '')) as "Holder",
               t.amount::text as "Amount",
-              initcap(replace(t.status, '_', ' ')) as "Status",
+              case when t.status = 'posted'
+                        and (t.kind in
+                               ('withdrawal', 'closure', 'resignation', 'demise')
+                             or (t.kind = 'transfer_leg'
+                                 and t.payee_name is not null))
+                   then 'Disbursed'
+                   else initcap(replace(t.status, '_', ' ')) end as "Status",
               case when t.status in ('submitted', 'under_review', 'returned')
                    then coalesce(ws.name || ' · ' || r.name, '')
                    when t.status = 'approved' then 'Payout'

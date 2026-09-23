@@ -151,9 +151,7 @@ const backHref = `/transactions/${t.id}`;
     )}
     <div class="row">
       <dt>Transaction</dt>
-      <dd>
-        {t.displayReference}
-      </dd>
+      <dd>{t.displayReference}</dd>
     </div>
     {t.method !== 'internal_transfer' && (
       <div class="row">

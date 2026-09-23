@@ -448,17 +448,17 @@ describe('the exits report (S-1706)', () => {
     const closure = result.rows.find(r => r.Kind === 'Account closure')!;
     expect(closure).toMatchObject({
       Member: 'Amina Test',
-      Status: 'posted',
+      Status: 'Disbursed',
       Amount: '1000.00',
       Days: 0,
     });
     expect(String(closure.Accounts)).toContain('Hajj Savings');
     expect(String(closure.Receipt)).toMatch(/^RCT-/);
     const rejected = result.rows.filter(r => r.Kind === 'Demised claim');
-    expect(rejected.every(r => r.Status === 'rejected')).toBe(true);
+    expect(rejected.every(r => r.Status === 'Rejected')).toBe(true);
     expect(rejected[0]['Paid to']).toBe('Nobody Reachable');
     expect(result.summary).toMatch(
-      /1 account closure\(s\), Rs 1000\.00 paid out/
+      /1 account closure\(s\), MUR 1,000\.00 paid out/
     );
     const only = await report.run({ from: today, to: today, kind: 'closure' });
     expect(only.rows.every(r => r.Kind === 'Account closure')).toBe(true);

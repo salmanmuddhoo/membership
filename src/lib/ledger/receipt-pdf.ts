@@ -64,7 +64,9 @@ export function receiptFacts(
       label: moneyIn ? 'Received from' : 'Paid to',
       value: t.payeeName || receipt.depositorName || holder,
     },
-    ...(receipt.depositorName ? [{ label: 'On behalf of', value: holder }] : []),
+    ...(receipt.depositorName
+      ? [{ label: 'On behalf of', value: holder }]
+      : []),
     { label: 'Account', value: `${t.accountNo} · ${t.accountTypeName}` },
   ];
   if (otherSide && !t.payeeName) {
