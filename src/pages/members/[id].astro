@@ -512,7 +512,11 @@ const documentCount = documentGroups.reduce(
           )}
           {resigning && (
             <a
-              href={`/transactions/${resigning.id}`}
+              href={
+                resigning.status === 'draft' || resigning.status === 'returned'
+                  ? `/resignations/${resigning.id}`
+                  : `/transactions/${resigning.id}`
+              }
               class="rounded-lg bg-amber-100 px-3 py-1.5 text-sm font-medium text-amber-900 underline dark:bg-amber-950 dark:text-amber-200"
             >
               Resigning · {resigning.reference}
@@ -525,7 +529,11 @@ const documentCount = documentGroups.reduce(
           )}
           {settling && (
             <a
-              href={`/transactions/${settling.id}`}
+              href={
+                settling.status === 'draft' || settling.status === 'returned'
+                  ? `/demises/${settling.id}`
+                  : `/transactions/${settling.id}`
+              }
               class="rounded-lg bg-amber-100 px-3 py-1.5 text-sm font-medium text-amber-900 underline dark:bg-amber-950 dark:text-amber-200"
             >
               Claim · {settling.reference}

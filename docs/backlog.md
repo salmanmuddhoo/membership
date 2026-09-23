@@ -5033,7 +5033,16 @@ rule.
 - **Every report** has a link back to the report list.
   - The Applications report adds the applicant's name and where each
     application stands ("With the Secretary", "Returned by …").
-  - Its Status filter is a dropdown.
+  - Its Status filter is a dropdown of where an application stands: Draft,
+    Received online, one "With the …" per step of the configured chain,
+    Returned, Abeyance, Approved, Rejected. The raw `new` and
+    `submitted_for_approval` are not offered (they say nothing about who
+    holds it), nor `submitted_for_review`, which no enabled step produces
+    (migration 0011).
+- **A colleague's draft** closure, resignation or claim says on its page
+  who holds it, since only its captor can continue or cancel it; the
+  member page's "Claim ·" and "Resigning ·" buttons open the wizard while
+  it is a draft.
 - **The Deposit, Withdrawal and Transfer lookups** suggest matching
   accounts, by number or by holder name, as the officer types.
 

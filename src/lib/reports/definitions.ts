@@ -13,13 +13,19 @@
 //
 // A report reads. Nothing here writes, and nothing takes a value the caller
 // supplies into SQL except as a bound parameter.
-import { dormancyMonths, nearFloorMargin } from '../config/reference';
+import {
+  activeChain,
+  dormancyMonths,
+  nearFloorMargin,
+  type WorkflowStep,
+} from '../config/reference';
 import { LAST_ACTIVITY_SQL } from '../members/dormancy';
 import { query } from '../db/pool';
 import { APPLICATION_STATUS_LABELS } from '../applications/status-labels';
 import {
   returnedByLabelsFor,
   reviewStageLabelsFor,
+  WORKFLOW_CODE as APPLICATION_WORKFLOW_CODE,
 } from '../applications/workflow';
 
 export type FilterKind = 'date' | 'text' | 'choice';
@@ -218,11 +224,49 @@ const APPLICATION_REPORT_STATUS_LABELS: Record<string, string> = {
   ...APPLICATION_STATUS_LABELS,
   approved: 'Approved',
 };
-const applicationStatusChoices = async () =>
-  Object.entries(APPLICATION_REPORT_STATUS_LABELS).map(([value, label]) => ({
-    value,
-    label,
-  }));
+
+// Officer feedback: the filter offers where an application stands, not the
+// raw status. 'new' is with the Regional Manager or with the Secretary, and
+// 'submitted_for_approval' is with the President — the same "With the X"
+// the report's own column says — so a stage is offered per enabled step of
+// the configured chain (`with:<step code>`) in place of those statuses.
+// The statuses that stand on their own (draft, received, returned, and the
+// decided ones) are offered as themselves.
+const WITH_PREFIX = 'with:';
+const STANDALONE_STATUSES = [
+  'draft',
+  'received',
+  'returned',
+  'abeyance',
+  'approved',
+  'rejected',
+];
+async function applicationStageSteps(): Promise<WorkflowStep[]> {
+  return (await activeChain(APPLICATION_WORKFLOW_CODE)).filter(
+    s => s.code !== 'capture'
+  );
+}
+const applicationStatusChoices = async () => {
+  const steps = await applicationStageSteps();
+  return [
+    ...STANDALONE_STATUSES.filter(
+      code => code === 'draft' || code === 'received'
+    ).map(code => ({
+      value: code,
+      label: APPLICATION_REPORT_STATUS_LABELS[code],
+    })),
+    ...steps.map(step => ({
+      value: `${WITH_PREFIX}${step.code}`,
+      label: `With the ${step.roleName}`,
+    })),
+    ...STANDALONE_STATUSES.filter(
+      code => code !== 'draft' && code !== 'received'
+    ).map(code => ({
+      value: code,
+      label: APPLICATION_REPORT_STATUS_LABELS[code],
+    })),
+  ];
+};
 
 const applications: ReportDefinition = {
   code: 'applications',
@@ -240,6 +284,15 @@ const applications: ReportDefinition = {
     },
   ],
   async run(filters) {
+    // A stage narrows the SQL to the status that stage sits on, then the
+    // rows to the ones the chain says are actually with that role.
+    const chosen = textOrNull(filters.status);
+    const stage = chosen?.startsWith(WITH_PREFIX)
+      ? ((await applicationStageSteps()).find(
+          s => s.code === chosen.slice(WITH_PREFIX.length)
+        ) ?? null)
+      : null;
+    const status = stage ? stage.fromStatus : chosen;
     const result = await query<Record<string, string>>(
       `select a.id           as "Id",
               a.reference    as "Reference",
@@ -262,11 +315,7 @@ const applications: ReportDefinition = {
           and ($2::date is null or a.created_at < $2::date + 1)
           and ($3::text is null or a.status = $3::text)
         order by a.created_at desc`,
-      [
-        dateOrNull(filters.from),
-        dateOrNull(filters.to),
-        textOrNull(filters.status),
-      ]
+      [dateOrNull(filters.from), dateOrNull(filters.to), status]
     );
 
     // "Where it has got to" (S-611 follow-up) — the same batched reads the
@@ -279,11 +328,13 @@ const applications: ReportDefinition = {
       result.rows.filter(r => r.StatusCode === 'returned').map(r => r.Id)
     );
 
-    const rows = result.rows.map(({ Id, StatusCode, ...rest }) => ({
-      ...rest,
-      Status: APPLICATION_REPORT_STATUS_LABELS[StatusCode] ?? StatusCode,
-      With: withLabels.get(Id) ?? returnedLabels.get(Id) ?? '',
-    }));
+    const rows = result.rows
+      .map(({ Id, StatusCode, ...rest }) => ({
+        ...rest,
+        Status: APPLICATION_REPORT_STATUS_LABELS[StatusCode] ?? StatusCode,
+        With: withLabels.get(Id) ?? returnedLabels.get(Id) ?? '',
+      }))
+      .filter(row => !stage || row.With === `With the ${stage.roleName}`);
 
     return {
       columns: [
