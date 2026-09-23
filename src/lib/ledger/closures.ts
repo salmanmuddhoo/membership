@@ -17,10 +17,7 @@ import { canTransact } from '../members/status';
 import { recordAudit } from '../access/audit';
 import type { Principal } from '../access/principal';
 import { query, withTransaction } from '../db/pool';
-import {
-  listDocumentTypes,
-  offeredPaymentMethods,
-} from '../config/reference';
+import { listDocumentTypes, offeredPaymentMethods } from '../config/reference';
 import {
   documentsForTransaction,
   type TransactionDocument,
