@@ -993,7 +993,15 @@ const transactions: ReportDefinition = {
           and ($3::text is null
                or t.kind = $3::text
                or ($3::text = 'transfer' and t.kind = 'transfer_leg'))
-          and ($4::text is null or t.method = $4::text)
+          -- Money out not yet paid has only a placeholder method; it is
+          -- found under the method the Treasurer pays it by, once paid.
+          and ($4::text is null
+               or (t.method = $4::text
+                   and not (t.status <> 'posted'
+                            and (t.kind in ('withdrawal', 'closure',
+                                            'resignation', 'demise')
+                                 or (t.kind = 'transfer_leg'
+                                     and t.payee_name is not null)))))
           and ($5::text is null or u.display_name ilike '%' || $5::text || '%')
         order by t.created_at desc, t.serial_no desc`,
       [
