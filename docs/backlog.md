@@ -5061,6 +5061,22 @@ rule.
   longer one with no account at all — one rule (`mayUseAppSql`,
   `src/lib/member/identity.ts`) for the link, the code and the refresh,
   by officer direction. `docs/member-app.md`.
+
+# The dashboard, and the document directory ✅
+
+The dashboard's six dashed "coming soon" tiles are replaced by cards built
+from the same navigation model as the sidebar (`navigationFor`,
+`src/lib/navigation.ts`): one card per group — Membership, Finance,
+Administration — each door on it offered only to a role holding the
+permission its route declares, with a line on what it is for
+(`NAV_DESCRIPTIONS`) and the same "waiting on you" counts the menu
+badges carry. **Documents** is a new door (`document.view`): the document
+directory at `/documents`, a folder per member and non-member customer
+with how much is on file, and `/documents/{id}` listing everything filed
+for them — under the applications that made them, against the member
+directly, and on their transactions (`src/lib/documents/directory.ts`,
+`docs/documents.md`, `docs/access-control.md`).
+
 - **The Deposit, Withdrawal and Transfer lookups** suggest matching
   accounts, by number or by holder name, as the officer types.
 

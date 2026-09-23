@@ -5,6 +5,7 @@ import ThemeIcon from '@components/ThemeIcon.astro';
 import EnvBadge from '@components/EnvBadge.astro';
 import Icon from '@components/ui/icons/Icon.astro';
 import { isProductionEnvironment } from '@lib/config';
+import { navigationFor } from '@lib/navigation';
 import { pendingActionCount } from '@lib/applications/workflow';
 import { pendingTransactionCount } from '@lib/ledger/review';
 
@@ -57,144 +58,12 @@ const transactionsBadge =
         pendingTransactionCount(principal))
     : 0;
 
-interface NavItem {
-  label: string;
-  href: string;
-  icon: string;
-  badge?: number;
-}
-
-interface NavGroup {
-  label?: string;
-  items: NavItem[];
-}
-
-const navGroups: NavGroup[] = [
-  { items: [{ label: 'Dashboard', href: '/dashboard', icon: 'dashboard' }] },
-  {
-    label: 'Membership',
-    items: [
-      ...(can('application.view')
-        ? [
-            {
-              label: 'Applications',
-              href: '/applications',
-              icon: 'members',
-              badge: applicationsBadge > 0 ? applicationsBadge : undefined,
-            },
-          ]
-        : []),
-      ...(can('member.view')
-        ? [{ label: 'Members', href: '/members', icon: 'members' }]
-        : []),
-    ],
-  },
-  {
-    label: 'Finance',
-    items: [
-      ...(can('transaction.view')
-        ? [
-            {
-              label: 'Transactions',
-              href: '/transactions',
-              icon: 'reports',
-              badge: transactionsBadge > 0 ? transactionsBadge : undefined,
-            },
-          ]
-        : []),
-      ...(can('cash.session')
-        ? [{ label: 'Cash drawer', href: '/cashier', icon: 'reports' }]
-        : []),
-      ...(can('cash.view')
-        ? [
-            {
-              label: 'Cash drawers',
-              href: '/cashier/sessions',
-              icon: 'reports',
-            },
-          ]
-        : []),
-      ...(can('receipt.reconcile')
-        ? [
-            {
-              label: 'Receipt reconciliation',
-              href: '/receipts/reconciliation',
-              icon: 'reports',
-            },
-          ]
-        : []),
-    ],
-  },
-  {
-    label: 'Administration',
-    items: [
-      ...(can('role.view')
-        ? [{ label: 'Roles', href: '/admin/roles', icon: 'settings' }]
-        : []),
-      ...(can('user.view')
-        ? [{ label: 'Staff accounts', href: '/admin/users', icon: 'members' }]
-        : []),
-      ...(can('config.view')
-        ? [
-            {
-              label: 'Configuration',
-              href: '/admin/configuration',
-              icon: 'settings',
-            },
-          ]
-        : can('fee.view')
-          ? [
-              {
-                label: 'Fee schedules',
-                href: '/admin/configuration/fees',
-                icon: 'settings',
-              },
-            ]
-          : []),
-      ...(can('system.reset_data') && !isProductionEnvironment()
-        ? [
-            {
-              label: 'Reset test data',
-              href: '/admin/reset-data',
-              icon: 'settings',
-            },
-          ]
-        : []),
-      ...(can('system.migrate_members')
-        ? [{ label: 'Migration', href: '/admin/migration', icon: 'members' }]
-        : []),
-      ...(can('audit.view')
-        ? [{ label: 'Audit log', href: '/admin/audit-log', icon: 'reports' }]
-        : []),
-      ...(can('report.view')
-        ? [{ label: 'Reports', href: '/reports', icon: 'reports' }]
-        : []),
-      ...(can('notification.view')
-        ? [
-            {
-              label: 'Notifications',
-              href: '/admin/notifications',
-              icon: 'reports',
-            },
-          ]
-        : []),
-      ...(can('api.explore')
-        ? [{ label: 'API', href: '/admin/api', icon: 'settings' }]
-        : []),
-      ...(can('api_credential.manage')
-        ? [
-            {
-              label: 'API credentials',
-              href: '/admin/api-credentials',
-              icon: 'settings',
-            },
-          ]
-        : []),
-    ],
-  },
-  // A group with nothing the person may see is dropped entirely, so the heading
-  // does not sit above an empty space.
-].filter(group => group.items.length > 0);
+const navGroups = navigationFor({
+  permissions: principal?.permissions ?? new Set<string>(),
+  applicationsBadge,
+  transactionsBadge,
+  production: isProductionEnvironment(),
+});
 
 const currentPath = Astro.url.pathname;
 ---

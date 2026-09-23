@@ -62,6 +62,16 @@ it. The staff API's `GET /api/v1/transactions`, called without a member,
 customer or account, is scoped the same way. Moving `transaction.view_all`
 between roles at Configuration → Roles changes who sees what.
 
+## The dashboard and the menu
+
+The dashboard's cards and the sidebar are one model, `navigationFor()` in
+`src/lib/navigation.ts` (officer feedback): each door is offered when the
+person holds the permission its route declares in `authorise.ts`, and not
+otherwise, so a role sees on the dashboard exactly what it may reach. A
+door added to one is added to both. **Documents** (`document.view`) opens
+the document directory (`/documents`): a folder per member and non-member
+customer, and inside it everything filed for them.
+
 ## Permissions are data
 
 Effective permissions are the union of every role the user holds, read from the
