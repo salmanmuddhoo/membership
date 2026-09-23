@@ -37,6 +37,7 @@ import {
   NOTICE_ERROR,
   NOTICE_OK,
   TAG,
+  VIEW_BUTTON,
 } from '@lib/ui';
 
 const principal = Astro.locals.principal!;
@@ -288,7 +289,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                     type="button"
                     data-view-document
                     data-document-id={item.filed.documentId}
-                    class="shrink-0 font-medium text-neutral-700 underline hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-neutral-100"
+                    class={VIEW_BUTTON}
                   >
                     View
                   </button>

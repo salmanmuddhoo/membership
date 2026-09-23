@@ -62,6 +62,7 @@ import {
   BUTTON_SM,
   SECONDARY_SM,
   DANGER_SM,
+  DANGER_XS,
   DIALOG,
   DIALOG_HEADER,
   ICON_BUTTON,
@@ -71,6 +72,7 @@ import {
   PILL,
   SECONDARY_XS,
   SUBTITLE,
+  VIEW_BUTTON,
 } from '@lib/ui';
 
 const principal = Astro.locals.principal!;
@@ -473,6 +475,10 @@ const approvalComments = applicationId
   ? await approvalCommentsFor(applicationId)
   : [];
 const pageTitle = member ? member.memberNo : name;
+const documentCount = documentGroups.reduce(
+  (sum, group) => sum + group.entries.length,
+  0
+);
 ---
 
 <DashboardLayout
@@ -908,10 +914,7 @@ const pageTitle = member ? member.memberNo : name;
                         ? '—'
                         : formatMoney(balances.get(account.id)!)}
                     </span>
-                    <a
-                      href={`/accounts/${account.id}`}
-                      class="text-sm font-medium text-neutral-700 underline hover:text-neutral-900 dark:text-neutral-200 dark:hover:text-neutral-100"
-                    >
+                    <a href={`/accounts/${account.id}`} class={SECONDARY_XS}>
                       History
                     </a>
                   </>
@@ -938,10 +941,7 @@ const pageTitle = member ? member.memberNo : name;
                         name="accountTypeId"
                         value={account.accountTypeId}
                       />
-                      <button
-                        type="submit"
-                        class="text-sm font-medium text-neutral-700 underline hover:text-neutral-900 dark:text-neutral-200 dark:hover:text-neutral-100"
-                      >
+                      <button type="submit" class={SECONDARY_XS}>
                         Reopen
                       </button>
                     </form>
@@ -962,7 +962,7 @@ const pageTitle = member ? member.memberNo : name;
                   ) && (
                     <a
                       href={`/members/${recordId}/close?account=${account.id}`}
-                      class="text-sm font-medium text-neutral-700 underline hover:text-neutral-900 dark:text-neutral-200 dark:hover:text-neutral-100"
+                      class={DANGER_XS}
                     >
                       Close
                     </a>
@@ -975,42 +975,78 @@ const pageTitle = member ? member.memberNo : name;
       )}
     </section>
 
-    {canSeeDocuments && (
-      <section class={CARD}>
-        <h2 class={CARD_TITLE}>Documents</h2>
-        {documentGroups.length === 0 ? (
-          <p class={`${HINT} mt-1`}>
-            Nothing filed for {member ? 'this member' : 'them'} yet.
-          </p>
-        ) : (
-          <div class="mt-4 space-y-5">
-            {documentGroups.map(group => (
-              <div>
-                {documentGroups.length > 1 && (
-                  <h3 class={SUBTITLE}>{group.applicationReference}</h3>
-                )}
-                <ul class="mt-2 space-y-2">
-                  {group.entries.map(entry => (
-                    <li class="flex items-center justify-between gap-3 rounded-xl border border-neutral-200 bg-white px-4 py-3 dark:border-neutral-800 dark:bg-neutral-900">
-                      <span class="font-medium text-neutral-800 dark:text-neutral-100">
-                        {entry.documentName}
-                      </span>
-                      <button
-                        type="button"
-                        data-view-document
-                        data-document-id={entry.documentId}
-                        class="shrink-0 font-medium text-neutral-700 underline hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-neutral-100"
-                      >
-                        View
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-          </div>
+    {/* Officer feedback: documents and payments grow with every year of a
+        membership, so they open in a dialog from two buttons rather than
+        lengthening the page. */}
+    {(canSeeDocuments || canSeePayments) && (
+      <div class="flex flex-wrap gap-2">
+        {canSeeDocuments && (
+          <button
+            type="button"
+            data-open-dialog="member-documents-dialog"
+            class={SECONDARY_SM}
+          >
+            Documents ({documentCount})
+          </button>
         )}
-      </section>
+        {canSeePayments && (
+          <button
+            type="button"
+            data-open-dialog="member-payments-dialog"
+            class={SECONDARY_SM}
+          >
+            Payments ({payments.length})
+          </button>
+        )}
+      </div>
+    )}
+
+    {canSeeDocuments && (
+      <dialog
+        id="member-documents-dialog"
+        class={`${DIALOG} w-[90vw] max-w-2xl p-0`}
+      >
+        <div class={DIALOG_HEADER}>
+          <p class="text-sm font-semibold">Documents</p>
+          <button type="button" data-close-dialog class={SECONDARY_XS}>
+            Close
+          </button>
+        </div>
+        <div class="max-h-[70vh] overflow-y-auto px-5 py-4">
+          {documentGroups.length === 0 ? (
+            <p class={HINT}>
+              Nothing filed for {member ? 'this member' : 'them'} yet.
+            </p>
+          ) : (
+            <div class="space-y-5">
+              {documentGroups.map(group => (
+                <div>
+                  {documentGroups.length > 1 && (
+                    <h3 class={SUBTITLE}>{group.applicationReference}</h3>
+                  )}
+                  <ul class="mt-2 space-y-2">
+                    {group.entries.map(entry => (
+                      <li class="flex items-center justify-between gap-3 rounded-xl border border-neutral-200 bg-white px-4 py-3 dark:border-neutral-800 dark:bg-neutral-900">
+                        <span class="font-medium text-neutral-800 dark:text-neutral-100">
+                          {entry.documentName}
+                        </span>
+                        <button
+                          type="button"
+                          data-view-document
+                          data-document-id={entry.documentId}
+                          class={VIEW_BUTTON}
+                        >
+                          View
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </dialog>
     )}
 
     {canSeeDocuments && <DocumentViewer />}
@@ -1047,60 +1083,71 @@ const pageTitle = member ? member.memberNo : name;
     )}
 
     {canSeePayments && (
-      <section class={CARD}>
-        <h2 class={CARD_TITLE}>Payments</h2>
-        {payments.length === 0 ? (
-          <p class={`${HINT} mt-1`}>Nothing recorded against this member.</p>
-        ) : (
-          <ul class="mt-4 space-y-3">
-            {payments.map(payment => (
-              <li class={PANEL}>
-                <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
-                  <a
-                    href={`/receipts/${payment.id}`}
-                    class="font-medium text-neutral-800 underline dark:text-neutral-100"
-                  >
-                    {payment.receiptNo}
-                  </a>
-                  <span class="font-medium text-neutral-800 tabular-nums dark:text-neutral-100">
-                    {payment.kind === 'refund' && '−'}
-                    {formatMoney(payment.totalAmount, payment.currency)}
-                  </span>
-                  {payment.kind === 'refund' && (
-                    <span class="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200">
-                      refund of {payment.refundsReceiptNo}
+      <dialog
+        id="member-payments-dialog"
+        class={`${DIALOG} w-[90vw] max-w-2xl p-0`}
+      >
+        <div class={DIALOG_HEADER}>
+          <p class="text-sm font-semibold">Payments</p>
+          <button type="button" data-close-dialog class={SECONDARY_XS}>
+            Close
+          </button>
+        </div>
+        <div class="max-h-[70vh] overflow-y-auto px-5 py-4">
+          {payments.length === 0 ? (
+            <p class={HINT}>Nothing recorded against this member.</p>
+          ) : (
+            <ul class="space-y-3">
+              {payments.map(payment => (
+                <li class={PANEL}>
+                  <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <a
+                      href={`/receipts/${payment.id}`}
+                      class="font-medium text-neutral-800 underline dark:text-neutral-100"
+                    >
+                      {payment.receiptNo}
+                    </a>
+                    <span class="font-medium text-neutral-800 tabular-nums dark:text-neutral-100">
+                      {payment.kind === 'refund' && '−'}
+                      {formatMoney(payment.totalAmount, payment.currency)}
                     </span>
-                  )}
-                  {payment.voidedAt && (
-                    <span class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200">
-                      void
-                    </span>
-                  )}
-                  <span class="text-xs text-neutral-500 dark:text-neutral-400">
-                    {payment.methodName} ·{' '}
-                    {dateFormat.format(payment.receivedAt)} · taken by{' '}
-                    {payment.recordedByName}
-                  </span>
-                  {payment.applicationId &&
-                    sourceOfFundByApplication.has(payment.applicationId) && (
-                      <button
-                        type="button"
-                        data-view-document
-                        data-document-id={
-                          sourceOfFundByApplication.get(payment.applicationId)!
-                            .documentId
-                        }
-                        class={SECONDARY_XS}
-                      >
-                        Source of Fund
-                      </button>
+                    {payment.kind === 'refund' && (
+                      <span class="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+                        refund of {payment.refundsReceiptNo}
+                      </span>
                     )}
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+                    {payment.voidedAt && (
+                      <span class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200">
+                        void
+                      </span>
+                    )}
+                    <span class="text-xs text-neutral-500 dark:text-neutral-400">
+                      {payment.methodName} ·{' '}
+                      {dateFormat.format(payment.receivedAt)} · taken by{' '}
+                      {payment.recordedByName}
+                    </span>
+                    {payment.applicationId &&
+                      sourceOfFundByApplication.has(payment.applicationId) && (
+                        <button
+                          type="button"
+                          data-view-document
+                          data-document-id={
+                            sourceOfFundByApplication.get(
+                              payment.applicationId
+                            )!.documentId
+                          }
+                          class={VIEW_BUTTON}
+                        >
+                          Source of Fund
+                        </button>
+                      )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </dialog>
     )}
   </div>
 </DashboardLayout>
@@ -1264,6 +1311,22 @@ const pageTitle = member ? member.memberNo : name;
   const closeApproval = approvalDialog?.querySelector<HTMLButtonElement>(
     '[data-close-approval-comments]'
   );
+
+  // The Documents and Payments dialogs: a button names its dialog by id,
+  // and any Close inside a dialog closes it.
+  for (const opener of document.querySelectorAll<HTMLButtonElement>(
+    '[data-open-dialog]'
+  )) {
+    const dialog = document.getElementById(
+      opener.dataset.openDialog ?? ''
+    ) as HTMLDialogElement | null;
+    opener.addEventListener('click', () => dialog?.showModal());
+  }
+  for (const closer of document.querySelectorAll<HTMLButtonElement>(
+    '[data-close-dialog]'
+  )) {
+    closer.addEventListener('click', () => closer.closest('dialog')?.close());
+  }
 
   if (approvalDialog && openApproval && closeApproval) {
     openApproval.addEventListener('click', () => approvalDialog.showModal());

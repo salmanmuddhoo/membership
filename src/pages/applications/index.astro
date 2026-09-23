@@ -34,6 +34,7 @@ import {
   returnedByLabelsFor,
   reviewStageLabelsFor,
 } from '@lib/applications/workflow';
+import { APPLICATION_STATUS_LABELS as STATUS_LABELS } from '@lib/applications/status-labels';
 
 const principal = Astro.locals.principal!;
 const canCapture = principal.permissions.has('application.capture');
@@ -162,24 +163,6 @@ const [reviewStageLabels, returnedStageLabels] = await Promise.all([
     applications.filter(a => a.status === 'returned').map(a => a.id)
   ),
 ]);
-
-// No 'approved' entry: an approved application no longer appears in this
-// list at all (listApplications excludes it — it lives on the Members page
-// from then on), so offering it as a filter would only ever show "no
-// applications match."
-const STATUS_LABELS: Record<string, string> = {
-  draft: 'Draft',
-  // Submitted from the member app and with the branch — worked exactly as a
-  // draft (docs/member-app.md). Named for what an officer has to do with it
-  // rather than for where it came from.
-  received: 'Received online',
-  new: 'New',
-  submitted_for_review: 'Submit for Review',
-  submitted_for_approval: 'Submit for Approval',
-  rejected: 'Rejected',
-  returned: 'Returned for Correction',
-  abeyance: 'Abeyance',
-};
 
 const STATUS_CLASSES: Record<string, string> = {
   draft:

@@ -252,6 +252,32 @@ export async function sourceOfFundItem(
 }
 
 /**
+ * The Source of Fund form on file for each of these transactions, by
+ * transaction id — for the account history, where a deposit that has
+ * posted still needs its form in reach (officer feedback). One query for a
+ * page of entries; a transaction without a form is simply absent.
+ */
+export async function sourceOfFundFormsFor(
+  transactionIds: string[]
+): Promise<Map<string, string>> {
+  const forms = new Map<string, string>();
+  if (transactionIds.length === 0) return forms;
+  const result = await query<{ transaction_id: string; document_id: string }>(
+    `select d.transaction_id, d.id as document_id
+       from document d
+       join document_type t on t.id = d.document_type_id
+      where t.code = $2
+        and d.transaction_id = any($1::uuid[])
+        and exists (select 1 from document_version v
+                     where v.document_id = d.id
+                       and v.state = 'committed' and v.superseded_at is null)`,
+    [transactionIds, SOURCE_OF_FUND_DOCUMENT_CODE]
+  );
+  for (const row of result.rows) forms.set(row.transaction_id, row.document_id);
+  return forms;
+}
+
+/**
  * Submit the request: the signed form on file (officer direction: the
  * officer who recorded it submits it, with no second check), and from there the
  * deposit an officer would have recorded at once — the matrix, the engine,

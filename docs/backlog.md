@@ -5012,6 +5012,31 @@ account; and a resigned member is a non-member from then on — they
 deposit, withdraw, transfer and close on the accounts still open, and
 are tagged and counted as a non-member while they hold one.
 
+# Officer feedback, round 6 — screens ✅
+
+Small changes to screens that are already built. None of them changes a
+rule.
+
+- **Filed documents** have the same two controls on every page: a View
+  button and a red ✕ that deletes, the same height and in the same place
+  (`VIEW_BUTTON`, `DELETE_BUTTON` in `src/lib/ui.ts`).
+- **Secondary buttons** have a white fill, and closing or deleting
+  actions a light red one. On a member's page the Close button on an
+  account row is one of these red buttons, and History and Reopen are
+  small secondary buttons.
+- **A member's Documents and Payments** open in dialogs from two buttons
+  that show a count, so the page does not grow with the lists.
+- **A posted deposit's Source of Fund form** has a View button on its row
+  in the account history.
+- **The left menu** collapses to a rail of icons, and each browser
+  remembers the choice.
+- **Every report** has a link back to the report list.
+  - The Applications report adds the applicant's name and where each
+    application stands ("With the Secretary", "Returned by …").
+  - Its Status filter is a dropdown.
+- **The Deposit, Withdrawal and Transfer lookups** suggest matching
+  accounts, by number or by holder name, as the officer types.
+
 # Open values that later stories depend on
 
 Each is absorbed by configuration, so none blocks the start of development.

@@ -312,6 +312,14 @@ describe('a large cash deposit as a request (S-1306)', () => {
     );
     expect(row.rows[0].source_of_fund_form_confirmed).toBe(true);
 
+    // Officer feedback: once posted, the form is still found for the
+    // account history's row, by the transaction it was filed against.
+    const forms = await requests.sourceOfFundFormsFor([requestId]);
+    expect(forms.get(requestId)).toBe(
+      (await requests.sourceOfFundItem(requestId))!.filed!.documentId
+    );
+    expect((await requests.sourceOfFundFormsFor([])).size).toBe(0);
+
     // Once submitted it is no longer a draft to change, submit or cancel.
     await expect(
       requests.submitDepositRequest(requestId, officer)

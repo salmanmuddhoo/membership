@@ -36,6 +36,8 @@ import {
   NOTICE_ERROR,
   SECONDARY_SM,
   TAG,
+  VIEW_BUTTON,
+  DELETE_BUTTON,
 } from '@lib/ui';
 
 const principal = Astro.locals.principal!;
@@ -356,23 +358,25 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                 </span>
               </span>
               {item.filed ? (
-                <span class="flex items-center gap-3">
+                <div class="flex shrink-0 items-center gap-2">
                   <button
                     type="button"
                     data-view-document
                     data-document-id={item.filed.documentId}
-                    class="font-medium text-neutral-700 underline hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-neutral-100"
+                    class={VIEW_BUTTON}
                   >
                     View
                   </button>
                   <button
                     type="button"
                     data-remove-document={item.filed.documentId}
-                    class="text-red-700 underline dark:text-red-300"
+                    title="Delete"
+                    aria-label="Remove this document"
+                    class={DELETE_BUTTON}
                   >
-                    Remove
+                    ✕
                   </button>
-                </span>
+                </div>
               ) : (
                 <span
                   class="flex flex-wrap items-center gap-3"

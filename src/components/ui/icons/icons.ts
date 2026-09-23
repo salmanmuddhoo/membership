@@ -56,4 +56,7 @@ export const Icons: Record<string, IconDef> = {
   chevronDown: {
     paths: ['m19.5 8.25-7.5 7.5-7.5-7.5'],
   },
+  chevronLeft: {
+    paths: ['M15.75 19.5 8.25 12l7.5-7.5'],
+  },
 };

@@ -16,6 +16,11 @@
 import { dormancyMonths, nearFloorMargin } from '../config/reference';
 import { LAST_ACTIVITY_SQL } from '../members/dormancy';
 import { query } from '../db/pool';
+import { APPLICATION_STATUS_LABELS } from '../applications/status-labels';
+import {
+  returnedByLabelsFor,
+  reviewStageLabelsFor,
+} from '../applications/workflow';
 
 export type FilterKind = 'date' | 'text' | 'choice';
 
@@ -206,25 +211,52 @@ const members: ReportDefinition = {
   },
 };
 
+// The list page's own map, plus 'approved' — an approved application drops
+// off that list (it lives on the Members page from then on) but a report
+// covering "every application" has no such reason to hide it.
+const APPLICATION_REPORT_STATUS_LABELS: Record<string, string> = {
+  ...APPLICATION_STATUS_LABELS,
+  approved: 'Approved',
+};
+const applicationStatusChoices = async () =>
+  Object.entries(APPLICATION_REPORT_STATUS_LABELS).map(([value, label]) => ({
+    value,
+    label,
+  }));
+
 const applications: ReportDefinition = {
   code: 'applications',
   title: 'Applications',
   category: 'Membership',
-  summary: 'Every application and where it has got to.',
+  summary: 'Every application, who it is for, and where it has got to.',
   permission: 'application.view',
-  filters: [...PERIOD, { name: 'status', label: 'Status', kind: 'text' }],
+  filters: [
+    ...PERIOD,
+    {
+      name: 'status',
+      label: 'Status',
+      kind: 'choice',
+      choices: applicationStatusChoices,
+    },
+  ],
   async run(filters) {
     const result = await query<Record<string, string>>(
-      `select a.reference   as "Reference",
+      `select a.id           as "Id",
+              a.reference    as "Reference",
+              trim(coalesce(p.values->>'name', '') || ' ' ||
+                   coalesce(p.values->>'surname', '')) as "Applicant",
               a.application_kind as "Kind",
               coalesce(t.name, '') as "Type",
-              a.status      as "Status",
+              a.status       as "StatusCode",
               to_char(a.created_at, 'DD Mon YYYY') as "Started",
               coalesce(to_char(a.submitted_at, 'DD Mon YYYY'), '') as "Submitted",
               coalesce(to_char(a.decided_at, 'DD Mon YYYY'), '')   as "Decided",
               u.display_name as "Captured by"
          from membership_application a
          left join membership_type t on t.id = a.membership_type_id
+         left join application_party p
+           on p.application_id = a.id
+          and p.subject = 'applicant' and p.ordinal = 1
          join app_user u on u.id = a.captured_by
         where ($1::date is null or a.created_at >= $1::date)
           and ($2::date is null or a.created_at < $2::date + 1)
@@ -237,19 +269,37 @@ const applications: ReportDefinition = {
       ]
     );
 
+    // "Where it has got to" (S-611 follow-up) — the same batched reads the
+    // Applications list page uses, run here on the report's own rows rather
+    // than duplicating the chain-walking logic.
+    const withLabels = await reviewStageLabelsFor(
+      result.rows.map(r => ({ id: r.Id, status: r.StatusCode }))
+    );
+    const returnedLabels = await returnedByLabelsFor(
+      result.rows.filter(r => r.StatusCode === 'returned').map(r => r.Id)
+    );
+
+    const rows = result.rows.map(({ Id, StatusCode, ...rest }) => ({
+      ...rest,
+      Status: APPLICATION_REPORT_STATUS_LABELS[StatusCode] ?? StatusCode,
+      With: withLabels.get(Id) ?? returnedLabels.get(Id) ?? '',
+    }));
+
     return {
       columns: [
         { key: 'Reference', label: 'Reference' },
+        { key: 'Applicant', label: 'Applicant' },
         { key: 'Kind', label: 'Kind' },
         { key: 'Type', label: 'Type' },
         { key: 'Status', label: 'Status' },
+        { key: 'With', label: 'With' },
         { key: 'Started', label: 'Started' },
         { key: 'Submitted', label: 'Submitted' },
         { key: 'Decided', label: 'Decided' },
         { key: 'Captured by', label: 'Captured by' },
       ],
-      rows: result.rows,
-      summary: `${result.rows.length} application(s).`,
+      rows,
+      summary: `${rows.length} application(s).`,
     };
   },
 };

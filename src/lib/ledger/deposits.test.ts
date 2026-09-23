@@ -538,6 +538,38 @@ describe('recording a deposit', () => {
     expect(await findAccountByNumber(types.shares, '   ')).toBeNull();
   });
 
+  // Officer feedback: suggestions while typing — by the start of the
+  // number, or by every word of the holder's name, within the type asked.
+  it('suggests accounts by the start of the number or by the holder name', async () => {
+    await load();
+    const { suggestAccounts } = await import('./lookup');
+    const types = Object.fromEntries(
+      (await run(appUrl, `select code, id from account_type`)).rows.map(r => [
+        r.code,
+        r.id,
+      ])
+    );
+    await run(
+      appUrl,
+      `insert into application_party (application_id, subject, ordinal, values)
+       select m.application_id, 'applicant', 1,
+              '{"name": "Fatima", "surname": "Rahman"}'::jsonb
+         from member m where m.id = $1
+       on conflict do nothing`,
+      [memberId]
+    );
+
+    const byNumber = await suggestAccounts(types.hsa, 'hsa0');
+    expect(byNumber.map(s => s.accountId)).toEqual([hsa]);
+    const byName = await suggestAccounts(types.shares, 'rahman fat');
+    expect(byName).toMatchObject([
+      { accountId: shares, holderId: memberId, holderName: 'Fatima Rahman' },
+    ]);
+    // Never across types, and nothing for a name nobody holds.
+    expect(await suggestAccounts(types.shares, 'hsa0')).toEqual([]);
+    expect(await suggestAccounts(types.shares, 'nobody')).toEqual([]);
+  });
+
   // S-1306: the same three configuration entries a cash payment reads
   // (0032, 0062), through the same function.
   it('applies the cash controls to cash, and only to cash', async () => {

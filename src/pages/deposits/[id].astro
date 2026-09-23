@@ -28,9 +28,9 @@ import {
   NOTICE_ERROR,
   PANEL,
   PILL_WARN,
-  SECONDARY_SM,
-  ICON_BUTTON_DANGER,
   TAG,
+  VIEW_BUTTON,
+  DELETE_BUTTON,
 } from '@lib/ui';
 
 const principal = Astro.locals.principal!;
@@ -218,26 +218,28 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                 {filed.state === 'rejected' && (
                   <span class={PILL_WARN}>Rejected</span>
                 )}
-                <button
-                  type="button"
-                  data-view-document
-                  data-document-id={filed.documentId}
-                  class={SECONDARY_SM}
-                >
-                  View
-                </button>
-                <form method="post" data-confirm-remove>
+                <div class="flex shrink-0 items-center gap-2">
                   <button
-                    type="submit"
-                    name="intent"
-                    value="remove-form"
-                    aria-label="Delete the signed form"
-                    title="Delete"
-                    class={ICON_BUTTON_DANGER}
+                    type="button"
+                    data-view-document
+                    data-document-id={filed.documentId}
+                    class={VIEW_BUTTON}
                   >
-                    ✕
+                    View
                   </button>
-                </form>
+                  <form method="post" data-confirm-remove>
+                    <button
+                      type="submit"
+                      name="intent"
+                      value="remove-form"
+                      aria-label="Delete the signed form"
+                      title="Delete"
+                      class={DELETE_BUTTON}
+                    >
+                      ✕
+                    </button>
+                  </form>
+                </div>
               </div>
             </div>
             {filed.state === 'rejected' && (
