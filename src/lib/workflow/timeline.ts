@@ -234,10 +234,32 @@ export interface RoutePreviewBand {
   toCents: number | null;
   summary: string;
   steps: TimelineStep[];
+  // No chain: recorded and posted in one act, by whoever records it.
+  atOnce: boolean;
 }
 export interface RoutePreviewGroup {
   accountId: string;
   bands: RoutePreviewBand[];
+}
+
+/** The band the form starts on: its account and amount, else the first. */
+export function initialRouteBand(
+  groups: RoutePreviewGroup[],
+  accountId: string | undefined,
+  amountCents: number | null
+): RoutePreviewBand | null {
+  const group =
+    groups.find(g => g.accountId === accountId) ?? groups[0] ?? null;
+  return (
+    group?.bands.find(
+      b =>
+        amountCents !== null &&
+        b.fromCents <= amountCents &&
+        (b.toCents === null || amountCents <= b.toCents)
+    ) ??
+    group?.bands[0] ??
+    null
+  );
 }
 
 export async function routePreviewGroups(
@@ -266,6 +288,7 @@ export async function routePreviewGroups(
         toCents: band.toCents,
         summary: describeBand(band),
         steps: previewTimeline(band.chain, labels),
+        atOnce: band.definitionCode === null,
       }))
     );
   }

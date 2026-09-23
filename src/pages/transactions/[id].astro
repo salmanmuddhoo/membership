@@ -419,16 +419,19 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         </dt>
         <dd class="font-medium text-neutral-800 dark:text-neutral-100">
           {formatMoney(transaction.amount, transaction.currency)}
-          {transaction.method !== 'internal_transfer' && (
-            <>
-              {' by '}
-              {transaction.methodName}
-              {transaction.methodReference &&
-                ` · ${transaction.methodReference}`}
-              {transaction.bankAccountName &&
-                ` · ${transaction.bankAccountName}`}
-            </>
-          )}
+          {/* How money out was paid is the Treasurer's to say at Disburse;
+              until then there is nothing to show. */}
+          {transaction.method !== 'internal_transfer' &&
+            !(disburses && transaction.status !== 'posted') && (
+              <>
+                {' by '}
+                {transaction.methodName}
+                {transaction.methodReference &&
+                  ` · ${transaction.methodReference}`}
+                {transaction.bankAccountName &&
+                  ` · ${transaction.bankAccountName}`}
+              </>
+            )}
         </dd>
         {isDemise && transaction.claimant && (
           <>
