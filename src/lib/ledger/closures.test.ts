@@ -350,14 +350,11 @@ describe('a closure request (S-1702)', () => {
       officer
     );
 
+    // Nothing asked about the payout: it goes for approval, and the
+    // Treasurer says how it was paid at the disbursement. The first offered
+    // method stands in until then.
     const draft = await closures.startClosure(
-      {
-        accountId: member.hsa,
-        reason: 'Moving abroad',
-        method: 'bank_transfer',
-        methodReference: 'MCB 4471',
-        bankAccountId,
-      },
+      { accountId: member.hsa, reason: 'Moving abroad' },
       clerk
     );
     expect(draft).toMatchObject({
@@ -365,7 +362,8 @@ describe('a closure request (S-1702)', () => {
       status: 'draft',
       amount: '2500.00',
       reason: 'Moving abroad',
-      method: 'bank_transfer',
+      method: 'cash',
+      methodReference: '',
     });
     expect((await accountStatus(member.hsa)).status).toBe('active');
     // A second request on the same account, or the officer's own on

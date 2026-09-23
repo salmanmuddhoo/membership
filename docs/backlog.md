@@ -5098,6 +5098,17 @@ name (`rolesHoldingPermission`, `src/lib/access/holders.ts`).
   pays it. The form follows the route preview as the account and amount
   change; until Disburse the method on record is a placeholder the screens
   and the transactions report do not show.
+- **The same for a closure and a demised claim** (business decision, after
+  the lifecycle test): recording either asks nothing about the payout, as a
+  resignation already did. Only where the matrix pays it out at once does
+  the Submit step ask "Paid by", the reference and the bank account. The
+  signed closure request no longer prints how it will be paid.
+- **A guardian cannot resign while a minor depends on them** (business
+  decision): the resignation's checks name each minor member, minor
+  non-member or minor's application that gives them as guardian, and the
+  request cannot be submitted until there is none. A minor's guardian
+  cannot be changed on screen today, so the block lasts until the minor
+  leaves or reaches majority.
 - **The Deposit, Withdrawal and Transfer lookups** suggest matching
   accounts, by number or by holder name, as the officer types.
 

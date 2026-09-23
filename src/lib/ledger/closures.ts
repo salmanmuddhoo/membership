@@ -17,7 +17,10 @@ import { canTransact } from '../members/status';
 import { recordAudit } from '../access/audit';
 import type { Principal } from '../access/principal';
 import { query, withTransaction } from '../db/pool';
-import { listDocumentTypes } from '../config/reference';
+import {
+  listDocumentTypes,
+  offeredPaymentMethods,
+} from '../config/reference';
 import {
   documentsForTransaction,
   type TransactionDocument,
@@ -34,7 +37,7 @@ import {
   markReceiptIssued,
 } from '../payments/receipts';
 import { LedgerError } from './ledger';
-import { requireBankAccount } from './bank-accounts';
+import { requireBankAccount, resolveBankAccount } from './bank-accounts';
 import { notifyExit } from './exit-notifications';
 import { notifySubmitted } from './transaction-notifications';
 import { notifyReceiptIssued } from './receipt-notifications';
@@ -76,9 +79,11 @@ export interface ClosureInput {
   accountId: string;
   // Why the member is closing it. Mandatory: it goes on the signed request.
   reason: string;
-  // How the balance goes back to them, decided now and confirmed at the
-  // disbursement (S-1503).
-  method: string;
+  // How the balance goes back to them. Asked only where the matrix pays it
+  // out at once, at the submit step (officer direction, as a withdrawal):
+  // left out, the first offered method stands in until the Treasurer
+  // records the real payout at the disbursement (S-1503).
+  method?: string;
   methodReference?: string;
   // Which of the Society's bank accounts it is paid from (S-1902), where
   // the method touches one.
@@ -219,6 +224,20 @@ async function checkedMethod(code: string) {
   }
 }
 
+// The method given, checked; or, none given, the first one offered, as the
+// stand-in the Treasurer replaces with the real payout (resignations.ts
+// does the same).
+async function methodOrDefault(code: string | undefined) {
+  if (code && code.trim()) return checkedMethod(code);
+  const [first] = await offeredPaymentMethods();
+  if (!first) {
+    throw new ClosureError(
+      'No payment method is configured. Ask an administrator.'
+    );
+  }
+  return checkedMethod(first.code);
+}
+
 // Shared with a resignation (resignations.ts), which says what is missing
 // in its own words and throws its own error.
 export function checkedReason(
@@ -278,14 +297,18 @@ export async function startClosure(
   const account = await candidate(input.accountId);
   await refuseUnlessClosable(account, null);
   const reason = checkedReason(input.reason);
-  const method = await checkedMethod(input.method);
+  const method = await methodOrDefault(input.method);
+  const bankAccountId = await resolveBankAccount(
+    input.bankAccountId,
+    message => new ClosureError(message)
+  );
 
   const id = await withTransaction(async client => {
     const inserted = await client.query<{ id: string; reference: string }>(
       `insert into transaction
          (kind, member_id, customer_id, account_id, amount, method,
-          method_reference, reason, status, captured_by)
-       values ('closure', $1, $2, $3, $4, $5, $6, $7, 'draft', $8)
+          method_reference, reason, status, captured_by, bank_account_id)
+       values ('closure', $1, $2, $3, $4, $5, $6, $7, 'draft', $8, $9)
        returning id, reference`,
       [
         account.memberId,
@@ -296,6 +319,7 @@ export async function startClosure(
         (input.methodReference ?? '').trim() || null,
         reason,
         principal.userId,
+        bankAccountId,
       ]
     );
     const { id, reference } = inserted.rows[0];
@@ -321,7 +345,11 @@ export async function startClosure(
   return (await loadTransaction(id))!;
 }
 
-/** Change the reason or the payout while the request is still the officer's. */
+/**
+ * Change the reason, and the payout where one is given (the submit step, for
+ * a closure the matrix pays out at once), while the request is still the
+ * officer's. What is not given stays as it was.
+ */
 export async function updateClosure(
   id: string,
   edit: ClosureEdit,
@@ -329,14 +357,25 @@ export async function updateClosure(
 ): Promise<Closure> {
   const closure = await ownedEditable(id, principal);
   const reason = checkedReason(edit.reason);
-  const method = await checkedMethod(edit.method);
-  const methodReference = (edit.methodReference ?? '').trim() || null;
+  const method = await checkedMethod(edit.method ?? closure.method);
+  const methodReference =
+    edit.methodReference === undefined
+      ? closure.methodReference || null
+      : edit.methodReference.trim() || null;
+  const bankAccountId =
+    edit.bankAccountId === undefined
+      ? (closure.bankAccountId ?? null)
+      : await resolveBankAccount(
+          edit.bankAccountId,
+          message => new ClosureError(message)
+        );
   await withTransaction(async client => {
     await client.query(
       `update transaction
-          set reason = $2, method = $3, method_reference = $4
+          set reason = $2, method = $3, method_reference = $4,
+              bank_account_id = $5
         where id = $1`,
-      [closure.id, reason, method.code, methodReference]
+      [closure.id, reason, method.code, methodReference, bankAccountId]
     );
     await recordAudit(
       {

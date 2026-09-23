@@ -21,8 +21,10 @@ import {
   updateClosure,
 } from '@lib/ledger/closures';
 import { DocumentError, removeFiledDocument } from '@lib/documents/documents';
+import { accountBalance } from '@lib/ledger/ledger';
 import { loadTransaction, transitionsFor } from '@lib/ledger/review';
-import { formatMoney } from '@lib/payments/money';
+import { resolveRoute } from '@lib/ledger/routing';
+import { formatMoney, toCents } from '@lib/payments/money';
 import { chainTimeline } from '@lib/workflow/timeline';
 import {
   PAGE,
@@ -76,18 +78,29 @@ if (Astro.request.method === 'POST') {
   const intent = text('intent');
   try {
     if (intent === 'details') {
+      // Only the reason: the payout is the Treasurer's to record at
+      // disbursement, unless the matrix posts the closure at once (below).
       closure = await updateClosure(
         closure.id,
-        {
-          reason: text('reason'),
-          method: text('method'),
-          methodReference: text('methodReference'),
-          bankAccountId: text('bankAccountId'),
-        },
+        { reason: text('reason') },
         principal
       );
       return Astro.redirect(`${base}?step=signature`);
     } else if (intent === 'submit') {
+      // Where the matrix posts it at once, submitting IS the posting, and
+      // the payout is asked here (postsAtOnce, below).
+      if (form.has('method')) {
+        closure = await updateClosure(
+          closure.id,
+          {
+            reason: closure.reason,
+            method: text('method'),
+            methodReference: text('methodReference'),
+            bankAccountId: text('bankAccountId'),
+          },
+          principal
+        );
+      }
       const submitted = await submitClosure(closure.id, principal);
       return Astro.redirect(`/transactions/${submitted.id}`);
     } else if (intent === 'remove-form') {
@@ -125,6 +138,20 @@ const [checklist, timeline, trail, paymentMethods, bankAccounts] =
   ]);
 const complete = checklistComplete(checklist);
 const request = checklist[0] ?? null;
+// The balance as it stands now — what submitting would actually post,
+// same as submitClosure (ledger/closures.ts) works out.
+const currentBalance =
+  (await accountBalance(closure.accountId))?.balance ?? '0.00';
+// Posted at once when the matrix routes it nowhere: only then is the payout
+// asked before the posting step, because submitting is the posting.
+const postsAtOnce = !(
+  await resolveRoute({
+    kind: 'closure',
+    accountTypeId: closure.accountTypeId,
+    amountCents: toCents(currentBalance),
+    roleCodes: principal.roles,
+  })
+).definition;
 const returnComment =
   closure.status === 'returned'
     ? [...trail].reverse().find(t => t.toStatus === 'returned')?.comment
@@ -172,7 +199,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     )}
 
     {step === 'details' && (
-      <form method="post" data-closure-details-form class={FORM_CARD}>
+      <form method="post" class={FORM_CARD}>
         <h2 class={CARD_LABEL}>Details</h2>
         <dl class="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
           <dt class="text-neutral-500 dark:text-neutral-400">Account</dt>
@@ -194,45 +221,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             class={INPUT}
           >{closure.reason}</textarea>
         </label>
-        <div class="grid gap-3 sm:grid-cols-2">
-          <label class={LABEL}>
-            Balance paid out by
-            <select name="method" class={INPUT}>
-              {paymentMethods.map(method => (
-                <option
-                  value={method.code}
-                  data-touches-bank={method.touchesBank ? 'true' : 'false'}
-                  selected={method.code === closure!.method}
-                >
-                  {method.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label class={LABEL}>
-            Reference (cheque number, transfer reference)
-            <input
-              type="text"
-              name="methodReference"
-              value={closure.methodReference}
-              class={INPUT}
-            />
-          </label>
-          <label data-bank-account-field class={LABEL}>
-            Bank account
-            <select name="bankAccountId" class={INPUT}>
-              <option value="">Choose…</option>
-              {bankAccounts.map(account => (
-                <option
-                  value={account.id}
-                  selected={account.id === closure!.bankAccountId}
-                >
-                  {account.name} · {account.bankName}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
         <input type="hidden" name="intent" value="details" />
         <div class="flex flex-wrap gap-2 pt-2">
           <button type="submit" class={BUTTON}>
@@ -352,7 +340,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     )}
 
     {step === 'submit' && (
-      <form method="post" class={FORM_CARD}>
+      <form method="post" data-closure-submit-form class={FORM_CARD}>
         <h2 class={CARD_LABEL}>Submit</h2>
         <dl class="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
           <dt class="text-neutral-500 dark:text-neutral-400">Account</dt>
@@ -367,11 +355,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           <dd class="text-neutral-800 dark:text-neutral-100">
             {closure.reason}
           </dd>
-          <dt class="text-neutral-500 dark:text-neutral-400">Paid out by</dt>
-          <dd class="text-neutral-800 dark:text-neutral-100">
-            {closure.methodName}
-            {closure.methodReference && ` · ${closure.methodReference}`}
-          </dd>
           <dt class="text-neutral-500 dark:text-neutral-400">Signed request</dt>
           <dd
             class:list={[
@@ -383,6 +366,47 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             {complete ? 'On file' : 'Missing'}
           </dd>
         </dl>
+        {postsAtOnce && (
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label class={LABEL}>
+              Balance paid out by
+              <select name="method" class={INPUT}>
+                {paymentMethods.map(method => (
+                  <option
+                    value={method.code}
+                    data-touches-bank={method.touchesBank ? 'true' : 'false'}
+                    selected={method.code === closure!.method}
+                  >
+                    {method.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label class={LABEL}>
+              Reference (cheque number, transfer reference)
+              <input
+                type="text"
+                name="methodReference"
+                value={closure.methodReference}
+                class={INPUT}
+              />
+            </label>
+            <label data-bank-account-field class={LABEL}>
+              Bank account
+              <select name="bankAccountId" class={INPUT}>
+                <option value="">Choose…</option>
+                {bankAccounts.map(account => (
+                  <option
+                    value={account.id}
+                    selected={account.id === closure!.bankAccountId}
+                  >
+                    {account.name} · {account.bankName}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        )}
         <p class={MUTED}>
           Once submitted, nothing else moves on this account until the closure
           is decided.
@@ -430,7 +454,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
   // A visual nudge only — enforced server-side (ledger/closures.ts)
   // whether or not this script runs.
   const form = document.querySelector<HTMLFormElement>(
-    '[data-closure-details-form]'
+    '[data-closure-submit-form]'
   );
   if (form) {
     const methodSelect =

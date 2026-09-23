@@ -182,7 +182,7 @@ export async function resignationInFlightFor(
 // The pre-checks (RES-US-002): each one configuration, each one named
 // ---------------------------------------------------------------------------
 export interface ResignationCheck {
-  code: 'pending_transactions' | 'unpaid_fees' | 'financing';
+  code: 'pending_transactions' | 'unpaid_fees' | 'financing' | 'guardian';
   label: string;
   // Off in configuration: shown as such, never blocks.
   enabled: boolean;
@@ -207,6 +207,85 @@ async function pendingOnCoreAccounts(
     [memberId, excludingId]
   );
   return result.rows.map(r => r.reference);
+}
+
+// The minors this member is still guardian of (officer direction: a
+// guardian may not resign while a minor depends on them). A minor member not
+// yet resigned or deceased — one moved to an adult type at majority (S-610)
+// no longer counts — a minor non-member holding an account of their own,
+// and a minor's application still on its way, which would otherwise be
+// approved naming a guardian who has left.
+//
+// Matched as guardianOf (applications/capture.ts) matches, on what capture
+// wrote into the minor's guardian block: this member's number or their NIC.
+async function minorsInCare(memberId: string): Promise<string[]> {
+  const result = await query<{ label: string }>(
+    `with me as (
+       select m.member_no, coalesce(p.values->>'nic', '') as nic
+         from member m
+         left join application_party p
+           on p.application_id = m.application_id
+          and p.subject = 'applicant' and p.ordinal = 1
+        where m.id = $1
+     )
+     select label from (
+       select m.member_no as ref,
+              m.member_no || ' · ' ||
+                trim(concat_ws(' ', a.values->>'name', a.values->>'surname'))
+                as label
+         from member m
+         join membership_type t on t.id = m.membership_type_id
+         join application_party g
+           on g.application_id = m.application_id and g.subject = 'guardian'
+         left join application_party a
+           on a.application_id = m.application_id
+          and a.subject = 'applicant' and a.ordinal = 1
+         cross join me
+        where m.id <> $1 and t.code = 'minor'
+          and m.status not in ('resigned', 'demised')
+          and ((me.member_no <> ''
+                and lower(g.values->>'member_id') = lower(me.member_no))
+               or (me.nic <> '' and g.values->>'nic' = me.nic))
+       union all
+       -- A minor who is not a member but holds an account of their own.
+       select coalesce(ap.reference, '') as ref,
+              coalesce(ap.reference, '') || ' · ' ||
+                trim(concat_ws(' ', a.values->>'name', a.values->>'surname'))
+                as label
+         from customer c
+         join membership_application ap on ap.id = c.application_id
+         join membership_type t on t.id = ap.membership_type_id
+         join application_party g
+           on g.application_id = ap.id and g.subject = 'guardian'
+         left join application_party a
+           on a.application_id = ap.id
+          and a.subject = 'applicant' and a.ordinal = 1
+         cross join me
+        where c.status = 'active' and t.code = 'minor'
+          and ((me.member_no <> ''
+                and lower(g.values->>'member_id') = lower(me.member_no))
+               or (me.nic <> '' and g.values->>'nic' = me.nic))
+       union all
+       select ap.reference as ref,
+              ap.reference || ' · ' ||
+                trim(concat_ws(' ', a.values->>'name', a.values->>'surname'))
+                as label
+         from membership_application ap
+         join application_party g
+           on g.application_id = ap.id and g.subject = 'guardian'
+         left join application_party a
+           on a.application_id = ap.id
+          and a.subject = 'applicant' and a.ordinal = 1
+         cross join me
+        where ap.status not in ('approved', 'rejected')
+          and ((me.member_no <> ''
+                and lower(g.values->>'member_id') = lower(me.member_no))
+               or (me.nic <> '' and g.values->>'nic' = me.nic))
+     ) wards
+     order by ref`,
+    [memberId]
+  );
+  return result.rows.map(r => r.label);
 }
 
 // What the membership was charged to join, less what was paid against it
@@ -243,7 +322,10 @@ export async function checksFor(
     resignationChecks(),
     memberFor(memberId),
   ]);
-  const pending = await pendingOnCoreAccounts(memberId, excludingId);
+  const [pending, wards] = await Promise.all([
+    pendingOnCoreAccounts(memberId, excludingId),
+    minorsInCare(memberId),
+  ]);
   // Officer direction: a migrated member paid their joining fees before the
   // system held them, so nothing is owed here and none is asked for again.
   const unpaid = member.migrated
@@ -279,6 +361,18 @@ export async function checksFor(
       enabled: switches.financing,
       passed: true,
       detail: 'Nothing recorded.',
+    },
+    {
+      // Officer direction: not a switch. A minor cannot be left with a
+      // guardian who has left the Society.
+      code: 'guardian',
+      label: 'Not the guardian of a minor',
+      enabled: true,
+      passed: wards.length === 0,
+      detail:
+        wards.length === 0
+          ? 'Guardian of no minor.'
+          : `Guardian of ${wards.join(', ')}.`,
     },
   ];
 }

@@ -19,7 +19,7 @@
 import { recordAudit } from '../access/audit';
 import type { Principal } from '../access/principal';
 import { loadApplication } from '../applications/capture';
-import { takafulBenefit } from '../config/reference';
+import { offeredPaymentMethods, takafulBenefit } from '../config/reference';
 import { query, withTransaction } from '../db/pool';
 import {
   offeredMethod,
@@ -84,8 +84,11 @@ export interface ClaimantInput {
 export interface DemiseInput {
   memberId: string;
   claimant: ClaimantInput;
-  // How the total goes to the claimant.
-  method: string;
+  // How the total goes to the claimant. Asked only where the matrix pays
+  // the claim out at once, at the submit step (officer direction, as a
+  // withdrawal): left out, the first offered method stands in until the
+  // Treasurer records the real payout at the disbursement (S-1503).
+  method?: string;
   methodReference?: string;
   // Which of the Society's bank accounts it is paid from (S-1902), where
   // the method touches one.
@@ -93,7 +96,9 @@ export interface DemiseInput {
   reason?: string;
 }
 
-export type DemiseEdit = Omit<DemiseInput, 'memberId'>;
+// Everything optional: what is not given stays as it was (the submit step
+// sends only the payout, for a claim the matrix pays out at once).
+export type DemiseEdit = Partial<Omit<DemiseInput, 'memberId'>>;
 export type Demise = TransactionSummary;
 
 export interface ClaimAccount {
@@ -263,6 +268,20 @@ async function checkedMethod(code: string) {
   }
 }
 
+// The method given, checked; or, none given, the first one offered, as the
+// stand-in the Treasurer replaces with the real payout (resignations.ts
+// does the same).
+async function methodOrDefault(code: string | undefined) {
+  if (code && code.trim()) return checkedMethod(code);
+  const [first] = await offeredPaymentMethods();
+  if (!first) {
+    throw new DemiseError(
+      'No payment method is configured. Ask an administrator.'
+    );
+  }
+  return checkedMethod(first.code);
+}
+
 function checkedReason(reason: string | undefined): string | null {
   const trimmed = (reason ?? '').trim();
   if (trimmed.length > 500) {
@@ -358,7 +377,7 @@ export async function startDemise(
     throw new DemiseError('This member has no account to settle.', 'conflict');
   }
   const claimant = await resolvedClaimant(input.memberId, input.claimant);
-  const method = await checkedMethod(input.method);
+  const method = await methodOrDefault(input.method);
   const reason = checkedReason(input.reason);
   const totals = await claimTotals(input.memberId);
   const bankAccountId = await resolveBankAccount(
@@ -422,14 +441,31 @@ export async function updateDemise(
   principal: Principal
 ): Promise<Demise> {
   const claim = await ownedEditable(id, principal);
-  const claimant = await resolvedClaimant(claim.holderId, edit.claimant);
-  const method = await checkedMethod(edit.method);
-  const methodReference = (edit.methodReference ?? '').trim() || null;
-  const reason = checkedReason(edit.reason);
-  const bankAccountId = await resolveBankAccount(
-    edit.bankAccountId,
-    message => new DemiseError(message)
-  );
+  const claimantKind = edit.claimant?.kind ?? claim.claimantKind;
+  const claimant = edit.claimant
+    ? await resolvedClaimant(claim.holderId, edit.claimant)
+    : claim.claimant;
+  if (!claimant || !claimantKind) {
+    throw new DemiseError('Say who the claimant is.');
+  }
+  // The payout only where one is given (the submit step, for a claim the
+  // matrix pays out at once): what is not given stays as it was.
+  const method = await checkedMethod(edit.method ?? claim.method);
+  const methodReference =
+    edit.methodReference === undefined
+      ? claim.methodReference || null
+      : edit.methodReference.trim() || null;
+  const reason =
+    edit.reason === undefined
+      ? claim.reason || null
+      : checkedReason(edit.reason);
+  const bankAccountId =
+    edit.bankAccountId === undefined
+      ? (claim.bankAccountId ?? null)
+      : await resolveBankAccount(
+          edit.bankAccountId,
+          message => new DemiseError(message)
+        );
   await withTransaction(async client => {
     await client.query(
       `update transaction
@@ -440,7 +476,7 @@ export async function updateDemise(
       [
         claim.id,
         claimant.name,
-        edit.claimant.kind,
+        claimantKind,
         JSON.stringify(claimant),
         method.code,
         methodReference,
@@ -463,7 +499,7 @@ export async function updateDemise(
           reason: claim.reason || null,
         },
         newValue: {
-          claimant_kind: edit.claimant.kind,
+          claimant_kind: claimantKind,
           claimant,
           method: method.code,
           method_reference: methodReference,

@@ -84,13 +84,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
         <span class="value">{formatMoney(closure.amount)}</span>
       </div>
       <div class="row">
-        <span class="label">PAID OUT BY:</span>
-        <span class="value">
-          {closure.methodName}
-          {closure.methodReference && ` · ${closure.methodReference}`}
-        </span>
-      </div>
-      <div class="row">
         <span class="label">REASON:</span>
         <span class="value">{closure.reason}</span>
       </div>

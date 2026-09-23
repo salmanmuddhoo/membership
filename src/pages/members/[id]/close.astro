@@ -1,13 +1,11 @@
 ---
-// Start closing one of a person's accounts (S-1702): which account, why,
-// and how the balance goes back to them. What this makes is a draft; the
-// member signs the request on the next screen and the officer submits it
-// from there.
+// Start closing one of a person's accounts (S-1702): which account and
+// why. What this makes is a draft; the member signs the request on the
+// next screen and the officer submits it from there. The payout is the
+// Treasurer's to record at disbursement, except where the matrix posts
+// the closure at once — then the submit step (closures/[id].astro) asks
+// for it, as submitting is the posting.
 import DashboardLayout from '@layouts/DashboardLayout.astro';
-import {
-  offeredBankAccounts,
-  offeredPaymentMethods,
-} from '@lib/config/reference';
 import { accountBalance } from '@lib/ledger/ledger';
 import {
   ClosureError,
@@ -58,17 +56,12 @@ const closable = await Promise.all(
       balance: (await accountBalance(a.id))?.balance ?? '0.00',
     }))
 );
-const paymentMethods = await offeredPaymentMethods();
-const bankAccounts = await offeredBankAccounts();
 const requestedAccount = Astro.url.searchParams.get('account') ?? '';
 
 let values = {
   accountId:
     closable.find(a => a.id === requestedAccount)?.id ?? closable[0]?.id ?? '',
   reason: '',
-  method: paymentMethods[0]?.code ?? '',
-  methodReference: '',
-  bankAccountId: '',
 };
 let error: string | null = null;
 
@@ -78,9 +71,6 @@ if (Astro.request.method === 'POST') {
   values = {
     accountId: text('accountId'),
     reason: text('reason'),
-    method: text('method'),
-    methodReference: text('methodReference'),
-    bankAccountId: text('bankAccountId'),
   };
   if (!person.accounts.some(a => a.id === values.accountId)) {
     error = 'Choose which account is closing.';
@@ -117,7 +107,7 @@ if (Astro.request.method === 'POST') {
         together: leaving them is a resignation.
       </p>
     ) : (
-      <form method="post" data-closure-form class={FORM_CARD}>
+      <form method="post" class={FORM_CARD}>
         <label class={LABEL}>
           Account
           <select name="accountId" class={INPUT}>
@@ -142,45 +132,6 @@ if (Astro.request.method === 'POST') {
             class={INPUT}
           >{values.reason}</textarea>
         </label>
-        <div class="grid gap-3 sm:grid-cols-2">
-          <label class={LABEL}>
-            Balance paid out by
-            <select name="method" class={INPUT}>
-              {paymentMethods.map(method => (
-                <option
-                  value={method.code}
-                  data-touches-bank={method.touchesBank ? 'true' : 'false'}
-                  selected={method.code === values.method}
-                >
-                  {method.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label class={LABEL}>
-            Reference (cheque number, transfer reference)
-            <input
-              type="text"
-              name="methodReference"
-              value={values.methodReference}
-              class={INPUT}
-            />
-          </label>
-          <label data-bank-account-field class={LABEL}>
-            Bank account
-            <select name="bankAccountId" class={INPUT}>
-              <option value="">Choose…</option>
-              {bankAccounts.map(account => (
-                <option
-                  value={account.id}
-                  selected={account.id === values.bankAccountId}
-                >
-                  {account.name} · {account.bankName}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
         <p class="text-xs text-neutral-500 dark:text-neutral-400">
           The balance is paid out when the closure is approved, as it stands
           then.
@@ -192,24 +143,3 @@ if (Astro.request.method === 'POST') {
     )}
   </div>
 </DashboardLayout>
-
-<script>
-  // A visual nudge only — enforced server-side (ledger/closures.ts)
-  // whether or not this script runs.
-  const form = document.querySelector<HTMLFormElement>('[data-closure-form]');
-  if (form) {
-    const methodSelect =
-      form.querySelector<HTMLSelectElement>('[name="method"]');
-    const bankField = form.querySelector<HTMLElement>(
-      '[data-bank-account-field]'
-    );
-    const recompute = () => {
-      const selected = methodSelect?.selectedOptions[0];
-      if (bankField) {
-        bankField.hidden = selected?.dataset.touchesBank !== 'true';
-      }
-    };
-    methodSelect?.addEventListener('change', recompute);
-    recompute();
-  }
-</script>
