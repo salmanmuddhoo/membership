@@ -77,9 +77,9 @@ const CELL = 'px-2 py-2';
             >
               {dateFormat.format(t.createdAt)}
             </td>
-            <td class={CELL} data-sort-value={t.reference}>
+            <td class={CELL} data-sort-value={t.displayReference}>
               <a href={`/transactions/${t.id}`} class="font-medium underline">
-                <code class="text-xs">{t.reference}</code>
+                <code class="text-xs">{t.displayReference}</code>
               </a>
               {t.receiptNo && (
                 <a

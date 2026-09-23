@@ -10,6 +10,8 @@ import {
   listAuditEvents,
   type AuditEventRow,
 } from '@lib/access/audit';
+import { query } from '@lib/db/pool';
+import { paysOut } from '@lib/ledger/labels';
 import {
   BUTTON,
   CARD,
@@ -51,6 +53,25 @@ const [{ events, total }, actions, entityTypes] = await Promise.all([
   distinctAuditActions(),
   distinctAuditEntityTypes(),
 ]);
+
+// A transfer leg's post is a disbursement only when it went to a payee
+// outside the system (paysOut), and the audit row does not say which —
+// so the payees of the transfer legs on this page are read here, once.
+const transferRefs = events
+  .filter(
+    e =>
+      e.action === 'transaction.posted' &&
+      (e.newValue as Record<string, unknown> | null)?.kind === 'transfer_leg'
+  )
+  .map(e => e.entityId);
+const payeeByRef = new Map<string, string | null>();
+if (transferRefs.length > 0) {
+  const rows = await query<{ reference: string; payee_name: string | null }>(
+    `select reference, payee_name from transaction where reference = any($1)`,
+    [transferRefs]
+  );
+  for (const r of rows.rows) payeeByRef.set(r.reference, r.payee_name);
+}
 
 const totalPages = Math.max(Math.ceil(total / AUDIT_PAGE_LIMIT), 1);
 
@@ -198,7 +219,13 @@ function describeEntry(entry: AuditEventRow): string {
     case 'transaction.resubmitted':
       return `Transaction corrected and resubmitted${by}`;
     case 'transaction.posted':
-      return `Transaction posted${by}`;
+      // Worded as the transaction itself reads (QA-20).
+      return paysOut({
+        kind: String(v.kind ?? ''),
+        payeeName: payeeByRef.get(entry.entityId) ?? null,
+      })
+        ? `Transaction disbursed${by}`
+        : `Transaction posted${by}`;
     default:
       return entry.action.replace(/\./g, ' · ');
   }

@@ -114,6 +114,10 @@ export interface TransactionSummary {
   // side — an account on the system, or a payee with none.
   transferId: string | null;
   transferReference: string | null;
+  // What staff see and quote: a transfer's own TR reference on either leg,
+  // otherwise the transaction's (QA-11). `reference` stays the leg's TX —
+  // the audit trail and the segregation checks are keyed on it.
+  displayReference: string;
   legDirection: 'credit' | 'debit' | null;
   payeeName: string | null;
   counterpartAccountId: string | null;
@@ -290,6 +294,7 @@ export function assembleTransaction(r: TransactionRow): TransactionSummary {
     sourceOfFundFormConfirmed: r.source_of_fund_form_confirmed,
     transferId: r.transfer_id,
     transferReference: r.transfer_reference,
+    displayReference: r.transfer_reference ?? r.reference,
     legDirection: r.leg_direction,
     payeeName: r.payee_name,
     counterpartAccountId: r.counterpart_account_id,
@@ -317,12 +322,16 @@ export async function loadTransaction(
 }
 
 // By its reference (TX-000123), which is what the audit log and a receipt
-// carry (S-1406).
+// carry (S-1406) — or a transfer's (TR-000001), which is what staff see on
+// it and quote (QA-11): that finds its debit leg, where a transfer is
+// reviewed and posted from.
 export async function loadTransactionByReference(
   reference: string
 ): Promise<TransactionSummary | null> {
   const result = await query<TransactionRow>(
-    `${TRANSACTION_SELECT} where t.reference = $1`,
+    `${TRANSACTION_SELECT}
+      where t.reference = $1
+         or (tr.reference = $1 and t.leg_direction = 'debit')`,
     [reference.trim().toUpperCase()]
   );
   const row = result.rows[0];

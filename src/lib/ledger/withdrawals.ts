@@ -20,7 +20,7 @@ import {
   PaymentError,
   requireReference,
 } from '../payments/payments';
-import { fromCents, MoneyError, toCents } from '../payments/money';
+import { formatMoney, fromCents, MoneyError, toCents } from '../payments/money';
 import {
   abandonReceiptNumber,
   allocateReceiptNumber,
@@ -213,9 +213,9 @@ export async function refuseUnlessWithdrawable(
   if (amountCents > availableCents) {
     const pending = toCents(figures.pendingDebits);
     throw new WithdrawalError(
-      `Only ${fromCents(availableCents)} is available on this account` +
+      `Only ${formatMoney(fromCents(availableCents))} is available on this account` +
         (pending > 0
-          ? ` (${fromCents(pending)} is already on its way out).`
+          ? ` (${formatMoney(fromCents(pending))} is already on its way out).`
           : '.')
     );
   }
@@ -223,8 +223,8 @@ export async function refuseUnlessWithdrawable(
   if (availableCents - amountCents < floorCents) {
     throw new WithdrawalError(
       `A ${from.typeName} account must keep at least ` +
-        `${fromCents(floorCents)}; only ` +
-        `${fromCents(Math.max(0, availableCents - floorCents))} can be ${verb}.`
+        `${formatMoney(fromCents(floorCents))}; only ` +
+        `${formatMoney(fromCents(Math.max(0, availableCents - floorCents)))} can be ${verb}.`
     );
   }
   if (
@@ -233,7 +233,7 @@ export async function refuseUnlessWithdrawable(
   ) {
     throw new WithdrawalError(
       `A ${from.typeName} transaction cannot exceed ` +
-        `${fromCents(toCents(from.maximumTransactionAmount))}.`
+        `${formatMoney(fromCents(toCents(from.maximumTransactionAmount)))}.`
     );
   }
 }

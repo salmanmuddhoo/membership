@@ -2,7 +2,7 @@
 // One account's statement (S-1604): a period, the balance it opened and
 // closed at, every entry between, and the totals. Printed through the
 // browser, like a receipt; downloaded as a spreadsheet through the API.
-import DashboardLayout from '@layouts/DashboardLayout.astro';
+import BaseLayout from '@layouts/BaseLayout.astro';
 import { accountStatement } from '@lib/ledger/ledger';
 import { statementPeriod } from '@lib/ledger/statement';
 import { formatMoney } from '@lib/payments/money';
@@ -49,155 +49,154 @@ const day = (value: string) => longDate.format(new Date(`${value}T00:00:00`));
 const excelHref = `/api/v1/accounts/${id}/statement?from=${shown.from}&to=${shown.to}&format=xlsx`;
 ---
 
-<DashboardLayout
-  title={`Statement ${statement.accountNo} · Al Barakah MCSL`}
-  heading={`Statement · ${statement.accountNo}`}
->
-  <div class={PAGE.list}>
-    <form
-      method="get"
-      class={`print:hidden flex flex-wrap items-end gap-3 ${FILTER}`}
-    >
-      <label class={LABEL}>
-        From
-        <input type="date" name="from" value={shown.from} class={INPUT} />
-      </label>
-      <label class={LABEL}>
-        To
-        <input type="date" name="to" value={shown.to} class={INPUT} />
-      </label>
-      <button type="submit" class={BUTTON}>
-        Show
-      </button>
-      <span class="grow"></span>
-      <button type="button" id="print" class={SECONDARY_SM}>
-        Print
-      </button>
-      <a href={excelHref} class={SECONDARY_SM}>
-        Download as Excel
-      </a>
-      <a href={`/accounts/${id}`} class={SECONDARY_SM}>
-        Back
-      </a>
-      {invalidPeriod && (
-        <p class="w-full text-sm text-red-700 dark:text-red-300">
-          Choose two dates, the first no later than the second. Showing the
-          month to date.
-        </p>
-      )}
-    </form>
+<BaseLayout title={`Statement ${statement.accountNo} · Al Barakah MCSL`}>
+  <div class="px-4 py-6 sm:px-6 lg:px-8 print:p-0">
+    <div class={PAGE.list}>
+      <form
+        method="get"
+        class={`print:hidden flex flex-wrap items-end gap-3 ${FILTER}`}
+      >
+        <label class={LABEL}>
+          From
+          <input type="date" name="from" value={shown.from} class={INPUT} />
+        </label>
+        <label class={LABEL}>
+          To
+          <input type="date" name="to" value={shown.to} class={INPUT} />
+        </label>
+        <button type="submit" class={BUTTON}>
+          Show
+        </button>
+        <span class="grow"></span>
+        <button type="button" id="print" class={SECONDARY_SM}>
+          Print
+        </button>
+        <a href={excelHref} class={SECONDARY_SM}>
+          Download as Excel
+        </a>
+        <a href={`/accounts/${id}`} class={SECONDARY_SM}>
+          Back
+        </a>
+        {invalidPeriod && (
+          <p class="w-full text-sm text-red-700 dark:text-red-300">
+            Choose two dates, the first no later than the second. Showing the
+            month to date.
+          </p>
+        )}
+      </form>
 
-    <section class="rounded-2xl border border-neutral-200 bg-white p-6 text-neutral-800 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-100 print:border-0 print:p-0">
-      <header class="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h2 class="text-lg font-semibold">Al Barakah MCSL</h2>
-          <p class="text-sm text-neutral-600 dark:text-neutral-300">
-            Account statement
-          </p>
-        </div>
-        <div class="text-right text-sm">
-          <p class="font-medium">{holder}</p>
-          <p>
-            {statement.accountNo} · {statement.accountTypeName}
-          </p>
-          <p class="text-neutral-600 dark:text-neutral-300">
-            {day(statement.from)} to {day(statement.to)}
-          </p>
-        </div>
-      </header>
+      <section class="rounded-2xl border border-neutral-200 bg-white p-6 text-neutral-800 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-100 print:border-0 print:p-0">
+        <header class="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h2 class="text-lg font-semibold">Al Barakah MCSL</h2>
+            <p class="text-sm text-neutral-600 dark:text-neutral-300">
+              Account statement
+            </p>
+          </div>
+          <div class="text-right text-sm">
+            <p class="font-medium">{holder}</p>
+            <p>
+              {statement.accountNo} · {statement.accountTypeName}
+            </p>
+            <p class="text-neutral-600 dark:text-neutral-300">
+              {day(statement.from)} to {day(statement.to)}
+            </p>
+          </div>
+        </header>
 
-      <div class="mt-6 overflow-x-auto">
-        <table class={TABLE} data-sortable>
-          <thead class={THEAD}>
-            <tr>
-              <th class={TH}>Date</th>
-              <th class={TH}>Reference</th>
-              <th class={TH}>Description</th>
-              <th class={TH}>Receipt</th>
-              <th class={`${TH} text-right`}>Out</th>
-              <th class={`${TH} text-right`}>In</th>
-              <th class={`${TH} text-right`}>Balance</th>
-            </tr>
-            {/* Opening balance is the statement's starting point, not a row
+        <div class="mt-6 overflow-x-auto">
+          <table class={TABLE} data-sortable>
+            <thead class={THEAD}>
+              <tr>
+                <th class={TH}>Date</th>
+                <th class={TH}>Reference</th>
+                <th class={TH}>Description</th>
+                <th class={TH}>Receipt</th>
+                <th class={`${TH} text-right`}>Out</th>
+                <th class={`${TH} text-right`}>In</th>
+                <th class={`${TH} text-right`}>Balance</th>
+              </tr>
+              {/* Opening balance is the statement's starting point, not a row
                 among the entries — kept here, in the thead, so sorting the
                 entries below never carries it out of place; styled as a row,
                 not a heading. */}
-            <tr class="text-sm font-medium text-neutral-800 normal-case dark:text-neutral-100">
-              <td class={`${TD} whitespace-nowrap`}>{day(statement.from)}</td>
-              <td class={TD}></td>
-              <td class={TD}>Opening balance</td>
-              <td class={TD}></td>
-              <td class={TD}></td>
-              <td class={TD}></td>
-              <td class={TD_NUM}>{formatMoney(statement.openingBalance)}</td>
-            </tr>
-          </thead>
-          <tbody class={TBODY}>
-            {statement.lines.map(line => (
-              <tr>
-                <td
-                  class={`${TD} whitespace-nowrap`}
-                  data-sort-value={line.postedAt.toISOString()}
-                >
-                  {dateFormat.format(line.postedAt)}
-                </td>
-                <td class={TD}>
-                  <code class="text-xs">{line.reference}</code>
-                </td>
-                <td class={TD}>
-                  {line.description}
-                  {line.reason && (
-                    <span class="text-xs text-neutral-500 dark:text-neutral-400">
-                      {' · '}
-                      {line.reason}
+              <tr class="text-sm font-medium text-neutral-800 normal-case dark:text-neutral-100">
+                <td class={`${TD} whitespace-nowrap`}>{day(statement.from)}</td>
+                <td class={TD}></td>
+                <td class={TD}>Opening balance</td>
+                <td class={TD}></td>
+                <td class={TD}></td>
+                <td class={TD}></td>
+                <td class={TD_NUM}>{formatMoney(statement.openingBalance)}</td>
+              </tr>
+            </thead>
+            <tbody class={TBODY}>
+              {statement.lines.map(line => (
+                <tr>
+                  <td
+                    class={`${TD} whitespace-nowrap`}
+                    data-sort-value={line.postedAt.toISOString()}
+                  >
+                    {dateFormat.format(line.postedAt)}
+                  </td>
+                  <td class={TD}>
+                    <code class="text-xs">{line.reference}</code>
+                  </td>
+                  <td class={TD}>
+                    {line.description}
+                    {line.reason && (
+                      <span class="text-xs text-neutral-500 dark:text-neutral-400">
+                        {' · '}
+                        {line.reason}
+                      </span>
+                    )}
+                    <span class="block text-xs text-neutral-500 dark:text-neutral-400">
+                      {line.methodName}
+                      {line.methodReference && ` · ${line.methodReference}`}
                     </span>
-                  )}
-                  <span class="block text-xs text-neutral-500 dark:text-neutral-400">
-                    {line.methodName}
-                    {line.methodReference && ` · ${line.methodReference}`}
-                  </span>
-                </td>
-                <td class={TD}>
-                  <code class="text-xs">{line.receiptNo ?? '—'}</code>
-                </td>
-                <td class={TD_NUM} data-sort-value={line.debit}>
-                  {line.debit && formatMoney(line.debit)}
-                </td>
-                <td class={TD_NUM} data-sort-value={line.credit}>
-                  {line.credit && formatMoney(line.credit)}
-                </td>
-                <td class={TD_NUM} data-sort-value={line.balance}>
-                  {formatMoney(line.balance)}
-                </td>
-              </tr>
-            ))}
-            {statement.lines.length === 0 && (
+                  </td>
+                  <td class={TD}>
+                    <code class="text-xs">{line.receiptNo ?? '—'}</code>
+                  </td>
+                  <td class={TD_NUM} data-sort-value={line.debit}>
+                    {line.debit && formatMoney(line.debit)}
+                  </td>
+                  <td class={TD_NUM} data-sort-value={line.credit}>
+                    {line.credit && formatMoney(line.credit)}
+                  </td>
+                  <td class={TD_NUM} data-sort-value={line.balance}>
+                    {formatMoney(line.balance)}
+                  </td>
+                </tr>
+              ))}
+              {statement.lines.length === 0 && (
+                <tr>
+                  <td
+                    colspan="7"
+                    class="px-2 py-3 text-center text-neutral-500 dark:text-neutral-400"
+                  >
+                    Nothing posted in this period.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+            <tfoot class="border-t-2 border-neutral-300 font-medium dark:border-neutral-700">
               <tr>
-                <td
-                  colspan="7"
-                  class="px-2 py-3 text-center text-neutral-500 dark:text-neutral-400"
-                >
-                  Nothing posted in this period.
-                </td>
+                <td class={`${TD} whitespace-nowrap`}>{day(statement.to)}</td>
+                <td class={TD}></td>
+                <td class={TD}>Closing balance</td>
+                <td class={TD}></td>
+                <td class={TD_NUM}>{formatMoney(statement.totalDebits)}</td>
+                <td class={TD_NUM}>{formatMoney(statement.totalCredits)}</td>
+                <td class={TD_NUM}>{formatMoney(statement.closingBalance)}</td>
               </tr>
-            )}
-          </tbody>
-          <tfoot class="border-t-2 border-neutral-300 font-medium dark:border-neutral-700">
-            <tr>
-              <td class={`${TD} whitespace-nowrap`}>{day(statement.to)}</td>
-              <td class={TD}></td>
-              <td class={TD}>Closing balance</td>
-              <td class={TD}></td>
-              <td class={TD_NUM}>{formatMoney(statement.totalDebits)}</td>
-              <td class={TD_NUM}>{formatMoney(statement.totalCredits)}</td>
-              <td class={TD_NUM}>{formatMoney(statement.closingBalance)}</td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-    </section>
+            </tfoot>
+          </table>
+        </div>
+      </section>
+    </div>
   </div>
-</DashboardLayout>
+</BaseLayout>
 
 <script>
   import { wireSortableTables } from '@lib/client/table-sort';

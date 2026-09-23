@@ -135,6 +135,13 @@ interface ExceptionRow {
 // One statement, three findings, so the period is read once and the results
 // cannot disagree with each other.
 //
+// A new member's opening deposits are carried from their fee receipt under
+// that receipt's own number (post_opening_balances, 0066) — one receipt,
+// shown once. They are the receipt, not a second use of its number, so the
+// joins leave them out; before they did, every approved member's fee
+// receipt read as a duplicate and was counted once per account it opened
+// (QA-03).
+//
 // `missing` looks redundant — receipt_number has a unique serial and nothing
 // may delete a row, so a hole in the run is impossible. That is exactly why it
 // is checked: a control that only reports what the schema already guarantees
@@ -147,7 +154,10 @@ const EXCEPTIONS = `
       from receipt_number r
       join app_user u on u.id = r.allocated_by
       left join payment p on p.receipt_number_id = r.id
-      left join transaction t on t.receipt_number_id = r.id
+      left join transaction t
+        on t.receipt_number_id = r.id
+       and t.payment_line_id is null
+       and t.payment_account_line_id is null
      where r.allocated_at >= $1 and r.allocated_at < $2
   ),
   bounds as (
@@ -220,7 +230,10 @@ export async function reconcileReceipts(
                 as total
          from receipt_number r
          left join payment p on p.receipt_number_id = r.id
-         left join transaction t on t.receipt_number_id = r.id
+         left join transaction t
+           on t.receipt_number_id = r.id
+          and t.payment_line_id is null
+          and t.payment_account_line_id is null
          left join account_entry e on e.transaction_id = t.id
         where r.allocated_at >= $1 and r.allocated_at < $2`,
       [from, to]

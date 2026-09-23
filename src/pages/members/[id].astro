@@ -53,6 +53,12 @@ import {
   reactivateMember,
 } from '@lib/members/dormancy';
 import {
+  formatDateOnly,
+  guardianFieldLabel,
+  partyDetailLabel,
+  statusLabel,
+} from '@lib/members/labels';
+import {
   PAGE,
   CARD,
   CARD_TITLE,
@@ -161,6 +167,9 @@ const guardianContactFields = contactFields.filter(
   f => f.subject === 'guardian'
 );
 function fieldDisplay(field: EditableContactField): string {
+  if (field.dataType === 'date') {
+    return field.value ? formatDateOnly(field.value) : field.value;
+  }
   return field.dataType === 'phone' ? forDisplay(field.value) : field.value;
 }
 
@@ -614,7 +623,7 @@ const documentCount = documentGroups.reduce(
               </span>
             )}
             <span class="bg-mint-200 dark:bg-mint-900 rounded px-1.5 py-0.5 text-xs text-neutral-800 dark:text-neutral-100">
-              {status}
+              {statusLabel(status)}
             </span>
             {isMinor && (
               <span class="rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-900 dark:bg-amber-950 dark:text-amber-200">
@@ -643,9 +652,9 @@ const documentCount = documentGroups.reduce(
         </div>
         <p class={`${HINT} mt-1`}>
           {member && `${member.membershipTypeName} · `}joined{' '}
-          {dateFormat.format(joinedAt)}
+          {formatDateOnly(joinedAt)}
           {member?.rejoinedAt &&
-            ` · rejoined ${dateFormat.format(member.rejoinedAt)}`}
+            ` · rejoined ${formatDateOnly(member.rejoinedAt)}`}
           {applicationReference && (
             <>
               {' '}
@@ -681,7 +690,7 @@ const documentCount = documentGroups.reduce(
                 data-subject={field.subject}
                 data-field-key={field.fieldKey}
               >
-                <dt class="min-w-32 text-neutral-500 capitalize dark:text-neutral-400">
+                <dt class="min-w-32 text-neutral-500 dark:text-neutral-400">
                   {field.label}
                 </dt>
                 <dd class="w-full text-neutral-800 dark:text-neutral-100">
@@ -715,7 +724,7 @@ const documentCount = documentGroups.reduce(
                   data-subject={field.subject}
                   data-field-key={field.fieldKey}
                 >
-                  <dt class="min-w-32 text-neutral-500 capitalize dark:text-neutral-400">
+                  <dt class="min-w-32 text-neutral-500 dark:text-neutral-400">
                     {field.label}
                   </dt>
                   <dd class="w-full text-neutral-800 dark:text-neutral-100">
@@ -804,8 +813,8 @@ const documentCount = documentGroups.reduce(
         <dl class="mt-4 grid gap-x-6 gap-y-2 sm:grid-cols-2">
           {guardianContactFields.map(field => (
             <div class="flex gap-2 text-sm">
-              <dt class="min-w-32 text-neutral-500 capitalize dark:text-neutral-400">
-                {field.label}
+              <dt class="min-w-32 text-neutral-500 dark:text-neutral-400">
+                {guardianFieldLabel(field.fieldKey, field.label)}
               </dt>
               <dd class="text-neutral-800 dark:text-neutral-100">
                 {field.fieldKey === 'member_id' && guardianLinkId ? (
@@ -839,7 +848,7 @@ const documentCount = documentGroups.reduce(
               </span>
               <span class="text-neutral-500 capitalize dark:text-neutral-400">
                 {party.isMember
-                  ? party.status
+                  ? statusLabel(party.status)
                   : `application · ${party.status}`}
               </span>
             </li>
@@ -859,7 +868,7 @@ const documentCount = documentGroups.reduce(
                 {group.details.map(d => (
                   <div class="flex gap-2 text-sm">
                     <dt class="min-w-32 text-neutral-500 capitalize dark:text-neutral-400">
-                      {d.label}
+                      {partyDetailLabel(d.key, d.label)}
                     </dt>
                     <dd class="text-neutral-800 dark:text-neutral-100">
                       {d.value}
@@ -903,7 +912,7 @@ const documentCount = documentGroups.reduce(
                 </code>
                 <span class={MUTED}>{account.accountTypeName}</span>
                 <span class="text-xs text-neutral-500 dark:text-neutral-400">
-                  {account.category} · {account.status} ·{' '}
+                  {account.category} · {statusLabel(account.status)} ·{' '}
                   {account.openedViaMigration ? 'migrated' : 'opened'}{' '}
                   {dateFormat.format(account.openedAt)}
                   {account.status === 'closed' &&
@@ -1339,5 +1348,22 @@ const documentCount = documentGroups.reduce(
   if (approvalDialog && openApproval && closeApproval) {
     openApproval.addEventListener('click', () => approvalDialog.showModal());
     closeApproval.addEventListener('click', () => approvalDialog.close());
+  }
+
+  // QA-15: a click on the backdrop closes the Documents, Payments and
+  // approval-comments dialogs too, not only Escape and Close. A click on a
+  // dialog's own content bubbles with a target inside it; one on the
+  // backdrop bubbles with the dialog element itself as the target, which is
+  // how the two are told apart here. The document viewer dialog manages its
+  // own close behaviour (DocumentViewer.astro) and is left alone.
+  for (const id of [
+    'member-documents-dialog',
+    'member-payments-dialog',
+    'approval-comments-dialog',
+  ]) {
+    const dialog = document.getElementById(id) as HTMLDialogElement | null;
+    dialog?.addEventListener('click', e => {
+      if (e.target === dialog) dialog.close();
+    });
   }
 </script>

@@ -1,7 +1,6 @@
 // What a transaction's status is called on screen, by kind (officer
 // direction): money paid out is "disbursed", not "posted" — a withdrawal,
-// a transfer to a payee — and an exit ends as it is: closed, resigned,
-// settled. Money in posts.
+// a transfer to a payee, a closure, a resignation, a claim. Money in posts.
 export const STATUS_LABELS: Record<string, string> = {
   draft: 'Draft',
   submitted: 'Submitted',
@@ -34,16 +33,10 @@ export function transactionStatusLabel(transaction: {
   if (transaction.status !== 'posted') {
     return STATUS_LABELS[transaction.status] ?? transaction.status;
   }
-  switch (transaction.kind) {
-    case 'closure':
-      return 'Closed';
-    case 'resignation':
-      return 'Resigned';
-    case 'demise':
-      return 'Settled';
-    default:
-      return paysOut(transaction) ? 'Disbursed' : 'Posted';
-  }
+  // An exit paid out reads Disbursed like any other money out (QA-10,
+  // business decision) — the member's own status says closed, resigned or
+  // demised.
+  return paysOut(transaction) ? 'Disbursed' : 'Posted';
 }
 
 /** The last step of the chevron, by kind: Posted, or Disbursement. */

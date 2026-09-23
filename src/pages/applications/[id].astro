@@ -22,6 +22,7 @@ import {
   offeredPaymentMethods,
 } from '@lib/config/reference';
 import { createMemberFromApplication } from '@lib/members/create';
+import { APPLICATION_STATUS_LABELS } from '@lib/applications/status-labels';
 import {
   availableActions,
   boardReadiness,
@@ -619,6 +620,11 @@ const signoffs =
   decideAction && decideAction.quorumCount > 1
     ? await signoffsFor(application!.id)
     : [];
+// A President who has already signed off waits for the others; Approve and
+// Reject are not theirs to press a second time (QA-28).
+const signedOffByMe = signoffs.some(
+  s => s.actorEmail.toLowerCase() === principal.email.toLowerCase()
+);
 
 // Most of `blocking` is a field left empty, which the red border and the
 // field's own asterisk already explain — a list repeating "Surname" back at
@@ -632,6 +638,16 @@ const explainedProblems = blocking.filter(b => {
   );
   return (party?.values[b.fieldKey] ?? '').trim() !== '';
 });
+// The shared map plus 'approved': deliberately absent from
+// APPLICATION_STATUS_LABELS itself (see that file) because an approved
+// application never appears in the Applications list a filter built from
+// that map serves — but this page is exactly where an approved application
+// IS shown, and its status pill and history need a word for it too.
+const STATUS_LABELS: Record<string, string> = {
+  ...APPLICATION_STATUS_LABELS,
+  approved: 'Approved',
+};
+
 const DOCUMENT_STATE_LABELS: Record<string, string> = {
   missing: 'Missing',
   uploaded: 'Uploaded',
@@ -932,7 +948,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           {application!.membershipTypeName}
         </span>
         <span class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200">
-          {application!.status}
+          {STATUS_LABELS[application!.status] ?? application!.status}
         </span>
         <span class="text-xs text-neutral-500 dark:text-neutral-400">
           captured by {application!.capturedByName} · updated{' '}
@@ -1646,54 +1662,66 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                   </div>
                 )}
 
-              {reviewMeta && (
-                <>
-                  <label class={LABEL}>
-                    Comment
-                    <textarea
-                      name="comment"
-                      rows="3"
-                      class={INPUT}
-                      placeholder={reviewMeta.commentPlaceholder}
-                    ></textarea>
-                  </label>
-                  <div class="flex flex-wrap gap-2">
-                    <button
-                      type="submit"
-                      name="outcome"
-                      value={reviewMeta.forwardOutcome}
-                      disabled={
-                        (action.stepCode === 'secretary_review' &&
-                          boardReasons.length > 0) ||
-                        rejectedDocuments.length > 0
-                      }
-                      class={BUTTON}
-                    >
-                      {reviewMeta.forwardLabel}
-                    </button>
-                    <button
-                      type="submit"
-                      name="outcome"
-                      value={reviewMeta.returnOutcome}
-                      class={DANGER}
-                    >
-                      {reviewMeta.returnLabel}
-                    </button>
-                  </div>
-                  <input
-                    type="hidden"
-                    name="intent"
-                    value={reviewMeta.intent}
-                  />
-                  {reviewMeta.intent === 'review' && (
+              {action.stepCode === 'president_decision' && signedOffByMe && (
+                <p class={HINT}>
+                  You have signed off. Waiting for{' '}
+                  {action.quorumCount -
+                    signoffs.filter(s => s.outcome === 'approve').length}{' '}
+                  more.
+                </p>
+              )}
+
+              {reviewMeta &&
+                !(
+                  action.stepCode === 'president_decision' && signedOffByMe
+                ) && (
+                  <>
+                    <label class={LABEL}>
+                      Comment
+                      <textarea
+                        name="comment"
+                        rows="3"
+                        class={INPUT}
+                        placeholder={reviewMeta.commentPlaceholder}
+                      ></textarea>
+                    </label>
+                    <div class="flex flex-wrap gap-2">
+                      <button
+                        type="submit"
+                        name="outcome"
+                        value={reviewMeta.forwardOutcome}
+                        disabled={
+                          (action.stepCode === 'secretary_review' &&
+                            boardReasons.length > 0) ||
+                          rejectedDocuments.length > 0
+                        }
+                        class={BUTTON}
+                      >
+                        {reviewMeta.forwardLabel}
+                      </button>
+                      <button
+                        type="submit"
+                        name="outcome"
+                        value={reviewMeta.returnOutcome}
+                        class={DANGER}
+                      >
+                        {reviewMeta.returnLabel}
+                      </button>
+                    </div>
                     <input
                       type="hidden"
-                      name="stepCode"
-                      value={action.stepCode}
+                      name="intent"
+                      value={reviewMeta.intent}
                     />
-                  )}
-                </>
-              )}
+                    {reviewMeta.intent === 'review' && (
+                      <input
+                        type="hidden"
+                        name="stepCode"
+                        value={action.stepCode}
+                      />
+                    )}
+                  </>
+                )}
             </form>
           );
         })}
@@ -1719,7 +1747,10 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             <li class="border-l-2 border-neutral-300 pl-3 text-sm dark:border-neutral-700">
               <div class="flex flex-wrap items-center gap-x-2">
                 <span class="font-medium text-neutral-800 dark:text-neutral-100">
-                  {entry.fromStatus ?? 'created'} → {entry.toStatus}
+                  {entry.fromStatus
+                    ? (STATUS_LABELS[entry.fromStatus] ?? entry.fromStatus)
+                    : 'created'}{' '}
+                  → {STATUS_LABELS[entry.toStatus] ?? entry.toStatus}
                 </span>
                 {entry.actorRole && (
                   <span class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
@@ -1763,6 +1794,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 </DashboardLayout>
 
 <script>
+  import { wireAutosave } from '@lib/client/autosave';
   import {
     compressImageForUpload,
     formatBytes,
@@ -2172,7 +2204,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
   const status = document.getElementById('autosave-status');
 
   if (form && status) {
-    const save = async (): Promise<boolean> => {
+    // Saves on leaving a changed field, on leaving the page, and on Next
+    // (QA-05; see lib/client/autosave.ts). Never while typing.
+    const save = async (leaving: boolean): Promise<boolean> => {
       const body = new FormData(form);
       body.set('intent', 'autosave');
 
@@ -2181,22 +2215,26 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           method: 'POST',
           body,
           headers: { 'x-requested-with': 'autosave' },
+          keepalive: leaving,
         });
         if (!response.ok) throw new Error(String(response.status));
-        status.textContent = `Saved at ${new Date().toLocaleTimeString('en-GB')}`;
+        if (!leaving) {
+          status.textContent = `Saved at ${new Date().toLocaleTimeString('en-GB')}`;
+        }
         return true;
       } catch {
         // Saying "saved" when nothing was saved is the one thing this must
         // never do: the officer would close the tablet trusting it.
-        status.textContent = 'Not saved — check your connection.';
+        if (!leaving) status.textContent = 'Not saved — check your connection.';
         return false;
       }
     };
+    const autosave = wireAutosave({ form, save });
 
     if (captureNextButton) {
       captureNextButton.addEventListener('click', async () => {
         captureNextButton.disabled = true;
-        const saved = await save();
+        const saved = await autosave.flush();
         if (!saved) {
           captureNextButton.disabled = false;
           return;

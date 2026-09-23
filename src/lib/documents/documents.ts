@@ -25,6 +25,7 @@ import {
   deleteItemByPath,
   ensureFolder,
   getItemByPath,
+  reachGraph,
   type GraphConfig,
 } from './graph';
 import {
@@ -1004,8 +1005,23 @@ export async function beginUpload(
       const base = sanitiseFileName(
         `${type.rows[0].name} - ${owner.reference}`
       );
-      const name =
-        (versionNo === 1 ? base : `${base} v${versionNo}`) + extension;
+      // Numbered by the versions actually filed, not by every attempt: an
+      // upload that never finished (SharePoint unreachable, the browser
+      // closed) still takes a version_no, and naming by it put "v2" — or
+      // "v5" — on the first file ever filed (QA-34). Only a filed version's
+      // name is known to be in the drive; one an unfinished attempt was
+      // given holds nothing there, and is free to be given again.
+      const filed = await client.query<{ file_name: string }>(
+        `select file_name from document_version
+          where document_id = $1 and state = 'committed'`,
+        [id]
+      );
+      const taken = new Set(filed.rows.map(r => r.file_name));
+      let shown = filed.rows.length + 1;
+      const nameFor = (n: number) =>
+        (n === 1 ? base : `${base} v${n}`) + extension;
+      while (taken.has(nameFor(shown))) shown += 1;
+      const name = nameFor(shown);
 
       const version = await client.query<{ id: string }>(
         `insert into document_version
@@ -1459,7 +1475,7 @@ export async function getDocumentContent(
     config
   );
 
-  const response = await fetch(url);
+  const response = await reachGraph(url);
   if (!response.ok || !response.body) {
     throw new DocumentError(
       'The file could not be read from SharePoint. Please try again.',

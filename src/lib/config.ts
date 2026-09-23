@@ -1,25 +1,50 @@
 // Central runtime configuration for the Azure-native backend.
 // See docs/adr/0001-azure-native-backend.md.
 //
-// Server-side secrets are read at RUNTIME. On Vercel, non-PUBLIC env vars are
-// available via process.env at request time (not inlined at build); in local
-// dev Astro loads .env into import.meta.env. We check both so it works in both
-// places.
+// Server-side settings are read at RUNTIME, from process.env; in local dev
+// Astro loads .env into import.meta.env, which is read when process.env has
+// nothing (readEnv, below).
 //
 // import.meta.env only EXISTS under Vite — the Astro app and the test runner.
 // The job runner and the CLI scripts run under plain Node, where it is
 // undefined and indexing it throws. So it is probed rather than assumed; every
 // caller outside the web app depends on that.
+//
+// The server's own environment comes first (QA-32). Vite writes whatever
+// .env held on the machine that ran `astro build` into the bundle, so a
+// build made from a working copy with a developer's .env carried its
+// DATABASE_URL and PUBLIC_APP_ENV=test to wherever it ran, and they won
+// over the settings of the server it ran on: a "production" build showed
+// the TEST badge, offered Reset test data, and reset the database named in
+// .env. So a built server reads process.env alone; what the build carried
+// is only for `astro dev`, where .env is how settings arrive at all, and
+// for the browser, which has no process.env and is only ever given PUBLIC_
+// values.
 export function readEnv(key: string): string | undefined {
-  const viteEnv = (
-    import.meta as unknown as { env?: Record<string, string | undefined> }
-  ).env;
-  const viteVal = viteEnv?.[key];
-  if (viteVal !== undefined && viteVal !== '') return viteVal;
-  const proc = (
-    globalThis as { process?: { env?: Record<string, string | undefined> } }
-  ).process;
-  return proc?.env?.[key];
+  return pickEnv(
+    key,
+    (globalThis as { process?: { env?: Record<string, string | undefined> } })
+      .process?.env,
+    (import.meta as unknown as { env?: Record<string, unknown> }).env
+  );
+}
+
+// The rule itself, apart from where the two sources come from — exported
+// for the tests, which cannot hold the two apart otherwise (under Vitest
+// import.meta.env mirrors process.env).
+export function pickEnv(
+  key: string,
+  runtime: Record<string, string | undefined> | undefined,
+  built: Record<string, unknown> | undefined
+): string | undefined {
+  const runtimeVal = runtime?.[key];
+  if (runtimeVal !== undefined && runtimeVal !== '') return runtimeVal;
+  // A built server: nothing the build carried stands in for a setting the
+  // server does not have.
+  if (runtime && built?.PROD) return runtimeVal;
+  const builtVal = built?.[key];
+  if (typeof builtVal === 'string' && builtVal !== '') return builtVal;
+  return runtimeVal;
 }
 
 export interface EntraConfig {

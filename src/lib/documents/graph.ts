@@ -31,7 +31,11 @@ import { readEnv } from '../config';
 export class GraphError extends Error {
   constructor(
     message: string,
-    readonly reason: 'not_configured' | 'auth_failed' | 'request_failed',
+    readonly reason:
+      | 'not_configured'
+      | 'auth_failed'
+      | 'request_failed'
+      | 'unreachable',
     // The HTTP status Graph gave, when there was one.
     readonly status?: number
   ) {
@@ -50,6 +54,9 @@ export function graphFailureMessage(error: GraphError): string {
       'cannot be filed yet. An administrator needs to set the GRAPH_* ' +
       'settings — see docs/documents.md.'
     );
+  }
+  if (error.reason === 'unreachable') {
+    return 'SharePoint could not be reached. Try again in a few minutes.';
   }
   if (error.reason === 'auth_failed') {
     return (
@@ -123,6 +130,27 @@ export function getGraphConfig(): GraphConfig {
   return { ...credentials, driveId };
 }
 
+/**
+ * fetch, for a request to Microsoft. A request that never gets an answer —
+ * the network down, DNS failing, the connection refused — rejects rather
+ * than returning a status, and used to reach the page as an unexplained
+ * internal error ("Something went wrong"), where a refusal already read as
+ * SharePoint's (QA-34). Both now say whose it is.
+ */
+export async function reachGraph(
+  input: string | URL,
+  init?: RequestInit
+): Promise<Response> {
+  try {
+    return await fetch(input, init);
+  } catch (error) {
+    throw new GraphError(
+      `SharePoint could not be reached: ${(error as Error).message}`,
+      'unreachable'
+    );
+  }
+}
+
 interface CachedToken {
   token: string;
   expiresAt: number;
@@ -151,7 +179,7 @@ export async function getAccessToken(
     grant_type: 'client_credentials',
   });
 
-  const response = await fetch(
+  const response = await reachGraph(
     `${config.loginBaseUrl}/${config.tenantId}/oauth2/v2.0/token`,
     {
       method: 'POST',
@@ -216,7 +244,7 @@ export async function getItemByPath(
   config: GraphConfig = getGraphConfig()
 ): Promise<GraphItem | null> {
   const token = await getAccessToken(config);
-  const response = await fetch(
+  const response = await reachGraph(
     `${config.graphBaseUrl}/drives/${config.driveId}/root:/${encodeURI(itemPath)}`,
     { headers: { authorization: `Bearer ${token}` } }
   );
@@ -267,7 +295,7 @@ export async function ensureFolder(
   const token = await getAccessToken(config);
   const parent = parentPath === '' ? 'root' : `root:/${encodeURI(parentPath)}:`;
 
-  const response = await fetch(
+  const response = await reachGraph(
     `${config.graphBaseUrl}/drives/${config.driveId}/${parent}/children`,
     {
       method: 'POST',
@@ -310,7 +338,7 @@ export async function deleteItemByPath(
   config: GraphConfig = getGraphConfig()
 ): Promise<void> {
   const token = await getAccessToken(config);
-  const response = await fetch(
+  const response = await reachGraph(
     `${config.graphBaseUrl}/drives/${config.driveId}/root:/${encodeURI(itemPath)}`,
     { method: 'DELETE', headers: { authorization: `Bearer ${token}` } }
   );

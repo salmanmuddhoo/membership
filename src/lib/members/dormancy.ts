@@ -44,10 +44,18 @@ export class DormancyError extends Error {
 // system (m.created_at). A migrated member's Joined Date is from the old
 // register, which brought no activity with it; one with nothing to carry
 // (0 balances) was otherwise marked dormant the first night.
+//
+// Reactivating counts as activity (QA-21): an active member's
+// status_changed_at is when they last became active — reactivated by an
+// officer, or rejoining — and without it the next nightly run found the
+// same old activity and marked them dormant again the day they were
+// brought back. Only while active: a dormant member's is the day they
+// were marked dormant, which is not activity.
 export const LAST_ACTIVITY_SQL = `
   greatest(
     m.joined_at,
     m.created_at,
+    case when m.status = 'active' then m.status_changed_at end,
     (select max(e.posted_at)
        from account_entry e
        join account a on a.id = e.account_id

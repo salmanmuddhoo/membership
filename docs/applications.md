@@ -32,11 +32,18 @@ client then moves the address bar to `/applications/<id>` with `replaceState`
 rather than navigating: the officer is mid-word, and reloading the page under
 them to show a heading they did not ask for is not worth the interruption.
 
-There is no Save draft button. Saving is automatic — two seconds after typing
-stops, on leaving a field, on a backstop interval, and when the page is hidden.
-That makes the autosave the guarantee rather than a convenience, which is why
-it reports "Not saved" loudly and never reports a save that did not happen. A
-`<noscript>` button is the fallback for a reader with scripting off.
+There is no Save draft button. Saving is automatic: on leaving a field the
+officer changed, when the page is hidden or closed, and on Next — never while
+typing (`src/lib/client/autosave.ts`). S-614 phase 7 had cut it back to Next
+alone, because a save at every pause in typing read as the application being
+slow; the regression run (QA-05) found that an officer interrupted before Next
+then lost everything, so the two moments that cost the officer nothing came
+back. Saves run one after another, never two at once: the first is the one
+that creates the application and moves the address, and a second racing it
+would create another. That makes the autosave the guarantee rather than a
+convenience, which is why it reports "Not saved" loudly and never reports a
+save that did not happen. A `<noscript>` button is the fallback for a reader
+with scripting off.
 
 The rule lives in the service, not on the page: a page that merely declines to
 post is still a page that can post.

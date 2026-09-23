@@ -204,7 +204,9 @@ export async function accountEntries(
          from account_entry e
         where e.account_id = $1
      )
-     select r.id, r.sequence_no, r.transaction_id, t.reference, t.kind,
+     select r.id, r.sequence_no, r.transaction_id,
+            -- A transfer by its TR reference, as staff quote it (QA-11).
+            coalesce(tr.reference, t.reference) as reference, t.kind,
             r.direction, r.amount, t.currency, r.running_balance, r.posted_at,
             t.created_at,
             (t.payment_line_id is not null
@@ -215,7 +217,7 @@ export async function accountEntries(
             coalesce(t.method_reference, '') as method_reference,
             coalesce(t.reason, '') as reason,
             rn.receipt_no,
-            o.reference as reverses_reference,
+            coalesce(otr.reference, o.reference) as reverses_reference,
             u.display_name as captured_by_name,
             coalesce(t.payee_name,
                      coalesce(la.account_no, lm.member_no) || ' · ' || lt.name)
@@ -225,6 +227,8 @@ export async function accountEntries(
        join payment_method pm on pm.code = t.method
        join app_user u on u.id = t.captured_by
        left join transaction o on o.id = t.reverses_id
+       left join transfer tr on tr.id = t.transfer_id
+       left join transfer otr on otr.id = o.transfer_id
        left join receipt_number rn on rn.id = t.receipt_number_id
        left join transaction l
          on l.transfer_id = t.transfer_id and l.id <> t.id
@@ -510,13 +514,14 @@ export async function accountStatement(
          from account_entry e
         where e.account_id = $1
      )
-     select r.sequence_no, r.transaction_id, t.reference, t.kind, r.direction,
+     select r.sequence_no, r.transaction_id,
+            coalesce(tr.reference, t.reference) as reference, t.kind, r.direction,
             r.amount, r.posted_at, r.running_balance,
             (t.payment_line_id is not null
              or t.payment_account_line_id is not null) as carried,
             (o.payment_line_id is not null
              or o.payment_account_line_id is not null) as reverses_carried,
-            o.reference as reverses_reference,
+            coalesce(otr.reference, o.reference) as reverses_reference,
             rn.receipt_no,
             pm.name as method_name,
             coalesce(t.method_reference, '') as method_reference,
@@ -528,6 +533,8 @@ export async function accountStatement(
        join transaction t on t.id = r.transaction_id
        join payment_method pm on pm.code = t.method
        left join transaction o on o.id = t.reverses_id
+       left join transfer tr on tr.id = t.transfer_id
+       left join transfer otr on otr.id = o.transfer_id
        left join receipt_number rn on rn.id = t.receipt_number_id
        left join transaction l
          on l.transfer_id = t.transfer_id and l.id <> t.id

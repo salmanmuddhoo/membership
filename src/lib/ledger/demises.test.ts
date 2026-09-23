@@ -410,7 +410,7 @@ describe('a demised claim (S-1704)', () => {
         'todo',
         'President / Chairperson',
       ],
-      ['posted', 'Settled', 'todo', 'Treasurer'],
+      ['posted', 'Disbursement', 'todo', 'Treasurer'],
     ]);
     await filePaper(draft.id, affidavitTypeId, clerk);
     const checklist = await demises.demiseChecklist(draft.id);

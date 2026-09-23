@@ -307,7 +307,7 @@ describe('a transfer between accounts on the system', () => {
         destination: { kind: 'account', accountId: amina.msa },
       })
     ).rejects.toThrowError(
-      /must keep at least 5000.00; only 5500.00 can be transferred/
+      /must keep at least MUR 5,000.00; only MUR 5,500.00 can be transferred/
     );
     await expect(
       attempt({

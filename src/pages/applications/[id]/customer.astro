@@ -1564,6 +1564,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 </DashboardLayout>
 
 <script>
+  import { wireAutosave } from '@lib/client/autosave';
   import {
     compressImageForUpload,
     formatBytes,
@@ -1907,7 +1908,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
   const status = document.getElementById('autosave-status');
 
   if (form && status) {
-    const save = async (): Promise<boolean> => {
+    // Saves on leaving a changed field, on leaving the page, and on Next
+    // (QA-05; see lib/client/autosave.ts). Never while typing.
+    const save = async (leaving: boolean): Promise<boolean> => {
       const body = new FormData(form);
       body.set('intent', 'autosave');
 
@@ -1916,20 +1919,24 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           method: 'POST',
           body,
           headers: { 'x-requested-with': 'autosave' },
+          keepalive: leaving,
         });
         if (!response.ok) throw new Error(String(response.status));
-        status.textContent = `Saved at ${new Date().toLocaleTimeString('en-GB')}`;
+        if (!leaving) {
+          status.textContent = `Saved at ${new Date().toLocaleTimeString('en-GB')}`;
+        }
         return true;
       } catch {
-        status.textContent = 'Not saved — check your connection.';
+        if (!leaving) status.textContent = 'Not saved — check your connection.';
         return false;
       }
     };
+    const autosave = wireAutosave({ form, save });
 
     if (captureNextButton) {
       captureNextButton.addEventListener('click', async () => {
         captureNextButton.disabled = true;
-        const saved = await save();
+        const saved = await autosave.flush();
         if (!saved) {
           captureNextButton.disabled = false;
           return;

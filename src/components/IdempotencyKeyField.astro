@@ -1,0 +1,55 @@
+---
+// The one-time key a money form posts with, so that posting the same form
+// twice records one transaction, not two (S-1308).
+//
+// A fresh key comes with every render of the form, which is right for a new
+// deposit and wrong for the officer who posts, presses Back, and posts again:
+// the browser renders the form afresh, restores what was typed, and — a
+// hidden field is never restored — the second post carries a new key and
+// records a second deposit (QA-01). So the key a form was posted with is
+// kept for the tab, and a form reached by Back puts it back. Any other way
+// of arriving (a link, "Record another", typing the address) starts clean.
+interface Props {
+  value: string;
+}
+const { value } = Astro.props;
+---
+
+<input type="hidden" name="idempotencyKey" value={value} data-idempotency-key />
+
+<script>
+  const STORE = 'ab:idempotency:';
+
+  function remember(): void {
+    for (const field of document.querySelectorAll<HTMLInputElement>(
+      '[data-idempotency-key]'
+    )) {
+      const form = field.form;
+      if (!form || form.dataset.idempotencyBound) continue;
+      form.dataset.idempotencyBound = 'yes';
+      const slot = STORE + location.pathname;
+      const navigation = performance.getEntriesByType('navigation')[0] as
+        | PerformanceNavigationTiming
+        | undefined;
+      try {
+        const kept = sessionStorage.getItem(slot);
+        if (navigation?.type === 'back_forward' && kept) field.value = kept;
+        else sessionStorage.removeItem(slot);
+      } catch {
+        // No storage (a private window): the server-side key still stops
+        // a double click; only the Back case goes unguarded.
+      }
+      form.addEventListener('submit', () => {
+        try {
+          sessionStorage.setItem(slot, field.value);
+        } catch {
+          // As above.
+        }
+      });
+    }
+  }
+
+  remember();
+  // A page restored whole from the back-forward cache still holds the key
+  // it was posted with; nothing to put back.
+</script>

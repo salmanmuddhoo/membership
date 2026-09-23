@@ -114,7 +114,7 @@ export interface TransactionTimelineInput {
   // being finished. Absent for a transaction recorded in one act.
   prelude?: PlannedStep[];
   // What the first and last steps are called: 'Recorded' and 'Posted' for
-  // money moving, 'Submitted' and 'Closed' for a closure.
+  // money in, 'Disbursement' for money out, 'Submitted' first for an exit.
   submitLabel?: string;
   postedLabel?: string;
   // Who takes the last step — the roles holding the permission it needs
@@ -402,7 +402,7 @@ export function depositPrelude(
 export function closurePrelude(
   checklist: { documentName: string; filed: unknown | null }[],
   kind: string = 'closure'
-): Pick<TransactionTimelineInput, 'prelude' | 'submitLabel' | 'postedLabel'> {
+): Pick<TransactionTimelineInput, 'prelude' | 'submitLabel'> {
   const complete = checklistComplete(
     checklist as Parameters<typeof checklistComplete>[0]
   );
@@ -420,7 +420,6 @@ export function closurePrelude(
     return {
       prelude: [{ key: 'details', label: 'Claimant', done: true }, documents],
       submitLabel: 'Submitted',
-      postedLabel: 'Settled',
     };
   }
   return {
@@ -435,7 +434,8 @@ export function closurePrelude(
       },
       documents,
     ],
+    // Its last step is Disbursement, like any money paid out (QA-10,
+    // business decision): finalStepLabel, not a word of its own.
     submitLabel: 'Submitted',
-    postedLabel: kind === 'resignation' ? 'Resigned' : 'Closed',
   };
 }

@@ -192,10 +192,10 @@ if (Astro.request.method === 'POST') {
 </DashboardLayout>
 
 <script>
-  // S-614: saves once, when the officer clicks Next, rather than continuously
-  // while typing — a network call on every keystroke read as the app being
-  // slow. (Replaces the continuous background saving from S-302, decision
-  // 14.)
+  import { wireAutosave } from '@lib/client/autosave';
+
+  // Saves on leaving a field the officer changed, on leaving the page, and
+  // on Next (QA-05; see lib/client/autosave.ts). Never while typing.
   //
   // Until the first value is entered this posts nothing at all: an empty form
   // must not create an application, and a request that would create nothing is
@@ -221,23 +221,31 @@ if (Astro.request.method === 'POST') {
           key.startsWith('field.') && String(value).trim() !== ''
       );
 
-    const save = async (): Promise<void> => {
+    const save = async (leaving: boolean): Promise<boolean> => {
       const body = new FormData(form);
       body.set('intent', 'autosave');
 
       try {
+        // Once created, the address is /applications/<id> and a save goes
+        // to that page's own autosave, which updates rather than creates.
         const response = await fetch(
           window.location.pathname + window.location.search,
           {
             method: 'POST',
             body,
             headers: { 'x-requested-with': 'autosave' },
+            keepalive: leaving,
           }
         );
         if (!response.ok) throw new Error(String(response.status));
+        if (leaving) return true;
 
         const result = await response.json();
-        if (!result.created) return;
+        if (applicationId) {
+          status.textContent = `Saved at ${new Date().toLocaleTimeString('en-GB')}`;
+          return true;
+        }
+        if (!result.created) return true;
         applicationId = result.id;
 
         // From here on this IS an application. replaceState rather than a
@@ -245,12 +253,16 @@ if (Astro.request.method === 'POST') {
         // moment anyway.
         window.history.replaceState({}, '', `/applications/${result.id}`);
         status.textContent = `${result.reference} saved.`;
+        return true;
       } catch {
         // Saying "saved" when nothing was saved is the one thing this must
         // never do: the officer would close the tablet trusting it.
-        status.textContent = 'Not saved — check your connection.';
+        if (!leaving) status.textContent = 'Not saved — check your connection.';
+        return false;
       }
     };
+
+    const autosave = wireAutosave({ form, save, worthSaving: anythingEntered });
 
     if (nextButton) {
       nextButton.hidden = false;
@@ -262,7 +274,7 @@ if (Astro.request.method === 'POST') {
         }
 
         nextButton.disabled = true;
-        await save();
+        await autosave.flush();
 
         if (applicationId) {
           // A real navigation, not replaceState: the officer asked to move

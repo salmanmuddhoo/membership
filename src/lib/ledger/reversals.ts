@@ -72,6 +72,9 @@ export async function reversalOf(
  * Reverse a posted transaction, with a reason. Both legs of a transfer go
  * together; the receipt is on the reversal of the transaction named.
  */
+/** The kinds that close accounts as they pay out, and so are never reversed. */
+export const EXIT_KINDS = ['closure', 'resignation', 'demise'] as const;
+
 export async function reverseTransaction(
   id: string,
   input: { reason: string },
@@ -90,6 +93,16 @@ export async function reverseTransaction(
   if (original.status !== 'posted') {
     throw new ReversalError(
       `${original.reference} is ${original.status}; only a posted transaction can be reversed.`,
+      'conflict'
+    );
+  }
+  // An exit closed the accounts it paid out of; there is nothing left for
+  // a reversal to put the money back into. Undoing a resignation is a
+  // rejoin, and a closed account comes back by being reopened (M26) — both
+  // through their own approval chain, not this (QA-04).
+  if ((EXIT_KINDS as readonly string[]).includes(original.kind)) {
+    throw new ReversalError(
+      `${original.reference} closed the accounts it paid out of, so it cannot be reversed.`,
       'conflict'
     );
   }
@@ -130,6 +143,21 @@ export async function reverseTransaction(
       const leg = await loadTransaction(row.id);
       if (leg) targets.push(leg);
     }
+  }
+
+  // Said in words before a receipt number is spent: the ledger itself
+  // refuses a closed account too, but names it by its id.
+  const closed = await query<{ account_no: string }>(
+    `select account_no from account
+      where id = any($1::uuid[]) and status = 'closed'
+      order by account_no`,
+    [targets.map(t => t.accountId)]
+  );
+  if (closed.rows.length > 0) {
+    throw new ReversalError(
+      `${original.reference} cannot be reversed: account ${closed.rows.map(r => r.account_no).join(', ')} is closed.`,
+      'conflict'
+    );
   }
 
   const receipt = await allocateReceiptNumber(principal.userId);

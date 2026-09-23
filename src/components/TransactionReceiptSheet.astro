@@ -125,8 +125,14 @@ const backHref = `/transactions/${t.id}`;
   <dl class="facts">
     <div class="row">
       <dt>{moneyIn ? 'Received from' : 'Paid to'}</dt>
-      <dd>{t.payeeName ? t.payeeName : holder}</dd>
+      <dd>{t.payeeName || receipt.depositorName || holder}</dd>
     </div>
+    {receipt.depositorName && (
+      <div class="row">
+        <dt>On behalf of</dt>
+        <dd>{holder}</dd>
+      </div>
+    )}
     <div class="row">
       <dt>Account</dt>
       <dd>{account}</dd>
@@ -146,8 +152,7 @@ const backHref = `/transactions/${t.id}`;
     <div class="row">
       <dt>Transaction</dt>
       <dd>
-        {t.reference}
-        {t.transferReference && ` · ${t.transferReference}`}
+        {t.displayReference}
       </dd>
     </div>
     {t.method !== 'internal_transfer' && (

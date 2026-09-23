@@ -207,7 +207,7 @@ const AUTO_FILLED_GUARDIAN_FIELDS = new Set([
                       >
                         <option value="">—</option>
                         {field.choices.map(choice => (
-                          <option value={choice} selected={choice === value}>
+                          <option value={choice} selected={choice.toLowerCase() === value.toLowerCase()}>
                             {choice}
                           </option>
                         ))}
@@ -284,7 +284,7 @@ const AUTO_FILLED_GUARDIAN_FIELDS = new Set([
                             {field.choices.map(choice => (
                               <option
                                 value={choice}
-                                selected={choice === value}
+                                selected={choice.toLowerCase() === value.toLowerCase()}
                               >
                                 {choice}
                               </option>
@@ -359,6 +359,8 @@ const AUTO_FILLED_GUARDIAN_FIELDS = new Set([
     const STATUS_TEXT: Record<string, string> = {
       active: 'active member',
       draft: 'application in progress',
+      // Sent from the member app, not yet picked up by an officer (QA-27).
+      received: 'application in progress',
       returned: 'application in progress',
       new: 'application submitted',
       submitted_for_review: 'with the Secretary',
