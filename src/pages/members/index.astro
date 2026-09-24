@@ -223,6 +223,10 @@ function accountButtonClasses(account: MemberListAccount): string {
                                 data-account-id={account.id}
                                 data-account-name={account.name}
                                 data-account-no={account.no}
+                                data-account-balance={account.balance}
+                                data-account-balance-label={formatMoney(
+                                  account.balance
+                                )}
                                 class:list={[
                                   'cursor-pointer rounded-md px-2 py-1 text-xs font-semibold whitespace-nowrap',
                                   accountButtonClasses(account),
@@ -277,6 +281,13 @@ function accountButtonClasses(account: MemberListAccount): string {
               data-dialog-no
               class="text-xs text-neutral-500 dark:text-neutral-400"
             />
+            <p class="mt-1 text-sm text-neutral-600 dark:text-neutral-300">
+              Balance{' '}
+              <span
+                data-dialog-balance
+                class="font-bold text-neutral-900 dark:text-neutral-100"
+              />
+            </p>
           </div>
           <button type="button" data-dialog-close class={SECONDARY_XS}>
             Close
@@ -319,12 +330,22 @@ function accountButtonClasses(account: MemberListAccount): string {
   ) as HTMLDialogElement | null;
   const dialogName = dialog?.querySelector<HTMLElement>('[data-dialog-name]');
   const dialogNo = dialog?.querySelector<HTMLElement>('[data-dialog-no]');
+  const dialogBalance = dialog?.querySelector<HTMLElement>(
+    '[data-dialog-balance]'
+  );
   const dialogBody = dialog?.querySelector<HTMLElement>('[data-dialog-body]');
   const dialogClose = dialog?.querySelector<HTMLButtonElement>(
     '[data-dialog-close]'
   );
 
-  if (dialog && dialogName && dialogNo && dialogBody && dialogClose) {
+  if (
+    dialog &&
+    dialogName &&
+    dialogNo &&
+    dialogBalance &&
+    dialogBody &&
+    dialogClose
+  ) {
     dialogClose.addEventListener('click', () => dialog.close());
     // QA-15: a click on the backdrop closes the dialog too, not only Escape
     // and Close. A click landing on the dialog's own content bubbles with a
@@ -355,6 +376,7 @@ function accountButtonClasses(account: MemberListAccount): string {
 
         dialogName.textContent = button.dataset.accountName ?? '';
         dialogNo.textContent = button.dataset.accountNo ?? '';
+        dialogBalance.textContent = button.dataset.accountBalanceLabel ?? '';
         dialogBody.textContent = 'Loading…';
         dialog.showModal();
 

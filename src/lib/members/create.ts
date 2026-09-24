@@ -1150,6 +1150,9 @@ export interface MemberListAccount {
   // customer's each carry their own (S-614) — identifier already differs
   // per row above for the same reason, this is that same value per account.
   no: string;
+  // Officer feedback: the closing balance shown in the account's dialog on
+  // this list, from the same ledger cache total_funds sums above.
+  balance: string;
 }
 
 export interface MemberSummary {
@@ -1269,7 +1272,12 @@ export async function listMembers(
                            -- (S-614) keeps its own HSA0001-style number,
                            -- which this member never had reassigned to
                            -- them (account_owner_shape, migration 0038).
-                           'no', coalesce(acc.account_no, m.member_no)
+                           'no', coalesce(acc.account_no, m.member_no),
+                           'balance', coalesce(
+                             (select b.balance from account_balance b
+                               where b.account_id = acc.id),
+                             0
+                           )::numeric(14,2)::text
                          ) order by act.sort_order, act.name)
                    from account acc
                    join account_type act on act.id = acc.account_type_id
@@ -1323,7 +1331,12 @@ export async function listMembers(
               coalesce(
                 (select json_agg(json_build_object(
                            'id', acc.id, 'code', act.code,
-                           'name', act.name, 'no', acc.account_no
+                           'name', act.name, 'no', acc.account_no,
+                           'balance', coalesce(
+                             (select b.balance from account_balance b
+                               where b.account_id = acc.id),
+                             0
+                           )::numeric(14,2)::text
                          ) order by act.sort_order, act.name)
                    from account acc
                    join account_type act on act.id = acc.account_type_id
