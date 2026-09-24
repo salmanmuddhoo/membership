@@ -39,10 +39,10 @@ export function transactionStatusLabel(transaction: {
   return paysOut(transaction) ? 'Disbursed' : 'Posted';
 }
 
-/** The last step of the chevron, by kind: Posted, or Disbursement. */
-export function finalStepLabel(transaction: {
+/** The last step of the chevron, for every transaction: Disbursement. */
+export function finalStepLabel(_transaction: {
   kind: string;
   payeeName?: string | null;
 }): string {
-  return paysOut(transaction) ? 'Disbursement' : 'Posted';
+  return 'Disbursement';
 }

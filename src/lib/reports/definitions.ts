@@ -914,6 +914,34 @@ const receipts: ReportDefinition = {
   },
 };
 
+// Where a transaction stands, for the Status filter: one choice per role
+// that sits on a transaction chain (an officer looking for a demised claim
+// asks for it "at the Secretary" or "at the President"), plus the states
+// off any chain. Resolved when the page loads, same as any other choice
+// list, so a chain reconfigured in Workflows is reflected without a code
+// change.
+const transactionStatusChoices = async () => {
+  const result = await query<{ code: string; name: string }>(
+    `select distinct r.code, r.name
+       from workflow_step ws
+       join workflow_definition wd on wd.id = ws.definition_id
+       join role r on r.id = ws.role_id
+      where wd.entity_type = 'transaction'
+      order by r.name`
+  );
+  return [
+    ...result.rows.map(r => ({
+      value: `with:${r.code}`,
+      label: `With ${r.name}`,
+    })),
+    { value: 'approved', label: 'To disburse' },
+    { value: 'returned', label: 'Returned' },
+    { value: 'done', label: 'Posted or disbursed' },
+    { value: 'rejected', label: 'Rejected' },
+    { value: 'cancelled', label: 'Cancelled' },
+  ];
+};
+
 // S-1806 · Transactions: everything recorded in a period, by kind, method
 // and officer. A transfer shows once, as its debit leg; a draft is not a
 // transaction yet. The period is the day it was recorded, since a pending
@@ -929,6 +957,12 @@ const transactions: ReportDefinition = {
   filters: [
     ...PERIOD,
     { name: 'kind', label: 'Kind', kind: 'choice', choices: kindChoices },
+    {
+      name: 'status',
+      label: 'Status',
+      kind: 'choice',
+      choices: transactionStatusChoices,
+    },
     {
       name: 'method',
       label: 'Method',
@@ -962,13 +996,23 @@ const transactions: ReportDefinition = {
                                  and t.payee_name is not null))
                    then '' else pm.name end as "Method",
               t.amount::text as "Amount",
-              case when t.status = 'posted'
-                        and (t.kind in
-                               ('withdrawal', 'closure', 'resignation', 'demise')
-                             or (t.kind = 'transfer_leg'
-                                 and t.payee_name is not null))
-                   then 'Disbursed'
-                   when t.status = 'posted' then 'Posted'
+              -- Where it is now, not merely its bare status: on a chain,
+              -- who holds it; approved, that it is waiting to be disbursed;
+              -- posted, Disbursed or Posted as elsewhere on screen.
+              case when t.status in ('submitted', 'under_review')
+                        then coalesce('With ' || r.name,
+                                       initcap(replace(t.status, '_', ' ')))
+                   when t.status = 'approved' then 'To disburse'
+                   when t.status = 'returned' then 'Returned'
+                   when t.status = 'posted'
+                        then case when (t.kind in
+                                          ('withdrawal', 'closure',
+                                           'resignation', 'demise')
+                                        or (t.kind = 'transfer_leg'
+                                            and t.payee_name is not null))
+                                  then 'Disbursed' else 'Posted' end
+                   when t.status = 'rejected' then 'Rejected'
+                   when t.status = 'cancelled' then 'Cancelled'
                    else initcap(replace(t.status, '_', ' ')) end as "Status",
               to_char(t.created_at, 'DD Mon YYYY HH24:MI') as "Recorded",
               u.display_name as "Officer",
@@ -986,6 +1030,10 @@ const transactions: ReportDefinition = {
            on p.application_id = coalesce(m.application_id, c.application_id)
           and p.subject = 'applicant' and p.ordinal = 1
          left join receipt_number rn on rn.id = t.receipt_number_id
+         left join workflow_step ws
+           on ws.definition_id = t.workflow_definition_id
+          and ws.code = t.current_step_code
+         left join role r on r.id = ws.role_id
         where t.status <> 'draft'
           and t.leg_direction is distinct from 'credit'
           and ($1::date is null or t.created_at >= $1::date)
@@ -1003,6 +1051,14 @@ const transactions: ReportDefinition = {
                                  or (t.kind = 'transfer_leg'
                                      and t.payee_name is not null)))))
           and ($5::text is null or u.display_name ilike '%' || $5::text || '%')
+          and ($6::text is null
+               or (t.status in ('submitted', 'under_review')
+                   and $6::text = 'with:' || r.code)
+               or (t.status = 'approved' and $6::text = 'approved')
+               or (t.status = 'returned' and $6::text = 'returned')
+               or (t.status = 'posted' and $6::text = 'done')
+               or (t.status = 'rejected' and $6::text = 'rejected')
+               or (t.status = 'cancelled' and $6::text = 'cancelled'))
         order by t.created_at desc, t.serial_no desc`,
       [
         dateOrNull(filters.from),
@@ -1010,6 +1066,7 @@ const transactions: ReportDefinition = {
         kind,
         textOrNull(filters.method),
         textOrNull(filters.officer),
+        textOrNull(filters.status),
       ]
     );
 

@@ -33,11 +33,16 @@ async function run(url: string, sql: string, params: unknown[] = []) {
 let openPool: typeof import('../db/pool') | null = null;
 
 async function load() {
-  if (openPool) await openPool.closePool();
+  // db/pool's own pool is a module-level singleton, shared with whatever
+  // else in this file last pointed it at a database (the transactions
+  // report's own fixture, below) — closed unconditionally, not only when
+  // this describe's own last-seen reference says one is open, so the next
+  // query always opens fresh against DATABASE_URL as just set.
+  openPool = await import('../db/pool');
+  await openPool.closePool();
   process.env.DATABASE_URL = appUrl;
   process.env.DATABASE_ALLOW_INSECURE = 'true';
   process.env.PUBLIC_APP_ENV = 'test';
-  openPool = await import('../db/pool');
   return { reports: await import('./definitions') };
 }
 
@@ -180,5 +185,142 @@ describe('applications report', () => {
     expect(withSecretary.rows.map(r => r.Applicant)).toEqual(['John Doe']);
     const withRegional = await report.run({ status: 'with:regional_review' });
     expect(withRegional.rows).toEqual([]);
+  });
+});
+
+// A separate database: one withdrawal on its chain, at the Secretary step,
+// is enough to show the Status column reads where it is and the filter
+// finds it by role.
+describe('transactions report', () => {
+  const txDbName = `reports_transactions_test_${Date.now()}`;
+  const txOwnerUrl = `postgresql://postgres@127.0.0.1:5433/${txDbName}`;
+  const txAppUrl = `postgresql://albarakah_app:devpassword@127.0.0.1:5433/${txDbName}`;
+
+  let txPool: typeof import('../db/pool') | null = null;
+  async function loadTx() {
+    // See load()'s own comment: closed unconditionally, since the pool this
+    // reaches may be the applications describe's, not this one's.
+    txPool = await import('../db/pool');
+    await txPool.closePool();
+    process.env.DATABASE_URL = txAppUrl;
+    process.env.DATABASE_ALLOW_INSECURE = 'true';
+    process.env.PUBLIC_APP_ENV = 'test';
+    return { reports: await import('./definitions') };
+  }
+
+  let atSecretaryReference: string;
+
+  beforeAll(async () => {
+    await run(ADMIN_URL, `create database ${txDbName}`);
+    await run(txOwnerUrl, 'revoke all on schema public from public');
+    await run(
+      txOwnerUrl,
+      `grant connect on database ${txDbName} to albarakah_app`
+    );
+    await migrate(txOwnerUrl, MIGRATIONS_DIR);
+
+    const user = await run(
+      txAppUrl,
+      `insert into app_user (entra_subject, email, display_name)
+       values ('test-officer-tx', 'officer-tx@albarakah.mu', 'Officer')
+       returning id`
+    );
+    const txOfficerId = user.rows[0].id;
+
+    const membershipTypeId = (
+      await run(
+        txAppUrl,
+        `select id from membership_type where code = 'individual'`
+      )
+    ).rows[0].id;
+    const msaTypeId = (
+      await run(txAppUrl, `select id from account_type where code = 'msa'`)
+    ).rows[0].id;
+    // The default chain every transaction kind is seeded with (migration
+    // 0070): Secretary review, then President decision.
+    const withdrawalDefinitionId = (
+      await run(
+        txAppUrl,
+        `select id from workflow_definition where code = 'transaction_withdrawal'`
+      )
+    ).rows[0].id;
+
+    const application = await run(
+      txAppUrl,
+      `insert into membership_application (membership_type_id, captured_by, status)
+       values ($1, $2, 'approved') returning id`,
+      [membershipTypeId, txOfficerId]
+    );
+    const member = await run(
+      txAppUrl,
+      `insert into member (application_id, membership_type_id)
+       values ($1, $2) returning id`,
+      [application.rows[0].id, membershipTypeId]
+    );
+    const memberId = member.rows[0].id;
+    const accountId = (
+      await run(
+        txAppUrl,
+        `insert into account (member_id, account_type_id, is_membership_default)
+         values ($1, $2, true) returning id`,
+        [memberId, msaTypeId]
+      )
+    ).rows[0].id;
+
+    const transaction = await run(
+      txAppUrl,
+      `insert into transaction
+         (kind, member_id, account_id, amount, method, status, captured_by,
+          workflow_definition_id, current_step_code)
+       values ('withdrawal', $1, $2, 500, 'cash', 'submitted', $3, $4,
+               'secretary_review')
+       returning reference`,
+      [memberId, accountId, txOfficerId, withdrawalDefinitionId]
+    );
+    atSecretaryReference = transaction.rows[0].reference;
+  }, 60_000);
+
+  afterAll(async () => {
+    if (txPool) await txPool.closePool();
+    await run(ADMIN_URL, `drop database if exists ${txDbName} with (force)`);
+  });
+
+  it('reads Status as where the transaction is now, not its bare workflow status', async () => {
+    const { reports } = await loadTx();
+    const report = reports.reportByCode('transactions')!;
+    const result = await report.run({});
+    const row = result.rows.find(r => r.Reference === atSecretaryReference)!;
+    expect(row.Status).toBe('With Secretary');
+  });
+
+  it('offers a Status choice per role on a transaction chain, and finds one by it', async () => {
+    const { reports } = await loadTx();
+    const report = reports.reportByCode('transactions')!;
+    const statusFilter = report.filters.find(f => f.name === 'status')!;
+    expect(statusFilter.kind).toBe('choice');
+    const choices = await statusFilter.choices!();
+    expect(choices).toContainEqual({
+      value: 'with:secretary',
+      label: 'With Secretary',
+    });
+    expect(choices).toContainEqual({
+      value: 'with:president',
+      label: 'With President / Chairperson',
+    });
+    expect(choices).toContainEqual({ value: 'approved', label: 'To disburse' });
+    expect(choices).toContainEqual({ value: 'returned', label: 'Returned' });
+    expect(choices).toContainEqual({
+      value: 'done',
+      label: 'Posted or disbursed',
+    });
+    expect(choices).toContainEqual({ value: 'rejected', label: 'Rejected' });
+    expect(choices).toContainEqual({ value: 'cancelled', label: 'Cancelled' });
+
+    const atSecretary = await report.run({ status: 'with:secretary' });
+    expect(atSecretary.rows.map(r => r.Reference)).toEqual([
+      atSecretaryReference,
+    ]);
+    const atPresident = await report.run({ status: 'with:president' });
+    expect(atPresident.rows).toEqual([]);
   });
 });

@@ -106,25 +106,29 @@ const STEP_HREF: Record<string, (base: string, id: string) => string> = {
   style="top: var(--app-header-height, 3.75rem)"
   aria-label={label}
 >
-  <ol class="flex flex-wrap items-stretch gap-3 sm:flex-nowrap">
+  {/* A step is never narrower than its longest word, so a label such as
+      "Disbursement" is never split or clipped by the arrow's point. On a
+      phone the steps wrap; from sm up they stay on one line, and a chain
+      too long for the width scrolls sideways rather than squeezing. */}
+  <ol class="flex flex-wrap items-stretch gap-2 sm:flex-nowrap sm:overflow-x-auto">
     {steps.map(step => {
       const href = applicationId
         ? STEP_HREF[step.key]?.(base, applicationId)
         : hrefs?.[step.key];
       const Tag = href ? 'a' : 'div';
       return (
-        <li class="flex min-w-[8rem] flex-1 items-stretch sm:min-w-0">
+        <li class="flex min-w-min flex-1 basis-32 items-stretch sm:basis-0">
           <Tag
             href={href}
             class:list={[
-              'step-arrow flex w-full flex-col justify-center py-2 pr-6 pl-6 text-center transition',
+              'step-arrow flex w-full flex-col justify-center py-2 pr-5 pl-4 text-center transition xl:pr-6 xl:pl-6',
               BOX[step.state],
               href && 'cursor-pointer hover:brightness-95',
             ]}
           >
             <span
               class:list={[
-                'block text-sm leading-tight font-semibold',
+                'block text-[0.8rem] leading-tight font-semibold xl:text-sm',
                 step.problem && PROBLEM_TEXT,
               ]}
             >

@@ -37,8 +37,6 @@ import {
   CARD_OK,
   CHECK_LABEL,
   NOTICE_ERROR,
-  DIALOG,
-  DIALOG_HEADER,
 } from '@lib/ui';
 
 const principal = Astro.locals.principal!;
@@ -516,29 +514,6 @@ const initialCents = /^\d{1,12}(\.\d{1,2})?$/.test(values.amount ?? '')
             </a>
           </div>
         </form>
-
-        <dialog
-          id="transfer-confirm-dialog"
-          class={`${DIALOG} w-[90vw] max-w-md p-0`}
-        >
-          <div class={DIALOG_HEADER}>
-            <p class="text-sm font-semibold text-neutral-800 dark:text-neutral-100">
-              Confirm transfer
-            </p>
-          </div>
-          <div
-            data-confirm-text
-            class="px-5 py-4 text-sm text-neutral-700 dark:text-neutral-200"
-          />
-          <div class="flex justify-end gap-2 border-t border-neutral-200 px-5 py-3 dark:border-neutral-800">
-            <button type="button" data-confirm-cancel class={SECONDARY_SM}>
-              Cancel
-            </button>
-            <button type="button" data-confirm-ok class={BUTTON}>
-              OK
-            </button>
-          </div>
-        </dialog>
       </>
     )}
   </div>
@@ -608,23 +583,12 @@ const initialCents = /^\d{1,12}(\.\d{1,2})?$/.test(values.amount ?? '')
     form.addEventListener('change', recompute);
     recompute();
 
-    // Officer feedback: the submit button records real money moving, so it
-    // asks once, in plain English, before it goes — never window.confirm(),
-    // whose OK/Cancel come from the browser in whatever language the device
-    // is set to. Intercepting the form's own submit event (rather than the
-    // button's click) covers pressing Enter in a field too; native
+    // Officer feedback: a transfer asks once, naming the amount and both
+    // sides, before it goes — through the app's own dialog (ConfirmDialog,
+    // window.appConfirm), never window.confirm(), whose buttons come from
+    // the browser in the device's language. Intercepting the form's submit
+    // (not the button's click) covers Enter in a field too; native
     // validation has already passed by the time this fires.
-    const confirmDialog = document.querySelector<HTMLDialogElement>(
-      '#transfer-confirm-dialog'
-    );
-    const confirmText = confirmDialog?.querySelector<HTMLElement>(
-      '[data-confirm-text]'
-    );
-    const confirmOk =
-      confirmDialog?.querySelector<HTMLButtonElement>('[data-confirm-ok]');
-    const confirmCancel = confirmDialog?.querySelector<HTMLButtonElement>(
-      '[data-confirm-cancel]'
-    );
     const amountInput = form.querySelector<HTMLInputElement>('[name="amount"]');
     const ownSelect = form.querySelector<HTMLSelectElement>(
       '[name="ownAccountId"]'
@@ -637,43 +601,40 @@ const initialCents = /^\d{1,12}(\.\d{1,2})?$/.test(values.amount ?? '')
         maximumFractionDigits: 2,
       })}`;
     // An option's own text is "<no> · <type name> · <balance>…" — the first
-    // two segments are the account's identity, the rest is balance detail
-    // this sentence has no room for.
+    // two segments are the account's identity.
     const accountLabel = (option: HTMLOptionElement | undefined) =>
       option ? option.text.split(' · ').slice(0, 2).join(' · ') : '';
 
-    if (confirmDialog && confirmText && confirmOk && confirmCancel) {
-      let confirmed = false;
-      form.addEventListener('submit', e => {
-        if (confirmed) return;
-        e.preventDefault();
-
-        const destinationKind = form.querySelector<HTMLInputElement>(
-          'input[name="destinationKind"]:checked'
-        )?.value;
-        const destination =
-          destinationKind === 'own'
-            ? accountLabel(ownSelect?.selectedOptions[0])
-            : destinationKind === 'other'
-              ? `${(numberInput?.value ?? '').trim().toUpperCase()} · ${typeSelect?.selectedOptions[0]?.text ?? ''}`
-              : (payeeInput?.value ?? '').trim();
-
-        confirmText.textContent =
+    let confirmed = false;
+    form.addEventListener('submit', e => {
+      if (confirmed) {
+        confirmed = false;
+        return;
+      }
+      e.preventDefault();
+      const submitter =
+        e.submitter instanceof HTMLElement ? e.submitter : undefined;
+      const destinationKind = form.querySelector<HTMLInputElement>(
+        'input[name="destinationKind"]:checked'
+      )?.value;
+      const destination =
+        destinationKind === 'own'
+          ? accountLabel(ownSelect?.selectedOptions[0])
+          : destinationKind === 'other'
+            ? `${(numberInput?.value ?? '').trim().toUpperCase()} · ${typeSelect?.selectedOptions[0]?.text ?? ''}`
+            : (payeeInput?.value ?? '').trim();
+      window
+        .appConfirm(
           `Transfer ${confirmAmount(amountInput?.value ?? '')} from ` +
-          `${accountLabel(sourceSelect?.selectedOptions[0])} to ` +
-          `${destination}?`;
-        confirmDialog.showModal();
-      });
-
-      confirmDialog.addEventListener('click', e => {
-        if (e.target === confirmDialog) confirmDialog.close();
-      });
-      confirmCancel.addEventListener('click', () => confirmDialog.close());
-      confirmOk.addEventListener('click', () => {
-        confirmed = true;
-        confirmDialog.close();
-        form.requestSubmit();
-      });
-    }
+            `${accountLabel(sourceSelect?.selectedOptions[0])} to ` +
+            `${destination}?`,
+          { okLabel: 'OK', danger: false }
+        )
+        .then(ok => {
+          if (!ok) return;
+          confirmed = true;
+          form.requestSubmit(submitter);
+        });
+    });
   }
 </script>

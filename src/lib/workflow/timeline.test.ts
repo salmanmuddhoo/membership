@@ -1,6 +1,6 @@
 // The chevron a transaction shows (S-1405): its chain as configured now,
-// between Recorded and Posted. Pure — what is under test is the mapping from
-// recorded state to what the officer is told.
+// between Recorded and Disbursement. Pure — what is under test is the
+// mapping from recorded state to what the officer is told.
 import { describe, expect, it } from 'vitest';
 import {
   closurePrelude,
@@ -47,13 +47,13 @@ describe('a transaction without a chain', () => {
 });
 
 describe('the preview over a form (the timeline experience)', () => {
-  it('starts at Record, shows every step to come, and ends at Posted', () => {
+  it('starts at Record, shows every step to come, and ends at Disbursement', () => {
     const steps = previewTimeline(CHAIN);
     expect(steps.map(s => [s.key, s.label, s.state])).toEqual([
       ['capture', 'Record', 'current'],
       ['secretary_review', 'Secretary review', 'todo'],
       ['president_decision', 'President decision', 'todo'],
-      ['posted', 'Posted', 'todo'],
+      ['posted', 'Disbursement', 'todo'],
     ]);
     expect(steps[1].detail).toBe('Secretary');
   });
@@ -83,7 +83,7 @@ describe('a transaction on a chain', () => {
       'Recorded',
       'Secretary review',
       'President decision',
-      'Posted',
+      'Disbursement',
     ]);
     expect(current(steps)).toEqual(['secretary_review']);
     expect(steps[1].detail).toBe('Secretary');
@@ -127,7 +127,7 @@ describe('a transaction on a chain', () => {
       passedStepCodes: ['secretary_review', 'president_decision'],
     });
     expect(current(steps)).toEqual(['posted']);
-    expect(steps[3].detail).toBe('Approved, to post');
+    expect(steps[3].detail).toBe('Approved, to disburse');
   });
 
   it('sends a returned transaction back to Recorded, as a problem, keeping the steps it passed', () => {
@@ -208,9 +208,9 @@ describe('a closure request', () => {
     });
     expect(steps.find(s => s.key === 'signature')?.problem).toBe(true);
     expect(steps.find(s => s.key === 'capture')?.label).toBe('Submitted');
-    // The pure prelude names no last step of its own (QA-10); the page
-    // passes finalStepLabel, which says Disbursement for an exit.
-    expect(steps.find(s => s.key === 'posted')?.label).toBe('Posted');
+    // The pure prelude names no last step of its own; transactionTimeline's
+    // own default is Disbursement, same as finalStepLabel's for every kind.
+    expect(steps.find(s => s.key === 'posted')?.label).toBe('Disbursement');
   });
 
   it('has the submission next once the request is signed, and everything done once closed', () => {
