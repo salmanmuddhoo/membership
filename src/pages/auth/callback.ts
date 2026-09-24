@@ -1,12 +1,17 @@
 import type { APIRoute } from 'astro';
 import { completeLogin } from '@lib/auth/providers/entra';
-import { createSessionCookie } from '@lib/auth/session';
+import { createSessionCookie, readSession } from '@lib/auth/session';
+import {
+  ACTION_SIGNED_IN,
+  clientAddress,
+  recordSessionEvent,
+} from '@lib/auth/session-audit';
 
 export const prerender = false;
 
 // Handles the redirect back from Entra: validates state, exchanges the code,
 // verifies the id_token, and issues our own session cookie.
-export const GET: APIRoute = async ({ url, cookies, redirect }) => {
+export const GET: APIRoute = async ({ url, cookies, redirect, request }) => {
   const code = url.searchParams.get('code');
   const state = url.searchParams.get('state');
 
@@ -33,6 +38,16 @@ export const GET: APIRoute = async ({ url, cookies, redirect }) => {
     const user = await completeLogin(code, verifier, nonce);
     const session = await createSessionCookie(user);
     cookies.set(session.name, session.value, session.options);
+    // Who signed in, when — the start of the session the audit log pairs
+    // with its sign-out or idle sign-out.
+    const signedIn = await readSession(session.value);
+    if (signedIn) {
+      await recordSessionEvent(
+        signedIn,
+        ACTION_SIGNED_IN,
+        clientAddress(request.headers)
+      );
+    }
     return redirect('/dashboard');
   } catch (error) {
     console.error('[auth] callback failed:', error);

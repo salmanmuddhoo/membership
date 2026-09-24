@@ -8,8 +8,14 @@ import {
   distinctAuditActions,
   distinctAuditEntityTypes,
   listAuditEvents,
+  listSignIns,
   type AuditEventRow,
+  type SignInRow,
 } from '@lib/access/audit';
+import {
+  describeAuditDetail,
+  type AuditDetail,
+} from '@lib/access/audit-detail';
 import {
   BUTTON,
   CARD,
@@ -19,10 +25,17 @@ import {
   PAGE,
   PANEL,
   SECONDARY_SM,
+  TAB_CURRENT,
+  TABLE,
+  TBODY,
+  TD,
+  TH,
+  THEAD,
   LABEL,
 } from '@lib/ui';
 
 const params = Astro.url.searchParams;
+const view = params.get('view') === 'signins' ? 'signins' : 'activity';
 const actor = params.get('actor')?.trim() || '';
 const action = params.get('action') || '';
 const entityType = params.get('entityType') || '';
@@ -38,19 +51,43 @@ const to = toRaw ? new Date(`${toRaw}T23:59:59.999`) : undefined;
 
 const offset = (page - 1) * AUDIT_PAGE_LIMIT;
 
-const [{ events, total }, actions, entityTypes] = await Promise.all([
-  listAuditEvents({
-    actor: actor || undefined,
-    action: action || undefined,
-    entityType: entityType || undefined,
-    entityId: entityId || undefined,
+let events: AuditEventRow[] = [];
+let actions: string[] = [];
+let entityTypes: string[] = [];
+let details = new Map<string, AuditDetail>();
+let signIns: SignInRow[] = [];
+let total = 0;
+
+if (view === 'activity') {
+  const [{ events: pageEvents, total: pageTotal }, allActions, allTypes] =
+    await Promise.all([
+      listAuditEvents({
+        actor: actor || undefined,
+        action: action || undefined,
+        entityType: entityType || undefined,
+        entityId: entityId || undefined,
+        from,
+        to,
+        offset,
+      }),
+      distinctAuditActions(),
+      distinctAuditEntityTypes(),
+    ]);
+  events = pageEvents;
+  total = pageTotal;
+  actions = allActions;
+  entityTypes = allTypes;
+  details = await describeAuditDetail(events);
+} else {
+  const { sessions, total: sessionTotal } = await listSignIns({
+    person: actor || undefined,
     from,
     to,
     offset,
-  }),
-  distinctAuditActions(),
-  distinctAuditEntityTypes(),
-]);
+  });
+  signIns = sessions;
+  total = sessionTotal;
+}
 
 const totalPages = Math.max(Math.ceil(total / AUDIT_PAGE_LIMIT), 1);
 
@@ -59,13 +96,50 @@ const dateTimeFormat = new Intl.DateTimeFormat('en-GB', {
   timeStyle: 'medium',
 });
 
-// Carries every filter across a page-number link — a next/previous click
-// changes only `page`, not what was being looked for.
+// Carries every filter across a page-number or tab link — a next/previous
+// click, or a switch between "All activity" and "Sign-ins", changes only
+// what it says it changes, not what was being looked for.
 const pageHref = (target: number) => {
   const next = new URLSearchParams(params);
   next.set('page', String(target));
   return `/admin/audit-log?${next.toString()}`;
 };
+
+const tabHref = (target: 'activity' | 'signins') => {
+  const next = new URLSearchParams();
+  if (actor) next.set('actor', actor);
+  if (fromRaw) next.set('from', fromRaw);
+  if (toRaw) next.set('to', toRaw);
+  if (target === 'signins') next.set('view', 'signins');
+  return `/admin/audit-log?${next.toString()}`;
+};
+
+const EIGHT_HOURS_MS = 8 * 60 * 60 * 1000;
+function endedLabel(row: SignInRow): string {
+  if (row.endedAt) return dateTimeFormat.format(row.endedAt);
+  if (
+    row.signedInAt &&
+    Date.now() - row.signedInAt.getTime() < EIGHT_HOURS_MS
+  ) {
+    return 'Still signed in';
+  }
+  return '—';
+}
+function howEndedLabel(row: SignInRow): string {
+  if (row.endedBy === 'signed_out') return 'Signed out';
+  if (row.endedBy === 'timed_out') return 'After inactivity';
+  return '—';
+}
+function durationLabel(row: SignInRow): string {
+  if (!row.signedInAt || !row.endedAt) return '—';
+  const totalMinutes = Math.max(
+    Math.round((row.endedAt.getTime() - row.signedInAt.getTime()) / 60000),
+    0
+  );
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return hours > 0 ? `${hours} h ${minutes} min` : `${minutes} min`;
+}
 
 function describeEntry(entry: AuditEventRow): string {
   const v = (entry.newValue as Record<string, unknown>) ?? {};
@@ -201,19 +275,47 @@ function describeEntry(entry: AuditEventRow): string {
       // Every finished transaction reads Disbursed, same as elsewhere on
       // screen (business decision).
       return `Transaction disbursed${by}`;
+    case 'auth.signed_in':
+      return `Signed in${by}`;
+    case 'auth.signed_out':
+      return `Signed out${by}`;
+    case 'auth.timed_out':
+      return `Signed out after inactivity${by}`;
     default:
-      return entry.action.replace(/\./g, ' · ');
+      return entry.action.startsWith('config.')
+        ? `Configuration changed${by}`
+        : entry.action.replace(/\./g, ' · ');
   }
 }
 ---
 
 <DashboardLayout title="Audit log · Al Barakah MCSL" heading="Audit log">
   <div class={PAGE.wide}>
+    <nav class="flex gap-2" aria-label="Audit log views">
+      <a
+        href={tabHref('activity')}
+        aria-current={view === 'activity' ? 'page' : undefined}
+        class={view === 'activity' ? TAB_CURRENT : SECONDARY_SM}
+      >
+        All activity
+      </a>
+      <a
+        href={tabHref('signins')}
+        aria-current={view === 'signins' ? 'page' : undefined}
+        class={view === 'signins' ? TAB_CURRENT : SECONDARY_SM}
+      >
+        Sign-ins
+      </a>
+    </nav>
+
     <section class={CARD}>
       <h2 class={CARD_TITLE}>Filter</h2>
       <form method="get" class="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {view === 'signins' && (
+          <input type="hidden" name="view" value="signins" />
+        )}
         <label class={LABEL}>
-          Actor
+          {view === 'signins' ? 'Person' : 'Actor'}
           <input
             type="text"
             name="actor"
@@ -222,38 +324,42 @@ function describeEntry(entry: AuditEventRow): string {
             class={INPUT}
           />
         </label>
-        <label class={LABEL}>
-          Action
-          <select name="action" class={INPUT}>
-            <option value="">All actions</option>
-            {actions.map(a => (
-              <option value={a} selected={a === action}>
-                {a}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label class={LABEL}>
-          Record type
-          <select name="entityType" class={INPUT}>
-            <option value="">All record types</option>
-            {entityTypes.map(t => (
-              <option value={t} selected={t === entityType}>
-                {t}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label class={LABEL}>
-          Record ID
-          <input
-            type="text"
-            name="entityId"
-            value={entityId}
-            placeholder="Exact ID"
-            class={INPUT}
-          />
-        </label>
+        {view === 'activity' && (
+          <>
+            <label class={LABEL}>
+              Action
+              <select name="action" class={INPUT}>
+                <option value="">All actions</option>
+                {actions.map(a => (
+                  <option value={a} selected={a === action}>
+                    {a}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label class={LABEL}>
+              Record type
+              <select name="entityType" class={INPUT}>
+                <option value="">All record types</option>
+                {entityTypes.map(t => (
+                  <option value={t} selected={t === entityType}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label class={LABEL}>
+              Record ID
+              <input
+                type="text"
+                name="entityId"
+                value={entityId}
+                placeholder="Exact ID"
+                class={INPUT}
+              />
+            </label>
+          </>
+        )}
         <label class={LABEL}>
           From
           <input type="date" name="from" value={fromRaw} class={INPUT} />
@@ -266,9 +372,16 @@ function describeEntry(entry: AuditEventRow): string {
           <button type="submit" class={BUTTON}>
             Filter
           </button>
-          {(actor || action || entityType || entityId || fromRaw || toRaw) && (
+          {(actor ||
+            (view === 'activity' && (action || entityType || entityId)) ||
+            fromRaw ||
+            toRaw) && (
             <a
-              href="/admin/audit-log"
+              href={
+                view === 'signins'
+                  ? '/admin/audit-log?view=signins'
+                  : '/admin/audit-log'
+              }
               class="text-sm text-neutral-500 underline dark:text-neutral-400"
             >
               Clear
@@ -278,52 +391,185 @@ function describeEntry(entry: AuditEventRow): string {
       </form>
     </section>
 
-    <section class={CARD}>
-      <div class="flex flex-wrap items-center justify-between gap-2">
-        <h2 class={CARD_TITLE}>
-          {total} entr{total === 1 ? 'y' : 'ies'}
-        </h2>
-        {totalPages > 1 && (
-          <p class={HINT}>
-            Page {page} of {totalPages}
-          </p>
-        )}
-      </div>
-
-      {events.length === 0 ? (
-        <p class={`${HINT} mt-4`}>Nothing matches those filters.</p>
-      ) : (
-        <ul class="mt-4 space-y-2">
-          {events.map(entry => (
-            <li class={PANEL}>
-              <p class="text-sm font-medium text-neutral-800 dark:text-neutral-100">
-                {describeEntry(entry)}
-              </p>
-              <p class="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
-                {dateTimeFormat.format(entry.occurredAt)}
-                {entry.ipAddress && ` · ${entry.ipAddress}`}
-              </p>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      {totalPages > 1 && (
-        <div class="mt-4 flex items-center justify-between gap-2 text-sm">
-          {page > 1 ? (
-            <a href={pageHref(page - 1)} class={SECONDARY_SM}>
-              ← Newer
-            </a>
-          ) : (
-            <span />
-          )}
-          {page < totalPages && (
-            <a href={pageHref(page + 1)} class={SECONDARY_SM}>
-              Older →
-            </a>
+    {view === 'activity' ? (
+      <section class={CARD}>
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <h2 class={CARD_TITLE}>
+            {total} entr{total === 1 ? 'y' : 'ies'}
+          </h2>
+          {totalPages > 1 && (
+            <p class={HINT}>
+              Page {page} of {totalPages}
+            </p>
           )}
         </div>
-      )}
-    </section>
+
+        {events.length === 0 ? (
+          <p class={`${HINT} mt-4`}>Nothing matches those filters.</p>
+        ) : (
+          <ul class="mt-4 space-y-2">
+            {events.map(entry => {
+              const detail = details.get(entry.id);
+              const panelId = `audit-detail-${entry.id}`;
+              return (
+                <li class={PANEL}>
+                  <button
+                    type="button"
+                    class="group flex w-full items-start justify-between gap-3 text-left"
+                    aria-expanded="false"
+                    aria-controls={panelId}
+                    data-audit-toggle
+                  >
+                    <span class="min-w-0">
+                      <span class="block text-sm font-medium text-neutral-800 dark:text-neutral-100">
+                        {describeEntry(entry)}
+                      </span>
+                      <span class="mt-1 block text-xs text-neutral-500 dark:text-neutral-400">
+                        {dateTimeFormat.format(entry.occurredAt)}
+                        {entry.ipAddress && ` · ${entry.ipAddress}`}
+                      </span>
+                    </span>
+                    <svg
+                      class="mt-0.5 h-4 w-4 shrink-0 text-neutral-400 transition-transform group-aria-expanded:rotate-90"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                      aria-hidden="true"
+                    >
+                      <path
+                        fill-rule="evenodd"
+                        d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z"
+                        clip-rule="evenodd"
+                      />
+                    </svg>
+                  </button>
+                  <div
+                    id={panelId}
+                    hidden
+                    data-audit-detail
+                    class="mt-3 border-t border-neutral-200 pt-3 dark:border-neutral-800"
+                  >
+                    {detail ? (
+                      <>
+                        <p class="text-sm text-neutral-700 dark:text-neutral-200">
+                          {detail.sentence}
+                        </p>
+                        {detail.facts.length > 0 && (
+                          <dl class="mt-2 grid gap-x-6 gap-y-1 text-xs sm:grid-cols-2">
+                            {detail.facts.map(fact => (
+                              <div class="flex gap-2">
+                                <dt class="shrink-0 text-neutral-500 dark:text-neutral-400">
+                                  {fact.label}:
+                                </dt>
+                                <dd class="text-neutral-700 dark:text-neutral-200">
+                                  {fact.value}
+                                </dd>
+                              </div>
+                            ))}
+                          </dl>
+                        )}
+                      </>
+                    ) : (
+                      <p class={HINT}>No further detail.</p>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+    ) : (
+      <section class={CARD}>
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <h2 class={CARD_TITLE}>
+            {total} session{total === 1 ? '' : 's'}
+          </h2>
+          {totalPages > 1 && (
+            <p class={HINT}>
+              Page {page} of {totalPages}
+            </p>
+          )}
+        </div>
+
+        {signIns.length === 0 ? (
+          <p class={`${HINT} mt-4`}>Nothing matches those filters.</p>
+        ) : (
+          <div class="mt-4 overflow-x-auto">
+            <table class={TABLE}>
+              <thead>
+                <tr class={THEAD}>
+                  <th class={TH}>Person</th>
+                  <th class={TH}>Signed in</th>
+                  <th class={TH}>Signed out</th>
+                  <th class={TH}>How it ended</th>
+                  <th class={TH}>Duration</th>
+                  <th class={TH}>IP address</th>
+                </tr>
+              </thead>
+              <tbody class={TBODY}>
+                {signIns.map(row => (
+                  <tr>
+                    <td class={`${TD} text-neutral-700 dark:text-neutral-200`}>
+                      {row.person}
+                    </td>
+                    <td class={`${TD} text-neutral-600 dark:text-neutral-300`}>
+                      {row.signedInAt
+                        ? dateTimeFormat.format(row.signedInAt)
+                        : '—'}
+                    </td>
+                    <td class={`${TD} text-neutral-600 dark:text-neutral-300`}>
+                      {endedLabel(row)}
+                    </td>
+                    <td class={`${TD} text-neutral-600 dark:text-neutral-300`}>
+                      {howEndedLabel(row)}
+                    </td>
+                    <td class={`${TD} text-neutral-600 dark:text-neutral-300`}>
+                      {durationLabel(row)}
+                    </td>
+                    <td class={`${TD} text-neutral-600 dark:text-neutral-300`}>
+                      {row.ipAddress ?? '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    )}
+
+    {totalPages > 1 && (
+      <div class="flex items-center justify-between gap-2 text-sm">
+        {page > 1 ? (
+          <a href={pageHref(page - 1)} class={SECONDARY_SM}>
+            ← Newer
+          </a>
+        ) : (
+          <span />
+        )}
+        {page < totalPages && (
+          <a href={pageHref(page + 1)} class={SECONDARY_SM}>
+            Older →
+          </a>
+        )}
+      </div>
+    )}
   </div>
 </DashboardLayout>
+
+<script>
+  // Several detail rows may be open at once; each toggle only ever affects
+  // its own panel, found by the id it names (S-... officer request: click an
+  // entry to see its detail below it).
+  document.addEventListener('click', event => {
+    const target = event.target as HTMLElement | null;
+    const button = target?.closest<HTMLButtonElement>('[data-audit-toggle]');
+    if (!button) return;
+    const panelId = button.getAttribute('aria-controls');
+    const panel = panelId ? document.getElementById(panelId) : null;
+    if (!panel) return;
+    const expanded = button.getAttribute('aria-expanded') === 'true';
+    button.setAttribute('aria-expanded', String(!expanded));
+    panel.hidden = expanded;
+  });
+</script>

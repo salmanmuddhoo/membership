@@ -2,7 +2,7 @@
 // Sub-navigation shared by the reference-configuration pages. Kept in one
 // place so a new section appears in every page's nav at once rather than in
 // whichever ones were remembered.
-import { SECONDARY_SM } from '@lib/ui';
+import { SECONDARY_SM, TAB_CURRENT } from '@lib/ui';
 
 export const CONFIG_SECTIONS = [
   {
@@ -81,11 +81,7 @@ const sections = seesAll ? CONFIG_SECTIONS : [];
     <a
       href={section.href}
       aria-current={current === section.href ? 'page' : undefined}
-      class:list={[
-        current === section.href
-          ? 'rounded-lg px-3 py-1.5 text-sm font-medium text-neutral-800 bg-mint-300 transition'
-          : SECONDARY_SM,
-      ]}
+      class:list={[current === section.href ? TAB_CURRENT : SECONDARY_SM]}
     >
       {section.label}
     </a>

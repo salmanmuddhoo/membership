@@ -6,6 +6,9 @@ import { resolvePrincipal, type Principal } from '@lib/access/principal';
 import { apiError, correlationIdFrom } from '@lib/api/envelope';
 import { pendingActionCount } from '@lib/applications/workflow';
 import { pendingTransactionCount } from '@lib/ledger/review';
+import { createSessionCookie, SESSION_COOKIE } from '@lib/auth/session';
+import { ACTION_TIMED_OUT, recordSessionEvent } from '@lib/auth/session-audit';
+import { sessionIdleMinutes } from '@lib/config/reference';
 
 const LOGIN_PATH = '/login';
 const HOME_PATH = '/dashboard';
@@ -131,6 +134,38 @@ const guard = defineMiddleware(async (context, next) => {
 
   if (!user) {
     return refuse('unauthenticated', LOGIN_PATH);
+  }
+
+  // Sign-out after inactivity (session.idle_minutes; 0 turns it off). A
+  // session whose last request is older than that is over: recorded, its
+  // cookie cleared, and the person sent to sign in again. The page's own
+  // timer (DashboardLayout) usually gets there first; this is what holds
+  // when the tab was closed, asleep or had its script stopped. Otherwise
+  // each request renews the session's last-seen time — at most once a
+  // minute, so a page's burst of requests does not reissue the cookie each.
+  let idleMinutes = 15;
+  try {
+    idleMinutes = await sessionIdleMinutes();
+  } catch (error) {
+    console.error('[auth] could not read session.idle_minutes:', error);
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const lastSeen = user.lastSeen ?? now;
+  if (idleMinutes > 0 && now - lastSeen > idleMinutes * 60) {
+    await recordSessionEvent(
+      user,
+      ACTION_TIMED_OUT,
+      clientAddress(context.request.headers)
+    );
+    context.cookies.delete(SESSION_COOKIE, { path: '/' });
+    return refuse('unauthenticated', `${LOGIN_PATH}?reason=idle`);
+  }
+  if (now - lastSeen >= 60) {
+    const renewed = await createSessionCookie(user, {
+      sessionId: user.sessionId ?? crypto.randomUUID(),
+      signedInAt: user.signedInAt ?? now,
+    });
+    context.cookies.set(renewed.name, renewed.value, renewed.options);
   }
 
   // The session is valid, but a valid session is not an account: the person

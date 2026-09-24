@@ -46,8 +46,13 @@ export const NAV_DESCRIPTIONS: Record<string, string> = {
   '/reports':
     'Membership, finance and operations, on screen or as a spreadsheet.',
   '/admin/notifications': 'What was sent to members, and whether it arrived.',
-  '/admin/api': 'The API reference, with a request to try.',
-  '/admin/api-credentials': 'Credentials for systems that call the API.',
+  // One item, "API", can land on either page depending on which permission
+  // the person holds — keyed by both so the dashboard card finds its text
+  // either way (it looks up NAV_DESCRIPTIONS by the item's own href).
+  '/admin/api':
+    'The API reference, and the credentials of the systems that call it.',
+  '/admin/api-credentials':
+    'The API reference, and the credentials of the systems that call it.',
 };
 
 export function navigationFor(input: {
@@ -115,7 +120,7 @@ export function navigationFor(input: {
           ? [
               {
                 label: 'Bank accounts',
-                href: '/reports/bank-accounts?all=1',
+                href: '/reports/bank-accounts',
                 icon: 'bank',
               },
             ]
@@ -190,15 +195,18 @@ export function navigationFor(input: {
               },
             ]
           : []),
-        ...(can('api.explore')
-          ? [{ label: 'API', href: '/admin/api', icon: 'api' }]
-          : []),
-        ...(can('api_credential.manage')
+        // One door, whichever half of it the person holds: the reference
+        // for someone who explores it, credentials for someone who only
+        // issues them (officer feedback: two menu items for what reads as
+        // one thing, "the API").
+        ...(can('api.explore') || can('api_credential.manage')
           ? [
               {
-                label: 'API credentials',
-                href: '/admin/api-credentials',
-                icon: 'key',
+                label: 'API',
+                href: can('api.explore')
+                  ? '/admin/api'
+                  : '/admin/api-credentials',
+                icon: 'api',
               },
             ]
           : []),
@@ -208,6 +216,16 @@ export function navigationFor(input: {
     // does not sit above an empty space.
   ].filter(group => group.items.length > 0);
 }
+
+// The API item's href is whichever of the two API pages the person's
+// permission sends them to, but the item itself lights up on both — they
+// read as one destination ("API") on the menu, and a plain prefix match
+// does not connect them: '/admin/api-credentials' does not start with
+// '/admin/api/'.
+const API_PATHS: ReadonlySet<string> = new Set([
+  '/admin/api',
+  '/admin/api-credentials',
+]);
 
 // Which item lights up for the page the person is on. Matches on the
 // pathname alone, so an href carrying a query string (e.g.
@@ -224,7 +242,9 @@ export function activeNavHref(
     for (const item of group.items) {
       const itemPath = item.href.split('?')[0];
       const matches =
-        pathname === itemPath || pathname.startsWith(`${itemPath}/`);
+        pathname === itemPath ||
+        pathname.startsWith(`${itemPath}/`) ||
+        (API_PATHS.has(itemPath) && API_PATHS.has(pathname));
       if (matches && itemPath.length > bestLength) {
         best = item.href;
         bestLength = itemPath.length;

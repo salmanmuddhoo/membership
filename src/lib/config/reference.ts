@@ -2233,6 +2233,55 @@ export async function setEnabledMemberOperations(
 }
 
 // ---------------------------------------------------------------------------
+// Sign-out after inactivity (officer request)
+// ---------------------------------------------------------------------------
+// Seeded by migration 0100; the default here is read only before it has run.
+// Read by the middleware on every request and by the page's own idle timer.
+const SESSION_IDLE_MINUTES_KEY = 'session.idle_minutes';
+const DEFAULT_SESSION_IDLE_MINUTES = 15;
+
+async function readSessionIdleMinutes(): Promise<number> {
+  const result = await query<{ value: unknown }>(
+    `select value from config_entry where key = $1`,
+    [SESSION_IDLE_MINUTES_KEY]
+  );
+  const value = Number(result.rows[0]?.value);
+  return Number.isInteger(value) && value >= 0
+    ? value
+    : DEFAULT_SESSION_IDLE_MINUTES;
+}
+
+export function sessionIdleMinutes(): Promise<number> {
+  return cached('session-idle-minutes', readSessionIdleMinutes);
+}
+
+export async function setSessionIdleMinutes(
+  minutes: string,
+  actor: Actor
+): Promise<void> {
+  const trimmed = minutes.trim();
+  if (!/^\d{1,3}$/.test(trimmed) || Number(trimmed) > 480) {
+    throw new ConfigError(
+      `${minutes || 'That'} is not a whole number of minutes (0 to 480).`
+    );
+  }
+  await withConfigurationActor(actorFor(actor), async client => {
+    await client.query(
+      `insert into config_entry (key, value, value_type, description, updated_by)
+       values (
+         $1, to_jsonb($2::int), 'number',
+         'A staff session with no activity for this many minutes is signed ' ||
+         'out. 0 turns the idle sign-out off.',
+         $3
+       )
+       on conflict (key) do update
+         set value = excluded.value, updated_by = excluded.updated_by`,
+      [SESSION_IDLE_MINUTES_KEY, Number(trimmed), actor.userId]
+    );
+  });
+}
+
+// ---------------------------------------------------------------------------
 // S-804, S-805 · Dormancy: after how long, and how a member comes back
 // ---------------------------------------------------------------------------
 // Seeded by migration 0086; the defaults here are read only before it has

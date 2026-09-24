@@ -7,6 +7,12 @@ export interface AuthUser {
   email: string | null;
   name: string | null;
   roles: string[];
+  // The sign-in this request belongs to, and when it last did anything
+  // (seconds since the epoch) — what the idle sign-out measures. Absent on a
+  // token minted without them, which then reads as active since it was issued.
+  sessionId?: string;
+  lastSeen?: number;
+  signedInAt?: number;
 }
 
 // Server-side auth surface used by middleware and pages.
