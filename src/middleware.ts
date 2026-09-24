@@ -2,6 +2,7 @@ import { defineMiddleware, sequence } from 'astro:middleware';
 import { createServerAuth } from '@lib/auth/server';
 import { recordAuditQuietly } from '@lib/access/audit';
 import { authorise } from '@lib/access/authorise';
+import { isInvalidReference } from '@lib/db/pool';
 import { resolvePrincipal, type Principal } from '@lib/access/principal';
 import { apiError, correlationIdFrom } from '@lib/api/envelope';
 import { pendingActionCount } from '@lib/applications/workflow';
@@ -252,7 +253,16 @@ const guard = defineMiddleware(async (context, next) => {
     });
   }
 
-  const response = await next();
+  // An id in the URL that is not one at all (/members/abc) fails in the
+  // database as a malformed reference: that page does not exist, so it is
+  // answered as not found rather than as a database outage.
+  let response: Response;
+  try {
+    response = await next();
+  } catch (error) {
+    if (!isInvalidReference(error)) throw error;
+    response = new Response('Not found', { status: 404 });
+  }
 
   // Swap a bare "Not found" for the app's own not-found page, still at 404,
   // so the officer keeps the sidebar and a way back instead of monospace

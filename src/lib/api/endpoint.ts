@@ -11,6 +11,7 @@
 import type { APIContext } from 'astro';
 import { recordAuditQuietly } from '../access/audit';
 import { hasPermission, type Principal } from '../access/principal';
+import { isInvalidReference } from '../db/pool';
 import {
   apiError,
   apiSuccess,
@@ -218,6 +219,15 @@ export function defineEndpoint(
             apiError(error.code, correlationId, error.message, error.details),
             principal.email,
             error.code
+          );
+        }
+
+        // An id in the path or body that is not one: nothing by that id.
+        if (isInvalidReference(error)) {
+          return finish(
+            apiError('not_found', correlationId),
+            principal.email,
+            'not_found'
           );
         }
 

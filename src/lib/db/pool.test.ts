@@ -70,6 +70,26 @@ describe('query', () => {
     }
   });
 
+  // Regression QA: /members/abc and the like answered "The database is
+  // unavailable" (500) — a malformed id is the request's fault, not an outage.
+  it('reports a value that is not a valid id as a bad reference, not an outage', async () => {
+    const {
+      query,
+      closePool,
+      InvalidReferenceError,
+      DatabaseUnavailableError,
+    } = await loadPool(LOCAL_URL);
+    try {
+      const attempt = query('select $1::uuid as id', ['not-a-uuid']);
+      await expect(attempt).rejects.toBeInstanceOf(InvalidReferenceError);
+      await expect(
+        query('select $1::uuid as id', ['TX-000056'])
+      ).rejects.not.toBeInstanceOf(DatabaseUnavailableError);
+    } finally {
+      await closePool();
+    }
+  });
+
   it('fails clearly when the environment has no database configured', async () => {
     vi.resetModules();
     delete process.env.DATABASE_URL;
