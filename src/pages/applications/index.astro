@@ -29,6 +29,7 @@ import {
   TH,
   ROW,
   TD,
+  COL_OPTIONAL,
 } from '@lib/ui';
 import { pagingFrom, pageHref, pageCount } from '@lib/paging';
 import { listMembershipTypes } from '@lib/config/reference';
@@ -354,15 +355,19 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                       />
                     </th>
                   )}
-                  {[
-                    ['Reference', 'reference'],
-                    ['Applicant', 'applicant'],
-                    ['Type', 'type'],
-                    ['Status', 'status'],
-                    ['Captured by', 'capturedBy'],
-                    ['Updated', 'updated'],
-                  ].map(([label, key]) => (
-                    <th class={TH}>{label}</th>
+                  {(
+                    [
+                      ['Reference', false],
+                      ['Applicant', false],
+                      ['Type', true],
+                      ['Status', false],
+                      ['Captured by', true],
+                      ['Updated', true],
+                    ] as const
+                  ).map(([label, optional]) => (
+                    <th class={optional ? `${TH} ${COL_OPTIONAL}` : TH}>
+                      {label}
+                    </th>
                   ))}
                 </tr>
               </thead>
@@ -411,7 +416,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                       {a.applicantName}
                     </td>
                     <td
-                      class={`${TD} text-neutral-600 dark:text-neutral-300`}
+                      class={`${TD} ${COL_OPTIONAL} text-neutral-600 dark:text-neutral-300`}
                       data-sort-value={a.membershipTypeName}
                     >
                       {a.membershipTypeName}
@@ -442,13 +447,13 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                         )}
                     </td>
                     <td
-                      class={`${TD} text-xs text-neutral-500 dark:text-neutral-400`}
+                      class={`${TD} ${COL_OPTIONAL} text-xs text-neutral-500 dark:text-neutral-400`}
                       data-sort-value={a.capturedByName}
                     >
                       {a.capturedByName}
                     </td>
                     <td
-                      class={`${TD} text-xs text-neutral-500 dark:text-neutral-400`}
+                      class={`${TD} ${COL_OPTIONAL} text-xs text-neutral-500 dark:text-neutral-400`}
                       data-sort-value={a.updatedAt.toISOString()}
                     >
                       {dateFormat.format(a.updatedAt)}
