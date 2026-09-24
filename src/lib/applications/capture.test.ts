@@ -1982,6 +1982,144 @@ describe('the application list staff work from', () => {
       );
     });
   });
+
+  // Officer request: a page at a time, 10/25/50 rows.
+  describe('paging the list', () => {
+    async function seedSubmitted(
+      capture: Awaited<ReturnType<typeof load>>['capture'],
+      surname: string,
+      count: number
+    ): Promise<string[]> {
+      const ids: string[] = [];
+      for (let i = 0; i < count; i++) {
+        const { id } = await capture.startApplication('individual', officer);
+        await capture.saveDraft(
+          id,
+          [
+            {
+              subject: 'applicant',
+              ordinal: 1,
+              values: { name: `Row${i}`, surname },
+            },
+          ],
+          officer
+        );
+        await run(
+          appUrl,
+          `update membership_application set status = 'submitted_for_review'
+            where id = $1`,
+          [id]
+        );
+        ids.push(id);
+      }
+      return ids;
+    }
+
+    it('limit and offset page through a search independently of one another', async () => {
+      const { capture } = await load();
+      await seedSubmitted(capture, 'Pageonia', 5);
+
+      const firstPage = await capture.listApplications({
+        search: 'Pageonia',
+        limit: 2,
+        offset: 0,
+      });
+      const secondPage = await capture.listApplications({
+        search: 'Pageonia',
+        limit: 2,
+        offset: 2,
+      });
+      const thirdPage = await capture.listApplications({
+        search: 'Pageonia',
+        limit: 2,
+        offset: 4,
+      });
+      expect(firstPage).toHaveLength(2);
+      expect(secondPage).toHaveLength(2);
+      expect(thirdPage).toHaveLength(1);
+
+      const seen = [...firstPage, ...secondPage, ...thirdPage].map(a => a.id);
+      expect(new Set(seen).size).toBe(5);
+
+      expect(
+        await capture.countApplicationsForList({ search: 'Pageonia' })
+      ).toBe(5);
+    });
+
+    it('countApplicationsForList mirrors listApplications’ own filters — search, status, and a viewer’s own drafts', async () => {
+      const { capture } = await load();
+      const { id } = await capture.startApplication('individual', officer);
+      await capture.saveDraft(
+        id,
+        [
+          {
+            subject: 'applicant',
+            ordinal: 1,
+            values: { name: 'Countme', surname: 'Total' },
+          },
+        ],
+        officer
+      );
+
+      const listedForOfficer = await capture.listApplications({
+        search: 'Countme',
+        viewerUserId: officer.userId,
+      });
+      expect(
+        await capture.countApplicationsForList({
+          search: 'Countme',
+          viewerUserId: officer.userId,
+        })
+      ).toBe(listedForOfficer.length);
+
+      // A colleague cannot see this officer's own draft, so their count
+      // narrows to nothing, the same as listApplications' own visibility.
+      expect(
+        await capture.countApplicationsForList({
+          search: 'Countme',
+          viewerUserId: colleague.userId,
+        })
+      ).toBe(0);
+    });
+
+    // Officer feedback: an application waiting on this officer specifically
+    // leads every page, not only the first — attentionIds are sorted ahead
+    // of everything else in the query itself, and waitingOnly narrows the
+    // list (and its count) to just those.
+    it('sorts attentionIds to the top of the list, and waitingOnly narrows to just those', async () => {
+      const { capture } = await load();
+      const ids = await seedSubmitted(capture, 'Attnville', 4);
+      const attentionIds = [ids[1]!, ids[3]!];
+
+      const ordered = await capture.listApplications({
+        search: 'Attnville',
+        attentionIds,
+      });
+      const flags = ordered.map(a => attentionIds.includes(a.id));
+      const firstNonAttention = flags.indexOf(false);
+      expect(
+        firstNonAttention === -1 ||
+          flags.slice(0, firstNonAttention).every(Boolean)
+      ).toBe(true);
+
+      const onlyWaiting = await capture.listApplications({
+        search: 'Attnville',
+        attentionIds,
+        waitingOnly: true,
+      });
+      expect(onlyWaiting.map(a => a.id).sort()).toEqual(
+        [...attentionIds].sort()
+      );
+
+      expect(
+        await capture.countApplicationsForList({
+          search: 'Attnville',
+          attentionIds,
+          waitingOnly: true,
+        })
+      ).toBe(2);
+    });
+  });
 });
 
 describe('deleting a draft that is no longer needed', () => {
