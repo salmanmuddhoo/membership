@@ -28,11 +28,11 @@ export const PAGE = {
 } as const;
 
 export const CARD =
-  'rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950';
+  'rounded-2xl border border-neutral-200 bg-neutral-100 p-4 sm:p-6 dark:border-neutral-800 dark:bg-neutral-950';
 // A one-line card that is itself a link to a queue ("Waiting on you"):
 // the title on the left, the count and an arrow on the right.
 export const LINK_CARD =
-  'flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-neutral-200 bg-neutral-100 px-6 py-4 transition hover:border-mint-400 hover:bg-white dark:border-neutral-800 dark:bg-neutral-950 dark:hover:border-mint-700 dark:hover:bg-neutral-900';
+  'flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-neutral-200 bg-neutral-100 px-4 py-4 transition sm:px-6 hover:border-mint-400 hover:bg-white dark:border-neutral-800 dark:bg-neutral-950 dark:hover:border-mint-700 dark:hover:bg-neutral-900';
 // A form that is a card: the same card, with its fields spaced.
 export const FORM_CARD = `space-y-4 ${CARD}`;
 export const FILTER =
@@ -122,9 +122,13 @@ export const THEAD =
   'text-left text-xs text-neutral-500 uppercase dark:text-neutral-400';
 export const TBODY = 'divide-y divide-neutral-200 dark:divide-neutral-800';
 export const ROW = 'border-t border-neutral-200 dark:border-neutral-800';
-export const TH = 'py-2 pr-4 font-medium';
+export const TH = 'py-2 pr-4 font-medium whitespace-nowrap';
 export const TD = 'py-2 pr-4';
 export const TD_NUM = 'py-2 pr-4 text-right tabular-nums';
+// A column a phone does without: its TH and its TDs carry it, and the
+// column shows from the small breakpoint up. The reference, the name and
+// the status stay; dates, who captured it and the like go.
+export const COL_OPTIONAL = 'max-sm:hidden';
 
 const BUTTON_BASE =
   'bg-mint-300 hover:bg-mint-400 rounded-lg font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50';

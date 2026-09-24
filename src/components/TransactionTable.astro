@@ -5,7 +5,7 @@
 import { transactionStatusLabel } from '@lib/ledger/labels';
 import type { TransactionSummary } from '@lib/ledger/review';
 import { formatMoney } from '@lib/payments/money';
-import { FILTER, HINT, TABLE, TBODY, THEAD } from '@lib/ui';
+import { COL_OPTIONAL, FILTER, HINT, TABLE, TBODY, THEAD } from '@lib/ui';
 
 interface Props {
   transactions: TransactionSummary[];
@@ -65,7 +65,7 @@ const CELL = 'px-2 py-2';
           <th class={`${CELL} text-right`}>In</th>
           <th class={`${CELL} text-right`}>Out</th>
           <th class={CELL}>Status</th>
-          <th class={CELL}>Recorded by</th>
+          <th class={`${CELL} ${COL_OPTIONAL}`}>Recorded by</th>
         </tr>
       </thead>
       <tbody class={TBODY}>
@@ -139,7 +139,7 @@ const CELL = 'px-2 py-2';
               {direction(t) === 'out' && formatMoney(t.amount, t.currency)}
             </td>
             <td class={CELL}>{transactionStatusLabel(t)}</td>
-            <td class={CELL}>{t.capturedByName}</td>
+            <td class={`${CELL} ${COL_OPTIONAL}`}>{t.capturedByName}</td>
           </tr>
         ))}
       </tbody>
