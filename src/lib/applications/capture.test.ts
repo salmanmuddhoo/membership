@@ -533,6 +533,9 @@ describe('S-604/S-605: a minor’s guardian must be a real, findable person', ()
       p => p.subject === 'guardian' && p.fieldKey === 'member_id'
     );
     expect(guardianProblem?.label).toMatch(/not an active member/);
+    // Officer feedback: the number is a way to the member, not a dead end.
+    expect(guardianProblem?.link?.text).toBe(memberNo);
+    expect(guardianProblem?.link?.href).toMatch(/^\/members\/[0-9a-f-]{36}$/);
   });
 
   // The whole point of the relaxation: a parent and their minor can join at

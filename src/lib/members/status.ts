@@ -52,8 +52,10 @@ export function isNonMember(
 // membership's; a further one of those is theirs to open, on their existing
 // record, through the same application. Shares and the MSA are not (that
 // is a rejoin).
+// 'closed' is a non-member whose every account has been closed
+// (markCustomerClosedOnceAllClosed): a new account makes them active again.
 export function canOpenAccount(status: string): boolean {
-  return status === 'active' || status === 'resigned';
+  return status === 'active' || status === 'resigned' || status === 'closed';
 }
 
 // The line the member page shows for a member who cannot transact: what
@@ -65,6 +67,7 @@ export function statusNotice(
   format = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' })
 ): string | null {
   if (status === 'active') return null;
+  if (status === 'closed') return 'Every account is closed.';
   const label = STATUS_LABELS[status as MemberStatus] ?? status;
   const since = changedAt ? ` since ${format.format(changedAt)}` : '';
   // A resigned member transacts and opens accounts as a non-member does:

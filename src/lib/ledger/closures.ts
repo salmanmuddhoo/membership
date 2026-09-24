@@ -38,6 +38,7 @@ import { LedgerError } from './ledger';
 import { requireBankAccount, resolveBankAccount } from './bank-accounts';
 import {
   claimantFrom,
+  markCustomerClosedOnceAllClosed,
   markDeceasedOnceAllClosed,
   nomineeOnApplication,
   type ClaimantInput,
@@ -769,6 +770,7 @@ export async function submitClosure(
       }
       if (submission.posted) {
         await markDeceasedOnceAllClosed(client, closure.id, principal);
+        await markCustomerClosedOnceAllClosed(client, closure.id, principal);
       }
     });
     if (receipt) await notifyReceiptIssued(closure.id);

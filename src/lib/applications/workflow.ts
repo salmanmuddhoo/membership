@@ -545,21 +545,35 @@ export async function boardReadiness(
   };
 }
 
+// One outstanding item, and the record it is about when there is one to go
+// to (the application pages link it; the refusal below is plain text).
+export interface BoardReason {
+  text: string;
+  link?: { href: string; text: string };
+}
+
 // Shared by the throw below and by the id page's proactive "not ready yet"
 // list, so the two can never name the outstanding items differently.
-export function boardReadinessReasons(readiness: BoardReadiness): string[] {
-  const reasons: string[] = [];
+export function boardReadinessItems(readiness: BoardReadiness): BoardReason[] {
+  const reasons: BoardReason[] = [];
   if (readiness.documentsUnverified > 0) {
-    reasons.push(
-      `${readiness.documentsUnverified} required document(s) still need ` +
-        'to be Verified'
-    );
+    reasons.push({
+      text:
+        `${readiness.documentsUnverified} required document(s) still need ` +
+        'to be Verified',
+    });
   }
   if (!readiness.paymentRecorded) {
-    reasons.push('payment has not been recorded');
+    reasons.push({ text: 'payment has not been recorded' });
   }
-  reasons.push(...readiness.guardianProblems.map(p => p.label));
+  reasons.push(
+    ...readiness.guardianProblems.map(p => ({ text: p.label, link: p.link }))
+  );
   return reasons;
+}
+
+export function boardReadinessReasons(readiness: BoardReadiness): string[] {
+  return boardReadinessItems(readiness).map(r => r.text);
 }
 
 /**

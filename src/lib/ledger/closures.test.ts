@@ -632,6 +632,89 @@ describe('a closure request (S-1702)', () => {
     );
     expect(entries.rows[0].n).toBe(0);
   });
+
+  // Officer feedback: a non-member whose only HSA was closed still read
+  // "Active" with no account at all.
+  it('marks a non-member closed once their last account is closed, not before', async () => {
+    const { closures, review } = await load();
+    const individual = (
+      await run(
+        appUrl,
+        `select id from membership_type where code = 'individual'`
+      )
+    ).rows[0].id;
+    const application = await run(
+      appUrl,
+      `insert into membership_application
+         (membership_type_id, captured_by, status)
+       values ($1, $2, 'approved') returning id`,
+      [individual, officer.userId]
+    );
+    await run(
+      appUrl,
+      `insert into application_party (application_id, subject, ordinal, values)
+       values ($1, 'applicant', 1, '{"name": "Nadia", "surname": "Test"}')`,
+      [application.rows[0].id]
+    );
+    const customer = (
+      await run(
+        appUrl,
+        `insert into customer (application_id) values ($1) returning id`,
+        [application.rows[0].id]
+      )
+    ).rows[0].id;
+    const openFor = async (code: string, no: string) =>
+      (
+        await run(
+          appUrl,
+          `insert into account
+             (customer_id, account_type_id, is_membership_default, status,
+              account_no)
+           select $1, id, false, 'active', $3 from account_type
+            where code = $2
+           returning id`,
+          [customer, code, no]
+        )
+      ).rows[0].id as string;
+    const hsa = await openFor('hsa', 'HSA0950');
+    const investment = await openFor('investment', 'INV0950');
+    const close = async (accountId: string) => {
+      const request = await closures.startClosure(
+        { accountId, reason: 'No longer needed', method: 'cash' },
+        clerk
+      );
+      await fileRequest(request.id, clerk);
+      await closures.submitClosure(request.id, clerk);
+      for (const reviewer of [secretary, president]) {
+        await review.reviewTransaction(
+          request.id,
+          { outcome: 'forward', comment: '' },
+          reviewer
+        );
+      }
+      await review.postApprovedTransaction(request.id, treasurer, {
+        method: 'cash',
+      });
+    };
+    const customerStatus = async () =>
+      (
+        await run(appUrl, `select status from customer where id = $1`, [
+          customer,
+        ])
+      ).rows[0].status;
+
+    await close(hsa);
+    expect(await customerStatus()).toBe('active');
+    await close(investment);
+    expect(await customerStatus()).toBe('closed');
+    const audit = await run(
+      appUrl,
+      `select action from audit_event
+        where entity_type = 'customer' and entity_id = $1`,
+      [customer]
+    );
+    expect(audit.rows.map(r => r.action)).toContain('customer.closed');
+  });
 });
 
 describe('a closure on a death (business decision)', () => {

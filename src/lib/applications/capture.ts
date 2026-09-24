@@ -4,6 +4,7 @@
 // which are mandatory and which subjects exist all come from the membership
 // type configuration of M2 (S-205) — so adding a field to the Corporate form
 // is a configuration change, and this code does not need to know it happened.
+import { statusLabel } from '../members/labels';
 import type { PoolClient } from 'pg';
 import { recordAudit } from '../access/audit';
 import { query, withTransaction } from '../db/pool';
@@ -166,6 +167,11 @@ export interface MissingField {
   ordinal: number;
   fieldKey: string;
   label: string;
+  // The record the problem is about, when there is one to go to: `text` is
+  // the part of `label` shown as the link (officer feedback: "The guardian
+  // (AB1001) is not an active member" named a number with no way to reach
+  // the member it belongs to).
+  link?: { href: string; text: string };
 }
 
 // The type an application is being captured against, refused if it is not one
@@ -648,7 +654,7 @@ export async function startCustomerAdditionalAccountApplication(
         'not_found'
       );
     }
-    if (customer.rows[0].status !== 'active') {
+    if (!['active', 'closed'].includes(customer.rows[0].status)) {
       throw new ApplicationError(
         'Only an active customer may open a new account.'
       );
@@ -910,7 +916,7 @@ export async function startMembershipApplicationFromCustomer(
   if (found.rowCount === 0) {
     throw new ApplicationError('That customer no longer exists.', 'not_found');
   }
-  if (found.rows[0].status !== 'active') {
+  if (!['active', 'closed'].includes(found.rows[0].status)) {
     throw new ApplicationError(
       'Only an active customer may apply to become a member.'
     );
@@ -2139,11 +2145,22 @@ export async function problemsBlockingSubmission(
         // Only a real member can be inactive in this sense — an in-progress
         // application has no "active" to fall short of; it is simply still
         // in progress, which is exactly the case this relaxation exists for.
+        const name = [
+          guardian.applicantValues.name,
+          guardian.applicantValues.surname,
+        ]
+          .filter(Boolean)
+          .join(' ');
         problems.push({
           subject: 'guardian',
           ordinal: party.ordinal,
           fieldKey: 'member_id',
-          label: `The guardian (${guardian.memberNo}) is not an active member.`,
+          label:
+            `The guardian ${guardian.memberNo}${name ? ` (${name})` : ''} is ` +
+            `${statusLabel(guardian.status).toLowerCase()}, not an active member.`,
+          link: guardian.id
+            ? { href: `/members/${guardian.id}`, text: guardian.memberNo }
+            : undefined,
         });
       }
     }
