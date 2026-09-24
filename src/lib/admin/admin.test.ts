@@ -673,6 +673,52 @@ describe('the staff list stays bounded', () => {
     }
   });
 
+  it('pages with limit and offset, in display-name order (officer request: 10/25/50 rows)', async () => {
+    const { roles } = await load();
+    await run(
+      appUrl,
+      `insert into app_user (email, display_name)
+       select 'page' || lpad(i::text, 3, '0') || '@albarakah.mu',
+              'Page ' || lpad(i::text, 3, '0')
+         from generate_series(1, 12) as i`
+    );
+
+    try {
+      const firstPage = await roles.listUsers({
+        search: 'page ',
+        limit: 5,
+        offset: 0,
+      });
+      const secondPage = await roles.listUsers({
+        search: 'page ',
+        limit: 5,
+        offset: 5,
+      });
+
+      expect(firstPage.total).toBe(12);
+      expect(secondPage.total).toBe(12);
+      expect(firstPage.users.map(u => u.displayName)).toEqual([
+        'Page 001',
+        'Page 002',
+        'Page 003',
+        'Page 004',
+        'Page 005',
+      ]);
+      expect(secondPage.users.map(u => u.displayName)).toEqual([
+        'Page 006',
+        'Page 007',
+        'Page 008',
+        'Page 009',
+        'Page 010',
+      ]);
+      // Never the same row twice across two pages.
+      const firstIds = new Set(firstPage.users.map(u => u.id));
+      expect(secondPage.users.every(u => !firstIds.has(u.id))).toBe(true);
+    } finally {
+      await run(appUrl, `delete from app_user where email like 'page%'`);
+    }
+  });
+
   it('finds an account by a fragment of its email, whatever the case', async () => {
     const { roles } = await load();
     const page = await roles.listUsers({ search: 'OFFICER@albarakah' });

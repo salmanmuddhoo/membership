@@ -595,7 +595,15 @@ export interface UserPage {
 export const USER_PAGE_LIMIT = 100;
 
 export async function listUsers(
-  options: { search?: string; limit?: number; includeInactive?: boolean } = {}
+  options: {
+    search?: string;
+    limit?: number;
+    // A page in (10, 25 or 50 — the officer's choice, src/lib/paging.ts)
+    // rather than always the first. Defaults to 0, so a caller that does not
+    // page (the API, other tests) keeps today's behaviour unchanged.
+    offset?: number;
+    includeInactive?: boolean;
+  } = {}
 ): Promise<UserPage> {
   const search = options.search?.trim() ? options.search.trim() : null;
   // Defaults to showing everyone, so the API and any other caller keep the
@@ -607,6 +615,7 @@ export async function listUsers(
     Math.max(options.limit ?? USER_PAGE_LIMIT, 1),
     USER_PAGE_LIMIT
   );
+  const offset = Math.max(options.offset ?? 0, 0);
 
   const result = await query<{
     id: string;
@@ -617,8 +626,8 @@ export async function listUsers(
     roles: string[];
     total_count: string;
   }>(
-    // count(*) over () is evaluated before LIMIT, so it reports the size of
-    // the whole match, not of the page.
+    // count(*) over () is evaluated before LIMIT/OFFSET, so it reports the
+    // size of the whole match, not of the page.
     `select u.id, u.email::text as email, u.display_name, u.is_active,
             (u.entra_subject is not null) as has_signed_in,
             coalesce(
@@ -634,8 +643,8 @@ export async function listUsers(
              or strpos(lower(u.email::text), lower($1::text)) > 0)
       group by u.id
       order by u.display_name
-      limit $2::int`,
-    [search, limit, includeInactive]
+      limit $2::int offset $4::int`,
+    [search, limit, includeInactive, offset]
   );
 
   const users = result.rows.map(r => ({

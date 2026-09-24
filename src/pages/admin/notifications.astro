@@ -3,11 +3,11 @@
 // own permission (notification.view, migration 0056) so who may see it is
 // Configuration -> Roles' decision, not this page's own.
 import DashboardLayout from '@layouts/DashboardLayout.astro';
+import Pagination from '@components/Pagination.astro';
 import { getNotificationConfig } from '@lib/config';
 import {
   listNotifications,
   notificationCounts,
-  NOTIFICATION_PAGE_LIMIT,
   type NotificationLogRow,
   type NotificationStatus,
 } from '@lib/notifications/log';
@@ -20,6 +20,7 @@ import {
   listNotificationTemplates,
   type NotificationChannel,
 } from '@lib/notifications/templates';
+import { pagingFrom } from '@lib/paging';
 import {
   BUTTON,
   CARD,
@@ -31,7 +32,6 @@ import {
   PAGE,
   PANEL,
   SECONDARY,
-  SECONDARY_SM,
   LABEL,
   NOTICE_ERROR,
   NOTICE_OK,
@@ -95,14 +95,15 @@ const channel = CHANNELS.includes(channelParam as NotificationChannel)
   ? (channelParam as NotificationChannel)
   : undefined;
 const search = params.get('search')?.trim() || '';
-const page = Math.max(Number(params.get('page') ?? '1') || 1, 1);
+const paging = pagingFrom(Astro.url);
 
 const [{ rows, total }, counts, templates] = await Promise.all([
   listNotifications({
     status,
     channel,
     search: search || undefined,
-    offset: (page - 1) * NOTIFICATION_PAGE_LIMIT,
+    limit: paging.per,
+    offset: paging.offset,
   }),
   notificationCounts(),
   listNotificationTemplates(),
@@ -111,18 +112,10 @@ const [{ rows, total }, counts, templates] = await Promise.all([
 const statuses = channelStatuses(getNotificationConfig());
 const sendable = templates.filter(t => t.isActive);
 
-const totalPages = Math.max(Math.ceil(total / NOTIFICATION_PAGE_LIMIT), 1);
-
 const dateTimeFormat = new Intl.DateTimeFormat('en-GB', {
   dateStyle: 'medium',
   timeStyle: 'short',
 });
-
-const pageHref = (target: number) => {
-  const next = new URLSearchParams(params);
-  next.set('page', String(target));
-  return `/admin/notifications?${next.toString()}`;
-};
 
 // A link that filters to one status, from the counts at the top.
 const statusHref = (target: NotificationStatus) =>
@@ -323,7 +316,13 @@ function whenLine(row: NotificationLogRow): string {
         </label>
         <label class={LABEL}>
           Address or reference
-          <input type="text" name="search" value={search} class={INPUT} />
+          <input
+            type="text"
+            name="search"
+            value={search}
+            data-suggest="/admin/notifications/suggest.json"
+            class={INPUT}
+          />
         </label>
         <div class="flex items-end gap-3">
           <button type="submit" class={BUTTON}>
@@ -346,11 +345,6 @@ function whenLine(row: NotificationLogRow): string {
         <h2 class={CARD_TITLE}>
           {total} message{total === 1 ? '' : 's'}
         </h2>
-        {totalPages > 1 && (
-          <p class={HINT}>
-            Page {page} of {totalPages}
-          </p>
-        )}
       </div>
 
       {rows.length === 0 ? (
@@ -415,22 +409,7 @@ function whenLine(row: NotificationLogRow): string {
         </ul>
       )}
 
-      {totalPages > 1 && (
-        <div class="mt-4 flex items-center justify-between gap-2 text-sm">
-          {page > 1 ? (
-            <a href={pageHref(page - 1)} class={SECONDARY_SM}>
-              ← Newer
-            </a>
-          ) : (
-            <span />
-          )}
-          {page < totalPages && (
-            <a href={pageHref(page + 1)} class={SECONDARY_SM}>
-              Older →
-            </a>
-          )}
-        </div>
-      )}
+      <Pagination total={total} paging={paging} noun="messages" />
     </section>
   </div>
 </DashboardLayout>

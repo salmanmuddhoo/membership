@@ -1,5 +1,6 @@
 ---
 import DashboardLayout from '@layouts/DashboardLayout.astro';
+import Pagination from '@components/Pagination.astro';
 import {
   AdminError,
   countDeactivatedUsers,
@@ -10,6 +11,7 @@ import {
   setUserActive,
   setUserRoles,
 } from '@lib/admin/roles';
+import { pagingFrom } from '@lib/paging';
 import {
   BUTTON,
   BUTTON_SM,
@@ -103,12 +105,18 @@ const search = revealAddress || (Astro.url.searchParams.get('q') ?? '');
 // behind a toggle.
 const showDeactivated =
   Astro.url.searchParams.get('deactivated') === '1' || revealDeactivated;
-const [page, roles, deactivatedCount] = await Promise.all([
-  listUsers({ search, includeInactive: showDeactivated }),
+const paging = pagingFrom(Astro.url);
+const [userPage, roles, deactivatedCount] = await Promise.all([
+  listUsers({
+    search,
+    includeInactive: showDeactivated,
+    limit: paging.per,
+    offset: paging.offset,
+  }),
   listRoles(),
   countDeactivatedUsers(),
 ]);
-const { users, total, truncated } = page;
+const { users, total } = userPage;
 ---
 
 <DashboardLayout
@@ -204,6 +212,7 @@ const { users, total, truncated } = page;
           name="q"
           value={search}
           placeholder="Search by name or email"
+          data-suggest="/admin/users/suggest.json"
           class={`${INPUT_BARE} min-w-64 flex-1 text-neutral-800`}
         />
         <button type="submit" class={SECONDARY_SM}>
@@ -250,9 +259,7 @@ const { users, total, truncated } = page;
           ? search
             ? `No accounts match \u201C${search}\u201D.`
             : 'No accounts yet.'
-          : truncated
-            ? `Showing the first ${users.length} of ${total} accounts \u2014 search to narrow the list.`
-            : `${total} account${total === 1 ? '' : 's'}.`}
+          : `${total} account${total === 1 ? '' : 's'}.`}
       </p>
 
       <div class="mt-5 space-y-4">
@@ -356,6 +363,8 @@ const { users, total, truncated } = page;
           </details>
         ))}
       </div>
+
+      <Pagination total={total} paging={paging} noun="accounts" />
     </section>
   </div>
 </DashboardLayout>
