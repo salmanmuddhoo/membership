@@ -35,6 +35,7 @@ export const NAV_DESCRIPTIONS: Record<string, string> = {
     'What each bank account holds, and every payment in and out.',
   '/receipts/reconciliation':
     'Gaps, duplicates and voids in the receipt numbers.',
+  '/statements': 'Send every member their statement.',
   '/admin/roles': 'Who may do what.',
   '/admin/users': 'Staff sign-ins and their roles.',
   '/admin/segregation': 'Who may not act twice on the same record.',
@@ -134,6 +135,9 @@ export function navigationFor(input: {
                 icon: 'reconciliation',
               },
             ]
+          : []),
+        ...(can('statement.send_all')
+          ? [{ label: 'Statements', href: '/statements', icon: 'reports' }]
           : []),
       ],
     },

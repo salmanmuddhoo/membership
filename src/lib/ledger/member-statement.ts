@@ -120,8 +120,12 @@ export function renderMemberStatementPdf(
   const left = 15;
   const right = 195;
   const bottom = 280;
-  // Column positions: date, reference, description, out, in, balance.
-  const col = { ref: 40, desc: 72, out: 150, in: 172, bal: 195 };
+  // Column positions: date, reference, description, out, in, balance. The
+  // figures are bare — the currency is said once, under the heading — so a
+  // six-figure balance still fits its column.
+  const col = { ref: 40, desc: 68, out: 141, in: 168, bal: 195 };
+  const money = (value: string) =>
+    formatMoney(value).replace(/^[A-Z]{3}\s*/, '');
   let y = 20;
 
   const newPage = () => {
@@ -147,8 +151,12 @@ export function renderMemberStatementPdf(
   );
   doc.setTextColor(90);
   doc.text(periodWords(statement.period), right, y, { align: 'right' });
+  y += 5;
+  doc.setFontSize(8);
+  doc.text('Amounts in MUR', right, y, { align: 'right' });
+  doc.setFontSize(10);
   doc.setTextColor(0);
-  y += 4;
+  y += 3;
   doc.setDrawColor(180);
   doc.line(left, y, right, y);
   y += 8;
@@ -174,7 +182,7 @@ export function renderMemberStatementPdf(
     y += 5;
 
     doc.text('Opening balance', col.desc, y);
-    doc.text(formatMoney(account.openingBalance), col.bal, y, {
+    doc.text(money(account.openingBalance), col.bal, y, {
       align: 'right',
     });
     y += 5;
@@ -182,19 +190,19 @@ export function renderMemberStatementPdf(
     for (const line of account.lines) {
       const description = doc.splitTextToSize(
         line.description,
-        col.out - col.desc - 22
+        col.out - col.desc - 20
       ) as string[];
       ensure(5 * description.length);
       doc.text(shortDate.format(line.postedAt), left, y);
       doc.text(line.reference, col.ref, y);
       doc.text(description, col.desc, y);
       if (line.debit) {
-        doc.text(formatMoney(line.debit), col.out, y, { align: 'right' });
+        doc.text(money(line.debit), col.out, y, { align: 'right' });
       }
       if (line.credit) {
-        doc.text(formatMoney(line.credit), col.in, y, { align: 'right' });
+        doc.text(money(line.credit), col.in, y, { align: 'right' });
       }
-      doc.text(formatMoney(line.balance), col.bal, y, { align: 'right' });
+      doc.text(money(line.balance), col.bal, y, { align: 'right' });
       y += 5 * description.length;
     }
     if (account.lines.length === 0) {
@@ -209,9 +217,9 @@ export function renderMemberStatementPdf(
     y += 3;
     doc.setFont('helvetica', 'bold');
     doc.text('Closing balance', col.desc, y);
-    doc.text(formatMoney(account.totalDebits), col.out, y, { align: 'right' });
-    doc.text(formatMoney(account.totalCredits), col.in, y, { align: 'right' });
-    doc.text(formatMoney(account.closingBalance), col.bal, y, {
+    doc.text(money(account.totalDebits), col.out, y, { align: 'right' });
+    doc.text(money(account.totalCredits), col.in, y, { align: 'right' });
+    doc.text(money(account.closingBalance), col.bal, y, {
       align: 'right',
     });
     doc.setFont('helvetica', 'normal');
@@ -342,10 +350,20 @@ export async function sendStatement(
           }
         : null,
     });
-    return {
-      outcome: notificationIds.length > 0 ? 'sent' : 'failed',
-      notificationIds,
-    };
+    // Sent only if a message actually went: a row written and failed (a
+    // WhatsApp wording with no template name, a relay down) is for the
+    // retry job and the delivery log, not something to report as done.
+    const went =
+      notificationIds.length > 0
+        ? (
+            await query<{ n: number }>(
+              `select count(*)::int as n from notification
+                where id = any($1::uuid[]) and status = 'sent'`,
+              [notificationIds]
+            )
+          ).rows[0].n > 0
+        : false;
+    return { outcome: went ? 'sent' : 'failed', notificationIds };
   } catch (error) {
     console.error('[statements] could not send a statement:', error);
     return { outcome: 'failed', notificationIds: [] };
