@@ -151,6 +151,46 @@ export async function markDeceasedOnceAllClosed(
   );
 }
 
+/**
+ * After an ordinary closure of a non-member's account posts: once nothing
+ * of theirs is left open, they are no longer an active customer — status
+ * 'closed' (officer feedback: someone whose only HSA was closed still read
+ * "Active", with no account at all). Opening a new account for them makes
+ * them active again (members/create.ts). A death claim is
+ * markDeceasedOnceAllClosed's; a member's own accounts end with a
+ * resignation, not here. Called inside the posting transaction.
+ */
+export async function markCustomerClosedOnceAllClosed(
+  client: PoolClient,
+  transactionId: string,
+  actor: { userId: string; email: string }
+): Promise<void> {
+  const marked = await client.query<{ id: string; reference: string }>(
+    `update customer c
+        set status = 'closed', updated_at = now()
+       from transaction t
+      where t.id = $1 and t.kind = 'closure' and t.claimant_kind is null
+        and t.customer_id = c.id and c.status = 'active'
+        and not exists (select 1 from account a
+                         where a.customer_id = c.id
+                           and a.status <> 'closed')
+      returning c.id, t.reference`,
+    [transactionId]
+  );
+  if (!marked.rowCount) return;
+  await recordAudit(
+    {
+      actorUserId: actor.userId,
+      actorDescription: actor.email,
+      action: 'customer.closed',
+      entityType: 'customer',
+      entityId: marked.rows[0].id,
+      newValue: { status: 'closed', closed_by: marked.rows[0].reference },
+    },
+    client
+  );
+}
+
 export interface AccountClosedOnDeath {
   id: string;
   accountNo: string;

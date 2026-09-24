@@ -3,6 +3,7 @@ import { isEditableStatus } from '@lib/applications/capture';
 import ChainTimeline from '@components/ChainTimeline.astro';
 import CaptureFields from '@components/CaptureFields.astro';
 import DashboardLayout from '@layouts/DashboardLayout.astro';
+import LinkedReason from '@components/LinkedReason.astro';
 import {
   ApplicationError,
   deleteDraftApplication,
@@ -26,7 +27,7 @@ import { APPLICATION_STATUS_LABELS } from '@lib/applications/status-labels';
 import {
   availableActions,
   boardReadiness,
-  boardReadinessReasons,
+  boardReadinessItems,
   decideApplication,
   reopenRejectedApplication,
   returnedByLabel,
@@ -560,7 +561,7 @@ const nextStepLabel = (
 // than only after the Secretary tries and is refused.
 const forwardAction = actions.find(a => a.stepCode === 'secretary_review');
 const boardReasons = forwardAction
-  ? boardReadinessReasons(
+  ? boardReadinessItems(
       await boardReadiness(application!, {
         checklist,
         payments,
@@ -1644,7 +1645,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                     <p class="font-medium">Not ready for the Board yet:</p>
                     <ul class="mt-1 list-disc pl-5">
                       {boardReasons.map(reason => (
-                        <li>{reason}</li>
+                        <li>
+                          <LinkedReason reason={reason} />
+                        </li>
                       ))}
                     </ul>
                   </div>

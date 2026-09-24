@@ -767,21 +767,25 @@ const documentCount = documentGroups.reduce(
         // "Apply to become a member" is a customer-only action; "Open other
         // account" is offered to a member and a non-member alike, whenever
         // there is still a type they can open (canOpenAnotherAccount).
-        ((customer && customer.status === 'active' && canConvertCustomer) ||
+        ((customer &&
+          ['active', 'closed'].includes(customer.status) &&
+          canConvertCustomer) ||
           (canOpenAnotherAccount && !resignedMember)) && (
           <div class="mt-5 flex flex-wrap gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800">
-            {customer && customer.status === 'active' && canConvertCustomer && (
-              <form method="post">
-                <input
-                  type="hidden"
-                  name="intent"
-                  value="apply-for-membership"
-                />
-                <button type="submit" class={BUTTON_SM}>
-                  Apply to become a member
-                </button>
-              </form>
-            )}
+            {customer &&
+              ['active', 'closed'].includes(customer.status) &&
+              canConvertCustomer && (
+                <form method="post">
+                  <input
+                    type="hidden"
+                    name="intent"
+                    value="apply-for-membership"
+                  />
+                  <button type="submit" class={BUTTON_SM}>
+                    Apply to become a member
+                  </button>
+                </form>
+              )}
             {canOpenAnotherAccount && !resignedMember && (
               <a
                 href={

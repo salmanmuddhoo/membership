@@ -866,9 +866,18 @@ async function openAccountsUnderCustomer(
   if (customer.rowCount === 0) {
     throw new MemberCreationError('That customer no longer exists.');
   }
-  if (customer.rows[0].status !== 'active') {
+  // A customer whose every account was closed ('closed') may open a new one,
+  // and is active again once it opens (below).
+  if (!['active', 'closed'].includes(customer.rows[0].status)) {
     throw new MemberCreationError(
       'This customer is no longer active, so no account can be opened for them.'
+    );
+  }
+  if (customer.rows[0].status === 'closed') {
+    await client.query(
+      `update customer set status = 'active', updated_at = now()
+        where id = $1 and status = 'closed'`,
+      [customerId]
     );
   }
   const label = customer.rows[0].name?.trim() || 'the customer';
@@ -1320,8 +1329,9 @@ export async function listMembers(
         -- second record alongside the member they became — their account(s)
         -- already moved (createMemberFromApplication), leaving nothing here
         -- but an empty row with the same name that would otherwise sit
-        -- beside the real one.
-        where c.status = 'active'
+        -- beside the real one. A customer whose every account is closed
+        -- stays listed (counted as former).
+        where c.status in ('active', 'closed')
      ),
      page as (
        select rows.*,

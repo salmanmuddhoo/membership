@@ -1,0 +1,24 @@
+---
+// One line of a "not ready" list, with the record it names as a link when
+// there is one (a guardian's AB number opens that member).
+import type { BoardReason } from '@lib/applications/workflow';
+
+interface Props {
+  reason: BoardReason;
+}
+
+const { reason } = Astro.props;
+const at = reason.link ? reason.text.indexOf(reason.link.text) : -1;
+---
+
+{reason.link && at >= 0 ? (
+  <>
+    {reason.text.slice(0, at)}
+    <a href={reason.link.href} class="font-medium underline">
+      {reason.link.text}
+    </a>
+    {reason.text.slice(at + reason.link.text.length)}
+  </>
+) : (
+  reason.text
+)}
