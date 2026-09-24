@@ -46,6 +46,13 @@ export function isNonMember(
   return status === 'resigned' && accounts.some(a => a.status !== 'closed');
 }
 
+// Officer direction: a resigned member still holding an open account is,
+// on screen, an active non-member — they resigned the membership, not
+// the Society. The stored status stays 'resigned' (Rejoin keys on it).
+export function shownStatus(status: string, nonMember: boolean): string {
+  return status === 'resigned' && nonMember ? 'active' : status;
+}
+
 // Who may apply for a further account (HSA, Investment, …). An active
 // holder, and — officer direction — a resigned member: they left the
 // membership, not the Society, and keep the accounts that were never the

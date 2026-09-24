@@ -4,6 +4,7 @@ import {
   canTransact,
   isNonMember,
   MEMBER_STATUSES,
+  shownStatus,
   statusNotice,
 } from './status';
 
@@ -37,5 +38,17 @@ describe('member status (S-1701)', () => {
     expect(statusNotice('dormant', null)).toBe(
       'Dormant. No transactions and no new accounts.'
     );
+  });
+
+  it('shows a resigned non-member as active, and a resigned member as resigned', () => {
+    expect(shownStatus('resigned', true)).toBe('active');
+    expect(shownStatus('resigned', false)).toBe('resigned');
+  });
+
+  it('leaves every other status as is, non-member or not', () => {
+    for (const status of MEMBER_STATUSES.filter(s => s !== 'resigned')) {
+      expect(shownStatus(status, true)).toBe(status);
+      expect(shownStatus(status, false)).toBe(status);
+    }
   });
 });

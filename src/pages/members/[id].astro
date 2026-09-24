@@ -46,6 +46,7 @@ import {
   canOpenAccount,
   canTransact,
   isNonMember,
+  shownStatus,
   statusNotice,
 } from '@lib/members/status';
 import {
@@ -374,6 +375,10 @@ const name = (member ?? customer)!.name;
 // which an administrator renaming the type would not change.
 const isMinor = (member ?? customer)!.membershipTypeCode === 'minor';
 const status = (member ?? customer)!.status;
+// Officer direction: a resigned member still holding an open account reads,
+// on screen, as an active non-member. Stored status is untouched by this.
+const resignedNonMember =
+  !!member && isNonMember(member.status, member.accounts);
 
 // Officer feedback: a member opens a further account from their own page now
 // (not by searching for themselves on the Applications page). The button —
@@ -406,7 +411,10 @@ const canDeposit =
 // POST above already set a notice of its own (a reactivation just done),
 // which takes priority over the status line it would otherwise replace.
 if (!notice) {
-  notice = member ? statusNotice(member.status, member.statusChangedAt) : null;
+  notice =
+    member && !resignedNonMember
+      ? statusNotice(member.status, member.statusChangedAt)
+      : null;
 }
 // S-804/S-805: a dormant member, put back to active by an officer with a
 // reason. Recomputed against the (possibly just-reloaded) member so the
@@ -615,14 +623,13 @@ const documentCount = documentGroups.reduce(
                 {member.memberNo}
               </code>
             )}
-            {(customer ||
-              (member && isNonMember(member.status, member.accounts))) && (
+            {(customer || resignedNonMember) && (
               <span class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
                 Non-member
               </span>
             )}
             <span class="bg-mint-200 dark:bg-mint-900 rounded px-1.5 py-0.5 text-xs text-neutral-800 dark:text-neutral-100">
-              {statusLabel(status)}
+              {statusLabel(shownStatus(status, resignedNonMember))}
             </span>
             {isMinor && (
               <span class="rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-900 dark:bg-amber-950 dark:text-amber-200">
@@ -654,6 +661,9 @@ const documentCount = documentGroups.reduce(
           {formatDateOnly(joinedAt)}
           {member?.rejoinedAt &&
             ` · rejoined ${formatDateOnly(member.rejoinedAt)}`}
+          {resignedNonMember &&
+            member!.statusChangedAt &&
+            ` · membership resigned ${formatDateOnly(member!.statusChangedAt)}`}
           {applicationReference && (
             <>
               {' '}
