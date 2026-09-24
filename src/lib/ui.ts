@@ -137,6 +137,11 @@ const SECONDARY_BASE =
   'rounded-lg border border-neutral-300 bg-white font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800';
 export const SECONDARY = `${SECONDARY_BASE} px-4 py-2 text-sm`;
 export const SECONDARY_SM = `${SECONDARY_BASE} px-3 py-1.5 text-sm`;
+// A bar of tabs between sibling pages (Configuration's sections, the API's
+// reference and credentials): the page you are on is TAB_CURRENT, the
+// others SECONDARY_SM, the same size.
+export const TAB_CURRENT =
+  'rounded-lg px-3 py-1.5 text-sm font-medium text-neutral-800 bg-mint-300 transition';
 // XS: inside a dense row, where even the small button is too much.
 export const SECONDARY_XS = `${SECONDARY_BASE} px-2.5 py-1 text-xs`;
 

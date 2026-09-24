@@ -60,6 +60,11 @@ export interface ReportColumn {
 export interface ReportResult {
   columns: ReportColumn[];
   rows: Record<string, string | number | null>[];
+  // Parallel to rows: where a row leads when clicked, or null for a row that
+  // does not. Only the bank accounts summary sets this today (S-1901 officer
+  // feedback) — a way into a row's own detail, not a link to somewhere else.
+  // The export ignores it: a spreadsheet has nowhere for a click to go.
+  rowHrefs?: (string | null)[];
   // Shown above the table: the answer in one line, where there is one.
   summary?: string;
 }
@@ -85,6 +90,32 @@ function dateOrNull(value: string | undefined): string | null {
 function textOrNull(value: string | undefined): string | null {
   const trimmed = (value ?? '').trim();
   return trimmed === '' ? null : trimmed;
+}
+
+const MONTH_ABBREVIATIONS = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+];
+
+// A 'YYYY-MM-DD' filter value, read the way every other date on a report
+// does ("DD Mon YYYY") — for the one date that never goes through SQL's own
+// to_char, because it names the filter rather than a row (S-1901 officer
+// feedback: the brought-forward row had an amount and no date, so nobody
+// could tell which day it was struck on).
+function periodStartLabel(from: string | null): string {
+  if (!from) return '';
+  const [year, month, day] = from.split('-').map(Number);
+  return `${String(day).padStart(2, '0')} ${MONTH_ABBREVIATIONS[month - 1]} ${year}`;
 }
 
 // A running total (built from Number addition, so it can carry more than two
@@ -1541,6 +1572,14 @@ const bankAccounts: ReportDefinition = {
         (sum, p) => sum + Number(p.closing),
         0
       );
+      // A row opens that account's own ins and outs, for the same period —
+      // the same report, the account chosen (S-1901 officer feedback).
+      const rowHrefs = periods.map(p => {
+        const query = new URLSearchParams({ bank: p.account.id });
+        if (from) query.set('from', from);
+        if (to) query.set('to', to);
+        return `/reports/bank-accounts?${query.toString()}`;
+      });
       return {
         columns: [
           { key: 'Bank account', label: 'Bank account' },
@@ -1551,6 +1590,7 @@ const bankAccounts: ReportDefinition = {
           { key: 'Closing', label: 'Closing', numeric: true, money: true },
         ],
         rows,
+        rowHrefs,
         summary:
           `${periods.length} bank account(s) — ${rs(totalClosing)} in ` +
           'total at the end of the period.',
@@ -1568,7 +1608,7 @@ const bankAccounts: ReportDefinition = {
     let runningCents = Math.round(Number(opening) * 100);
     const rows: Record<string, string | number | null>[] = [
       {
-        Date: '',
+        Date: periodStartLabel(from),
         Reference: '',
         Kind: 'Balance brought forward',
         Holder: '',

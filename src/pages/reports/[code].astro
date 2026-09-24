@@ -46,12 +46,29 @@ const params = Astro.url.searchParams;
 const filters: FilterValues = Object.fromEntries(
   report.filters.map(f => [f.name, params.get(f.name) ?? ''])
 );
+const showAll = params.get('all') === '1';
+
+// A fresh visit — no filter param at all in the URL — opens on the current
+// month rather than an empty screen, in the Society's own time zone. A
+// param that IS present, even empty (the officer cleared the field and
+// submitted), is a deliberate "no bound" and is left alone; ?all=1 keeps
+// meaning "ignore filters" as it always has.
+const hasPeriod =
+  report.filters.some(f => f.name === 'from') &&
+  report.filters.some(f => f.name === 'to');
+const noFilterInUrl = report.filters.every(f => !params.has(f.name));
+if (!showAll && hasPeriod && noFilterInUrl) {
+  const todayInMauritius = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Indian/Mauritius',
+  }).format(new Date());
+  filters.from = `${todayInMauritius.slice(0, 7)}-01`;
+  filters.to = todayInMauritius;
+}
 
 // Only run when asked. Opening a report and immediately scanning every
 // payment ever taken is a cost nobody asked for, and the first thing an
 // officer does is choose a period.
 const asked = report.filters.some(f => (filters[f.name] ?? '') !== '');
-const showAll = params.get('all') === '1';
 const result = asked || showAll ? await report.run(filters) : null;
 
 // What the filters actually were, in words, for the top of the spreadsheet.
@@ -83,8 +100,16 @@ for (const filter of report.filters) {
   if (filter.choices) choices.set(filter.name, await filter.choices());
 }
 
+// Built from the filters actually in effect, defaults included, so the
+// download matches what is on screen even on a fresh visit that never put
+// `from`/`to` in the URL.
 const exportHref = () => {
-  const next = new URLSearchParams(params);
+  const next = new URLSearchParams();
+  for (const filter of report.filters) {
+    const value = filters[filter.name];
+    if (value) next.set(filter.name, value);
+  }
+  if (showAll) next.set('all', '1');
   next.set('export', 'xlsx');
   return `/reports/${report.code}?${next.toString()}`;
 };
@@ -208,27 +233,39 @@ const cellText = (column: ReportColumn, value: string | number | null) => {
                 </tr>
               </thead>
               <tbody>
-                {result.rows.map(row => (
-                  <tr class={ROW}>
-                    {result.columns.map(column => (
-                      <td
-                        class:list={[
-                          'px-2 py-1.5 text-neutral-700 dark:text-neutral-300',
-                          column.numeric
-                            ? 'text-right tabular-nums'
-                            : 'text-left',
-                        ]}
-                        data-sort-value={
-                          column.numeric
-                            ? String(row[column.key] ?? '')
-                            : undefined
-                        }
-                      >
-                        {cellText(column, row[column.key] ?? null)}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
+                {result.rows.map((row, rowIndex) => {
+                  const href = result.rowHrefs?.[rowIndex] ?? null;
+                  return (
+                    <tr
+                      class:list={[ROW, href && 'cursor-pointer']}
+                      data-href={href ?? undefined}
+                    >
+                      {result.columns.map((column, columnIndex) => (
+                        <td
+                          class:list={[
+                            'px-2 py-1.5 text-neutral-700 dark:text-neutral-300',
+                            column.numeric
+                              ? 'text-right tabular-nums'
+                              : 'text-left',
+                          ]}
+                          data-sort-value={
+                            column.numeric
+                              ? String(row[column.key] ?? '')
+                              : undefined
+                          }
+                        >
+                          {href && columnIndex === 0 ? (
+                            <a href={href} class="hover:underline">
+                              {cellText(column, row[column.key] ?? null)}
+                            </a>
+                          ) : (
+                            cellText(column, row[column.key] ?? null)
+                          )}
+                        </td>
+                      ))}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -242,4 +279,19 @@ const cellText = (column: ReportColumn, value: string | number | null) => {
   import { wireSortableTables } from '@lib/client/table-sort';
 
   wireSortableTables();
+
+  // A row with somewhere to go (the bank accounts summary, today) opens it
+  // on click anywhere in the row; the link in its first cell is its own
+  // click target for keyboard and screen-reader use, so a click landing on
+  // it must not also navigate via the row.
+  for (const row of document.querySelectorAll<HTMLTableRowElement>(
+    'tr[data-href]'
+  )) {
+    row.addEventListener('click', e => {
+      const target = e.target as HTMLElement;
+      if (target.closest('a, button')) return;
+      const href = row.dataset.href;
+      if (href) window.location.assign(href);
+    });
+  }
 </script>

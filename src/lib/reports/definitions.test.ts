@@ -499,6 +499,28 @@ describe('bank accounts report', () => {
     // No account number anywhere on the page — name and bank only (S-1901).
     expect(result.columns.map(c => c.label)).not.toContain('Account number');
     expect(JSON.stringify(result.rows)).not.toContain('000123456789');
+
+    // A row opens that account's own ins and outs, for the same period.
+    const rowIndex = result.rows.indexOf(row);
+    const href = result.rowHrefs?.[rowIndex];
+    expect(href).toContain(`bank=${bankAccountId}`);
+  });
+
+  it('a row href keeps the period that was asked for', async () => {
+    const { reports } = await loadBank();
+    const report = reports.reportByCode('bank-accounts')!;
+    const result = await report.run({
+      from: '2026-01-01',
+      to: '2026-12-31',
+    });
+
+    const rowIndex = result.rows.findIndex(
+      r => r['Bank account'] === 'MCB current'
+    );
+    const href = result.rowHrefs?.[rowIndex];
+    expect(href).toContain(`bank=${bankAccountId}`);
+    expect(href).toContain('from=2026-01-01');
+    expect(href).toContain('to=2026-12-31');
   });
 
   it('one account chosen shows its statement, oldest first, with a running balance', async () => {
@@ -510,6 +532,8 @@ describe('bank accounts report', () => {
     const [broughtForward, deposit, withdrawal] = result.rows;
 
     expect(broughtForward.Kind).toBe('Balance brought forward');
+    // No `from` was asked for, so there is no date to show it against.
+    expect(broughtForward.Date).toBe('');
     expect(broughtForward.In).toBeNull();
     expect(broughtForward.Out).toBeNull();
     expect(broughtForward.Balance).toBe('10000.00');
@@ -580,5 +604,25 @@ describe('bank accounts report', () => {
     expect(afterOne.rows).toHaveLength(1);
     expect(afterOne.rows[0].Kind).toBe('Balance brought forward');
     expect(afterOne.rows[0].Balance).toBe('12000.00');
+    // The brought-forward row shows the From date it was struck on, read
+    // the same way every other date on the report is.
+    const MONTHS = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    const [y, m, d] = isoDate(tomorrow).split('-').map(Number);
+    expect(afterOne.rows[0].Date).toBe(
+      `${String(d).padStart(2, '0')} ${MONTHS[m - 1]} ${y}`
+    );
   });
 });

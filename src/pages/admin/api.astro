@@ -33,6 +33,8 @@ import {
   CODE_BLOCK,
   INPUT_SM,
   LABEL,
+  SECONDARY_SM,
+  TAB_CURRENT,
   SECONDARY_XS,
   SUBTITLE,
 } from '@lib/ui';
@@ -42,6 +44,13 @@ const specification = openapi as unknown as OpenApiDocument;
 const categories = categorise(specification);
 const total = categories.reduce((n, c) => n + c.endpoints.length, 0);
 const forBrowser = tryDefinitions(categories);
+
+// The two halves of "API" (officer feedback: one menu item, but still two
+// pages) — a tab each, shown only for the half the officer actually holds.
+// Reaching this page at all means holding api.explore, so "Reference"
+// always shows; "Credentials" only alongside it.
+const principal = Astro.locals.principal!;
+const showCredentialsTab = principal.permissions.has('api_credential.manage');
 
 const METHOD_CLASSES: Record<string, string> = {
   GET: 'bg-mint-200 text-neutral-800 dark:bg-mint-900 dark:text-mint-100',
@@ -56,6 +65,17 @@ const pretty = (schema: unknown) => JSON.stringify(schema, null, 2);
 
 <DashboardLayout title="API · Al Barakah MCSL" heading="API">
   <div class={PAGE.list}>
+    <nav class="flex flex-wrap gap-2" aria-label="API sections">
+      <a href="/admin/api" aria-current="page" class={TAB_CURRENT}>
+        Reference
+      </a>
+      {showCredentialsTab && (
+        <a href="/admin/api-credentials" class={SECONDARY_SM}>
+          Credentials
+        </a>
+      )}
+    </nav>
+
     <section class={CARD}>
       <div class="flex flex-wrap items-center justify-between gap-3">
         <div>
