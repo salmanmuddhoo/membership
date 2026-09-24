@@ -178,6 +178,10 @@ const guard = defineMiddleware(async (context, next) => {
 
     if (!result.ok) {
       const { rejection } = result;
+      if (rejection.reason === 'session-ended') {
+        context.cookies.delete(SESSION_COOKIE, { path: '/' });
+        return refuse('unauthenticated', LOGIN_PATH);
+      }
       // A provisioning gap, not a broken session — worth seeing in the logs.
       console.warn(
         `[access] session rejected (${rejection.reason}) for subject ${user.id}`
@@ -307,7 +311,11 @@ export const SECURITY_HEADERS: Record<string, string> = {
     "form-action 'self'",
     "frame-src 'self' https://*.sharepoint.com",
     "frame-ancestors 'self'",
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+    // No unsafe-eval: nothing the app ships evaluates strings as code
+    // (security review: the built scripts contain no eval or new Function),
+    // so allowing it only helped an injected script. 'unsafe-inline' stays
+    // while the pages carry inline scripts.
+    "script-src 'self' 'unsafe-inline'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: https://images.unsplash.com https://*.sharepoint.com",
     "connect-src 'self' https://*.sharepoint.com",
@@ -316,7 +324,9 @@ export const SECURITY_HEADERS: Record<string, string> = {
     'block-all-mixed-content',
   ].join('; '),
   'Permissions-Policy': 'interest-cohort=()',
-  'Referrer-Policy': 'no-referrer-when-downgrade',
+  // Another site is told which site a link came from, never the page:
+  // app paths carry member and transaction ids (security review).
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
   'X-Content-Type-Options': 'nosniff',
   'X-Frame-Options': 'SAMEORIGIN',
   'X-XSS-Protection': '1; mode=block',

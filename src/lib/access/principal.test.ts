@@ -176,6 +176,37 @@ describe('resolvePrincipal (S-106)', () => {
     expect(result.rejection.reason).toBe('deactivated');
   });
 
+  // Security review: signing out deleted the cookie and nothing else, so a
+  // copy of it went on working. Once the sign-out is on the audit trail, the
+  // session it names is refused; another session of the same person is not.
+  it('refuses a session that has been signed out, and only that one', async () => {
+    const { resolvePrincipal } = await load();
+    await run(
+      ownerUrl,
+      `insert into audit_event
+         (actor_description, action, entity_type, entity_id)
+       values ('officer@albarakah.mu', 'auth.signed_out', 'auth_session',
+               'session-ended-1')`
+    );
+    const user = {
+      id: 'sub-officer',
+      email: null,
+      name: null,
+      roles: [],
+    };
+
+    const ended = await resolvePrincipal({
+      ...user,
+      sessionId: 'session-ended-1',
+    });
+    expect(ended.ok).toBe(false);
+    if (ended.ok) return;
+    expect(ended.rejection.reason).toBe('session-ended');
+
+    const other = await resolvePrincipal({ ...user, sessionId: 'session-2' });
+    expect(other.ok).toBe(true);
+  });
+
   it('reports no session without touching the database', async () => {
     const { resolvePrincipal } = await load();
 

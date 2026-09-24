@@ -112,6 +112,18 @@ If sustained traffic outgrows that, the answer is **Azure's built-in PgBouncer**
 (enable `pgbouncer` on the server and connect on port **6432**), not a larger
 pool here.
 
+**Azure App Service is not serverless.** Production runs as one long-lived
+Node process, so `DATABASE_POOL_MAX` there is the ceiling for the whole
+application, not for one warm instance among many. Performance testing at
+5,000 members found that with 3 connections, fifty simultaneous requests to one
+slow report left cheap lookups on other pages timing out waiting for a
+connection. Capping the reports on screen and paging the members list removed
+that (no errors at fifty at once, pool of 3 or 10 alike — the Node process, not
+the pool, is now the limit), but one process sharing 3 connections still has no
+headroom for a slow query. Set **`DATABASE_POOL_MAX=10`** on App Service (times
+the number of instances, if it is ever scaled out, must stay well under the
+server's `max_connections`). Vercel (Test) keeps the default of 3.
+
 An idle connection is kept for **60 seconds** (`DATABASE_IDLE_TIMEOUT_MS`),
 with TCP keepalives on. Opening a connection to the database's region — TCP,
 TLS, authentication — costs more than most of the queries that then run on
