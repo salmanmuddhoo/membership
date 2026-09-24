@@ -319,6 +319,22 @@ const paymentMethods =
 const bankAccounts =
   canEdit || (canPost && disburses) ? await offeredBankAccounts() : [];
 
+// Disbursing: the method on the record is only the placeholder capture
+// offered first (Cash), not what the Treasurer actually pays by — so the
+// form starts at cheque, the Society's usual way of paying out, when it is
+// offered. A bank account the transaction already names is kept; failing
+// that, the one account offered is preselected rather than left for the
+// Treasurer to pick from a list of one.
+const disbursementMethod =
+  canPost && disburses && paymentMethods.some(m => m.code === 'cheque')
+    ? 'cheque'
+    : transaction.method;
+const disbursementBankAccountId =
+  canPost && disburses
+    ? (transaction.bankAccountId ??
+      (bankAccounts.length === 1 ? bankAccounts[0].id : null))
+    : transaction.bankAccountId;
+
 // A returned withdrawal asks how it is paid out only if, as corrected, it
 // is paid out at once; one that goes for approval is paid how the
 // Treasurer says at Disburse. The bands say which, by account and amount.
@@ -781,7 +797,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                         : 'false'
                     }
                     data-touches-bank={method.touchesBank ? 'true' : 'false'}
-                    selected={method.code === transaction!.method}
+                    selected={method.code === disbursementMethod}
                   >
                     {method.name}
                   </option>
@@ -804,7 +820,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                 {bankAccounts.map(account => (
                   <option
                     value={account.id}
-                    selected={account.id === transaction!.bankAccountId}
+                    selected={account.id === disbursementBankAccountId}
                   >
                     {account.name} · {account.bankName}
                   </option>

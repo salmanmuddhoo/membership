@@ -119,6 +119,11 @@ const ROUTE_PERMISSIONS: ReadonlyArray<readonly [string, string]> = [
   // payment.view, audit.view — so a URL typed by hand is not a way past the
   // permission that governs the data underneath.
   ['/reports/', 'report.view'],
+  // Bank accounts (S-1901): the Treasurer and the Auditor hold
+  // bank_account.view but not report.view, and this is their report. An
+  // exact rule, so it opens only this one page and not the index or any
+  // other report — the longer match wins over the prefix above.
+  ['/reports/bank-accounts', 'bank_account.view'],
 
   // Receipts (M5). Reading a receipt is payment.view; auditing the sequence is
   // the Treasurer's own permission. The longer prefix wins, so the exact rule
