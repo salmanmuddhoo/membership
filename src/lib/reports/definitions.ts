@@ -981,6 +981,16 @@ const transactionStatusChoices = async () => {
   ];
 };
 
+// The simpler three-state Status filter the exit-and-movement reports below
+// offer (resignations, withdrawals): where a chain's own roles do not
+// matter to the question being asked, only whether it is still moving,
+// already paid, or refused.
+const inProgressOrDoneChoices = async () => [
+  { value: 'in_progress', label: 'On its way' },
+  { value: 'done', label: 'Disbursed' },
+  { value: 'rejected', label: 'Rejected' },
+];
+
 // S-1806 · Transactions: everything recorded in a period, by kind, method
 // and officer. A transfer shows once, as its debit leg; a draft is not a
 // transaction yet. The period is the day it was recorded, since a pending
@@ -1525,6 +1535,403 @@ const exits: ReportDefinition = {
   },
 };
 
+// Officer request: the movements of membership itself, one report per kind,
+// sitting beside Transactions and Exits since that is where the money and
+// the paperwork behind each of them already live.
+
+const admissions: ReportDefinition = {
+  code: 'admissions',
+  title: 'New members',
+  category: 'Membership',
+  summary:
+    'Who was admitted in a period — first time or on a rejoin — the ' +
+    'application it came from, and whether they are still a member.',
+  permission: 'member.view',
+  filters: [
+    ...PERIOD,
+    {
+      name: 'type',
+      label: 'Membership type',
+      kind: 'choice',
+      choices: membershipTypeChoices,
+    },
+  ],
+  async run(filters) {
+    // A rejoin (0090) is a second admission on the same member row: the
+    // member the report shows is dated by whichever is later, and a
+    // period asks about that date, not the founding joined_at underneath
+    // it.
+    const result = await query<Record<string, string>>(
+      `select m.member_no        as "Member no",
+              trim(coalesce(p.values->>'name', '') || ' ' ||
+                   coalesce(p.values->>'surname', '')) as "Name",
+              t.name             as "Type",
+              to_char(coalesce(m.rejoined_at, m.joined_at), 'DD Mon YYYY')
+                as "Admitted",
+              case when m.rejoined_at is not null then 'Yes' else '' end
+                as "Rejoin",
+              coalesce(ma.reference, '')   as "Application reference",
+              initcap(m.status)            as "Status now"
+         from member m
+         join membership_type t on t.id = m.membership_type_id
+         left join membership_application ma on ma.id = m.application_id
+         left join application_party p
+           on p.application_id = m.application_id
+          and p.subject = 'applicant' and p.ordinal = 1
+        where ($1::date is null
+               or coalesce(m.rejoined_at, m.joined_at) >= $1::date)
+          and ($2::date is null
+               or coalesce(m.rejoined_at, m.joined_at) < $2::date + 1)
+          and ($3::text is null or t.code = $3::text)
+        order by coalesce(m.rejoined_at, m.joined_at) desc`,
+      [
+        dateOrNull(filters.from),
+        dateOrNull(filters.to),
+        textOrNull(filters.type),
+      ]
+    );
+
+    const rejoins = result.rows.filter(r => r.Rejoin === 'Yes').length;
+    return {
+      columns: [
+        { key: 'Member no', label: 'Member no' },
+        { key: 'Name', label: 'Name' },
+        { key: 'Type', label: 'Type' },
+        { key: 'Admitted', label: 'Admitted' },
+        { key: 'Rejoin', label: 'Rejoin' },
+        { key: 'Application reference', label: 'Application reference' },
+        { key: 'Status now', label: 'Status now' },
+      ],
+      rows: result.rows,
+      summary:
+        `${result.rows.length} admission(s)` +
+        (rejoins > 0 ? `, ${rejoins} rejoin(s).` : '.'),
+    };
+  },
+};
+
+const resignations: ReportDefinition = {
+  code: 'resignations',
+  title: 'Resignations',
+  category: 'Finance',
+  summary:
+    'Who asked to leave the Society, why, what was paid out, and where ' +
+    'the request stands.',
+  permission: 'transaction.view',
+  filters: [
+    ...PERIOD,
+    {
+      name: 'status',
+      label: 'Status',
+      kind: 'choice',
+      choices: inProgressOrDoneChoices,
+    },
+  ],
+  async run(filters) {
+    const status = textOrNull(filters.status);
+    const result = await query<Record<string, string | number>>(
+      `select t.reference         as "Reference",
+              coalesce(m.member_no, '') as "Member no",
+              trim(coalesce(p.values->>'name', '') || ' ' ||
+                   coalesce(p.values->>'surname', '')) as "Name",
+              coalesce(t.reason, '')    as "Reason",
+              t.amount::text            as "Amount paid out",
+              case when t.status in ('submitted', 'under_review')
+                        then coalesce('With ' || r.name,
+                                       initcap(replace(t.status, '_', ' ')))
+                   when t.status = 'approved' then 'To disburse'
+                   when t.status = 'returned' then 'Returned'
+                   when t.status = 'posted' then 'Disbursed'
+                   when t.status = 'rejected' then 'Rejected'
+                   when t.status = 'cancelled' then 'Cancelled'
+                   else initcap(replace(t.status, '_', ' ')) end as "Status",
+              to_char(t.submitted_at, 'DD Mon YYYY') as "Requested",
+              coalesce(to_char(t.posted_at, 'DD Mon YYYY'), '') as "Disbursed"
+         from transaction t
+         left join member m on m.id = t.member_id
+         left join application_party p
+           on p.application_id = m.application_id
+          and p.subject = 'applicant' and p.ordinal = 1
+         left join workflow_step ws
+           on ws.definition_id = t.workflow_definition_id
+          and ws.code = t.current_step_code
+         left join role r on r.id = ws.role_id
+        where t.kind = 'resignation'
+          and t.status <> 'draft'
+          and ($1::date is null or t.submitted_at >= $1::date)
+          and ($2::date is null or t.submitted_at < $2::date + 1)
+          and ($3::text is null
+               or ($3::text = 'in_progress'
+                   and t.status in ('submitted', 'under_review', 'approved',
+                                     'returned'))
+               or ($3::text = 'done' and t.status = 'posted')
+               or ($3::text = 'rejected'
+                   and t.status in ('rejected', 'cancelled')))
+        order by t.submitted_at desc nulls last, t.serial_no desc`,
+      [dateOrNull(filters.from), dateOrNull(filters.to), status]
+    );
+
+    const paidOut = result.rows
+      .filter(r => r.Status === 'Disbursed')
+      .reduce((sum, r) => sum + Number(r['Amount paid out'] ?? 0), 0);
+
+    return {
+      columns: [
+        { key: 'Reference', label: 'Reference' },
+        { key: 'Member no', label: 'Member no' },
+        { key: 'Name', label: 'Name' },
+        { key: 'Reason', label: 'Reason' },
+        { key: 'Amount paid out', label: 'Amount paid out', numeric: true },
+        { key: 'Status', label: 'Status' },
+        { key: 'Requested', label: 'Requested' },
+        { key: 'Disbursed', label: 'Disbursed' },
+      ],
+      rows: result.rows,
+      summary: `${result.rows.length} resignation(s), ${rs(paidOut)} paid out.`,
+    };
+  },
+};
+
+const withdrawals: ReportDefinition = {
+  code: 'withdrawals',
+  title: 'Withdrawals',
+  category: 'Finance',
+  summary: 'Money drawn from an account, by whom, how, and to what receipt.',
+  permission: 'transaction.view',
+  filters: [
+    ...PERIOD,
+    {
+      name: 'status',
+      label: 'Status',
+      kind: 'choice',
+      choices: inProgressOrDoneChoices,
+    },
+  ],
+  async run(filters) {
+    const status = textOrNull(filters.status);
+    const result = await query<Record<string, string | number>>(
+      `select t.reference as "Reference",
+              to_char(t.created_at, 'DD Mon YYYY') as "Date",
+              trim(coalesce(p.values->>'name', '') || ' ' ||
+                   coalesce(p.values->>'surname', '')) as "Name",
+              coalesce(m.member_no, '') as "Member no",
+              coalesce(a.account_no, m.member_no, '') || ' · ' || at.name
+                as "Account",
+              t.amount::text as "Amount",
+              -- Money out is paid how the Treasurer says at Disburse; before
+              -- that the method on record is only a placeholder (same rule
+              -- the transactions report reads by).
+              case when t.status <> 'posted' then '' else pm.name end
+                as "Method",
+              case when t.status in ('submitted', 'under_review')
+                        then coalesce('With ' || r.name,
+                                       initcap(replace(t.status, '_', ' ')))
+                   when t.status = 'approved' then 'To disburse'
+                   when t.status = 'returned' then 'Returned'
+                   when t.status = 'posted' then 'Disbursed'
+                   when t.status = 'rejected' then 'Rejected'
+                   when t.status = 'cancelled' then 'Cancelled'
+                   else initcap(replace(t.status, '_', ' ')) end as "Status",
+              coalesce(rn.receipt_no, '') as "Receipt no"
+         from transaction t
+         join account a on a.id = t.account_id
+         join account_type at on at.id = a.account_type_id
+         join payment_method pm on pm.code = t.method
+         left join member m on m.id = t.member_id
+         left join customer c on c.id = t.customer_id
+         left join application_party p
+           on p.application_id = coalesce(m.application_id, c.application_id)
+          and p.subject = 'applicant' and p.ordinal = 1
+         left join receipt_number rn on rn.id = t.receipt_number_id
+         left join workflow_step ws
+           on ws.definition_id = t.workflow_definition_id
+          and ws.code = t.current_step_code
+         left join role r on r.id = ws.role_id
+        where t.kind = 'withdrawal'
+          and t.status <> 'draft'
+          and ($1::date is null or t.created_at >= $1::date)
+          and ($2::date is null or t.created_at < $2::date + 1)
+          and ($3::text is null
+               or ($3::text = 'in_progress'
+                   and t.status in ('submitted', 'under_review', 'approved',
+                                     'returned'))
+               or ($3::text = 'done' and t.status = 'posted')
+               or ($3::text = 'rejected'
+                   and t.status in ('rejected', 'cancelled')))
+        order by t.created_at desc, t.serial_no desc`,
+      [dateOrNull(filters.from), dateOrNull(filters.to), status]
+    );
+
+    const paidOut = result.rows
+      .filter(r => r.Status === 'Disbursed')
+      .reduce((sum, r) => sum + Number(r.Amount ?? 0), 0);
+
+    return {
+      columns: [
+        { key: 'Reference', label: 'Reference' },
+        { key: 'Date', label: 'Date' },
+        { key: 'Name', label: 'Name' },
+        { key: 'Member no', label: 'Member no' },
+        { key: 'Account', label: 'Account' },
+        { key: 'Amount', label: 'Amount', numeric: true },
+        { key: 'Method', label: 'Method' },
+        { key: 'Status', label: 'Status' },
+        { key: 'Receipt no', label: 'Receipt no' },
+      ],
+      rows: result.rows,
+      summary: `${result.rows.length} withdrawal(s), ${rs(paidOut)} paid out.`,
+    };
+  },
+};
+
+const transfers: ReportDefinition = {
+  code: 'transfers',
+  title: 'Transfers',
+  category: 'Finance',
+  summary:
+    'Every transfer: from whom, to whom or to which payee, and where it ' +
+    'stands.',
+  permission: 'transaction.view',
+  filters: PERIOD,
+  async run(filters) {
+    // A transfer is two legs sharing a transfer id (0073): the debit leg
+    // is the one the chain, the receipt and the transfer's own status
+    // belong to, so it drives Reference/Date/Status/Amount here; the
+    // credit leg, when there is one, is only read for To. A destination
+    // off the system has no credit leg, and reads by its payee_name
+    // instead (open point 5's default).
+    const result = await query<Record<string, string | number>>(
+      `select tr.reference as "Reference",
+              to_char(tr.created_at, 'DD Mon YYYY') as "Date",
+              trim(coalesce(dp.values->>'name', '') || ' ' ||
+                   coalesce(dp.values->>'surname', '')) || ' · ' ||
+                coalesce(da.account_no, dm.member_no, '') || ' · ' || dat.name
+                as "From",
+              case when c.id is not null
+                   then trim(coalesce(cp.values->>'name', '') || ' ' ||
+                             coalesce(cp.values->>'surname', '')) || ' · ' ||
+                        coalesce(ca.account_no, cm.member_no, '') || ' · ' ||
+                        cat.name
+                   else coalesce(d.payee_name, '') end as "To",
+              d.amount::text as "Amount",
+              case when d.status in ('submitted', 'under_review')
+                        then coalesce('With ' || r.name,
+                                       initcap(replace(d.status, '_', ' ')))
+                   when d.status = 'approved' then 'To disburse'
+                   when d.status = 'returned' then 'Returned'
+                   when d.status = 'posted' then 'Disbursed'
+                   when d.status = 'rejected' then 'Rejected'
+                   when d.status = 'cancelled' then 'Cancelled'
+                   else initcap(replace(d.status, '_', ' ')) end as "Status"
+         from transfer tr
+         join transaction d
+           on d.transfer_id = tr.id and d.leg_direction = 'debit'
+         left join transaction c
+           on c.transfer_id = tr.id and c.leg_direction = 'credit'
+         join account da on da.id = d.account_id
+         join account_type dat on dat.id = da.account_type_id
+         left join member dm on dm.id = d.member_id
+         left join customer dc on dc.id = d.customer_id
+         left join application_party dp
+           on dp.application_id = coalesce(dm.application_id, dc.application_id)
+          and dp.subject = 'applicant' and dp.ordinal = 1
+         left join account ca on ca.id = c.account_id
+         left join account_type cat on cat.id = ca.account_type_id
+         left join member cm on cm.id = c.member_id
+         left join customer cc on cc.id = c.customer_id
+         left join application_party cp
+           on cp.application_id = coalesce(cm.application_id, cc.application_id)
+          and cp.subject = 'applicant' and cp.ordinal = 1
+         left join workflow_step ws
+           on ws.definition_id = d.workflow_definition_id
+          and ws.code = d.current_step_code
+         left join role r on r.id = ws.role_id
+        where d.status <> 'draft'
+          and ($1::date is null or tr.created_at >= $1::date)
+          and ($2::date is null or tr.created_at < $2::date + 1)
+        order by tr.created_at desc, tr.serial_no desc`,
+      [dateOrNull(filters.from), dateOrNull(filters.to)]
+    );
+
+    return {
+      columns: [
+        { key: 'Reference', label: 'Reference' },
+        { key: 'Date', label: 'Date' },
+        { key: 'From', label: 'From' },
+        { key: 'To', label: 'To' },
+        { key: 'Amount', label: 'Amount', numeric: true },
+        { key: 'Status', label: 'Status' },
+      ],
+      rows: result.rows,
+      summary: `${result.rows.length} transfer(s).`,
+    };
+  },
+};
+
+const demised: ReportDefinition = {
+  code: 'demised',
+  title: 'Demised',
+  category: 'Finance',
+  summary:
+    "Every death settled or on its way: a member's claim with the Takaful " +
+    "benefit, or a non-member's account closed to their claimant.",
+  permission: 'transaction.view',
+  filters: PERIOD,
+  async run(filters) {
+    // A demised claim (kind = 'demise') is a member's; a closure on death
+    // (kind = 'closure' with claimant_kind set, 0098) is a non-member's,
+    // which has no Takaful benefit. An ordinary closure has no claimant and
+    // is excluded by the same test.
+    const result = await query<Record<string, string | number>>(
+      `select t.reference as "Reference",
+              trim(coalesce(p.values->>'name', '') || ' ' ||
+                   coalesce(p.values->>'surname', '')) as "Name",
+              coalesce(m.member_no, '') as "Member no",
+              case when m.id is not null then 'Member' else 'Non-member' end
+                as "Member / Non-member",
+              coalesce(t.claimant->>'name', '') as "Claimant",
+              t.amount::text as "Total paid",
+              case when t.status = 'posted' then 'Disbursed'
+                   else initcap(replace(t.status, '_', ' ')) end as "Status",
+              to_char(t.submitted_at, 'DD Mon YYYY') as "Requested",
+              coalesce(to_char(t.posted_at, 'DD Mon YYYY'), '') as "Disbursed"
+         from transaction t
+         left join member m on m.id = t.member_id
+         left join customer c on c.id = t.customer_id
+         left join application_party p
+           on p.application_id = coalesce(m.application_id, c.application_id)
+          and p.subject = 'applicant' and p.ordinal = 1
+        where (t.kind = 'demise'
+               or (t.kind = 'closure' and t.claimant_kind is not null))
+          and t.status <> 'draft'
+          and ($1::date is null or t.submitted_at >= $1::date)
+          and ($2::date is null or t.submitted_at < $2::date + 1)
+        order by t.submitted_at desc nulls last, t.serial_no desc`,
+      [dateOrNull(filters.from), dateOrNull(filters.to)]
+    );
+
+    const paidOut = result.rows
+      .filter(r => r.Status === 'Disbursed')
+      .reduce((sum, r) => sum + Number(r['Total paid'] ?? 0), 0);
+
+    return {
+      columns: [
+        { key: 'Reference', label: 'Reference' },
+        { key: 'Name', label: 'Name' },
+        { key: 'Member no', label: 'Member no' },
+        { key: 'Member / Non-member', label: 'Member / Non-member' },
+        { key: 'Claimant', label: 'Claimant' },
+        { key: 'Total paid', label: 'Total paid', numeric: true },
+        { key: 'Status', label: 'Status' },
+        { key: 'Requested', label: 'Requested' },
+        { key: 'Disbursed', label: 'Disbursed' },
+      ],
+      rows: result.rows,
+      summary: `${result.rows.length} claim(s), ${rs(paidOut)} paid out.`,
+    };
+  },
+};
+
 const bankAccountChoices = async () => {
   const accounts = await listBankAccounts();
   return accounts.map(a => ({ value: a.id, label: a.name }));
@@ -1788,6 +2195,11 @@ export const REPORTS: ReportDefinition[] = [
   feeComponents,
   transactions,
   exits,
+  admissions,
+  resignations,
+  withdrawals,
+  transfers,
+  demised,
   bankAccounts,
   receipts,
   accountsNearFloor,

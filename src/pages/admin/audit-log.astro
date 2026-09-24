@@ -3,8 +3,8 @@
 // table dump — gated by its own permission (audit.view, migration 0036) so
 // who may see it is Configuration -> Roles' decision, not this page's own.
 import DashboardLayout from '@layouts/DashboardLayout.astro';
+import Pagination from '@components/Pagination.astro';
 import {
-  AUDIT_PAGE_LIMIT,
   distinctAuditActions,
   distinctAuditEntityTypes,
   listAuditEvents,
@@ -16,6 +16,7 @@ import {
   describeAuditDetail,
   type AuditDetail,
 } from '@lib/access/audit-detail';
+import { pagingFrom } from '@lib/paging';
 import {
   BUTTON,
   CARD,
@@ -42,14 +43,12 @@ const entityType = params.get('entityType') || '';
 const entityId = params.get('entityId')?.trim() || '';
 const fromRaw = params.get('from') || '';
 const toRaw = params.get('to') || '';
-const page = Math.max(Number(params.get('page') ?? '1') || 1, 1);
+const paging = pagingFrom(Astro.url);
 
 // A day picked in "To" means through the end of that day, not midnight at
 // its start — the one point a straight `<=` on the typed date would miss.
 const from = fromRaw ? new Date(`${fromRaw}T00:00:00`) : undefined;
 const to = toRaw ? new Date(`${toRaw}T23:59:59.999`) : undefined;
-
-const offset = (page - 1) * AUDIT_PAGE_LIMIT;
 
 let events: AuditEventRow[] = [];
 let actions: string[] = [];
@@ -68,7 +67,8 @@ if (view === 'activity') {
         entityId: entityId || undefined,
         from,
         to,
-        offset,
+        limit: paging.per,
+        offset: paging.offset,
       }),
       distinctAuditActions(),
       distinctAuditEntityTypes(),
@@ -83,28 +83,22 @@ if (view === 'activity') {
     person: actor || undefined,
     from,
     to,
-    offset,
+    limit: paging.per,
+    offset: paging.offset,
   });
   signIns = sessions;
   total = sessionTotal;
 }
-
-const totalPages = Math.max(Math.ceil(total / AUDIT_PAGE_LIMIT), 1);
 
 const dateTimeFormat = new Intl.DateTimeFormat('en-GB', {
   dateStyle: 'medium',
   timeStyle: 'medium',
 });
 
-// Carries every filter across a page-number or tab link — a next/previous
-// click, or a switch between "All activity" and "Sign-ins", changes only
-// what it says it changes, not what was being looked for.
-const pageHref = (target: number) => {
-  const next = new URLSearchParams(params);
-  next.set('page', String(target));
-  return `/admin/audit-log?${next.toString()}`;
-};
-
+// Carries every filter across a tab link — a switch between "All activity"
+// and "Sign-ins" changes only what it says it changes, not what was being
+// looked for. Dropping page/per on purpose: the other tab's own list starts
+// at its own first page.
 const tabHref = (target: 'activity' | 'signins') => {
   const next = new URLSearchParams();
   if (actor) next.set('actor', actor);
@@ -330,6 +324,7 @@ function describeEntry(entry: AuditEventRow): string {
             value={actor}
             placeholder="Name or email"
             class={INPUT}
+            data-suggest={`/admin/audit-log/suggest.json${view === 'signins' ? '?view=signins' : ''}`}
           />
         </label>
         {view === 'activity' && (
@@ -405,11 +400,6 @@ function describeEntry(entry: AuditEventRow): string {
           <h2 class={CARD_TITLE}>
             {total} entr{total === 1 ? 'y' : 'ies'}
           </h2>
-          {totalPages > 1 && (
-            <p class={HINT}>
-              Page {page} of {totalPages}
-            </p>
-          )}
         </div>
 
         {events.length === 0 ? (
@@ -485,6 +475,7 @@ function describeEntry(entry: AuditEventRow): string {
             })}
           </ul>
         )}
+        <Pagination total={total} paging={paging} noun="entries" />
       </section>
     ) : (
       <section class={CARD}>
@@ -492,11 +483,6 @@ function describeEntry(entry: AuditEventRow): string {
           <h2 class={CARD_TITLE}>
             {total} session{total === 1 ? '' : 's'}
           </h2>
-          {totalPages > 1 && (
-            <p class={HINT}>
-              Page {page} of {totalPages}
-            </p>
-          )}
         </div>
 
         {signIns.length === 0 ? (
@@ -543,24 +529,8 @@ function describeEntry(entry: AuditEventRow): string {
             </table>
           </div>
         )}
+        <Pagination total={total} paging={paging} noun="sessions" />
       </section>
-    )}
-
-    {totalPages > 1 && (
-      <div class="flex items-center justify-between gap-2 text-sm">
-        {page > 1 ? (
-          <a href={pageHref(page - 1)} class={SECONDARY_SM}>
-            ← Newer
-          </a>
-        ) : (
-          <span />
-        )}
-        {page < totalPages && (
-          <a href={pageHref(page + 1)} class={SECONDARY_SM}>
-            Older →
-          </a>
-        )}
-      </div>
     )}
   </div>
 </DashboardLayout>

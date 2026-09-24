@@ -1,8 +1,15 @@
 ---
 // Every cash drawer, for a holder of cash.view (S-2001).
 import DashboardLayout from '@layouts/DashboardLayout.astro';
-import { PERMISSION_VIEW, listSessions } from '@lib/cash/sessions';
+import Pagination from '@components/Pagination.astro';
+import {
+  countSessions,
+  listSessions,
+  PERMISSION_VIEW,
+  sessionTotals,
+} from '@lib/cash/sessions';
 import { query } from '@lib/db/pool';
+import { pagingFrom, pageCount } from '@lib/paging';
 import { formatMoney, fromCents, toCents } from '@lib/payments/money';
 import {
   BUTTON,
@@ -44,20 +51,29 @@ const toInclusive = parse(params.get('to'), now);
 // The query is half-open, so the last day typed is included.
 const to = new Date(toInclusive.getTime() + 24 * 60 * 60 * 1000);
 const cashierId = params.get('cashierId') || null;
+const paging = pagingFrom(Astro.url);
+const filter = { from, to, cashierId };
 
-const [sessions, cashiers] = await Promise.all([
-  listSessions({ from, to, cashierId }),
+const [sessions, total, totals, cashiers] = await Promise.all([
+  listSessions({ ...filter, limit: paging.per, offset: paging.offset }),
+  countSessions(filter),
+  sessionTotals(filter),
   query<{ id: string; display_name: string }>(
     `select id, display_name from app_user
      where is_active and (entra_subject is null or entra_subject not like 'system:%')
      order by display_name`
   ),
 ]);
+// A page past the end (a filter narrowed the list under it) lands on the
+// first page rather than showing nothing.
+if (paging.page > 1 && paging.page > pageCount(total, paging.per)) {
+  const next = new URL(Astro.url);
+  next.searchParams.delete('page');
+  return Astro.redirect(`${next.pathname}${next.search}`);
+}
 
-const openCount = sessions.filter(s => s.closedAt === null).length;
-const netOverShortCents = sessions
-  .filter((s): s is typeof s & { overShort: string } => s.overShort !== null)
-  .reduce((total, s) => total + toCents(s.overShort), 0);
+const openCount = totals.open;
+const netOverShortCents = toCents(totals.netOverShort);
 
 const dateFormat = new Intl.DateTimeFormat('en-GB', {
   dateStyle: 'medium',
@@ -114,8 +130,8 @@ function overShortClass(value: string | null): string {
 
     <section class={CARD}>
       <p class={MUTED}>
-        {sessions.length} drawer{sessions.length === 1 ? '' : 's'} · {openCount}{' '}
-        still open · net over/short {formatMoney(fromCents(netOverShortCents))}
+        {total} drawer{total === 1 ? '' : 's'} · {openCount} still open · net
+        over/short {formatMoney(fromCents(netOverShortCents))}
       </p>
 
       {sessions.length === 0 ? (
@@ -198,6 +214,7 @@ function overShortClass(value: string | null): string {
           </tbody>
         </table>
       )}
+      <Pagination total={total} paging={paging} noun="drawers" />
     </section>
   </div>
 </DashboardLayout>

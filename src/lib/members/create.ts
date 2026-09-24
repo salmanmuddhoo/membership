@@ -9,6 +9,7 @@ import type { PoolClient } from 'pg';
 import { recordAudit } from '../access/audit';
 import { query } from '../db/pool';
 import { postOpeningBalances } from '../ledger/ledger';
+import { PAGE_SIZES } from '../paging';
 import { canOpenAccount } from './status';
 import type {
   Actor,
@@ -1237,12 +1238,53 @@ const NAME_SQL = `
   trim(coalesce(p.values->>'name', '') || ' ' || coalesce(p.values->>'surname', ''))
 `;
 
-export const MEMBER_LIST_PAGE_SIZE = 100;
+// Officer pagination (src/lib/paging.ts): the largest of the 10/25/50 an
+// officer may choose, and the cap this list refuses to hand back more of
+// regardless of what is asked — the page reads its own limit/offset from
+// pagingFrom rather than this.
+export const MEMBER_LIST_PAGE_SIZE = Math.max(...PAGE_SIZES);
+
+// Status filter (officer request): the values the Members page's own
+// status <select> may send, matching exactly what the Status column shows
+// (shownStatus/isNonMember, status.ts) rather than the raw stored status —
+// 'active' and 'non_member' both span more than one stored status, and
+// 'resigned' here means only a resigned member with nothing left open (one
+// still holding an account is counted under 'active'/'non_member' instead,
+// same as the column reads them).
+export type MemberListStatusFilter =
+  | ''
+  | 'active'
+  | 'dormant'
+  | 'inactive'
+  | 'resigned'
+  | 'demised'
+  | 'non_member'
+  | 'closed';
+
+const MEMBER_LIST_STATUS_FILTERS = new Set<string>([
+  'active',
+  'dormant',
+  'inactive',
+  'resigned',
+  'demised',
+  'non_member',
+  'closed',
+]);
 
 export async function listMembers(
-  options: { search?: string; limit?: number; offset?: number } = {}
+  options: {
+    search?: string;
+    status?: string;
+    limit?: number;
+    offset?: number;
+  } = {}
 ) {
   const search = options.search?.trim() ? options.search.trim() : null;
+  // Anything not one of the select's own values is treated as no filter,
+  // the same forgiving handling pagingFrom gives an out-of-range page.
+  const status = MEMBER_LIST_STATUS_FILTERS.has(options.status ?? '')
+    ? (options.status as MemberListStatusFilter)
+    : null;
   const limit = Math.min(
     Math.max(options.limit ?? MEMBER_LIST_PAGE_SIZE, 1),
     MEMBER_LIST_PAGE_SIZE
@@ -1355,9 +1397,29 @@ export async function listMembers(
                 where (kind = 'customer' or status = 'resigned') and has_open
               ) over () as non_member_count
          from rows
-        where $1::text is null
-           or strpos(lower(identifier), lower($1::text)) > 0
-           or strpos(lower(name), lower($1::text)) > 0
+        where ($1::text is null
+               or strpos(lower(identifier), lower($1::text)) > 0
+               or strpos(lower(name), lower($1::text)) > 0)
+          -- The status filter, in has_open/status/kind rather than the
+          -- non_member alias above (a WHERE here cannot see it): each arm
+          -- matches one option of the Members page's own <select>, in the
+          -- same terms shownStatus/isNonMember (status.ts) use for the
+          -- Status column, so a filter and what the column shows never
+          -- disagree.
+          and ($4::text is null
+               or ($4::text = 'active'
+                   -- A customer's own status is 'active' too (a different
+                   -- column, the same word) — kind = 'member' keeps this
+                   -- arm to an actually-active membership, not a customer.
+                   and ((kind = 'member' and status = 'active')
+                        or (status = 'resigned' and has_open)))
+               or ($4::text = 'dormant' and status = 'dormant')
+               or ($4::text = 'inactive' and status = 'inactive')
+               or ($4::text = 'resigned' and status = 'resigned' and not has_open)
+               or ($4::text = 'demised' and status = 'demised')
+               or ($4::text = 'non_member'
+                   and (kind = 'customer' or status = 'resigned') and has_open)
+               or ($4::text = 'closed' and kind = 'customer' and status = 'closed'))
         order by identifier
         limit $2::int offset $3::int
      )
@@ -1399,7 +1461,7 @@ export async function listMembers(
             )::numeric(14,2)::text as total_funds
        from page
       order by page.identifier`,
-    [search, limit, offset]
+    [search, limit, offset, status]
   );
 
   const first = result.rows[0];

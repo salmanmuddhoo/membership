@@ -2445,7 +2445,17 @@ export async function listApplications(options: {
   // 'draft': false hides it, true (application.submit_online, the caller's
   // job to check) shows it same as any other non-draft status.
   canHandleReceived?: boolean;
+  // Officer feedback ("Waiting on you"): the ids the caller has already
+  // worked out are this officer's to act on (pendingApplicationIds,
+  // workflow.ts). Sorted to the top ahead of everything else — ties broken
+  // by updated_at, same as the plain order — so the ones waiting on this
+  // officer lead every page, not just whichever page happened to be asked
+  // for first. waitingOnly narrows the list to just these instead of merely
+  // reordering it.
+  attentionIds?: string[];
+  waitingOnly?: boolean;
   limit?: number;
+  offset?: number;
 }): Promise<
   Array<{
     id: string;
@@ -2520,11 +2530,12 @@ export async function listApplications(options: {
           and (a.status != 'received' or $6::boolean)
      )
      select * from rows
-      where $4::text is null
-         or strpos(lower(reference), lower($4::text)) > 0
-         or strpos(lower(applicant_name), lower($4::text)) > 0
-      order by updated_at desc
-      limit $5::int`,
+      where ($4::text is null
+             or strpos(lower(reference), lower($4::text)) > 0
+             or strpos(lower(applicant_name), lower($4::text)) > 0)
+        and ($8::boolean is not true or id = any($7::uuid[]))
+      order by (id = any($7::uuid[])) desc, updated_at desc
+      limit $5::int offset $9::int`,
     [
       options.capturedBy ?? null,
       options.statuses ?? null,
@@ -2532,6 +2543,9 @@ export async function listApplications(options: {
       options.search?.trim() || null,
       options.limit ?? 100,
       options.canHandleReceived ?? false,
+      options.attentionIds ?? [],
+      options.waitingOnly ?? false,
+      options.offset ?? 0,
     ]
   );
 
@@ -2571,6 +2585,65 @@ export async function countApplications(
         and a.status != 'approved'
         and (a.status != 'received' or $2::boolean)`,
     [options.statuses ?? null, options.canHandleReceived ?? false]
+  );
+  return Number(result.rows[0].n);
+}
+
+// Pagination (officer request: pages of 10/25/50): the true total behind
+// whatever page listApplications is showing. Mirrors listApplications' own
+// WHERE clause exactly — including the viewer's own draft visibility, the
+// search text and the "Waiting on you" narrowing — rather than reusing
+// countApplications above, which answers a different question (how many
+// applications exist at all, draft and approved always set aside) and does
+// not take a search term or narrow to one officer's own drafts.
+export async function countApplicationsForList(options: {
+  viewerUserId?: string;
+  statuses?: string[];
+  search?: string;
+  canHandleReceived?: boolean;
+  attentionIds?: string[];
+  waitingOnly?: boolean;
+}): Promise<number> {
+  const result = await query<{ n: string }>(
+    `with rows as (
+       select a.id, a.reference,
+              trim(coalesce(p.values->>'name', ep.values->>'name',
+                            ecp.values->>'name', '') || ' '
+                   || coalesce(p.values->>'surname', ep.values->>'surname',
+                               ecp.values->>'surname', ''))
+                as applicant_name
+         from membership_application a
+         left join application_party p
+           on p.application_id = a.id and p.subject = 'applicant' and p.ordinal = 1
+         left join member em on em.id = a.existing_member_id
+         left join application_party ep
+           on ep.application_id = em.application_id
+          and ep.subject = 'applicant' and ep.ordinal = 1
+         left join customer ec on ec.id = a.existing_customer_id
+         left join application_party ecp
+           on ecp.application_id = ec.application_id
+          and ecp.subject = 'applicant' and ecp.ordinal = 1
+        where ($1::text[] is null or a.status = any($1::text[]))
+          and (a.status != 'draft'
+               or $2::uuid is null
+               or a.captured_by = $2::uuid)
+          and a.status != 'approved'
+          and (a.status != 'received' or $4::boolean)
+     )
+     select count(*)::int as n
+       from rows
+      where ($3::text is null
+             or strpos(lower(reference), lower($3::text)) > 0
+             or strpos(lower(applicant_name), lower($3::text)) > 0)
+        and ($5::boolean is not true or id = any($6::uuid[]))`,
+    [
+      options.statuses ?? null,
+      options.viewerUserId ?? null,
+      options.search?.trim() || null,
+      options.canHandleReceived ?? false,
+      options.waitingOnly ?? false,
+      options.attentionIds ?? [],
+    ]
   );
   return Number(result.rows[0].n);
 }

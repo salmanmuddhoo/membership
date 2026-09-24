@@ -1,8 +1,10 @@
 ---
 import DashboardLayout from '@layouts/DashboardLayout.astro';
+import Pagination from '@components/Pagination.astro';
 import {
   ApplicationError,
   countApplications,
+  countApplicationsForList,
   deleteDraftApplication,
   listApplications,
 } from '@lib/applications/capture';
@@ -27,7 +29,9 @@ import {
   TH,
   ROW,
   TD,
+  COL_OPTIONAL,
 } from '@lib/ui';
+import { pagingFrom, pageHref, pageCount } from '@lib/paging';
 import { listMembershipTypes } from '@lib/config/reference';
 import {
   pendingApplicationIds,
@@ -115,37 +119,55 @@ const canHandleReceived = principal.permissions.has(
   'application.submit_online'
 );
 
-const [unsortedApplications, types, nonDraftCount, attentionIds] =
-  await Promise.all([
-    listApplications({
-      ...(filter ? { statuses: [filter] } : {}),
-      viewerUserId: principal.userId,
-      search,
-      canHandleReceived,
-    }),
-    listMembershipTypes(),
-    // Meaningless filtered to Draft specifically — countApplications excludes
-    // every draft regardless, so that combination would always read 0 beside
-    // a table that is, in fact, showing rows.
-    filter === 'draft'
-      ? null
-      : countApplications({
-          ...(filter ? { statuses: [filter] } : {}),
-          canHandleReceived,
-        }),
-    pendingApplicationIds(principal),
-  ]);
+// Officer request: a page at a time, 10/25/50 as chosen (src/lib/paging.ts).
+const paging = pagingFrom(Astro.url);
 
-// Officer feedback: an application waiting on this person specifically —
-// theirs to review, approve, or correct — reads as a row to scroll past
-// like any other otherwise, easy to miss on a list sorted only by when it
-// last changed. Array.prototype.sort is stable, so this only moves those
-// rows ahead of everything else; within each group, still newest first.
-const applications = [...unsortedApplications]
-  .filter(a => !waitingOnly || attentionIds.has(a.id))
-  .sort(
-    (a, b) => Number(attentionIds.has(b.id)) - Number(attentionIds.has(a.id))
-  );
+// pendingApplicationIds depends only on the signed-in officer, not on this
+// page's filters, so it is resolved before the paged query rather than
+// alongside it — listApplications needs the ids themselves, to sort
+// "Waiting on you" ahead of everything else on every page (not just
+// whichever one happened to be asked for) and, with waitingOnly, to narrow
+// to just these.
+const attentionIds = await pendingApplicationIds(principal);
+const attentionIdList = [...attentionIds];
+
+const [applications, total, types, nonDraftCount] = await Promise.all([
+  listApplications({
+    ...(filter ? { statuses: [filter] } : {}),
+    viewerUserId: principal.userId,
+    search,
+    canHandleReceived,
+    attentionIds: attentionIdList,
+    waitingOnly,
+    limit: paging.per,
+    offset: paging.offset,
+  }),
+  countApplicationsForList({
+    viewerUserId: principal.userId,
+    ...(filter ? { statuses: [filter] } : {}),
+    search,
+    canHandleReceived,
+    attentionIds: attentionIdList,
+    waitingOnly,
+  }),
+  listMembershipTypes(),
+  // Meaningless filtered to Draft specifically — countApplications excludes
+  // every draft regardless, so that combination would always read 0 beside
+  // a table that is, in fact, showing rows.
+  filter === 'draft'
+    ? null
+    : countApplications({
+        ...(filter ? { statuses: [filter] } : {}),
+        canHandleReceived,
+      }),
+]);
+
+// A page past the end — a stale link, or the filter narrowing since it was
+// followed — lands on the first page rather than an empty table with no
+// way back.
+if (paging.page > pageCount(total, paging.per)) {
+  return Astro.redirect(pageHref(Astro.url, { page: 1 }));
+}
 
 // S-611 follow-up: a status names a stage, never the person holding it.
 // 'new' means as many different things as the configured chain has steps
@@ -246,7 +268,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         <h2 class={`${CARD_TITLE} flex items-center gap-2`}>
           {waitingOnly ? 'Waiting on you' : 'Applications'}
           {waitingOnly ? (
-            <span class={PILL}>{applications.length}</span>
+            <span class={PILL}>{total}</span>
           ) : (
             nonDraftCount !== null && <span class={PILL}>{nonDraftCount}</span>
           )}
@@ -262,6 +284,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             value={search}
             placeholder="Search applicant or reference"
             class={INPUT_BARE}
+            data-suggest="/applications/suggest.json"
           />
           <label for="status" class="sr-only">
             Filter by status
@@ -332,15 +355,19 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                       />
                     </th>
                   )}
-                  {[
-                    ['Reference', 'reference'],
-                    ['Applicant', 'applicant'],
-                    ['Type', 'type'],
-                    ['Status', 'status'],
-                    ['Captured by', 'capturedBy'],
-                    ['Updated', 'updated'],
-                  ].map(([label, key]) => (
-                    <th class={TH}>{label}</th>
+                  {(
+                    [
+                      ['Reference', false],
+                      ['Applicant', false],
+                      ['Type', true],
+                      ['Status', false],
+                      ['Captured by', true],
+                      ['Updated', true],
+                    ] as const
+                  ).map(([label, optional]) => (
+                    <th class={optional ? `${TH} ${COL_OPTIONAL}` : TH}>
+                      {label}
+                    </th>
                   ))}
                 </tr>
               </thead>
@@ -389,7 +416,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                       {a.applicantName}
                     </td>
                     <td
-                      class={`${TD} text-neutral-600 dark:text-neutral-300`}
+                      class={`${TD} ${COL_OPTIONAL} text-neutral-600 dark:text-neutral-300`}
                       data-sort-value={a.membershipTypeName}
                     >
                       {a.membershipTypeName}
@@ -420,13 +447,13 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                         )}
                     </td>
                     <td
-                      class={`${TD} text-xs text-neutral-500 dark:text-neutral-400`}
+                      class={`${TD} ${COL_OPTIONAL} text-xs text-neutral-500 dark:text-neutral-400`}
                       data-sort-value={a.capturedByName}
                     >
                       {a.capturedByName}
                     </td>
                     <td
-                      class={`${TD} text-xs text-neutral-500 dark:text-neutral-400`}
+                      class={`${TD} ${COL_OPTIONAL} text-xs text-neutral-500 dark:text-neutral-400`}
                       data-sort-value={a.updatedAt.toISOString()}
                     >
                       {dateFormat.format(a.updatedAt)}
@@ -436,6 +463,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               </tbody>
             </table>
           </div>
+          <Pagination total={total} paging={paging} noun="applications" />
         </form>
       )}
     </section>

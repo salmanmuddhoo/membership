@@ -3,6 +3,7 @@
 // non-member customer, with how much is on file, opening onto everything
 // filed for them. document.view, like the member page's own Documents.
 import DashboardLayout from '@layouts/DashboardLayout.astro';
+import Pagination from '@components/Pagination.astro';
 import { documentCountsForHolders } from '@lib/documents/directory';
 import { listMembers } from '@lib/members/create';
 import {
@@ -20,10 +21,26 @@ import {
   TH,
   THEAD,
 } from '@lib/ui';
+import { pagingFrom, pageHref, pageCount } from '@lib/paging';
 
 const search = Astro.url.searchParams.get('q') ?? '';
-const { members, total, truncated } = await listMembers({ search });
+// Officer request: a page at a time, 10/25/50 as chosen (src/lib/paging.ts).
+// listMembers already takes limit/offset and hands back the true total
+// matching the search, not merely how many rows this page got.
+const paging = pagingFrom(Astro.url);
+const { members, total } = await listMembers({
+  search,
+  limit: paging.per,
+  offset: paging.offset,
+});
 const counts = await documentCountsForHolders(members.map(m => m.id));
+
+// A page past the end — a stale link, or a search that narrowed the list
+// since — lands on the first page rather than an empty table with no way
+// back.
+if (paging.page > pageCount(total, paging.per)) {
+  return Astro.redirect(pageHref(Astro.url, { page: 1 }));
+}
 ---
 
 <DashboardLayout title="Documents · Al Barakah MCSL" heading="Documents">
@@ -42,6 +59,7 @@ const counts = await documentCountsForHolders(members.map(m => m.id));
           value={search}
           placeholder="Search by ID or name"
           class={`${INPUT_BARE} min-w-64 flex-1 text-neutral-800`}
+          data-suggest="/documents/suggest.json"
         />
         <button type="submit" class={SECONDARY_SM}>
           Search
@@ -53,65 +71,64 @@ const counts = await documentCountsForHolders(members.map(m => m.id));
         )}
       </form>
 
-      <p class={`${HINT} mt-3`}>
-        {total === 0
-          ? search
-            ? `No members match “${search}”.`
-            : 'No members yet.'
-          : truncated
-            ? `Showing the first ${members.length} of ${total}. Search to narrow the list.`
-            : `${total} folder${total === 1 ? '' : 's'}.`}
-      </p>
+      {total === 0 && (
+        <p class={`${HINT} mt-3`}>
+          {search ? `No members match “${search}”.` : 'No members yet.'}
+        </p>
+      )}
 
       {members.length > 0 && (
-        <div class="mt-4 overflow-x-auto">
-          <table class={TABLE} data-sortable>
-            <thead>
-              <tr class={THEAD}>
-                <th class={TH}>Name</th>
-                <th class={TH}>Number</th>
-                <th class={TH}>Type</th>
-                <th class={TH}>Status</th>
-                <th class={`${TH} text-right`}>Documents</th>
-              </tr>
-            </thead>
-            <tbody>
-              {members.map(m => (
-                <tr
-                  data-href={`/documents/${m.id}`}
-                  class={`${ROW} group cursor-pointer`}
-                >
-                  <td class={TD}>
-                    <a
-                      href={`/documents/${m.id}`}
-                      class="font-medium text-neutral-800 underline dark:text-neutral-100"
-                    >
-                      {m.name}
-                    </a>
-                    {m.kind === 'customer' && (
-                      <span class={`${PILL} ml-2`}>Non-member</span>
-                    )}
-                  </td>
-                  <td class={TD}>
-                    <code class="text-xs">{m.memberNo || '—'}</code>
-                  </td>
-                  <td class={`${TD} text-neutral-600 dark:text-neutral-300`}>
-                    {m.membershipTypeName}
-                  </td>
-                  <td class={TD}>
-                    <span class={PILL}>{m.status}</span>
-                  </td>
-                  <td
-                    class={TD_NUM}
-                    data-sort-value={String(counts.get(m.id) ?? 0)}
-                  >
-                    {counts.get(m.id) ?? 0}
-                  </td>
+        <>
+          <div class="mt-4 overflow-x-auto">
+            <table class={TABLE} data-sortable>
+              <thead>
+                <tr class={THEAD}>
+                  <th class={TH}>Name</th>
+                  <th class={TH}>Number</th>
+                  <th class={TH}>Type</th>
+                  <th class={TH}>Status</th>
+                  <th class={`${TH} text-right`}>Documents</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {members.map(m => (
+                  <tr
+                    data-href={`/documents/${m.id}`}
+                    class={`${ROW} group cursor-pointer`}
+                  >
+                    <td class={TD}>
+                      <a
+                        href={`/documents/${m.id}`}
+                        class="font-medium text-neutral-800 underline dark:text-neutral-100"
+                      >
+                        {m.name}
+                      </a>
+                      {m.kind === 'customer' && (
+                        <span class={`${PILL} ml-2`}>Non-member</span>
+                      )}
+                    </td>
+                    <td class={TD}>
+                      <code class="text-xs">{m.memberNo || '—'}</code>
+                    </td>
+                    <td class={`${TD} text-neutral-600 dark:text-neutral-300`}>
+                      {m.membershipTypeName}
+                    </td>
+                    <td class={TD}>
+                      <span class={PILL}>{m.status}</span>
+                    </td>
+                    <td
+                      class={TD_NUM}
+                      data-sort-value={String(counts.get(m.id) ?? 0)}
+                    >
+                      {counts.get(m.id) ?? 0}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <Pagination total={total} paging={paging} noun="folders" />
+        </>
       )}
     </section>
   </div>
