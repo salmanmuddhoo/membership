@@ -863,6 +863,14 @@ export interface BeginUploadResult {
  * confirms the bytes are in SharePoint the item still reads Missing — which is
  * exactly what should happen if the tablet loses signal halfway.
  */
+// How a subject reads in a filed document's name.
+const SUBJECT_NAMES: Record<string, string> = {
+  nominee: 'Nominee',
+  guardian: 'Guardian',
+  beneficiary: 'Beneficiary',
+  employment: 'Employment',
+};
+
 export async function beginUpload(
   input: {
     applicationId?: string;
@@ -1007,8 +1015,18 @@ export async function beginUpload(
       // about the original name is discarded.
       const extensionMatch = /\.[^./\\]+$/.exec(input.fileName);
       const extension = extensionMatch ? extensionMatch[0] : '';
+      // Whose it is goes in the name too, for anyone but the applicant: the
+      // applicant's and the nominee's Identity Card are one document type
+      // filed into one folder, and under one name the second upload
+      // collides with the first — SharePoint renames it on arrival, the
+      // version still records the name it asked for, and the commit then
+      // finds the other person's file there instead.
+      const whose =
+        input.subject === 'applicant'
+          ? ''
+          : ` (${SUBJECT_NAMES[input.subject] ?? input.subject})`;
       const base = sanitiseFileName(
-        `${type.rows[0].name} - ${owner.reference}`
+        `${type.rows[0].name}${whose} - ${owner.reference}`
       );
       // Numbered by the versions actually filed, not by every attempt: an
       // upload that never finished (SharePoint unreachable, the browser
