@@ -514,7 +514,7 @@ describe('carrying a receipt into the ledger', () => {
     };
     await expect(
       payments.voidPayment(receipt.paymentId, 'issued twice', principal)
-    ).rejects.toThrowError(/posted to the account.*Refund it instead/);
+    ).rejects.toThrowError(/is already on the account.*Refund it instead/);
     expect(await balance(appUrl, member.accounts.shares)).toBe('5000.00');
   });
 });

@@ -311,7 +311,7 @@ describe('transactions report', () => {
     expect(choices).toContainEqual({ value: 'returned', label: 'Returned' });
     expect(choices).toContainEqual({
       value: 'done',
-      label: 'Posted or disbursed',
+      label: 'Disbursed',
     });
     expect(choices).toContainEqual({ value: 'rejected', label: 'Rejected' });
     expect(choices).toContainEqual({ value: 'cancelled', label: 'Cancelled' });

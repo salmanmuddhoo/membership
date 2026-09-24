@@ -51,6 +51,13 @@ const groups = navigationFor({
       <h2 class={CARD_TITLE}>
         Assalamoualaikoum{displayName ? `, ${displayName}` : ''}
       </h2>
+      <p
+        lang="ar"
+        dir="rtl"
+        class="mt-1 text-left text-xl font-semibold text-neutral-700 dark:text-neutral-200"
+      >
+        السلام عليكم
+      </p>
       {(applicationsBadge > 0 || transactionsBadge > 0) && (
         <p class={`${HINT} mt-2`}>
           Waiting on you:{' '}
@@ -96,9 +103,9 @@ const groups = navigationFor({
                     </span>
                   )}
                 </span>
-                {NAV_DESCRIPTIONS[item.href] && (
+                {NAV_DESCRIPTIONS[item.href.split('?')[0]] && (
                   <span class={`${HINT} mt-0.5 block`}>
-                    {NAV_DESCRIPTIONS[item.href]}
+                    {NAV_DESCRIPTIONS[item.href.split('?')[0]]}
                   </span>
                 )}
               </span>

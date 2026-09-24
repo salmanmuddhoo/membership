@@ -181,7 +181,7 @@ const backHref = `/transactions/${t.id}`;
     </div>
     {receipt.postedByName && receipt.postedByName !== t.capturedByName && (
       <div class="row">
-        <dt>Posted by</dt>
+        <dt>Disbursed by</dt>
         <dd>{receipt.postedByName}</dd>
       </div>
     )}
@@ -252,8 +252,8 @@ const backHref = `/transactions/${t.id}`;
   <section class="screen-only panel danger">
     <h2>Void this receipt</h2>
     <p>
-      The number is withdrawn; the transaction stays posted. To undo the money,
-      reverse the transaction.
+      The number is withdrawn; the transaction stays disbursed. To undo the
+      money, reverse the transaction.
     </p>
     <form method="post" id="void-form">
       <label>

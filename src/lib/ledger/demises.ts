@@ -254,7 +254,7 @@ async function ownedEditable(
   }
   if (!isEditable(claim.status)) {
     throw new DemiseError(
-      `${claim.reference} is ${claim.status}, so it cannot be changed.`,
+      `${claim.reference} is ${claim.status === 'posted' ? 'disbursed' : claim.status}, so it cannot be changed.`,
       'conflict'
     );
   }

@@ -546,7 +546,7 @@ export async function resubmitDeposit(
   }
   if (deposit.status !== 'returned') {
     throw new DepositError(
-      `${deposit.reference} is ${deposit.status}, so it cannot be changed.`,
+      `${deposit.reference} is ${deposit.status === 'posted' ? 'disbursed' : deposit.status}, so it cannot be changed.`,
       'conflict'
     );
   }

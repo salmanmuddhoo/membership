@@ -429,7 +429,7 @@ async function ownedEditable(
   }
   if (!isEditable(request.status)) {
     throw new ResignationError(
-      `${request.reference} is ${request.status}, so it cannot be changed.`,
+      `${request.reference} is ${request.status === 'posted' ? 'disbursed' : request.status}, so it cannot be changed.`,
       'conflict'
     );
   }

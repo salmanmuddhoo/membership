@@ -440,7 +440,7 @@ export async function resubmitWithdrawal(
   }
   if (withdrawal.status !== 'returned') {
     throw new WithdrawalError(
-      `${withdrawal.reference} is ${withdrawal.status}, so it cannot be changed.`,
+      `${withdrawal.reference} is ${withdrawal.status === 'posted' ? 'disbursed' : withdrawal.status}, so it cannot be changed.`,
       'conflict'
     );
   }

@@ -546,7 +546,7 @@ export async function resubmitTransfer(
   }
   if (leg.status !== 'returned') {
     throw new TransferError(
-      `${leg.transferReference} is ${leg.status}, so it cannot be changed.`,
+      `${leg.transferReference} is ${leg.status === 'posted' ? 'disbursed' : leg.status}, so it cannot be changed.`,
       'conflict'
     );
   }

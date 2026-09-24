@@ -402,7 +402,7 @@ async function ownedEditable(
   }
   if (!isEditable(closure.status)) {
     throw new ClosureError(
-      `${closure.reference} is ${closure.status}, so it cannot be changed.`,
+      `${closure.reference} is ${closure.status === 'posted' ? 'disbursed' : closure.status}, so it cannot be changed.`,
       'conflict'
     );
   }

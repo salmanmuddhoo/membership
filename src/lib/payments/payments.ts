@@ -1907,7 +1907,7 @@ export async function voidPayment(
     );
     if ((carried.rowCount ?? 0) > 0) {
       throw new PaymentError(
-        `Receipt ${payment.receiptNo} has been posted to the account. ` +
+        `Receipt ${payment.receiptNo} is already on the account. ` +
           'Refund it instead.',
         'conflict'
       );

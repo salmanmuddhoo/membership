@@ -328,10 +328,10 @@ describe('a large cash deposit as a request (S-1306)', () => {
     // Once submitted it is no longer a draft to change, submit or cancel.
     await expect(
       requests.submitDepositRequest(requestId, officer)
-    ).rejects.toThrowError(/is posted/);
+    ).rejects.toThrowError(/is disbursed/);
     await expect(
       requests.cancelDepositRequest(requestId, officer)
-    ).rejects.toThrowError(/is posted/);
+    ).rejects.toThrowError(/is disbursed/);
 
     const trail = await run(
       appUrl,
