@@ -6,6 +6,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ExcelJS from 'exceljs';
+import type { ParsedRow } from './members';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { migrate } from '../../../scripts/migrate';
@@ -1612,5 +1613,194 @@ describe('sixth increment: Employment Details columns and trimmed Nominee column
         where m.legacy_code = 'LEG-EMP-3' and p.subject = 'employment'`
     );
     expect(employment.rows).toHaveLength(0);
+  });
+});
+
+// Officer QA: migration scenarios run against the template, and what they
+// showed — each case below failed, or failed silently, before.
+describe('officer QA: migration scenarios', () => {
+  const individualRow = (overrides: Partial<ParsedRow> = {}): ParsedRow => ({
+    sheet: 'Individual',
+    rowNumber: 2,
+    legacyCode: 'QA-1',
+    abNumber: 'AB7001',
+    joinedAt: '',
+    values: {
+      surname: 'Qa',
+      name: 'One',
+      nic: 'Q7001000000000',
+      gender: 'Male',
+      address: 'Addr',
+      mobile: '57007001',
+    },
+    employment: {},
+    guardian: {},
+    beneficiary: {},
+    nominees: [
+      {
+        surname: 'Nominee Surname',
+        name: 'Nominee Name',
+        nic: 'Nominee NIC',
+        address: 'Nominee Address',
+      },
+      {} as Record<string, string>,
+    ],
+    sharesBalance: '0',
+    msaBalance: '0',
+    accountNumbers: {},
+    accountBalances: {},
+    ...overrides,
+  });
+
+  async function workbookFrom(buffer: Buffer) {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(buffer as any);
+    return workbook;
+  }
+
+  it('marks what must be filled in: colour, note and an Instructions sheet', async () => {
+    const { buildImportTemplate } = await load();
+    const workbook = await workbookFrom(await buildImportTemplate());
+    expect(workbook.worksheets[0].name).toBe('Instructions');
+
+    const sheet = workbook.getWorksheet('Individual')!;
+    const byHeader = new Map<string, ExcelJS.Cell>();
+    sheet.getRow(1).eachCell(cell => byHeader.set(String(cell.value), cell));
+    const fill = (header: string) =>
+      (byHeader.get(header)!.fill as ExcelJS.FillPattern).fgColor?.argb;
+
+    expect(fill('Surname *')).toBe('FFF4B6B6');
+    expect(fill('Legacy Member Code')).toBe('FFFFE08A');
+    expect(fill('AB Number')).toBe('FFFFE08A');
+    expect(fill('Shares Balance')).toBe('FFFFE08A');
+    expect(fill('Joined Date (optional)')).toBe('FFE5E7EB');
+    expect(String(byHeader.get('Legacy Member Code')!.note)).toMatch(
+      /Required for a non-member/
+    );
+    expect(String(byHeader.get('AB Number')!.note)).toMatch(/AB2001/);
+    expect(String(byHeader.get('Mobile *')!.note)).toMatch(/57001234/);
+    expect(sheet.getColumn(byHeader.get('NIC *')!.col).numFmt).toBe('@');
+  });
+
+  it('catches the same mobile twice in one file, however it is typed', async () => {
+    const { validateRows } = await load();
+    const { errors } = await validateRows([
+      individualRow(),
+      individualRow({
+        rowNumber: 3,
+        legacyCode: 'QA-2',
+        abNumber: 'AB7002',
+        values: { ...individualRow().values, nic: 'Q7002000000000' },
+      }),
+    ]);
+    expect(errors).toHaveLength(2);
+    expect(
+      errors.every(e => /appears more than once in this sheet/.test(e.message))
+    ).toBe(true);
+  });
+
+  it('reads a date as YYYY-MM-DD only, and refuses an impossible one', async () => {
+    const { validateRows } = await load();
+    const check = async (joinedAt: string) =>
+      (await validateRows([individualRow({ joinedAt })])).errors.map(
+        e => e.message
+      );
+    expect(await check('2000-06-15')).toEqual([]);
+    expect((await check('15/06/2000'))[0]).toMatch(/use YYYY-MM-DD/);
+    expect((await check('36688'))[0]).toMatch(/use YYYY-MM-DD/);
+    expect((await check('2000-02-30'))[0]).toMatch(/use YYYY-MM-DD/);
+    expect((await check('2999-01-01'))[0]).toMatch(/not a possible date/);
+  });
+
+  it('reads a Joined Date that lost its date formatting as the day it was', async () => {
+    const { buildImportTemplate, parseImportFile } = await load();
+    const workbook = await workbookFrom(await buildImportTemplate());
+    const sheet = workbook.getWorksheet('Individual')!;
+    let joined = 0;
+    let surname = 0;
+    sheet.getRow(1).eachCell((cell, col) => {
+      if (cell.value === 'Joined Date (optional)') joined = col;
+      if (cell.value === 'Surname *') surname = col;
+    });
+    sheet.getCell(2, joined).value = 36692; // Excel's day number for 15 June 2000
+    sheet.getCell(2, surname).value = 'Serial';
+    const rows = await parseImportFile(
+      Buffer.from(await workbook.xlsx.writeBuffer())
+    );
+    expect(rows[0].joinedAt).toBe('2000-06-15');
+  });
+
+  it('refuses a Date of birth in the future', async () => {
+    const { validateRows } = await load();
+    const { errors } = await validateRows([
+      individualRow({
+        sheet: 'Minor',
+        values: { ...individualRow().values, date_of_birth: '2999-01-01' },
+      }),
+    ]);
+    expect(errors[0].message).toMatch(
+      /Date of birth 2999-01-01 is not a possible date/
+    );
+  });
+
+  it('accepts a balance written with thousands commas', async () => {
+    const { validateRows } = await load();
+    const { valid, errors } = await validateRows([
+      individualRow({ sharesBalance: '1,500.00' }),
+    ]);
+    expect(errors).toEqual([]);
+    expect(valid[0].sharesBalance).toBe('1500.00');
+  });
+
+  it('reads a sheet whose name was retyped in another case', async () => {
+    const { buildImportTemplate, parseImportFile } = await load();
+    const filled = await fillSheet(await buildImportTemplate(), 'Individual', {
+      Surname: 'Renamed',
+    });
+    const workbook = await workbookFrom(filled);
+    const renamed = workbook.getWorksheet('Individual')!;
+    renamed.name = 'Renaming';
+    renamed.name = 'individual';
+    const rows = await parseImportFile(
+      Buffer.from(await workbook.xlsx.writeBuffer())
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].sheet).toBe('Individual');
+  });
+
+  it('refuses a sheet or a column the template does not have, when anything is in it', async () => {
+    const { buildImportTemplate, parseImportFile, MigrationError } =
+      await load();
+    const template = await buildImportTemplate();
+
+    const withSheet = await workbookFrom(template);
+    withSheet.addWorksheet('Empty');
+    withSheet.addWorksheet('Notes').addRow(['Header']).commit();
+    withSheet.getWorksheet('Notes')!.addRow(['Something typed']);
+    await expect(
+      parseImportFile(Buffer.from(await withSheet.xlsx.writeBuffer()))
+    ).rejects.toThrow(/Sheet "Notes" is not one of the template's sheets/);
+
+    const withColumn = await workbookFrom(template);
+    const sheet = withColumn.getWorksheet('Individual')!;
+    const next = sheet.getRow(1).cellCount + 1;
+    sheet.getCell(1, next).value = 'Passport Number';
+    sheet.getCell(2, next).value = 'P123';
+    await expect(
+      parseImportFile(Buffer.from(await withColumn.xlsx.writeBuffer()))
+    ).rejects.toThrow(MigrationError);
+    await expect(
+      parseImportFile(Buffer.from(await withColumn.xlsx.writeBuffer()))
+    ).rejects.toThrow(/column "Passport Number" is not in the template/);
+
+    // The untouched template, Instructions sheet and all, reads as empty.
+    expect(await parseImportFile(template)).toEqual([]);
+  });
+
+  it('says plainly when the file is not an Excel workbook', async () => {
+    const { parseImportFile } = await load();
+    await expect(
+      parseImportFile(Buffer.from('Legacy Member Code,AB Number\nX,AB1\n'))
+    ).rejects.toThrow(/not an Excel workbook/);
   });
 });

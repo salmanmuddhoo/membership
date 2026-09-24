@@ -55,7 +55,8 @@ if (Astro.request.method === 'POST' && isTestEnvironment) {
   }
 }
 
-const counts = isTestEnvironment && !done ? await countsBeforeReset() : null;
+const counts =
+  isTestEnvironment && !done ? await countsBeforeReset(principal.userId) : null;
 ---
 
 <DashboardLayout
@@ -90,12 +91,14 @@ const counts = isTestEnvironment && !done ? await countsBeforeReset() : null;
           transaction{counts.transactions === 1 ? '' : 's'}, {counts.payments}{' '}
           payment
           {counts.payments === 1 ? '' : 's'} and {counts.documents} document
-          {counts.documents === 1 ? '' : 's'} — and the record of who did what
-          to any of them. This cannot be undone.
+          {counts.documents === 1 ? '' : 's'}, the audit log and the history of
+          setting changes. This cannot be undone.
         </p>
         <p class="mt-2 text-sm text-red-800 dark:text-red-200">
-          Staff accounts, roles, API credentials and everything under
-          Configuration are kept.
+          {counts.otherStaff === 0
+            ? 'Your staff account is kept.'
+            : `${counts.otherStaff} other staff account${counts.otherStaff === 1 ? '' : 's'} ${counts.otherStaff === 1 ? 'is' : 'are'} removed; yours is kept.`}{' '}
+          Roles, API credentials and everything under Configuration are kept.
         </p>
 
         <form method="post" class="mt-5 space-y-3" data-reset-form>
