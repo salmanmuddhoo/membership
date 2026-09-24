@@ -10,7 +10,9 @@ const errorMessage =
     ? 'Sign-in is not configured yet. Please contact your administrator.'
     : errorCode === 'auth'
       ? 'We could not sign you in. Please try again.'
-      : null;
+      : Astro.url.searchParams.get('reason') === 'idle'
+        ? 'You were signed out after a period without activity.'
+        : null;
 ---
 
 <AuthLayout

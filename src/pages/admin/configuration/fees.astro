@@ -16,6 +16,8 @@ import {
   resignationChecks,
   setCashMaximum,
   setDormancyMonths,
+  setSessionIdleMinutes,
+  sessionIdleMinutes,
   setDormancyReactivation,
   setNearFloorMargin,
   setResignationChecks,
@@ -109,6 +111,12 @@ if (Astro.request.method === 'POST') {
           actor
         );
         notice = 'Dormancy threshold updated.';
+      } else if (intent === 'set-session-idle-minutes') {
+        await setSessionIdleMinutes(
+          String(form.get('sessionIdleMinutes') ?? '').trim(),
+          actor
+        );
+        notice = 'Sign-out after inactivity updated.';
       } else if (intent === 'set-dormancy-reactivation') {
         await setDormancyReactivation(
           String(form.get('dormancyReactivation') ?? '').trim(),
@@ -151,6 +159,7 @@ const checks = await resignationChecks();
 const takaful = await takafulBenefit();
 const nearFloor = await nearFloorMargin();
 const dormancy = await dormancyMonths();
+const idleMinutes = await sessionIdleMinutes();
 const reactivation = await dormancyReactivation();
 const RESIGNATION_CHECKS: {
   name: keyof typeof checks;
@@ -449,6 +458,33 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             inputmode="decimal"
             name="nearFloorMargin"
             value={nearFloor}
+            disabled={!canManage}
+            class={`${INPUT_SM} mt-1 block w-40`}
+          />
+        </label>
+        {canManage && (
+          <button type="submit" class={BUTTON_SM}>
+            Save
+          </button>
+        )}
+      </form>
+    </section>
+
+    <section class={CARD}>
+      <h2 class={CARD_TITLE}>Sign-out after inactivity</h2>
+      <p class={`${HINT} mt-1`}>
+        Staff are signed out after this many minutes without activity. 0 turns
+        it off.
+      </p>
+      <form method="post" class="mt-4 flex flex-wrap items-end gap-3">
+        <input type="hidden" name="intent" value="set-session-idle-minutes" />
+        <label class={LABEL}>
+          Minutes
+          <input
+            type="text"
+            inputmode="numeric"
+            name="sessionIdleMinutes"
+            value={idleMinutes}
             disabled={!canManage}
             class={`${INPUT_SM} mt-1 block w-40`}
           />

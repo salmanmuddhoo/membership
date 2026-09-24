@@ -8,6 +8,7 @@ import { isProductionEnvironment } from '@lib/config';
 import { activeNavHref, navigationFor } from '@lib/navigation';
 import { pendingActionCount } from '@lib/applications/workflow';
 import { pendingTransactionCount } from '@lib/ledger/review';
+import { sessionIdleMinutes } from '@lib/config/reference';
 
 interface Props {
   title?: string;
@@ -67,6 +68,15 @@ const navGroups = navigationFor({
 
 const currentPath = Astro.url.pathname;
 const activeHref = activeNavHref(navGroups, currentPath);
+
+// Sign-out after inactivity (session.idle_minutes): the page's own timer,
+// below. The middleware enforces the same limit on the next request.
+let idleMinutes = 15;
+try {
+  idleMinutes = await sessionIdleMinutes();
+} catch (error) {
+  console.error('[layout] could not read session.idle_minutes:', error);
+}
 ---
 
 <BaseLayout title={title} bodyClass="islamic-pattern">
@@ -364,5 +374,61 @@ const activeHref = activeNavHref(navGroups, currentPath);
         });
       }
     })();
+  </script>
+  <div data-idle-minutes={idleMinutes} hidden></div>
+  <script>
+    // Signs the officer out once nobody has used the app for
+    // session.idle_minutes: no key, click, touch or scroll in any of its tabs.
+    // The last activity is shared through localStorage, so a busy tab keeps
+    // an idle one open; without storage each tab counts on its own.
+    const minutes = Number(
+      document.querySelector<HTMLElement>('[data-idle-minutes]')?.dataset
+        .idleMinutes ?? '0'
+    );
+    if (minutes > 0) {
+      const KEY = 'ab-last-activity';
+      const limit = minutes * 60_000;
+      let local = Date.now();
+      const mark = () => {
+        local = Date.now();
+        try {
+          localStorage.setItem(KEY, String(local));
+        } catch {
+          // Storage unavailable: this tab's own clock is the one used.
+        }
+      };
+      const last = () => {
+        try {
+          return Math.max(local, Number(localStorage.getItem(KEY) ?? 0));
+        } catch {
+          return local;
+        }
+      };
+      let pending = false;
+      const throttled = () => {
+        if (pending) return;
+        pending = true;
+        setTimeout(() => {
+          pending = false;
+          mark();
+        }, 5_000);
+      };
+      mark();
+      for (const event of [
+        'keydown',
+        'mousedown',
+        'mousemove',
+        'touchstart',
+        'scroll',
+        'wheel',
+      ]) {
+        window.addEventListener(event, throttled, { passive: true });
+      }
+      setInterval(() => {
+        if (Date.now() - last() > limit) {
+          window.location.assign('/auth/logout?reason=idle');
+        }
+      }, 30_000);
+    }
   </script>
 </BaseLayout>
