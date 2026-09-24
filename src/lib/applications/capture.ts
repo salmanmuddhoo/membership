@@ -962,6 +962,20 @@ export async function startMembershipApplicationFromCustomer(
       );
     }
 
+    // Their identity card and the rest are already on file from the
+    // account(s) they opened as a customer: carried onto this application
+    // the same way a further account's are (officer feedback).
+    await carryForwardMemberDocuments(client, {
+      applicationId: id,
+      memberId: null,
+      sourceApplicationIds: await holderSourceApplicationIds(client, id, {
+        column: 'existing_customer_id',
+        ownerId: customerId,
+        foundingApplicationId: sourceApplicationId,
+      }),
+      actor,
+    });
+
     await recordAudit(
       {
         actorUserId: actor.userId,
@@ -1516,6 +1530,15 @@ export async function saveDraft(
   const fields = visibleFields(type);
 
   const problems: MissingField[] = [];
+  const applicantNic = (list: PartyValues[]) =>
+    (
+      list.find(p => p.subject === 'applicant' && p.ordinal === 1)?.values
+        .nic ?? ''
+    )
+      .trim()
+      .toUpperCase();
+  const nicBefore = applicantNic(application.parties);
+  let nicAfter = nicBefore;
 
   const savedAt = await withTransaction(async client => {
     // One statement for every party rather than one round trip each — see
@@ -1529,6 +1552,9 @@ export async function saveDraft(
       const subjectFields = fields.get(party.subject) ?? [];
       const { values, errors } = normalise(party.values, subjectFields);
       problems.push(...errors.map(e => ({ ...e, ordinal: party.ordinal })));
+      if (party.subject === 'applicant' && party.ordinal === 1) {
+        nicAfter = applicantNic([{ ...party, values }]);
+      }
       partySubjects.push(party.subject);
       partyOrdinals.push(party.ordinal);
       partyValues.push(JSON.stringify(values));
@@ -1543,6 +1569,31 @@ export async function saveDraft(
          do update set values = excluded.values`,
         [applicationId, partySubjects, partyOrdinals, partyValues]
       );
+    }
+
+    // Someone applying again after being turned down (officer feedback):
+    // the identity card and the rest they filed then are carried onto this
+    // application once their NIC is entered, as a further account's are.
+    // Only when the NIC changes, not on every autosave; a document already
+    // here, or removed from here, is never carried over it.
+    if (nicAfter !== '' && nicAfter !== nicBefore) {
+      const earlier = await client.query<{ id: string }>(
+        `select a.id from membership_application a
+           join application_party p
+             on p.application_id = a.id
+            and p.subject = 'applicant' and p.ordinal = 1
+          where a.id <> $1 and a.status = 'rejected'
+            and upper(trim(p.values->>'nic')) = $2`,
+        [applicationId, nicAfter]
+      );
+      if (earlier.rowCount) {
+        await carryForwardMemberDocuments(client, {
+          applicationId,
+          memberId: null,
+          sourceApplicationIds: earlier.rows.map(r => r.id),
+          actor,
+        });
+      }
     }
 
     const touched = await client.query<{ updated_at: Date }>(

@@ -695,8 +695,9 @@ export function isDocumentComplete(entries: ChecklistEntry[]): boolean {
 }
 
 /**
- * Carry an existing member's documents onto a new additional-account
- * application (officer feedback).
+ * Carry an existing member's documents onto a new application (officer
+ * feedback): a further account, a rejoin, a customer applying to become a
+ * member, or someone applying again after a rejection.
  *
  * A member opening a further account has already given their identity card,
  * proof of address and the like when they joined — asking for them again is
@@ -777,6 +778,14 @@ export async function carryForwardMemberDocuments(
         and v.state = 'committed' and v.superseded_at is null
       where ci.application_id = $1::uuid
         and dt.code <> 'signed_form'
+        -- Nothing this application already has a document for, filed or
+        -- since removed: a carry never doubles a filing, and never brings
+        -- back what the officer took off (the removed row stays).
+        and not exists (
+              select 1 from document t
+               where t.application_id = $1::uuid
+                 and t.document_type_id = ci.document_type_id
+                 and t.subject = ci.subject)
       order by ci.document_type_id, ci.subject, v.committed_at desc`,
     [input.applicationId, input.memberId, input.sourceApplicationIds]
   );
