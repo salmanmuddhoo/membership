@@ -28,6 +28,7 @@ import {
 } from '@lib/documents/documents';
 import {
   editableContactFields,
+  mayEditAllDetails,
   PERMISSION_EDIT_CONTACT,
   type EditableContactField,
 } from '@lib/members/contact';
@@ -99,7 +100,11 @@ const canCapture = principal.permissions.has('application.capture');
 // the spot, no review or approval (migration 0045) — its own permission,
 // separate from member.details_verify, which gates a change the member sent
 // in unattended from the app.
-const canEditContact = principal.permissions.has(PERMISSION_EDIT_CONTACT);
+// member.edit_all_details opens every applicant field, name and NIC
+// included, not just the contact ones (officer request).
+const canEditAllDetails = mayEditAllDetails(principal);
+const canEditContact =
+  principal.permissions.has(PERMISSION_EDIT_CONTACT) || canEditAllDetails;
 
 const { id } = Astro.params;
 // Two different tables (member, customer — migration 0027), and no way to
@@ -129,7 +134,9 @@ const contactApplicationId = (member ?? customer)!.applicationId;
 // canEditContact: a viewer without the permission still sees the same
 // values, just no pencil icon or inputs — see contact.ts.
 const contactFields: EditableContactField[] = contactApplicationId
-  ? await editableContactFields(contactApplicationId)
+  ? await editableContactFields(contactApplicationId, {
+      allDetails: canEditAllDetails,
+    })
   : [];
 
 // Officer feedback: Name, Surname, Address, Gender, Marital status, NIC,

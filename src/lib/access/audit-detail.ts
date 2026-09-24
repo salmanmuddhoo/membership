@@ -435,6 +435,7 @@ interface PersonInfo {
 const PERSON_ACTION_SENTENCES: Record<string, (who: string) => string> = {
   'member.created': who => `${who} created as a member.`,
   'member.contact.updated': who => `Contact details updated for ${who}.`,
+  'member.details.corrected': who => `Details corrected for ${who}.`,
   'member.majority_transition': who => `${who} reached majority age.`,
   'member.migration.imported': who => `${who} imported via migration.`,
   'member.migration.updated': who => `Migrated record updated for ${who}.`,

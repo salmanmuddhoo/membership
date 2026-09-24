@@ -180,6 +180,8 @@ function describeEntry(entry: AuditEventRow): string {
       return `Member${memberNo} created${by}`;
     case 'member.contact.updated':
       return `Contact details updated${by}`;
+    case 'member.details.corrected':
+      return `Details corrected${by}`;
     case 'member.majority_transition':
       return `Member${memberNo} reached majority age`;
     case 'member.migration.imported':
