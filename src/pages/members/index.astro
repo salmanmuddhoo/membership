@@ -1,15 +1,17 @@
 ---
 import DashboardLayout from '@layouts/DashboardLayout.astro';
+import Pagination from '@components/Pagination.astro';
 import {
   listMembers,
-  MEMBER_LIST_PAGE_SIZE,
   type MemberListAccount,
+  type MemberListStatusFilter,
 } from '@lib/members/create';
 import { countPendingDetailsRequests } from '@lib/members/details-requests';
 import { listAccountTypes } from '@lib/config/reference';
 import { formatMoney } from '@lib/payments/money';
 import { statusLabel } from '@lib/members/labels';
 import { shownStatus } from '@lib/members/status';
+import { pagingFrom, pageHref } from '@lib/paging';
 import {
   PAGE,
   CARD,
@@ -38,17 +40,26 @@ const canSeePayments = principal.permissions.has('payment.view');
 // noticing.
 const pendingDetailsUpdates = await countPendingDetailsRequests();
 
+// The status <select>'s own options, in the order the officer sees them —
+// what the Status column would show for each, not the raw stored value
+// (listMembers' own status filter matches this exactly).
+const STATUS_FILTERS: [MemberListStatusFilter, string][] = [
+  ['', 'All statuses'],
+  ['active', 'Active'],
+  ['non_member', 'Non-member'],
+  ['dormant', 'Dormant'],
+  ['inactive', 'Inactive'],
+  ['resigned', 'Resigned'],
+  ['demised', 'Demised'],
+  ['closed', 'Closed'],
+];
+
 const search = Astro.url.searchParams.get('q') ?? '';
-// Performance QA: past the first 100, members were reachable only by
-// searching. A page of 100 at a time, the search kept across pages.
-const page = Math.max(Number(Astro.url.searchParams.get('page')) || 1, 1);
-const pageHref = (target: number) => {
-  const next = new URLSearchParams();
-  if (search) next.set('q', search);
-  if (target > 1) next.set('page', String(target));
-  const query = next.toString();
-  return query ? `/members?${query}` : '/members';
-};
+const statusParam = Astro.url.searchParams.get('status') ?? '';
+const status = STATUS_FILTERS.some(([value]) => value === statusParam)
+  ? statusParam
+  : '';
+const paging = pagingFrom(Astro.url);
 // Officer feedback: every account button lines up under the others of its
 // own type across every row — Investment never under Shares — rather than
 // packing left to right per row. A fixed table column per active account
@@ -59,15 +70,18 @@ const [
   { members, total, memberCount, nonMemberCount, formerCount },
   accountTypeColumns,
 ] = await Promise.all([
-  listMembers({ search, offset: (page - 1) * MEMBER_LIST_PAGE_SIZE }),
+  listMembers({
+    search,
+    status,
+    limit: paging.per,
+    offset: paging.offset,
+  }),
   listAccountTypes(),
 ]);
-// A page past the end (the list shrank since the link was made) goes back
-// to the first.
-if (members.length === 0 && page > 1) return Astro.redirect(pageHref(1));
-const totalPages = Math.max(Math.ceil(total / MEMBER_LIST_PAGE_SIZE), 1);
-const firstShown = (page - 1) * MEMBER_LIST_PAGE_SIZE + 1;
-const lastShown = firstShown + members.length - 1;
+// A page past the end (the list shrank, or a filter narrowed it, since the
+// link was made) goes back to the first.
+if (members.length === 0 && paging.page > 1)
+  return Astro.redirect(pageHref(Astro.url, { page: 1 }));
 const activeAccountTypeColumns = accountTypeColumns.filter(t => t.isActive);
 
 const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium' });
@@ -138,12 +152,28 @@ function accountButtonClasses(account: MemberListAccount): string {
           name="q"
           value={search}
           placeholder="Search by ID or name"
+          data-suggest="/members/suggest.json"
           class={`${INPUT_BARE} min-w-64 flex-1 text-neutral-800`}
         />
+        <label for="status" class="sr-only">
+          Status
+        </label>
+        <select
+          id="status"
+          name="status"
+          class={INPUT_BARE}
+          onchange="this.form.submit()"
+        >
+          {STATUS_FILTERS.map(([value, label]) => (
+            <option value={value} selected={value === status}>
+              {label}
+            </option>
+          ))}
+        </select>
         <button type="submit" class={SECONDARY_SM}>
           Search
         </button>
-        {search && (
+        {(search || status) && (
           <a href="/members" class={`${HINT} px-2 py-1.5 underline`}>
             Clear
           </a>
@@ -152,8 +182,8 @@ function accountButtonClasses(account: MemberListAccount): string {
 
       <p class={`${HINT} mt-3`}>
         {total === 0
-          ? search
-            ? `No members match “${search}”.`
+          ? search || status
+            ? 'No member matches.'
             : 'No members yet. One is created when an application is approved.'
           : (() => {
               // Officer feedback: split the count into members (their
@@ -161,13 +191,12 @@ function accountButtonClasses(account: MemberListAccount): string {
               // resigned member, still holding an open account); LC-10
               // adds former — a resigned or demised member, or a customer,
               // with nothing open — shown only when there is one to report.
-              const breakdown =
+              return (
                 `${memberCount} member${memberCount === 1 ? '' : 's'}, ` +
                 `${nonMemberCount} non-member${nonMemberCount === 1 ? '' : 's'}` +
-                (formerCount > 0 ? `, ${formerCount} former` : '');
-              return totalPages > 1
-                ? `${firstShown}–${lastShown} of ${total} — ${breakdown}.`
-                : `${breakdown}.`;
+                (formerCount > 0 ? `, ${formerCount} former` : '') +
+                '.'
+              );
             })()}
       </p>
 
@@ -289,27 +318,7 @@ function accountButtonClasses(account: MemberListAccount): string {
         </div>
       )}
 
-      {totalPages > 1 && (
-        <div class="mt-4 flex items-center justify-between gap-2 text-sm">
-          {page > 1 ? (
-            <a href={pageHref(page - 1)} class={SECONDARY_SM}>
-              ← Previous
-            </a>
-          ) : (
-            <span />
-          )}
-          <span class={HINT}>
-            Page {page} of {totalPages}
-          </span>
-          {page < totalPages ? (
-            <a href={pageHref(page + 1)} class={SECONDARY_SM}>
-              Next →
-            </a>
-          ) : (
-            <span />
-          )}
-        </div>
-      )}
+      <Pagination total={total} paging={paging} noun="members" />
     </section>
 
     {canSeePayments && (
