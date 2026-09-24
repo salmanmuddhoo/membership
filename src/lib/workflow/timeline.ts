@@ -113,8 +113,9 @@ export interface TransactionTimelineInput {
   // steps the officer walks first, in order, each with its own test for
   // being finished. Absent for a transaction recorded in one act.
   prelude?: PlannedStep[];
-  // What the first and last steps are called: 'Recorded' and 'Posted' for
-  // money in, 'Disbursement' for money out, 'Submitted' first for an exit.
+  // What the first and last steps are called: 'Recorded' first and
+  // 'Disbursement' last for every transaction, 'Submitted' first for an
+  // exit.
   submitLabel?: string;
   postedLabel?: string;
   // Who takes the last step — the roles holding the permission it needs
@@ -128,8 +129,8 @@ const ENDED: Record<string, string> = {
 };
 
 /**
- * Recorded → each enabled step of its chain → Posted. Pure: what the trail
- * and the chain say, and nothing stored.
+ * Recorded → each enabled step of its chain → Disbursement. Pure: what the
+ * trail and the chain say, and nothing stored.
  */
 export function transactionTimeline(
   input: TransactionTimelineInput
@@ -183,11 +184,12 @@ export function transactionTimeline(
     }),
     {
       key: 'posted',
-      label: input.postedLabel ?? 'Posted',
+      label: input.postedLabel ?? 'Disbursement',
       done: posted,
       detail: posted
         ? (input.receiptNo ?? undefined)
-        : (input.postedDetail ?? (approved ? 'Approved, to post' : undefined)),
+        : (input.postedDetail ??
+          (approved ? 'Approved, to disburse' : undefined)),
     },
   ];
   return assignStates(planned);
@@ -197,8 +199,8 @@ export function transactionTimeline(
  * The timeline a transaction WOULD take, before it exists (the timeline
  * experience): what an officer sees over the form, so the first chevron is
  * theirs and the rest say who decides. Recorded is current, every step of
- * the chain to come, Posted at the end — or Recorded then Posted alone
- * where the matrix posts at once.
+ * the chain to come, Disbursement at the end — or Recorded then Disbursement
+ * alone where the matrix posts at once.
  */
 export function previewTimeline(
   chain: Pick<WorkflowStep, 'code' | 'name' | 'roleName'>[],
@@ -217,7 +219,7 @@ export function previewTimeline(
     returnedBy: null,
     receiptNo: null,
     submitLabel: labels.submitLabel ?? 'Record',
-    postedLabel: labels.postedLabel ?? 'Posted',
+    postedLabel: labels.postedLabel ?? 'Disbursement',
     // A chain ends with someone paying out or posting; with none, the
     // officer recording it does both at once.
     postedDetail: chain.length > 0 ? labels.postedDetail : undefined,
@@ -270,13 +272,11 @@ export async function routePreviewGroups(
   const byType = new Map<string, RoutePreviewBand[]>();
   // A withdrawal is disbursed by whoever holds transaction.disburse (the
   // Treasurer); a transfer's payee is not known until the form is filled,
-  // so its preview says Posted and the chevron after submit says which.
+  // so its preview names whoever posts and the chevron after submit says
+  // which. Both read Disbursement (previewTimeline's default).
   const labels =
     kind === 'withdrawal'
-      ? {
-          postedLabel: 'Disbursement',
-          postedDetail: await roleNamesHolding(PERMISSION_DISBURSE),
-        }
+      ? { postedDetail: await roleNamesHolding(PERMISSION_DISBURSE) }
       : { postedDetail: await roleNamesHolding(PERMISSION_POST) };
   for (const typeId of new Set(accounts.map(a => a.accountTypeId))) {
     const bands = await routeBands({ kind, accountTypeId: typeId, roleCodes });
@@ -352,8 +352,9 @@ export async function chainTimeline(
     rejectedAtStepCode: rejected?.stepCode ?? null,
     returnedBy: lastReturn?.actorRole ?? null,
     receiptNo: transaction.receiptNo,
-    // Money paid out ends in Disbursement, by whoever holds the permission
-    // for it (officer direction: the Treasurer); money in ends in Posted.
+    // Every transaction ends in Disbursement, by whoever holds the
+    // permission for it — unchanged: the Treasurer for money out, the same
+    // officer as today for a deposit or an internal transfer.
     postedLabel: finalStepLabel(transaction),
     postedDetail:
       chain.length > 0

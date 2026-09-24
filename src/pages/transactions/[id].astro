@@ -132,10 +132,9 @@ if (Astro.request.method === 'POST') {
             }
           : undefined
       );
-      const word = needsDisbursement(transaction) ? 'disbursed' : 'posted';
       notice = posted.receiptNo
-        ? `${transaction.displayReference} ${word}. Receipt ${posted.receiptNo}.`
-        : `${transaction.displayReference} ${word}.`;
+        ? `${transaction.displayReference} disbursed. Receipt ${posted.receiptNo}.`
+        : `${transaction.displayReference} disbursed.`;
     } else if (intent === 'reverse') {
       const result = await reverseTransaction(
         transaction.id,
@@ -766,7 +765,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                   : 'Approved. Record how the balance was paid out; the account closes and the receipt is issued now.'
                 : disburses
                   ? 'Approved. Record how it is paid out; disbursing moves the money and issues the receipt.'
-                  : 'Approved. Posting moves the money and issues the receipt.'}
+                  : 'Approved. Disbursing moves the money and issues the receipt.'}
         </p>
         {disburses && (
           <div class="grid gap-3 sm:grid-cols-2">
@@ -816,7 +815,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         )}
         <input type="hidden" name="intent" value="post" />
         <button type="submit" class={BUTTON}>
-          {disburses ? 'Disburse' : 'Post'}
+          Disburse
         </button>
       </form>
     )}
