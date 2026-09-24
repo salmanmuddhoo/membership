@@ -30,6 +30,7 @@ const MEMBER_API_PREFIX = '/api/v1/member/';
 // signed-in officer's browser cannot reach these endpoints as themselves.
 const PUBLIC_API_PREFIX = '/api/v1/public/';
 const SHARED_RECEIPT_PREFIX = '/receipts/shared/';
+const SHARED_STATEMENT_PREFIX = '/statements/shared/';
 
 // An API caller is not a browser: redirecting it to a sign-in page produces a
 // 302 to some HTML, which a client parsing JSON cannot make sense of. API
@@ -53,7 +54,9 @@ function isPublic(pathname: string): boolean {
     // A member's receipt, opened from the signed link the Society sent
     // them (S-1602). The token in the path is the credential, checked by
     // the page; nothing there is reachable without it.
-    pathname.startsWith(SHARED_RECEIPT_PREFIX)
+    pathname.startsWith(SHARED_RECEIPT_PREFIX) ||
+    // A member's statement, the same way: the signed link it was sent with.
+    pathname.startsWith(SHARED_STATEMENT_PREFIX)
   );
 }
 

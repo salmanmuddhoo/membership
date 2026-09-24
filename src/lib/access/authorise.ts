@@ -134,6 +134,11 @@ const ROUTE_PERMISSIONS: ReadonlyArray<readonly [string, string]> = [
   // shadowed by it.
   ['/receipts/', 'payment.view'],
   ['/receipts/reconciliation', 'receipt.reconcile'],
+  // Sending every member their statement at once (officer request). The
+  // signed-link PDFs under /statements/shared/ never reach this check: the
+  // middleware lets them through, the token being their credential.
+  ['/statements', 'statement.send_all'],
+  ['/statements/', 'statement.send_all'],
 
   // Further modules are added here as they land (members, financing,
   // documents, ...). The order does not matter: the longest matching prefix

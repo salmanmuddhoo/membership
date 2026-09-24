@@ -25,6 +25,7 @@ import {
   EXIT_HAPPENINGS,
   EXIT_SUBJECTS,
   RECEIPT_ISSUED,
+  STATEMENT_ISSUED,
   TRANSACTION_PLACEHOLDERS,
 } from '../notifications/event-codes';
 import { listNotificationTemplates } from '../notifications/templates';
@@ -409,6 +410,7 @@ async function paymentMethods(): Promise<ReadinessItem[]> {
 // The Phase 2 events, by the thing they are about.
 const WORDING_GROUPS: { label: string; events: string[] }[] = [
   { label: 'Receipt', events: [RECEIPT_ISSUED] },
+  { label: 'Statement', events: [STATEMENT_ISSUED] },
   ...EXIT_SUBJECTS.map(subject => ({
     label: {
       closure: 'Account closure',

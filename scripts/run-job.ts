@@ -22,6 +22,10 @@ import {
   disposedAnything,
 } from '../src/lib/retention/disposal';
 import { watchJobs } from '../src/lib/jobs/watch';
+import {
+  processStatementRuns,
+  type StatementRunCheckpoint,
+} from '../src/lib/ledger/member-statement';
 
 // Jobs are named here rather than passed as arbitrary strings: the container's
 // arguments are configuration, and configuration should not be able to name a
@@ -221,6 +225,17 @@ const JOBS: Record<string, () => Promise<unknown>> = {
   // whose latest run failed is one nobody has re-run. Both are told to the
   // System Administrators, once per run — the delivery log remembers what
   // was said. Run every few hours; a run with nothing wrong writes nothing.
+  // Officer request: every member and non-member sent their statement, once
+  // someone asks for it from Finance → Statements. A run with nothing
+  // queued reads one row and stops, so schedule it every fifteen minutes;
+  // a long run is stopped and resumed across starts, and never sends
+  // anyone their statement twice (statement_run_item).
+  'statement-send': () =>
+    runJob<StatementRunCheckpoint>({
+      name: 'statement-send',
+      run: context => processStatementRuns(context),
+    }),
+
   'job-watch': () =>
     runJob<{ sweptAt: string }>({
       name: 'job-watch',
