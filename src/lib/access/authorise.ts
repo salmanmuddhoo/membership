@@ -41,6 +41,10 @@ const ROUTE_PERMISSIONS: ReadonlyArray<readonly [string, string]> = [
   // be granted to someone who is not a system administrator.
   ['/admin/roles', 'role.view'],
   ['/admin/users', 'user.view'],
+  // The search boxes' suggestions (officer request), under the same
+  // permission as the list they search.
+  ['/admin/users/suggest.json', 'user.view'],
+  ['/admin/notifications/suggest.json', 'notification.view'],
   // Segregation of duties (S-203): seen with segregation.view, changed only
   // with segregation.manage, which the page checks itself.
   ['/admin/segregation', 'segregation.view'],

@@ -377,6 +377,12 @@ try {
   </script>
   <div data-idle-minutes={idleMinutes} hidden></div>
   <script>
+    // Every search box marked data-suggest suggests as you type (officer
+    // request), on every page, from one place.
+    import { wireSearchSuggestions } from '@lib/client/search-suggest';
+    wireSearchSuggestions();
+  </script>
+  <script>
     // Signs the officer out once nobody has used the app for
     // session.idle_minutes: no key, click, touch or scroll in any of its tabs.
     // The last activity is shared through localStorage, so a busy tab keeps

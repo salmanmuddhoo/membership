@@ -1,0 +1,90 @@
+---
+// Under a long list: which rows are showing, how many to a page (10, 25
+// or 50), and the pages. Links only — no script — so it works as the rest
+// of the list does, and the address says where you are (src/lib/paging.ts).
+import {
+  PAGE_SIZES,
+  pageCount,
+  pageHref,
+  pageNumbers,
+  type Paging,
+} from '@lib/paging';
+import { HINT, PAGER_CURRENT, PAGER_LINK } from '@lib/ui';
+
+interface Props {
+  total: number;
+  paging: Paging;
+  // What the rows are, for "Showing 26–50 of 312 members".
+  noun?: string;
+}
+const { total, paging, noun = 'rows' } = Astro.props;
+const url = Astro.url;
+const pages = pageCount(total, paging.per);
+const first = total === 0 ? 0 : paging.offset + 1;
+const last = Math.min(paging.offset + paging.per, total);
+const numberFormat = new Intl.NumberFormat('en-GB');
+---
+
+{total > 0 && (
+  <nav
+    aria-label="Pages"
+    class="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm"
+    data-pagination
+  >
+    <p class={HINT}>
+      Showing {numberFormat.format(first)}–{numberFormat.format(last)} of{' '}
+      {numberFormat.format(total)} {noun}
+    </p>
+    <div class="flex flex-wrap items-center gap-3">
+      <span class="flex items-center gap-1">
+        <span class={HINT}>Rows</span>
+        {PAGE_SIZES.map(size =>
+          size === paging.per ? (
+            <span class={PAGER_CURRENT} aria-current="true">
+              {size}
+            </span>
+          ) : (
+            <a href={pageHref(url, { per: size })} class={PAGER_LINK}>
+              {size}
+            </a>
+          )
+        )}
+      </span>
+      {pages > 1 && (
+        <span class="flex items-center gap-1">
+          {paging.page > 1 ? (
+            <a
+              href={pageHref(url, { page: paging.page - 1 })}
+              class={PAGER_LINK}
+              aria-label="Previous page"
+            >
+              ‹
+            </a>
+          ) : null}
+          {pageNumbers(paging.page, pages).map(n =>
+            n === null ? (
+              <span class={HINT}>…</span>
+            ) : n === paging.page ? (
+              <span class={PAGER_CURRENT} aria-current="page">
+                {n}
+              </span>
+            ) : (
+              <a href={pageHref(url, { page: n })} class={PAGER_LINK}>
+                {n}
+              </a>
+            )
+          )}
+          {paging.page < pages ? (
+            <a
+              href={pageHref(url, { page: paging.page + 1 })}
+              class={PAGER_LINK}
+              aria-label="Next page"
+            >
+              ›
+            </a>
+          ) : null}
+        </span>
+      )}
+    </div>
+  </nav>
+)}
