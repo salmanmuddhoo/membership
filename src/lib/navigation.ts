@@ -37,6 +37,7 @@ export const NAV_DESCRIPTIONS: Record<string, string> = {
     'Gaps, duplicates and voids in the receipt numbers.',
   '/admin/roles': 'Who may do what.',
   '/admin/users': 'Staff sign-ins and their roles.',
+  '/admin/segregation': 'Who may not act twice on the same record.',
   '/admin/configuration':
     'Fees, forms, chains, wording and every other setting.',
   '/admin/configuration/fees': 'Entrance, share and account fees.',
@@ -144,6 +145,15 @@ export function navigationFor(input: {
           : []),
         ...(can('user.view')
           ? [{ label: 'Staff accounts', href: '/admin/users', icon: 'staff' }]
+          : []),
+        ...(can('segregation.view')
+          ? [
+              {
+                label: 'Segregation of duties',
+                href: '/admin/segregation',
+                icon: 'segregation',
+              },
+            ]
           : []),
         ...(can('config.view')
           ? [

@@ -1,0 +1,209 @@
+---
+// Segregation of duties (S-203; officer feedback: the rules existed, and a
+// permission to manage them, but no screen to see or change them).
+//
+// Each rule bars whoever performed one action on a record from performing
+// another on that same record — checked when they try, against the audit
+// trail. Rules are switched off rather than deleted, so what was once
+// enforced stays visible; a new one is built from the actions the code
+// actually checks (SEGREGATION_CATALOGUE), never typed free-hand.
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import { isInvalidReference } from '@lib/db/pool';
+import {
+  SEGREGATION_CATALOGUE,
+  SegregationError,
+  addSegregationRule,
+  listSegregationRules,
+  setSegregationRuleEnabled,
+} from '@lib/admin/segregation';
+import {
+  BUTTON_SM,
+  CARD,
+  CARD_TITLE,
+  HINT,
+  INPUT_SM,
+  NOTICE_ERROR,
+  NOTICE_OK,
+  PAGE,
+  PILL,
+  PILL_OUTLINE,
+  ROW,
+  SECONDARY_SM,
+  TABLE,
+  TBODY,
+  TD,
+  TH,
+  THEAD,
+} from '@lib/ui';
+
+const principal = Astro.locals.principal!;
+const canManage = principal.permissions.has('segregation.manage');
+
+let error: string | null = null;
+let notice: string | null = null;
+
+if (Astro.request.method === 'POST') {
+  if (!canManage) {
+    // The route only requires segregation.view.
+    error = 'You do not have permission to change these rules.';
+  } else {
+    const form = await Astro.request.formData();
+    const intent = String(form.get('intent') ?? '');
+    const actor = { userId: principal.userId, email: principal.email };
+    try {
+      if (intent === 'enable' || intent === 'disable') {
+        await setSegregationRuleEnabled(
+          String(form.get('ruleId') ?? ''),
+          intent === 'enable',
+          actor
+        );
+        notice =
+          intent === 'enable' ? 'Rule switched on.' : 'Rule switched off.';
+      } else if (intent === 'add') {
+        await addSegregationRule(
+          {
+            entityType: String(form.get('entityType') ?? ''),
+            earlierAction: String(form.get('earlierAction') ?? ''),
+            laterAction: String(form.get('laterAction') ?? ''),
+          },
+          actor
+        );
+        notice = 'Rule added.';
+      }
+    } catch (err) {
+      if (err instanceof SegregationError) {
+        error = err.message;
+      } else if (isInvalidReference(err)) {
+        error = 'That rule no longer exists.';
+      } else {
+        console.error('[admin/segregation]', err);
+        error = 'Something went wrong. Please try again.';
+      }
+    }
+  }
+}
+
+const rules = await listSegregationRules();
+const sections = [
+  ...SEGREGATION_CATALOGUE.map(type => ({
+    type,
+    label: type.label,
+    rules: rules.filter(r => r.entityType === type.entityType),
+  })),
+  // A rule on a record type the catalogue does not describe (added by a
+  // migration later, say) is still shown, and can still be switched.
+  ...[
+    ...new Set(
+      rules
+        .map(r => r.entityType)
+        .filter(e => !SEGREGATION_CATALOGUE.some(t => t.entityType === e))
+    ),
+  ].map(entityType => ({
+    type: null,
+    label: entityType,
+    rules: rules.filter(r => r.entityType === entityType),
+  })),
+];
+---
+
+<DashboardLayout
+  title="Segregation of duties · Al Barakah MCSL"
+  heading="Segregation of duties"
+>
+  <div class={PAGE.list}>
+    {error && <div class={NOTICE_ERROR}>{error}</div>}
+    {notice && <div class={NOTICE_OK}>{notice}</div>}
+
+    {sections.map(section => (
+      <section class={CARD}>
+        <h2 class={CARD_TITLE}>{section.label}</h2>
+
+        {section.rules.length === 0 ? (
+          <p class={`${HINT} mt-3`}>No rules.</p>
+        ) : (
+          <table class={`${TABLE} mt-4`}>
+            <thead class={THEAD}>
+              <tr>
+                <th class={TH}>Rule</th>
+                <th class={TH}>Status</th>
+                {canManage && (
+                  <th class={TH}>
+                    <span class="sr-only">Action</span>
+                  </th>
+                )}
+              </tr>
+            </thead>
+            <tbody class={TBODY}>
+              {section.rules.map(rule => (
+                <tr class={ROW} data-rule={rule.id}>
+                  <td class={`${TD} text-neutral-800 dark:text-neutral-100`}>
+                    {rule.description}
+                  </td>
+                  <td class={TD}>
+                    <span class={rule.isEnabled ? PILL : PILL_OUTLINE}>
+                      {rule.isEnabled ? 'On' : 'Off'}
+                    </span>
+                  </td>
+                  {canManage && (
+                    <td class={`${TD} text-right`}>
+                      <form method="post">
+                        <input type="hidden" name="ruleId" value={rule.id} />
+                        <button
+                          type="submit"
+                          name="intent"
+                          value={rule.isEnabled ? 'disable' : 'enable'}
+                          class={rule.isEnabled ? SECONDARY_SM : BUTTON_SM}
+                        >
+                          {rule.isEnabled ? 'Switch off' : 'Switch on'}
+                        </button>
+                      </form>
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
+        {canManage && section.type && (
+          <form
+            method="post"
+            class="mt-4 flex flex-wrap items-center gap-2 border-t border-neutral-200 pt-4 text-sm text-neutral-700 dark:border-neutral-800 dark:text-neutral-200"
+            data-add-rule={section.type.entityType}
+          >
+            <input type="hidden" name="intent" value="add" />
+            <input
+              type="hidden"
+              name="entityType"
+              value={section.type.entityType}
+            />
+            <span>Whoever</span>
+            <select
+              name="earlierAction"
+              class={INPUT_SM}
+              aria-label="Earlier action"
+            >
+              {section.type.earlier.map(a => (
+                <option value={a.action}>{a.past}</option>
+              ))}
+            </select>
+            <span>{section.type.noun} may not</span>
+            <select
+              name="laterAction"
+              class={INPUT_SM}
+              aria-label="Later action"
+            >
+              {section.type.later.map(a => (
+                <option value={a.action}>{a.present}</option>
+              ))}
+            </select>
+            <span>it.</span>
+            <button type="submit" class={BUTTON_SM}>
+              Add rule
+            </button>
+          </form>
+        )}
+      </section>
+    ))}
+  </div>
+</DashboardLayout>
