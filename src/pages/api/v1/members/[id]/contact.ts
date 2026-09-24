@@ -28,7 +28,8 @@ const endpoint = defineEndpoint(
       'changed are written; a locked applicant field or any guardian field ' +
       'sent anyway is silently dropped, never saved. With ' +
       'member.edit_all_details no applicant field is locked: name, NIC and ' +
-      'the rest can be corrected, checked as on the application. Returns the field ' +
+      'the rest can be corrected, and each nominee too (by ordinal), checked ' +
+      'as on the application. Returns the field ' +
       'list refreshed with what was actually saved, so the page can update ' +
       'in place.',
     tag: 'Members',
@@ -45,7 +46,12 @@ const endpoint = defineEndpoint(
             properties: {
               subject: {
                 type: 'string',
-                enum: ['applicant', 'employment', 'guardian'],
+                enum: ['applicant', 'employment', 'guardian', 'nominee'],
+              },
+              ordinal: {
+                type: 'integer',
+                minimum: 1,
+                description: 'Which nominee. Ignored for every other subject.',
               },
               fieldKey: { type: 'string' },
               value: { type: 'string' },
@@ -65,6 +71,7 @@ const endpoint = defineEndpoint(
             type: 'object',
             required: [
               'subject',
+              'ordinal',
               'fieldKey',
               'label',
               'dataType',
@@ -74,8 +81,9 @@ const endpoint = defineEndpoint(
             properties: {
               subject: {
                 type: 'string',
-                enum: ['applicant', 'employment', 'guardian'],
+                enum: ['applicant', 'employment', 'guardian', 'nominee'],
               },
+              ordinal: { type: 'integer' },
               fieldKey: { type: 'string' },
               label: { type: 'string' },
               dataType: { type: 'string' },

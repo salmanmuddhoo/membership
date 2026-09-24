@@ -89,13 +89,17 @@ function assertMayEdit(principal: Principal): void {
   }
 }
 
-export type EditableSubject = 'applicant' | 'employment' | 'guardian';
+export type EditableSubject =
+  'applicant' | 'employment' | 'guardian' | 'nominee';
 
 export interface EditableContactField {
   // Which application_party row this field lives on and saves to — the
   // applicant's own (every field the type configures), Employment
   // Details, or (Minor only) the guardian's.
   subject: EditableSubject;
+  // Which one of the subject: always 1 but for a nominee, of whom a type
+  // may ask for several.
+  ordinal: number;
   fieldKey: string;
   label: string;
   dataType: string;
@@ -139,31 +143,54 @@ export async function editableContactFields(
   const guardianFields = (type?.fields ?? []).filter(
     f => f.subject === 'guardian' && f.isVisible
   );
+  // Officer request: member.edit_all_details corrects the nominees too.
+  // Without it they are not offered here at all — the page shows them in
+  // their own card, read-only.
+  const nomineeFields = options.allDetails
+    ? (type?.fields ?? []).filter(f => f.subject === 'nominee' && f.isVisible)
+    : [];
   if (
     applicantFields.length === 0 &&
     employmentFields.length === 0 &&
-    guardianFields.length === 0
+    guardianFields.length === 0 &&
+    nomineeFields.length === 0
   ) {
     return [];
   }
 
   const parties = await query<{
     subject: EditableSubject;
+    ordinal: number;
     values: Record<string, string>;
   }>(
-    `select subject, values from application_party
+    `select subject, ordinal, values from application_party
       where application_id = $1
-        and subject in ('applicant', 'employment', 'guardian')
-        and ordinal = 1`,
+        and (subject in ('applicant', 'employment', 'guardian')
+               and ordinal = 1
+             or subject = 'nominee')
+      order by subject, ordinal`,
     [applicationId]
   );
-  const valuesBySubject = new Map(parties.rows.map(p => [p.subject, p.values]));
+  const valuesBySubject = new Map(
+    parties.rows
+      .filter(p => p.subject !== 'nominee')
+      .map(p => [p.subject, p.values])
+  );
+  // Every nominee on file, or the first one's empty slot when none is yet.
+  const nominees = parties.rows.filter(p => p.subject === 'nominee');
+  const nomineeRows =
+    nomineeFields.length === 0
+      ? []
+      : nominees.length > 0
+        ? nominees
+        : [{ ordinal: 1, values: {} as Record<string, string> }];
 
   return [
     ...applicantFields.map(f => {
       const value = valuesBySubject.get('applicant')?.[f.fieldKey] ?? '';
       return {
         subject: 'applicant' as const,
+        ordinal: 1,
         fieldKey: f.fieldKey,
         editable:
           options.allDetails === true ||
@@ -176,6 +203,7 @@ export async function editableContactFields(
     }),
     ...employmentFields.map(f => ({
       subject: 'employment' as const,
+      ordinal: 1,
       fieldKey: f.fieldKey,
       editable: true,
       label: f.label,
@@ -184,20 +212,39 @@ export async function editableContactFields(
     })),
     ...guardianFields.map(f => ({
       subject: 'guardian' as const,
+      ordinal: 1,
       fieldKey: f.fieldKey,
       editable: false,
       label: f.label,
       dataType: f.dataType,
       value: valuesBySubject.get('guardian')?.[f.fieldKey] ?? '',
     })),
+    ...nomineeRows.flatMap(row =>
+      nomineeFields.map(f => ({
+        subject: 'nominee' as const,
+        ordinal: row.ordinal,
+        fieldKey: f.fieldKey,
+        editable: true,
+        label: f.label,
+        dataType: f.dataType,
+        value: row.values[f.fieldKey] ?? '',
+      }))
+    ),
   ];
 }
 
-// The applicant fields this application's type configures, by key — what a
-// correction is checked against.
-async function applicantFieldsOf(
+interface CorrectableFields {
+  applicant: Map<string, MembershipTypeField>;
+  nominee: Map<string, MembershipTypeField>;
+  nomineeCount: number;
+}
+
+// The applicant and nominee fields this application's type configures, by
+// key — what a correction is checked against — and how many nominees it
+// asks for at most.
+async function correctableFieldsOf(
   applicationId: string
-): Promise<Map<string, MembershipTypeField>> {
+): Promise<CorrectableFields> {
   const application = await query<{ membership_type_id: string }>(
     `select membership_type_id from membership_application where id = $1`,
     [applicationId]
@@ -205,27 +252,37 @@ async function applicantFieldsOf(
   const type = (await listMembershipTypes()).find(
     t => t.id === application.rows[0]?.membership_type_id
   );
-  return new Map(
-    (type?.fields ?? [])
-      .filter(f => f.subject === 'applicant' && f.isVisible)
-      .map(f => [f.fieldKey, f])
-  );
+  const bySubject = (subject: string) =>
+    new Map(
+      (type?.fields ?? [])
+        .filter(f => f.subject === subject && f.isVisible)
+        .map(f => [f.fieldKey, f])
+    );
+  return {
+    applicant: bySubject('applicant'),
+    nominee: bySubject('nominee'),
+    nomineeCount: type?.nomineeCount ?? 0,
+  };
 }
 
 const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 
-// One corrected applicant value, checked the way capture checks it: not
-// emptied if required, a configured choice, a real date not in the future,
-// a phone number that can be placed — and an NIC nobody else holds.
-async function checkedApplicantValue(
+// One corrected value, checked the way capture checks it: not emptied if
+// required, a configured choice, a real date not in the future, a phone
+// number that can be placed — and, for the applicant, an NIC nobody else
+// holds. A nominee's NIC is anyone's: a member names a relative who may
+// well be a member too. Only the first nominee's required fields are
+// required, as at capture; a second or third is optional throughout.
+async function checkedValue(
   field: MembershipTypeField,
   raw: string,
   applicationId: string,
   entity: ContactEntity,
-  client: PoolClient
+  client: PoolClient,
+  party: { subject: 'applicant' | 'nominee'; ordinal: number }
 ): Promise<string> {
   if (raw === '') {
-    if (field.isMandatory) {
+    if (field.isMandatory && party.ordinal === 1) {
       throw new ContactUpdateError(`${field.label} is required.`);
     }
     return '';
@@ -250,7 +307,7 @@ async function checkedApplicantValue(
     }
   }
 
-  if (field.fieldKey === 'nic') {
+  if (party.subject === 'applicant' && field.fieldKey === 'nic') {
     // Checked as a new application's NIC is: someone else — a member, a
     // non-member, an application in progress — already holding it. This
     // person's own records are theirs, not a clash.
@@ -283,8 +340,16 @@ export interface ContactEntity {
 
 export interface ContactFieldChange {
   subject: EditableSubject;
+  // Which nominee; 1, and ignored, for every other subject.
+  ordinal?: number;
   fieldKey: string;
   value: string;
+}
+
+// How a change is named in what is returned and on the audit trail: the
+// field's key, or for a nominee which one it was.
+function changeKey(subject: EditableSubject, ordinal: number, key: string) {
+  return subject === 'nominee' ? `nominee.${ordinal}.${key}` : key;
 }
 
 /**
@@ -310,29 +375,62 @@ export async function updateContactDetails(
 ): Promise<{ updated: string[] }> {
   assertMayEdit(principal);
   const allDetails = mayEditAllDetails(principal);
-  const applicantFields = allDetails
-    ? await applicantFieldsOf(applicationId)
-    : new Map<string, MembershipTypeField>();
+  const fields: CorrectableFields = allDetails
+    ? await correctableFieldsOf(applicationId)
+    : { applicant: new Map(), nominee: new Map(), nomineeCount: 0 };
+  const applicantFields = fields.applicant;
 
   return withTransaction(async client => {
-    const bySubject = new Map<EditableSubject, ContactFieldChange[]>();
+    // By party: the subject, and for a nominee which one.
+    const byParty = new Map<
+      string,
+      {
+        subject: EditableSubject;
+        ordinal: number;
+        changes: ContactFieldChange[];
+      }
+    >();
     for (const change of changes) {
       if (change.subject === 'guardian') continue;
-      const list = bySubject.get(change.subject) ?? [];
-      list.push(change);
-      bySubject.set(change.subject, list);
+      // A nominee only with member.edit_all_details, and only one of those
+      // the type asks for.
+      let ordinal = 1;
+      if (change.subject === 'nominee') {
+        ordinal = Number(change.ordinal ?? 1);
+        if (
+          !allDetails ||
+          !Number.isInteger(ordinal) ||
+          ordinal < 1 ||
+          ordinal > fields.nomineeCount
+        ) {
+          continue;
+        }
+      }
+      const key = `${change.subject}:${ordinal}`;
+      const party = byParty.get(key) ?? {
+        subject: change.subject,
+        ordinal,
+        changes: [],
+      };
+      party.changes.push(change);
+      byParty.set(key, party);
     }
 
     const updated: string[] = [];
     const previousValue: Record<string, string> = {};
     const newValue: Record<string, string> = {};
+    let nomineesChanged = false;
 
-    for (const [subject, subjectChanges] of bySubject) {
+    for (const {
+      subject,
+      ordinal,
+      changes: subjectChanges,
+    } of byParty.values()) {
       const current = await client.query<{ values: Record<string, string> }>(
         `select values from application_party
-          where application_id = $1 and subject = $2 and ordinal = 1
+          where application_id = $1 and subject = $2 and ordinal = $3
           for no key update`,
-        [applicationId, subject]
+        [applicationId, subject, ordinal]
       );
       const before = current.rows[0]?.values ?? null;
       if (before === null && subject === 'applicant') {
@@ -357,15 +455,16 @@ export async function updateContactDetails(
           continue;
         }
         let value = raw.trim();
-        if (allDetails && subject === 'applicant') {
-          const field = applicantFields.get(fieldKey);
+        if (allDetails && (subject === 'applicant' || subject === 'nominee')) {
+          const field = fields[subject].get(fieldKey);
           if (!field) continue;
-          value = await checkedApplicantValue(
+          value = await checkedValue(
             field,
             value,
             applicationId,
             entity,
-            client
+            client,
+            { subject, ordinal }
           );
         }
         if (PHONE_FIELD_KEYS.has(fieldKey) && value !== '') {
@@ -389,16 +488,18 @@ export async function updateContactDetails(
 
       await client.query(
         `insert into application_party (application_id, subject, ordinal, values)
-         values ($1, $2, 1, $3::jsonb)
+         values ($1, $2, $3, $4::jsonb)
          on conflict (application_id, subject, ordinal)
          do update set values = application_party.values || excluded.values`,
-        [applicationId, subject, JSON.stringify(patch)]
+        [applicationId, subject, ordinal, JSON.stringify(patch)]
       );
+      if (subject === 'nominee') nomineesChanged = true;
 
       for (const key of Object.keys(patch)) {
-        updated.push(key);
-        previousValue[key] = (before ?? {})[key] ?? '';
-        newValue[key] = patch[key];
+        const named = changeKey(subject, ordinal, key);
+        updated.push(named);
+        previousValue[named] = (before ?? {})[key] ?? '';
+        newValue[named] = patch[key];
       }
     }
 
@@ -406,13 +507,36 @@ export async function updateContactDetails(
       return { updated: [] };
     }
 
+    // S-602, as at capture: where the type divides the membership between
+    // nominees by a required percentage, the split still has to come to
+    // 100% once every nominee has one. Checked after the writes, inside the
+    // transaction, so a refusal leaves nothing saved.
+    if (nomineesChanged && fields.nominee.get('percentage')?.isMandatory) {
+      const split = await client.query<{ percentage: string | null }>(
+        `select values->>'percentage' as percentage from application_party
+          where application_id = $1 and subject = 'nominee'`,
+        [applicationId]
+      );
+      const entered = split.rows.map(r => (r.percentage ?? '').trim());
+      if (entered.length > 0 && entered.every(v => v !== '')) {
+        const total = entered.reduce((sum, v) => sum + Number(v), 0);
+        if (Math.round(total * 100) / 100 !== 100) {
+          throw new ContactUpdateError(
+            `Nominee percentages must add up to 100% (currently ${total}%).`
+          );
+        }
+      }
+    }
+
     // A field the counter edit could not have changed (a filled-in name,
-    // NIC…) is recorded as a correction, so it stands out on the trail.
+    // NIC, a nominee's details…) is recorded as a correction, so it stands
+    // out on the trail.
     const corrected = Object.keys(newValue).some(
       key =>
-        applicantFields.has(key) &&
-        !ALWAYS_EDITABLE_APPLICANT_FIELD_KEYS.has(key) &&
-        previousValue[key] !== ''
+        previousValue[key] !== '' &&
+        (key.startsWith('nominee.') ||
+          (applicantFields.has(key) &&
+            !ALWAYS_EDITABLE_APPLICANT_FIELD_KEYS.has(key)))
     );
     await recordAudit(
       {
