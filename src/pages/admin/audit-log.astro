@@ -324,6 +324,7 @@ function describeEntry(entry: AuditEventRow): string {
             value={actor}
             placeholder="Name or email"
             class={INPUT}
+            data-suggest={`/admin/audit-log/suggest.json${view === 'signins' ? '?view=signins' : ''}`}
           />
         </label>
         {view === 'activity' && (

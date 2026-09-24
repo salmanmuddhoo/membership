@@ -45,6 +45,7 @@ const ROUTE_PERMISSIONS: ReadonlyArray<readonly [string, string]> = [
   // permission as the list they search.
   ['/admin/users/suggest.json', 'user.view'],
   ['/admin/notifications/suggest.json', 'notification.view'],
+  ['/admin/audit-log/suggest.json', 'audit.view'],
   // Segregation of duties (S-203): seen with segregation.view, changed only
   // with segregation.manage, which the page checks itself.
   ['/admin/segregation', 'segregation.view'],
