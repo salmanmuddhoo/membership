@@ -92,7 +92,7 @@ export async function reverseTransaction(
   }
   if (original.status !== 'posted') {
     throw new ReversalError(
-      `${original.reference} is ${original.status}; only a posted transaction can be reversed.`,
+      `${original.reference} is ${original.status}; only a disbursed transaction can be reversed.`,
       'conflict'
     );
   }

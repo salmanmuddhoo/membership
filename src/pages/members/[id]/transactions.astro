@@ -119,7 +119,7 @@ const pageHref = (n: number) => {
           <option value="">All</option>
           {STATUSES.map(s => (
             <option value={s} selected={s === status}>
-              {s.replace('_', ' ')}
+              {s === 'posted' ? 'Disbursed' : s.replace('_', ' ')}
             </option>
           ))}
         </select>

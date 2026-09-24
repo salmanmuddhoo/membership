@@ -108,7 +108,7 @@ export function receiptFacts(
       .join(' · '),
   });
   if (receipt.postedByName && receipt.postedByName !== t.capturedByName) {
-    rows.push({ label: 'Posted by', value: receipt.postedByName });
+    rows.push({ label: 'Disbursed by', value: receipt.postedByName });
   }
   return rows;
 }

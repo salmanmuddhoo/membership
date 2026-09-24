@@ -139,8 +139,8 @@ const CHECK =
                 )}
                 <span class="w-full text-xs text-neutral-400 dark:text-neutral-500">
                   {account.movements > 0
-                    ? `${account.movements} posted · last ${dateFormat.format(account.lastPostedAt!)}`
-                    : 'No postings yet'}
+                    ? `${account.movements} transaction${account.movements === 1 ? '' : 's'} · last ${dateFormat.format(account.lastPostedAt!)}`
+                    : 'No transactions yet'}
                 </span>
               </summary>
 

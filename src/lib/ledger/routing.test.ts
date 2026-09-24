@@ -138,7 +138,7 @@ describe('the seeded matrix', () => {
       [cents(100000.01), null, ['secretary_review', 'president_decision']],
     ]);
     expect(routing.describeBand(bands[0])).toBe(
-      'Up to Rs 100,000.00: posted at once, no review needed.'
+      'Up to Rs 100,000.00: disbursed at once, no review needed.'
     );
     expect(routing.describeBand(bands[1])).toBe(
       'Rs 100,000.01 and above: Secretary review (Secretary), then President decision (President / Chairperson).'

@@ -678,10 +678,10 @@ describe('the Section 13 reports (S-1806)', () => {
     expect(refused).toMatchObject({
       Kind: 'Withdrawal',
       Amount: '110000.00',
-      Posted: null,
+      Disbursed: null,
       Receipt: '',
     });
-    expect(all.summary).toMatch(/posted: Deposit MUR 28[0-9,]*\.00/);
+    expect(all.summary).toMatch(/disbursed: Deposit MUR 28[0-9,]*\.00/);
     expect(all.summary).toContain('Withdrawal MUR 120,600.00');
     const none = await report.run({ from: '2000-01-01', to: '2000-01-02' });
     expect(none.rows).toEqual([]);

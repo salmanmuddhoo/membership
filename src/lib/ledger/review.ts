@@ -576,7 +576,7 @@ export async function reviewTransaction(
   }
   if (!(IN_FLIGHT as readonly string[]).includes(transaction.status)) {
     throw new ReviewError(
-      `${transaction.reference} is ${transaction.status}; nothing is waiting on it.`,
+      `${transaction.reference} is ${transaction.status === 'posted' ? 'disbursed' : transaction.status}; nothing is waiting on it.`,
       'conflict'
     );
   }
@@ -805,7 +805,7 @@ export async function postApprovedTransaction(
   }
   if (transaction.status !== 'approved') {
     throw new ReviewError(
-      `${transaction.reference} is ${transaction.status}; only an approved transaction posts.`,
+      `${transaction.reference} is ${transaction.status === 'posted' ? 'disbursed' : transaction.status}; only an approved transaction posts.`,
       'conflict'
     );
   }

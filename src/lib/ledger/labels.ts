@@ -1,12 +1,12 @@
-// What a transaction's status is called on screen, by kind (officer
-// direction): money paid out is "disbursed", not "posted" — a withdrawal,
-// a transfer to a payee, a closure, a resignation, a claim. Money in posts.
+// What a transaction's status is called on screen: every finished
+// transaction reads "Disbursed", not "Posted" (business decision) — a
+// withdrawal, a transfer, a deposit, a closure, a resignation, a claim.
 export const STATUS_LABELS: Record<string, string> = {
   draft: 'Draft',
   submitted: 'Submitted',
   under_review: 'Under review',
   approved: 'Approved',
-  posted: 'Posted',
+  posted: 'Disbursed',
   returned: 'Returned',
   rejected: 'Rejected',
   cancelled: 'Cancelled',
@@ -33,10 +33,9 @@ export function transactionStatusLabel(transaction: {
   if (transaction.status !== 'posted') {
     return STATUS_LABELS[transaction.status] ?? transaction.status;
   }
-  // An exit paid out reads Disbursed like any other money out (QA-10,
-  // business decision) — the member's own status says closed, resigned or
-  // demised.
-  return paysOut(transaction) ? 'Disbursed' : 'Posted';
+  // Every finished transaction reads Disbursed, regardless of kind
+  // (business decision) — deposits and internal transfers included.
+  return 'Disbursed';
 }
 
 /** The last step of the chevron, for every transaction: Disbursement. */

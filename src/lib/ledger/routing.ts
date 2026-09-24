@@ -184,7 +184,7 @@ export function describeBand(band: RouteBand): string {
           ? `${rs(band.fromCents)} and above`
           : `${rs(band.fromCents)} to ${rs(band.toCents)}`;
   if (band.chain.length === 0) {
-    return `${range}: posted at once, no review needed.`;
+    return `${range}: disbursed at once, no review needed.`;
   }
   const steps = band.chain
     .map(s => (s.roleName ? `${s.name} (${s.roleName})` : s.name))

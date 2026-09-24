@@ -204,14 +204,14 @@ const initialCents = /^\d{1,12}(\.\d{1,2})?$/.test(values.amount ?? '')
       <section class={CARD_OK}>
         <h2 class={CARD_TITLE}>
           {deposit.status === 'posted'
-            ? `Deposit ${deposit.reference} posted`
+            ? `Deposit ${deposit.reference} disbursed`
             : `Deposit ${deposit.reference} submitted for approval`}
         </h2>
         {deposit.status !== 'posted' && deposit.currentStepName && (
           <p class={`${MUTED} mt-1`}>
             Waiting for {deposit.currentStepName}
             {deposit.currentStepRole && ` (${deposit.currentStepRole})`}. The
-            receipt is issued when it posts.
+            receipt is issued when it is disbursed.
           </p>
         )}
         <dl class="mt-4 grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
@@ -396,7 +396,7 @@ const initialCents = /^\d{1,12}(\.\d{1,2})?$/.test(values.amount ?? '')
               data-deposit-submit
               class={BUTTON}
             >
-              Post deposit
+              Record deposit
             </button>
             <button
               type="submit"

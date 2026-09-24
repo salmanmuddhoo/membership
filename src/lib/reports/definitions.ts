@@ -936,7 +936,7 @@ const transactionStatusChoices = async () => {
     })),
     { value: 'approved', label: 'To disburse' },
     { value: 'returned', label: 'Returned' },
-    { value: 'done', label: 'Posted or disbursed' },
+    { value: 'done', label: 'Disbursed' },
     { value: 'rejected', label: 'Rejected' },
     { value: 'cancelled', label: 'Cancelled' },
   ];
@@ -998,25 +998,20 @@ const transactions: ReportDefinition = {
               t.amount::text as "Amount",
               -- Where it is now, not merely its bare status: on a chain,
               -- who holds it; approved, that it is waiting to be disbursed;
-              -- posted, Disbursed or Posted as elsewhere on screen.
+              -- posted reads Disbursed, same as elsewhere on screen
+              -- (business decision, every kind).
               case when t.status in ('submitted', 'under_review')
                         then coalesce('With ' || r.name,
                                        initcap(replace(t.status, '_', ' ')))
                    when t.status = 'approved' then 'To disburse'
                    when t.status = 'returned' then 'Returned'
-                   when t.status = 'posted'
-                        then case when (t.kind in
-                                          ('withdrawal', 'closure',
-                                           'resignation', 'demise')
-                                        or (t.kind = 'transfer_leg'
-                                            and t.payee_name is not null))
-                                  then 'Disbursed' else 'Posted' end
+                   when t.status = 'posted' then 'Disbursed'
                    when t.status = 'rejected' then 'Rejected'
                    when t.status = 'cancelled' then 'Cancelled'
                    else initcap(replace(t.status, '_', ' ')) end as "Status",
               to_char(t.created_at, 'DD Mon YYYY HH24:MI') as "Recorded",
               u.display_name as "Officer",
-              to_char(t.posted_at, 'DD Mon YYYY') as "Posted",
+              to_char(t.posted_at, 'DD Mon YYYY') as "Disbursed",
               coalesce(rn.receipt_no, '') as "Receipt"
          from transaction t
          left join transfer tr on tr.id = t.transfer_id
@@ -1070,15 +1065,15 @@ const transactions: ReportDefinition = {
       ]
     );
 
-    // What was actually posted or disbursed, by kind: the figures a period
-    // is closed on.
+    // What was actually disbursed, by kind: the figures a period is closed
+    // on.
     const byKind = new Map<string, number>();
     for (const row of result.rows) {
-      if (row.Status !== 'Posted' && row.Status !== 'Disbursed') continue;
+      if (row.Status !== 'Disbursed') continue;
       const k = String(row.Kind);
       byKind.set(k, (byKind.get(k) ?? 0) + Number(row.Amount ?? 0));
     }
-    const posted = [...byKind.entries()]
+    const disbursed = [...byKind.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([k, amount]) => `${k} ${rs(amount)}`)
       .join(', ');
@@ -1095,13 +1090,13 @@ const transactions: ReportDefinition = {
         { key: 'Status', label: 'Status' },
         { key: 'Recorded', label: 'Recorded' },
         { key: 'Officer', label: 'Officer' },
-        { key: 'Posted', label: 'Posted' },
+        { key: 'Disbursed', label: 'Disbursed' },
         { key: 'Receipt', label: 'Receipt' },
       ],
       rows: result.rows,
       summary:
         `${result.rows.length} transaction(s)` +
-        (posted ? ` — posted: ${posted}.` : '.'),
+        (disbursed ? ` — disbursed: ${disbursed}.` : '.'),
     };
   },
 };
@@ -1137,12 +1132,7 @@ const pendingApprovals: ReportDefinition = {
               trim(coalesce(p.values->>'name', '') || ' '
                    || coalesce(p.values->>'surname', '')) as "Holder",
               t.amount::text as "Amount",
-              case when t.status = 'posted'
-                        and (t.kind in
-                               ('withdrawal', 'closure', 'resignation', 'demise')
-                             or (t.kind = 'transfer_leg'
-                                 and t.payee_name is not null))
-                   then 'Disbursed'
+              case when t.status = 'posted' then 'Disbursed'
                    else initcap(replace(t.status, '_', ' ')) end as "Status",
               case when t.status in ('submitted', 'under_review', 'returned')
                    then coalesce(ws.name || ' · ' || r.name, '')
