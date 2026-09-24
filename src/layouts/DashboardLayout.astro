@@ -5,7 +5,7 @@ import ThemeIcon from '@components/ThemeIcon.astro';
 import EnvBadge from '@components/EnvBadge.astro';
 import Icon from '@components/ui/icons/Icon.astro';
 import { isProductionEnvironment } from '@lib/config';
-import { navigationFor } from '@lib/navigation';
+import { activeNavHref, navigationFor } from '@lib/navigation';
 import { pendingActionCount } from '@lib/applications/workflow';
 import { pendingTransactionCount } from '@lib/ledger/review';
 
@@ -66,6 +66,7 @@ const navGroups = navigationFor({
 });
 
 const currentPath = Astro.url.pathname;
+const activeHref = activeNavHref(navGroups, currentPath);
 ---
 
 <BaseLayout title={title} bodyClass="islamic-pattern">
@@ -118,7 +119,7 @@ const currentPath = Astro.url.pathname;
               </p>
             )}
             {group.items.map(item => {
-              const active = currentPath.startsWith(item.href);
+              const active = item.href === activeHref;
               return (
                 <a
                   href={item.href}
@@ -194,7 +195,7 @@ const currentPath = Astro.url.pathname;
           <button
             id="user-menu"
             type="button"
-            class="hs-dropdown-toggle flex items-center gap-x-2 rounded-full py-1 ps-1 pe-2 text-sm text-neutral-700 hover:bg-neutral-200 dark:text-neutral-200 dark:hover:bg-neutral-800"
+            class="hs-dropdown-toggle flex items-center gap-x-2 rounded-xl py-1 ps-1 pe-2 text-sm text-neutral-700 hover:bg-neutral-200 dark:text-neutral-200 dark:hover:bg-neutral-800"
             aria-haspopup="menu"
             aria-expanded="false"
             aria-label="User menu"
@@ -202,7 +203,14 @@ const currentPath = Astro.url.pathname;
             <span class="bg-mint-300 flex size-8 items-center justify-center rounded-full text-sm font-bold text-neutral-800">
               {initial}
             </span>
-            <span class="hidden max-w-40 truncate sm:block">{displayName}</span>
+            <span class="hidden text-left leading-tight sm:block">
+              <span class="block max-w-40 truncate">{displayName}</span>
+              {roleLabel && (
+                <span class="block max-w-40 truncate text-xs text-neutral-500 dark:text-neutral-400">
+                  {roleLabel}
+                </span>
+              )}
+            </span>
             <Icon name="chevronDown" class="size-4" />
           </button>
 

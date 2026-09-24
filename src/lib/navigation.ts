@@ -31,6 +31,8 @@ export const NAV_DESCRIPTIONS: Record<string, string> = {
     'Deposits, withdrawals and transfers, and the ones waiting on you.',
   '/cashier': 'Your cash drawer: open, count, close.',
   '/cashier/sessions': 'Every cash drawer, with its count and over or short.',
+  '/reports/bank-accounts':
+    'What each bank account holds, and every payment in and out.',
   '/receipts/reconciliation':
     'Gaps, duplicates and voids in the receipt numbers.',
   '/admin/roles': 'Who may do what.',
@@ -65,7 +67,7 @@ export function navigationFor(input: {
               {
                 label: 'Applications',
                 href: '/applications',
-                icon: 'members',
+                icon: 'applications',
                 badge:
                   input.applicationsBadge > 0
                     ? input.applicationsBadge
@@ -89,7 +91,7 @@ export function navigationFor(input: {
               {
                 label: 'Transactions',
                 href: '/transactions',
-                icon: 'reports',
+                icon: 'transactions',
                 badge:
                   input.transactionsBadge > 0
                     ? input.transactionsBadge
@@ -98,14 +100,23 @@ export function navigationFor(input: {
             ]
           : []),
         ...(can('cash.session')
-          ? [{ label: 'Cash drawer', href: '/cashier', icon: 'reports' }]
+          ? [{ label: 'Cash drawer', href: '/cashier', icon: 'cashDrawer' }]
           : []),
         ...(can('cash.view')
           ? [
               {
                 label: 'Cash drawers',
                 href: '/cashier/sessions',
-                icon: 'reports',
+                icon: 'cashDrawers',
+              },
+            ]
+          : []),
+        ...(can('bank_account.view')
+          ? [
+              {
+                label: 'Bank accounts',
+                href: '/reports/bank-accounts?all=1',
+                icon: 'bank',
               },
             ]
           : []),
@@ -114,7 +125,7 @@ export function navigationFor(input: {
               {
                 label: 'Receipt reconciliation',
                 href: '/receipts/reconciliation',
-                icon: 'reports',
+                icon: 'reconciliation',
               },
             ]
           : []),
@@ -124,10 +135,10 @@ export function navigationFor(input: {
       label: 'Administration',
       items: [
         ...(can('role.view')
-          ? [{ label: 'Roles', href: '/admin/roles', icon: 'settings' }]
+          ? [{ label: 'Roles', href: '/admin/roles', icon: 'roles' }]
           : []),
         ...(can('user.view')
-          ? [{ label: 'Staff accounts', href: '/admin/users', icon: 'members' }]
+          ? [{ label: 'Staff accounts', href: '/admin/users', icon: 'staff' }]
           : []),
         ...(can('config.view')
           ? [
@@ -142,7 +153,7 @@ export function navigationFor(input: {
                 {
                   label: 'Fee schedules',
                   href: '/admin/configuration/fees',
-                  icon: 'settings',
+                  icon: 'fees',
                 },
               ]
             : []),
@@ -151,15 +162,21 @@ export function navigationFor(input: {
               {
                 label: 'Reset test data',
                 href: '/admin/reset-data',
-                icon: 'settings',
+                icon: 'reset',
               },
             ]
           : []),
         ...(can('system.migrate_members')
-          ? [{ label: 'Migration', href: '/admin/migration', icon: 'members' }]
+          ? [
+              {
+                label: 'Migration',
+                href: '/admin/migration',
+                icon: 'migration',
+              },
+            ]
           : []),
         ...(can('audit.view')
-          ? [{ label: 'Audit log', href: '/admin/audit-log', icon: 'reports' }]
+          ? [{ label: 'Audit log', href: '/admin/audit-log', icon: 'audit' }]
           : []),
         ...(can('report.view')
           ? [{ label: 'Reports', href: '/reports', icon: 'reports' }]
@@ -169,19 +186,19 @@ export function navigationFor(input: {
               {
                 label: 'Notifications',
                 href: '/admin/notifications',
-                icon: 'reports',
+                icon: 'notifications',
               },
             ]
           : []),
         ...(can('api.explore')
-          ? [{ label: 'API', href: '/admin/api', icon: 'settings' }]
+          ? [{ label: 'API', href: '/admin/api', icon: 'api' }]
           : []),
         ...(can('api_credential.manage')
           ? [
               {
                 label: 'API credentials',
                 href: '/admin/api-credentials',
-                icon: 'settings',
+                icon: 'key',
               },
             ]
           : []),
@@ -190,4 +207,29 @@ export function navigationFor(input: {
     // A group with nothing the person may see is dropped entirely, so the heading
     // does not sit above an empty space.
   ].filter(group => group.items.length > 0);
+}
+
+// Which item lights up for the page the person is on. Matches on the
+// pathname alone, so an href carrying a query string (e.g.
+// /reports/bank-accounts?all=1) still highlights while on that page, and
+// picks the longest matching pathname, so a sub-page (Bank accounts, under
+// /reports) lights up its own link rather than also lighting up Reports.
+export function activeNavHref(
+  groups: NavGroup[],
+  pathname: string
+): string | undefined {
+  let best: string | undefined;
+  let bestLength = -1;
+  for (const group of groups) {
+    for (const item of group.items) {
+      const itemPath = item.href.split('?')[0];
+      const matches =
+        pathname === itemPath || pathname.startsWith(`${itemPath}/`);
+      if (matches && itemPath.length > bestLength) {
+        best = item.href;
+        bestLength = itemPath.length;
+      }
+    }
+  }
+  return best;
 }
