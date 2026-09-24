@@ -372,8 +372,14 @@ const fixedViewport =
     )}
 
     {/* Three columns rather than a row of gaps, so the upload button sits
-        centred on the page whatever the two links either side of it are
-        called — and stays centred when one of them is not there at all. */}
+        centred on the page whatever is in the column either side of it —
+        and stays centred when a column is empty, as `actions-end` usually
+        is now. Upload to SharePoint carries the officer straight on to KYC
+        Documents itself once it succeeds (officer feedback: a separate Next
+        link that just sat there invited moving on without filing, or filing
+        twice by going back through this step). `actions-end` is left for
+        the one case that still needs a plain way forward without
+        re-filing: a signed form already on file. */}
     <div class="actions">
       <div class="actions-start">
         {isEditable ? (
@@ -388,15 +394,16 @@ const fixedViewport =
             type="button"
             id="file-signed-form"
             data-filed-document-id={filedSignedForm?.documentId ?? ''}
+            data-next-href={`${basePath}?step=3`}
           >
             Upload to SharePoint
           </button>
         )}
       </div>
       <div class="actions-end">
-        {isEditable && (
-          <a href={`${basePath}?step=3`} class="next">
-            Next: upload documents →
+        {isEditable && signedFormType && filedSignedForm && (
+          <a href={`${basePath}?step=3`} class="secondary-link">
+            KYC Documents →
           </a>
         )}
       </div>
@@ -722,8 +729,7 @@ const fixedViewport =
   .actions-end {
     text-align: right;
   }
-  .actions button,
-  .actions a.next {
+  .actions button {
     /* The arrow belongs on the label's own line, not wrapped below it. */
     white-space: nowrap;
     padding: 2mm 5mm;
@@ -737,6 +743,16 @@ const fixedViewport =
   .actions button:disabled {
     cursor: wait;
     opacity: 0.6;
+  }
+  /* Plain text, not a bordered box like the Upload button — a way past this
+     step for the officer who already has a signed form on file and wants to
+     move on without re-filing, without competing with the button that does
+     the filing. */
+  .actions a.secondary-link {
+    white-space: nowrap;
+    font: inherit;
+    color: #555;
+    text-decoration: underline;
   }
 
   .status-line {
@@ -1089,15 +1105,18 @@ const fixedViewport =
   // and file it as the Signed Application Form, so step 3 opens with
   // nothing left to upload for it.
   //
-  // Its own button, not Next. Filing used to ride on "Next: upload
-  // documents", which meant simply passing back through this step filed a
-  // second copy nobody asked for (officer feedback). Next is a plain link
-  // again, and filing happens when — and only when — the officer says so.
+  // Its own button, not a plain Next link. Filing used to ride on "Next:
+  // upload documents", which meant simply passing back through this step
+  // filed a second copy nobody asked for (officer feedback). Filing happens
+  // when — and only when — the officer clicks Upload; once it succeeds this
+  // is also what carries them on to KYC Documents, so there is no longer a
+  // separate Next to click by mistake.
   //
   // Deliberately not a hard gate either. The applicant may still be signing
   // on paper instead (the ruled line under each name is the fallback that
   // was always there), and a SharePoint hiccup must not strand the officer
-  // here: the manual upload on step 3 is still open to them.
+  // here: the manual upload on step 3 is still open to them, and the error
+  // message links straight there.
   const fileButton =
     document.querySelector<HTMLButtonElement>('#file-signed-form');
   const statusLine = document.querySelector<HTMLElement>(
@@ -1108,11 +1127,30 @@ const fixedViewport =
     const reference = signaturesEl.getAttribute('data-reference') ?? '';
     const signedFormTypeId =
       signaturesEl.getAttribute('data-signed-form-type-id') ?? '';
+    // There is no longer a Next link on this page — Upload to SharePoint
+    // moves the officer on itself once it succeeds. When it can't run at
+    // all (no signature) or fails, this is the only way forward left on the
+    // page, so both of those messages carry it too.
+    const nextHref = fileButton.dataset.nextHref ?? '';
 
     const say = (message: string, tone: 'info' | 'error' = 'info') => {
       if (!statusLine) return;
       statusLine.textContent = message;
       statusLine.dataset.tone = tone;
+    };
+
+    // Same as `say`, plus a real link to KYC Documents after the message —
+    // built with DOM methods, not innerHTML, since the message can include
+    // text from a thrown error.
+    const sayWithNextLink = (message: string, tone: 'info' | 'error') => {
+      if (!statusLine) return;
+      statusLine.textContent = `${message} `;
+      statusLine.dataset.tone = tone;
+      if (!nextHref) return;
+      const link = document.createElement('a');
+      link.href = nextHref;
+      link.textContent = 'Go to KYC Documents';
+      statusLine.appendChild(link);
     };
 
     const applicantSigned = (): boolean => {
@@ -1128,7 +1166,7 @@ const fixedViewport =
       if (busy) return;
 
       if (!applicantSigned()) {
-        say(
+        sayWithNextLink(
           'There is no signature on screen to file. Sign above first, or ' +
             'print the form and upload the signed copy on the next step.',
           'error'
@@ -1222,20 +1260,24 @@ const fixedViewport =
             onStatus: message => say(message),
           });
           fileButton.dataset.filedDocumentId = documentId;
-          // No file name here: the server names what it files (document type
-          // and reference, plus a version), and naming the one this page sent
-          // would tell the officer a name that is not on the drive. The name
-          // that is appears on the next load of this page, from the server.
-          say('Signed form filed. Filing again replaces it.');
+          // Straight on to KYC Documents — the whole point of this button.
+          // The button stays disabled rather than being handed back to the
+          // officer: this page is on its way out.
+          say('Signed form filed. Opening KYC Documents…');
+          if (nextHref) {
+            window.location.assign(nextHref);
+          } else {
+            busy = false;
+            fileButton.disabled = false;
+          }
         } catch (error) {
-          say(
+          sayWithNextLink(
             (error instanceof Error
               ? error.message
               : 'The signed form could not be filed.') +
               ' Upload it by hand on the next step instead.',
             'error'
           );
-        } finally {
           busy = false;
           fileButton.disabled = false;
         }
