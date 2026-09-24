@@ -1,12 +1,14 @@
 // Wiping a test environment back to empty (System Administrator only).
 //
-// "All data" here means every member, application, document, payment and
-// receipt — and their permanent history, application_transition and
-// audit_event included. Staff accounts, roles and permissions, and reference
-// configuration (membership types, fee schedules, the document checklist,
-// workflow steps) are untouched: this is a test environment being reset, not
-// a factory reset of the system that runs it. See migration 0019 for exactly
-// what gets removed and why it is safe to.
+// "All data" here means everything anyone did: every member, application,
+// document, payment, transaction and receipt, every message sent, the audit
+// log (sign-ins included) and the history of job runs, with every reference
+// number starting again. Staff accounts, roles and permissions, API
+// credentials and all configuration are kept: this is a test environment
+// emptied, not a factory reset of the system that runs it. The latest
+// reset_all_test_data() migration says exactly what is removed, and
+// reset.test.ts fails when a table is added without deciding which side it
+// is on.
 //
 // The refusal below is the one that matters most: it runs before any
 // connection to the database is even opened, on the same PUBLIC_APP_ENV

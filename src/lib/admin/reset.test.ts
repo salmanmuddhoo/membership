@@ -210,6 +210,77 @@ const BUSINESS_TABLES = [
   'sharepoint_folder',
 ];
 
+// Every table in the schema is on exactly one of these two lists, and the
+// test below fails when one is added to neither: whoever adds a table decides
+// whether "Reset test data" clears it (it records activity) or keeps it (it
+// is how the system is set up). Officer request: the reset leaves a fresh
+// database, configuration aside.
+const CLEARED_TABLES = [
+  'account',
+  'account_balance',
+  'account_entry',
+  'account_number_counter',
+  'application_account_selection',
+  'application_checklist_item',
+  'application_party',
+  'application_step_signoff',
+  'application_transition',
+  'audit_event',
+  'cash_session',
+  'customer',
+  'document',
+  'document_version',
+  'financial_event',
+  'job_run',
+  'member',
+  'member_details_request',
+  'member_login_challenge',
+  'member_session',
+  'membership_application',
+  'notification',
+  'payment',
+  'payment_account_line',
+  'payment_line',
+  'rate_limit_window',
+  'receipt_number',
+  'receipt_print',
+  'sharepoint_folder',
+  'transaction',
+  'transaction_transition',
+  'transfer',
+];
+
+const KEPT_TABLES = [
+  'account_type',
+  'account_type_membership_type',
+  'api_credential',
+  'app_user',
+  'approval_rule',
+  'bank_account',
+  'config_entry',
+  'config_entry_history',
+  'document_checklist',
+  'document_checklist_item',
+  'document_type',
+  'fee_component',
+  'fee_schedule',
+  'fee_schedule_version',
+  'membership_type',
+  'membership_type_field',
+  'notification_template',
+  'payment_method',
+  'permission',
+  'retention_policy',
+  'role',
+  'role_permission',
+  'schema_migrations',
+  'segregation_rule',
+  'user_role',
+  'workflow_definition',
+  'workflow_status',
+  'workflow_step',
+];
+
 async function countsOf(tables: string[]): Promise<Record<string, number>> {
   const counts: Record<string, number> = {};
   for (const table of tables) {
@@ -355,6 +426,102 @@ describe('resetAllTestData', () => {
          (select count(*)::int from membership_type) as membership_types`
     );
     expect(after.rows[0]).toEqual(before.rows[0]);
+  });
+
+  it('places every table on the cleared list or the kept list', async () => {
+    const tables = await run(
+      ownerUrl,
+      `select table_name from information_schema.tables
+        where table_schema = 'public' and table_type = 'BASE TABLE'
+        order by table_name`
+    );
+    const all = tables.rows.map(r => r.table_name as string);
+    const unplaced = all.filter(
+      t => !CLEARED_TABLES.includes(t) && !KEPT_TABLES.includes(t)
+    );
+    expect(unplaced, 'tables on neither list').toEqual([]);
+    const missing = [...CLEARED_TABLES, ...KEPT_TABLES].filter(
+      t => !all.includes(t)
+    );
+    expect(missing, 'listed tables that no longer exist').toEqual([]);
+  });
+
+  it('leaves every cleared table empty, the reset itself aside', async () => {
+    const { resetAllTestData } = await load();
+    await seedOneOfEverything();
+    await run(
+      ownerUrl,
+      `insert into job_run (job_name, status, finished_at)
+       values ('dormancy', 'succeeded', now())`
+    );
+
+    await resetAllTestData(actor);
+
+    const after = await countsOf(CLEARED_TABLES);
+    for (const table of CLEARED_TABLES) {
+      expect(after[table], table).toBe(table === 'audit_event' ? 1 : 0);
+    }
+  });
+
+  it('restarts every numbering sequence but those of kept tables', async () => {
+    const { resetAllTestData } = await load();
+    // A sequence owned by a kept table (a setting's change history) keeps
+    // counting; every other one — reference numbers, ledger, audit, job
+    // runs — starts again.
+    const sequences = await run(
+      ownerUrl,
+      `select s.relname as sequence, t.relname as owner
+         from pg_class s
+         join pg_namespace n on n.oid = s.relnamespace
+         left join pg_depend d
+           on d.objid = s.oid and d.deptype in ('a', 'i')
+          and d.classid = 'pg_class'::regclass
+         left join pg_class t on t.oid = d.refobjid
+        where s.relkind = 'S' and n.nspname = 'public'`
+    );
+    const restarted = sequences.rows
+      .filter(r => !KEPT_TABLES.includes(r.owner as string))
+      .map(r => r.sequence as string);
+    expect(restarted.length).toBeGreaterThan(5);
+    for (const sequence of restarted) {
+      await run(ownerUrl, `select nextval('${sequence}')`);
+    }
+
+    await resetAllTestData(actor);
+
+    const values = await run(
+      ownerUrl,
+      `select sequencename, last_value from pg_sequences
+        where schemaname = 'public'`
+    );
+    const lastValue = new Map(
+      values.rows.map(r => [r.sequencename as string, r.last_value])
+    );
+    for (const sequence of restarted) {
+      // The reset writes one audit row of its own, so that one reads 1.
+      expect(lastValue.get(sequence), sequence).toBe(
+        sequence === 'audit_event_id_seq' ? '1' : null
+      );
+    }
+  });
+
+  it('keeps API credentials but forgets when they were last used', async () => {
+    const { resetAllTestData } = await load();
+    await run(
+      ownerUrl,
+      `insert into api_credential
+         (name, client_id, secret_hash, scopes, last_used_at, created_by)
+       values ('Website', 'website-client', 'hash', '{}', now(), $1)`,
+      [userId]
+    );
+
+    await resetAllTestData(actor);
+
+    const credentials = await run(
+      ownerUrl,
+      `select name, last_used_at from api_credential`
+    );
+    expect(credentials.rows).toEqual([{ name: 'Website', last_used_at: null }]);
   });
 
   it('does not reopen the guard for an ordinary delete afterwards', async () => {
