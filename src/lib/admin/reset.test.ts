@@ -227,6 +227,7 @@ const CLEARED_TABLES = [
   'application_transition',
   'audit_event',
   'cash_session',
+  'config_entry_history',
   'customer',
   'document',
   'document_version',
@@ -250,6 +251,8 @@ const CLEARED_TABLES = [
   'transfer',
 ];
 
+// app_user and user_role keep one account: the System Administrator running
+// the reset, with their roles (see the test below).
 const KEPT_TABLES = [
   'account_type',
   'account_type_membership_type',
@@ -258,7 +261,6 @@ const KEPT_TABLES = [
   'approval_rule',
   'bank_account',
   'config_entry',
-  'config_entry_history',
   'document_checklist',
   'document_checklist_item',
   'document_type',
@@ -402,30 +404,124 @@ describe('resetAllTestData', () => {
     });
   });
 
-  it('leaves staff accounts, roles and reference configuration untouched', async () => {
+  // Officer request: staff accounts go too, all but the one running the
+  // reset — nobody could sign in to add the others back otherwise.
+  it('removes every staff account but the one running the reset, and keeps configuration', async () => {
     const { resetAllTestData } = await load();
     await seedOneOfEverything();
+    const admin = await run(
+      ownerUrl,
+      `insert into user_role (user_id, role_id)
+       select $1, id from role where code = 'system_administrator'
+       on conflict do nothing`,
+      [userId]
+    );
+    expect(admin.rowCount).toBe(1);
+    const other = await run(
+      ownerUrl,
+      `insert into app_user (email, display_name)
+       values ('officer@albarakah.mu', 'Officer')
+       returning id`
+    );
+    const otherId = other.rows[0].id;
+    await run(
+      ownerUrl,
+      `insert into user_role (user_id, role_id, granted_by)
+       select $1, id, $1 from role where code = 'system_administrator'`,
+      [otherId]
+    );
+    // A setting last changed by the staff member about to go.
+    await run(
+      ownerUrl,
+      `with actor as (
+         select set_config('albarakah.actor_description', 'test', false)
+       )
+       update notification_template set updated_by = $1
+         from actor
+        where id = (select id from notification_template limit 1)`,
+      [otherId]
+    );
+    const template = await run(
+      ownerUrl,
+      `select id, updated_at from notification_template where updated_by = $1`,
+      [otherId]
+    );
 
-    const before = await run(
-      appUrl,
-      `select
-         (select count(*)::int from app_user) as users,
+    const configuration = `select
          (select count(*)::int from role) as roles,
          (select count(*)::int from permission) as permissions,
-         (select count(*)::int from membership_type) as membership_types`
+         (select count(*)::int from role_permission) as role_permissions,
+         (select count(*)::int from membership_type) as membership_types,
+         (select count(*)::int from config_entry) as settings,
+         (select count(*)::int from notification_template) as templates,
+         (select count(*)::int from fee_schedule_version) as fee_versions`;
+    const before = await run(ownerUrl, configuration);
+
+    await resetAllTestData(actor);
+
+    const users = await run(ownerUrl, `select id from app_user`);
+    expect(users.rows).toEqual([{ id: userId }]);
+    const roles = await run(
+      ownerUrl,
+      `select r.code from user_role ur join role r on r.id = ur.role_id
+        where ur.user_id = $1`,
+      [userId]
     );
+    expect(roles.rows).toEqual([{ code: 'system_administrator' }]);
+    expect((await run(ownerUrl, configuration)).rows[0]).toEqual(
+      before.rows[0]
+    );
+    // The setting stays as it was, only no longer naming who changed it.
+    const after = await run(
+      ownerUrl,
+      `select updated_by, updated_at from notification_template where id = $1`,
+      [template.rows[0].id]
+    );
+    expect(after.rows[0]).toEqual({
+      updated_by: null,
+      updated_at: template.rows[0].updated_at,
+    });
+  });
+
+  it('clears the history of setting changes', async () => {
+    const { resetAllTestData } = await load();
+    await run(
+      ownerUrl,
+      `set albarakah.actor_description = 'test';
+       update config_entry set value = value
+        where key = (select key from config_entry limit 1);`
+    );
+    const before = await run(
+      ownerUrl,
+      `select count(*)::int as n from config_entry_history`
+    );
+    expect(before.rows[0].n).toBeGreaterThan(0);
 
     await resetAllTestData(actor);
 
     const after = await run(
-      appUrl,
-      `select
-         (select count(*)::int from app_user) as users,
-         (select count(*)::int from role) as roles,
-         (select count(*)::int from permission) as permissions,
-         (select count(*)::int from membership_type) as membership_types`
+      ownerUrl,
+      `select count(*)::int as n from config_entry_history`
     );
-    expect(after.rows[0]).toEqual(before.rows[0]);
+    expect(after.rows[0].n).toBe(0);
+  });
+
+  it('refuses without the staff account running it', async () => {
+    const { resetAllTestData } = await load();
+    await expect(
+      resetAllTestData({
+        userId: '00000000-0000-0000-0000-000000000000',
+        email: 'nobody@albarakah.mu',
+      })
+    ).rejects.toMatchObject({
+      cause: { message: expect.stringMatching(/staff account running it/) },
+    });
+    const users = await run(
+      ownerUrl,
+      `select count(*)::int as n from app_user where id = $1`,
+      [userId]
+    );
+    expect(users.rows[0].n).toBe(1);
   });
 
   it('places every table on the cleared list or the kept list', async () => {
@@ -465,9 +561,8 @@ describe('resetAllTestData', () => {
 
   it('restarts every numbering sequence but those of kept tables', async () => {
     const { resetAllTestData } = await load();
-    // A sequence owned by a kept table (a setting's change history) keeps
-    // counting; every other one — reference numbers, ledger, audit, job
-    // runs — starts again.
+    // Every sequence outside the kept tables — reference numbers, ledger,
+    // audit, job runs, setting history — starts again.
     const sequences = await run(
       ownerUrl,
       `select s.relname as sequence, t.relname as owner
