@@ -106,22 +106,33 @@ const STEP_HREF: Record<string, (base: string, id: string) => string> = {
   style="top: var(--app-header-height, 3.75rem)"
   aria-label={label}
 >
-  {/* A step is never narrower than its longest word, so a label such as
-      "Disbursement" is never split or clipped by the arrow's point. On a
-      phone the steps wrap; from sm up they stay on one line, and a chain
-      too long for the width scrolls sideways rather than squeezing. */}
-  <ol class="flex flex-wrap items-stretch gap-2 sm:flex-nowrap sm:overflow-x-auto">
+  {/* Every chevron the same size, mobile included (officer feedback: a step
+      whose box also carries a detail line, e.g. "Submit" + "with the
+      Secretary", used to stand taller and wider than a label-only step, and
+      wrapped rows did not line up). Below sm: a two-column grid with equal
+      row heights, each `li` filling its cell. From sm up: one row, one equal
+      column per step (`repeat(N, minmax(0, 1fr))`, N = steps.length, set
+      inline since it varies) — `sm:overflow-x-auto` stays as a safety net.
+      A step is never narrower than its longest word, so a label such as
+      "Disbursement" is never split or clipped by the arrow's point; where an
+      equal column would not fit one, its column's minimum is its content
+      instead. */}
+  <ol
+    id="step-list"
+    class="grid grid-cols-2 auto-rows-fr items-stretch gap-2 sm:overflow-x-auto"
+    style={`--step-count: ${steps.length}`}
+  >
     {steps.map(step => {
       const href = applicationId
         ? STEP_HREF[step.key]?.(base, applicationId)
         : hrefs?.[step.key];
       const Tag = href ? 'a' : 'div';
       return (
-        <li class="flex min-w-min flex-1 basis-32 items-stretch sm:basis-0">
+        <li class="flex items-stretch">
           <Tag
             href={href}
             class:list={[
-              'step-arrow flex w-full flex-col justify-center py-2 pr-5 pl-4 text-center transition xl:pr-6 xl:pl-6',
+              'step-arrow flex h-full w-full flex-col justify-center py-2 pr-5 pl-4 text-center transition xl:pr-6 xl:pl-6',
               BOX[step.state],
               href && 'cursor-pointer hover:brightness-95',
             ]}
@@ -168,6 +179,23 @@ const STEP_HREF: Record<string, (base: string, id: string) => string> = {
       0 100%,
       14px 50%
     );
+  }
+
+  /* From sm up, one row with one equal column per step rather than Tailwind's
+     fixed grid-cols-N (the step count varies by chain) — repeat() reads
+     --step-count, set inline above since it is only known per render.
+     minmax(min-content, 1fr) rather than minmax(0, 1fr): columns are equal
+     unless a single long word (e.g. "Disbursement") needs more than its
+     equal share, in which case that column alone grows to fit it rather than
+     clipping the word. */
+  @media (min-width: 640px) {
+    #step-list {
+      grid-auto-rows: auto;
+      grid-template-columns: repeat(
+        var(--step-count),
+        minmax(min-content, 1fr)
+      );
+    }
   }
 </style>
 
