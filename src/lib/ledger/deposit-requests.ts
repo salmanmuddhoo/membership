@@ -152,6 +152,22 @@ export async function startDepositRequest(
   await cashRules(paymentMethod, amountCents);
   const to = await destination(input.accountId);
   refuseUnlessDepositable(to, amountCents);
+  // Whoever starts it submits it: a deposit that would post at once,
+  // started by someone who may not post, could never be submitted once the
+  // Source of Fund form is signed and filed.
+  const route = await resolveRoute({
+    kind: 'deposit',
+    accountTypeId: to.accountTypeId,
+    amountCents,
+    roleCodes: principal.roles,
+  });
+  if (!route.definition && !principal.permissions.has(PERMISSION_POST)) {
+    throw new DepositError(
+      'You may record a deposit but not post it. Ask an Account Officer to ' +
+        'record it.',
+      'forbidden'
+    );
+  }
 
   const id = await withTransaction(async client => {
     const inserted = await client.query<{ id: string; reference: string }>(

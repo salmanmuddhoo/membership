@@ -416,6 +416,55 @@ async function ownedEditable(
   return closure;
 }
 
+// A transaction still on its way (submitted, under review, approved) on
+// any of these accounts, by account: the balance a closure would settle is
+// about to change. Checked at the first step (officer feedback: a request
+// that cannot be submitted should not be started, signed and filed first)
+// and again at submit.
+export async function transactionsOnTheirWay(
+  accountIds: readonly string[],
+  excludingId: string | null = null
+): Promise<Map<string, { reference: string; accountNo: string }>> {
+  if (accountIds.length === 0) return new Map();
+  const result = await query<{
+    account_id: string;
+    reference: string;
+    account_no: string;
+  }>(
+    `select distinct on (t.account_id)
+            t.account_id, t.reference,
+            coalesce(a.account_no, m.member_no) as account_no
+       from transaction t
+       join account a on a.id = t.account_id
+       left join member m on m.id = a.member_id
+      where t.account_id = any($1::uuid[])
+        and ($2::uuid is null or t.id <> $2::uuid)
+        and t.status in ('submitted', 'under_review', 'approved')
+      order by t.account_id, t.created_at`,
+    [accountIds, excludingId]
+  );
+  return new Map(
+    result.rows.map(r => [
+      r.account_id,
+      { reference: r.reference, accountNo: r.account_no },
+    ])
+  );
+}
+
+// `named`: the closure covers several accounts (a death), so the message
+// says which one.
+export function onItsWayMessage(
+  onItsWay: Map<string, { reference: string; accountNo: string }>,
+  named: boolean
+): string {
+  const [first] = onItsWay.values();
+  return (
+    `${first.reference} is still on its way on ` +
+    (named ? first.accountNo : 'this account') +
+    '. Wait for it to post or be decided.'
+  );
+}
+
 /**
  * Start a closure request: a draft naming the account, the reason and the
  * payout method, with the balance as it stands. Nothing moves and the
@@ -439,6 +488,27 @@ export async function startClosure(
   const covered = claimant
     ? await refuseUnlessAllClosable(account, null)
     : null;
+  const onItsWay = await transactionsOnTheirWay(
+    covered ? covered.accounts.map(a => a.id) : [account.id]
+  );
+  if (onItsWay.size > 0) {
+    throw new ClosureError(onItsWayMessage(onItsWay, !!covered), 'conflict');
+  }
+  // Whoever starts it submits it (ownedEditable): a closure that would post
+  // at once, started by someone who may not post, could never be submitted.
+  const route = await resolveRoute({
+    kind: 'closure',
+    accountTypeId: account.accountTypeId,
+    amountCents: toCents(covered?.total ?? account.balance),
+    roleCodes: principal.roles,
+  });
+  if (!route.definition && !principal.permissions.has(PERMISSION_POST)) {
+    throw new ClosureError(
+      'This closure posts at once, which you may not do. Ask an Account ' +
+        'Officer to record it.',
+      'forbidden'
+    );
+  }
   const reason = checkedReason(
     claimant ? (input.reason ?? '').trim() || DECEASED_REASON : input.reason
   );
@@ -681,24 +751,9 @@ export async function submitClosure(
         : 'File the signed closure request before submitting.'
     );
   }
-  const inFlight = await query<{ reference: string; account_no: string }>(
-    `select t.reference, coalesce(a.account_no, m.member_no) as account_no
-       from transaction t
-       join account a on a.id = t.account_id
-       left join member m on m.id = a.member_id
-      where t.account_id = any($1::uuid[]) and t.id <> $2
-        and t.status in ('submitted', 'under_review', 'approved')
-      order by t.created_at limit 1`,
-    [accountIds, closure.id]
-  );
-  if (inFlight.rowCount) {
-    const { reference, account_no } = inFlight.rows[0];
-    throw new ClosureError(
-      `${reference} is still on its way on ` +
-        (covered ? account_no : 'this account') +
-        '. Wait for it to post or be decided.',
-      'conflict'
-    );
+  const onItsWay = await transactionsOnTheirWay(accountIds, closure.id);
+  if (onItsWay.size > 0) {
+    throw new ClosureError(onItsWayMessage(onItsWay, !!covered), 'conflict');
   }
 
   const amountCents = toCents(covered?.total ?? account.balance);

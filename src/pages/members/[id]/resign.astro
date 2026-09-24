@@ -6,6 +6,7 @@
 // every check passes.
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import {
+  blockingChecks,
   checksFor,
   coreAccounts,
   resignationInFlightFor,
@@ -45,6 +46,9 @@ const [accounts, checks] = await Promise.all([
   checksFor(member.id),
 ]);
 const total = fromCents(totalCents(accounts));
+// Officer feedback: a check that would refuse the submit blocks this first
+// step too — the library refuses it as well (startResignation).
+const blocked = blockingChecks(checks).length > 0;
 const others = member.accounts.filter(a => !accounts.some(c => c.id === a.id));
 
 // Officer feedback: only the reason here. How the balance is paid out is
@@ -146,7 +150,8 @@ if (Astro.request.method === 'POST') {
         The balance is paid out when the resignation is approved, as it stands
         then. Both accounts close and the membership ends.
       </p>
-      <button type="submit" class={BUTTON}>
+      {blocked && <p class={NOTICE_ERROR}>Clear the checks in red first.</p>}
+      <button type="submit" class={BUTTON} disabled={blocked}>
         Continue to signature
       </button>
     </form>

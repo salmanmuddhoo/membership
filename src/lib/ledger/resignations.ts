@@ -381,6 +381,12 @@ export function blockingChecks(checks: ResignationCheck[]): ResignationCheck[] {
   return checks.filter(c => c.enabled && !c.passed);
 }
 
+// What the officer is told for the checks in the way, the same at the first
+// step as at submit.
+export function blockingMessage(blocking: ResignationCheck[]): string {
+  return blocking.map(c => `${c.label}: ${c.detail}`).join(' ');
+}
+
 // ---------------------------------------------------------------------------
 // The request
 // ---------------------------------------------------------------------------
@@ -494,6 +500,28 @@ export async function startResignation(
     );
   }
   const accounts = await refuseUnlessResignable(input.memberId, null);
+  // Officer feedback: a check that would refuse the submit refuses the
+  // first step too, so nobody takes the member through signing a request
+  // that cannot go anywhere.
+  const blocking = blockingChecks(await checksFor(input.memberId));
+  if (blocking.length > 0) {
+    throw new ResignationError(blockingMessage(blocking), 'conflict');
+  }
+  // Whoever starts it submits it: one that would post at once, started by
+  // someone who may not post, could never be submitted.
+  const route = await resolveRoute({
+    kind: 'resignation',
+    accountTypeId: accounts[0].accountTypeId,
+    amountCents: totalCents(accounts),
+    roleCodes: principal.roles,
+  });
+  if (!route.definition && !principal.permissions.has(PERMISSION_POST)) {
+    throw new ResignationError(
+      'This resignation posts at once, which you may not do. Ask an ' +
+        'Account Officer to record it.',
+      'forbidden'
+    );
+  }
   const reason = checkedReasonOrRefuse(input.reason);
   const method = await methodOrDefault(input.method);
 
@@ -615,10 +643,7 @@ export async function submitResignation(
     await checksFor(request.holderId, request.id)
   );
   if (blocking.length > 0) {
-    throw new ResignationError(
-      blocking.map(c => `${c.label}: ${c.detail}`).join(' '),
-      'conflict'
-    );
+    throw new ResignationError(blockingMessage(blocking), 'conflict');
   }
 
   const amountCents = totalCents(accounts);

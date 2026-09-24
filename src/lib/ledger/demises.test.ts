@@ -318,6 +318,38 @@ describe('a demised claim (S-1704)', () => {
     ).rejects.toThrowError(/permission/);
   });
 
+  it('is refused at the first step while money is on its way on an account (officer feedback)', async () => {
+    const { demises, deposits, review } = await load();
+    const pending = await deposits.recordDeposit(
+      {
+        accountId: member.hsa,
+        amount: '150000',
+        method: 'bank_transfer',
+        methodReference: 'MCB 9002',
+        bankAccountId,
+      },
+      clerk
+    );
+    expect(pending.status).toBe('submitted');
+    expect(await demises.transactionOnItsWay(member.id)).toBe(
+      pending.reference
+    );
+    await expect(
+      demises.startDemise(
+        { memberId: member.id, claimant: { kind: 'nominee' }, method: 'cash' },
+        clerk
+      )
+    ).rejects.toThrowError(
+      `${pending.reference} is still on its way. Wait for it to post or be decided.`
+    );
+    await review.reviewTransaction(
+      pending.id,
+      { outcome: 'reject', comment: 'Not now' },
+      secretary
+    );
+    expect(await demises.transactionOnItsWay(member.id)).toBeNull();
+  });
+
   it('adds the Takaful benefit as its own line, and the total is every account plus it', async () => {
     const { demises, config } = await load();
     expect(await config.takafulBenefit()).toBe('15000');
