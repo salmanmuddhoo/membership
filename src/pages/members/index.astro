@@ -1,6 +1,10 @@
 ---
 import DashboardLayout from '@layouts/DashboardLayout.astro';
-import { listMembers, type MemberListAccount } from '@lib/members/create';
+import {
+  listMembers,
+  MEMBER_LIST_PAGE_SIZE,
+  type MemberListAccount,
+} from '@lib/members/create';
 import { countPendingDetailsRequests } from '@lib/members/details-requests';
 import { listAccountTypes } from '@lib/config/reference';
 import { formatMoney } from '@lib/payments/money';
@@ -34,6 +38,16 @@ const canSeePayments = principal.permissions.has('payment.view');
 const pendingDetailsUpdates = await countPendingDetailsRequests();
 
 const search = Astro.url.searchParams.get('q') ?? '';
+// Performance QA: past the first 100, members were reachable only by
+// searching. A page of 100 at a time, the search kept across pages.
+const page = Math.max(Number(Astro.url.searchParams.get('page')) || 1, 1);
+const pageHref = (target: number) => {
+  const next = new URLSearchParams();
+  if (search) next.set('q', search);
+  if (target > 1) next.set('page', String(target));
+  const query = next.toString();
+  return query ? `/members?${query}` : '/members';
+};
 // Officer feedback: every account button lines up under the others of its
 // own type across every row — Investment never under Shares — rather than
 // packing left to right per row. A fixed table column per active account
@@ -41,9 +55,18 @@ const search = Astro.url.searchParams.get('q') ?? '';
 // them in, gets that alignment from the browser's own table layout, no
 // per-row logic needed.
 const [
-  { members, total, memberCount, nonMemberCount, formerCount, truncated },
+  { members, total, memberCount, nonMemberCount, formerCount },
   accountTypeColumns,
-] = await Promise.all([listMembers({ search }), listAccountTypes()]);
+] = await Promise.all([
+  listMembers({ search, offset: (page - 1) * MEMBER_LIST_PAGE_SIZE }),
+  listAccountTypes(),
+]);
+// A page past the end (the list shrank since the link was made) goes back
+// to the first.
+if (members.length === 0 && page > 1) return Astro.redirect(pageHref(1));
+const totalPages = Math.max(Math.ceil(total / MEMBER_LIST_PAGE_SIZE), 1);
+const firstShown = (page - 1) * MEMBER_LIST_PAGE_SIZE + 1;
+const lastShown = firstShown + members.length - 1;
 const activeAccountTypeColumns = accountTypeColumns.filter(t => t.isActive);
 
 const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium' });
@@ -141,8 +164,8 @@ function accountButtonClasses(account: MemberListAccount): string {
                 `${memberCount} member${memberCount === 1 ? '' : 's'}, ` +
                 `${nonMemberCount} non-member${nonMemberCount === 1 ? '' : 's'}` +
                 (formerCount > 0 ? `, ${formerCount} former` : '');
-              return truncated
-                ? `Showing the first ${members.length} of ${total} — ${breakdown}. Search to narrow the list.`
+              return totalPages > 1
+                ? `${firstShown}–${lastShown} of ${total} — ${breakdown}.`
                 : `${breakdown}.`;
             })()}
       </p>
@@ -262,6 +285,28 @@ function accountButtonClasses(account: MemberListAccount): string {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {totalPages > 1 && (
+        <div class="mt-4 flex items-center justify-between gap-2 text-sm">
+          {page > 1 ? (
+            <a href={pageHref(page - 1)} class={SECONDARY_SM}>
+              ← Previous
+            </a>
+          ) : (
+            <span />
+          )}
+          <span class={HINT}>
+            Page {page} of {totalPages}
+          </span>
+          {page < totalPages ? (
+            <a href={pageHref(page + 1)} class={SECONDARY_SM}>
+              Next →
+            </a>
+          ) : (
+            <span />
+          )}
         </div>
       )}
     </section>

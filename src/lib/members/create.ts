@@ -1228,17 +1228,30 @@ const NAME_SQL = `
   trim(coalesce(p.values->>'name', '') || ' ' || coalesce(p.values->>'surname', ''))
 `;
 
+export const MEMBER_LIST_PAGE_SIZE = 100;
+
 export async function listMembers(
-  options: { search?: string; limit?: number } = {}
+  options: { search?: string; limit?: number; offset?: number } = {}
 ) {
   const search = options.search?.trim() ? options.search.trim() : null;
-  const limit = Math.min(Math.max(options.limit ?? 100, 1), 100);
+  const limit = Math.min(
+    Math.max(options.limit ?? MEMBER_LIST_PAGE_SIZE, 1),
+    MEMBER_LIST_PAGE_SIZE
+  );
+  const offset = Math.max(options.offset ?? 0, 0);
 
   // S-614: a customer (never a member — customer table, migration 0027)
   // appears in the same list, tagged, since an officer searching by name or
   // number does not know in advance which one they are looking for. Unioned
   // rather than two separate lists, so one search and one page of results
   // covers both.
+  //
+  // Performance QA: the accounts and balances of every member used to be
+  // gathered before the list was cut to its first 100 — at 5,000 members,
+  // a third of a second per visit and six seconds under load. The rows are
+  // now filtered, counted, ordered and paged on what is cheap (who they are,
+  // whether anything of theirs is open), and the accounts and balances are
+  // gathered for the one page actually shown.
   const result = await query<{
     id: string;
     kind: 'member' | 'customer';
@@ -1261,47 +1274,13 @@ export async function listMembers(
               t.name as type_label, m.status, m.status_changed_at,
               ${NAME_SQL} as name, m.joined_at,
               a.reference as application_reference,
-              coalesce(
-                (select json_agg(json_build_object(
-                           'id', acc.id, 'code', act.code,
-                           'name', act.name,
-                           -- A Shares or MSA account carries no number of
-                           -- its own (migration 0018) and shows the
-                           -- member's — but one carried over from the
-                           -- non-member customer this member used to be
-                           -- (S-614) keeps its own HSA0001-style number,
-                           -- which this member never had reassigned to
-                           -- them (account_owner_shape, migration 0038).
-                           'no', coalesce(acc.account_no, m.member_no),
-                           'balance', coalesce(
-                             (select b.balance from account_balance b
-                               where b.account_id = acc.id),
-                             0
-                           )::numeric(14,2)::text
-                         ) order by act.sort_order, act.name)
-                   from account acc
-                   join account_type act on act.id = acc.account_type_id
-                  -- Officer feedback: a closed account (a closure, or the
-                  -- Shares and MSA a resignation closed) is no longer
-                  -- something they hold, so it has no button here.
-                  where acc.member_id = m.id and acc.status <> 'closed'),
-                '[]'
-              ) as accounts,
-              -- Officer feedback: what the member actually has in the
-              -- Society — Shares, the MSA, and any HSA/Investment/other
-              -- account — never Entrance, the processing fee or Takaful,
-              -- which are one-time charges with no account behind them.
-              -- The ledger's own balances (S-1309): every account of theirs,
-              -- whichever application opened it and whether it came with
-              -- them from the customer they used to be (S-614), summed from
-              -- the cache post_transaction() maintains (docs/ledger.md).
-              coalesce(
-                (select sum(b.balance)
-                   from account acc
-                   join account_balance b on b.account_id = acc.id
-                  where acc.member_id = m.id),
-                0
-              ) as total_funds
+              -- Officer feedback: a closed account (a closure, or the
+              -- Shares and MSA a resignation closed) is no longer something
+              -- they hold.
+              exists (
+                select 1 from account acc
+                 where acc.member_id = m.id and acc.status <> 'closed'
+              ) as has_open
          from member m
          join membership_type t on t.id = m.membership_type_id
          left join membership_application a on a.id = m.application_id
@@ -1328,41 +1307,10 @@ export async function listMembers(
               c.status, null::timestamptz as status_changed_at,
               ${NAME_SQL} as name, c.joined_at,
               capp.reference as application_reference,
-              coalesce(
-                (select json_agg(json_build_object(
-                           'id', acc.id, 'code', act.code,
-                           'name', act.name, 'no', acc.account_no,
-                           'balance', coalesce(
-                             (select b.balance from account_balance b
-                               where b.account_id = acc.id),
-                             0
-                           )::numeric(14,2)::text
-                         ) order by act.sort_order, act.name)
-                   from account acc
-                   join account_type act on act.id = acc.account_type_id
-                  where acc.customer_id = c.id and acc.status <> 'closed'),
-                '[]'
-              ) as accounts,
-              -- A customer never has Shares or an MSA (they are not a
-              -- member) — only whatever account type(s) their own
-              -- applications opened, the same payment_account_line source
-              -- HSA/Investment use for a member above.
-              --
-              -- Joined through account.opened_by_application_id exactly as
-              -- the member arm is, and for the same reason: this used to
-              -- read c.application_id, the one application that created the
-              -- customer, so a non-member who opened a second account later
-              -- (an Investment beside their HSA — its own application, its
-              -- own id) had that second deposit counted as nothing. The
-              -- money had not moved; only the application it was taken
-              -- against was a different one (officer feedback).
-              coalesce(
-                (select sum(b.balance)
-                   from account acc
-                   join account_balance b on b.account_id = acc.id
-                  where acc.customer_id = c.id),
-                0
-              ) as total_funds
+              exists (
+                select 1 from account acc
+                 where acc.customer_id = c.id and acc.status <> 'closed'
+              ) as has_open
          from customer c
          join membership_application capp on capp.id = c.application_id
          left join application_party p
@@ -1374,48 +1322,80 @@ export async function listMembers(
         -- but an empty row with the same name that would otherwise sit
         -- beside the real one.
         where c.status = 'active'
+     ),
+     page as (
+       select rows.*,
+              -- LC-10/officer direction: a non-member is a customer, or a
+              -- resigned member, still holding an account that is not
+              -- closed — one with nothing open has nothing left to deal on
+              -- and is "former" instead (counted below, never tagged).
+              ((kind = 'customer' or status = 'resigned') and has_open)
+                as non_member,
+              count(*) over () as total_count,
+              -- LC-10: the header splits the total three ways — members
+              -- (holding their membership open), non-members (see above),
+              -- and former (nothing open, membership or account). A resigned
+              -- or demised member is never counted as a member here. Counted
+              -- after the search filter, so the three always add up to the
+              -- total the list is showing.
+              count(*) filter (
+                where kind = 'member' and status not in ('resigned', 'demised')
+              ) over () as member_count,
+              count(*) filter (
+                where (kind = 'customer' or status = 'resigned') and has_open
+              ) over () as non_member_count
+         from rows
+        where $1::text is null
+           or strpos(lower(identifier), lower($1::text)) > 0
+           or strpos(lower(name), lower($1::text)) > 0
+        order by identifier
+        limit $2::int offset $3::int
      )
-     select id, kind, identifier, type_label, status, name, joined_at,
-            application_reference, accounts, total_funds::numeric(14,2)::text as total_funds,
-            -- LC-10/officer direction: a non-member is a customer, or a
-            -- resigned member, still holding an account that is not closed —
-            -- one with nothing open has nothing left to deal on and is
-            -- "former" instead (counted below, never tagged either way).
-            (
-              (kind = 'customer' and json_array_length(accounts) > 0)
-              or (status = 'resigned' and json_array_length(accounts) > 0)
-            ) as non_member,
-            count(*) over () as total_count,
-            -- LC-10: the header splits the total three ways — members
-            -- (holding their membership open), non-members (an account
-            -- open but no membership, or none ever), and former (nothing
-            -- open, membership or account). A resigned or demised member is
-            -- never counted as a member here, whether or not they still
-            -- hold an open account (demised) or hold nothing at all
-            -- (resigned) — see the non_member column above for who counts
-            -- there instead. Counted here, after the search filter, so the
-            -- three always add up to the same total the list is showing.
-            count(*) filter (
-              where kind = 'member' and status not in ('resigned', 'demised')
-            ) over () as member_count,
-            count(*) filter (
-              where (kind = 'customer' and json_array_length(accounts) > 0)
-                 or (status = 'resigned' and json_array_length(accounts) > 0)
-            ) over () as non_member_count
-       from rows
-      where $1::text is null
-         or strpos(lower(identifier), lower($1::text)) > 0
-         or strpos(lower(name), lower($1::text)) > 0
-      order by identifier
-      limit $2::int`,
-    [search, limit]
+     select page.id, page.kind, page.identifier, page.type_label,
+            page.status, page.status_changed_at, page.name, page.joined_at,
+            page.application_reference, page.non_member, page.total_count,
+            page.member_count, page.non_member_count,
+            coalesce(
+              (select json_agg(json_build_object(
+                         'id', acc.id, 'code', act.code, 'name', act.name,
+                         -- A Shares or MSA account carries no number of its
+                         -- own (migration 0018) and shows the member's — but
+                         -- one carried over from the non-member customer this
+                         -- member used to be (S-614) keeps its own
+                         -- HSA0001-style number (account_owner_shape,
+                         -- migration 0038). A customer's always has one.
+                         'no', coalesce(acc.account_no, page.identifier),
+                         'balance', coalesce(b.balance, 0)::numeric(14,2)::text
+                       ) order by act.sort_order, act.name)
+                 from account acc
+                 join account_type act on act.id = acc.account_type_id
+                 left join account_balance b on b.account_id = acc.id
+                where (acc.member_id = page.id or acc.customer_id = page.id)
+                  and acc.status <> 'closed'),
+              '[]'
+            ) as accounts,
+            -- Officer feedback: what they actually have in the Society —
+            -- every account of theirs, whichever application opened it and
+            -- whether it came with them from the customer they used to be
+            -- (S-614), summed from the ledger's own balance cache
+            -- (docs/ledger.md). Never Entrance, the processing fee or
+            -- Takaful: one-time charges with no account behind them.
+            coalesce(
+              (select sum(b.balance)
+                 from account acc
+                 join account_balance b on b.account_id = acc.id
+                where acc.member_id = page.id or acc.customer_id = page.id),
+              0
+            )::numeric(14,2)::text as total_funds
+       from page
+      order by page.identifier`,
+    [search, limit, offset]
   );
 
-  const total = result.rows.length > 0 ? Number(result.rows[0].total_count) : 0;
-  const memberCount =
-    result.rows.length > 0 ? Number(result.rows[0].member_count) : 0;
-  const nonMemberCount =
-    result.rows.length > 0 ? Number(result.rows[0].non_member_count) : 0;
+  const first = result.rows[0];
+  const total = first ? Number(first.total_count) : 0;
+  const memberCount = first ? Number(first.member_count) : 0;
+  const nonMemberCount = first ? Number(first.non_member_count) : 0;
   // LC-10: everyone neither a member nor a non-member — a resigned or
   // demised member with nothing open, or a customer with nothing open.
   const formerCount = total - memberCount - nonMemberCount;
@@ -1439,7 +1419,9 @@ export async function listMembers(
     memberCount,
     nonMemberCount,
     formerCount,
-    truncated: result.rows.length < total,
+    offset,
+    pageSize: limit,
+    truncated: offset + result.rows.length < total,
   };
 }
 

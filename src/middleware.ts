@@ -2,6 +2,7 @@ import { defineMiddleware, sequence } from 'astro:middleware';
 import { createServerAuth } from '@lib/auth/server';
 import { recordAuditQuietly } from '@lib/access/audit';
 import { authorise } from '@lib/access/authorise';
+import { isInvalidReference } from '@lib/db/pool';
 import { resolvePrincipal, type Principal } from '@lib/access/principal';
 import { apiError, correlationIdFrom } from '@lib/api/envelope';
 import { pendingActionCount } from '@lib/applications/workflow';
@@ -177,6 +178,10 @@ const guard = defineMiddleware(async (context, next) => {
 
     if (!result.ok) {
       const { rejection } = result;
+      if (rejection.reason === 'session-ended') {
+        context.cookies.delete(SESSION_COOKIE, { path: '/' });
+        return refuse('unauthenticated', LOGIN_PATH);
+      }
       // A provisioning gap, not a broken session — worth seeing in the logs.
       console.warn(
         `[access] session rejected (${rejection.reason}) for subject ${user.id}`
@@ -252,7 +257,16 @@ const guard = defineMiddleware(async (context, next) => {
     });
   }
 
-  const response = await next();
+  // An id in the URL that is not one at all (/members/abc) fails in the
+  // database as a malformed reference: that page does not exist, so it is
+  // answered as not found rather than as a database outage.
+  let response: Response;
+  try {
+    response = await next();
+  } catch (error) {
+    if (!isInvalidReference(error)) throw error;
+    response = new Response('Not found', { status: 404 });
+  }
 
   // Swap a bare "Not found" for the app's own not-found page, still at 404,
   // so the officer keeps the sidebar and a way back instead of monospace
@@ -297,7 +311,11 @@ export const SECURITY_HEADERS: Record<string, string> = {
     "form-action 'self'",
     "frame-src 'self' https://*.sharepoint.com",
     "frame-ancestors 'self'",
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+    // No unsafe-eval: nothing the app ships evaluates strings as code
+    // (security review: the built scripts contain no eval or new Function),
+    // so allowing it only helped an injected script. 'unsafe-inline' stays
+    // while the pages carry inline scripts.
+    "script-src 'self' 'unsafe-inline'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: https://images.unsplash.com https://*.sharepoint.com",
     "connect-src 'self' https://*.sharepoint.com",
@@ -306,7 +324,9 @@ export const SECURITY_HEADERS: Record<string, string> = {
     'block-all-mixed-content',
   ].join('; '),
   'Permissions-Policy': 'interest-cohort=()',
-  'Referrer-Policy': 'no-referrer-when-downgrade',
+  // Another site is told which site a link came from, never the page:
+  // app paths carry member and transaction ids (security review).
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
   'X-Content-Type-Options': 'nosniff',
   'X-Frame-Options': 'SAMEORIGIN',
   'X-XSS-Protection': '1; mode=block',

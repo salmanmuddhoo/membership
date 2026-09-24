@@ -35,7 +35,7 @@ import {
   type ErrorCode,
 } from './envelope';
 import { ApplicationError } from '../applications/capture';
-import { DatabaseUnavailableError } from '../db/pool';
+import { DatabaseUnavailableError, isInvalidReference } from '../db/pool';
 import { checkRateLimit } from './rate-limit';
 
 export interface IntegrationEndpointDescriptor extends Omit<
@@ -92,6 +92,7 @@ function toApiError(error: unknown): ApiError | null {
             : 'validation_failed';
     return new ApiError(code, error.message);
   }
+  if (isInvalidReference(error)) return new ApiError('not_found');
   if (error instanceof DatabaseUnavailableError) {
     return new ApiError(
       'service_unavailable',

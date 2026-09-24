@@ -242,7 +242,7 @@ const pretty = (schema: unknown) => JSON.stringify(schema, null, 2);
   <script
     type="application/json"
     id="api-endpoints"
-    set:html={JSON.stringify(forBrowser)}
+    set:html={JSON.stringify(forBrowser).replace(/</g, '\\u003c')}
   ></script>
   <script>
     import type { TryDefinition } from '@lib/api/explorer';

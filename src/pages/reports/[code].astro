@@ -26,6 +26,7 @@ import {
   HINT,
   INPUT,
   MUTED,
+  NOTICE_WARN,
   PAGE,
   SECONDARY_SM,
   LABEL,
@@ -70,6 +71,14 @@ if (!showAll && hasPeriod && noFilterInUrl) {
 // officer does is choose a period.
 const asked = report.filters.some(f => (filters[f.name] ?? '') !== '');
 const result = asked || showAll ? await report.run(filters) : null;
+
+// On screen, a report stops at SCREEN_ROWS rows; the spreadsheet carries
+// every one (performance QA: "everything" over 80,000 transactions built a
+// 93 MB page in 6 seconds, and fifty of those at once starved every other
+// page of database connections). The summary line is still over all rows.
+const SCREEN_ROWS = 1000;
+const shownRows = result ? result.rows.slice(0, SCREEN_ROWS) : [];
+const hiddenRows = result ? result.rows.length - shownRows.length : 0;
 
 // What the filters actually were, in words, for the top of the spreadsheet.
 const describeFilters = () =>
@@ -211,6 +220,14 @@ const cellText = (column: ReportColumn, value: string | number | null) => {
           )}
         </div>
 
+        {hiddenRows > 0 && (
+          <p class={`${NOTICE_WARN} mt-4`}>
+            Showing the first {SCREEN_ROWS.toLocaleString('en-GB')} of{' '}
+            {result.rows.length.toLocaleString('en-GB')} rows. Narrow the
+            filters, or download the spreadsheet for all of them.
+          </p>
+        )}
+
         {result.rows.length === 0 ? (
           <p class={`${HINT} mt-4`}>Nothing matches.</p>
         ) : (
@@ -233,7 +250,7 @@ const cellText = (column: ReportColumn, value: string | number | null) => {
                 </tr>
               </thead>
               <tbody>
-                {result.rows.map((row, rowIndex) => {
+                {shownRows.map((row, rowIndex) => {
                   const href = result.rowHrefs?.[rowIndex] ?? null;
                   return (
                     <tr

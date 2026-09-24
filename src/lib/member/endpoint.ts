@@ -20,7 +20,7 @@ import type { EndpointDescriptor, Endpoint } from '../api/endpoint';
 import { checkRateLimit } from '../api/rate-limit';
 import { ApplicationError } from '../applications/capture';
 import { MemberConfigError } from '../config';
-import { DatabaseUnavailableError } from '../db/pool';
+import { DatabaseUnavailableError, isInvalidReference } from '../db/pool';
 import { DocumentError } from '../documents/documents';
 import { GraphError, graphFailureMessage } from '../documents/graph';
 import { UploadRejected } from '../documents/upload';
@@ -110,6 +110,7 @@ function toApiError(error: unknown): ApiError | null {
         'tell an administrator.'
     );
   }
+  if (isInvalidReference(error)) return new ApiError('not_found');
   if (error instanceof DatabaseUnavailableError) {
     return new ApiError('service_unavailable');
   }
