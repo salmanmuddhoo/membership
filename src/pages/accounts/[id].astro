@@ -68,6 +68,10 @@ const [balance, entries] = await Promise.all([
 // in reach after it has posted, on its own row.
 const canSeeDocuments =
   Astro.locals.principal!.permissions.has('document.view');
+// /transactions/ is gated on transaction.view — a row leads there only for
+// someone who can actually open it.
+const canSeeTransaction =
+  Astro.locals.principal!.permissions.has('transaction.view');
 const sourceOfFund = canSeeDocuments
   ? await sourceOfFundFormsFor([...new Set(entries.map(e => e.transactionId))])
   : new Map<string, string>();
@@ -134,7 +138,17 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           </thead>
           <tbody class={TBODY}>
             {entries.map(entry => (
-              <tr class="text-neutral-800 dark:text-neutral-100">
+              <tr
+                data-href={
+                  canSeeTransaction
+                    ? `/transactions/${entry.transactionId}`
+                    : undefined
+                }
+                class:list={[
+                  'text-neutral-800 dark:text-neutral-100',
+                  canSeeTransaction && 'cursor-pointer',
+                ]}
+              >
                 <td
                   class={`${TD} whitespace-nowrap`}
                   data-sort-value={entry.occurredAt.toISOString()}
@@ -142,7 +156,16 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                   {dateFormat.format(entry.occurredAt)}
                 </td>
                 <td class={TD}>
-                  <code class="text-xs">{entry.transactionReference}</code>
+                  {canSeeTransaction ? (
+                    <a
+                      href={`/transactions/${entry.transactionId}`}
+                      class="underline"
+                    >
+                      <code class="text-xs">{entry.transactionReference}</code>
+                    </a>
+                  ) : (
+                    <code class="text-xs">{entry.transactionReference}</code>
+                  )}
                 </td>
                 <td class={TD}>
                   {entry.description}
@@ -232,6 +255,20 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 
 <script>
   import { wireSortableTables } from '@lib/client/table-sort';
+
+  // Each row leads to its own transaction's detail — the row's Receipt link
+  // and, on a deposit, the Source of Fund "View" button stay their own
+  // click targets, exactly as members/index.astro tells the two apart.
+  for (const row of document.querySelectorAll<HTMLTableRowElement>(
+    'tr[data-href]'
+  )) {
+    row.addEventListener('click', e => {
+      const target = e.target as HTMLElement;
+      if (target.closest('a, button')) return;
+      const href = row.dataset.href;
+      if (href) window.location.assign(href);
+    });
+  }
 
   wireSortableTables();
 </script>
