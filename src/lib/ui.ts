@@ -142,6 +142,11 @@ export const SECONDARY_SM = `${SECONDARY_BASE} px-3 py-1.5 text-sm`;
 // others SECONDARY_SM, the same size.
 export const TAB_CURRENT =
   'rounded-lg px-3 py-1.5 text-sm font-medium text-neutral-800 bg-mint-300 transition';
+// The pager under a long list (Pagination.astro): a page number or a page
+// size, and the one showing.
+export const PAGER_LINK = `${SECONDARY_BASE} inline-flex h-8 min-w-8 items-center justify-center px-2 text-sm`;
+export const PAGER_CURRENT =
+  'inline-flex h-8 min-w-8 items-center justify-center rounded-lg bg-mint-300 px-2 text-sm font-semibold text-neutral-800';
 // XS: inside a dense row, where even the small button is too much.
 export const SECONDARY_XS = `${SECONDARY_BASE} px-2.5 py-1 text-xs`;
 
