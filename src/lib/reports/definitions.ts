@@ -16,10 +16,15 @@
 import {
   activeChain,
   dormancyMonths,
+  listBankAccounts,
   nearFloorMargin,
   type WorkflowStep,
 } from '../config/reference';
 import { LAST_ACTIVITY_SQL } from '../members/dormancy';
+import {
+  bankAccountMovements,
+  bankAccountPeriods,
+} from '../ledger/bank-accounts';
 import { query } from '../db/pool';
 import { formatMoney } from '../payments/money';
 import { APPLICATION_STATUS_LABELS } from '../applications/status-labels';
@@ -45,8 +50,11 @@ export type FilterValues = Record<string, string | undefined>;
 export interface ReportColumn {
   key: string;
   label: string;
-  // Right-aligned and summed in the footer. Money and counts.
+  // Right-aligned, sorted as a number and exported as one. Money and counts.
   numeric?: boolean;
+  // Money: shown with thousands separated and two decimals, whatever the
+  // column is called (the page otherwise guesses from the label).
+  money?: boolean;
 }
 
 export interface ReportResult {
@@ -1486,6 +1494,139 @@ const exits: ReportDefinition = {
   },
 };
 
+const bankAccountChoices = async () => {
+  const accounts = await listBankAccounts();
+  return accounts.map(a => ({ value: a.id, label: a.name }));
+};
+
+// S-1901 · Bank accounts: what each holds, and what moved through it. No
+// account chosen answers "how much do we have, and where" one row per
+// account; one chosen is that account's own statement, oldest first, with
+// a running balance. Movements are dated by when they posted — the day
+// the bank itself saw them — the same posted transactions
+// bankAccountBalances stands on (src/lib/ledger/bank-accounts.ts).
+const bankAccounts: ReportDefinition = {
+  code: 'bank-accounts',
+  title: 'Bank accounts',
+  category: 'Finance',
+  summary:
+    "What each of the Society's bank accounts holds, and every payment " +
+    'in and out of it.',
+  permission: 'bank_account.view',
+  filters: [
+    ...PERIOD,
+    {
+      name: 'bank',
+      label: 'Bank account',
+      kind: 'choice',
+      choices: bankAccountChoices,
+    },
+  ],
+  async run(filters) {
+    const from = dateOrNull(filters.from);
+    const to = dateOrNull(filters.to);
+    const bankAccountId = textOrNull(filters.bank);
+    const periods = await bankAccountPeriods({ from, to });
+
+    if (!bankAccountId) {
+      const rows = periods.map(p => ({
+        'Bank account': p.account.name,
+        Bank: p.account.bankName,
+        Opening: p.opening,
+        In: p.in,
+        Out: p.out,
+        Closing: p.closing,
+      }));
+      const totalClosing = periods.reduce(
+        (sum, p) => sum + Number(p.closing),
+        0
+      );
+      return {
+        columns: [
+          { key: 'Bank account', label: 'Bank account' },
+          { key: 'Bank', label: 'Bank' },
+          { key: 'Opening', label: 'Opening', numeric: true, money: true },
+          { key: 'In', label: 'In', numeric: true, money: true },
+          { key: 'Out', label: 'Out', numeric: true, money: true },
+          { key: 'Closing', label: 'Closing', numeric: true, money: true },
+        ],
+        rows,
+        summary:
+          `${periods.length} bank account(s) — ${rs(totalClosing)} in ` +
+          'total at the end of the period.',
+      };
+    }
+
+    const period = periods.find(p => p.account.id === bankAccountId);
+    const opening = period?.opening ?? '0.00';
+    const movements = await bankAccountMovements({
+      bankAccountId,
+      from,
+      to,
+    });
+
+    let runningCents = Math.round(Number(opening) * 100);
+    const rows: Record<string, string | number | null>[] = [
+      {
+        Date: '',
+        Reference: '',
+        Kind: 'Balance brought forward',
+        Holder: '',
+        'Paid to / from': '',
+        Method: '',
+        'Method reference': '',
+        In: null,
+        Out: null,
+        Balance: opening,
+      },
+    ];
+    let totalIn = 0;
+    let totalOut = 0;
+    for (const m of movements) {
+      const cents = Math.round(Number(m.amount) * 100);
+      if (m.direction === 'credit') {
+        runningCents += cents;
+        totalIn += Number(m.amount);
+      } else {
+        runningCents -= cents;
+        totalOut += Number(m.amount);
+      }
+      rows.push({
+        Date: m.date,
+        Reference: m.reference,
+        Kind: KIND_WORDS[m.kind] ?? m.kind,
+        Holder: m.holder,
+        'Paid to / from': m.paidToFrom,
+        Method: m.method,
+        'Method reference': m.methodReference,
+        In: m.direction === 'credit' ? m.amount : null,
+        Out: m.direction === 'credit' ? null : m.amount,
+        Balance: (runningCents / 100).toFixed(2),
+      });
+    }
+    const closing = period?.closing ?? opening;
+
+    return {
+      columns: [
+        { key: 'Date', label: 'Date' },
+        { key: 'Reference', label: 'Reference' },
+        { key: 'Kind', label: 'Kind' },
+        { key: 'Holder', label: 'Holder' },
+        { key: 'Paid to / from', label: 'Paid to / from' },
+        { key: 'Method', label: 'Method' },
+        { key: 'Method reference', label: 'Method reference' },
+        { key: 'In', label: 'In', numeric: true, money: true },
+        { key: 'Out', label: 'Out', numeric: true, money: true },
+        { key: 'Balance', label: 'Balance', numeric: true, money: true },
+      ],
+      rows,
+      summary:
+        `Opening ${rs(Number(opening))} · in ${rs(totalIn)} · ` +
+        `out ${rs(totalOut)} · closing ${rs(Number(closing))}.`,
+    };
+  },
+};
+
 // ---------------------------------------------------------------------------
 // S-907 · Operations and audit
 // ---------------------------------------------------------------------------
@@ -1607,6 +1748,7 @@ export const REPORTS: ReportDefinition[] = [
   feeComponents,
   transactions,
   exits,
+  bankAccounts,
   receipts,
   accountsNearFloor,
   pendingApprovals,

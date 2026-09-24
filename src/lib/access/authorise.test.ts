@@ -250,4 +250,20 @@ describe('the live route map', () => {
     });
     expect(authorise(treasurer, '/receipts/reconciliation').allowed).toBe(true);
   });
+
+  // S-1901: the Treasurer and the Auditor hold bank_account.view but not
+  // report.view, and this is their report — the exact rule has to beat the
+  // /reports/ prefix without opening any other report to them.
+  it('opens the bank accounts report on bank_account.view alone', () => {
+    expect(requiredPermissionFor('/reports/bank-accounts')).toBe(
+      'bank_account.view'
+    );
+    expect(requiredPermissionFor('/reports/transactions')).toBe('report.view');
+
+    const treasurer = principal({
+      permissions: new Set(['bank_account.view']),
+    });
+    expect(authorise(treasurer, '/reports/bank-accounts').allowed).toBe(true);
+    expect(authorise(treasurer, '/reports/transactions').allowed).toBe(false);
+  });
 });

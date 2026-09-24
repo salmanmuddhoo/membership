@@ -2548,6 +2548,156 @@ describe("officer feedback: a member's documents carry onto a new account openin
   });
 });
 
+describe('officer feedback: a person’s documents are picked up by any new application of theirs', () => {
+  // Files an ID card for the applicant on an application (draft while
+  // filing), then leaves the application in the status given.
+  async function withIdCardOn(
+    documents: Awaited<ReturnType<typeof load>>['documents'],
+    status: string,
+    nic: string,
+    name: string
+  ) {
+    const type = await run(
+      appUrl,
+      `select id, checklist_id from membership_type where code = 'individual'`
+    );
+    const application = await run(
+      appUrl,
+      `insert into membership_application (membership_type_id, captured_by)
+       values ($1, $2) returning id`,
+      [type.rows[0].id, officer.userId]
+    );
+    const id = application.rows[0].id as string;
+    await snapshotChecklist(id, [type.rows[0].checklist_id]);
+    await run(
+      appUrl,
+      `insert into application_party (application_id, subject, ordinal, values)
+       values ($1, 'applicant', 1, $2)`,
+      [id, JSON.stringify({ name, nic })]
+    );
+    const begun = await documents.beginUpload(
+      {
+        applicationId: id,
+        documentTypeId: idCardTypeId,
+        subject: 'applicant',
+        fileName: `${name}-id.jpg`,
+        contentType: 'image/jpeg',
+        sizeBytes: 120,
+      },
+      officer
+    );
+    drive.files.set(begun.ticket.itemPath, { id: `graph-${name}`, size: 120 });
+    await documents.commitUpload(begun.versionId, officer);
+    await run(
+      appUrl,
+      `update membership_application set status = $2 where id = $1`,
+      [id, status]
+    );
+    return {
+      id,
+      typeId: type.rows[0].id as string,
+      path: begun.ticket.itemPath,
+    };
+  }
+
+  it('carries a customer’s ID card onto their application to become a member', async () => {
+    const { capture, documents } = await load();
+    const source = await withIdCardOn(
+      documents,
+      'approved',
+      'C1234567890123',
+      'convert'
+    );
+    const customer = await run(
+      appUrl,
+      `insert into customer (application_id) values ($1) returning id`,
+      [source.id]
+    );
+
+    const { id } = await capture.startMembershipApplicationFromCustomer(
+      customer.rows[0].id,
+      officer
+    );
+
+    const idCard = (await documents.checklistFor({ applicationId: id })).find(
+      e => e.subject === 'applicant' && e.documentCode === 'id_card'
+    );
+    expect(idCard?.state).toBe('under_review');
+    const versions = await documents.versionsOf(idCard!.documentId!);
+    expect(versions[0].sharepointPath).toBe(source.path);
+  });
+
+  it('carries the ID card from a rejected application once the NIC is entered, and never brings back one removed', async () => {
+    const { capture, documents } = await load();
+    const nic = 'R1234567890123';
+    const rejected = await withIdCardOn(documents, 'rejected', nic, 'again');
+
+    const fresh = await run(
+      appUrl,
+      `insert into membership_application (membership_type_id, captured_by)
+       values ($1, $2) returning id`,
+      [rejected.typeId, officer.userId]
+    );
+    const freshId = fresh.rows[0].id as string;
+    const checklistId = (
+      await run(
+        appUrl,
+        `select checklist_id from membership_type where id = $1`,
+        [rejected.typeId]
+      )
+    ).rows[0].checklist_id;
+    await snapshotChecklist(freshId, [checklistId]);
+    const idCard = async () =>
+      (await documents.checklistFor({ applicationId: freshId })).find(
+        e => e.subject === 'applicant' && e.documentCode === 'id_card'
+      );
+
+    // Nothing to go on before the NIC.
+    await capture.saveDraft(
+      freshId,
+      [{ subject: 'applicant', ordinal: 1, values: { name: 'Again' } }],
+      officer
+    );
+    expect((await idCard())?.state).toBe('missing');
+
+    await capture.saveDraft(
+      freshId,
+      [{ subject: 'applicant', ordinal: 1, values: { name: 'Again', nic } }],
+      officer
+    );
+    const carried = await idCard();
+    expect(carried?.state).toBe('under_review');
+    expect(
+      (await documents.versionsOf(carried!.documentId!))[0].sharepointPath
+    ).toBe(rejected.path);
+
+    // Removed by the officer: saving again, or entering the NIC afresh,
+    // does not bring it back.
+    await documents.removeFiledDocument(carried!.documentId!, {
+      ...officer,
+      permissions: new Set(['document.upload']),
+    });
+    await capture.saveDraft(
+      freshId,
+      [
+        {
+          subject: 'applicant',
+          ordinal: 1,
+          values: { name: 'Again', nic: '' },
+        },
+      ],
+      officer
+    );
+    await capture.saveDraft(
+      freshId,
+      [{ subject: 'applicant', ordinal: 1, values: { name: 'Again', nic } }],
+      officer
+    );
+    expect((await idCard())?.state).toBe('missing');
+    expect(drive.files.has(rejected.path)).toBe(true);
+  });
+});
+
 describe("S-1702: a request's own paper is filed against the transaction", () => {
   it("files the signed closure request in the member's folder, named by the transaction, one per request", async () => {
     const { documents } = await load();

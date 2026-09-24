@@ -96,7 +96,8 @@ const exportHref = () => {
 const MONEY_COLUMN =
   /amount|balance|total|float|cash in|cash out|expected|counted|over.?short|held|minimum|headroom|benefit/i;
 const isMoneyColumn = (column: ReportColumn) =>
-  Boolean(column.numeric) && MONEY_COLUMN.test(column.label);
+  Boolean(column.money) ||
+  (Boolean(column.numeric) && MONEY_COLUMN.test(column.label));
 const amountFormat = new Intl.NumberFormat('en-GB', {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
@@ -116,9 +117,15 @@ const cellText = (column: ReportColumn, value: string | number | null) => {
   heading={report.title}
 >
   <div class={PAGE.wide}>
-    <a href="/reports" class={`${HINT} inline-block underline`}>
-      ← All reports
-    </a>
+    {principal.permissions.has('report.view') ? (
+      <a href="/reports" class={`${HINT} inline-block underline`}>
+        ← All reports
+      </a>
+    ) : (
+      <a href="/dashboard" class={`${HINT} inline-block underline`}>
+        ← Dashboard
+      </a>
+    )}
 
     <section class={CARD}>
       <p class={MUTED}>{report.summary}</p>

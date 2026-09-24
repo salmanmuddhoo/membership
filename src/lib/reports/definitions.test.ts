@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { migrate } from '../../../scripts/migrate';
+import type { Principal } from '../access/principal';
 
 const ADMIN_URL = 'postgresql://postgres@127.0.0.1:5433/postgres';
 const MIGRATIONS_DIR = path.resolve(
@@ -322,5 +323,262 @@ describe('transactions report', () => {
     ]);
     const atPresident = await report.run({ status: 'with:president' });
     expect(atPresident.rows).toEqual([]);
+  });
+});
+
+// A separate database: one bank account with an opening balance, a deposit
+// into it by bank transfer and a withdrawal out of it by cheque — enough to
+// show the per-account summary (opening/in/out/closing), the per-account
+// statement with its running balance and brought-forward row, and that a
+// period filter keeps a movement out of the period it falls outside.
+describe('bank accounts report', () => {
+  const bankDbName = `reports_bank_accounts_test_${Date.now()}`;
+  const bankOwnerUrl = `postgresql://postgres@127.0.0.1:5433/${bankDbName}`;
+  const bankAppUrl = `postgresql://albarakah_app:devpassword@127.0.0.1:5433/${bankDbName}`;
+
+  async function configure(sql: string) {
+    await run(
+      bankAppUrl,
+      `begin; set local albarakah.actor_description = 'definitions.test'; ${sql}; commit;`
+    );
+  }
+
+  let bankPool: typeof import('../db/pool') | null = null;
+  async function loadBank() {
+    // See load()'s own comment: closed unconditionally, since the pool this
+    // reaches may be an earlier describe's, not this one's.
+    bankPool = await import('../db/pool');
+    await bankPool.closePool();
+    process.env.DATABASE_URL = bankAppUrl;
+    process.env.DATABASE_ALLOW_INSECURE = 'true';
+    process.env.PUBLIC_APP_ENV = 'test';
+    return {
+      reports: await import('./definitions'),
+      deposits: await import('../ledger/deposits'),
+      withdrawals: await import('../ledger/withdrawals'),
+    };
+  }
+
+  let officer: Principal;
+  let bankAccountId: string;
+
+  beforeAll(async () => {
+    await run(ADMIN_URL, `create database ${bankDbName}`);
+    await run(bankOwnerUrl, 'revoke all on schema public from public');
+    await run(
+      bankOwnerUrl,
+      `grant connect on database ${bankDbName} to albarakah_app`
+    );
+    await migrate(bankOwnerUrl, MIGRATIONS_DIR);
+
+    const user = await run(
+      bankAppUrl,
+      `insert into app_user (email, display_name)
+       values ('officer-bank@albarakah.mu', 'Officer')
+       returning id`
+    );
+    officer = {
+      userId: user.rows[0].id,
+      entraSubject: 'sub-officer-bank',
+      email: 'officer-bank@albarakah.mu',
+      displayName: 'Officer',
+      roles: ['account_officer'],
+      roleNames: ['Account Officer'],
+      permissions: new Set(['transaction.capture', 'transaction.post']),
+    };
+
+    const membershipTypeId = (
+      await run(
+        bankAppUrl,
+        `select id from membership_type where code = 'individual'`
+      )
+    ).rows[0].id;
+    const application = await run(
+      bankAppUrl,
+      `insert into membership_application (membership_type_id, captured_by, status)
+       values ($1, $2, 'approved') returning id`,
+      [membershipTypeId, officer.userId]
+    );
+    await run(
+      bankAppUrl,
+      `insert into application_party (application_id, subject, ordinal, values)
+       values ($1, 'applicant', 1, $2::jsonb)`,
+      [
+        application.rows[0].id,
+        JSON.stringify({ name: 'Amina', surname: 'Beeharry' }),
+      ]
+    );
+    const member = await run(
+      bankAppUrl,
+      `insert into member (application_id, membership_type_id)
+       values ($1, $2) returning id`,
+      [application.rows[0].id, membershipTypeId]
+    );
+    const msaTypeId = (
+      await run(bankAppUrl, `select id from account_type where code = 'msa'`)
+    ).rows[0].id;
+    const msa = (
+      await run(
+        bankAppUrl,
+        `insert into account (member_id, account_type_id, is_membership_default, status)
+         values ($1, $2, true, 'active') returning id`,
+        [member.rows[0].id, msaTypeId]
+      )
+    ).rows[0].id;
+
+    // Opening balance dated well before any transaction this suite posts,
+    // so "opening" always means the configured figure unless a test asks
+    // for a period that starts later.
+    await configure(
+      `insert into bank_account
+         (code, name, bank_name, account_number, opening_balance, opening_date)
+       values ('mcb', 'MCB current', 'MCB', '000123456789', 10000, '2020-01-01')`
+    );
+    bankAccountId = (
+      await run(bankAppUrl, `select id from bank_account where code = 'mcb'`)
+    ).rows[0].id;
+
+    const { deposits, withdrawals } = await loadBank();
+    const deposit = await deposits.recordDeposit(
+      {
+        accountId: msa,
+        amount: '3000',
+        method: 'bank_transfer',
+        methodReference: 'BT-1',
+        bankAccountId,
+      },
+      officer
+    );
+    expect(deposit.status).toBe('posted');
+
+    const withdrawal = await withdrawals.recordWithdrawal(
+      {
+        accountId: msa,
+        amount: '1000',
+        method: 'cheque',
+        methodReference: 'CHQ-1',
+        bankAccountId,
+        reason: 'Test',
+      },
+      officer
+    );
+    expect(withdrawal.status).toBe('posted');
+  }, 60_000);
+
+  afterAll(async () => {
+    if (bankPool) await bankPool.closePool();
+    await run(ADMIN_URL, `drop database if exists ${bankDbName} with (force)`);
+  });
+
+  it('offers every bank account by name as a filter choice', async () => {
+    const { reports } = await loadBank();
+    const report = reports.reportByCode('bank-accounts')!;
+    const bankFilter = report.filters.find(f => f.name === 'bank')!;
+    expect(bankFilter.kind).toBe('choice');
+    const choices = await bankFilter.choices!();
+    expect(choices).toContainEqual({
+      value: bankAccountId,
+      label: 'MCB current',
+    });
+  });
+
+  it('with no account chosen, answers opening, in, out and closing per account', async () => {
+    const { reports } = await loadBank();
+    const report = reports.reportByCode('bank-accounts')!;
+    const result = await report.run({});
+
+    const row = result.rows.find(r => r['Bank account'] === 'MCB current')!;
+    expect(row.Bank).toBe('MCB');
+    expect(row.Opening).toBe('10000.00');
+    expect(row.In).toBe('3000.00');
+    expect(row.Out).toBe('1000.00');
+    expect(row.Closing).toBe('12000.00');
+    expect(result.summary).toMatch(
+      /^1 bank account\(s\) — MUR 12,000\.00 in total/
+    );
+    // No account number anywhere on the page — name and bank only (S-1901).
+    expect(result.columns.map(c => c.label)).not.toContain('Account number');
+    expect(JSON.stringify(result.rows)).not.toContain('000123456789');
+  });
+
+  it('one account chosen shows its statement, oldest first, with a running balance', async () => {
+    const { reports } = await loadBank();
+    const report = reports.reportByCode('bank-accounts')!;
+    const result = await report.run({ bank: bankAccountId });
+
+    expect(result.rows).toHaveLength(3);
+    const [broughtForward, deposit, withdrawal] = result.rows;
+
+    expect(broughtForward.Kind).toBe('Balance brought forward');
+    expect(broughtForward.In).toBeNull();
+    expect(broughtForward.Out).toBeNull();
+    expect(broughtForward.Balance).toBe('10000.00');
+
+    expect(deposit.Kind).toBe('Deposit');
+    expect(deposit.Holder).toBe('Amina Beeharry');
+    expect(deposit.Method).toBe('Bank transfer');
+    expect(deposit['Method reference']).toBe('BT-1');
+    expect(deposit.In).toBe('3000.00');
+    expect(deposit.Out).toBeNull();
+    expect(deposit.Balance).toBe('13000.00');
+
+    expect(withdrawal.Kind).toBe('Withdrawal');
+    expect(withdrawal.Method).toBe('Cheque');
+    expect(withdrawal['Method reference']).toBe('CHQ-1');
+    expect(withdrawal.In).toBeNull();
+    expect(withdrawal.Out).toBe('1000.00');
+    expect(withdrawal.Balance).toBe('12000.00');
+
+    expect(result.summary).toBe(
+      'Opening MUR 10,000.00 · in MUR 3,000.00 · out MUR 1,000.00 · ' +
+        'closing MUR 12,000.00.'
+    );
+
+    // Every figure reads as money on screen, the running balance included.
+    for (const key of ['In', 'Out', 'Balance']) {
+      expect(result.columns.find(c => c.key === key)!.money).toBe(true);
+    }
+  });
+
+  it('a period filter keeps a movement out of a period it falls outside', async () => {
+    const { reports } = await loadBank();
+    const report = reports.reportByCode('bank-accounts')!;
+
+    const isoDate = (d: Date) => d.toISOString().slice(0, 10);
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    // A period that ends before today: both movements (posted today)
+    // fall outside it, and with no `from` the opening is the account's
+    // own configured figure.
+    const before = await report.run({ to: isoDate(yesterday) });
+    const beforeRow = before.rows.find(
+      r => r['Bank account'] === 'MCB current'
+    )!;
+    expect(beforeRow.Opening).toBe('10000.00');
+    expect(beforeRow.In).toBe('0.00');
+    expect(beforeRow.Out).toBe('0.00');
+    expect(beforeRow.Closing).toBe('10000.00');
+
+    // A period starting tomorrow: both movements now fall BEFORE it, so
+    // they count toward the opening rather than within the period.
+    const after = await report.run({ from: isoDate(tomorrow) });
+    const afterRow = after.rows.find(r => r['Bank account'] === 'MCB current')!;
+    expect(afterRow.Opening).toBe('12000.00');
+    expect(afterRow.In).toBe('0.00');
+    expect(afterRow.Out).toBe('0.00');
+    expect(afterRow.Closing).toBe('12000.00');
+
+    // The per-account view agrees: no movement rows, just what carried
+    // forward.
+    const afterOne = await report.run({
+      bank: bankAccountId,
+      from: isoDate(tomorrow),
+    });
+    expect(afterOne.rows).toHaveLength(1);
+    expect(afterOne.rows[0].Kind).toBe('Balance brought forward');
+    expect(afterOne.rows[0].Balance).toBe('12000.00');
   });
 });
