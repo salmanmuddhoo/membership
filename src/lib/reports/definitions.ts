@@ -1927,7 +1927,7 @@ const demised: ReportDefinition = {
         { key: 'Disbursed', label: 'Disbursed' },
       ],
       rows: result.rows,
-      summary: `${result.rows.length} demised(s), ${rs(paidOut)} paid out.`,
+      summary: `${result.rows.length} claim(s), ${rs(paidOut)} paid out.`,
     };
   },
 };
