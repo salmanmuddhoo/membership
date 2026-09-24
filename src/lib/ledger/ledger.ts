@@ -171,9 +171,16 @@ export async function memberBalances(
 // ledger says, whatever the cache does.
 export async function accountEntries(
   accountId: string,
-  options: { limit?: number; beforeSequenceNo?: number } = {}
+  options: {
+    limit?: number;
+    // A page by offset (the officer's paged screen); leave unset and use
+    // beforeSequenceNo for the cursor the statement and the API page by.
+    offset?: number;
+    beforeSequenceNo?: number;
+  } = {}
 ): Promise<AccountEntry[]> {
   const limit = Math.min(Math.max(options.limit ?? 50, 1), 500);
+  const offset = Math.max(options.offset ?? 0, 0);
   const result = await query<{
     id: string;
     sequence_no: string;
@@ -237,8 +244,8 @@ export async function accountEntries(
        left join member lm on lm.id = la.member_id
       where ($2::bigint is null or r.sequence_no < $2)
       order by r.sequence_no desc
-      limit $3`,
-    [accountId, options.beforeSequenceNo ?? null, limit]
+      limit $3 offset $4`,
+    [accountId, options.beforeSequenceNo ?? null, limit, offset]
   );
   return result.rows.map(r => ({
     id: r.id,
@@ -260,6 +267,15 @@ export async function accountEntries(
     reversesReference: r.reverses_reference,
     capturedByName: r.captured_by_name,
   }));
+}
+
+// How many entries an account has, for paging its history screen.
+export async function accountEntryCount(accountId: string): Promise<number> {
+  const result = await query<{ n: string }>(
+    `select count(*)::int as n from account_entry where account_id = $1`,
+    [accountId]
+  );
+  return Number(result.rows[0]?.n ?? 0);
 }
 
 function describe(r: {

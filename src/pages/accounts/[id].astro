@@ -1,13 +1,19 @@
 ---
 // One account's history (S-1309): every posted entry, newest first, with
 // the balance the account stood at after each — the statement S-1601 later
-// exports. Reached from the person's page; paged backwards by sequence.
+// exports. Reached from the person's page; paged 10/25/50 to a page.
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import DocumentViewer from '@components/DocumentViewer.astro';
+import Pagination from '@components/Pagination.astro';
 import { query } from '@lib/db/pool';
 import { sourceOfFundFormsFor } from '@lib/ledger/deposit-requests';
-import { accountBalance, accountEntries } from '@lib/ledger/ledger';
+import {
+  accountBalance,
+  accountEntries,
+  accountEntryCount,
+} from '@lib/ledger/ledger';
 import { formatMoney } from '@lib/payments/money';
+import { pagingFrom, pageCount } from '@lib/paging';
 import {
   PAGE,
   CARD_TITLE,
@@ -55,15 +61,22 @@ const found = id
 const account = found?.rows[0];
 if (!account) return new Response('Not found', { status: 404 });
 
-const PAGE_SIZE = 50;
-const beforeParam = Astro.url.searchParams.get('before');
-const before =
-  beforeParam && /^\d+$/.test(beforeParam) ? Number(beforeParam) : undefined;
+const paging = pagingFrom(Astro.url);
 
-const [balance, entries] = await Promise.all([
+const [balance, total, entries] = await Promise.all([
   accountBalance(id!),
-  accountEntries(id!, { limit: PAGE_SIZE, beforeSequenceNo: before }),
+  accountEntryCount(id!),
+  // The running balance is a window sum over every entry the account has
+  // (accountEntries), so it reads right on any page — only which slice of
+  // rows comes back changes with limit/offset.
+  accountEntries(id!, { limit: paging.per, offset: paging.offset }),
 ]);
+// A page past the end lands on the first page rather than showing nothing.
+if (paging.page > 1 && paging.page > pageCount(total, paging.per)) {
+  const next = new URL(Astro.url);
+  next.searchParams.delete('page');
+  return Astro.redirect(`${next.pathname}${next.search}`);
+}
 // Officer feedback: a deposit that needed the Source of Fund form keeps it
 // in reach after it has posted, on its own row.
 const canSeeDocuments =
@@ -75,9 +88,6 @@ const canSeeTransaction =
 const sourceOfFund = canSeeDocuments
   ? await sourceOfFundFormsFor([...new Set(entries.map(e => e.transactionId))])
   : new Map<string, string>();
-const oldest = entries[entries.length - 1];
-const nextBefore =
-  entries.length === PAGE_SIZE && oldest ? oldest.sequenceNo : null;
 
 const dateFormat = new Intl.DateTimeFormat('en-GB', {
   day: 'numeric',
@@ -118,7 +128,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     <section class={`overflow-x-auto ${FILTER}`}>
       {entries.length === 0 ? (
         <p class={HINT}>
-          {before ? 'Nothing older.' : 'Nothing recorded on this account yet.'}
+          {paging.page > 1
+            ? 'Nothing on this page.'
+            : 'Nothing recorded on this account yet.'}
         </p>
       ) : (
         <table class={TABLE} data-sortable>
@@ -235,18 +247,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       )}
     </section>
 
-    <div class="flex flex-wrap gap-2">
-      {before && (
-        <a href={`/accounts/${id}`} class={SECONDARY_SM}>
-          Latest
-        </a>
-      )}
-      {nextBefore !== null && (
-        <a href={`/accounts/${id}?before=${nextBefore}`} class={SECONDARY_SM}>
-          Older
-        </a>
-      )}
-    </div>
+    <Pagination total={total} paging={paging} noun="entries" />
   </div>
   {canSeeDocuments && <DocumentViewer />}
 </DashboardLayout>

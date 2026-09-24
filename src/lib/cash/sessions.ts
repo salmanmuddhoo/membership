@@ -311,19 +311,78 @@ export async function closeSession(
   return (await sessionById(session.id))!;
 }
 
-/** Every session in a period, newest first, for a holder of cash.view. */
+/**
+ * Every session in a period, newest first, for a holder of cash.view.
+ * Unpaged (the default) when limit is left unset; the paged screen passes
+ * limit and offset.
+ */
 export async function listSessions(filter: {
   from?: Date | null;
   to?: Date | null;
   cashierId?: string | null;
+  limit?: number;
+  offset?: number;
 }): Promise<CashSession[]> {
+  const params: unknown[] = [
+    filter.from ?? null,
+    filter.to ?? null,
+    filter.cashierId ?? null,
+  ];
+  let page = '';
+  if (filter.limit !== undefined) {
+    params.push(filter.limit, Math.max(filter.offset ?? 0, 0));
+    page = `limit $${params.length - 1} offset $${params.length}`;
+  }
   const result = await query<SessionRow>(
     `${SELECT}
       where ($1::timestamptz is null or s.opened_at >= $1)
         and ($2::timestamptz is null or s.opened_at < $2)
         and ($3::uuid is null or s.cashier_user_id = $3)
-      order by s.opened_at desc`,
-    [filter.from ?? null, filter.to ?? null, filter.cashierId ?? null]
+      order by s.opened_at desc
+      ${page}`,
+    params
   );
   return result.rows.map(assemble);
+}
+
+/** How many sessions match a period, for paging listSessions. */
+export async function countSessions(filter: {
+  from?: Date | null;
+  to?: Date | null;
+  cashierId?: string | null;
+}): Promise<number> {
+  const result = await query<{ n: string }>(
+    `select count(*)::int as n
+       from cash_session s
+      where ($1::timestamptz is null or s.opened_at >= $1)
+        and ($2::timestamptz is null or s.opened_at < $2)
+        and ($3::uuid is null or s.cashier_user_id = $3)`,
+    [filter.from ?? null, filter.to ?? null, filter.cashierId ?? null]
+  );
+  return Number(result.rows[0]?.n ?? 0);
+}
+
+/**
+ * How many are still open and the net over/short, across the whole period
+ * — not just the page listSessions returns.
+ */
+export async function sessionTotals(filter: {
+  from?: Date | null;
+  to?: Date | null;
+  cashierId?: string | null;
+}): Promise<{ open: number; netOverShort: string }> {
+  const result = await query<{ open: string; net_over_short: string | null }>(
+    `select count(*) filter (where s.closed_at is null)::int as open,
+            coalesce(sum(s.over_short), 0)::text as net_over_short
+       from cash_session s
+      where ($1::timestamptz is null or s.opened_at >= $1)
+        and ($2::timestamptz is null or s.opened_at < $2)
+        and ($3::uuid is null or s.cashier_user_id = $3)`,
+    [filter.from ?? null, filter.to ?? null, filter.cashierId ?? null]
+  );
+  const row = result.rows[0];
+  return {
+    open: Number(row?.open ?? 0),
+    netOverShort: row?.net_over_short ?? '0',
+  };
 }

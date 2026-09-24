@@ -415,6 +415,18 @@ describe('the history of an account', () => {
     expect(older.map(e => [e.amount, e.runningBalance])).toEqual([
       ['10.00', '10.00'],
     ]);
+
+    // Paging by offset (the officer's screen, 10/25/50 to a page) finds the
+    // same rows the cursor does, and the running balance is still right on
+    // the second page — it is a sum over the whole account, not the page.
+    const byOffset = await ledger.accountEntries(account, {
+      limit: 2,
+      offset: 2,
+    });
+    expect(byOffset.map(e => [e.amount, e.runningBalance])).toEqual([
+      ['10.00', '10.00'],
+    ]);
+    expect(await ledger.accountEntryCount(account)).toBe(3);
   });
 });
 

@@ -343,6 +343,19 @@ describe('the cash drawer (S-2001, S-2002)', () => {
     expect(await cash.listSessions({ cashierId: treasurer.userId })).toEqual(
       []
     );
+
+    // Paged for the officer's screen: a page at a time, newest first, with
+    // a total and the open/over-short figures across every drawer in the
+    // period — not just the page.
+    expect(await cash.countSessions({})).toBe(2);
+    const firstPage = await cash.listSessions({ limit: 1, offset: 0 });
+    expect(firstPage.map(s => s.overShort)).toEqual([null]);
+    const secondPage = await cash.listSessions({ limit: 1, offset: 1 });
+    expect(secondPage.map(s => s.overShort)).toEqual(['-50.00']);
+    expect(await cash.sessionTotals({})).toEqual({
+      open: 1,
+      netOverShort: '-50.00',
+    });
   });
 
   // S-2003 · The day's reconciliation, over what the cases above left: one
