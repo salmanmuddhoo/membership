@@ -39,7 +39,10 @@ import {
 } from '@lib/config/reference';
 import { approvalCommentsFor } from '@lib/applications/workflow';
 import DocumentViewer from '@components/DocumentViewer.astro';
-import { closuresInFlightFor } from '@lib/ledger/closures';
+import {
+  closuresInFlightFor,
+  deathClosureInFlightFor,
+} from '@lib/ledger/closures';
 import { resignationInFlightFor } from '@lib/ledger/resignations';
 import { demiseInFlightFor } from '@lib/ledger/demises';
 import {
@@ -174,6 +177,19 @@ const employmentContactFields = contactFields.filter(
 const guardianContactFields = contactFields.filter(
   f => f.subject === 'guardian'
 );
+// Officer request: with member.edit_all_details the nominees are corrected
+// here too, in their own card — one group of fields per nominee on file.
+// Only offered with that permission (contact.ts), so without it the
+// read-only Nominee card below stays exactly as it was.
+const nomineeContactGroups = [
+  ...contactFields
+    .filter(f => f.subject === 'nominee')
+    .reduce((groups, f) => {
+      groups.set(f.ordinal, [...(groups.get(f.ordinal) ?? []), f]);
+      return groups;
+    }, new Map<number, EditableContactField[]>())
+    .entries(),
+].map(([ordinal, fields]) => ({ ordinal, fields }));
 function fieldDisplay(field: EditableContactField): string {
   if (field.dataType === 'date') {
     return field.value ? formatDateOnly(field.value) : field.value;
@@ -368,6 +384,12 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 // card above, driven by contactFields instead.
 const applicationId = (member ?? customer)!.applicationId;
 const partyGroups = await otherPartyGroups(applicationId);
+// The nominees move to their own editable card when they are offered for
+// correction (nomineeContactGroups); anyone else stays here, read-only.
+const readOnlyPartyGroups = partyGroups.filter(
+  group =>
+    !(nomineeContactGroups.length > 0 && group.key.startsWith('nominee-'))
+);
 
 const name = (member ?? customer)!.name;
 // Officer feedback: a minor — member or non-member alike — carries a tag so
@@ -379,6 +401,10 @@ const status = (member ?? customer)!.status;
 // on screen, as an active non-member. Stored status is untouched by this.
 const resignedNonMember =
   !!member && isNonMember(member.status, member.accounts);
+// Officer feedback: a customer, or a resigned member still holding an open
+// account, is a non-member — their death is a closure on a death, not a
+// demised claim (that path stays a member-only one, Takaful included).
+const isNonMemberHolder = !!customer || resignedNonMember;
 
 // Officer feedback: a member opens a further account from their own page now
 // (not by searching for themselves on the Applications page). The button —
@@ -463,6 +489,19 @@ const settling =
     ? await demiseInFlightFor(member.id)
     : null;
 const canClaim = inMembership && canDeposit && !resigning && !settling;
+// Officer feedback: the same button, for a non-member — a closure on a
+// death instead of a demised claim, no Takaful. Offered wherever Deposit
+// is (canDeposit), same as the member's Demised claim above.
+const dying = principal.permissions.has('transaction.view')
+  ? isNonMemberHolder
+    ? await deathClosureInFlightFor(
+        member
+          ? { memberId: member.id, customerId: null }
+          : { memberId: null, customerId: customer!.id }
+      )
+    : null
+  : null;
+const canClaimNonMember = isNonMemberHolder && canDeposit && !dying;
 const closing = principal.permissions.has('transaction.view')
   ? await closuresInFlightFor(
       member ? { memberId: member.id } : { customerId: customer!.id }
@@ -553,6 +592,26 @@ const documentCount = documentGroups.reduce(
               class="rounded-lg bg-amber-100 px-3 py-1.5 text-sm font-medium text-amber-900 underline dark:bg-amber-950 dark:text-amber-200"
             >
               Claim · {settling.reference}
+            </a>
+          )}
+          {canClaimNonMember && (
+            <a
+              href={`/members/${recordId}/close?cause=death`}
+              class={SECONDARY_SM}
+            >
+              Demised claim
+            </a>
+          )}
+          {dying && (
+            <a
+              href={
+                dying.status === 'draft' || dying.status === 'returned'
+                  ? `/closures/${dying.id}`
+                  : `/transactions/${dying.id}`
+              }
+              class="rounded-lg bg-amber-100 px-3 py-1.5 text-sm font-medium text-amber-900 underline dark:bg-amber-950 dark:text-amber-200"
+            >
+              Claim · {dying.reference}
             </a>
           )}
         </div>
@@ -870,11 +929,95 @@ const documentCount = documentGroups.reduce(
       </section>
     )}
 
-    {partyGroups.length > 0 && (
+    {nomineeContactGroups.length > 0 && (
+      <section class={CARD}>
+        <div data-edit-block data-record-id={recordId}>
+          <div class="flex flex-wrap items-start justify-between gap-2">
+            <h2 class={CARD_TITLE}>Nominee</h2>
+            <button
+              type="button"
+              data-edit-toggle
+              aria-label="Edit nominee"
+              class={ICON_BUTTON}
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+                class="h-4 w-4"
+              >
+                <path d="M13.586 3.586a2 2 0 1 1 2.828 2.828l-8.5 8.5a2 2 0 0 1-.878.507l-3 .857a.5.5 0 0 1-.618-.618l.857-3a2 2 0 0 1 .507-.878l8.5-8.5Z" />
+                <path d="M11.379 5.793 14.207 8.621 6.5 16.328a1 1 0 0 1-.439.254l-2.121.606.606-2.12a1 1 0 0 1 .254-.44l6.579-6.835Z" />
+              </svg>
+            </button>
+          </div>
+          <div class="mt-4 space-y-4">
+            {nomineeContactGroups.map(group => (
+              <div>
+                {nomineeContactGroups.length > 1 && (
+                  <h3 class={SUBTITLE}>Nominee {group.ordinal}</h3>
+                )}
+                <dl class="mt-2 grid gap-x-6 gap-y-2 sm:grid-cols-2">
+                  {group.fields.map(field => (
+                    <div
+                      class="flex gap-2 text-sm"
+                      data-field
+                      data-subject="nominee"
+                      data-ordinal={field.ordinal}
+                      data-field-key={field.fieldKey}
+                    >
+                      <dt class="min-w-32 text-neutral-500 dark:text-neutral-400">
+                        {partyDetailLabel(
+                          field.fieldKey,
+                          field.label.replace(/^Nominee\s+(\w)/i, (_, c) =>
+                            c.toUpperCase()
+                          )
+                        )}
+                      </dt>
+                      <dd class="w-full text-neutral-800 dark:text-neutral-100">
+                        <span data-view>{fieldDisplay(field)}</span>
+                        <input
+                          type={field.dataType === 'phone' ? 'tel' : 'text'}
+                          data-edit
+                          value={field.value}
+                          hidden
+                          class={`${INPUT_SM} w-full`}
+                        />
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
+            ))}
+          </div>
+          <div class="mt-4">
+            <p
+              data-edit-error
+              hidden
+              class="mb-2 text-sm text-red-700 dark:text-red-300"
+            />
+            <div data-edit-actions hidden class="flex items-center gap-3">
+              <button type="button" data-edit-save class={BUTTON_SM}>
+                Save
+              </button>
+              <button
+                type="button"
+                data-edit-cancel
+                class={`${HINT} underline`}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+    )}
+
+    {readOnlyPartyGroups.length > 0 && (
       <section class={CARD}>
         <h2 class={CARD_TITLE}>Nominee</h2>
         <div class="mt-4 space-y-4">
-          {partyGroups.map(group => (
+          {readOnlyPartyGroups.map(group => (
             <div>
               <h3 class={SUBTITLE}>{group.label}</h3>
               <dl class="mt-2 grid gap-x-6 gap-y-2 sm:grid-cols-2">
@@ -904,6 +1047,14 @@ const documentCount = documentGroups.reduce(
             class="text-sm font-medium text-neutral-700 underline hover:text-neutral-900 dark:text-neutral-200 dark:hover:text-neutral-100"
           >
             All transactions
+          </a>
+        )}
+        {canSeeAccounts && (
+          <a
+            href={`/members/${recordId}/statement`}
+            class="text-sm font-medium text-neutral-700 underline hover:text-neutral-900 dark:text-neutral-200 dark:hover:text-neutral-100"
+          >
+            Statement
           </a>
         )}
       </div>
@@ -1205,6 +1356,7 @@ const documentCount = documentGroups.reduce(
 
   interface SavedField {
     subject: string;
+    ordinal?: number;
     fieldKey: string;
     value: string;
     dataType: string;
@@ -1257,6 +1409,10 @@ const documentCount = documentGroups.reduce(
           if (!input) return null;
           return {
             subject: fieldEl.dataset.subject,
+            // Which nominee; absent for every other subject.
+            ...(fieldEl.dataset.ordinal
+              ? { ordinal: Number(fieldEl.dataset.ordinal) }
+              : {}),
             fieldKey: fieldEl.dataset.fieldKey,
             value: input.value,
           };
@@ -1288,6 +1444,7 @@ const documentCount = documentGroups.reduce(
           const fresh = fields.find(
             f =>
               f.subject === fieldEl.dataset.subject &&
+              (f.ordinal ?? 1) === Number(fieldEl.dataset.ordinal ?? 1) &&
               f.fieldKey === fieldEl.dataset.fieldKey
           );
           if (!fresh) continue;

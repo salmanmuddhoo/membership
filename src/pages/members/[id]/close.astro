@@ -73,6 +73,10 @@ const requestedAccount = Astro.url.searchParams.get('account') ?? '';
 // still active who dies is refused by the library — settled by a demised
 // claim instead — so the choice is not even offered here.
 const isNonMember = !member || member.status === 'resigned';
+// The cause no longer switches on this page — it arrives from which button
+// sent the officer here: Close (a closure) or Demised claim (?cause=death).
+const onDeathMode =
+  isNonMember && Astro.url.searchParams.get('cause') === 'death';
 const nominee = isNonMember
   ? await nomineeOnApplication(person.applicationId)
   : null;
@@ -105,7 +109,7 @@ let values = {
   accountId:
     closable.find(a => a.id === requestedAccount)?.id ?? closable[0]?.id ?? '',
   reason: '',
-  cause: 'request',
+  cause: onDeathMode ? 'death' : 'request',
   kind: nominee ? 'nominee' : 'other',
   name: '',
   nic: '',
@@ -190,8 +194,12 @@ const blockedMessage = causeIsDeath
 ---
 
 <DashboardLayout
-  title="Close an account · Al Barakah MCSL"
-  heading="Close an account"
+  title={
+    causeIsDeath
+      ? 'Demised claim · Al Barakah MCSL'
+      : 'Close an account · Al Barakah MCSL'
+  }
+  heading={causeIsDeath ? 'Demised claim' : 'Close an account'}
 >
   <div class={PAGE.form}>
     <a href={`/members/${id}`} class={`${HINT} inline-block underline`}>
@@ -271,28 +279,7 @@ const blockedMessage = causeIsDeath
           </div>
         )}
         {isNonMember && (
-          <div class="space-y-2 text-sm text-neutral-700 dark:text-neutral-200">
-            <label class="flex items-start gap-3">
-              <input
-                type="radio"
-                name="cause"
-                value="request"
-                checked={values.cause !== 'death'}
-                class="mt-1"
-              />
-              <span class="font-medium">The holder asked to close it</span>
-            </label>
-            <label class="flex items-start gap-3">
-              <input
-                type="radio"
-                name="cause"
-                value="death"
-                checked={values.cause === 'death'}
-                class="mt-1"
-              />
-              <span class="font-medium">The holder has died</span>
-            </label>
-          </div>
+          <input type="hidden" name="cause" value={values.cause} />
         )}
         {isNonMember && (
           <div
@@ -430,11 +417,11 @@ const blockedMessage = causeIsDeath
 </DashboardLayout>
 
 <script>
-  // Reveals the claimant block, swaps the Account select for the Accounts
-  // closing list, drops the reason from required and swaps the button's and
-  // payout note's wording the moment "The holder has died" is picked — a
-  // visual nudge only, enforced server-side (ledger/closures.ts) whether or
-  // not this script runs.
+  // The cause is fixed for the page (the hidden cause input), set from which
+  // button sent the officer here. This reads it once to show the claimant
+  // block, the Accounts closing list, and the death wording in place of the
+  // Account select and the closure wording — enforced server-side
+  // (ledger/closures.ts) whether or not this script runs.
   const form = document.querySelector<HTMLFormElement>('[data-close-form]');
   const claimantBlock = form?.querySelector<HTMLElement>(
     '[data-claimant-block]'
@@ -458,8 +445,8 @@ const blockedMessage = causeIsDeath
     // Submit step certain to refuse — enforced server-side too (S-1702).
     const syncBlocked = () => {
       const onDeath =
-        form.querySelector<HTMLInputElement>('input[name="cause"]:checked')
-          ?.value === 'death';
+        form.querySelector<HTMLInputElement>('input[name="cause"]')?.value ===
+        'death';
       const message = onDeath
         ? (form.dataset.deathBlocked ?? null)
         : (accountSelect?.selectedOptions[0]?.dataset.blocked ?? null);
@@ -471,8 +458,8 @@ const blockedMessage = causeIsDeath
     };
     const refresh = () => {
       const onDeath =
-        form.querySelector<HTMLInputElement>('input[name="cause"]:checked')
-          ?.value === 'death';
+        form.querySelector<HTMLInputElement>('input[name="cause"]')?.value ===
+        'death';
       if (claimantBlock) claimantBlock.hidden = !onDeath;
       if (accountField) accountField.hidden = onDeath;
       if (deathAccounts) deathAccounts.hidden = !onDeath;

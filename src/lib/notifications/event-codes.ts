@@ -106,6 +106,17 @@ export const RECEIPT_PLACEHOLDERS = [
   'link',
 ] as const;
 
+// A member's statement (officer request): what
+// src/lib/ledger/member-statement.ts passes, one holder at a time or to
+// everyone at once.
+export const STATEMENT_ISSUED = 'statement.issued';
+export const STATEMENT_PLACEHOLDERS = [
+  'member_name',
+  'period',
+  'accounts',
+  'link',
+] as const;
+
 /**
  * The event code for one thing happening to one kind of application.
  *
@@ -151,6 +162,7 @@ export function placeholdersForEvent(eventCode: string): string[] | null {
   // A transaction's receipt (S-1602): what the ledger passes when one is
   // issued or re-sent (src/lib/ledger/receipt-notifications.ts).
   if (eventCode === RECEIPT_ISSUED) return [...RECEIPT_PLACEHOLDERS];
+  if (eventCode === STATEMENT_ISSUED) return [...STATEMENT_PLACEHOLDERS];
   if (eventCode in TRANSACTION_PLACEHOLDERS) {
     return [...TRANSACTION_PLACEHOLDERS[eventCode]];
   }

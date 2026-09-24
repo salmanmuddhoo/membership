@@ -274,6 +274,33 @@ history, and the Jobs report's "last run" column.
 pnpm job job-watch
 ```
 
+## `statement-send`
+
+Sends every member and non-member with an open account their statement for
+a period — every account they hold, as one PDF, by email and WhatsApp
+(`src/lib/ledger/member-statement.ts`). Nothing happens until someone with
+`statement.send_all` asks for it at **Finance → Statements**, which records a
+`statement_run`; the job picks up the oldest open run and works through the
+holders fifty at a time.
+
+Each holder dealt with is written to `statement_run_item` before the
+checkpoint moves, and a holder already there is skipped, so a run stopped
+and resumed — even mid-chunk — never sends anyone their statement twice. Only
+one run can be waiting or sending at a time.
+
+Schedule it every fifteen minutes. A start with nothing queued reads one row
+and stops.
+
+```
+az containerapp job create --name albarakah-statement-send \
+  --trigger-type Schedule --cron-expression "*/15 * * * *" \
+  --replica-timeout 3600 --replica-retry-limit 1 ... --args "statement-send"
+```
+
+The job needs the same `PUBLIC_APP_URL` and `MEMBER_SESSION_SECRET` as the
+web app: the link in each message, and the PDF attached to it, are signed
+with the member-facing secret and fetched from the app's own address.
+
 ## Recommendation for M7 and M8
 
 - **M7 migration import** — a Manual job. Read the cleansed extract in batches,

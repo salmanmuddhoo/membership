@@ -199,9 +199,9 @@ async function closureInFlight(
 async function deathClosureInFlight(
   holder: { memberId: string | null; customerId: string | null },
   excludingId: string | null
-): Promise<{ id: string; reference: string } | null> {
-  const result = await query<{ id: string; reference: string }>(
-    `select id, reference from transaction
+): Promise<{ id: string; reference: string; status: string } | null> {
+  const result = await query<{ id: string; reference: string; status: string }>(
+    `select id, reference, status from transaction
       where kind = 'closure' and claimant_kind is not null
         and (member_id = $1::uuid or customer_id = $2::uuid)
         and status = any($3::text[])
@@ -210,6 +210,16 @@ async function deathClosureInFlight(
     [holder.memberId, holder.customerId, IN_FLIGHT, excludingId]
   );
   return result.rows[0] ?? null;
+}
+
+// The closure on a death on its way for this non-member, if any: what the
+// Demised claim button on their page becomes while it is (officer feedback:
+// a non-member's death is started from its own button, as a member's is).
+export function deathClosureInFlightFor(holder: {
+  memberId: string | null;
+  customerId: string | null;
+}): Promise<{ id: string; reference: string; status: string } | null> {
+  return deathClosureInFlight(holder, null);
 }
 
 export interface DeathAccount {

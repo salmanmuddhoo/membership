@@ -246,6 +246,8 @@ const CLEARED_TABLES = [
   'receipt_number',
   'receipt_print',
   'sharepoint_folder',
+  'statement_run',
+  'statement_run_item',
   'transaction',
   'transaction_transition',
   'transfer',

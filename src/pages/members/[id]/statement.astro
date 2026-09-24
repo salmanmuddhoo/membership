@@ -1,0 +1,203 @@
+---
+// A member's or non-member's statement (officer request): every account
+// they hold, over a period, downloaded as a PDF or sent by email and
+// WhatsApp from their own page. Sending everyone's at once is
+// /statements; the figures are the same, from the same library
+// (member-statement.ts).
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import { loadCustomer, loadMember } from '@lib/members/create';
+import {
+  memberStatement,
+  PERMISSION_SEND,
+  sendStatementTo,
+  StatementError,
+  type Holder,
+  type SendOutcome,
+} from '@lib/ledger/member-statement';
+import { contactForHolder } from '@lib/ledger/receipt-notifications';
+import { statementPeriod } from '@lib/ledger/statement';
+import { formatMoney } from '@lib/payments/money';
+import {
+  PAGE,
+  CARD,
+  CARD_TITLE,
+  FILTER,
+  LABEL,
+  INPUT,
+  BUTTON,
+  SECONDARY_SM,
+  HINT,
+  MUTED,
+  NOTICE_OK,
+  NOTICE_WARN,
+  NOTICE_ERROR,
+  TABLE,
+  THEAD,
+  TBODY,
+  TH,
+  TD_NUM,
+} from '@lib/ui';
+
+const principal = Astro.locals.principal!;
+// The route already needs member.view; the money itself needs account.view,
+// same as the member page's own Accounts card.
+if (!principal.permissions.has('account.view')) {
+  return Astro.redirect('/denied');
+}
+
+const { id } = Astro.params;
+const member = id ? await loadMember(id) : null;
+const customer = !member && id ? await loadCustomer(id) : null;
+if (!member && !customer) return new Response('Not found', { status: 404 });
+
+const holder: Holder = member
+  ? { kind: 'member', id: member.id }
+  : { kind: 'customer', id: customer!.id };
+const holderName = member?.name ?? customer!.name;
+const memberNo = member?.memberNo ?? null;
+
+const params = Astro.url.searchParams;
+const queryPeriod = statementPeriod({
+  from: params.get('from'),
+  to: params.get('to'),
+});
+const invalidPeriod = queryPeriod === null;
+let period = queryPeriod ?? statementPeriod({ from: null, to: null })!;
+
+const OUTCOME_NOTICE: Record<
+  SendOutcome,
+  { kind: 'ok' | 'warn' | 'error'; message: string }
+> = {
+  sent: { kind: 'ok', message: 'Statement sent.' },
+  no_contact: { kind: 'warn', message: 'No email or mobile on file.' },
+  no_accounts: { kind: 'warn', message: 'No account in this period.' },
+  failed: {
+    kind: 'error',
+    message: 'The statement could not be sent. Try again later.',
+  },
+};
+
+let sendNotice: { kind: 'ok' | 'warn' | 'error'; message: string } | null =
+  null;
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const text = (name: string) => {
+    const value = form.get(name);
+    return typeof value === 'string' && value !== '' ? value : null;
+  };
+  // The hidden fields carry the period the page was showing when Send was
+  // pressed — already valid, since that is what Show put there.
+  period = statementPeriod({ from: text('from'), to: text('to') }) ?? period;
+  try {
+    const outcome = await sendStatementTo(holder, period, principal);
+    sendNotice = OUTCOME_NOTICE[outcome];
+  } catch (err) {
+    if (err instanceof StatementError) {
+      sendNotice = { kind: 'error', message: err.message };
+    } else {
+      console.error('[members/statement] could not send', err);
+      sendNotice = {
+        kind: 'error',
+        message: 'Something went wrong. Please try again.',
+      };
+    }
+  }
+}
+
+const [statement, contact] = await Promise.all([
+  memberStatement(holder, period),
+  contactForHolder(holder.kind, holder.id),
+]);
+
+const canSend = principal.permissions.has(PERMISSION_SEND);
+const hasContact = !!(contact && (contact.email || contact.mobile));
+const contactHint = hasContact
+  ? [contact!.email, contact!.mobile].filter(Boolean).join(' · ')
+  : 'No email or mobile on file.';
+
+const NOTICE_CLASS = {
+  ok: NOTICE_OK,
+  warn: NOTICE_WARN,
+  error: NOTICE_ERROR,
+} as const;
+---
+
+<DashboardLayout title="Statement · Al Barakah MCSL" heading="Statement">
+  <div class={PAGE.detail}>
+    <a href={`/members/${holder.id}`} class={`${HINT} inline-block underline`}>
+      ← {holderName}
+      {memberNo && ` · ${memberNo}`}
+    </a>
+
+    {sendNotice && (
+      <div class={NOTICE_CLASS[sendNotice.kind]}>{sendNotice.message}</div>
+    )}
+    {invalidPeriod && <div class={NOTICE_ERROR}>Choose a valid period.</div>}
+
+    <form method="get" class={`flex flex-wrap items-end gap-3 ${FILTER}`}>
+      <label class={LABEL}>
+        From
+        <input type="date" name="from" value={period.from} class={INPUT} />
+      </label>
+      <label class={LABEL}>
+        To
+        <input type="date" name="to" value={period.to} class={INPUT} />
+      </label>
+      <button type="submit" class={BUTTON}>
+        Show
+      </button>
+    </form>
+
+    <div class="flex flex-wrap items-center gap-3">
+      <a
+        href={`/members/${holder.id}/statement.pdf?from=${period.from}&to=${period.to}`}
+        class={SECONDARY_SM}
+      >
+        Download PDF
+      </a>
+      {canSend && (
+        <form method="post" class="flex flex-wrap items-center gap-3">
+          <input type="hidden" name="from" value={period.from} />
+          <input type="hidden" name="to" value={period.to} />
+          <button type="submit" class={BUTTON} disabled={!hasContact}>
+            Send by email and WhatsApp
+          </button>
+          <span class={HINT}>{contactHint}</span>
+        </form>
+      )}
+    </div>
+
+    {statement ? (
+      statement.accounts.map(account => (
+        <section class={CARD}>
+          <h2 class={CARD_TITLE}>
+            {account.accountNo} · {account.accountTypeName}
+          </h2>
+          <table class={`${TABLE} mt-3`}>
+            <thead class={THEAD}>
+              <tr>
+                <th class={TH}>Opening balance</th>
+                <th class={TH}>Money in</th>
+                <th class={TH}>Money out</th>
+                <th class={TH}>Closing balance</th>
+              </tr>
+            </thead>
+            <tbody class={TBODY}>
+              <tr>
+                <td class={TD_NUM}>{formatMoney(account.openingBalance)}</td>
+                <td class={TD_NUM}>{formatMoney(account.totalCredits)}</td>
+                <td class={TD_NUM}>{formatMoney(account.totalDebits)}</td>
+                <td class={TD_NUM}>{formatMoney(account.closingBalance)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+      ))
+    ) : (
+      <section class={CARD}>
+        <p class={MUTED}>No account in this period.</p>
+      </section>
+    )}
+  </div>
+</DashboardLayout>

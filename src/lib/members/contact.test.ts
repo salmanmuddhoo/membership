@@ -803,3 +803,178 @@ describe('member.edit_all_details: any applicant detail, name and NIC included',
     );
   });
 });
+
+describe('member.edit_all_details: the nominees too (officer request)', () => {
+  let corrector: Principal;
+  const NOMINEE_1 = {
+    surname: 'Peerally',
+    name: 'Yusuf',
+    nic: 'Y1234567890123',
+    address: '12 Rue des Palmiers, Curepipe',
+    percentage: '60',
+  };
+  const NOMINEE_2 = {
+    surname: 'Peerally',
+    name: 'Aisha',
+    nic: 'A1234567890123',
+    address: '12 Rue des Palmiers, Curepipe',
+    percentage: '40',
+  };
+
+  beforeAll(async () => {
+    corrector = principalFor(officer.userId, 'officer@test', [
+      'member.view',
+      'member.edit_all_details',
+    ]);
+    // Two nominees dividing the membership by a required percentage.
+    await run(
+      ownerUrl,
+      `select set_config('albarakah.actor_description', 'test', false);
+       update membership_type set nominee_count = 2 where code = 'individual';
+       insert into membership_type_field
+         (membership_type_id, field_key, label, data_type, subject,
+          is_mandatory, sort_order)
+       select id, 'percentage', 'Nominee percentage', 'number', 'nominee',
+              true, 8
+         from membership_type where code = 'individual'`
+    );
+    (await import('../config/cache')).clearReferenceCache();
+  });
+
+  beforeEach(async () => {
+    await run(
+      appUrl,
+      `delete from application_party
+        where application_id = $1 and subject = 'nominee'`,
+      [applicationId]
+    );
+    await run(
+      appUrl,
+      `insert into application_party (application_id, subject, ordinal, values)
+       values ($1, 'nominee', 1, $2::jsonb), ($1, 'nominee', 2, $3::jsonb)`,
+      [applicationId, JSON.stringify(NOMINEE_1), JSON.stringify(NOMINEE_2)]
+    );
+  });
+
+  async function nominee(ordinal: number): Promise<Record<string, string>> {
+    const result = await run(
+      appUrl,
+      `select values from application_party
+        where application_id = $1 and subject = 'nominee' and ordinal = $2`,
+      [applicationId, ordinal]
+    );
+    return result.rows[0]?.values ?? {};
+  }
+
+  const nomineeChange = (ordinal: number, fieldKey: string, value: string) =>
+    ({ subject: 'nominee', ordinal, fieldKey, value }) as ContactFieldChange;
+
+  it('offers every nominee on file, only with the permission', async () => {
+    const without = await contact.editableContactFields(applicationId);
+    expect(without.some(f => f.subject === 'nominee')).toBe(false);
+
+    const withIt = await contact.editableContactFields(applicationId, {
+      allDetails: true,
+    });
+    const names = withIt
+      .filter(f => f.subject === 'nominee' && f.fieldKey === 'name')
+      .map(f => [f.ordinal, f.value, f.editable]);
+    expect(names).toEqual([
+      [1, 'Yusuf', true],
+      [2, 'Aisha', true],
+    ]);
+  });
+
+  it('corrects a nominee, audited as a correction naming which one', async () => {
+    const result = await contact.updateContactDetails(
+      applicationId,
+      [
+        nomineeChange(2, 'name', 'Aïsha'),
+        nomineeChange(2, 'nic', 'B9999999999999'),
+      ],
+      { entityType: 'member', entityId: memberId },
+      corrector
+    );
+    // A nominee's NIC may be a member's own: nobody is refused for it.
+    expect(result.updated.sort()).toEqual(['nominee.2.name', 'nominee.2.nic']);
+    expect(await nominee(2)).toMatchObject({
+      name: 'Aïsha',
+      nic: 'B9999999999999',
+    });
+    expect(await nominee(1)).toEqual(NOMINEE_1);
+
+    const events = await run(
+      appUrl,
+      `select action, previous_value, new_value from audit_event
+        where entity_type = 'member' and entity_id = $1
+        order by id desc limit 1`,
+      [memberId]
+    );
+    expect(events.rows[0]).toEqual({
+      action: 'member.details.corrected',
+      previous_value: {
+        'nominee.2.name': 'Aisha',
+        'nominee.2.nic': NOMINEE_2.nic,
+      },
+      new_value: {
+        'nominee.2.name': 'Aïsha',
+        'nominee.2.nic': 'B9999999999999',
+      },
+    });
+  });
+
+  it('drops a nominee change without the permission, or for a nominee the type does not ask for', async () => {
+    const withoutPermission = await contact.updateContactDetails(
+      applicationId,
+      [nomineeChange(1, 'name', 'Someone Else')],
+      { entityType: 'member', entityId: memberId },
+      officer
+    );
+    expect(withoutPermission.updated).toEqual([]);
+    const beyond = await contact.updateContactDetails(
+      applicationId,
+      [nomineeChange(3, 'name', 'Third')],
+      { entityType: 'member', entityId: memberId },
+      corrector
+    );
+    expect(beyond.updated).toEqual([]);
+    expect(await nominee(1)).toEqual(NOMINEE_1);
+  });
+
+  it('keeps the first nominee complete and the split at 100%', async () => {
+    await expect(
+      contact.updateContactDetails(
+        applicationId,
+        [nomineeChange(1, 'surname', '')],
+        { entityType: 'member', entityId: memberId },
+        corrector
+      )
+    ).rejects.toThrow('Nominee surname is required.');
+
+    await expect(
+      contact.updateContactDetails(
+        applicationId,
+        [nomineeChange(2, 'percentage', '50')],
+        { entityType: 'member', entityId: memberId },
+        corrector
+      )
+    ).rejects.toThrow(
+      'Nominee percentages must add up to 100% (currently 110%).'
+    );
+    expect((await nominee(2)).percentage).toBe('40');
+
+    const both = await contact.updateContactDetails(
+      applicationId,
+      [
+        nomineeChange(1, 'percentage', '50'),
+        nomineeChange(2, 'percentage', '50'),
+      ],
+      { entityType: 'member', entityId: memberId },
+      corrector
+    );
+    expect(both.updated.sort()).toEqual([
+      'nominee.1.percentage',
+      'nominee.2.percentage',
+    ]);
+  });
+});
