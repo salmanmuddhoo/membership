@@ -9,7 +9,6 @@ import {
   MigrationError,
   buildImportTemplate,
   checksumBuffer,
-  eligibleMembershipTypesForMigration,
   fileBalanceCents,
   importMembers,
   parseImportFile,
@@ -162,7 +161,6 @@ if (Astro.request.method === 'POST') {
   }
 }
 
-const types = canMigrate ? await eligibleMembershipTypesForMigration() : [];
 const memberCount =
   outcome?.imported.filter(m => m.kind === 'member').length ?? 0;
 const customerCount =
@@ -180,29 +178,12 @@ const customerCount =
         <section class={CARD}>
           <h2 class={CARD_TITLE}>Import from the legacy register</h2>
           <p class={`${MUTED} mt-2`}>
-            Every row is approved immediately — no review, no approval step. Run
-            it as many times as needed; each upload is its own batch. A Legacy
-            Member Code already on file updates that record instead of creating
-            a second one.
+            Every row is approved as soon as it is imported.
           </p>
           <p class={`${MUTED} mt-2`}>
-            A row with an AB Number is a member — Shares and the MSA always come
-            together, and the number carries over unchanged, never reassigned. A
-            row with none, only an account of its own (HSA, Investment, …), is a
-            non-member. Give that account its own number and balance together;
-            leave both blank if it is not yet known, and add it on a later
-            upload.
-          </p>
-          <p class={`${MUTED} mt-2`}>
-            Covers {types.map(t => t.name).join(', ')}. A Minor's guardian must
-            already be on file — import the guardian first, then the minor with
-            just their Member ID; the rest of the guardian's details are filled
-            in automatically.
-          </p>
-          <p class={`${MUTED} mt-2`}>
-            NIC, mobile and account numbers must each be unique to one member or
-            non-member. Legacy Member Code can be left blank for a member row —
-            the AB Number is used instead.
+            In the template, a red heading is required on every row, an amber
+            one in some cases (its note says when), a grey one is optional. The
+            Instructions sheet lists the rules.
           </p>
           <a
             href="/admin/migration?template=1"

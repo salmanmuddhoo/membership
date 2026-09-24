@@ -96,6 +96,7 @@ import {
   type MembershipTypeField,
 } from '../config/reference';
 import { query, withTransaction } from '../db/pool';
+import { toInternational } from '../applications/phone';
 import { MoneyError, fromCents, toCents } from '../payments/money';
 import {
   hasMigrationBalance,
@@ -120,6 +121,74 @@ const AB_NUMBER_COLUMN = 'AB Number';
 const JOINED_COLUMN = 'Joined Date (optional)';
 const SHARES_BALANCE_COLUMN = 'Shares Balance';
 const MSA_BALANCE_COLUMN = 'MSA Deposit Balance';
+const INSTRUCTIONS_SHEET = 'Instructions';
+
+// How the template marks each column (officer request: what must be filled
+// in has to be plain on the sheet itself). The header's fill says which:
+// red, always required (also " *"); amber, required in some cases, the
+// header's note saying when; grey, optional. Every rule a column carries
+// is in its header note.
+const REQUIRED_FILL = 'FFF4B6B6';
+const CONDITIONAL_FILL = 'FFFFE08A';
+const OPTIONAL_FILL = 'FFE5E7EB';
+
+type ColumnKind = 'required' | 'conditional' | 'optional';
+
+interface TemplateColumn {
+  header: string;
+  kind: ColumnKind;
+  note?: string;
+  text?: boolean; // keep as typed: no number or date conversion by Excel
+  field?: MembershipTypeField; // a choice field gets its dropdown
+}
+
+const FILLS: Record<ColumnKind, string> = {
+  required: REQUIRED_FILL,
+  conditional: CONDITIONAL_FILL,
+  optional: OPTIONAL_FILL,
+};
+
+const DATE_NOTE = 'Date as YYYY-MM-DD, e.g. 2000-06-15.';
+const AMOUNT_NOTE = 'A plain amount, e.g. 1500 or 1500.50.';
+
+function fieldNote(field: MembershipTypeField): string | undefined {
+  if (field.dataType === 'date') return DATE_NOTE;
+  if (field.subject !== 'applicant') {
+    return field.dataType === 'choice' && field.choices.length > 0
+      ? `One of: ${field.choices.join(', ')}.`
+      : undefined;
+  }
+  if (field.fieldKey === 'nic') {
+    return 'Unique: no two people in this file or on file may share a NIC.';
+  }
+  if (field.fieldKey === 'mobile') {
+    return (
+      '8 digits (e.g. 57001234) or with the country code (+230 5700 1234). ' +
+      'Unique: no two people may share a mobile.'
+    );
+  }
+  if (field.dataType === 'choice' && field.choices.length > 0) {
+    return `One of: ${field.choices.join(', ')}.`;
+  }
+  return undefined;
+}
+
+function fieldColumn(
+  field: MembershipTypeField,
+  header: string,
+  mandatory: boolean
+): TemplateColumn {
+  return {
+    header: header + (mandatory ? ' *' : ''),
+    kind: mandatory ? 'required' : 'optional',
+    note: fieldNote(field),
+    text:
+      field.dataType === 'phone' ||
+      field.fieldKey === 'nic' ||
+      field.dataType === 'text',
+    field,
+  };
+}
 
 // 'AB' followed by digits, case-insensitive on the way in — the exact shape
 // next_member_number() (migration 0018) itself generates, "AB" plus however
@@ -305,6 +374,51 @@ function extraBalanceColumn(accountType: AccountType): string {
   return `${accountType.name} Balance`;
 }
 
+// The template's first sheet: the colour key and the rules that hold on
+// every sheet. Kept short — the column notes carry each column's own rule.
+function fillInstructions(sheet: ExcelJS.Worksheet, typeNames: string[]) {
+  sheet.getColumn(1).width = 28;
+  sheet.getColumn(2).width = 90;
+  const title = sheet.addRow(['Member migration file']);
+  title.font = { bold: true, size: 14 };
+  sheet.addRow([]);
+  const key: [ColumnKind, string, string][] = [
+    ['required', 'Red heading, marked *', 'Required on every row.'],
+    [
+      'conditional',
+      'Amber heading',
+      'Required in some cases: the heading’s note says when.',
+    ],
+    ['optional', 'Grey heading', 'Optional.'],
+  ];
+  sheet.addRow(['Column headings']).font = { bold: true };
+  for (const [kind, label, meaning] of key) {
+    const row = sheet.addRow([label, meaning]);
+    row.getCell(1).fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: FILLS[kind] },
+    };
+  }
+  sheet.addRow([]);
+  sheet.addRow(['Rules']).font = { bold: true };
+  const rules = [
+    `One row per person, on the sheet of their membership type: ${typeNames.join(', ')}.`,
+    'A member has an AB Number, with Shares Balance and MSA Deposit Balance (0 if none).',
+    'A non-member has no AB Number: fill Legacy Member Code and at least one account number with its balance.',
+    'Hover over a heading to read its note.',
+    'Dates as YYYY-MM-DD. Amounts as plain numbers, e.g. 1500.50.',
+    'NIC, mobile, legacy code and account numbers belong to one person only, in this file and on file.',
+    'A minor’s guardian must already be a member: import the guardian first, then the minor.',
+    'Keep the sheet names and column headings as they are. A sheet or column the template does not have is refused.',
+    'Uploading the same Legacy Member Code again updates that person instead of adding them twice.',
+  ];
+  rules.forEach((rule, index) => {
+    const row = sheet.addRow([`${index + 1}.`, rule]);
+    row.getCell(2).alignment = { wrapText: true };
+  });
+}
+
 // One sheet per eligible membership type, its columns exactly the fields
 // that type's own capture form asks for — read live, the same as the
 // capture form itself, so a field an administrator adds or relabels
@@ -318,27 +432,7 @@ export async function buildImportTemplate(): Promise<Buffer> {
   workbook.creator = 'Al Barakah MCSL';
   workbook.created = new Date();
 
-  // A choice field gets a dropdown restricted to its configured choices, so a
-  // typo cannot even be typed in — the same guarantee the capture form's own
-  // <select> already gives. Applied to whichever column block a field list
-  // occupies, by its 1-based starting column.
-  const applyChoiceDropdowns = (
-    sheet: ExcelJS.Worksheet,
-    fieldList: MembershipTypeField[],
-    startColumn: number
-  ) => {
-    fieldList.forEach((field, index) => {
-      if (field.dataType !== 'choice' || field.choices.length === 0) return;
-      const column = startColumn + index;
-      for (let row = 2; row <= 500; row++) {
-        sheet.getCell(row, column).dataValidation = {
-          type: 'list',
-          allowBlank: !field.isMandatory,
-          formulae: [`"${field.choices.join(',')}"`],
-        };
-      }
-    });
-  };
+  const instructions = workbook.addWorksheet(INSTRUCTIONS_SHEET);
 
   for (const type of types) {
     const fields = applicantFields(type);
@@ -350,64 +444,115 @@ export async function buildImportTemplate(): Promise<Buffer> {
     const extras = additionalAccountTypes(type, accountTypes);
     const sheet = workbook.addWorksheet(type.name.slice(0, 31));
 
-    const nomineeHeaders: string[] = [];
+    // Employment Details sit right after the applicant's own fields — the
+    // same grouping the member page gives them — and before Nominee.
+    const columns: TemplateColumn[] = [
+      {
+        header: LEGACY_CODE_COLUMN,
+        kind: 'conditional',
+        note:
+          'Required for a non-member (AB Number left blank). ' +
+          'Each code once only.',
+        text: true,
+      },
+      {
+        header: AB_NUMBER_COLUMN,
+        kind: 'conditional',
+        note:
+          'A member: AB followed by digits, e.g. AB2001. Leave blank for a ' +
+          'non-member, who then needs an account number and balance below.',
+        text: true,
+      },
+      { header: JOINED_COLUMN, kind: 'optional', note: DATE_NOTE },
+      ...fields.map(f => fieldColumn(f, f.label, f.isMandatory)),
+      ...employment.map(f => fieldColumn(f, f.label, f.isMandatory)),
+      ...guardian.map(f => ({
+        ...fieldColumn(f, f.label, f.isMandatory),
+        note:
+          "The guardian's AB Number. The guardian must already be a " +
+          'member: import them first, then this sheet.',
+        text: true,
+      })),
+      ...beneficiary.map(f => fieldColumn(f, f.label, f.isMandatory)),
+    ];
     for (let ordinal = 1; ordinal <= nomineeOrdinals; ordinal++) {
       for (const field of nominees) {
         // S-602, relaxed on officer feedback: only the first nominee is
         // ever mandatory (problemsBlockingSubmission's own exemption) — a
         // second is there for a family that wants to name one, never
         // demanded.
-        nomineeHeaders.push(
-          nomineeColumnHeader(
-            field,
-            ordinal,
-            ordinal === 1 && field.isMandatory
-          )
-        );
+        const mandatory = ordinal === 1 && field.isMandatory;
+        columns.push({
+          ...fieldColumn(field, '', false),
+          header: nomineeColumnHeader(field, ordinal, mandatory),
+          kind: mandatory ? 'required' : 'optional',
+        });
       }
     }
+    for (const header of [SHARES_BALANCE_COLUMN, MSA_BALANCE_COLUMN]) {
+      columns.push({
+        header,
+        kind: 'conditional',
+        note:
+          'Required when AB Number is filled; 0 if there is no balance. ' +
+          AMOUNT_NOTE,
+      });
+    }
+    for (const extra of extras) {
+      const pair =
+        `Fill ${extraNumberColumn(extra)} and ${extraBalanceColumn(extra)} ` +
+        'together, or leave both blank.';
+      columns.push(
+        {
+          header: extraNumberColumn(extra),
+          kind: 'conditional',
+          note: `${pair} Each account number once only.`,
+          text: true,
+        },
+        {
+          header: extraBalanceColumn(extra),
+          kind: 'conditional',
+          note: `${pair} ${AMOUNT_NOTE}`,
+        }
+      );
+    }
 
-    // Employment Details sit right after the applicant's own fields — the
-    // same grouping the member page gives them — and before Nominee.
-    const headers = [
-      LEGACY_CODE_COLUMN,
-      AB_NUMBER_COLUMN,
-      JOINED_COLUMN,
-      ...fields.map(f => f.label + (f.isMandatory ? ' *' : '')),
-      ...employment.map(f => f.label + (f.isMandatory ? ' *' : '')),
-      ...guardian.map(f => f.label + (f.isMandatory ? ' *' : '')),
-      ...beneficiary.map(f => f.label + (f.isMandatory ? ' *' : '')),
-      ...nomineeHeaders,
-      SHARES_BALANCE_COLUMN,
-      MSA_BALANCE_COLUMN,
-      ...extras.flatMap(t => [extraNumberColumn(t), extraBalanceColumn(t)]),
-    ];
-    sheet.addRow(headers);
-    sheet.getRow(1).font = { bold: true };
-    sheet.columns.forEach(col => {
-      col.width = 24;
+    sheet.addRow(columns.map(c => c.header));
+    sheet.views = [{ state: 'frozen', ySplit: 1 }];
+    columns.forEach((column, index) => {
+      const cell = sheet.getCell(1, index + 1);
+      cell.font = { bold: true };
+      cell.alignment = { wrapText: true, vertical: 'middle' };
+      cell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: FILLS[column.kind] },
+      };
+      if (column.note) cell.note = column.note;
+      const sheetColumn = sheet.getColumn(index + 1);
+      sheetColumn.width = 24;
+      if (column.text) sheetColumn.numFmt = '@';
+      const field = column.field;
+      if (field && field.dataType === 'choice' && field.choices.length > 0) {
+        // A choice field gets a dropdown restricted to its configured
+        // choices, so a typo cannot even be typed in — the same guarantee
+        // the capture form's own <select> already gives.
+        for (let row = 2; row <= 500; row++) {
+          sheet.getCell(row, index + 1).dataValidation = {
+            type: 'list',
+            allowBlank: column.kind !== 'required',
+            formulae: [`"${field.choices.join(',')}"`],
+          };
+        }
+      }
     });
-
-    // Note on the Joined Date column (column 3) and Date of Birth column
-    // (wherever it falls in the applicant fields block).
-    sheet.getCell(1, 3).note = 'Format: YYYY-MM-DD (e.g. 2000-06-15)';
-    // Not starred: required only on a row with an AB Number, and left blank
-    // on a non-member's row.
-    for (const column of [SHARES_BALANCE_COLUMN, MSA_BALANCE_COLUMN]) {
-      sheet.getCell(1, headers.indexOf(column) + 1).note =
-        'Required when AB Number is filled. Enter 0 if there is no balance.';
-    }
-    const dobIndex = fields.findIndex(f => f.fieldKey === 'date_of_birth');
-    if (dobIndex >= 0) {
-      sheet.getCell(1, 4 + dobIndex).note =
-        'Format: YYYY-MM-DD (e.g. 2015-01-15)';
-    }
-
-    // Column 1: legacy code, 2: AB number, 3: joined date, then the
-    // applicant fields, then the employment fields.
-    applyChoiceDropdowns(sheet, fields, 4);
-    applyChoiceDropdowns(sheet, employment, 4 + fields.length);
+    sheet.getRow(1).height = 32;
   }
+
+  fillInstructions(
+    instructions,
+    types.map(t => t.name)
+  );
 
   const buffer = await workbook.xlsx.writeBuffer();
   return Buffer.from(buffer);
@@ -454,23 +599,63 @@ function stripMandatoryMarker(header: string): string {
   return header.replace(/\s*\*\s*$/, '').trim();
 }
 
+// Day 0 of Excel's date numbering (1899-12-30, which absorbs Excel's own
+// 1900 leap-year slip), in milliseconds.
+const EXCEL_EPOCH = Date.UTC(1899, 11, 30);
+
+function sheetHasData(sheet: ExcelJS.Worksheet): boolean {
+  let found = false;
+  sheet.eachRow((row, rowNumber) => {
+    if (found || rowNumber === 1) return;
+    row.eachCell(cell => {
+      if (String(cell.value ?? '').trim() !== '') found = true;
+    });
+  });
+  return found;
+}
+
 export async function parseImportFile(buffer: Buffer): Promise<ParsedRow[]> {
   const workbook = new ExcelJS.Workbook();
-  // exceljs bundles its own @types/node, whose Buffer generic instantiation
-  // does not structurally match this project's — an assertion, not an
-  // actual type difference.
-  await workbook.xlsx.load(buffer as any);
+  try {
+    // exceljs bundles its own @types/node, whose Buffer generic instantiation
+    // does not structurally match this project's — an assertion, not an
+    // actual type difference.
+    await workbook.xlsx.load(buffer as any);
+  } catch {
+    throw new MigrationError(
+      'That file is not an Excel workbook (.xlsx). Fill in the template and upload it as it is saved.'
+    );
+  }
 
   const [types, accountTypes] = await Promise.all([
     eligibleMembershipTypesForMigration(),
     listAccountTypes(),
   ]);
-  const byName = new Map(types.map(t => [t.name, t]));
+  // Matched ignoring case and surrounding spaces (officer QA: a tab retyped
+  // as "individual" used to drop its whole sheet without a word). A sheet
+  // that matches no type is refused if anything is typed in it, rather
+  // than silently skipped; the template's own Instructions sheet and an
+  // empty sheet are passed over.
+  const sheetKey = (name: string) => name.trim().toLowerCase();
+  const byName = new Map(types.map(t => [sheetKey(t.name), t]));
+  const problems: string[] = [];
 
   const rows: ParsedRow[] = [];
   for (const sheet of workbook.worksheets) {
-    const type = byName.get(sheet.name);
-    if (!type) continue; // A sheet this template never produced — ignored.
+    const type = byName.get(sheetKey(sheet.name));
+    if (!type) {
+      if (
+        sheetKey(sheet.name) !== sheetKey(INSTRUCTIONS_SHEET) &&
+        sheetHasData(sheet)
+      ) {
+        problems.push(
+          `Sheet "${sheet.name}" is not one of the template's sheets (` +
+            `${types.map(t => t.name).join(', ')}). Move its rows to the ` +
+            'right sheet, or delete it.'
+        );
+      }
+      continue;
+    }
     const fields = applicantFields(type);
     const byLabel = new Map(
       fields.map(f => [stripMandatoryMarker(f.label), f.fieldKey])
@@ -520,6 +705,7 @@ export async function parseImportFile(buffer: Buffer): Promise<ParsedRow[]> {
     >();
     const extraNumberColumns = new Map<number, string>();
     const extraBalanceColumns = new Map<number, string>();
+    const unknownColumns = new Map<number, string>();
     let legacyCodeColumn: number | null = null;
     let abNumberColumn: number | null = null;
     let joinedColumn: number | null = null;
@@ -553,8 +739,39 @@ export async function parseImportFile(buffer: Buffer): Promise<ParsedRow[]> {
       } else {
         const fieldKey = byLabel.get(bareHeader);
         if (fieldKey) columnFieldKeys.set(colNumber, fieldKey);
+        else if (header !== '') unknownColumns.set(colNumber, header);
       }
     });
+    // A column the template does not have is refused when anything is typed
+    // under it: what is in it would otherwise be lost without a word
+    // (officer QA). An empty one — a spacer, a note to self — is ignored.
+    for (const [colNumber, header] of unknownColumns) {
+      let used = false;
+      sheet.eachRow((row, rowNumber) => {
+        if (rowNumber === 1 || used) return;
+        const value = row.getCell(colNumber).value;
+        if (value !== null && value !== undefined && String(value).trim())
+          used = true;
+      });
+      if (used) {
+        problems.push(
+          `Sheet "${sheet.name}": column "${header}" is not in the template. ` +
+            "Use the template's own column headings, or delete the column."
+        );
+      }
+    }
+
+    const dateColumns = new Set<number>(
+      [
+        joinedColumn,
+        ...[...columnFieldKeys]
+          .filter(
+            ([, key]) =>
+              fields.find(f => f.fieldKey === key)?.dataType === 'date'
+          )
+          .map(([column]) => column),
+      ].filter((c): c is number => c !== null)
+    );
 
     sheet.eachRow((row, rowNumber) => {
       if (rowNumber === 1) return;
@@ -563,6 +780,19 @@ export async function parseImportFile(buffer: Buffer): Promise<ParsedRow[]> {
         const value = row.getCell(colNumber).value;
         if (value === null || value === undefined) return '';
         if (value instanceof Date) return value.toISOString().slice(0, 10);
+        // A date column holding a bare number is an Excel date that lost
+        // its date formatting (36688 is 15 June 2000): read it as that day.
+        if (
+          typeof value === 'number' &&
+          dateColumns.has(colNumber) &&
+          Number.isInteger(value) &&
+          value > 0 &&
+          value < 2_958_466
+        ) {
+          return new Date(EXCEL_EPOCH + value * 86_400_000)
+            .toISOString()
+            .slice(0, 10);
+        }
         if (typeof value === 'object' && 'text' in value) {
           return String((value as { text: unknown }).text ?? '').trim();
         }
@@ -624,7 +854,7 @@ export async function parseImportFile(buffer: Buffer): Promise<ParsedRow[]> {
       if (!hasContent) return;
 
       rows.push({
-        sheet: sheet.name,
+        sheet: type.name,
         rowNumber,
         legacyCode,
         abNumber,
@@ -642,6 +872,7 @@ export async function parseImportFile(buffer: Buffer): Promise<ParsedRow[]> {
     });
   }
 
+  if (problems.length > 0) throw new MigrationError(problems.join(' '));
   return rows;
 }
 
@@ -699,10 +930,58 @@ interface ExistingRecord {
   accountNos: Map<string, string>;
 }
 
+const THOUSANDS_GROUPED = /^-?\d{1,3}(,\d{3})+(\.\d+)?$/;
+
+function mobileMatchKey(raw: string): string {
+  const trimmed = raw.trim();
+  if (trimmed === '') return '';
+  try {
+    return toInternational(trimmed).toLowerCase();
+  } catch {
+    return trimmed.toLowerCase();
+  }
+}
+
+// A date in a migration file: YYYY-MM-DD (what an Excel date cell is read
+// as, too), a real calendar day, not before 1900 and not in the future.
+// Officer QA: "15/06/2000" and a bare Excel day number like 36688 were
+// either refused unhelpfully or read as the year 36688.
+const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+function parseMigrationDate(
+  raw: string,
+  label: string,
+  problems: string[]
+): Date | null {
+  const match = ISO_DATE.exec(raw.trim());
+  const date = match
+    ? new Date(Date.UTC(+match[1], +match[2] - 1, +match[3]))
+    : null;
+  if (
+    !match ||
+    !date ||
+    date.getUTCFullYear() !== +match[1] ||
+    date.getUTCMonth() !== +match[2] - 1 ||
+    date.getUTCDate() !== +match[3]
+  ) {
+    problems.push(`${label} "${raw}" is not a date; use YYYY-MM-DD.`);
+    return null;
+  }
+  if (date.getUTCFullYear() < 1900 || date.getTime() > Date.now()) {
+    problems.push(`${label} ${raw.trim()} is not a possible date.`);
+    return null;
+  }
+  return date;
+}
+
 function parseAmount(raw: string, label: string, problems: string[]): string {
   if (raw.trim() === '') return '';
   try {
-    const cents = toCents(raw);
+    // "1,500.00" as a spreadsheet shows it: the commas are only grouping.
+    const bare = THOUSANDS_GROUPED.test(raw.trim())
+      ? raw.trim().replace(/,/g, '')
+      : raw;
+    const cents = toCents(bare);
     if (cents < 0) {
       problems.push(`${label} cannot be negative.`);
       return '';
@@ -938,7 +1217,10 @@ export async function validateRows(
     if (nicKey !== '') {
       nicOccurrences.set(nicKey, (nicOccurrences.get(nicKey) ?? 0) + 1);
     }
-    const mobileKey = (row.values.mobile ?? '').trim().toLowerCase();
+    // Keyed on the number as it will be stored (+230…), the same form the
+    // row-level check below looks it up by: "57001234" and "+230 5700 1234"
+    // are the same mobile.
+    const mobileKey = mobileMatchKey(row.values.mobile ?? '');
     if (mobileKey !== '') {
       mobileOccurrences.set(
         mobileKey,
@@ -1030,17 +1312,19 @@ export async function validateRows(
 
     let joinedAt: Date | null = null;
     if (row.joinedAt !== '') {
-      const parsed = new Date(row.joinedAt);
-      if (Number.isNaN(parsed.getTime())) {
-        problems.push(`${JOINED_COLUMN} "${row.joinedAt}" is not a date.`);
-      } else {
-        joinedAt = parsed;
-      }
+      joinedAt = parseMigrationDate(row.joinedAt, 'Joined Date', problems);
     }
 
     const fields = applicantFields(type);
     const { values, errors: formatErrors } = normalise(row.values, fields);
     for (const error of formatErrors) problems.push(error.label);
+    // A date field (Date of birth) is taken as typed by normalise — the
+    // capture form's own date picker cannot produce a bad one; a sheet can.
+    for (const field of fields) {
+      if (field.dataType !== 'date') continue;
+      const raw = (row.values[field.fieldKey] ?? '').trim();
+      if (raw !== '') parseMigrationDate(raw, field.label, problems);
+    }
     for (const field of fields) {
       if (!field.isMandatory) continue;
       if ((values[field.fieldKey] ?? '').trim() === '') {
