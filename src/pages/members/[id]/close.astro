@@ -11,7 +11,9 @@ import {
   accountsOnDeath,
   ClosureError,
   closuresInFlightFor,
+  onItsWayMessage,
   startClosure,
+  transactionsOnTheirWay,
   PERMISSION_CAPTURE,
 } from '@lib/ledger/closures';
 import { nomineeOnApplication } from '@lib/ledger/claimants';
@@ -81,6 +83,23 @@ const onDeathAccounts = isNonMember
         : { memberId: null, customerId: customer!.id }
     )
   : null;
+
+const onItsWay = await transactionsOnTheirWay([
+  ...new Set([
+    ...closable.map(a => a.id),
+    ...(onDeathAccounts?.accounts.map(a => a.id) ?? []),
+  ]),
+]);
+const deathBlockedEntries = (onDeathAccounts?.accounts ?? [])
+  .map(a => [a.id, onItsWay.get(a.id)] as const)
+  .filter(
+    (entry): entry is [string, { reference: string; accountNo: string }] =>
+      entry[1] !== undefined
+  );
+const deathBlocked =
+  deathBlockedEntries.length > 0
+    ? onItsWayMessage(new Map(deathBlockedEntries), true)
+    : null;
 
 let values = {
   accountId:
@@ -160,6 +179,14 @@ if (Astro.request.method === 'POST') {
     }
   }
 }
+
+const causeIsDeath = isNonMember && values.cause === 'death';
+const selectedEntry = onItsWay.get(values.accountId);
+const blockedMessage = causeIsDeath
+  ? deathBlocked
+  : selectedEntry
+    ? onItsWayMessage(new Map([[values.accountId, selectedEntry]]), false)
+    : null;
 ---
 
 <DashboardLayout
@@ -179,7 +206,12 @@ if (Astro.request.method === 'POST') {
         together: leaving them is a resignation.
       </p>
     ) : (
-      <form method="post" data-close-form class={FORM_CARD}>
+      <form
+        method="post"
+        data-close-form
+        class={FORM_CARD}
+        data-death-blocked={deathBlocked}
+      >
         <div
           data-account-field
           hidden={isNonMember && values.cause === 'death'}
@@ -187,15 +219,23 @@ if (Astro.request.method === 'POST') {
           <label class={LABEL}>
             Account
             <select name="accountId" class={INPUT}>
-              {closable.map(account => (
-                <option
-                  value={account.id}
-                  selected={account.id === values.accountId}
-                >
-                  {account.accountNo} · {account.accountTypeName} ·{' '}
-                  {formatMoney(account.balance)}
-                </option>
-              ))}
+              {closable.map(account => {
+                const entry = onItsWay.get(account.id);
+                return (
+                  <option
+                    value={account.id}
+                    selected={account.id === values.accountId}
+                    data-blocked={
+                      entry
+                        ? onItsWayMessage(new Map([[account.id, entry]]), false)
+                        : undefined
+                    }
+                  >
+                    {account.accountNo} · {account.accountTypeName} ·{' '}
+                    {formatMoney(account.balance)}
+                  </option>
+                );
+              })}
             </select>
           </label>
         </div>
@@ -371,7 +411,15 @@ if (Astro.request.method === 'POST') {
             ? 'The balances are paid out together when it is approved, as they stand then.'
             : 'The balance is paid out when the closure is approved, as it stands then.'}
         </p>
-        <button type="submit" data-continue-button class={BUTTON}>
+        <p data-blocked-note class={NOTICE_ERROR} hidden={!blockedMessage}>
+          {blockedMessage}
+        </p>
+        <button
+          type="submit"
+          data-continue-button
+          class={BUTTON}
+          disabled={!!blockedMessage}
+        >
           {isNonMember && values.cause === 'death'
             ? 'Continue to documents'
             : 'Continue to signature'}
@@ -401,7 +449,26 @@ if (Astro.request.method === 'POST') {
     '[data-continue-button]'
   );
   const payoutNote = form?.querySelector<HTMLElement>('[data-payout-note]');
+  const accountSelect = form?.querySelector<HTMLSelectElement>(
+    'select[name="accountId"]'
+  );
+  const blockedNote = form?.querySelector<HTMLElement>('[data-blocked-note]');
   if (form) {
+    // Blocks Continue the moment a transaction still on its way makes the
+    // Submit step certain to refuse — enforced server-side too (S-1702).
+    const syncBlocked = () => {
+      const onDeath =
+        form.querySelector<HTMLInputElement>('input[name="cause"]:checked')
+          ?.value === 'death';
+      const message = onDeath
+        ? (form.dataset.deathBlocked ?? null)
+        : (accountSelect?.selectedOptions[0]?.dataset.blocked ?? null);
+      if (blockedNote) {
+        blockedNote.textContent = message ?? '';
+        blockedNote.hidden = !message;
+      }
+      if (continueButton) continueButton.disabled = !!message;
+    };
     const refresh = () => {
       const onDeath =
         form.querySelector<HTMLInputElement>('input[name="cause"]:checked')
@@ -426,6 +493,7 @@ if (Astro.request.method === 'POST') {
         )?.value;
         otherFields.hidden = kind !== 'other';
       }
+      syncBlocked();
     };
     form.addEventListener('change', refresh);
     refresh();

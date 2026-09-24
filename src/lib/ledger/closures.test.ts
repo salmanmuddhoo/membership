@@ -344,6 +344,65 @@ describe('a closure request (S-1702)', () => {
     ).rejects.toThrowError(/permission/);
   });
 
+  it('is refused at the first step while money is on its way on the account (officer feedback)', async () => {
+    const { closures, deposits, review } = await load();
+    const pending = await deposits.recordDeposit(
+      {
+        accountId: member.hsa,
+        amount: '150000',
+        method: 'bank_transfer',
+        methodReference: 'MCB 9000',
+        bankAccountId,
+      },
+      officer
+    );
+    expect(pending.status).toBe('submitted');
+    const onItsWay = await closures.transactionsOnTheirWay([member.hsa]);
+    expect(onItsWay.get(member.hsa)?.reference).toBe(pending.reference);
+    await expect(
+      closures.startClosure(
+        { accountId: member.hsa, reason: 'Moving abroad', method: 'cash' },
+        officer
+      )
+    ).rejects.toThrowError(
+      `${pending.reference} is still on its way on this account. Wait for it to post or be decided.`
+    );
+    await review.reviewTransaction(
+      pending.id,
+      { outcome: 'reject', comment: 'Not now' },
+      secretary
+    );
+    expect((await closures.transactionsOnTheirWay([member.hsa])).size).toBe(0);
+  });
+
+  it('is refused at the first step for someone who could never submit it (officer feedback)', async () => {
+    // A closure that posts at once, with no chain, needs someone who may
+    // post — and whoever starts it is the one who submits it.
+    await run(
+      ownerUrl,
+      `select set_config('albarakah.actor_description', 'test', false);
+       insert into approval_rule (kind, workflow_definition_id, note, sort_order)
+       values ('closure', null, 'test: posts at once', -100)`
+    );
+    try {
+      const { closures } = await load();
+      await expect(
+        closures.startClosure(
+          { accountId: member.hsa, reason: 'Moving abroad', method: 'cash' },
+          clerk
+        )
+      ).rejects.toThrowError(
+        'This closure posts at once, which you may not do. Ask an Account Officer to record it.'
+      );
+    } finally {
+      await run(
+        ownerUrl,
+        `select set_config('albarakah.actor_description', 'test', false);
+         delete from approval_rule where note = 'test: posts at once'`
+      );
+    }
+  });
+
   it('is a draft the officer builds, submits with the signed request, and the chain decides; posting pays out the balance and closes the account', async () => {
     const { closures, deposits, review, ledger, timeline } = await load();
     await deposits.recordDeposit(

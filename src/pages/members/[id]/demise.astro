@@ -11,7 +11,9 @@ import {
   demiseInFlightFor,
   DemiseError,
   nomineeFor,
+  onItsWayMessage,
   startDemise,
+  transactionOnItsWay,
   PERMISSION_CAPTURE,
 } from '@lib/ledger/demises';
 import { loadMember } from '@lib/members/create';
@@ -40,9 +42,10 @@ if (!member) return new Response('Not found', { status: 404 });
 const inFlight = await demiseInFlightFor(member.id);
 if (inFlight) return Astro.redirect(`/transactions/${inFlight.id}`);
 
-const [nominee, totals] = await Promise.all([
+const [nominee, totals, onItsWay] = await Promise.all([
   nomineeFor(member.id),
   claimTotals(member.id),
+  transactionOnItsWay(member.id),
 ]);
 
 let values = {
@@ -219,7 +222,8 @@ if (Astro.request.method === 'POST') {
         The total is paid out when the claim is approved, as the accounts stand
         then. Every account closes and the membership ends.
       </p>
-      <button type="submit" class={BUTTON}>
+      {onItsWay && <p class={NOTICE_ERROR}>{onItsWayMessage(onItsWay)}</p>}
+      <button type="submit" class={BUTTON} disabled={!!onItsWay}>
         Continue to documents
       </button>
     </form>

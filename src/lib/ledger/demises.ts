@@ -267,6 +267,32 @@ async function ownedEditable(
   return claim;
 }
 
+// A transaction still on its way (submitted, under review, approved) on
+// any of the member's accounts: the total a claim would pay is about to
+// change. Checked at the first step (officer feedback: a claim that cannot
+// be submitted should not be started and its documents filed first) and
+// again at submit.
+export async function transactionOnItsWay(
+  memberId: string,
+  excludingId: string | null = null
+): Promise<string | null> {
+  const result = await query<{ reference: string }>(
+    `select t.reference
+       from transaction t
+       join account a on a.id = t.account_id
+      where a.member_id = $1
+        and ($2::uuid is null or t.id <> $2::uuid)
+        and t.status in ('submitted', 'under_review', 'approved')
+      order by t.created_at limit 1`,
+    [memberId, excludingId]
+  );
+  return result.rows[0]?.reference ?? null;
+}
+
+export function onItsWayMessage(reference: string): string {
+  return `${reference} is still on its way. Wait for it to post or be decided.`;
+}
+
 async function refuseUnlessClaimable(
   memberId: string,
   existing: TransactionSummary | null
@@ -316,6 +342,25 @@ export async function startDemise(
   const accounts = await refuseUnlessClaimable(input.memberId, null);
   if (accounts.length === 0) {
     throw new DemiseError('This member has no account to settle.', 'conflict');
+  }
+  const onItsWay = await transactionOnItsWay(input.memberId);
+  if (onItsWay) {
+    throw new DemiseError(onItsWayMessage(onItsWay), 'conflict');
+  }
+  // Whoever starts it submits it: a claim that would post at once, started
+  // by someone who may not post, could never be submitted.
+  const route = await resolveRoute({
+    kind: 'demise',
+    accountTypeId: accounts[0].accountTypeId,
+    amountCents: toCents((await claimTotals(input.memberId)).total),
+    roleCodes: principal.roles,
+  });
+  if (!route.definition && !principal.permissions.has(PERMISSION_POST)) {
+    throw new DemiseError(
+      'This claim posts at once, which you may not do. Ask an Account ' +
+        'Officer to record it.',
+      'forbidden'
+    );
   }
   const claimant = await resolvedClaimant(input.memberId, input.claimant);
   const method = await methodOrDefault(input.method);
@@ -476,20 +521,9 @@ export async function submitDemise(
       'File the death certificate and the affidavit before submitting.'
     );
   }
-  const inFlight = await query<{ reference: string }>(
-    `select t.reference
-       from transaction t
-       join account a on a.id = t.account_id
-      where a.member_id = $1 and t.id <> $2
-        and t.status in ('submitted', 'under_review', 'approved')
-      order by t.created_at limit 1`,
-    [claim.holderId, claim.id]
-  );
-  if (inFlight.rowCount) {
-    throw new DemiseError(
-      `${inFlight.rows[0].reference} is still on its way. Wait for it to post or be decided.`,
-      'conflict'
-    );
+  const onItsWay = await transactionOnItsWay(claim.holderId, claim.id);
+  if (onItsWay) {
+    throw new DemiseError(onItsWayMessage(onItsWay), 'conflict');
   }
 
   const totals = await claimTotals(claim.holderId);

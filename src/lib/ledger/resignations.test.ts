@@ -314,6 +314,14 @@ describe('the pre-checks (S-1703)', () => {
       'pending_transactions',
       'unpaid_fees',
     ]);
+    // Officer feedback: refused at the first step, not only at submit.
+    await expect(
+      resignations.startResignation(
+        { memberId: member.id, reason: 'Moving abroad' },
+        officer
+      )
+    ).rejects.toThrowError(`${pending.reference} still on its way.`);
+    expect(await resignations.resignationInFlightFor(member.id)).toBeNull();
 
     // Switched off, a check no longer blocks — the Society's call.
     await config.setResignationChecks(
