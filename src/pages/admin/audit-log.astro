@@ -182,6 +182,12 @@ function describeEntry(entry: AuditEventRow): string {
       return `Contact details updated${by}`;
     case 'member.details.corrected':
       return `Details corrected${by}`;
+    case 'segregation.rule.added':
+      return `Segregation rule added${by}`;
+    case 'segregation.rule.enabled':
+      return `Segregation rule switched on${by}`;
+    case 'segregation.rule.disabled':
+      return `Segregation rule switched off${by}`;
     case 'member.majority_transition':
       return `Member${memberNo} reached majority age`;
     case 'member.migration.imported':

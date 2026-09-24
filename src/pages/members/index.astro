@@ -9,6 +9,7 @@ import { countPendingDetailsRequests } from '@lib/members/details-requests';
 import { listAccountTypes } from '@lib/config/reference';
 import { formatMoney } from '@lib/payments/money';
 import { statusLabel } from '@lib/members/labels';
+import { shownStatus } from '@lib/members/status';
 import {
   PAGE,
   CARD,
@@ -216,7 +217,7 @@ function accountButtonClasses(account: MemberListAccount): string {
                   <td
                     class={`${TD} text-neutral-600 dark:text-neutral-300 ${ROW_HOVER}`}
                   >
-                    {statusLabel(m.status)}
+                    {statusLabel(shownStatus(m.status, m.nonMember))}
                   </td>
                   <td
                     class={`${TD} text-xs text-neutral-500 dark:text-neutral-400 ${ROW_HOVER}`}
