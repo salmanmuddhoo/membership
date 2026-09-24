@@ -3406,7 +3406,9 @@ describe('S-614: a non-member applying to become one', () => {
       name: 'Nita',
       nic: 'N1234567890123',
     });
-    await run(appUrl, `update customer set status = 'closed' where id = $1`, [
+    // Not 'closed': a customer whose every account was closed may still
+    // apply (officer feedback) — a deceased one may not.
+    await run(appUrl, `update customer set status = 'demised' where id = $1`, [
       customerId,
     ]);
 
