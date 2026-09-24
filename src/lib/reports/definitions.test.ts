@@ -626,3 +626,812 @@ describe('bank accounts report', () => {
     );
   });
 });
+
+// Officer request: admissions, resignations, withdrawals, transfers and
+// demised — one database, since the fixture is one member's whole
+// lifecycle plus the people who move through it with her.
+describe('membership movements reports', () => {
+  const mvDbName = `reports_movements_test_${Date.now()}`;
+  const mvOwnerUrl = `postgresql://postgres@127.0.0.1:5433/${mvDbName}`;
+  const mvAppUrl = `postgresql://albarakah_app:devpassword@127.0.0.1:5433/${mvDbName}`;
+
+  let mvPool: typeof import('../db/pool') | null = null;
+  async function loadMv() {
+    // See load()'s own comment: closed unconditionally, since the pool this
+    // reaches may be an earlier describe's, not this one's.
+    mvPool = await import('../db/pool');
+    await mvPool.closePool();
+    process.env.DATABASE_URL = mvAppUrl;
+    process.env.DATABASE_ALLOW_INSECURE = 'true';
+    process.env.PUBLIC_APP_ENV = 'test';
+    return { reports: await import('./definitions') };
+  }
+
+  const IN_PERIOD_FROM = '2026-03-01';
+  const IN_PERIOD_TO = '2026-03-31';
+  const OUTSIDE_DATE = '2026-01-05';
+
+  let officerId: string;
+
+  // Admissions
+  let bobMemberNo: string;
+  let caraMemberNo: string;
+  let caraRejoinReference: string;
+
+  // Resignations / withdrawals (Farah's own account carries both)
+  let farahMemberNo: string;
+  let resignationDisbursedRef: string;
+  let resignationInProgressRef: string;
+  let resignationRejectedRef: string;
+  let resignationOutsideRef: string;
+  let withdrawalDisbursedRef: string;
+  let withdrawalInProgressRef: string;
+  let withdrawalOutsideRef: string;
+
+  // Transfers
+  let internalTransferReference: string;
+  let externalTransferReference: string;
+  let transferOutsideReference: string;
+
+  // Demised
+  let ibrahimMemberNo: string;
+  let demiseReference: string;
+  let demiseOutsideReference: string;
+  let closureOnDeathReference: string;
+  let ordinaryClosureReference: string;
+
+  beforeAll(async () => {
+    await run(ADMIN_URL, `create database ${mvDbName}`);
+    await run(mvOwnerUrl, 'revoke all on schema public from public');
+    await run(
+      mvOwnerUrl,
+      `grant connect on database ${mvDbName} to albarakah_app`
+    );
+    await migrate(mvOwnerUrl, MIGRATIONS_DIR);
+
+    const user = await run(
+      mvAppUrl,
+      `insert into app_user (entra_subject, email, display_name)
+       values ('test-officer-mv', 'officer-mv@albarakah.mu', 'Officer')
+       returning id`
+    );
+    officerId = user.rows[0].id;
+
+    const types = await run(
+      mvAppUrl,
+      `select code, id from membership_type where code in ('individual', 'corporate')`
+    );
+    const individualTypeId = types.rows.find(
+      (r: { code: string }) => r.code === 'individual'
+    )!.id;
+    const corporateTypeId = types.rows.find(
+      (r: { code: string }) => r.code === 'corporate'
+    )!.id;
+
+    const msaTypeId = (
+      await run(mvAppUrl, `select id from account_type where code = 'msa'`)
+    ).rows[0].id;
+    await run(
+      mvAppUrl,
+      `begin;
+       set local albarakah.actor_description = 'definitions.test';
+       insert into account_type (code, name, number_prefix)
+       values ('hsa', 'Hajj Savings Account', 'HSA');
+       commit;`
+    );
+    const hsaTypeId = (
+      await run(mvAppUrl, `select id from account_type where code = 'hsa'`)
+    ).rows[0].id;
+
+    const withdrawalDefinitionId = (
+      await run(
+        mvAppUrl,
+        `select id from workflow_definition where code = 'transaction_withdrawal'`
+      )
+    ).rows[0].id;
+    const transferDefinitionId = (
+      await run(
+        mvAppUrl,
+        `select id from workflow_definition where code = 'transaction_transfer'`
+      )
+    ).rows[0].id;
+    const resignationDefinitionId = (
+      await run(
+        mvAppUrl,
+        `select id from workflow_definition where code = 'transaction_resignation'`
+      )
+    ).rows[0].id;
+
+    async function createMember(
+      typeId: string,
+      name: string,
+      surname: string,
+      joinedAt: string
+    ) {
+      const application = await run(
+        mvAppUrl,
+        `insert into membership_application (membership_type_id, captured_by, status)
+         values ($1, $2, 'approved') returning id, reference`,
+        [typeId, officerId]
+      );
+      await run(
+        mvAppUrl,
+        `insert into application_party (application_id, subject, ordinal, values)
+         values ($1, 'applicant', 1, $2::jsonb)`,
+        [application.rows[0].id, JSON.stringify({ name, surname })]
+      );
+      const member = await run(
+        mvAppUrl,
+        `insert into member (application_id, membership_type_id, joined_at, status)
+         values ($1, $2, $3, 'active') returning id, member_no`,
+        [application.rows[0].id, typeId, joinedAt]
+      );
+      return {
+        memberId: member.rows[0].id as string,
+        memberNo: member.rows[0].member_no as string,
+      };
+    }
+
+    // A row this suite passes directly into `transaction`, bypassing the
+    // capture/review/post flow those live elsewhere for — the reports read
+    // the table, not the flow that filled it, and the fixtures above and
+    // below already cover that flow's own rules.
+    async function insertTransaction(opts: {
+      kind: string;
+      memberId?: string | null;
+      customerId?: string | null;
+      accountId: string;
+      amount: string;
+      method?: string;
+      reason?: string | null;
+      status: string;
+      submittedAt?: string | null;
+      postedAt?: string | null;
+      createdAt?: string | null;
+      definitionId?: string | null;
+      stepCode?: string | null;
+      payeeName?: string | null;
+      transferId?: string | null;
+      legDirection?: string | null;
+      claimantKind?: string | null;
+      claimant?: Record<string, string> | null;
+      takafulBenefit?: string;
+    }) {
+      const result = await run(
+        mvAppUrl,
+        `insert into transaction
+           (kind, member_id, customer_id, account_id, amount, method, reason,
+            status, captured_by, submitted_at, posted_at, posted_by,
+            created_at, workflow_definition_id, current_step_code,
+            payee_name, transfer_id, leg_direction, claimant_kind, claimant,
+            takaful_benefit)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+                 $14, $15, $16, $17, $18, $19, $20::jsonb, $21)
+         returning id, reference`,
+        [
+          opts.kind,
+          opts.memberId ?? null,
+          opts.customerId ?? null,
+          opts.accountId,
+          opts.amount,
+          opts.method ?? 'cash',
+          opts.reason ?? null,
+          opts.status,
+          officerId,
+          opts.submittedAt ?? null,
+          opts.postedAt ?? null,
+          opts.status === 'posted' ? officerId : null,
+          opts.createdAt ?? opts.submittedAt ?? new Date().toISOString(),
+          opts.definitionId ?? null,
+          opts.stepCode ?? null,
+          opts.payeeName ?? null,
+          opts.transferId ?? null,
+          opts.legDirection ?? null,
+          opts.claimantKind ?? null,
+          opts.claimant ? JSON.stringify(opts.claimant) : null,
+          opts.takafulBenefit ?? '0',
+        ]
+      );
+      return result.rows[0] as { id: string; reference: string };
+    }
+
+    // ---- admissions --------------------------------------------------
+    // Before the test period — an admission the period must not return.
+    await createMember(
+      individualTypeId,
+      'Alice',
+      'Admitted-Early',
+      '2025-01-10'
+    );
+
+    // Inside the period — an ordinary, first-time admission.
+    const bob = await createMember(
+      individualTypeId,
+      'Bob',
+      'Newmember',
+      `${IN_PERIOD_FROM} 09:00:00+04`
+    );
+    bobMemberNo = bob.memberNo;
+
+    // A corporate member inside the period, to prove the type filter
+    // narrows.
+    await createMember(
+      corporateTypeId,
+      'Al Barakah Trading Ltd',
+      '',
+      `${IN_PERIOD_FROM} 08:00:00+04`
+    );
+
+    // Founded long ago; a second membership application re-admits the same
+    // member row inside the period (0090) — the rejoin's own reference,
+    // not the founding one.
+    const cara = await createMember(
+      individualTypeId,
+      'Cara',
+      'Rejoiner',
+      '2020-06-01'
+    );
+    const rejoinApplication = await run(
+      mvAppUrl,
+      `insert into membership_application
+         (membership_type_id, captured_by, status, rejoins_member_id)
+       values ($1, $2, 'approved', $3) returning id, reference`,
+      [individualTypeId, officerId, cara.memberId]
+    );
+    await run(
+      mvAppUrl,
+      `update member
+          set status = 'active', application_id = $2, rejoined_at = $3
+        where id = $1`,
+      [
+        cara.memberId,
+        rejoinApplication.rows[0].id,
+        `${IN_PERIOD_FROM} 10:00:00+04`,
+      ]
+    );
+    caraMemberNo = cara.memberNo;
+    caraRejoinReference = rejoinApplication.rows[0].reference;
+
+    // ---- resignations / withdrawals -----------------------------------
+    const farah = await createMember(
+      individualTypeId,
+      'Farah',
+      'Test',
+      '2024-01-01'
+    );
+    farahMemberNo = farah.memberNo;
+    const farahMsa = (
+      await run(
+        mvAppUrl,
+        `insert into account (member_id, account_type_id, is_membership_default, status)
+         values ($1, $2, true, 'active') returning id`,
+        [farah.memberId, msaTypeId]
+      )
+    ).rows[0].id;
+
+    resignationDisbursedRef = (
+      await insertTransaction({
+        kind: 'resignation',
+        memberId: farah.memberId,
+        accountId: farahMsa,
+        amount: '5000',
+        reason: 'Relocating abroad',
+        status: 'posted',
+        submittedAt: `${IN_PERIOD_FROM} 09:00:00+04`,
+        postedAt: `${IN_PERIOD_FROM} 12:00:00+04`,
+      })
+    ).reference;
+
+    resignationInProgressRef = (
+      await insertTransaction({
+        kind: 'resignation',
+        memberId: farah.memberId,
+        accountId: farahMsa,
+        amount: '3000',
+        reason: 'Health',
+        status: 'submitted',
+        submittedAt: `${IN_PERIOD_FROM} 09:30:00+04`,
+        definitionId: resignationDefinitionId,
+        stepCode: 'secretary_review',
+      })
+    ).reference;
+
+    resignationRejectedRef = (
+      await insertTransaction({
+        kind: 'resignation',
+        memberId: farah.memberId,
+        accountId: farahMsa,
+        amount: '2000',
+        reason: 'Duplicate request',
+        status: 'rejected',
+        submittedAt: `${IN_PERIOD_FROM} 10:00:00+04`,
+      })
+    ).reference;
+
+    resignationOutsideRef = (
+      await insertTransaction({
+        kind: 'resignation',
+        memberId: farah.memberId,
+        accountId: farahMsa,
+        amount: '1000',
+        reason: 'Outside period',
+        status: 'posted',
+        submittedAt: `${OUTSIDE_DATE} 09:00:00+04`,
+        postedAt: `${OUTSIDE_DATE} 12:00:00+04`,
+      })
+    ).reference;
+
+    withdrawalDisbursedRef = (
+      await insertTransaction({
+        kind: 'withdrawal',
+        memberId: farah.memberId,
+        accountId: farahMsa,
+        amount: '500',
+        method: 'cash',
+        status: 'posted',
+        createdAt: `${IN_PERIOD_FROM} 09:00:00+04`,
+        postedAt: `${IN_PERIOD_FROM} 09:05:00+04`,
+      })
+    ).reference;
+
+    withdrawalInProgressRef = (
+      await insertTransaction({
+        kind: 'withdrawal',
+        memberId: farah.memberId,
+        accountId: farahMsa,
+        amount: '200',
+        method: 'cash',
+        status: 'submitted',
+        createdAt: `${IN_PERIOD_FROM} 09:10:00+04`,
+        definitionId: withdrawalDefinitionId,
+        stepCode: 'secretary_review',
+      })
+    ).reference;
+
+    withdrawalOutsideRef = (
+      await insertTransaction({
+        kind: 'withdrawal',
+        memberId: farah.memberId,
+        accountId: farahMsa,
+        amount: '100',
+        method: 'cash',
+        status: 'posted',
+        createdAt: `${OUTSIDE_DATE} 09:00:00+04`,
+        postedAt: `${OUTSIDE_DATE} 09:05:00+04`,
+      })
+    ).reference;
+
+    // ---- transfers ------------------------------------------------------
+    const grace = await createMember(
+      individualTypeId,
+      'Grace',
+      'Recipient',
+      '2024-01-01'
+    );
+    const graceMsa = (
+      await run(
+        mvAppUrl,
+        `insert into account (member_id, account_type_id, is_membership_default, status)
+         values ($1, $2, true, 'active') returning id`,
+        [grace.memberId, msaTypeId]
+      )
+    ).rows[0].id;
+
+    // Internal: Farah to Grace, both on the system — two legs, one row.
+    const internalTransfer = await run(
+      mvAppUrl,
+      `insert into transfer (member_id, status, captured_by, created_at)
+       values ($1, 'posted', $2, $3) returning id, reference`,
+      [farah.memberId, officerId, `${IN_PERIOD_FROM} 11:00:00+04`]
+    );
+    internalTransferReference = internalTransfer.rows[0].reference;
+    await insertTransaction({
+      kind: 'transfer_leg',
+      memberId: farah.memberId,
+      accountId: farahMsa,
+      amount: '1500',
+      method: 'internal_transfer',
+      status: 'posted',
+      createdAt: `${IN_PERIOD_FROM} 11:00:00+04`,
+      postedAt: `${IN_PERIOD_FROM} 11:01:00+04`,
+      transferId: internalTransfer.rows[0].id,
+      legDirection: 'debit',
+    });
+    await insertTransaction({
+      kind: 'transfer_leg',
+      memberId: grace.memberId,
+      accountId: graceMsa,
+      amount: '1500',
+      method: 'internal_transfer',
+      status: 'posted',
+      createdAt: `${IN_PERIOD_FROM} 11:00:00+04`,
+      postedAt: `${IN_PERIOD_FROM} 11:01:00+04`,
+      transferId: internalTransfer.rows[0].id,
+      legDirection: 'credit',
+    });
+
+    // External: Farah to a payee off the system — debit leg only.
+    const externalTransfer = await run(
+      mvAppUrl,
+      `insert into transfer (member_id, status, captured_by, created_at)
+       values ($1, 'submitted', $2, $3) returning id, reference`,
+      [farah.memberId, officerId, `${IN_PERIOD_FROM} 12:00:00+04`]
+    );
+    externalTransferReference = externalTransfer.rows[0].reference;
+    await insertTransaction({
+      kind: 'transfer_leg',
+      memberId: farah.memberId,
+      accountId: farahMsa,
+      amount: '750',
+      method: 'cheque',
+      status: 'submitted',
+      createdAt: `${IN_PERIOD_FROM} 12:00:00+04`,
+      transferId: externalTransfer.rows[0].id,
+      legDirection: 'debit',
+      payeeName: 'Harold Estate',
+      definitionId: transferDefinitionId,
+      stepCode: 'secretary_review',
+    });
+
+    // Outside the period.
+    const transferOutside = await run(
+      mvAppUrl,
+      `insert into transfer (member_id, status, captured_by, created_at)
+       values ($1, 'posted', $2, $3) returning id, reference`,
+      [farah.memberId, officerId, `${OUTSIDE_DATE} 11:00:00+04`]
+    );
+    transferOutsideReference = transferOutside.rows[0].reference;
+    await insertTransaction({
+      kind: 'transfer_leg',
+      memberId: farah.memberId,
+      accountId: farahMsa,
+      amount: '50',
+      method: 'internal_transfer',
+      status: 'posted',
+      createdAt: `${OUTSIDE_DATE} 11:00:00+04`,
+      postedAt: `${OUTSIDE_DATE} 11:01:00+04`,
+      transferId: transferOutside.rows[0].id,
+      legDirection: 'debit',
+    });
+    await insertTransaction({
+      kind: 'transfer_leg',
+      memberId: grace.memberId,
+      accountId: graceMsa,
+      amount: '50',
+      method: 'internal_transfer',
+      status: 'posted',
+      createdAt: `${OUTSIDE_DATE} 11:00:00+04`,
+      postedAt: `${OUTSIDE_DATE} 11:01:00+04`,
+      transferId: transferOutside.rows[0].id,
+      legDirection: 'credit',
+    });
+
+    // ---- demised --------------------------------------------------------
+    const ibrahim = await createMember(
+      individualTypeId,
+      'Ibrahim',
+      'Demised',
+      '2021-01-01'
+    );
+    ibrahimMemberNo = ibrahim.memberNo;
+    const ibrahimMsa = (
+      await run(
+        mvAppUrl,
+        `insert into account (member_id, account_type_id, is_membership_default, status)
+         values ($1, $2, true, 'active') returning id`,
+        [ibrahim.memberId, msaTypeId]
+      )
+    ).rows[0].id;
+
+    demiseReference = (
+      await insertTransaction({
+        kind: 'demise',
+        memberId: ibrahim.memberId,
+        accountId: ibrahimMsa,
+        amount: '20000',
+        status: 'posted',
+        submittedAt: `${IN_PERIOD_FROM} 08:00:00+04`,
+        postedAt: `${IN_PERIOD_FROM} 09:00:00+04`,
+        claimantKind: 'nominee',
+        claimant: {
+          name: 'Zara Ibrahim',
+          nic: 'N123',
+          address: 'Port Louis',
+          relation: 'Spouse',
+        },
+        takafulBenefit: '15000',
+      })
+    ).reference;
+
+    demiseOutsideReference = (
+      await insertTransaction({
+        kind: 'demise',
+        memberId: ibrahim.memberId,
+        accountId: ibrahimMsa,
+        amount: '5000',
+        status: 'posted',
+        submittedAt: `${OUTSIDE_DATE} 08:00:00+04`,
+        postedAt: `${OUTSIDE_DATE} 09:00:00+04`,
+        claimantKind: 'nominee',
+        claimant: { name: 'Outside Claimant' },
+      })
+    ).reference;
+
+    // A non-member's account, closed to their claimant on death (0098).
+    const customerApplication = await run(
+      mvAppUrl,
+      `insert into membership_application
+         (membership_type_id, captured_by, status, application_kind)
+       values ($1, $2, 'approved', 'customer_account') returning id`,
+      [individualTypeId, officerId]
+    );
+    await run(
+      mvAppUrl,
+      `insert into application_party (application_id, subject, ordinal, values)
+       values ($1, 'applicant', 1, $2::jsonb)`,
+      [
+        customerApplication.rows[0].id,
+        JSON.stringify({ name: 'Jamal', surname: 'Nonmember' }),
+      ]
+    );
+    const jamal = await run(
+      mvAppUrl,
+      `insert into customer (application_id) values ($1) returning id`,
+      [customerApplication.rows[0].id]
+    );
+    const jamalHsa = (
+      await run(
+        mvAppUrl,
+        `insert into account (customer_id, account_type_id, account_no, status)
+         values ($1, $2, 'HSA0001', 'active') returning id`,
+        [jamal.rows[0].id, hsaTypeId]
+      )
+    ).rows[0].id;
+
+    closureOnDeathReference = (
+      await insertTransaction({
+        kind: 'closure',
+        customerId: jamal.rows[0].id,
+        accountId: jamalHsa,
+        amount: '8000',
+        status: 'submitted',
+        submittedAt: `${IN_PERIOD_FROM} 08:30:00+04`,
+        claimantKind: 'other',
+        claimant: {
+          name: 'Nadia Nonmember',
+          nic: 'N999',
+          address: 'Curepipe',
+          relation: 'Daughter',
+        },
+      })
+    ).reference;
+
+    // An ordinary closure — no claimant — is not a death and must be
+    // excluded.
+    ordinaryClosureReference = (
+      await insertTransaction({
+        kind: 'closure',
+        memberId: farah.memberId,
+        accountId: farahMsa,
+        amount: '300',
+        status: 'posted',
+        submittedAt: `${IN_PERIOD_FROM} 08:45:00+04`,
+        postedAt: `${IN_PERIOD_FROM} 09:15:00+04`,
+      })
+    ).reference;
+  }, 60_000);
+
+  afterAll(async () => {
+    if (mvPool) await mvPool.closePool();
+    await run(ADMIN_URL, `drop database if exists ${mvDbName} with (force)`);
+  });
+
+  describe('admissions report', () => {
+    it('lists an admission by whichever date it happened on, marking a rejoin', async () => {
+      const { reports } = await loadMv();
+      const report = reports.reportByCode('admissions')!;
+      const result = await report.run({
+        from: IN_PERIOD_FROM,
+        to: IN_PERIOD_TO,
+      });
+
+      const codes = result.rows.map(r => r['Member no']);
+      expect(codes).toContain(bobMemberNo);
+      expect(codes).toContain(caraMemberNo);
+      // Admitted well before the period — out.
+      expect(result.rows.some(r => r.Name === 'Alice Admitted-Early')).toBe(
+        false
+      );
+
+      const bobRow = result.rows.find(r => r['Member no'] === bobMemberNo)!;
+      expect(bobRow.Name).toBe('Bob Newmember');
+      expect(bobRow.Rejoin).toBe('');
+
+      const caraRow = result.rows.find(r => r['Member no'] === caraMemberNo)!;
+      expect(caraRow.Rejoin).toBe('Yes');
+      expect(caraRow['Application reference']).toBe(caraRejoinReference);
+      expect(caraRow['Status now']).toBe('Active');
+    });
+
+    it('filters by membership type', async () => {
+      const { reports } = await loadMv();
+      const report = reports.reportByCode('admissions')!;
+      const result = await report.run({
+        from: IN_PERIOD_FROM,
+        to: IN_PERIOD_TO,
+        type: 'corporate',
+      });
+      expect(result.rows.length).toBeGreaterThan(0);
+      expect(result.rows.every(r => r.Type === 'Corporate')).toBe(true);
+      expect(result.rows.some(r => r['Member no'] === bobMemberNo)).toBe(false);
+    });
+  });
+
+  describe('resignations report', () => {
+    it('shows the reason, amount, status and dates, and respects the period', async () => {
+      const { reports } = await loadMv();
+      const report = reports.reportByCode('resignations')!;
+      const result = await report.run({
+        from: IN_PERIOD_FROM,
+        to: IN_PERIOD_TO,
+      });
+
+      const refs = result.rows.map(r => r.Reference);
+      expect(refs).toContain(resignationDisbursedRef);
+      expect(refs).toContain(resignationInProgressRef);
+      expect(refs).toContain(resignationRejectedRef);
+      expect(refs).not.toContain(resignationOutsideRef);
+
+      const disbursed = result.rows.find(
+        r => r.Reference === resignationDisbursedRef
+      )!;
+      expect(disbursed['Member no']).toBe(farahMemberNo);
+      expect(disbursed.Reason).toBe('Relocating abroad');
+      expect(disbursed['Amount paid out']).toBe('5000.00');
+      expect(disbursed.Status).toBe('Disbursed');
+      expect(disbursed.Disbursed).not.toBe('');
+
+      const inProgress = result.rows.find(
+        r => r.Reference === resignationInProgressRef
+      )!;
+      expect(inProgress.Status).toBe('With Secretary');
+      expect(inProgress.Disbursed).toBe('');
+    });
+
+    it('offers All / On its way / Disbursed / Rejected, and finds one by it', async () => {
+      const { reports } = await loadMv();
+      const report = reports.reportByCode('resignations')!;
+      const statusFilter = report.filters.find(f => f.name === 'status')!;
+      expect(statusFilter.kind).toBe('choice');
+      const choices = await statusFilter.choices!();
+      expect(choices).toEqual([
+        { value: 'in_progress', label: 'On its way' },
+        { value: 'done', label: 'Disbursed' },
+        { value: 'rejected', label: 'Rejected' },
+      ]);
+
+      const done = await report.run({ status: 'done' });
+      expect(done.rows.map(r => r.Reference)).toContain(
+        resignationDisbursedRef
+      );
+      expect(done.rows.map(r => r.Reference)).not.toContain(
+        resignationInProgressRef
+      );
+
+      const inProgress = await report.run({ status: 'in_progress' });
+      expect(inProgress.rows.map(r => r.Reference)).toContain(
+        resignationInProgressRef
+      );
+      expect(inProgress.rows.map(r => r.Reference)).not.toContain(
+        resignationDisbursedRef
+      );
+
+      const rejected = await report.run({ status: 'rejected' });
+      expect(rejected.rows.map(r => r.Reference)).toContain(
+        resignationRejectedRef
+      );
+      expect(rejected.rows.map(r => r.Reference)).not.toContain(
+        resignationDisbursedRef
+      );
+    });
+  });
+
+  describe('withdrawals report', () => {
+    it('shows the holder, account, amount and method, and respects the period', async () => {
+      const { reports } = await loadMv();
+      const report = reports.reportByCode('withdrawals')!;
+      const result = await report.run({
+        from: IN_PERIOD_FROM,
+        to: IN_PERIOD_TO,
+      });
+
+      const refs = result.rows.map(r => r.Reference);
+      expect(refs).toContain(withdrawalDisbursedRef);
+      expect(refs).toContain(withdrawalInProgressRef);
+      expect(refs).not.toContain(withdrawalOutsideRef);
+
+      const disbursed = result.rows.find(
+        r => r.Reference === withdrawalDisbursedRef
+      )!;
+      expect(disbursed['Member no']).toBe(farahMemberNo);
+      expect(disbursed.Name).toBe('Farah Test');
+      expect(disbursed.Amount).toBe('500.00');
+      expect(disbursed.Method).toBe('Cash');
+      expect(disbursed.Status).toBe('Disbursed');
+
+      const inProgress = result.rows.find(
+        r => r.Reference === withdrawalInProgressRef
+      )!;
+      // Money out not yet paid has only a placeholder method (transactions
+      // report's own rule).
+      expect(inProgress.Method).toBe('');
+      expect(inProgress.Status).toBe('With Secretary');
+    });
+  });
+
+  describe('transfers report', () => {
+    it('gives one row per transfer — internal and external — and respects the period', async () => {
+      const { reports } = await loadMv();
+      const report = reports.reportByCode('transfers')!;
+      const result = await report.run({
+        from: IN_PERIOD_FROM,
+        to: IN_PERIOD_TO,
+      });
+
+      const internal = result.rows.filter(
+        r => r.Reference === internalTransferReference
+      );
+      expect(internal).toHaveLength(1);
+      expect(internal[0].From).toContain('Farah Test');
+      expect(internal[0].To).toContain('Grace Recipient');
+      expect(internal[0].Amount).toBe('1500.00');
+      expect(internal[0].Status).toBe('Disbursed');
+
+      const external = result.rows.filter(
+        r => r.Reference === externalTransferReference
+      );
+      expect(external).toHaveLength(1);
+      expect(external[0].From).toContain('Farah Test');
+      expect(external[0].To).toBe('Harold Estate');
+      expect(external[0].Status).toBe('With Secretary');
+
+      expect(
+        result.rows.some(r => r.Reference === transferOutsideReference)
+      ).toBe(false);
+    });
+  });
+
+  describe('demised report', () => {
+    it('includes a member claim and a non-member closure on death, excludes an ordinary closure, and respects the period', async () => {
+      const { reports } = await loadMv();
+      const report = reports.reportByCode('demised')!;
+      const result = await report.run({
+        from: IN_PERIOD_FROM,
+        to: IN_PERIOD_TO,
+      });
+
+      const refs = result.rows.map(r => r.Reference);
+      expect(refs).toContain(demiseReference);
+      expect(refs).toContain(closureOnDeathReference);
+      expect(refs).not.toContain(ordinaryClosureReference);
+      expect(refs).not.toContain(demiseOutsideReference);
+
+      const claim = result.rows.find(r => r.Reference === demiseReference)!;
+      expect(claim['Member / Non-member']).toBe('Member');
+      expect(claim['Member no']).toBe(ibrahimMemberNo);
+      expect(claim.Claimant).toBe('Zara Ibrahim');
+      // The Takaful benefit is already in the transaction's own amount
+      // (0079) — not added again here.
+      expect(claim['Total paid']).toBe('20000.00');
+      expect(claim.Status).toBe('Disbursed');
+
+      const closure = result.rows.find(
+        r => r.Reference === closureOnDeathReference
+      )!;
+      expect(closure['Member / Non-member']).toBe('Non-member');
+      expect(closure['Member no']).toBe('');
+      expect(closure.Claimant).toBe('Nadia Nonmember');
+      expect(closure['Total paid']).toBe('8000.00');
+    });
+  });
+});
