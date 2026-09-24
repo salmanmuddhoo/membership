@@ -149,7 +149,11 @@ function buildDocument(descriptors: EndpointDescriptor[]) {
             ? '(none — public)'
             : d.caller === 'integration'
               ? `(an API credential with scope: ${d.scope})`
-              : (d.permission ?? '(any signed-in account)'),
+              : d.permission === null
+                ? '(any signed-in account)'
+                : typeof d.permission === 'string'
+                  ? d.permission
+                  : d.permission.join(' or '),
       // The staff cookie is the document-wide default; the member surface
       // overrides it per operation (docs/member-app.md).
       ...(d.caller === 'member'

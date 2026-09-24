@@ -662,3 +662,144 @@ describe("updateContactDetails: a Minor's guardian is never editable here", () =
     expect(values.surname).toBe(ORIGINAL.surname);
   });
 });
+
+describe('member.edit_all_details: any applicant detail, name and NIC included', () => {
+  let corrector: Principal;
+  beforeAll(() => {
+    corrector = principalFor(officer.userId, 'officer@test', [
+      'member.view',
+      'member.edit_all_details',
+    ]);
+  });
+
+  it('opens every applicant field on the page, filled in or not', async () => {
+    const locked = await contact.editableContactFields(applicationId);
+    expect(locked.find(f => f.fieldKey === 'name')?.editable).toBe(false);
+    const open = await contact.editableContactFields(applicationId, {
+      allDetails: true,
+    });
+    for (const field of open.filter(f => f.subject === 'applicant')) {
+      expect(field.editable, field.fieldKey).toBe(true);
+    }
+  });
+
+  it('corrects a filled-in name and NIC, and audits it as a correction', async () => {
+    const result = await contact.updateContactDetails(
+      applicationId,
+      applicantChanges({ name: 'Fatima', nic: 'P1234567890123' }),
+      { entityType: 'member', entityId: memberId },
+      corrector
+    );
+    expect(result.updated.sort()).toEqual(['name', 'nic']);
+    const values = await currentValues(applicationId);
+    expect(values.name).toBe('Fatima');
+    expect(values.nic).toBe('P1234567890123');
+    expect(values.surname).toBe(ORIGINAL.surname);
+
+    const events = await run(
+      appUrl,
+      `select action, previous_value, new_value from audit_event
+        where entity_type = 'member' and entity_id = $1
+        order by id desc limit 1`,
+      [memberId]
+    );
+    expect(events.rows[0].action).toBe('member.details.corrected');
+    expect(events.rows[0].previous_value).toEqual({
+      name: ORIGINAL.name,
+      nic: ORIGINAL.nic,
+    });
+    expect(events.rows[0].new_value).toEqual({
+      name: 'Fatima',
+      nic: 'P1234567890123',
+    });
+  });
+
+  it('corrects a non-member the same way', async () => {
+    const result = await contact.updateContactDetails(
+      customerApplicationId,
+      applicantChanges({ surname: 'Peeraly' }),
+      { entityType: 'customer', entityId: customerId },
+      corrector
+    );
+    expect(result.updated).toEqual(['surname']);
+    expect((await currentValues(customerApplicationId)).surname).toBe(
+      'Peeraly'
+    );
+    await run(
+      appUrl,
+      `update application_party set values = $2::jsonb
+        where application_id = $1 and subject = 'applicant'`,
+      [customerApplicationId, JSON.stringify(ORIGINAL)]
+    );
+  });
+
+  it("refuses an NIC that is someone else's, and saves nothing", async () => {
+    await expect(
+      contact.updateContactDetails(
+        applicationId,
+        applicantChanges({ name: 'Fatima', nic: 'B9999999999999' }),
+        { entityType: 'member', entityId: memberId },
+        corrector
+      )
+    ).rejects.toThrow('This NIC is already on file for member AB0002.');
+    expect(await currentValues(applicationId)).toEqual(ORIGINAL);
+  });
+
+  it('refuses emptying a required field', async () => {
+    await expect(
+      contact.updateContactDetails(
+        applicationId,
+        applicantChanges({ surname: '' }),
+        { entityType: 'member', entityId: memberId },
+        corrector
+      )
+    ).rejects.toThrow('Surname is required.');
+    expect((await currentValues(applicationId)).surname).toBe(ORIGINAL.surname);
+  });
+
+  it('refuses a value that is not one of the choices, and stores a choice as written', async () => {
+    await expect(
+      contact.updateContactDetails(
+        applicationId,
+        applicantChanges({ gender: 'Unknown' }),
+        { entityType: 'member', entityId: memberId },
+        corrector
+      )
+    ).rejects.toThrow('Gender must be one of: Male, Female');
+
+    await contact.updateContactDetails(
+      applicationId,
+      applicantChanges({ gender: 'female' }),
+      { entityType: 'member', entityId: memberId },
+      corrector
+    );
+    expect((await currentValues(applicationId)).gender).toBe('Female');
+  });
+
+  it('refuses a date of birth that is not a real, past day', async () => {
+    for (const value of ['2001-02-30', '31/12/2001', '2999-01-01']) {
+      await expect(
+        contact.updateContactDetails(
+          minorApplicationId,
+          applicantChanges({ date_of_birth: value }),
+          { entityType: 'member', entityId: memberId },
+          corrector
+        ),
+        value
+      ).rejects.toThrow('Date of birth is not a possible date.');
+    }
+  });
+
+  it('still never changes a guardian field', async () => {
+    const result = await contact.updateContactDetails(
+      minorApplicationId,
+      [{ subject: 'guardian', fieldKey: 'surname', value: 'Other' }],
+      { entityType: 'member', entityId: memberId },
+      corrector
+    );
+    expect(result.updated).toEqual([]);
+    expect((await currentValues(minorApplicationId, 'guardian')).surname).toBe(
+      ORIGINAL.surname
+    );
+  });
+});

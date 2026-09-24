@@ -25,12 +25,28 @@
 // same as it always was.
 import { recordAudit } from '../access/audit';
 import type { Principal } from '../access/principal';
+import { findNicHolder, normalise } from '../applications/capture';
 import { toInternational, PhoneFormatError } from '../applications/phone';
-import { listMembershipTypes } from '../config/reference';
+import {
+  listMembershipTypes,
+  type MembershipTypeField,
+} from '../config/reference';
+import type { PoolClient } from 'pg';
 import { query, withTransaction } from '../db/pool';
 
 export const PERMISSION_EDIT_CONTACT = 'member.edit_contact';
+// Officer request: a role that may correct ANY detail of a member or
+// non-member — name, NIC, date of birth, everything the locking rule above
+// keeps closed once filled in. The fields are still checked the way capture
+// checks them (required, choices, dates, phone format, an NIC nobody else
+// holds), and the change is audited as a correction, before and after.
+export const PERMISSION_EDIT_ALL_DETAILS = 'member.edit_all_details';
 const ACTION_UPDATED = 'member.contact.updated';
+const ACTION_CORRECTED = 'member.details.corrected';
+
+export function mayEditAllDetails(principal: Principal): boolean {
+  return principal.permissions.has(PERMISSION_EDIT_ALL_DETAILS);
+}
 
 const PHONE_FIELD_KEYS = new Set(['telephone', 'mobile']);
 
@@ -62,7 +78,10 @@ export class ContactUpdateError extends Error {
 }
 
 function assertMayEdit(principal: Principal): void {
-  if (!principal.permissions.has(PERMISSION_EDIT_CONTACT)) {
+  if (
+    !principal.permissions.has(PERMISSION_EDIT_CONTACT) &&
+    !mayEditAllDetails(principal)
+  ) {
     throw new ContactUpdateError(
       'You do not have permission to edit contact details.',
       'forbidden'
@@ -97,7 +116,10 @@ export interface EditableContactField {
 // returns nothing to show, same as a type that never asked for a Nominee
 // renders no Nominee section.
 export async function editableContactFields(
-  applicationId: string
+  applicationId: string,
+  // With member.edit_all_details every applicant field is open, filled in
+  // or not.
+  options: { allDetails?: boolean } = {}
 ): Promise<EditableContactField[]> {
   const application = await query<{ membership_type_id: string }>(
     `select membership_type_id from membership_application where id = $1`,
@@ -144,7 +166,9 @@ export async function editableContactFields(
         subject: 'applicant' as const,
         fieldKey: f.fieldKey,
         editable:
-          ALWAYS_EDITABLE_APPLICANT_FIELD_KEYS.has(f.fieldKey) || value === '',
+          options.allDetails === true ||
+          ALWAYS_EDITABLE_APPLICANT_FIELD_KEYS.has(f.fieldKey) ||
+          value === '',
         label: f.label,
         dataType: f.dataType,
         value,
@@ -167,6 +191,94 @@ export async function editableContactFields(
       value: valuesBySubject.get('guardian')?.[f.fieldKey] ?? '',
     })),
   ];
+}
+
+// The applicant fields this application's type configures, by key — what a
+// correction is checked against.
+async function applicantFieldsOf(
+  applicationId: string
+): Promise<Map<string, MembershipTypeField>> {
+  const application = await query<{ membership_type_id: string }>(
+    `select membership_type_id from membership_application where id = $1`,
+    [applicationId]
+  );
+  const type = (await listMembershipTypes()).find(
+    t => t.id === application.rows[0]?.membership_type_id
+  );
+  return new Map(
+    (type?.fields ?? [])
+      .filter(f => f.subject === 'applicant' && f.isVisible)
+      .map(f => [f.fieldKey, f])
+  );
+}
+
+const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+// One corrected applicant value, checked the way capture checks it: not
+// emptied if required, a configured choice, a real date not in the future,
+// a phone number that can be placed — and an NIC nobody else holds.
+async function checkedApplicantValue(
+  field: MembershipTypeField,
+  raw: string,
+  applicationId: string,
+  entity: ContactEntity,
+  client: PoolClient
+): Promise<string> {
+  if (raw === '') {
+    if (field.isMandatory) {
+      throw new ContactUpdateError(`${field.label} is required.`);
+    }
+    return '';
+  }
+  const { values, errors } = normalise({ [field.fieldKey]: raw }, [field]);
+  if (errors.length > 0) throw new ContactUpdateError(errors[0].label);
+  const value = values[field.fieldKey] ?? raw;
+
+  if (field.dataType === 'date') {
+    const match = ISO_DATE.exec(value);
+    const date = match
+      ? new Date(Date.UTC(+match[1], +match[2] - 1, +match[3]))
+      : null;
+    if (
+      !match ||
+      !date ||
+      date.getUTCDate() !== +match[3] ||
+      date.getUTCMonth() !== +match[2] - 1 ||
+      date.getTime() > Date.now()
+    ) {
+      throw new ContactUpdateError(`${field.label} is not a possible date.`);
+    }
+  }
+
+  if (field.fieldKey === 'nic') {
+    // Checked as a new application's NIC is: someone else — a member, a
+    // non-member, an application in progress — already holding it. This
+    // person's own records are theirs, not a clash.
+    const holder = await findNicHolder(
+      value,
+      applicationId,
+      entity.entityType === 'customer' ? entity.entityId : null,
+      entity.entityType === 'member' ? entity.entityId : null,
+      client
+    );
+    if (holder) {
+      const who =
+        holder.kind === 'member'
+          ? `member ${holder.reference}`
+          : holder.kind === 'customer'
+            ? holder.reference
+              ? `non-member ${holder.reference}`
+              : 'another non-member'
+            : `application ${holder.reference}`;
+      throw new ContactUpdateError(`This NIC is already on file for ${who}.`);
+    }
+  }
+  return value;
+}
+
+export interface ContactEntity {
+  entityType: 'member' | 'customer';
+  entityId: string;
 }
 
 export interface ContactFieldChange {
@@ -193,10 +305,14 @@ export interface ContactFieldChange {
 export async function updateContactDetails(
   applicationId: string,
   changes: ContactFieldChange[],
-  entity: { entityType: 'member' | 'customer'; entityId: string },
+  entity: ContactEntity,
   principal: Principal
 ): Promise<{ updated: string[] }> {
   assertMayEdit(principal);
+  const allDetails = mayEditAllDetails(principal);
+  const applicantFields = allDetails
+    ? await applicantFieldsOf(applicationId)
+    : new Map<string, MembershipTypeField>();
 
   return withTransaction(async client => {
     const bySubject = new Map<EditableSubject, ContactFieldChange[]>();
@@ -233,6 +349,7 @@ export async function updateContactDetails(
         // value, it is locked — this is the server-side half of that,
         // not just the page hiding the input.
         if (
+          !allDetails &&
           subject === 'applicant' &&
           !ALWAYS_EDITABLE_APPLICANT_FIELD_KEYS.has(fieldKey) &&
           (before ?? {})[fieldKey]
@@ -240,6 +357,17 @@ export async function updateContactDetails(
           continue;
         }
         let value = raw.trim();
+        if (allDetails && subject === 'applicant') {
+          const field = applicantFields.get(fieldKey);
+          if (!field) continue;
+          value = await checkedApplicantValue(
+            field,
+            value,
+            applicationId,
+            entity,
+            client
+          );
+        }
         if (PHONE_FIELD_KEYS.has(fieldKey) && value !== '') {
           try {
             value = toInternational(value);
@@ -278,11 +406,19 @@ export async function updateContactDetails(
       return { updated: [] };
     }
 
+    // A field the counter edit could not have changed (a filled-in name,
+    // NIC…) is recorded as a correction, so it stands out on the trail.
+    const corrected = Object.keys(newValue).some(
+      key =>
+        applicantFields.has(key) &&
+        !ALWAYS_EDITABLE_APPLICANT_FIELD_KEYS.has(key) &&
+        previousValue[key] !== ''
+    );
     await recordAudit(
       {
         actorUserId: principal.userId,
         actorDescription: principal.email,
-        action: ACTION_UPDATED,
+        action: corrected ? ACTION_CORRECTED : ACTION_UPDATED,
         entityType: entity.entityType,
         entityId: entity.entityId,
         previousValue,

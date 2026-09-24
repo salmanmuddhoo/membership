@@ -33,8 +33,9 @@ export interface EndpointDescriptor {
   tag: string;
   // The permission required. `null` means "any signed-in, active account" and
   // has to be written deliberately — there is no way to omit the field and get
-  // an unprotected endpoint by accident.
-  permission: string | null;
+  // an unprotected endpoint by accident. A list means any one of them will
+  // do — an endpoint two separately granted permissions both reach.
+  permission: string | readonly string[] | null;
   // Who reaches this endpoint. Absent means staff, through the session
   // cookie and defineEndpoint. 'member' is the member app's bearer token and
   // 'public' is nobody at all — both are only ever produced by
@@ -145,9 +146,15 @@ export function defineEndpoint(
         return finish(apiError(code, correlationId), 'anonymous', code);
       }
 
+      const required =
+        descriptor.permission === null
+          ? null
+          : typeof descriptor.permission === 'string'
+            ? [descriptor.permission]
+            : descriptor.permission;
       if (
-        descriptor.permission !== null &&
-        !hasPermission(principal, descriptor.permission)
+        required !== null &&
+        !required.some(code => hasPermission(principal, code))
       ) {
         await recordAuditQuietly({
           actorUserId: principal.userId,
@@ -155,7 +162,10 @@ export function defineEndpoint(
           action: 'access.denied',
           entityType: 'endpoint',
           entityId: `${descriptor.method} ${descriptor.path}`,
-          newValue: { required: descriptor.permission },
+          newValue: {
+            required:
+              required.length === 1 ? required[0] : required.join(' or '),
+          },
           requestId: correlationId,
           ipAddress: clientAddress(context.request.headers),
         });

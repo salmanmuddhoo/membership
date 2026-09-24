@@ -8992,12 +8992,12 @@
     "/api/v1/members/{id}/contact": {
       "patch": {
         "summary": "Save applicant/Employment Details for a member or non-member",
-        "description": "Straight through, no draft, no approval — the same write the member/customer page itself makes. Only the fields that actually changed are written; a locked applicant field or any guardian field sent anyway is silently dropped, never saved. Returns the field list refreshed with what was actually saved, so the page can update in place.",
+        "description": "Straight through, no draft, no approval — the same write the member/customer page itself makes. Only the fields that actually changed are written; a locked applicant field or any guardian field sent anyway is silently dropped, never saved. With member.edit_all_details no applicant field is locked: name, NIC and the rest can be corrected, checked as on the application. Returns the field list refreshed with what was actually saved, so the page can update in place.",
         "tags": [
           "Members"
         ],
         "operationId": "patchMembersIdContact",
-        "x-required-permission": "member.edit_contact",
+        "x-required-permission": "member.edit_contact or member.edit_all_details",
         "responses": {
           "200": {
             "description": "Success",

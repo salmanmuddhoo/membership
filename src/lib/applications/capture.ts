@@ -5,7 +5,7 @@
 // type configuration of M2 (S-205) — so adding a field to the Corporate form
 // is a configuration change, and this code does not need to know it happened.
 import { statusLabel } from '../members/labels';
-import type { PoolClient } from 'pg';
+import type { PoolClient, QueryResultRow } from 'pg';
 import { recordAudit } from '../access/audit';
 import { query, withTransaction } from '../db/pool';
 import {
@@ -1824,13 +1824,13 @@ export async function guardianOf(
 // that happens to have typed the same NIC.
 // Who else an NIC is on file for. What comes back names the kind of record
 // so the caller can say what to do about it (lifecycle test, LC-09).
-interface NicHolder {
+export interface NicHolder {
   kind: 'member' | 'customer' | 'application';
   reference: string;
   status: string;
 }
 
-async function findNicHolder(
+export async function findNicHolder(
   nic: string,
   excludeApplicationId: string,
   excludeCustomerId: string | null = null,
@@ -1838,9 +1838,14 @@ async function findNicHolder(
   // their own NIC because it IS them — neither that member, nor the
   // applications that are theirs, nor the customer record they converted
   // from, is someone else holding it.
-  excludeMemberId: string | null = null
+  excludeMemberId: string | null = null,
+  // A caller already inside a transaction passes its own connection, so the
+  // lookup does not wait on a second one from the pool.
+  client: PoolClient | null = null
 ): Promise<NicHolder | null> {
-  const member = await query<{ member_no: string; status: string }>(
+  const run = <T extends QueryResultRow>(text: string, params: unknown[]) =>
+    client ? client.query<T>(text, params) : query<T>(text, params);
+  const member = await run<{ member_no: string; status: string }>(
     `select m.member_no, m.status
        from member m
        join application_party p
@@ -1862,7 +1867,7 @@ async function findNicHolder(
     };
   }
 
-  const customer = await query<{ name: string | null; status: string }>(
+  const customer = await run<{ name: string | null; status: string }>(
     `select trim(coalesce(p.values->>'name', '') || ' '
                  || coalesce(p.values->>'surname', '')) as name, c.status
        from customer c
@@ -1891,7 +1896,7 @@ async function findNicHolder(
   // member's or the customer's (lifecycle test, LC-01: a member who started
   // as a non-member and rejoined once was refused a second rejoin on their
   // own earlier membership application).
-  const application = await query<{ reference: string; status: string }>(
+  const application = await run<{ reference: string; status: string }>(
     `with own_roots as (
        select coalesce(o.folder_application_id, o.id) as root
          from membership_application o
