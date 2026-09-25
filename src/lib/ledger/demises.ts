@@ -19,6 +19,7 @@
 import { recordAudit } from '../access/audit';
 import type { Principal } from '../access/principal';
 import {
+  cancelDraftsOnDeath,
   claimableMembershipType,
   claimantFrom,
   nomineeOnApplication,
@@ -618,6 +619,9 @@ export async function submitDemise(
             );
       if (submission.posted && receipt) {
         await markReceiptIssued(receipt.id, client);
+      }
+      if (submission.posted) {
+        await cancelDraftsOnDeath(client, claim.id, principal);
       }
     });
     if (receipt) await notifyReceiptIssued(claim.id);

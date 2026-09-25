@@ -40,6 +40,7 @@ import { requireBankAccount, resolveBankAccount } from './bank-accounts';
 import {
   claimableMembershipType,
   claimantFrom,
+  cancelDraftsOnDeath,
   markCustomerClosedOnceAllClosed,
   markDeceasedOnceAllClosed,
   nomineeOnApplication,
@@ -866,6 +867,7 @@ export async function submitClosure(
       if (submission.posted) {
         await markDeceasedOnceAllClosed(client, closure.id, principal);
         await markCustomerClosedOnceAllClosed(client, closure.id, principal);
+        await cancelDraftsOnDeath(client, closure.id, principal);
       }
     });
     if (receipt) await notifyReceiptIssued(closure.id);

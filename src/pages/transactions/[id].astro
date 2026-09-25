@@ -30,7 +30,12 @@ import {
   reverseTransaction,
   EXIT_KINDS,
 } from '@lib/ledger/reversals';
-import { accountsClosedTogether } from '@lib/ledger/claimants';
+import {
+  accountsClosedTogether,
+  draftsLeftOnDeath,
+} from '@lib/ledger/claimants';
+import { guardianGoneMessage } from '@lib/members/guardian';
+import DraftsCancelledOnDeath from '@components/DraftsCancelledOnDeath.astro';
 import { resubmitTransfer, TransferError } from '@lib/ledger/transfers';
 import { resubmitWithdrawal, WithdrawalError } from '@lib/ledger/withdrawals';
 import {
@@ -250,6 +255,23 @@ const closedOnDeathAccounts =
   (isClosure && transaction.claimant) || isDemise || isResignation
     ? await accountsClosedTogether(transaction.id)
     : [];
+// A claim not yet disbursed names the holder's drafts it will cancel.
+const draftsOnDeath =
+  ((isClosure && transaction.claimant) || isDemise) &&
+  !['posted', 'rejected', 'cancelled'].includes(transaction.status)
+    ? await draftsLeftOnDeath(transaction.holderId, transaction.id)
+    : [];
+// Money out of a minor whose guardian is demised goes no further until a
+// new guardian is recorded (review.ts refuseWhileGuardianGone); it can
+// still be returned or rejected.
+const guardianGone =
+  ['withdrawal', 'transfer_leg', 'closure', 'resignation'].includes(
+    transaction.kind
+  ) && ['submitted', 'under_review', 'approved'].includes(transaction.status)
+    ? await guardianGoneMessage(
+        isCreditLeg ? transaction.counterpartHolderId : transaction.holderId
+      )
+    : null;
 // A request the officer built (a closure, a resignation, a claim): its
 // papers are on it, and it is corrected in its own wizard.
 const isExit = isClosure || isResignation || isDemise;
@@ -703,6 +725,10 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       </p>
     )}
 
+    <DraftsCancelledOnDeath drafts={draftsOnDeath} />
+
+    {guardianGone && <p class={NOTICE_WARN}>{guardianGone}</p>}
+
     {heldByColleague && (
       <p class={NOTICE_WARN}>
         {transaction.status === 'returned' ? 'Returned to' : 'Draft with'}{' '}
@@ -752,9 +778,11 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           ></textarea>
         </label>
         <div class="flex flex-wrap gap-2">
-          <button type="submit" name="outcome" value="forward" class={BUTTON}>
-            {position.isLast ? 'Approve' : 'Forward'}
-          </button>
+          {!guardianGone && (
+            <button type="submit" name="outcome" value="forward" class={BUTTON}>
+              {position.isLast ? 'Approve' : 'Forward'}
+            </button>
+          )}
           <button type="submit" name="outcome" value="return" class={DANGER}>
             Return
           </button>
@@ -766,7 +794,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       </form>
     )}
 
-    {canPost && (
+    {canPost && !guardianGone && (
       <form method="post" data-disbursement-form class={`space-y-3 ${CARD}`}>
         <p class="text-sm text-neutral-700 dark:text-neutral-200">
           {isDemise

@@ -26,6 +26,7 @@ import { requireBankAccount, resolveBankAccount } from './bank-accounts';
 import { LedgerError, postTransaction } from './ledger';
 import { notifyReceiptIssued } from './receipt-notifications';
 import {
+  cancelDraftsOnDeath,
   markCustomerClosedOnceAllClosed,
   markDeceasedOnceAllClosed,
 } from './claimants';
@@ -37,6 +38,7 @@ import type {
   TransactionRowKind,
 } from '../config/reference';
 import { offeredMethod, PaymentError } from '../payments/payments';
+import { guardianGoneMessage } from '../members/guardian';
 
 export const PERMISSION_REVIEW = 'transaction.review';
 export const PERMISSION_APPROVE = 'transaction.approve';
@@ -541,6 +543,30 @@ export interface Decision {
   comment: string;
 }
 
+// Money leaving a minor whose guardian is demised waits for a new guardian
+// (officer direction): what was already on its way when the guardian died
+// is neither forwarded nor paid out until then, though it can still be
+// returned or rejected. The same rule the capture paths apply
+// (withdrawals.ts, closures.ts, resignations.ts). A transfer is paid by its
+// debit side, whichever leg is open.
+async function refuseWhileGuardianGone(
+  transaction: TransactionSummary
+): Promise<void> {
+  if (
+    !['withdrawal', 'transfer_leg', 'closure', 'resignation'].includes(
+      transaction.kind
+    )
+  ) {
+    return;
+  }
+  const payer =
+    transaction.legDirection === 'credit'
+      ? transaction.counterpartHolderId
+      : transaction.holderId;
+  const message = await guardianGoneMessage(payer);
+  if (message) throw new ReviewError(message, 'conflict');
+}
+
 async function refuseUnlessSegregated(
   principal: Principal,
   reference: string,
@@ -609,6 +635,9 @@ export async function reviewTransaction(
         ? 'Say what needs correcting before returning it.'
         : 'Say why before rejecting it.'
     );
+  }
+  if (decision.outcome === 'forward') {
+    await refuseWhileGuardianGone(transaction);
   }
   await refuseUnlessSegregated(
     principal,
@@ -848,6 +877,7 @@ export async function postApprovedTransaction(
       throw err;
     }
   }
+  await refuseWhileGuardianGone(transaction);
   await refuseUnlessSegregated(principal, transaction.reference, ACTION_POSTED);
 
   const receipt = await allocateReceiptNumber(principal.userId);
@@ -938,6 +968,8 @@ export async function postApprovedTransaction(
       await markDeceasedOnceAllClosed(client, transaction.id, principal);
       // An ordinary closure that leaves a non-member nothing open.
       await markCustomerClosedOnceAllClosed(client, transaction.id, principal);
+      // The holder is demised: their drafts can never go through.
+      await cancelDraftsOnDeath(client, transaction.id, principal);
       await markReceiptIssued(receipt.id, client);
       await client.query(
         `insert into transaction_transition

@@ -1,0 +1,36 @@
+---
+// The holder's drafts and returned transactions a death claim cancels once
+// it is disbursed (claimants.ts cancelDraftsOnDeath), named before it is,
+// on the claim's own pages. Nothing when there are none.
+import type { DraftLeftOnDeath } from '@lib/ledger/claimants';
+import { STATUS_LABELS } from '@lib/ledger/labels';
+import { formatMoney } from '@lib/payments/money';
+import { NOTICE_WARN } from '@lib/ui';
+
+interface Props {
+  drafts: DraftLeftOnDeath[];
+}
+
+const { drafts } = Astro.props;
+---
+
+{drafts.length > 0 && (
+  <div class={`${NOTICE_WARN} space-y-1`}>
+    <p>
+      {drafts.length === 1
+        ? 'This draft is cancelled when the claim is disbursed:'
+        : `These ${drafts.length} drafts are cancelled when the claim is disbursed:`}
+    </p>
+    <ul class="list-disc pl-5">
+      {drafts.map(draft => (
+        <li>
+          <a href={`/transactions/${draft.id}`} class="underline">
+            {draft.reference}
+          </a>{' '}
+          · {draft.kindName} · {formatMoney(draft.amount)} ·{' '}
+          {STATUS_LABELS[draft.status]}
+        </li>
+      ))}
+    </ul>
+  </div>
+)}
