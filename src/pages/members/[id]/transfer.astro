@@ -350,8 +350,15 @@ const initialCents = /^\d{1,12}(\.\d{1,2})?$/.test(values.amount ?? '')
               name="amount"
               required
               value={values.amount}
+              aria-describedby="transfer-amount-error"
               class={INPUT}
             />
+            <p
+              data-amount-error
+              id="transfer-amount-error"
+              class="text-xs text-red-700 dark:text-red-300"
+              hidden
+            ></p>
           </label>
 
           <fieldset class="space-y-3">
@@ -543,8 +550,42 @@ const initialCents = /^\d{1,12}(\.\d{1,2})?$/.test(values.amount ?? '')
     );
     const numberLabel = form.querySelector<HTMLElement>('[data-number-label]');
     const numberInput = form.querySelector<HTMLInputElement>('[data-number]');
+    const amountInput = form.querySelector<HTMLInputElement>('[name="amount"]');
+    const amountError = form.querySelector<HTMLElement>('[data-amount-error]');
+    const submitButton = form.querySelector<HTMLButtonElement>(
+      'button[type="submit"]'
+    );
     const money = (value: string) =>
       `Rs ${Number(value).toLocaleString('en-GB', { minimumFractionDigits: 2 })}`;
+    // What the chosen source account can pay out without falling under its
+    // type's minimum balance — kept up to date by recompute() as the
+    // account changes, and checked against the typed amount below.
+    let room = 0;
+    // Parsed the way the server parses it (ledger/transfers.ts): strip
+    // commas and spaces, then Number(). Over room is a client-side nudge
+    // only — the server refuses it regardless.
+    const checkAmount = () => {
+      if (!amountInput) return;
+      amountInput.dataset.max = room.toFixed(2);
+      const typed = amountInput.value.replace(/[,\s]/g, '');
+      const amount = typed === '' ? 0 : Number(typed);
+      const overRoom = typed !== '' && Number.isFinite(amount) && amount > room;
+      if (overRoom) {
+        const message = `At most ${money(room.toFixed(2))} can be transferred from this account.`;
+        amountInput.setCustomValidity(message);
+        if (amountError) {
+          amountError.textContent = message;
+          amountError.hidden = false;
+        }
+      } else {
+        amountInput.setCustomValidity('');
+        if (amountError) {
+          amountError.textContent = '';
+          amountError.hidden = true;
+        }
+      }
+      if (submitButton) submitButton.disabled = overRoom;
+    };
     const recompute = () => {
       const chosen = form.querySelector<HTMLInputElement>(
         'input[name="destinationKind"]:checked'
@@ -555,14 +596,16 @@ const initialCents = /^\d{1,12}(\.\d{1,2})?$/.test(values.amount ?? '')
         block.hidden = block.dataset.destination !== chosen;
       }
       const account = sourceSelect?.selectedOptions[0];
-      if (note && account) {
+      if (account) {
         const available = account.dataset.available ?? '0';
         const floor = account.dataset.floor ?? '0';
-        const room = Math.max(0, Number(available) - Number(floor));
-        note.textContent =
-          Number(floor) > 0
-            ? `${money(available)} available; the account keeps at least ${money(floor)}, so up to ${money(room.toFixed(2))} can be transferred.`
-            : `${money(available)} available.`;
+        room = Math.max(0, Number(available) - Number(floor));
+        if (note) {
+          note.textContent =
+            Number(floor) > 0
+              ? `${money(available)} available; the account keeps at least ${money(floor)}, so up to ${money(room.toFixed(2))} can be transferred.`
+              : `${money(available)} available.`;
+        }
       }
       const method = methodSelect?.selectedOptions[0];
       if (referenceField) {
@@ -579,8 +622,10 @@ const initialCents = /^\d{1,12}(\.\d{1,2})?$/.test(values.amount ?? '')
       }
       if (numberInput)
         numberInput.placeholder = own ? 'AB0001' : `${prefix}0001`;
+      checkAmount();
     };
     form.addEventListener('change', recompute);
+    amountInput?.addEventListener('input', checkAmount);
     recompute();
 
     // Officer feedback: a transfer asks once, naming the amount and both
@@ -589,7 +634,6 @@ const initialCents = /^\d{1,12}(\.\d{1,2})?$/.test(values.amount ?? '')
     // the browser in the device's language. Intercepting the form's submit
     // (not the button's click) covers Enter in a field too; native
     // validation has already passed by the time this fires.
-    const amountInput = form.querySelector<HTMLInputElement>('[name="amount"]');
     const ownSelect = form.querySelector<HTMLSelectElement>(
       '[name="ownAccountId"]'
     );
@@ -612,6 +656,10 @@ const initialCents = /^\d{1,12}(\.\d{1,2})?$/.test(values.amount ?? '')
         return;
       }
       e.preventDefault();
+      // Over the account's room: the amount field already carries the
+      // message, so no dialog — fixing the amount is the next step, not
+      // confirming a transfer that cannot go through.
+      if (amountInput && !amountInput.validity.valid) return;
       const submitter =
         e.submitter instanceof HTMLElement ? e.submitter : undefined;
       const destinationKind = form.querySelector<HTMLInputElement>(

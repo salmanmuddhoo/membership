@@ -7,10 +7,7 @@
 // row: the page hands every row it is about to show to describeAuditDetail
 // once, and this groups them by entityType before it goes near the
 // database.
-import {
-  paysOut,
-  STATUS_LABELS as TRANSACTION_STATUS_LABELS,
-} from '../ledger/labels';
+import { paysOut, transactionStatusLabel } from '../ledger/labels';
 import { KIND_WORDS as TRANSACTION_KIND_WORDS } from '../ledger/void-notifications';
 import {
   assembleTransaction,
@@ -242,7 +239,7 @@ function transactionFacts(t: TransactionSummary): AuditDetailFact[] {
     { label: 'Amount', value: formatMoney(t.amount, t.currency) },
     {
       label: 'Status',
-      value: TRANSACTION_STATUS_LABELS[t.status] ?? t.status,
+      value: transactionStatusLabel(t),
     },
     { label: 'Account', value: `${accountLabel(t)} of ${holderLabel(t)}` },
   ];

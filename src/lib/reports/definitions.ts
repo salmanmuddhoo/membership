@@ -959,6 +959,14 @@ const receipts: ReportDefinition = {
 // off any chain. Resolved when the page loads, same as any other choice
 // list, so a chain reconfigured in Workflows is reflected without a code
 // change.
+// A posted transaction's status, as labels.ts words it on screen: a
+// deposit and a transfer are recorded, everything else disbursed.
+const POSTED_STATUS_SQL = (alias: string) =>
+  `case ${alias}.kind when 'deposit' then 'Deposit recorded'
+                      when 'transfer_leg' then 'Transfer recorded'
+                      else 'Disbursed' end`;
+const POSTED_STATUSES = ['Disbursed', 'Deposit recorded', 'Transfer recorded'];
+
 const transactionStatusChoices = async () => {
   const result = await query<{ code: string; name: string }>(
     `select distinct r.code, r.name
@@ -975,7 +983,7 @@ const transactionStatusChoices = async () => {
     })),
     { value: 'approved', label: 'To disburse' },
     { value: 'returned', label: 'Returned' },
-    { value: 'done', label: 'Disbursed' },
+    { value: 'done', label: 'Disbursed or recorded' },
     { value: 'rejected', label: 'Rejected' },
     { value: 'cancelled', label: 'Cancelled' },
   ];
@@ -1047,14 +1055,15 @@ const transactions: ReportDefinition = {
               t.amount::text as "Amount",
               -- Where it is now, not merely its bare status: on a chain,
               -- who holds it; approved, that it is waiting to be disbursed;
-              -- posted reads Disbursed, same as elsewhere on screen
-              -- (business decision, every kind).
+              -- posted reads as it does elsewhere on screen
+              -- (labels.ts): Deposit recorded, Transfer recorded, or
+              -- Disbursed.
               case when t.status in ('submitted', 'under_review')
                         then coalesce('With ' || r.name,
                                        initcap(replace(t.status, '_', ' ')))
                    when t.status = 'approved' then 'To disburse'
                    when t.status = 'returned' then 'Returned'
-                   when t.status = 'posted' then 'Disbursed'
+                   when t.status = 'posted' then ${POSTED_STATUS_SQL('t')}
                    when t.status = 'rejected' then 'Rejected'
                    when t.status = 'cancelled' then 'Cancelled'
                    else initcap(replace(t.status, '_', ' ')) end as "Status",
@@ -1114,11 +1123,11 @@ const transactions: ReportDefinition = {
       ]
     );
 
-    // What was actually disbursed, by kind: the figures a period is closed
+    // What was actually completed, by kind: the figures a period is closed
     // on.
     const byKind = new Map<string, number>();
     for (const row of result.rows) {
-      if (row.Status !== 'Disbursed') continue;
+      if (!POSTED_STATUSES.includes(String(row.Status))) continue;
       const k = String(row.Kind);
       byKind.set(k, (byKind.get(k) ?? 0) + Number(row.Amount ?? 0));
     }
@@ -1139,13 +1148,13 @@ const transactions: ReportDefinition = {
         { key: 'Status', label: 'Status' },
         { key: 'Recorded', label: 'Recorded' },
         { key: 'Officer', label: 'Officer' },
-        { key: 'Disbursed', label: 'Disbursed' },
+        { key: 'Disbursed', label: 'Completed' },
         { key: 'Receipt', label: 'Receipt' },
       ],
       rows: result.rows,
       summary:
         `${result.rows.length} transaction(s)` +
-        (disbursed ? ` — disbursed: ${disbursed}.` : '.'),
+        (disbursed ? ` — completed: ${disbursed}.` : '.'),
     };
   },
 };
@@ -1181,7 +1190,7 @@ const pendingApprovals: ReportDefinition = {
               trim(coalesce(p.values->>'name', '') || ' '
                    || coalesce(p.values->>'surname', '')) as "Holder",
               t.amount::text as "Amount",
-              case when t.status = 'posted' then 'Disbursed'
+              case when t.status = 'posted' then ${POSTED_STATUS_SQL('t')}
                    else initcap(replace(t.status, '_', ' ')) end as "Status",
               case when t.status in ('submitted', 'under_review', 'returned')
                    then coalesce(ws.name || ' · ' || r.name, '')
@@ -1819,7 +1828,7 @@ const transfers: ReportDefinition = {
                                        initcap(replace(d.status, '_', ' ')))
                    when d.status = 'approved' then 'To disburse'
                    when d.status = 'returned' then 'Returned'
-                   when d.status = 'posted' then 'Disbursed'
+                   when d.status = 'posted' then 'Transfer recorded'
                    when d.status = 'rejected' then 'Rejected'
                    when d.status = 'cancelled' then 'Cancelled'
                    else initcap(replace(d.status, '_', ' ')) end as "Status"

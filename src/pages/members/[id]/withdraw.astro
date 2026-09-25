@@ -310,8 +310,15 @@ const paidAtOnce =
                 name="amount"
                 required
                 value={values.amount}
+                aria-describedby="withdraw-amount-error"
                 class={INPUT}
               />
+              <p
+                data-amount-error
+                id="withdraw-amount-error"
+                class="text-xs text-red-700 dark:text-red-300"
+                hidden
+              ></p>
             </label>
             <label data-payout-field hidden={!paidAtOnce} class={LABEL}>
               Paid by
@@ -402,6 +409,11 @@ const paidAtOnce =
       '[data-bank-account-field]'
     );
     const payoutField = form.querySelector<HTMLElement>('[data-payout-field]');
+    const amountInput = form.querySelector<HTMLInputElement>('[name="amount"]');
+    const amountError = form.querySelector<HTMLElement>('[data-amount-error]');
+    const submitButton = form.querySelector<HTMLButtonElement>(
+      'button[type="submit"]'
+    );
     // A hidden field is also disabled, so it is not sent: the Treasurer
     // chooses how at Disburse.
     const toggle = (field: HTMLElement | null, show: boolean) => {
@@ -415,16 +427,47 @@ const paidAtOnce =
     };
     const money = (value: string) =>
       `Rs ${Number(value).toLocaleString('en-GB', { minimumFractionDigits: 2 })}`;
+    // What the chosen account can pay out without falling under its type's
+    // minimum balance — kept up to date by recompute() as the account
+    // changes, and checked against the typed amount below.
+    let room = 0;
+    // Parsed the way the server parses it (ledger/withdrawals.ts): strip
+    // commas and spaces, then Number(). Over room is a client-side nudge
+    // only — the server refuses it regardless.
+    const checkAmount = () => {
+      if (!amountInput) return;
+      amountInput.dataset.max = room.toFixed(2);
+      const typed = amountInput.value.replace(/[,\s]/g, '');
+      const amount = typed === '' ? 0 : Number(typed);
+      const overRoom = typed !== '' && Number.isFinite(amount) && amount > room;
+      if (overRoom) {
+        const message = `At most ${money(room.toFixed(2))} can be withdrawn from this account.`;
+        amountInput.setCustomValidity(message);
+        if (amountError) {
+          amountError.textContent = message;
+          amountError.hidden = false;
+        }
+      } else {
+        amountInput.setCustomValidity('');
+        if (amountError) {
+          amountError.textContent = '';
+          amountError.hidden = true;
+        }
+      }
+      if (submitButton) submitButton.disabled = overRoom;
+    };
     const recompute = () => {
       const account = accountSelect?.selectedOptions[0];
-      if (note && account) {
+      if (account) {
         const available = account.dataset.available ?? '0';
         const floor = account.dataset.floor ?? '0';
-        const room = Math.max(0, Number(available) - Number(floor));
-        note.textContent =
-          Number(floor) > 0
-            ? `${money(available)} available; the account keeps at least ${money(floor)}, so up to ${money(room.toFixed(2))} can be withdrawn.`
-            : `${money(available)} available.`;
+        room = Math.max(0, Number(available) - Number(floor));
+        if (note) {
+          note.textContent =
+            Number(floor) > 0
+              ? `${money(available)} available; the account keeps at least ${money(floor)}, so up to ${money(room.toFixed(2))} can be withdrawn.`
+              : `${money(available)} available.`;
+        }
       }
       const atOnce = form.dataset.atOnce === 'true';
       const method = methodSelect?.selectedOptions[0];
@@ -434,6 +477,7 @@ const paidAtOnce =
         atOnce && method?.dataset.requiresReference === 'true'
       );
       toggle(bankField, atOnce && method?.dataset.touchesBank === 'true');
+      checkAmount();
     };
     document.addEventListener('route-band', event => {
       const { atOnce } = (event as CustomEvent<{ atOnce: boolean }>).detail;
@@ -442,6 +486,7 @@ const paidAtOnce =
     });
     accountSelect?.addEventListener('change', recompute);
     methodSelect?.addEventListener('change', recompute);
+    amountInput?.addEventListener('input', checkAmount);
     recompute();
   }
 </script>

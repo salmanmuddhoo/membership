@@ -5243,3 +5243,15 @@ until a new guardian is approved; it can still be returned or rejected
 
 Not covered: an additional-account application still in capture for the
 deceased. Applications have no cancelled state yet.
+
+---
+
+### Deposits and transfers are recorded, not disbursed
+
+Officer direction. A finished deposit reads **Deposit recorded** and a
+finished transfer **Transfer recorded** — the last step of the chevron and
+the status alike, on every screen and in the Transactions, Approvals and
+Transfers reports (their status filter reads "Disbursed or recorded").
+Money paid out keeps Disbursement / Disbursed. And the withdrawal and
+transfer forms refuse an amount that would take the account below the
+minimum its type holds, before the officer submits.
