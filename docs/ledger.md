@@ -723,6 +723,14 @@ the exits report (S-1806) — in the same statement. The `transaction.posted`
 event carries `account_closed`, `membership_ended`, `takaful_benefit` and
 `claimant`. The retention anchor is the same as a resignation's.
 
+A claim settles a death, so only a person has one: a Corporate member is
+not offered **Demised claim** and `startDemise()` refuses it
+(`claimableMembershipType()`); it leaves by resignation. The claim's page,
+its receipt (sheet and PDF) and its notifications list every account it
+closes with what each paid (`accountsClosedOnDeath()`, shared with a
+closure on a death), and the receipt carries the Takaful benefit as its own
+line under the accounts' line (DEM-US-004), with no "Balance after".
+
 Every stage of an exit is told to its member or claimant (S-1705,
 `src/lib/ledger/exit-notifications.ts`, `docs/notifications.md`); a
 deposit, a withdrawal and a transfer tell the member the same way

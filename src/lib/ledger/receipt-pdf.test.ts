@@ -18,7 +18,7 @@ function receipt(overrides: Record<string, unknown> = {}): TransactionReceipt {
     voidedAt: null,
     capturedByRole: 'Account Officer',
     postedByName: 'Zainab Officer',
-    depositorName: null,
+    atTheCounter: null,
     accountsClosed: [],
     transaction: {
       id: 'tx',
@@ -108,6 +108,50 @@ describe('the receipt as a PDF', () => {
       label: 'On behalf of',
       value: 'Amina Test · AB0001',
     });
+  });
+
+  it("names a Minor's guardian as collecting a withdrawal", () => {
+    const rows = receiptFacts({
+      ...receipt({ kind: 'withdrawal', holderName: 'Zara Test' }),
+      atTheCounter: 'Irfan Test',
+    });
+    expect(rows[0]).toEqual({ label: 'Paid to', value: 'Irfan Test' });
+    expect(rows[1]).toEqual({
+      label: 'On behalf of',
+      value: 'Zara Test · AB0001',
+    });
+  });
+
+  it('lists every account a demised claim closed, and the Takaful benefit on its own line', () => {
+    const claim = {
+      ...receipt({
+        kind: 'demise',
+        amount: '50700.00',
+        takafulBenefit: '15000.00',
+        payeeName: 'Yusuf Nominee',
+        reason: null,
+        balanceAfter: '0.00',
+      }),
+      accountsClosed: [
+        { id: 'a', accountNo: 'AB0001', typeName: 'Shares', amount: '5000.00' },
+        {
+          id: 'b',
+          accountNo: 'HSA0007',
+          typeName: 'Hajj Savings Account',
+          amount: '30700.00',
+        },
+      ],
+    };
+    const rows = receiptFacts(claim);
+    expect(rows.find(r => r.label === 'Accounts')?.value).toBe(
+      'AB0001 · Shares · MUR 5,000.00\nHSA0007 · Hajj Savings Account · MUR 30,700.00'
+    );
+    const text = Buffer.from(renderReceiptPdf(claim)).toString('latin1');
+    expect(text).toContain('Takaful benefit');
+    expect(text).toContain('15,000.00');
+    expect(text).toContain('35,700.00');
+    expect(text).toContain('50,700.00');
+    expect(text).not.toContain('Balance after');
   });
 
   it('marks a voided receipt as void', () => {

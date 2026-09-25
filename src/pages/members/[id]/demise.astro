@@ -7,6 +7,7 @@
 // there.
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import {
+  claimableMembershipType,
   claimTotals,
   demiseInFlightFor,
   DemiseError,
@@ -38,6 +39,9 @@ if (!principal.permissions.has(PERMISSION_CAPTURE)) {
 const { id } = Astro.params;
 const member = id ? await loadMember(id) : null;
 if (!member) return new Response('Not found', { status: 404 });
+if (!claimableMembershipType(member.membershipTypeCode)) {
+  return Astro.redirect(`/members/${member.id}`);
+}
 
 const inFlight = await demiseInFlightFor(member.id);
 if (inFlight) return Astro.redirect(`/transactions/${inFlight.id}`);

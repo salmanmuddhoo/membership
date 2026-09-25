@@ -4,6 +4,7 @@
 // filed against the request. What is filed is this sheet as the depositor
 // saw it, not a second rendering of it.
 import BaseLayout from '@layouts/BaseLayout.astro';
+import { depositorForApplication } from '@lib/applications/depositor';
 import { cashSourceOfFundChecklist } from '@lib/config/reference';
 import { sourceOfFundItem } from '@lib/ledger/deposit-requests';
 import { loadDeposit } from '@lib/ledger/deposits';
@@ -25,8 +26,16 @@ if (
 const holder = deposit.memberId
   ? await loadMember(deposit.memberId)
   : await loadCustomer(deposit.customerId!);
-const holderName = holder?.name ?? '';
-const nic = (holder?.applicantValues?.nic ?? '').trim();
+
+// Who hands over the money, as against whose account it goes into — a
+// guardian for a Minor, a Contact Person for a Corporate entity, as the
+// receipt names them. Falling back to the holder's own name and NIC where
+// that cannot be read, as the paper form did.
+const depositor = await depositorForApplication(holder?.applicationId ?? null);
+const holderName = depositor.name || holder?.name || '';
+const nic = (
+  depositor.name ? depositor.nic : (holder?.applicantValues?.nic ?? '')
+).trim();
 
 const item = await sourceOfFundItem(deposit.id);
 const checklistItems = await cashSourceOfFundChecklist();

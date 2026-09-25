@@ -44,7 +44,10 @@ import {
   deathClosureInFlightFor,
 } from '@lib/ledger/closures';
 import { resignationInFlightFor } from '@lib/ledger/resignations';
-import { demiseInFlightFor } from '@lib/ledger/demises';
+import {
+  claimableMembershipType,
+  demiseInFlightFor,
+} from '@lib/ledger/demises';
 import {
   canOpenAccount,
   canTransact,
@@ -488,7 +491,13 @@ const settling =
   member && principal.permissions.has('transaction.view')
     ? await demiseInFlightFor(member.id)
     : null;
-const canClaim = inMembership && canDeposit && !resigning && !settling;
+// A Corporate member has no claim (claimableMembershipType): it resigns.
+const canClaim =
+  inMembership &&
+  canDeposit &&
+  !resigning &&
+  !settling &&
+  claimableMembershipType(member!.membershipTypeCode);
 // Officer feedback: the same button, for a non-member — a closure on a
 // death instead of a demised claim, no Takaful. Offered wherever Deposit
 // is (canDeposit), same as the member's Demised claim above.

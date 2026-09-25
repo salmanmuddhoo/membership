@@ -318,7 +318,7 @@ describe('recording a deposit', () => {
     ).rejects.toThrowError(/account is pending/);
     await expect(
       attempt({ accountId: msa, amount: '20000.01', method: 'cash' })
-    ).rejects.toThrowError(/cannot exceed 20000.00/);
+    ).rejects.toThrowError(/cannot exceed MUR 20,000.00/);
     await expect(
       attempt({
         accountId: shares,
