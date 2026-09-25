@@ -1717,6 +1717,43 @@ describe('S-208: document types and dynamic checklists', () => {
       const union = await config.checklistForNonMemberAccount(code, []);
       expect(union).toEqual(applicantOnly);
     });
+
+    it('reads what migration 0108 seeded for Corporate and Minor, before anyone has changed it', async () => {
+      const { config } = await load();
+
+      const corporate =
+        await config.checklistForNonMemberApplicant('corporate');
+      expect(
+        (corporate.get('applicant') ?? []).map(i => i.documentCode).sort()
+      ).toEqual(
+        [
+          'signed_form',
+          'cert_registration',
+          'memorandum',
+          'written_resolution',
+          'utility_bill',
+        ].sort()
+      );
+      // Unlike corporate_kyc (the MEMBER checklist), no nominee item — a
+      // customer_account application has no nominee of its own.
+      expect(corporate.get('nominee')).toBeUndefined();
+
+      const minor = await config.checklistForNonMemberApplicant('minor');
+      expect(
+        (minor.get('applicant') ?? []).map(i => i.documentCode).sort()
+      ).toEqual(['signed_form', 'birth_certificate'].sort());
+      expect(
+        (minor.get('guardian') ?? []).map(i => i.documentCode).sort()
+      ).toEqual(['id_card', 'utility_bill'].sort());
+      expect(minor.get('nominee')).toBeUndefined();
+      expect(minor.get('beneficiary')).toBeUndefined();
+
+      for (const items of [...corporate.values(), ...minor.values()]) {
+        for (const item of items) {
+          expect(item.requirement).toBe('required');
+        }
+      }
+    });
   });
 
   // S-614: the non-member checklist is set the same way checklistId and

@@ -6,6 +6,7 @@
 // the closure at once — then the submit step (closures/[id].astro) asks
 // for it, as submitting is the posting.
 import DashboardLayout from '@layouts/DashboardLayout.astro';
+import { claimableMembershipType } from '@lib/ledger/claimants';
 import { accountBalance } from '@lib/ledger/ledger';
 import {
   accountsOnDeath,
@@ -75,8 +76,11 @@ const requestedAccount = Astro.url.searchParams.get('account') ?? '';
 const isNonMember = !member || member.status === 'resigned';
 // The cause no longer switches on this page — it arrives from which button
 // sent the officer here: Close (a closure) or Demised claim (?cause=death).
+// A company does not die (claimableMembershipType): no closure on a death.
+const canCloseOnDeath =
+  isNonMember && claimableMembershipType(person.membershipTypeCode);
 const onDeathMode =
-  isNonMember && Astro.url.searchParams.get('cause') === 'death';
+  canCloseOnDeath && Astro.url.searchParams.get('cause') === 'death';
 const nominee = isNonMember
   ? await nomineeOnApplication(person.applicationId)
   : null;
@@ -135,7 +139,7 @@ if (Astro.request.method === 'POST') {
     email: text('email'),
     mobile: text('mobile'),
   };
-  const onDeath = isNonMember && values.cause === 'death';
+  const onDeath = canCloseOnDeath && values.cause === 'death';
   if (!onDeath && !person.accounts.some(a => a.id === values.accountId)) {
     error = 'Choose which account is closing.';
   } else {
@@ -184,7 +188,7 @@ if (Astro.request.method === 'POST') {
   }
 }
 
-const causeIsDeath = isNonMember && values.cause === 'death';
+const causeIsDeath = canCloseOnDeath && values.cause === 'death';
 const selectedEntry = onItsWay.get(values.accountId);
 const blockedMessage = causeIsDeath
   ? deathBlocked
@@ -222,7 +226,7 @@ const blockedMessage = causeIsDeath
       >
         <div
           data-account-field
-          hidden={isNonMember && values.cause === 'death'}
+          hidden={canCloseOnDeath && values.cause === 'death'}
         >
           <label class={LABEL}>
             Account
@@ -247,7 +251,7 @@ const blockedMessage = causeIsDeath
             </select>
           </label>
         </div>
-        {isNonMember && onDeathAccounts && (
+        {canCloseOnDeath && onDeathAccounts && (
           <div
             data-death-accounts
             class="space-y-2"
@@ -278,10 +282,10 @@ const blockedMessage = causeIsDeath
             </table>
           </div>
         )}
-        {isNonMember && (
+        {canCloseOnDeath && (
           <input type="hidden" name="cause" value={values.cause} />
         )}
-        {isNonMember && (
+        {canCloseOnDeath && (
           <div
             data-claimant-block
             class="space-y-2"
@@ -385,7 +389,7 @@ const blockedMessage = causeIsDeath
           <textarea
             name="reason"
             rows="3"
-            required={!(isNonMember && values.cause === 'death')}
+            required={!(canCloseOnDeath && values.cause === 'death')}
             maxlength="500"
             class={INPUT}
           >{values.reason}</textarea>
@@ -394,7 +398,7 @@ const blockedMessage = causeIsDeath
           data-payout-note
           class="text-xs text-neutral-500 dark:text-neutral-400"
         >
-          {isNonMember && values.cause === 'death'
+          {canCloseOnDeath && values.cause === 'death'
             ? 'The balances are paid out together when it is approved, as they stand then.'
             : 'The balance is paid out when the closure is approved, as it stands then.'}
         </p>
@@ -407,7 +411,7 @@ const blockedMessage = causeIsDeath
           class={BUTTON}
           disabled={!!blockedMessage}
         >
-          {isNonMember && values.cause === 'death'
+          {canCloseOnDeath && values.cause === 'death'
             ? 'Continue to documents'
             : 'Continue to signature'}
         </button>

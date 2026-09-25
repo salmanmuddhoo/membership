@@ -1,5 +1,6 @@
 ---
-// Changing a Minor member's guardian (migration 0107, src/lib/members/
+// Changing a minor's guardian — a member's or a non-member's (migrations
+// 0107, 0109, src/lib/members/
 // guardian.ts): the officer finds the new guardian among the members,
 // names the relationship, and it waits for a second person to approve
 // before the guardian block is replaced. Whoever holds
@@ -18,7 +19,7 @@ import {
   PERMISSION_CHANGE,
   recordGuardianChange,
 } from '@lib/members/guardian';
-import { loadMember } from '@lib/members/create';
+import { loadCustomer, loadMember } from '@lib/members/create';
 import {
   PAGE,
   CARD,
@@ -49,11 +50,21 @@ const canApprove = principal.permissions.has(PERMISSION_APPROVE);
 if (!canChange && !canApprove) return Astro.redirect('/denied');
 
 const { id } = Astro.params;
-const member = id ? await loadMember(id) : null;
-if (!member) return new Response('Not found', { status: 404 });
-if (member.membershipTypeCode !== 'minor') {
-  return Astro.redirect(`/members/${member.id}`);
+const loadedMember = id ? await loadMember(id) : null;
+const loadedCustomer = !loadedMember && id ? await loadCustomer(id) : null;
+const holder = loadedMember ?? loadedCustomer;
+if (!holder) return new Response('Not found', { status: 404 });
+if (holder.membershipTypeCode !== 'minor') {
+  return Astro.redirect(`/members/${holder.id}`);
 }
+// What the rest of the page reads: the holder, and the number it goes by —
+// a member's own, none for a non-member.
+const member = {
+  id: holder.id,
+  name: holder.name,
+  memberNo: loadedMember?.memberNo ?? '',
+  status: holder.status,
+};
 
 let error: string | null = null;
 let notice: string | null = null;
@@ -99,7 +110,11 @@ const [guardian, open, history] = await Promise.all([
   openGuardianChange(member.id),
   guardianChanges(member.id),
 ]);
-const inMembership = !['resigned', 'demised'].includes(member.status);
+// A resigned Minor member still holds accounts of their own; only a holder
+// who has left entirely has nothing left to guard.
+const inMembership = !['demised', 'closed', 'converted'].includes(
+  member.status
+);
 // A new guardian is recorded only once the guardian is demised (officer
 // direction); recordGuardianChange refuses it otherwise.
 const canRecord =
@@ -147,7 +162,7 @@ const who = (v: Record<string, string>) =>
 >
   <div class={PAGE.form}>
     <a href={`/members/${member.id}`} class={`${HINT} inline-block underline`}>
-      ← {member.name} · {member.memberNo}
+      ← {[member.name, member.memberNo].filter(Boolean).join(' · ')}
     </a>
 
     {error && <div class={NOTICE_ERROR}>{error}</div>}

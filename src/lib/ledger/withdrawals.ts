@@ -202,7 +202,9 @@ export async function refuseUnlessWithdrawable(
         `so nothing can be ${verb}.`
     );
   }
-  const guardianGone = await guardianGoneMessage(from.memberId);
+  const guardianGone = await guardianGoneMessage(
+    from.memberId ?? from.customerId
+  );
   if (guardianGone) throw new WithdrawalError(guardianGone);
   const figures = await availableBalance(from.id);
   let availableCents = toCents(figures.available);

@@ -480,22 +480,21 @@ const canReopen = (account: { status: string; accountTypeId: string }) =>
   canOpenAccount(person.status) &&
   account.status === 'closed' &&
   !reopening.has(account.accountTypeId);
-// S-1702: closing an account that is not the membership's, and the request
-// already on its way where there is one.
-// A Minor whose guardian is demised (members/guardian.ts): money still comes
-// in, but none leaves until a new guardian is recorded and approved — the
-// ledger refuses it, and the buttons that would start it are not offered.
-const isMinorMember = member?.membershipTypeCode === 'minor';
-const guardianGone = isMinorMember
-  ? await guardianGoneMessage(member!.id)
+// A minor — member or non-member — whose guardian is demised
+// (members/guardian.ts): money still comes in, but none leaves until a new
+// guardian is recorded and approved — the ledger refuses it, and the buttons
+// that would start it are not offered.
+const minorHolderId = isMinor ? (member ?? customer)!.id : null;
+const guardianGone = minorHolderId
+  ? await guardianGoneMessage(minorHolderId)
   : null;
-const guardianChange = isMinorMember
-  ? await openGuardianChange(member!.id)
+const guardianChange = minorHolderId
+  ? await openGuardianChange(minorHolderId)
   : null;
 // Offered only while there is one to make or decide: a guardian is replaced
 // once they are demised, never while they are alive (officer direction).
 const canChangeGuardian =
-  isMinorMember &&
+  !!minorHolderId &&
   (!!guardianGone || !!guardianChange) &&
   (principal.permissions.has(GUARDIAN_CHANGE) ||
     principal.permissions.has(GUARDIAN_APPROVE));
@@ -534,7 +533,12 @@ const dying = principal.permissions.has('transaction.view')
       )
     : null
   : null;
-const canClaimNonMember = isNonMemberHolder && canDeposit && !dying;
+// Not for a company (claimableMembershipType), which does not die.
+const canClaimNonMember =
+  isNonMemberHolder &&
+  canDeposit &&
+  !dying &&
+  claimableMembershipType((member ?? customer)!.membershipTypeCode);
 const closing = principal.permissions.has('transaction.view')
   ? await closuresInFlightFor(
       member ? { memberId: member.id } : { customerId: customer!.id }

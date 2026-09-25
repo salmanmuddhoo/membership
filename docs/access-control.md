@@ -159,6 +159,11 @@ other's endpoints.
 
 ## What is recorded
 
+The audit log's Record ID takes the reference an officer sees on screen as
+well as the id the trail is keyed on: a transfer's TR- reference finds its
+two legs' entries, a member number finds the member and its membership
+accounts, and an account number finds that account (`listAuditEvents`).
+
 Every refusal is written to the append-only audit trail before the redirect:
 
 | Action                    | Written when                                                                  |

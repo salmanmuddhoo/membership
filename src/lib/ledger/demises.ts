@@ -19,10 +19,13 @@
 import { recordAudit } from '../access/audit';
 import type { Principal } from '../access/principal';
 import {
+  claimableMembershipType,
   claimantFrom,
   nomineeOnApplication,
   type ClaimantInput,
 } from './claimants';
+
+export { claimableMembershipType } from './claimants';
 import { offeredPaymentMethods, takafulBenefit } from '../config/reference';
 import { query, withTransaction } from '../db/pool';
 import {
@@ -189,18 +192,6 @@ async function memberFor(memberId: string): Promise<{
     applicationId: r.application_id,
     membershipTypeCode: r.type_code,
   };
-}
-
-/**
- * Whether a member of this type can be the subject of a claim at all. A
- * claim settles a death (FRD 7.3) and carries the funeral benefit; a
- * Corporate member is an entity, not a person, and leaves by resignation or
- * by closing its accounts. Read by the member's page for the button, and
- * enforced in refuseUnlessClaimable. `typeCode` is the membership type's
- * own code, not its label, as depositorFor reads it.
- */
-export function claimableMembershipType(typeCode: string): boolean {
-  return typeCode !== 'corporate';
 }
 
 /**

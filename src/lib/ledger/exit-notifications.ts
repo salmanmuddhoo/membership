@@ -13,7 +13,7 @@
 import { notify } from '../notifications/notify';
 import { formatMoney } from '../payments/money';
 import { contactForHolder } from './receipt-notifications';
-import { accountsClosedOnDeath } from './claimants';
+import { accountsClosedTogether } from './claimants';
 import type { TransactionSummary } from './review';
 
 export type ExitHappening =
@@ -44,8 +44,9 @@ export function exitEventCode(kind: string, happening: ExitHappening): string {
 async function accountWords(transaction: TransactionSummary): Promise<string> {
   const covered =
     (transaction.kind === 'closure' && transaction.claimantKind) ||
-    transaction.kind === 'demise'
-      ? await accountsClosedOnDeath(transaction.id)
+    transaction.kind === 'demise' ||
+    transaction.kind === 'resignation'
+      ? await accountsClosedTogether(transaction.id)
       : [];
   return covered.length > 0
     ? covered.map(a => `${a.accountNo} · ${a.typeName}`).join(', ')

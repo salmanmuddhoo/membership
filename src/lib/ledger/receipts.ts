@@ -12,7 +12,10 @@ import { recordAudit } from '../access/audit';
 import type { Principal } from '../access/principal';
 import { checkSegregation } from '../admin/segregation';
 import { query, withTransaction } from '../db/pool';
-import { accountsClosedOnDeath, type AccountClosedOnDeath } from './claimants';
+import {
+  accountsClosedTogether,
+  type AccountClosedTogether,
+} from './claimants';
 import { loadTransaction, type TransactionSummary } from './review';
 import { KIND_WORDS, notifyReceiptVoided } from './void-notifications';
 import {
@@ -48,13 +51,13 @@ export interface TransactionReceipt {
   // Who stood at the counter, where that is not the holder: for money in,
   // a Minor's guardian or a Corporate member's contact person (QA-23) — the
   // same rule the fee receipt and the Cash Deposit Form follow
-  // (depositorFor); for a withdrawal, a Minor's guardian, who collects it
-  // (collectorForApplication). Null for anything else, and where it is the
+  // (depositorFor); for a withdrawal, a resignation or a closure paid out, a
+  // Minor's guardian, who collects it (collectorForApplication). Null for anything else, and where it is the
   // holder themselves.
   atTheCounter: string | null;
   // A closure on a death or a demised claim: every account it closed, with
   // what each paid. Empty for anything else.
-  accountsClosed: AccountClosedOnDeath[];
+  accountsClosed: AccountClosedTogether[];
 }
 
 // By the transaction's id, its receipt number's id, or the receipt number
@@ -92,10 +95,13 @@ export async function loadTransactionReceipt(
   const transaction = await loadTransaction(row.transaction_id);
   if (!transaction) return null;
   let atTheCounter: string | null = null;
-  if (
-    (transaction.kind === 'deposit' || transaction.kind === 'withdrawal') &&
-    !transaction.payeeName
-  ) {
+  // Money out collected at the counter: a withdrawal, a resignation's
+  // payout, an ordinary closure's. A closure on a death names its claimant
+  // (payeeName) instead.
+  const payout = ['withdrawal', 'resignation', 'closure'].includes(
+    transaction.kind
+  );
+  if ((transaction.kind === 'deposit' || payout) && !transaction.payeeName) {
     const holder = await query<{ application_id: string | null }>(
       `select coalesce(m.application_id, c.application_id) as application_id
          from transaction t
@@ -113,8 +119,9 @@ export async function loadTransactionReceipt(
   }
   const accountsClosed =
     (transaction.kind === 'closure' && transaction.claimantKind) ||
-    transaction.kind === 'demise'
-      ? await accountsClosedOnDeath(transaction.id)
+    transaction.kind === 'demise' ||
+    transaction.kind === 'resignation'
+      ? await accountsClosedTogether(transaction.id)
       : [];
   return {
     transaction,

@@ -8,6 +8,16 @@ import { query } from '../db/pool';
 import { loadApplication } from '../applications/capture';
 import type { Claimant } from './review';
 
+/**
+ * Whether a holder of this membership type can die, and so be settled by a
+ * demised claim or a closure on a death. A Corporate holder is an entity, not
+ * a person: it leaves by resignation or by closing its accounts. `typeCode`
+ * is the membership type's own code, not its label, as depositorFor reads it.
+ */
+export function claimableMembershipType(typeCode: string): boolean {
+  return typeCode !== 'corporate';
+}
+
 export interface ClaimantInput {
   kind: 'nominee' | 'other';
   // For 'other'. For 'nominee' these come from the application.
@@ -191,7 +201,7 @@ export async function markCustomerClosedOnceAllClosed(
   );
 }
 
-export interface AccountClosedOnDeath {
+export interface AccountClosedTogether {
   id: string;
   accountNo: string;
   typeName: string;
@@ -200,16 +210,17 @@ export interface AccountClosedOnDeath {
 }
 
 /**
- * The accounts a deceased non-member's closure covers (migration 0099), or
- * a deceased member's claim (S-1704): every account of the holder it has
- * not closed yet, with its balance — or, once it has posted, the ones it
- * closed, with what each paid. Those close in the posting's own statement,
- * so their closing time is its posting time exactly. Empty for anything
- * but a closure on a death or a claim.
+ * The accounts one request closes together, with what each paid: a deceased
+ * non-member's closure (migration 0099) and a deceased member's claim
+ * (S-1704) close every account of the holder; a resignation (S-1703) the
+ * Shares and the MSA. Before posting, the ones it will close with their
+ * balances; once posted, the ones it closed — in the posting's own
+ * statement, so their closing time is its posting time exactly. Empty for
+ * anything else.
  */
-export async function accountsClosedOnDeath(
+export async function accountsClosedTogether(
   transactionId: string
-): Promise<AccountClosedOnDeath[]> {
+): Promise<AccountClosedTogether[]> {
   const result = await query<{
     id: string;
     account_no: string;
@@ -232,10 +243,12 @@ export async function accountsClosedOnDeath(
        left join account_balance b on b.account_id = a.id
       where t.id = $1
         and ((t.kind = 'closure' and t.claimant_kind is not null)
-          or t.kind = 'demise')
+          or t.kind in ('demise', 'resignation'))
         and (case when t.status = 'posted' then a.closed_at = t.posted_at
                   when t.status in ('rejected', 'cancelled') then a.id = t.account_id
-                  else a.status <> 'closed' end)
+                  else a.status <> 'closed'
+                       and (t.kind <> 'resignation' or a.is_membership_default)
+             end)
       order by at.sort_order, a.opened_at`,
     [transactionId]
   );
