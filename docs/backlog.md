@@ -5214,3 +5214,15 @@ another on the same records. Fixed:
   from its row, not also offered under Open other account (LC-11). The
   Members list counts members, non-members and former (a resigned or
   demised member, or a non-member, with nothing open) (LC-10).
+
+---
+
+### Migration 0108: Corporate and Minor non-member applicants had no checklist of their own
+
+0028 gave Individual a `non_member_checklist_id` (`non_member_kyc`) but left
+Corporate and Minor's own column null, so a Corporate or Minor
+`customer_account` application asked for no documents at all and its signed
+form never counted toward the application's timeline. Migration 0108 adds
+`non_member_corporate_kyc` and `non_member_minor_kyc` — each the matching
+member checklist without the pieces that only mean something to a member
+(a nominee's own ID card) — and points `corporate` and `minor` at them.

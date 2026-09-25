@@ -109,6 +109,8 @@ export interface AuditEventFilters {
   actor?: string;
   action?: string;
   entityType?: string;
+  // A record ID as the trail holds it, or a reference as the screens show
+  // it: a transfer's TR- reference, a member number or an account number.
   entityId?: string;
   from?: Date;
   to?: Date;
@@ -154,7 +156,31 @@ export async function listAuditEvents(
        left join app_user u on u.id = e.actor_user_id
       where ($1::text is null or e.action = $1::text)
         and ($2::text is null or e.entity_type = $2::text)
-        and ($3::text is null or e.entity_id = $3::text)
+        and ($3::text is null or e.entity_id in (
+              -- The record ID an officer types is whatever the screen
+              -- showed them, not always what the trail is keyed on
+              -- (functional round): a transfer's TR- reference is recorded
+              -- under its two legs' TX- references, and a member or an
+              -- account under its internal id. Each resolves to those.
+              select $3::text
+              union
+              select t.reference
+                from transaction t join transfer tr on tr.id = t.transfer_id
+               where upper(tr.reference) = upper($3::text)
+              union
+              select m.id::text from member m
+               where lower(m.member_no) = lower($3::text)
+              union
+              select m.application_id::text from member m
+               where lower(m.member_no) = lower($3::text)
+                 and m.application_id is not null
+              union
+              select a.id::text from account a
+                left join member m on m.id = a.member_id
+               where lower(a.account_no) = lower($3::text)
+                  or (a.account_no is null
+                      and lower(m.member_no) = lower($3::text))
+            ))
         and ($4::timestamptz is null or e.occurred_at >= $4::timestamptz)
         and ($5::timestamptz is null or e.occurred_at <= $5::timestamptz)
         and (

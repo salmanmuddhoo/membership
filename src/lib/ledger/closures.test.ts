@@ -777,6 +777,57 @@ describe('a closure request (S-1702)', () => {
 });
 
 describe('a closure on a death (business decision)', () => {
+  it('is not offered for a corporate non-member, which does not die', async () => {
+    const { closures } = await load();
+    const corporate = (
+      await run(
+        appUrl,
+        `select id from membership_type where code = 'corporate'`
+      )
+    ).rows[0].id;
+    const application = await run(
+      appUrl,
+      `insert into membership_application
+         (membership_type_id, captured_by, status)
+       values ($1, $2, 'approved') returning id`,
+      [corporate, officer.userId]
+    );
+    await run(
+      appUrl,
+      `insert into application_party (application_id, subject, ordinal, values)
+       values ($1, 'applicant', 1, '{"name": "Test Traders Ltd"}'),
+              ($1, 'nominee', 1,
+               '{"name": "Bilal", "surname": "Test", "nic": "B1234567890123",
+                 "address": "2 Test Street"}')`,
+      [application.rows[0].id]
+    );
+    const customer = (
+      await run(
+        appUrl,
+        `insert into customer (application_id) values ($1) returning id`,
+        [application.rows[0].id]
+      )
+    ).rows[0].id;
+    const account = (
+      await run(
+        appUrl,
+        `insert into account
+           (customer_id, account_type_id, is_membership_default, status,
+            account_no)
+         select $1, id, false, 'active', 'HSA0987' from account_type
+          where code = 'hsa'
+         returning id`,
+        [customer]
+      )
+    ).rows[0].id;
+    await expect(
+      closures.startClosure(
+        { accountId: account, onDeath: { claimant: { kind: 'nominee' } } },
+        clerk
+      )
+    ).rejects.toThrowError(/corporate holder has no demised claim/);
+  });
+
   it("pays a deceased non-member's balance to their nominee or another person, on a death certificate, and marks them deceased once nothing is left open", async () => {
     const { closures, claimants, deposits, review, timeline } = await load();
     const individual = (
@@ -918,7 +969,7 @@ describe('a closure on a death (business decision)', () => {
       payeeName: 'Bilal Test',
     });
     expect(
-      (await claimants.accountsClosedOnDeath(first.id)).map(a => [
+      (await claimants.accountsClosedTogether(first.id)).map(a => [
         a.accountNo,
         a.amount,
       ])
@@ -1005,7 +1056,7 @@ describe('a closure on a death (business decision)', () => {
       ['INV0900', '1500.00'],
     ]);
     expect(
-      (await claimants.accountsClosedOnDeath(second.id)).map(a => [
+      (await claimants.accountsClosedTogether(second.id)).map(a => [
         a.accountNo,
         a.amount,
       ])

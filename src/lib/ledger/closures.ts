@@ -38,6 +38,7 @@ import {
 import { LedgerError } from './ledger';
 import { requireBankAccount, resolveBankAccount } from './bank-accounts';
 import {
+  claimableMembershipType,
   claimantFrom,
   markCustomerClosedOnceAllClosed,
   markDeceasedOnceAllClosed,
@@ -308,7 +309,9 @@ async function refuseUnlessClosable(
       'conflict'
     );
   }
-  const guardianGone = await guardianGoneMessage(account.memberId);
+  const guardianGone = await guardianGoneMessage(
+    account.memberId ?? account.customerId
+  );
   if (guardianGone) throw new ClosureError(guardianGone, 'conflict');
   const other = await closureInFlight(account.id, existing?.id ?? null);
   if (other) {
@@ -366,6 +369,23 @@ async function methodOrDefault(code: string | undefined) {
   return checkedMethod(first.code);
 }
 
+// The holder's membership type code: a member's own, or the type the
+// non-member's founding application was captured against.
+async function holderTypeCode(account: Candidate): Promise<string> {
+  const result = await query<{ code: string }>(
+    `select t.code
+       from membership_type t
+      where t.id = coalesce(
+              (select m.membership_type_id from member m where m.id = $1::uuid),
+              (select a.membership_type_id
+                 from customer c
+                 join membership_application a on a.id = c.application_id
+                where c.id = $2::uuid))`,
+    [account.memberId, account.customerId]
+  );
+  return result.rows[0]?.code ?? '';
+}
+
 // Who a deceased holder's balance goes to (business decision). Only a
 // non-member's: a member still in the membership who dies is settled by a
 // demised claim, which covers every account and adds the Takaful benefit.
@@ -373,6 +393,13 @@ async function deceasedClaimant(account: Candidate, input: ClaimantInput) {
   if (account.memberId && account.holderStatus === 'active') {
     throw new ClosureError(
       'A member who has died is settled by a demised claim.',
+      'conflict'
+    );
+  }
+  // A company does not die (functional round, as for a member's claim).
+  if (!claimableMembershipType(await holderTypeCode(account))) {
+    throw new ClosureError(
+      'A corporate holder has no demised claim. Close its accounts instead.',
       'conflict'
     );
   }

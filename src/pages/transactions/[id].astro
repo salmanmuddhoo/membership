@@ -30,7 +30,7 @@ import {
   reverseTransaction,
   EXIT_KINDS,
 } from '@lib/ledger/reversals';
-import { accountsClosedOnDeath } from '@lib/ledger/claimants';
+import { accountsClosedTogether } from '@lib/ledger/claimants';
 import { resubmitTransfer, TransferError } from '@lib/ledger/transfers';
 import { resubmitWithdrawal, WithdrawalError } from '@lib/ledger/withdrawals';
 import {
@@ -243,12 +243,12 @@ const isDeposit = transaction.kind === 'deposit';
 const isClosure = transaction.kind === 'closure';
 const isResignation = transaction.kind === 'resignation';
 const isDemise = transaction.kind === 'demise';
-// A closure on a death, and a demised claim, cover every account the
-// holder has, not just transaction.accountId (the lead one) — shown as
-// their own list below.
+// A closure on a death and a demised claim cover every account the holder
+// has, and a resignation the Shares and the MSA, not just
+// transaction.accountId (the lead one) — shown as their own list below.
 const closedOnDeathAccounts =
-  (isClosure && transaction.claimant) || isDemise
-    ? await accountsClosedOnDeath(transaction.id)
+  (isClosure && transaction.claimant) || isDemise || isResignation
+    ? await accountsClosedTogether(transaction.id)
     : [];
 // A request the officer built (a closure, a resignation, a claim): its
 // papers are on it, and it is corrected in its own wizard.

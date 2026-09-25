@@ -531,7 +531,7 @@ nothing else can close any of them meanwhile, a rejection or a withdrawal
 opens them all again, and `post_transaction()` writes one debit per
 account under the one transaction, as a claim does — without the Takaful
 benefit. Every screen, the receipt and the notifications list the accounts
-(`accountsOnDeath()`, `accountsClosedOnDeath()`). The death certificate is
+(`accountsOnDeath()`, `accountsClosedTogether()`). The death certificate is
 its paper instead of the signed request, the notifications go to the
 claimant, and the posting marks the holder `demised`
 (`markDeceasedOnceAllClosed()`, `src/lib/ledger/claimants.ts`). A member
@@ -727,7 +727,7 @@ A claim settles a death, so only a person has one: a Corporate member is
 not offered **Demised claim** and `startDemise()` refuses it
 (`claimableMembershipType()`); it leaves by resignation. The claim's page,
 its receipt (sheet and PDF) and its notifications list every account it
-closes with what each paid (`accountsClosedOnDeath()`, shared with a
+closes with what each paid (`accountsClosedTogether()`, shared with a
 closure on a death), and the receipt carries the Takaful benefit as its own
 line under the accounts' line (DEM-US-004), with no "Balance after".
 
@@ -756,6 +756,17 @@ minor is still made, since it is paid to the nominee. A deposit receipt and
 the Cash Deposit Form stop naming the dead guardian and fall back to the
 holder. A transfer from a minor's account into the guardian's own account
 is an ordinary transfer and follows the matrix like any other.
+
+The same holds for a minor who holds an account without being a member
+(migration 0109): the change hangs on the customer instead of a member, the
+same page and the same approval. And for any minor, the receipt for money
+paid out — a withdrawal, a resignation, an ordinary closure — reads "Paid
+to" the guardian, on behalf of the child.
+
+A resignation's receipt, like a claim's and a closure on a death's
+(`accountsClosedTogether()`), lists the Shares and the MSA with what each
+paid, and a company — member or not — is never offered a closure on a death
+(`claimableMembershipType()`).
 
 Every stage of an exit is told to its member or claimant (S-1705,
 `src/lib/ledger/exit-notifications.ts`, `docs/notifications.md`); a

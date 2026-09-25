@@ -21,7 +21,7 @@ import {
   updateClosure,
 } from '@lib/ledger/closures';
 import {
-  accountsClosedOnDeath,
+  accountsClosedTogether,
   nomineeOnApplication,
 } from '@lib/ledger/claimants';
 import { DocumentError, removeFiledDocument } from '@lib/documents/documents';
@@ -191,7 +191,7 @@ const nominee = holder
 // Every account the death closes, with what each holds now (or, once
 // posted, paid) — while in flight, the sum of these is what submitting
 // would post (ledger/closures.ts works it out the same way).
-const deathAccounts = onDeath ? await accountsClosedOnDeath(closure.id) : [];
+const deathAccounts = onDeath ? await accountsClosedTogether(closure.id) : [];
 const deathTotal = fromCents(
   deathAccounts.reduce((sum, a) => sum + toCents(a.amount), 0)
 );

@@ -220,6 +220,80 @@ describe('listAuditEvents: a filterable page over the trail, not a table dump', 
     expect(byEntity.events[0].action).toBe('member.marked_dormant');
   });
 
+  it('finds a record by the reference the screens show: a transfer, a member number, an account number', async () => {
+    const { recordAudit, listAuditEvents } = await load();
+    const user = await run(
+      ownerUrl,
+      `insert into app_user (entra_subject, email, display_name)
+       values ('sub-ref-officer', 'ref-officer@albarakah.mu', 'Officer')
+       returning id`
+    );
+    const officerId = user.rows[0].id;
+    const member = await run(
+      ownerUrl,
+      `insert into member (membership_type_id, member_no)
+       values ((select id from membership_type where code = 'individual'), 'AB0777')
+       returning id`
+    );
+    const memberId = member.rows[0].id;
+    const accounts = await run(
+      ownerUrl,
+      `insert into account (member_id, account_type_id, is_membership_default, status, account_no)
+       values ($1, (select id from account_type where code = 'msa'), true, 'active', null),
+              ($1, (select id from account_type where code = 'shares'), false, 'active', 'HSA0777')
+       returning id`,
+      [memberId]
+    );
+    const [msaId, hsaId] = accounts.rows.map(r => r.id);
+    const transfer = await run(
+      ownerUrl,
+      `insert into transfer (captured_by, member_id) values ($1, $2)
+       returning id, reference`,
+      [officerId, memberId]
+    );
+    const trRef = transfer.rows[0].reference;
+    const legs = await run(
+      ownerUrl,
+      `insert into transaction
+         (kind, account_id, amount, captured_by, method, transfer_id,
+          member_id, leg_direction)
+       values ('transfer_leg', $1, 10, $3, 'internal_transfer', $4, $5, 'debit'),
+              ('transfer_leg', $2, 10, $3, 'internal_transfer', $4, $5, 'credit')
+       returning reference`,
+      [msaId, hsaId, officerId, transfer.rows[0].id, memberId]
+    );
+    const [leg1, leg2] = legs.rows.map(r => r.reference);
+    for (const [action, entityType, entityId] of [
+      ['member.created', 'member', memberId],
+      ['account.opened', 'account', msaId],
+      ['account.opened', 'account', hsaId],
+      ['transaction.captured', 'transaction', leg1],
+      ['transaction.posted', 'transaction', leg2],
+    ]) {
+      await recordAudit({
+        actorDescription: 'ref-test',
+        action,
+        entityType,
+        entityId,
+      });
+    }
+
+    const byTransfer = await listAuditEvents({ entityId: trRef });
+    expect(byTransfer.events.map(e => e.entityId).sort()).toEqual(
+      [leg1, leg2].sort()
+    );
+    // The member, and the membership accounts that carry its number.
+    const byMember = await listAuditEvents({ entityId: 'ab0777' });
+    expect(byMember.events.map(e => e.entityId).sort()).toEqual(
+      [memberId, msaId].sort()
+    );
+    const byAccount = await listAuditEvents({ entityId: 'HSA0777' });
+    expect(byAccount.events.map(e => e.entityId)).toEqual([hsaId]);
+    // A plain record ID still matches itself.
+    const byLeg = await listAuditEvents({ entityId: leg1 });
+    expect(byLeg.events).toHaveLength(1);
+  });
+
   it('filters by an occurred_at range, and reports a page against the whole match', async () => {
     const { listAuditEvents } = await load();
     const { query } = await import('../db/pool');

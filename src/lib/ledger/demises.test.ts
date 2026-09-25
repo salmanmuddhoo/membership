@@ -566,7 +566,7 @@ describe('a demised claim (S-1704)', () => {
       receipts: await import('./receipts'),
     };
     expect(
-      (await claimants.accountsClosedOnDeath(draft.id)).map(a => [
+      (await claimants.accountsClosedTogether(draft.id)).map(a => [
         a.id,
         a.amount,
       ])

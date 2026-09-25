@@ -538,6 +538,17 @@ describe('a resignation (S-1703)', () => {
       amount: '20000.00',
       accountId: member.shares,
     });
+    // It closes the Shares and the MSA together, and nothing else.
+    const claimants = await import('./claimants');
+    expect(
+      (await claimants.accountsClosedTogether(draft.id)).map(a => [
+        a.id,
+        a.amount,
+      ])
+    ).toEqual([
+      [member.shares, '8000.00'],
+      [member.msa, '12000.00'],
+    ]);
     expect(await resignations.resignationInFlightFor(member.id)).toMatchObject({
       id: draft.id,
       status: 'draft',
@@ -651,6 +662,16 @@ describe('a resignation (S-1703)', () => {
     expect(entries.rows).toEqual([
       { account_id: member.shares, direction: 'debit', amount: '8000.00' },
       { account_id: member.msa, direction: 'debit', amount: '12000.00' },
+    ]);
+    // The receipt names both, with what each paid.
+    const receipts = await import('./receipts');
+    expect(
+      (await receipts.loadTransactionReceipt(draft.id))?.accountsClosed.map(
+        a => [a.id, a.amount]
+      )
+    ).toEqual([
+      [member.shares, '8000.00'],
+      [member.msa, '12000.00'],
     ]);
     expect(await memberStatus()).toMatchObject({
       status: 'resigned',

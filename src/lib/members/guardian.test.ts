@@ -285,7 +285,7 @@ describe("a Minor's guardian", () => {
         input(secondGuardian.memberNo),
         officer
       )
-    ).rejects.toThrowError(/Only a Minor member has a guardian/);
+    ).rejects.toThrowError(/Only a minor has a guardian/);
     await expect(
       guardian.recordGuardianChange(
         minor.id,
@@ -413,5 +413,85 @@ describe("a Minor's guardian", () => {
     expect(
       (await guardian.guardianChanges(minor.id)).map(c => c.status)
     ).toEqual(['cancelled', 'approved']);
+  });
+  it('holds back and changes the guardian of a minor who is not a member, the same way', async () => {
+    // At this point the second guardian is demised (the test above) and the
+    // first is active again.
+    const typeId = (
+      await run(appUrl, `select id from membership_type where code = 'minor'`)
+    ).rows[0].id;
+    const application = await run(
+      appUrl,
+      `insert into membership_application (membership_type_id, captured_by, status)
+       values ($1, $2, 'approved') returning id`,
+      [typeId, officer.userId]
+    );
+    await run(
+      appUrl,
+      `insert into application_party (application_id, subject, ordinal, values)
+       values ($1, 'applicant', 1, '{"name": "Adam", "surname": "Test"}'),
+              ($1, 'guardian', 1, $2)`,
+      [
+        application.rows[0].id,
+        JSON.stringify({
+          name: 'Salma',
+          surname: 'Test',
+          member_id: secondGuardian.memberNo,
+          relationship: 'Mother',
+        }),
+      ]
+    );
+    const customer = (
+      await run(
+        appUrl,
+        `insert into customer (application_id) values ($1) returning id`,
+        [application.rows[0].id]
+      )
+    ).rows[0].id;
+    const hsa = (
+      await run(
+        appUrl,
+        `insert into account
+           (customer_id, account_type_id, is_membership_default, status, account_no)
+         values ($1, (select id from account_type where code = 'msa'), false,
+                 'active', 'HSA0444')
+         returning id`,
+        [customer]
+      )
+    ).rows[0].id;
+    const { guardian, deposits, withdrawals } = await load();
+    await deposits.recordDeposit(
+      { accountId: hsa, amount: '3000', method: 'cash' },
+      officer
+    );
+    expect(await guardian.guardianGoneMessage(customer)).toMatch(
+      /Record a new guardian first/
+    );
+    await expect(
+      withdrawals.recordWithdrawal(
+        { accountId: hsa, amount: '100', method: 'cash' },
+        officer
+      )
+    ).rejects.toThrowError(/Record a new guardian first/);
+
+    const change = await guardian.recordGuardianChange(
+      customer,
+      { guardianMemberNo: firstGuardian.memberNo, relationship: 'Father' },
+      officer
+    );
+    expect(change.memberId).toBe(customer);
+    expect(await guardian.guardianChangesWaitingOn(manager)).toEqual([
+      { memberId: customer, memberNo: '', name: 'Adam Test' },
+    ]);
+    await guardian.decideGuardianChange(change.id, 'approve', '', manager);
+    expect((await guardian.currentGuardian(customer))?.memberNo).toBe(
+      firstGuardian.memberNo
+    );
+    expect(await guardian.guardianGoneMessage(customer)).toBeNull();
+    const w = await withdrawals.recordWithdrawal(
+      { accountId: hsa, amount: '100', method: 'cash' },
+      officer
+    );
+    expect(w.status).toBe('posted');
   });
 });

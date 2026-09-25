@@ -142,11 +142,18 @@ if (
 ) {
   return new Response('Not found', { status: 404 });
 }
+// Carry the query string along (e.g. ?step=4) — dropping it stranded a
+// bookmarked or shared step-specific link on the redirect target's default
+// step.
 if (initial.applicationKind === 'additional_account') {
-  return Astro.redirect(`/applications/${initial.id}/account`);
+  return Astro.redirect(
+    `/applications/${initial.id}/account${Astro.url.search}`
+  );
 }
 if (initial.applicationKind === 'customer_account') {
-  return Astro.redirect(`/applications/${initial.id}/customer`);
+  return Astro.redirect(
+    `/applications/${initial.id}/customer${Astro.url.search}`
+  );
 }
 let application: MembershipApplication | null = initial;
 
