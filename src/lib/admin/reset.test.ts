@@ -232,6 +232,7 @@ const CLEARED_TABLES = [
   'document',
   'document_version',
   'financial_event',
+  'guardian_change',
   'job_run',
   'member',
   'member_details_request',
