@@ -185,7 +185,7 @@ if (Astro.request.method === 'POST') {
               );
       notice =
         result.status === 'posted'
-          ? `${transaction.displayReference} disbursed. Receipt ${result.receiptNo}.`
+          ? `${transaction.displayReference} ${(recordedLabel(transaction) ?? 'Disbursed').toLowerCase()}. Receipt ${result.receiptNo}.`
           : `${transaction.displayReference} sent back for ${result.currentStepName ?? 'review'}.`;
     }
   } catch (err) {

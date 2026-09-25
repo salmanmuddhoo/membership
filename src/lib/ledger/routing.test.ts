@@ -137,7 +137,10 @@ describe('the seeded matrix', () => {
       [1, cents(100000), []],
       [cents(100000.01), null, ['secretary_review', 'president_decision']],
     ]);
-    expect(routing.describeBand(bands[0])).toBe(
+    expect(routing.describeBand(bands[0], 'deposit')).toBe(
+      'Up to Rs 100,000.00: recorded at once, no review needed.'
+    );
+    expect(routing.describeBand(bands[0], 'withdrawal')).toBe(
       'Up to Rs 100,000.00: disbursed at once, no review needed.'
     );
     expect(routing.describeBand(bands[1])).toBe(
