@@ -8,7 +8,7 @@
 // Reprint marks and the print history are deliberately absent: those belong
 // to the paper an officer hands over, and this is the copy the member keeps.
 import { jsPDF } from 'jspdf';
-import { formatMoney } from '../payments/money';
+import { formatMoney, fromCents, toCents } from '../payments/money';
 import type { TransactionReceipt } from './receipts';
 
 const TITLES: Record<string, string> = {
@@ -62,11 +62,9 @@ export function receiptFacts(
   const rows: { label: string; value: string }[] = [
     {
       label: moneyIn ? 'Received from' : 'Paid to',
-      value: t.payeeName || receipt.depositorName || holder,
+      value: t.payeeName || receipt.atTheCounter || holder,
     },
-    ...(receipt.depositorName
-      ? [{ label: 'On behalf of', value: holder }]
-      : []),
+    ...(receipt.atTheCounter ? [{ label: 'On behalf of', value: holder }] : []),
     receipt.accountsClosed.length > 0
       ? {
           label: 'Accounts',
@@ -182,9 +180,23 @@ export function renderReceiptPdf(receipt: TransactionReceipt): ArrayBuffer {
     .filter(Boolean)
     .join(' · ');
   const amount = formatMoney(t.amount, t.currency);
+  // A demised claim: the Takaful benefit on its own line (DEM-US-004), the
+  // accounts' line the rest, as the sheet shows it.
+  const takaful =
+    t.kind === 'demise' && toCents(t.takafulBenefit) > 0
+      ? t.takafulBenefit
+      : null;
+  const fromAccounts = takaful
+    ? fromCents(toCents(t.amount) - toCents(takaful))
+    : t.amount;
   doc.text(doc.splitTextToSize(line, right - left - 50) as string[], left, y);
-  doc.text(amount, right, y, { align: 'right' });
+  doc.text(formatMoney(fromAccounts, t.currency), right, y, { align: 'right' });
   y += 8;
+  if (takaful) {
+    doc.text('Takaful benefit', left, y);
+    doc.text(formatMoney(takaful, t.currency), right, y, { align: 'right' });
+    y += 8;
+  }
   doc.setFont('helvetica', 'bold');
   doc.text('Total', left, y);
   doc.text(amount, right, y, { align: 'right' });
@@ -193,7 +205,7 @@ export function renderReceiptPdf(receipt: TransactionReceipt): ArrayBuffer {
   doc.line(left, y, right, y);
   y += 8;
 
-  if (t.balanceAfter) {
+  if (t.balanceAfter && receipt.accountsClosed.length === 0) {
     doc.setTextColor(90);
     doc.text(
       `Balance after: ${formatMoney(t.balanceAfter, t.currency)}`,

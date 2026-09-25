@@ -241,14 +241,15 @@ const isDeposit = transaction.kind === 'deposit';
 // A closure (S-1702) is corrected in its own wizard, not here: the signed
 // request may need signing again.
 const isClosure = transaction.kind === 'closure';
-// A closure on a death covers every account the holder has, not just
-// transaction.accountId (the lead one) — shown as its own list below.
-const closedOnDeathAccounts =
-  isClosure && transaction.claimant
-    ? await accountsClosedOnDeath(transaction.id)
-    : [];
 const isResignation = transaction.kind === 'resignation';
 const isDemise = transaction.kind === 'demise';
+// A closure on a death, and a demised claim, cover every account the
+// holder has, not just transaction.accountId (the lead one) — shown as
+// their own list below.
+const closedOnDeathAccounts =
+  (isClosure && transaction.claimant) || isDemise
+    ? await accountsClosedOnDeath(transaction.id)
+    : [];
 // A request the officer built (a closure, a resignation, a claim): its
 // papers are on it, and it is corrected in its own wizard.
 const isExit = isClosure || isResignation || isDemise;
@@ -434,7 +435,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           </a>
           {transaction.memberNo && ` · ${transaction.memberNo}`}
         </dd>
-        {isClosure && transaction.claimant ? (
+        {closedOnDeathAccounts.length > 0 ? (
           <>
             <dt class="text-neutral-500 dark:text-neutral-400">Accounts</dt>
             <dd class="font-medium text-neutral-800 dark:text-neutral-100">
@@ -528,9 +529,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             </dt>
             <dd class="text-neutral-800 dark:text-neutral-100">
               {formatMoney(transaction.takafulBenefit, transaction.currency)}
-              <span class="block text-xs text-neutral-500 dark:text-neutral-400">
-                The rest is what the accounts hold.
-              </span>
             </dd>
           </>
         )}

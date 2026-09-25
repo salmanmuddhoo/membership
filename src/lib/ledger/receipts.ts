@@ -15,7 +15,10 @@ import { query, withTransaction } from '../db/pool';
 import { accountsClosedOnDeath, type AccountClosedOnDeath } from './claimants';
 import { loadTransaction, type TransactionSummary } from './review';
 import { KIND_WORDS, notifyReceiptVoided } from './void-notifications';
-import { depositorForApplication } from '../applications/depositor';
+import {
+  collectorForApplication,
+  depositorForApplication,
+} from '../applications/depositor';
 
 export class ReceiptError extends Error {
   constructor(
@@ -42,13 +45,15 @@ export interface TransactionReceipt {
   // transaction that posted at once).
   capturedByRole: string | null;
   postedByName: string | null;
-  // Who handed the money over, where that is not the holder: a Minor's
-  // guardian, a Corporate member's contact person (QA-23) — the same rule
-  // the fee receipt and the Cash Deposit Form follow (depositorFor). Null
-  // for anything but money in, and where it is the holder themselves.
-  depositorName: string | null;
-  // A closure on a death: every account it closed, with what each paid.
-  // Empty for anything else (transaction.claimantKind null).
+  // Who stood at the counter, where that is not the holder: for money in,
+  // a Minor's guardian or a Corporate member's contact person (QA-23) — the
+  // same rule the fee receipt and the Cash Deposit Form follow
+  // (depositorFor); for a withdrawal, a Minor's guardian, who collects it
+  // (collectorForApplication). Null for anything else, and where it is the
+  // holder themselves.
+  atTheCounter: string | null;
+  // A closure on a death or a demised claim: every account it closed, with
+  // what each paid. Empty for anything else.
   accountsClosed: AccountClosedOnDeath[];
 }
 
@@ -86,8 +91,11 @@ export async function loadTransactionReceipt(
   if (!row || (row.state !== 'issued' && row.state !== 'void')) return null;
   const transaction = await loadTransaction(row.transaction_id);
   if (!transaction) return null;
-  let depositorName: string | null = null;
-  if (transaction.kind === 'deposit' && !transaction.payeeName) {
+  let atTheCounter: string | null = null;
+  if (
+    (transaction.kind === 'deposit' || transaction.kind === 'withdrawal') &&
+    !transaction.payeeName
+  ) {
     const holder = await query<{ application_id: string | null }>(
       `select coalesce(m.application_id, c.application_id) as application_id
          from transaction t
@@ -96,15 +104,16 @@ export async function loadTransactionReceipt(
         where t.id = $1`,
       [transaction.id]
     );
-    const depositor = await depositorForApplication(
-      holder.rows[0]?.application_id ?? null
-    );
-    if (depositor.name && depositor.name !== transaction.holderName) {
-      depositorName = depositor.name;
-    }
+    const applicationId = holder.rows[0]?.application_id ?? null;
+    const name =
+      transaction.kind === 'deposit'
+        ? (await depositorForApplication(applicationId)).name
+        : await collectorForApplication(applicationId);
+    if (name && name !== transaction.holderName) atTheCounter = name;
   }
   const accountsClosed =
-    transaction.kind === 'closure' && transaction.claimantKind
+    (transaction.kind === 'closure' && transaction.claimantKind) ||
+    transaction.kind === 'demise'
       ? await accountsClosedOnDeath(transaction.id)
       : [];
   return {
@@ -116,7 +125,7 @@ export async function loadTransactionReceipt(
     voidedAt: row.state === 'void' ? row.settled_at : null,
     capturedByRole: row.captured_by_role,
     postedByName: row.posted_by_name,
-    depositorName,
+    atTheCounter,
     accountsClosed,
   };
 }

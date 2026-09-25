@@ -22,7 +22,7 @@ import {
   PaymentError,
   requireReference,
 } from '../payments/payments';
-import { fromCents, MoneyError, toCents } from '../payments/money';
+import { formatMoney, fromCents, MoneyError, toCents } from '../payments/money';
 import {
   abandonReceiptNumber,
   allocateReceiptNumber,
@@ -203,7 +203,7 @@ function refuseUnlessCreditable(to: Destination, amountCents: number): void {
   ) {
     throw new TransferError(
       `A ${to.typeName} transaction cannot exceed ` +
-        `${fromCents(toCents(to.maximumTransactionAmount))}.`
+        `${formatMoney(fromCents(toCents(to.maximumTransactionAmount)))}.`
     );
   }
 }

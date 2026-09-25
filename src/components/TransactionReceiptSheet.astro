@@ -5,7 +5,7 @@
 // Treasurer's void is on screen only; the paper carries the receipt.
 // Rendered inside /receipts/[id], whose styles it shares.
 import type { PrintHistory, TransactionReceipt } from '@lib/ledger/receipts';
-import { formatMoney } from '@lib/payments/money';
+import { formatMoney, fromCents, toCents } from '@lib/payments/money';
 
 export interface ReceiptSendRecord {
   channel: string;
@@ -71,6 +71,15 @@ const LINES: Record<string, string> = {
   resignation: 'Membership resigned · Shares and MSA paid out',
   demise: 'Entitlements paid to the claimant',
 };
+// A demised claim pays the accounts and the Takaful benefit together; the
+// benefit is its own line (DEM-US-004), the accounts' line the rest.
+const takaful =
+  t.kind === 'demise' && toCents(t.takafulBenefit) > 0
+    ? t.takafulBenefit
+    : null;
+const fromAccounts = takaful
+  ? fromCents(toCents(t.amount) - toCents(takaful))
+  : t.amount;
 const holder = [t.holderName || t.holderKind, t.memberNo]
   .filter(Boolean)
   .join(' · ');
@@ -125,9 +134,9 @@ const backHref = `/transactions/${t.id}`;
   <dl class="facts">
     <div class="row">
       <dt>{moneyIn ? 'Received from' : 'Paid to'}</dt>
-      <dd>{t.payeeName || receipt.depositorName || holder}</dd>
+      <dd>{t.payeeName || receipt.atTheCounter || holder}</dd>
     </div>
-    {receipt.depositorName && (
+    {receipt.atTheCounter && (
       <div class="row">
         <dt>On behalf of</dt>
         <dd>{holder}</dd>
@@ -196,8 +205,14 @@ const backHref = `/transactions/${t.id}`;
             : (LINES[t.kind] ?? t.kind)}
           {t.reason && ` · ${t.reason}`}
         </td>
-        <td class="amount">{formatMoney(t.amount, t.currency)}</td>
+        <td class="amount">{formatMoney(fromAccounts, t.currency)}</td>
       </tr>
+      {takaful && (
+        <tr>
+          <td>Takaful benefit</td>
+          <td class="amount">{formatMoney(takaful, t.currency)}</td>
+        </tr>
+      )}
       <tr class="total">
         <td>Total</td>
         <td class="amount">{formatMoney(t.amount, t.currency)}</td>
@@ -205,7 +220,7 @@ const backHref = `/transactions/${t.id}`;
     </tbody>
   </table>
 
-  {t.balanceAfter && (
+  {t.balanceAfter && receipt.accountsClosed.length === 0 && (
     <p class="note">Balance after: {formatMoney(t.balanceAfter, t.currency)}</p>
   )}
 

@@ -350,6 +350,53 @@ describe('a demised claim (S-1704)', () => {
     expect(await demises.transactionOnItsWay(member.id)).toBeNull();
   });
 
+  it('is not offered for a Corporate member, which is not a person', async () => {
+    const { demises } = await load();
+    const corporateTypeId = (
+      await run(
+        appUrl,
+        `select id from membership_type where code = 'corporate'`
+      )
+    ).rows[0].id;
+    const application = await run(
+      appUrl,
+      `insert into membership_application (membership_type_id, captured_by, status)
+       values ($1, $2, 'approved') returning id`,
+      [corporateTypeId, officer.userId]
+    );
+    await run(
+      appUrl,
+      `insert into application_party (application_id, subject, ordinal, values)
+       values ($1, 'applicant', 1, '{"name": "Test Trading Ltd"}'),
+              ($1, 'nominee', 1, '{"name": "Yusuf", "surname": "Test", "nic": "Y1234567890123", "address": "12 Rue des Palmiers, Curepipe"}')`,
+      [application.rows[0].id]
+    );
+    const company = await run(
+      appUrl,
+      `insert into member (application_id, membership_type_id)
+       values ($1, $2) returning id`,
+      [application.rows[0].id, corporateTypeId]
+    );
+    await run(
+      appUrl,
+      `insert into account (member_id, account_type_id, is_membership_default, status)
+       values ($1, (select id from account_type where code = 'shares'), true, 'active')`,
+      [company.rows[0].id]
+    );
+    expect(demises.claimableMembershipType('corporate')).toBe(false);
+    expect(demises.claimableMembershipType('minor')).toBe(true);
+    await expect(
+      demises.startDemise(
+        {
+          memberId: company.rows[0].id,
+          claimant: { kind: 'nominee' },
+          method: 'cash',
+        },
+        clerk
+      )
+    ).rejects.toThrowError(/corporate member has no demised claim/);
+  });
+
   it('adds the Takaful benefit as its own line, and the total is every account plus it', async () => {
     const { demises, config } = await load();
     expect(await config.takafulBenefit()).toBe('15000');
@@ -513,6 +560,24 @@ describe('a demised claim (S-1704)', () => {
       { account_id: member.msa, amount: '12000.00' },
       { account_id: member.hsa, amount: '1000.00' },
     ]);
+    // The receipt lists every account the claim closed, with what each paid.
+    const { claimants, receipts } = {
+      claimants: await import('./claimants'),
+      receipts: await import('./receipts'),
+    };
+    expect(
+      (await claimants.accountsClosedOnDeath(draft.id)).map(a => [
+        a.id,
+        a.amount,
+      ])
+    ).toEqual([
+      [member.shares, '8000.00'],
+      [member.msa, '12000.00'],
+      [member.hsa, '1000.00'],
+    ]);
+    expect(
+      (await receipts.loadTransactionReceipt(draft.id))?.accountsClosed
+    ).toHaveLength(3);
     expect(await memberStatus()).toMatchObject({
       status: 'demised',
       status_changed_at: expect.any(Date),

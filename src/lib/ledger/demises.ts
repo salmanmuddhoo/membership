@@ -163,17 +163,44 @@ export async function claimTotals(
   };
 }
 
-async function memberFor(
-  memberId: string
-): Promise<{ id: string; status: string; applicationId: string | null }> {
+async function memberFor(memberId: string): Promise<{
+  id: string;
+  status: string;
+  applicationId: string | null;
+  membershipTypeCode: string;
+}> {
   const result = await query<{
     id: string;
     status: string;
     application_id: string | null;
-  }>(`select id, status, application_id from member where id = $1`, [memberId]);
+    type_code: string;
+  }>(
+    `select m.id, m.status, m.application_id, t.code as type_code
+       from member m
+       join membership_type t on t.id = m.membership_type_id
+      where m.id = $1`,
+    [memberId]
+  );
   const r = result.rows[0];
   if (!r) throw new DemiseError('That member no longer exists.', 'not_found');
-  return { id: r.id, status: r.status, applicationId: r.application_id };
+  return {
+    id: r.id,
+    status: r.status,
+    applicationId: r.application_id,
+    membershipTypeCode: r.type_code,
+  };
+}
+
+/**
+ * Whether a member of this type can be the subject of a claim at all. A
+ * claim settles a death (FRD 7.3) and carries the funeral benefit; a
+ * Corporate member is an entity, not a person, and leaves by resignation or
+ * by closing its accounts. Read by the member's page for the button, and
+ * enforced in refuseUnlessClaimable. `typeCode` is the membership type's
+ * own code, not its label, as depositorFor reads it.
+ */
+export function claimableMembershipType(typeCode: string): boolean {
+  return typeCode !== 'corporate';
 }
 
 /**
@@ -298,6 +325,12 @@ async function refuseUnlessClaimable(
   existing: TransactionSummary | null
 ): Promise<ClaimAccount[]> {
   const member = await memberFor(memberId);
+  if (!claimableMembershipType(member.membershipTypeCode)) {
+    throw new DemiseError(
+      'A corporate member has no demised claim. Resign the member instead.',
+      'conflict'
+    );
+  }
   if (member.status !== 'active') {
     throw new DemiseError(`This member is ${member.status}.`, 'conflict');
   }

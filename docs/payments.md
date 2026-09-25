@@ -178,6 +178,13 @@ nothing changes. An additional account captures nobody of its own, so the
 rule is applied to the holder's founding application, which is where their
 guardian or contact person was captured.
 
+The same holds for the Phase 2 Cash Deposit Form on a large cash deposit
+request (`/deposits/{id}/form`), and on the way out: a Minor's withdrawal
+receipt reads "Paid to" the guardian, on behalf of the child
+(`collectorForApplication`). A Corporate member's withdrawal is paid to the
+company itself — a cheque or a transfer is the company's, not its Contact
+Person's.
+
 **The filed form follows the money.** It used to be readable only from the
 Payments step of the application that took it, which meant the people it
 most concerns could not see it: the Regional Manager, Secretary and

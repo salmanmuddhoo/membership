@@ -40,10 +40,11 @@ export function exitEventCode(kind: string, happening: ExitHappening): string {
  * active wording.
  */
 // The account the wording names — on a death, every account the closure
-// covers (0099).
+// (0099) or the claim covers.
 async function accountWords(transaction: TransactionSummary): Promise<string> {
   const covered =
-    transaction.kind === 'closure' && transaction.claimantKind
+    (transaction.kind === 'closure' && transaction.claimantKind) ||
+    transaction.kind === 'demise'
       ? await accountsClosedOnDeath(transaction.id)
       : [];
   return covered.length > 0

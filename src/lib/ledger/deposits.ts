@@ -19,7 +19,7 @@ import {
   PaymentError,
   requireReference,
 } from '../payments/payments';
-import { fromCents, MoneyError, toCents } from '../payments/money';
+import { formatMoney, fromCents, MoneyError, toCents } from '../payments/money';
 import {
   abandonReceiptNumber,
   allocateReceiptNumber,
@@ -303,7 +303,7 @@ export function refuseUnlessDepositable(
   ) {
     throw new DepositError(
       `A ${to.typeName} transaction cannot exceed ` +
-        `${fromCents(toCents(to.maximumTransactionAmount))}.`
+        `${formatMoney(fromCents(toCents(to.maximumTransactionAmount)))}.`
     );
   }
 }
