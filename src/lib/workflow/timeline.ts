@@ -24,7 +24,7 @@ import {
 } from '../ledger/closures';
 import { rolesHoldingPermission } from '../access/holders';
 import { sourceOfFundItem } from '../ledger/deposit-requests';
-import { finalStepLabel } from '../ledger/labels';
+import { finalStepLabel, recordedLabel } from '../ledger/labels';
 import {
   loadTransaction,
   PERMISSION_DISBURSE,
@@ -273,11 +273,15 @@ export async function routePreviewGroups(
   // A withdrawal is disbursed by whoever holds transaction.disburse (the
   // Treasurer); a transfer's payee is not known until the form is filled,
   // so its preview names whoever posts and the chevron after submit says
-  // which. Both read Disbursement (previewTimeline's default).
+  // which. The last step reads as it will once done (labels.ts): Deposit
+  // recorded, Transfer recorded, else Disbursement.
+  const postedLabel =
+    recordedLabel({ kind: kind === 'transfer' ? 'transfer_leg' : kind }) ??
+    undefined;
   const labels =
     kind === 'withdrawal'
       ? { postedDetail: await roleNamesHolding(PERMISSION_DISBURSE) }
-      : { postedDetail: await roleNamesHolding(PERMISSION_POST) };
+      : { postedLabel, postedDetail: await roleNamesHolding(PERMISSION_POST) };
   for (const typeId of new Set(accounts.map(a => a.accountTypeId))) {
     const bands = await routeBands({ kind, accountTypeId: typeId, roleCodes });
     byType.set(
@@ -286,7 +290,7 @@ export async function routePreviewGroups(
         key: `${typeId}:${i}`,
         fromCents: band.fromCents,
         toCents: band.toCents,
-        summary: describeBand(band),
+        summary: describeBand(band, kind),
         steps: previewTimeline(band.chain, labels),
         atOnce: band.definitionCode === null,
       }))

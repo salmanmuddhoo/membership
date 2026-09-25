@@ -204,6 +204,13 @@ const routeGroups = await routePreviewGroups(
 const initialCents = /^\d{1,12}(\.\d{1,2})?$/.test(values.amount ?? '')
   ? toCents(values.amount)
   : null;
+// The own-account destination can't be the source account chosen above —
+// the server refuses that combination, so this picks a different one to
+// start from (unless the posted value already is one).
+const initialOwnAccountId =
+  values.ownAccountId && values.ownAccountId !== values.sourceAccountId
+    ? values.ownAccountId
+    : (ownTargets.find(a => a.id !== values.sourceAccountId)?.id ?? '');
 ---
 
 <DashboardLayout title="Transfer · Al Barakah MCSL" heading="Record a transfer">
@@ -231,7 +238,7 @@ const initialCents = /^\d{1,12}(\.\d{1,2})?$/.test(values.amount ?? '')
       <section class={CARD_OK}>
         <h2 class={CARD_TITLE}>
           {transfer.status === 'posted'
-            ? `Transfer ${transfer.reference} disbursed`
+            ? `Transfer ${transfer.reference} recorded`
             : `Transfer ${transfer.reference} submitted for approval`}
         </h2>
         {transfer.status !== 'posted' && transfer.debitLeg.currentStepName && (
@@ -380,7 +387,9 @@ const initialCents = /^\d{1,12}(\.\d{1,2})?$/.test(values.amount ?? '')
                 {ownTargets.map(account => (
                   <option
                     value={account.id}
-                    selected={account.id === values.ownAccountId}
+                    selected={account.id === initialOwnAccountId}
+                    disabled={account.id === values.sourceAccountId}
+                    hidden={account.id === values.sourceAccountId}
                   >
                     {account.accountNo} · {account.accountTypeName} ·{' '}
                     {formatMoney(account.balance)}
@@ -536,6 +545,9 @@ const initialCents = /^\d{1,12}(\.\d{1,2})?$/.test(values.amount ?? '')
     const sourceSelect = form.querySelector<HTMLSelectElement>(
       '[name="sourceAccountId"]'
     );
+    const ownSelect = form.querySelector<HTMLSelectElement>(
+      '[name="ownAccountId"]'
+    );
     const note = form.querySelector<HTMLElement>('[data-available-note]');
     const methodSelect =
       form.querySelector<HTMLSelectElement>('[name="method"]');
@@ -586,6 +598,31 @@ const initialCents = /^\d{1,12}(\.\d{1,2})?$/.test(values.amount ?? '')
       }
       if (submitButton) submitButton.disabled = overRoom;
     };
+    // The own-account destination can't also be the source — the server
+    // refuses that combination — so whichever option matches the chosen
+    // source is taken off the list here, and picked back up if the source
+    // changes again.
+    const updateOwnOptions = () => {
+      if (!ownSelect) return;
+      const sourceId = sourceSelect?.value;
+      let selectedWasRemoved = false;
+      for (const option of ownSelect.options) {
+        const isSource = option.value === sourceId;
+        option.disabled = isSource;
+        option.hidden = isSource;
+        if (isSource && option.selected) selectedWasRemoved = true;
+      }
+      if (selectedWasRemoved) {
+        const firstEnabled = Array.from(ownSelect.options).find(
+          o => !o.disabled
+        );
+        if (firstEnabled) {
+          ownSelect.value = firstEnabled.value;
+        } else {
+          ownSelect.selectedIndex = -1;
+        }
+      }
+    };
     const recompute = () => {
       const chosen = form.querySelector<HTMLInputElement>(
         'input[name="destinationKind"]:checked'
@@ -622,6 +659,7 @@ const initialCents = /^\d{1,12}(\.\d{1,2})?$/.test(values.amount ?? '')
       }
       if (numberInput)
         numberInput.placeholder = own ? 'AB0001' : `${prefix}0001`;
+      updateOwnOptions();
       checkAmount();
     };
     form.addEventListener('change', recompute);
@@ -634,9 +672,6 @@ const initialCents = /^\d{1,12}(\.\d{1,2})?$/.test(values.amount ?? '')
     // the browser in the device's language. Intercepting the form's submit
     // (not the button's click) covers Enter in a field too; native
     // validation has already passed by the time this fires.
-    const ownSelect = form.querySelector<HTMLSelectElement>(
-      '[name="ownAccountId"]'
-    );
     const payeeInput =
       form.querySelector<HTMLInputElement>('[name="payeeName"]');
     const confirmAmount = (value: string) =>

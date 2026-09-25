@@ -171,8 +171,9 @@ export async function routeBands(
 }
 
 // One line an officer reads above the timeline: which amounts, and what
-// happens to them.
-export function describeBand(band: RouteBand): string {
+// happens to them. A deposit or a transfer is recorded at once, money paid
+// out disbursed (labels.ts).
+export function describeBand(band: RouteBand, kind?: string): string {
   const rs = (cents: number) =>
     `Rs ${formatMoney(fromCents(cents)).replace(/^[A-Z]{3}\s*/, '')}`;
   const range =
@@ -184,7 +185,9 @@ export function describeBand(band: RouteBand): string {
           ? `${rs(band.fromCents)} and above`
           : `${rs(band.fromCents)} to ${rs(band.toCents)}`;
   if (band.chain.length === 0) {
-    return `${range}: disbursed at once, no review needed.`;
+    const done =
+      kind === 'deposit' || kind === 'transfer' ? 'recorded' : 'disbursed';
+    return `${range}: ${done} at once, no review needed.`;
   }
   const steps = band.chain
     .map(s => (s.roleName ? `${s.name} (${s.roleName})` : s.name))
