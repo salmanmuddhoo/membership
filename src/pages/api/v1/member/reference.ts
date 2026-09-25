@@ -7,7 +7,7 @@
 // no workflows, no account types, no administration detail.
 import type { APIRoute } from 'astro';
 import { defineMemberEndpoint, apiSuccess } from '@lib/member/endpoint';
-import { checklistItemId } from '@lib/member/applications';
+import { checklistItemId, isOnlineRegistrable } from '@lib/member/applications';
 import {
   listChecklists,
   listFeeSchedules,
@@ -55,6 +55,7 @@ const endpoint = defineMemberEndpoint(
               'code',
               'name',
               'isActive',
+              'onlineRegistration',
               'fields',
               'nomineeCount',
               'checklist',
@@ -66,6 +67,12 @@ const endpoint = defineMemberEndpoint(
               name: { type: 'string' },
               description: { type: 'string' },
               isActive: { type: 'boolean' },
+              onlineRegistration: {
+                type: 'boolean',
+                description:
+                  'Whether a new applicant may apply for this membership ' +
+                  'type from the app. Others are started at a branch.',
+              },
               nomineeCount: { type: 'integer' },
               fields: {
                 type: 'array',
@@ -189,6 +196,7 @@ const endpoint = defineMemberEndpoint(
           name: t.name,
           description: t.description,
           isActive: t.isActive,
+          onlineRegistration: isOnlineRegistrable(t.code),
           nomineeCount: t.nomineeCount,
           fields: t.fields.map(f => ({
             id: f.id,

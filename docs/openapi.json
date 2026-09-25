@@ -8768,6 +8768,7 @@
                               "code",
                               "name",
                               "isActive",
+                              "onlineRegistration",
                               "fields",
                               "nomineeCount",
                               "checklist",
@@ -8789,6 +8790,10 @@
                               },
                               "isActive": {
                                 "type": "boolean"
+                              },
+                              "onlineRegistration": {
+                                "type": "boolean",
+                                "description": "Whether a new applicant may apply for this membership type from the app. Others are started at a branch."
                               },
                               "nomineeCount": {
                                 "type": "integer"
