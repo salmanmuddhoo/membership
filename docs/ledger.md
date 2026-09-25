@@ -731,6 +731,20 @@ closes with what each paid (`accountsClosedTogether()`, shared with a
 closure on a death), and the receipt carries the Takaful benefit as its own
 line under the accounts' line (DEM-US-004), with no "Balance after".
 
+Once a claim is disbursed and the holder reads `demised` — a member's claim,
+or the closure on a death that closed a non-member's last account — every
+draft and returned transaction of theirs is cancelled in the same database
+transaction (officer direction, `cancelDraftsOnDeath()` in
+`src/lib/ledger/claimants.ts`): a deposit request, a withdrawal or transfer
+sent back, a closure or resignation never submitted, and a transfer from
+someone else into one of their accounts, both legs. Each gets a
+`cancelled` transition naming the claim and a `transaction.cancelled`
+audit event, as though its officer had withdrawn it. Cancelled, not
+deleted: the ledger keeps a row once a transition names it. Until then the
+claim's own pages (the wizard and `/transactions/{id}`) list the ones it
+will cancel (`draftsLeftOnDeath()`), so the officer and the Treasurer see
+them before disbursing. A claim rejected or withdrawn cancels nothing.
+
 ## A minor's guardian
 
 A Minor member's guardian block (the minor's founding application, subject
@@ -752,7 +766,11 @@ While a minor's guardian is demised and not yet replaced
 direction): a withdrawal, a transfer out, a closure and the minor's
 resignation are refused, and the member page does not offer them. Money in
 still arrives — a deposit or a transfer in — and a demised claim on the
-minor is still made, since it is paid to the nominee. A deposit receipt and
+minor is still made, since it is paid to the nominee. What was already on
+its way when the guardian died stops where it is: it is neither forwarded
+nor approved at its step, nor disbursed, until the new guardian is in
+place (`refuseWhileGuardianGone()` in `src/lib/ledger/review.ts`); it can
+still be returned or rejected, and its page says why. A deposit receipt and
 the Cash Deposit Form stop naming the dead guardian and fall back to the
 holder. A transfer from a minor's account into the guardian's own account
 is an ordinary transfer and follows the matrix like any other.

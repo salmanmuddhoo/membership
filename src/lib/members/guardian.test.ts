@@ -60,6 +60,7 @@ async function load() {
     guardian: await import('./guardian'),
     deposits: await import('../ledger/deposits'),
     withdrawals: await import('../ledger/withdrawals'),
+    review: await import('../ledger/review'),
     depositor: await import('../applications/depositor'),
   };
 }
@@ -249,6 +250,35 @@ describe("a Minor's guardian", () => {
         officer
       )
     ).rejects.toThrowError(message!);
+    // A withdrawal approved before the guardian died is not paid out
+    // either.
+    const approved = await run(
+      appUrl,
+      `insert into transaction
+         (kind, member_id, account_id, amount, method, status, captured_by)
+       values ('withdrawal', $1, $2, 50, 'cash', 'approved', $3)
+       returning id`,
+      [minor.id, minor.msa, clerk.userId]
+    );
+    const { review } = await load();
+    await expect(
+      review.postApprovedTransaction(
+        approved.rows[0].id,
+        {
+          ...officer,
+          permissions: new Set([
+            ...officer.permissions,
+            'transaction.disburse',
+          ]),
+        },
+        { method: 'cash' }
+      )
+    ).rejects.toThrowError(message!);
+    await run(
+      ownerUrl,
+      `update transaction set status = 'rejected' where id = $1`,
+      [approved.rows[0].id]
+    );
     const d = await deposits.recordDeposit(
       { accountId: minor.msa, amount: '200', method: 'cash' },
       officer

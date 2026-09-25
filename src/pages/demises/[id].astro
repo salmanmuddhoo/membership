@@ -4,6 +4,7 @@
 // Once submitted it is reviewed at /transactions/<id> like any
 // transaction, and comes back here only if a reviewer returns it.
 import ChainTimeline from '@components/ChainTimeline.astro';
+import DraftsCancelledOnDeath from '@components/DraftsCancelledOnDeath.astro';
 import DocumentViewer from '@components/DocumentViewer.astro';
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import {
@@ -20,6 +21,7 @@ import {
   submitDemise,
   updateDemise,
 } from '@lib/ledger/demises';
+import { draftsLeftOnDeath } from '@lib/ledger/claimants';
 import { resolveRoute } from '@lib/ledger/routing';
 import { loadTransaction, transitionsFor } from '@lib/ledger/review';
 import { formatMoney, toCents } from '@lib/payments/money';
@@ -147,6 +149,7 @@ const [
   claimTotals(claim.holderId),
   nomineeFor(claim.holderId),
 ]);
+const drafts = await draftsLeftOnDeath(claim.holderId, claim.id);
 const complete = checklistComplete(checklist);
 // Posted at once when the matrix routes it nowhere: only then is the payout
 // asked before the posting step, because submitting is the posting
@@ -205,6 +208,8 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         Returned: {returnComment}
       </div>
     )}
+
+    <DraftsCancelledOnDeath drafts={drafts} />
 
     {step === 'details' && (
       <form method="post" data-claimant-form class={FORM_CARD}>

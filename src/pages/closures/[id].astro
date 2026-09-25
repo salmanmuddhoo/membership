@@ -5,6 +5,7 @@
 // /transactions/<id> like any transaction, and comes back here only if a
 // reviewer returns it.
 import ChainTimeline from '@components/ChainTimeline.astro';
+import DraftsCancelledOnDeath from '@components/DraftsCancelledOnDeath.astro';
 import DocumentViewer from '@components/DocumentViewer.astro';
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import {
@@ -22,6 +23,7 @@ import {
 } from '@lib/ledger/closures';
 import {
   accountsClosedTogether,
+  draftsLeftOnDeath,
   nomineeOnApplication,
 } from '@lib/ledger/claimants';
 import { DocumentError, removeFiledDocument } from '@lib/documents/documents';
@@ -192,6 +194,9 @@ const nominee = holder
 // posted, paid) — while in flight, the sum of these is what submitting
 // would post (ledger/closures.ts works it out the same way).
 const deathAccounts = onDeath ? await accountsClosedTogether(closure.id) : [];
+const drafts = onDeath
+  ? await draftsLeftOnDeath(closure.holderId, closure.id)
+  : [];
 const deathTotal = fromCents(
   deathAccounts.reduce((sum, a) => sum + toCents(a.amount), 0)
 );
@@ -255,6 +260,8 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         Returned: {returnComment}
       </div>
     )}
+
+    <DraftsCancelledOnDeath drafts={drafts} />
 
     {step === 'details' && (
       <form method="post" data-details-form class={FORM_CARD}>

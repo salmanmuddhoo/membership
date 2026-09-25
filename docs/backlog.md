@@ -5226,3 +5226,20 @@ form never counted toward the application's timeline. Migration 0108 adds
 `non_member_corporate_kyc` and `non_member_minor_kyc` — each the matching
 member checklist without the pieces that only mean something to a member
 (a nominee's own ID card) — and points `corporate` and `minor` at them.
+
+---
+
+### A death clears the holder's drafts; a pending payout waits for a new guardian
+
+Officer direction after the functional round. When a demised claim, or the
+closure on a death that closes a non-member's last account, is disbursed,
+every draft and returned transaction of the holder is cancelled with it —
+logged and audited, and listed on the claim's pages beforehand so it is no
+surprise (`docs/ledger.md`, "A deceased member's claim"). And a minor's
+withdrawal, transfer out, closure or resignation already on its way when
+the guardian died goes no further — not forwarded, approved or disbursed —
+until a new guardian is approved; it can still be returned or rejected
+(`docs/ledger.md`, "A minor's guardian").
+
+Not covered: an additional-account application still in capture for the
+deceased. Applications have no cancelled state yet.

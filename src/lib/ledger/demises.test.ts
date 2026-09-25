@@ -468,6 +468,27 @@ describe('a demised claim (S-1704)', () => {
     expect(edited.payeeName).toBe('Fatima Test');
     expect(edited.claimant?.relation).toBe('Daughter');
 
+    // A deposit still a draft on one of the accounts: named on the claim,
+    // and cancelled once it is disbursed (officer direction).
+    const leftOver = await run(
+      appUrl,
+      `insert into transaction
+         (kind, member_id, account_id, amount, method, status, captured_by)
+       values ('deposit', $1, $2, 5000, 'cash', 'draft', $3)
+       returning id, reference`,
+      [member.id, member.hsa, clerk.userId]
+    );
+    const { claimants: early } = { claimants: await import('./claimants') };
+    expect(await early.draftsLeftOnDeath(member.id, draft.id)).toEqual([
+      {
+        id: leftOver.rows[0].id,
+        reference: leftOver.rows[0].reference,
+        kindName: 'Deposit',
+        status: 'draft',
+        amount: '5000.00',
+      },
+    ]);
+
     // Both papers, or nothing submits.
     await expect(demises.submitDemise(draft.id, clerk)).rejects.toThrowError(
       /File the death certificate and the affidavit/
@@ -582,6 +603,33 @@ describe('a demised claim (S-1704)', () => {
       status: 'demised',
       status_changed_at: expect.any(Date),
     });
+    // The draft deposit went with it, logged and audited.
+    const cancelled = await run(
+      appUrl,
+      `select t.status, tt.from_status, tt.comment
+         from transaction t
+         join transaction_transition tt on tt.transaction_id = t.id
+        where t.id = $1`,
+      [leftOver.rows[0].id]
+    );
+    expect(cancelled.rows).toEqual([
+      {
+        status: 'cancelled',
+        from_status: 'draft',
+        comment: `Cancelled with ${draft.reference}: the holder is demised.`,
+      },
+    ]);
+    const audited = await run(
+      appUrl,
+      `select new_value from audit_event
+        where action = 'transaction.cancelled' and entity_id = $1`,
+      [leftOver.rows[0].reference]
+    );
+    expect(audited.rows[0].new_value).toEqual({
+      status: 'cancelled',
+      cancelled_by: draft.reference,
+    });
+    expect(await claimants.draftsLeftOnDeath(member.id, draft.id)).toEqual([]);
     const event = await run(
       appUrl,
       `select payload from financial_event where transaction_id = $1`,
