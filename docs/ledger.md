@@ -358,7 +358,13 @@ issued when money moves. On screen money paid out is "disbursed", never
 "posted" (`transactionStatusLabel`, `src/lib/ledger/labels.ts`), and a
 transaction that pays out ends its chevron in **Disbursement**, naming the
 roles that hold the permission (`rolesHoldingPermission`) — "Treasurer" —
-until it is done.
+until it is done. A deposit and a transfer are not paid out but recorded
+(officer direction): their chevron ends in **Deposit recorded** or
+**Transfer recorded**, a finished one reads so as its status — on the
+page, in the tables, in the audit detail and in the Transactions,
+Approvals and Transfers reports — and the button that finishes one says
+Record deposit or Record transfer (a transfer to a payee still says
+Disburse).
 
 The strip at the top of the transaction page is the chain as it is now
 (S-1405): `chainTimeline('transaction', id)` in `src/lib/workflow/timeline.ts`

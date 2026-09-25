@@ -20,13 +20,14 @@ const KINDS: [TransactionRowKind, string][] = [
   ['demise', 'Demised claim'],
   ['reversal', 'Reversal'],
 ];
-// The table reads a posted row as Disbursed regardless of kind (business
-// decision), so the filter offers one choice for it (QA-19).
+// The table reads a posted deposit or transfer as recorded and anything
+// else as Disbursed (labels.ts); the filter offers one choice for all of
+// them (QA-19).
 const STATUSES: [string, string][] = [
   ['submitted', STATUS_LABELS.submitted],
   ['under_review', STATUS_LABELS.under_review],
   ['approved', STATUS_LABELS.approved],
-  ['posted', STATUS_LABELS.posted],
+  ['posted', 'Disbursed or recorded'],
   ['returned', STATUS_LABELS.returned],
   ['rejected', STATUS_LABELS.rejected],
 ];

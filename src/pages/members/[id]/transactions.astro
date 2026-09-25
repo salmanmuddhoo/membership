@@ -122,7 +122,7 @@ if (paging.page > 1 && paging.page > pageCount(result.total, paging.per)) {
           <option value="">All</option>
           {STATUSES.map(s => (
             <option value={s} selected={s === status}>
-              {s === 'posted' ? 'Disbursed' : s.replace('_', ' ')}
+              {s === 'posted' ? 'Disbursed or recorded' : s.replace('_', ' ')}
             </option>
           ))}
         </select>

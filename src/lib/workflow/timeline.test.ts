@@ -209,7 +209,7 @@ describe('a closure request', () => {
     expect(steps.find(s => s.key === 'signature')?.problem).toBe(true);
     expect(steps.find(s => s.key === 'capture')?.label).toBe('Submitted');
     // The pure prelude names no last step of its own; transactionTimeline's
-    // own default is Disbursement, same as finalStepLabel's for every kind.
+    // own default is Disbursement, finalStepLabel's for money paid out.
     expect(steps.find(s => s.key === 'posted')?.label).toBe('Disbursement');
   });
 

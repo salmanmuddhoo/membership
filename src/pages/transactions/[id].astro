@@ -4,7 +4,7 @@
 // post, or correct and resubmit — and the trail of who did what.
 import ChainTimeline from '@components/ChainTimeline.astro';
 import DocumentViewer from '@components/DocumentViewer.astro';
-import { transactionStatusLabel } from '@lib/ledger/labels';
+import { recordedLabel, transactionStatusLabel } from '@lib/ledger/labels';
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import {
   documentsForTransaction,
@@ -137,9 +137,10 @@ if (Astro.request.method === 'POST') {
             }
           : undefined
       );
+      const done = (recordedLabel(transaction) ?? 'Disbursed').toLowerCase();
       notice = posted.receiptNo
-        ? `${transaction.displayReference} disbursed. Receipt ${posted.receiptNo}.`
-        : `${transaction.displayReference} disbursed.`;
+        ? `${transaction.displayReference} ${done}. Receipt ${posted.receiptNo}.`
+        : `${transaction.displayReference} ${done}.`;
     } else if (intent === 'reverse') {
       const result = await reverseTransaction(
         transaction.id,
@@ -807,7 +808,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                   : 'Approved. Record how the balance was paid out; the account closes and the receipt is issued now.'
                 : disburses
                   ? 'Approved. Record how it is paid out; disbursing moves the money and issues the receipt.'
-                  : 'Approved. Disbursing moves the money and issues the receipt.'}
+                  : 'Approved. Recording it moves the money and issues the receipt.'}
         </p>
         {disburses && (
           <div class="grid gap-3 sm:grid-cols-2">
@@ -857,7 +858,11 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         )}
         <input type="hidden" name="intent" value="post" />
         <button type="submit" class={BUTTON}>
-          Disburse
+          {isDeposit
+            ? 'Record deposit'
+            : isTransfer && !disburses
+              ? 'Record transfer'
+              : 'Disburse'}
         </button>
       </form>
     )}

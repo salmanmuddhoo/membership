@@ -33,15 +33,27 @@ export function transactionStatusLabel(transaction: {
   if (transaction.status !== 'posted') {
     return STATUS_LABELS[transaction.status] ?? transaction.status;
   }
-  // Every finished transaction reads Disbursed, regardless of kind
-  // (business decision) — deposits and internal transfers included.
-  return 'Disbursed';
+  return recordedLabel(transaction) ?? 'Disbursed';
 }
 
-/** The last step of the chevron, for every transaction: Disbursement. */
-export function finalStepLabel(_transaction: {
+/**
+ * What a finished deposit or transfer is called (officer direction): money
+ * that arrived or moved is recorded, not disbursed. Null for everything
+ * else, which reads Disbursed.
+ */
+export function recordedLabel(transaction: { kind: string }): string | null {
+  if (transaction.kind === 'deposit') return 'Deposit recorded';
+  if (transaction.kind === 'transfer_leg') return 'Transfer recorded';
+  return null;
+}
+
+/**
+ * The last step of the chevron: Deposit recorded or Transfer recorded for
+ * those, Disbursement for everything else.
+ */
+export function finalStepLabel(transaction: {
   kind: string;
   payeeName?: string | null;
 }): string {
-  return 'Disbursement';
+  return recordedLabel(transaction) ?? 'Disbursement';
 }

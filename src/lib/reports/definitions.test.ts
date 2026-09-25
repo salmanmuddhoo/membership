@@ -312,7 +312,7 @@ describe('transactions report', () => {
     expect(choices).toContainEqual({ value: 'returned', label: 'Returned' });
     expect(choices).toContainEqual({
       value: 'done',
-      label: 'Disbursed',
+      label: 'Disbursed or recorded',
     });
     expect(choices).toContainEqual({ value: 'rejected', label: 'Rejected' });
     expect(choices).toContainEqual({ value: 'cancelled', label: 'Cancelled' });
@@ -1385,7 +1385,7 @@ describe('membership movements reports', () => {
       expect(internal[0].From).toContain('Farah Test');
       expect(internal[0].To).toContain('Grace Recipient');
       expect(internal[0].Amount).toBe('1500.00');
-      expect(internal[0].Status).toBe('Disbursed');
+      expect(internal[0].Status).toBe('Transfer recorded');
 
       const external = result.rows.filter(
         r => r.Reference === externalTransferReference
