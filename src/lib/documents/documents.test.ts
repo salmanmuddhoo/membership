@@ -2027,6 +2027,37 @@ describe('S-403: viewing a filed document', () => {
     expect(result.url).toContain(encodeURIComponent(begun.ticket.itemPath));
   });
 
+  it("names the nominee's copy of a document apart from the applicant's", async () => {
+    const { documents } = await load();
+    const type = await run(
+      appUrl,
+      `select id from document_type where code = 'utility_bill'`
+    );
+    const application = await run(
+      appUrl,
+      `select reference from membership_application where id = $1`,
+      [applicationId]
+    );
+    const begun = await documents.beginUpload(
+      {
+        applicationId,
+        documentTypeId: type.rows[0].id,
+        subject: 'nominee',
+        fileName: 'scan.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 300,
+      },
+      officer
+    );
+    // One document type, one folder: without the subject in the name the
+    // nominee's file would land on the applicant's path.
+    expect(begun.ticket.itemPath).toMatch(
+      new RegExp(
+        `/Utility Bill \\(Nominee\\) - ${application.rows[0].reference}\\.pdf$`
+      )
+    );
+  });
+
   it('refuses when nothing has been committed yet', async () => {
     const { documents } = await load();
     const type = await run(
@@ -2152,7 +2183,7 @@ describe('undoing a mistaken upload, so it can be filed again', () => {
     // version above still counts (S-409), so this is version 2 — and the
     // original file's own extension, not its name (bill3.pdf), which the
     // stored name never carries at all.
-    expect(live.fileName).toMatch(/^Utility Bill - .+ v2\.pdf$/);
+    expect(live.fileName).toMatch(/^Utility Bill \(Guardian\) - .+ v2\.pdf$/);
   });
 
   it('still returns Missing when the SharePoint delete itself fails', async () => {
