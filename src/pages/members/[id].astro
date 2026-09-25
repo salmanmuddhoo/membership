@@ -14,6 +14,12 @@ import {
   startRejoinApplication,
 } from '@lib/applications/capture';
 import { forDisplay } from '@lib/applications/phone';
+import {
+  guardianGoneMessage,
+  openGuardianChange,
+  PERMISSION_APPROVE as GUARDIAN_APPROVE,
+  PERMISSION_CHANGE as GUARDIAN_CHANGE,
+} from '@lib/members/guardian';
 import { otherPartyGroups } from '@lib/applications/parties';
 import {
   paymentsForCustomer,
@@ -83,6 +89,7 @@ import {
   INPUT_SM,
   LABEL,
   NOTICE_ERROR,
+  NOTICE_WARN,
   PILL,
   SECONDARY_XS,
   SUBTITLE,
@@ -475,7 +482,21 @@ const canReopen = (account: { status: string; accountTypeId: string }) =>
   !reopening.has(account.accountTypeId);
 // S-1702: closing an account that is not the membership's, and the request
 // already on its way where there is one.
-const canClose = canDeposit;
+// A Minor whose guardian is demised (members/guardian.ts): money still comes
+// in, but none leaves until a new guardian is recorded and approved — the
+// ledger refuses it, and the buttons that would start it are not offered.
+const isMinorMember = member?.membershipTypeCode === 'minor';
+const guardianGone = isMinorMember
+  ? await guardianGoneMessage(member!.id)
+  : null;
+const guardianChange = isMinorMember
+  ? await openGuardianChange(member!.id)
+  : null;
+const canChangeGuardian =
+  isMinorMember &&
+  (principal.permissions.has(GUARDIAN_CHANGE) ||
+    principal.permissions.has(GUARDIAN_APPROVE));
+const canClose = canDeposit && !guardianGone;
 // S-1703: leaving the Society, and the request on its way where there is
 // one. Only a member resigns; a customer holds no membership to end.
 const resigning =
@@ -485,7 +506,7 @@ const resigning =
 // Only a member still in the membership resigns or is claimed for: a
 // resigned one deals as a non-member and has no membership left to end.
 const inMembership = member?.status === 'active';
-const canResign = inMembership && canDeposit && !resigning;
+const canResign = inMembership && canDeposit && !resigning && !guardianGone;
 // S-1704: settling a deceased member's entitlements.
 const settling =
   member && principal.permissions.has('transaction.view')
@@ -563,12 +584,16 @@ const documentCount = documentGroups.reduce(
           <a href={`/members/${recordId}/deposit`} class={BUTTON_SM}>
             Deposit
           </a>
-          <a href={`/members/${recordId}/withdraw`} class={BUTTON_SM}>
-            Withdrawal
-          </a>
-          <a href={`/members/${recordId}/transfer`} class={BUTTON_SM}>
-            Transfer
-          </a>
+          {!guardianGone && (
+            <a href={`/members/${recordId}/withdraw`} class={BUTTON_SM}>
+              Withdrawal
+            </a>
+          )}
+          {!guardianGone && (
+            <a href={`/members/${recordId}/transfer`} class={BUTTON_SM}>
+              Transfer
+            </a>
+          )}
           {canResign && (
             <a href={`/members/${recordId}/resign`} class={DANGER_SM}>
               Resign
@@ -628,6 +653,18 @@ const documentCount = documentGroups.reduce(
     </div>
 
     {error && <div class={NOTICE_ERROR}>{error}</div>}
+    {(guardianGone || guardianChange) && (
+      <div class={NOTICE_WARN}>
+        {guardianChange
+          ? 'A new guardian is waiting for approval.'
+          : guardianGone}{' '}
+        {canChangeGuardian && (
+          <a href={`/members/${recordId}/guardian`} class="underline">
+            {guardianChange ? 'Open it' : 'Change guardian'}
+          </a>
+        )}
+      </div>
+    )}
     {notice && (
       <div class="rounded-lg border border-amber-300 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200">
         {notice}
@@ -890,7 +927,14 @@ const documentCount = documentGroups.reduce(
 
     {guardianContactFields.length > 0 && (
       <section class={CARD}>
-        <h2 class={CARD_TITLE}>Parent / Guardian</h2>
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <h2 class={CARD_TITLE}>Parent / Guardian</h2>
+          {canChangeGuardian && (
+            <a href={`/members/${recordId}/guardian`} class={SECONDARY_SM}>
+              Change guardian
+            </a>
+          )}
+        </div>
         <dl class="mt-4 grid gap-x-6 gap-y-2 sm:grid-cols-2">
           {guardianContactFields.map(field => (
             <div class="flex gap-2 text-sm">

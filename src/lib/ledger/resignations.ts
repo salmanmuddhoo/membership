@@ -13,6 +13,7 @@
 // both accounts under one disbursement, one receipt, and ends the
 // membership: member.status = 'resigned', dated (post_transaction).
 import { recordAudit } from '../access/audit';
+import { guardianGoneMessage } from '../members/guardian';
 import type { Principal } from '../access/principal';
 import { query, withTransaction } from '../db/pool';
 import { offeredPaymentMethods, resignationChecks } from '../config/reference';
@@ -456,6 +457,8 @@ async function refuseUnlessResignable(
   if (member.status !== 'active') {
     throw new ResignationError(`This member is ${member.status}.`, 'conflict');
   }
+  const guardianGone = await guardianGoneMessage(memberId);
+  if (guardianGone) throw new ResignationError(guardianGone, 'conflict');
   const accounts = await coreAccounts(memberId);
   if (accounts.length === 0) {
     throw new ResignationError(
