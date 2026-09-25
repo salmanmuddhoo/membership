@@ -44,6 +44,19 @@ export const ACTION_RECEIVED = 'membership.application.received';
 // and beyond) they may not: an officer may be working on it.
 const APPLICANT_EDITABLE = new Set(['draft', 'returned']);
 
+// Which membership types a person may apply for from the phone. The app is
+// deliberately limited to the individual application — the one someone can
+// complete unaided, with no guardian, no company documents and no second
+// party for a branch to chase. Every other membership is still started at a
+// branch. Enforced in startMemberApplication, and surfaced to the app as
+// each type's onlineRegistration flag (the reference endpoint reads the same
+// set), so the app never offers what the backend would refuse.
+export const ONLINE_REGISTRABLE_TYPE_CODES = new Set(['individual']);
+
+export function isOnlineRegistrable(code: string): boolean {
+  return ONLINE_REGISTRABLE_TYPE_CODES.has(code);
+}
+
 // The signed form is a branch step: the applicant signs the printed form
 // when they pay. It is on the checklist for the officer, not for the phone.
 const BRANCH_ONLY_DOCUMENTS = new Set(['signed_form']);
@@ -351,6 +364,17 @@ export async function startMemberApplication(
   membershipTypeCode: string,
   origin: RequestOrigin
 ): Promise<MemberApplicationView> {
+  // The one membership the app is for. A crafted request naming any other
+  // type is refused here, not only hidden in the app (member/reference).
+  if (!isOnlineRegistrable(String(membershipTypeCode ?? ''))) {
+    throw new ApiError(
+      'validation_failed',
+      'Individual membership is the only kind you can apply for in the app. ' +
+        'Any other membership is started at a branch.',
+      { membershipType: ['Not available for online registration.'] }
+    );
+  }
+
   const open = await query<{ reference: string }>(
     `select reference from membership_application
       where applicant_mobile = $1
