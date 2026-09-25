@@ -1,11 +1,11 @@
 // A Minor member's guardian: who it is now, whether they are still there,
-// and changing them (migration 0107).
+// and replacing one who has died (migration 0107).
 //
 // The guardian block lives on the minor's founding application, as capture
 // wrote it (application_party, subject 'guardian'): surname, name, NIC, the
 // guardian's own Member No., relationship and mobile. It is read-only on
-// the member page. The one way to change it is a guardian_change: an
-// officer records the new guardian — an existing member, whose identity is
+// the member page, and changes only once the guardian is demised (officer
+// direction), through a guardian_change: an officer records the new guardian — an existing member, whose identity is
 // already on file under their own membership — and a second person
 // approves it; only then is the block replaced. The block before and after
 // are kept on the change and in the audit trail.
@@ -244,8 +244,8 @@ export interface GuardianChangeInput {
 }
 
 /**
- * Record a new guardian for a Minor member, waiting on approval. The
- * guardian block is untouched until then.
+ * Record a new guardian for a Minor member whose guardian is demised,
+ * waiting on approval. The guardian block is untouched until then.
  */
 export async function recordGuardianChange(
   memberId: string,
@@ -268,6 +268,15 @@ export async function recordGuardianChange(
   if (minor.status === 'resigned' || minor.status === 'demised') {
     throw new GuardianChangeError(
       `This member is ${minor.status}.`,
+      'conflict'
+    );
+  }
+  // Officer direction: a guardian is replaced only once they have died —
+  // never while they are alive.
+  const current = await currentGuardian(minor.id);
+  if (current?.status !== 'demised') {
+    throw new GuardianChangeError(
+      'The guardian can be changed only once they are demised.',
       'conflict'
     );
   }
@@ -311,18 +320,6 @@ export async function recordGuardianChange(
       `${guardian.member_no} is ${guardian.status}, so cannot be a guardian.`
     );
   }
-  const current = await currentGuardian(minor.id);
-  if (
-    current?.memberNo &&
-    current.memberNo.toLowerCase() === guardian.member_no.toLowerCase() &&
-    current.status !== 'demised'
-  ) {
-    throw new GuardianChangeError(
-      `${guardian.member_no} is already the guardian.`,
-      'conflict'
-    );
-  }
-
   const values = guardian.values ?? {};
   const newValues: Record<string, string> = {
     surname: (values.surname ?? '').trim(),

@@ -734,8 +734,8 @@ line under the accounts' line (DEM-US-004), with no "Balance after".
 ## A minor's guardian
 
 A Minor member's guardian block (the minor's founding application, subject
-`guardian`) is read-only on the member page and changes only through a
-**guardian change** (migration 0107, `src/lib/members/guardian.ts`,
+`guardian`) is read-only on the member page and changes only once the guardian is
+demised, through a **guardian change** (migration 0107, `src/lib/members/guardian.ts`,
 `/members/{id}/guardian`): an officer holding `member.guardian_change` —
 Regional Officer and Regional Manager by default — finds the new guardian
 among the active Individual members, names the relationship, and it waits

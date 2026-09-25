@@ -100,6 +100,10 @@ const [guardian, open, history] = await Promise.all([
   guardianChanges(member.id),
 ]);
 const inMembership = !['resigned', 'demised'].includes(member.status);
+// A new guardian is recorded only once the guardian is demised (officer
+// direction); recordGuardianChange refuses it otherwise.
+const canRecord =
+  canChange && !open && inMembership && guardian?.status === 'demised';
 
 // Choosing the new guardian: a search over active Individual members, then
 // the chosen one's details to confirm.
@@ -108,13 +112,13 @@ const chosenNo = (
   Astro.url.searchParams.get('choose') ?? values.guardianMemberNo
 ).trim();
 const candidates =
-  canChange && !open && q
+  canRecord && q
     ? (await searchGuardianCandidates(q, 20)).filter(
         c => c.kind === 'member' && c.reference !== member.memberNo
       )
     : [];
 const chosen =
-  canChange && !open && chosenNo
+  canRecord && chosenNo
     ? ((await searchGuardianCandidates(chosenNo, 20)).find(
         c => c.kind === 'member' && c.reference === chosenNo
       ) ?? null)
@@ -230,7 +234,7 @@ const who = (v: Record<string, string>) =>
       </section>
     )}
 
-    {canChange && !open && inMembership && (
+    {canRecord && (
       <section class={`${FORM_CARD} space-y-3`}>
         <h2 class={CARD_LABEL}>New guardian</h2>
         <form method="get" class={FILTER}>

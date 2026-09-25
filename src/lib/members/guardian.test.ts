@@ -214,7 +214,7 @@ afterAll(async () => {
 });
 
 describe("a Minor's guardian", () => {
-  it('holds nothing back while the guardian is alive', async () => {
+  it('holds nothing back, and cannot be changed, while the guardian is alive', async () => {
     const { guardian, withdrawals } = await load();
     expect(await guardian.guardianGoneMessage(minor.id)).toBeNull();
     expect(await guardian.guardianGoneMessage(firstGuardian.id)).toBeNull();
@@ -223,6 +223,15 @@ describe("a Minor's guardian", () => {
       officer
     );
     expect(w.status).toBe('posted');
+    await expect(
+      guardian.recordGuardianChange(
+        minor.id,
+        { guardianMemberNo: secondGuardian.memberNo, relationship: 'Mother' },
+        officer
+      )
+    ).rejects.toThrowError(
+      'The guardian can be changed only once they are demised.'
+    );
   });
 
   it('stops money leaving, but not arriving, once the guardian is demised', async () => {
@@ -377,18 +386,19 @@ describe("a Minor's guardian", () => {
 
   it('lets the recorder withdraw a change, and nobody else', async () => {
     const { guardian } = await load();
-    const change = await guardian
-      .recordGuardianChange(
+    // The second guardian is alive, so nobody replaces them yet.
+    await run(ownerUrl, `update member set status = 'active' where id = $1`, [
+      firstGuardian.id,
+    ]);
+    await expect(
+      guardian.recordGuardianChange(
         minor.id,
         { guardianMemberNo: firstGuardian.memberNo, relationship: 'Father' },
         officer
       )
-      .catch(() => null);
-    // The first guardian is demised, so this one is refused; record one
-    // naming someone valid instead.
-    expect(change).toBeNull();
-    await run(ownerUrl, `update member set status = 'active' where id = $1`, [
-      firstGuardian.id,
+    ).rejects.toThrowError(/only once they are demised/);
+    await run(ownerUrl, `update member set status = 'demised' where id = $1`, [
+      secondGuardian.id,
     ]);
     const second = await guardian.recordGuardianChange(
       minor.id,

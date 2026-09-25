@@ -492,8 +492,11 @@ const guardianGone = isMinorMember
 const guardianChange = isMinorMember
   ? await openGuardianChange(member!.id)
   : null;
+// Offered only while there is one to make or decide: a guardian is replaced
+// once they are demised, never while they are alive (officer direction).
 const canChangeGuardian =
   isMinorMember &&
+  (!!guardianGone || !!guardianChange) &&
   (principal.permissions.has(GUARDIAN_CHANGE) ||
     principal.permissions.has(GUARDIAN_APPROVE));
 const canClose = canDeposit && !guardianGone;
