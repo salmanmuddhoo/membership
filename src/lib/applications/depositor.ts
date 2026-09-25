@@ -19,6 +19,7 @@
  * print — the form asks for no NIC against the Contact Person, and a ruled
  * blank is what the paper form leaves there.
  */
+import { query } from '../db/pool';
 import { loadApplication, type PartyValues } from './capture';
 
 export interface Depositor {
@@ -102,8 +103,30 @@ export async function depositorForApplication(
   applicationId: string | null
 ): Promise<Depositor> {
   const source = await foundingApplication(applicationId);
-  if (!source) return { name: '', nic: '' };
+  if (!source || (await guardianDemised(source))) return { name: '', nic: '' };
   return depositorFor(source.membershipTypeCode, source.parties);
+}
+
+/**
+ * A Minor's guardian who has died since they were named (migration 0107):
+ * whoever pays in now is not them, so nobody is named until the guardian
+ * is replaced and the caller falls back to the holder.
+ */
+async function guardianDemised(source: {
+  membershipTypeCode: string;
+  parties: readonly PartyValues[];
+}): Promise<boolean> {
+  if (source.membershipTypeCode !== 'minor') return false;
+  const guardian = source.parties.find(
+    p => p.subject === 'guardian' && p.ordinal === 1
+  );
+  const memberNo = (guardian?.values.member_id ?? '').trim();
+  if (!memberNo) return false;
+  const result = await query<{ status: string }>(
+    `select status from member where lower(member_no) = lower($1)`,
+    [memberNo]
+  );
+  return result.rows[0]?.status === 'demised';
 }
 
 /**
@@ -118,5 +141,6 @@ export async function collectorForApplication(
 ): Promise<string> {
   const source = await foundingApplication(applicationId);
   if (!source || source.membershipTypeCode !== 'minor') return '';
+  if (await guardianDemised(source)) return '';
   return depositorFor('minor', source.parties).name;
 }

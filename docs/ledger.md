@@ -731,6 +731,32 @@ closes with what each paid (`accountsClosedOnDeath()`, shared with a
 closure on a death), and the receipt carries the Takaful benefit as its own
 line under the accounts' line (DEM-US-004), with no "Balance after".
 
+## A minor's guardian
+
+A Minor member's guardian block (the minor's founding application, subject
+`guardian`) is read-only on the member page and changes only through a
+**guardian change** (migration 0107, `src/lib/members/guardian.ts`,
+`/members/{id}/guardian`): an officer holding `member.guardian_change` —
+Regional Officer and Regional Manager by default — finds the new guardian
+among the active Individual members, names the relationship, and it waits
+for someone holding `member.guardian_approve` (Regional Manager, Secretary)
+other than the recorder to approve it. Only then is the block replaced; the
+old and new blocks stay on the `guardian_change` row and in the audit trail
+(`member.guardian_change.recorded`, `member.guardian_changed`,
+`member.guardian_change.rejected`, `member.guardian_change.cancelled`). The
+new guardian is already a member, so their identity is on file under their
+own membership and nothing new is uploaded.
+
+While a minor's guardian is demised and not yet replaced
+(`guardianGoneMessage()`), no money leaves the minor's accounts (officer
+direction): a withdrawal, a transfer out, a closure and the minor's
+resignation are refused, and the member page does not offer them. Money in
+still arrives — a deposit or a transfer in — and a demised claim on the
+minor is still made, since it is paid to the nominee. A deposit receipt and
+the Cash Deposit Form stop naming the dead guardian and fall back to the
+holder. A transfer from a minor's account into the guardian's own account
+is an ordinary transfer and follows the matrix like any other.
+
 Every stage of an exit is told to its member or claimant (S-1705,
 `src/lib/ledger/exit-notifications.ts`, `docs/notifications.md`); a
 deposit, a withdrawal and a transfer tell the member the same way

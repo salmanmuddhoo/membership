@@ -13,6 +13,7 @@
 import { canTransact } from '../members/status';
 import { createHash } from 'node:crypto';
 import { recordAudit } from '../access/audit';
+import { guardianGoneMessage } from '../members/guardian';
 import type { Principal } from '../access/principal';
 import { query, withTransaction } from '../db/pool';
 import {
@@ -201,6 +202,8 @@ export async function refuseUnlessWithdrawable(
         `so nothing can be ${verb}.`
     );
   }
+  const guardianGone = await guardianGoneMessage(from.memberId);
+  if (guardianGone) throw new WithdrawalError(guardianGone);
   const figures = await availableBalance(from.id);
   let availableCents = toCents(figures.available);
   if (excludingTransactionId) {

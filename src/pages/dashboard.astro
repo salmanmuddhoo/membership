@@ -8,6 +8,7 @@ import Icon from '@components/ui/icons/Icon.astro';
 import { isProductionEnvironment } from '@lib/config';
 import { pendingActionCount } from '@lib/applications/workflow';
 import { pendingTransactionCount } from '@lib/ledger/review';
+import { guardianChangesWaitingOn } from '@lib/members/guardian';
 import { NAV_DESCRIPTIONS, navigationFor } from '@lib/navigation';
 import { CARD, CARD_TITLE, HINT, PAGE, PANEL } from '@lib/ui';
 
@@ -30,6 +31,12 @@ const transactionsBadge =
     ? await (Astro.locals.pendingTransactions ??
         pendingTransactionCount(principal))
     : 0;
+
+// A Minor's change of guardian waiting for approval (migration 0107): there
+// is no queue page, so each one is linked from here.
+const guardianChanges = principal
+  ? await guardianChangesWaitingOn(principal)
+  : [];
 
 const groups = navigationFor({
   permissions,
@@ -70,6 +77,23 @@ const groups = navigationFor({
             .filter(Boolean)
             .join(', ')}
           .
+        </p>
+      )}
+      {guardianChanges.length > 0 && (
+        <p class={`${HINT} mt-2`}>
+          Change of guardian to approve:{' '}
+          {guardianChanges.map((change, i) => (
+            <>
+              {i > 0 && ', '}
+              <a
+                href={`/members/${change.memberId}/guardian`}
+                class="underline"
+              >
+                {change.memberNo}
+                {change.name && ` · ${change.name}`}
+              </a>
+            </>
+          ))}
         </p>
       )}
     </section>

@@ -16,6 +16,7 @@
 import type { PoolClient } from 'pg';
 import { canTransact } from '../members/status';
 import { recordAudit } from '../access/audit';
+import { guardianGoneMessage } from '../members/guardian';
 import type { Principal } from '../access/principal';
 import { query, withTransaction } from '../db/pool';
 import { listDocumentTypes, offeredPaymentMethods } from '../config/reference';
@@ -307,6 +308,8 @@ async function refuseUnlessClosable(
       'conflict'
     );
   }
+  const guardianGone = await guardianGoneMessage(account.memberId);
+  if (guardianGone) throw new ClosureError(guardianGone, 'conflict');
   const other = await closureInFlight(account.id, existing?.id ?? null);
   if (other) {
     throw new ClosureError(

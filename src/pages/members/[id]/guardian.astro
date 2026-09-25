@@ -1,0 +1,348 @@
+---
+// Changing a Minor member's guardian (migration 0107, src/lib/members/
+// guardian.ts): the officer finds the new guardian among the members,
+// names the relationship, and it waits for a second person to approve
+// before the guardian block is replaced. Whoever holds
+// member.guardian_approve decides it here too.
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import { searchGuardianCandidates } from '@lib/applications/capture';
+import { forDisplay } from '@lib/applications/phone';
+import {
+  cancelGuardianChange,
+  currentGuardian,
+  decideGuardianChange,
+  guardianChanges,
+  GuardianChangeError,
+  openGuardianChange,
+  PERMISSION_APPROVE,
+  PERMISSION_CHANGE,
+  recordGuardianChange,
+} from '@lib/members/guardian';
+import { loadMember } from '@lib/members/create';
+import {
+  PAGE,
+  CARD,
+  FORM_CARD,
+  CARD_LABEL,
+  FILTER,
+  HINT,
+  LABEL,
+  INPUT,
+  BUTTON,
+  BUTTON_SM,
+  SECONDARY,
+  DANGER,
+  NOTICE_ERROR,
+  NOTICE_OK,
+  PILL,
+  PILL_WARN,
+  TABLE,
+  THEAD,
+  TH,
+  ROW,
+  TD,
+} from '@lib/ui';
+
+const principal = Astro.locals.principal!;
+const canChange = principal.permissions.has(PERMISSION_CHANGE);
+const canApprove = principal.permissions.has(PERMISSION_APPROVE);
+if (!canChange && !canApprove) return Astro.redirect('/denied');
+
+const { id } = Astro.params;
+const member = id ? await loadMember(id) : null;
+if (!member) return new Response('Not found', { status: 404 });
+if (member.membershipTypeCode !== 'minor') {
+  return Astro.redirect(`/members/${member.id}`);
+}
+
+let error: string | null = null;
+let notice: string | null = null;
+let values = { guardianMemberNo: '', relationship: '', mobile: '' };
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const text = (name: string) => String(form.get(name) ?? '');
+  const intent = text('intent');
+  try {
+    if (intent === 'record') {
+      values = {
+        guardianMemberNo: text('guardianMemberNo'),
+        relationship: text('relationship'),
+        mobile: text('mobile'),
+      };
+      await recordGuardianChange(member.id, values, principal);
+      notice = 'Sent for approval.';
+    } else if (intent === 'approve' || intent === 'reject') {
+      await decideGuardianChange(
+        text('changeId'),
+        intent,
+        text('comment'),
+        principal
+      );
+      notice = intent === 'approve' ? 'Guardian changed.' : 'Rejected.';
+    } else if (intent === 'cancel') {
+      await cancelGuardianChange(text('changeId'), principal);
+      notice = 'Withdrawn.';
+    }
+  } catch (err) {
+    if (err instanceof GuardianChangeError) {
+      error = err.message;
+    } else {
+      console.error('[members/guardian]', err);
+      error = 'Something went wrong. Please try again.';
+    }
+  }
+}
+
+const [guardian, open, history] = await Promise.all([
+  currentGuardian(member.id),
+  openGuardianChange(member.id),
+  guardianChanges(member.id),
+]);
+const inMembership = !['resigned', 'demised'].includes(member.status);
+
+// Choosing the new guardian: a search over active Individual members, then
+// the chosen one's details to confirm.
+const q = (Astro.url.searchParams.get('q') ?? '').trim();
+const chosenNo = (
+  Astro.url.searchParams.get('choose') ?? values.guardianMemberNo
+).trim();
+const candidates =
+  canChange && !open && q
+    ? (await searchGuardianCandidates(q, 20)).filter(
+        c => c.kind === 'member' && c.reference !== member.memberNo
+      )
+    : [];
+const chosen =
+  canChange && !open && chosenNo
+    ? ((await searchGuardianCandidates(chosenNo, 20)).find(
+        c => c.kind === 'member' && c.reference === chosenNo
+      ) ?? null)
+    : null;
+
+const dateFormat = new Intl.DateTimeFormat('en-GB', {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+  timeZone: 'Indian/Mauritius',
+});
+const STATUS_WORDS: Record<string, string> = {
+  submitted: 'Waiting for approval',
+  approved: 'Approved',
+  rejected: 'Rejected',
+  cancelled: 'Withdrawn',
+};
+const who = (v: Record<string, string>) =>
+  [[v.name, v.surname].filter(Boolean).join(' '), v.member_id]
+    .filter(Boolean)
+    .join(' · ');
+---
+
+<DashboardLayout
+  title="Change guardian · Al Barakah MCSL"
+  heading="Change guardian"
+>
+  <div class={PAGE.form}>
+    <a href={`/members/${member.id}`} class={`${HINT} inline-block underline`}>
+      ← {member.name} · {member.memberNo}
+    </a>
+
+    {error && <div class={NOTICE_ERROR}>{error}</div>}
+    {notice && <div class={NOTICE_OK}>{notice}</div>}
+
+    <section class={`${CARD} space-y-2`}>
+      <h2 class={CARD_LABEL}>Guardian now</h2>
+      {guardian && guardian.name ? (
+        <p class="text-sm text-neutral-800 dark:text-neutral-100">
+          {guardian.memberId ? (
+            <a href={`/members/${guardian.memberId}`} class="underline">
+              {guardian.name}
+            </a>
+          ) : (
+            guardian.name
+          )}
+          {guardian.memberNo && ` · ${guardian.memberNo}`}
+          {guardian.values.relationship && ` · ${guardian.values.relationship}`}
+          {guardian.status === 'demised' && (
+            <span class={`${PILL_WARN} ml-2`}>Demised</span>
+          )}
+        </p>
+      ) : (
+        <p class={HINT}>None recorded.</p>
+      )}
+    </section>
+
+    {open && (
+      <section class={`${FORM_CARD} space-y-3`}>
+        <h2 class={CARD_LABEL}>Waiting for approval</h2>
+        <dl class="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
+          <dt class="text-neutral-500 dark:text-neutral-400">New guardian</dt>
+          <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+            {who(open.newValues)}
+          </dd>
+          <dt class="text-neutral-500 dark:text-neutral-400">NIC</dt>
+          <dd>{open.newValues.nic || '—'}</dd>
+          <dt class="text-neutral-500 dark:text-neutral-400">Relationship</dt>
+          <dd>{open.newValues.relationship}</dd>
+          <dt class="text-neutral-500 dark:text-neutral-400">Mobile</dt>
+          <dd>
+            {open.newValues.mobile ? forDisplay(open.newValues.mobile) : '—'}
+          </dd>
+          <dt class="text-neutral-500 dark:text-neutral-400">Recorded by</dt>
+          <dd>
+            {open.capturedByName ?? '—'} · {dateFormat.format(open.capturedAt)}
+          </dd>
+        </dl>
+        {canApprove && open.capturedById !== principal.userId && (
+          <form method="post" class="space-y-3">
+            <input type="hidden" name="changeId" value={open.id} />
+            <label class={LABEL}>
+              Comment (required to reject)
+              <input type="text" name="comment" maxlength="500" class={INPUT} />
+            </label>
+            <div class="flex flex-wrap gap-2">
+              <button
+                type="submit"
+                name="intent"
+                value="approve"
+                class={BUTTON}
+              >
+                Approve
+              </button>
+              <button type="submit" name="intent" value="reject" class={DANGER}>
+                Reject
+              </button>
+            </div>
+          </form>
+        )}
+        {open.capturedById === principal.userId && (
+          <form method="post">
+            <input type="hidden" name="changeId" value={open.id} />
+            <button
+              type="submit"
+              name="intent"
+              value="cancel"
+              class={SECONDARY}
+            >
+              Withdraw
+            </button>
+          </form>
+        )}
+      </section>
+    )}
+
+    {canChange && !open && inMembership && (
+      <section class={`${FORM_CARD} space-y-3`}>
+        <h2 class={CARD_LABEL}>New guardian</h2>
+        <form method="get" class={FILTER}>
+          <input
+            type="search"
+            name="q"
+            value={q}
+            placeholder="Name, NIC or Member No."
+            aria-label="Find a member"
+            class={INPUT}
+          />
+          <button type="submit" class={SECONDARY}>
+            Find
+          </button>
+        </form>
+        {q && candidates.length === 0 && (
+          <p class={HINT}>No active Individual member matches.</p>
+        )}
+        {candidates.length > 0 && (
+          <table class={TABLE}>
+            <thead class={THEAD}>
+              <tr>
+                <th class={TH}>Member</th>
+                <th class={TH}>NIC</th>
+                <th class={TH}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {candidates.map(c => (
+                <tr class={ROW}>
+                  <td class={TD}>
+                    {c.name} {c.surname} · {c.reference}
+                  </td>
+                  <td class={TD}>{c.nic}</td>
+                  <td class={`${TD} text-right`}>
+                    <a
+                      href={`?choose=${encodeURIComponent(c.reference)}`}
+                      class={BUTTON_SM}
+                    >
+                      Choose
+                    </a>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        {chosen && (
+          <form method="post" class="space-y-3">
+            <input
+              type="hidden"
+              name="guardianMemberNo"
+              value={chosen.reference}
+            />
+            <p class="text-sm font-medium text-neutral-800 dark:text-neutral-100">
+              {chosen.name} {chosen.surname} · {chosen.reference}
+              {chosen.nic && ` · ${chosen.nic}`}
+            </p>
+            <div class="grid gap-3 sm:grid-cols-2">
+              <label class={LABEL}>
+                Relationship to the minor
+                <input
+                  type="text"
+                  name="relationship"
+                  value={values.relationship}
+                  required
+                  class={INPUT}
+                />
+              </label>
+              <label class={LABEL}>
+                Mobile
+                <input
+                  type="tel"
+                  name="mobile"
+                  value={values.mobile || chosen.mobile}
+                  class={INPUT}
+                />
+              </label>
+            </div>
+            <button type="submit" name="intent" value="record" class={BUTTON}>
+              Submit for approval
+            </button>
+          </form>
+        )}
+      </section>
+    )}
+
+    {!open && !canChange && <p class={HINT}>Nothing waiting for approval.</p>}
+
+    {history.length > 0 && (
+      <section class={`${CARD} space-y-2`}>
+        <h2 class={CARD_LABEL}>Changes</h2>
+        <ul class="divide-y divide-neutral-200 text-sm dark:divide-neutral-800">
+          {history.map(change => (
+            <li class="flex flex-wrap items-center justify-between gap-2 py-2">
+              <span>
+                {who(change.previousValues) || 'None'} → {who(change.newValues)}
+                <span class={`${HINT} block`}>
+                  {change.capturedByName ?? '—'} ·{' '}
+                  {dateFormat.format(change.capturedAt)}
+                  {change.decidedAt &&
+                    ` · ${change.decidedByName ?? '—'} · ${dateFormat.format(change.decidedAt)}`}
+                  {change.comment && ` · ${change.comment}`}
+                </span>
+              </span>
+              <span class={change.status === 'submitted' ? PILL_WARN : PILL}>
+                {STATUS_WORDS[change.status]}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </section>
+    )}
+  </div>
+</DashboardLayout>
