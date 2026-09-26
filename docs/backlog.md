@@ -5403,3 +5403,23 @@ figures go into the upload's audit entry. The file's accounts are matched
 with one hash join on its own keys, so the check stays quick at that size,
 and the button shows it is working until the page returns, so a second
 click cannot send the file again.
+
+---
+
+### Choice fields as dropdowns; migrated and captured members read alike
+
+Officer requests:
+
+- Editing a member's details in place, a field configured as a choice
+  (Marital status, Employment status, any other) is picked from a dropdown of
+  its configured choices, with a blank option; a value on file no longer among
+  them is kept as an option.
+- A member imported by the migration and one approved through the
+  application form were compared page by page (Individual guardian, Minor
+  member, Minor non-member, Corporate): the same cards and the same fields in
+  the same order. Two gaps came out of it. **Guardian of** listed members and
+  applications but never a minor who holds an account without being a member
+  — every migrated minor saver, and captured ones too; `guardianOf` now lists
+  them, by account number, as "Non-member · Active". And a 7-digit fixed line
+  (a Contact Person telephone) showed as +2302080004; it now reads
+  +230 208 0004, the way a mobile is grouped.

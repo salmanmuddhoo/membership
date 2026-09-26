@@ -2091,6 +2091,18 @@ describe('a guardian and their minor in the same upload', () => {
       surname: 'Joomun',
       name: 'Nadia',
     });
+
+    // And the guardian's page names them under Guardian of, by their account.
+    const { guardianOf } = await import('../applications/capture');
+    const guarded = await guardianOf('AB1780', '');
+    expect(guarded).toContainEqual(
+      expect.objectContaining({
+        reference: 'HSA-710',
+        name: 'Sara Joomun',
+        isMember: false,
+        isNonMember: true,
+      })
+    );
   });
 
   it('reads a Guardian Member ID filled in by a formula or with mixed formatting', async () => {

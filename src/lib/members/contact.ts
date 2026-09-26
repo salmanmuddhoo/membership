@@ -103,6 +103,10 @@ export interface EditableContactField {
   fieldKey: string;
   label: string;
   dataType: string;
+  // The configured choices for a 'choice' field (Marital status, Employment
+  // status…) — empty for every other dataType. Lets the page render a
+  // dropdown instead of a text input without a second lookup.
+  choices: string[];
   value: string;
   // Whether this specific field accepts an edit right now. Telephone,
   // Mobile, Address and Email are always editable; every other applicant
@@ -198,6 +202,7 @@ export async function editableContactFields(
           value === '',
         label: f.label,
         dataType: f.dataType,
+        choices: f.choices,
         value,
       };
     }),
@@ -208,6 +213,7 @@ export async function editableContactFields(
       editable: true,
       label: f.label,
       dataType: f.dataType,
+      choices: f.choices,
       value: valuesBySubject.get('employment')?.[f.fieldKey] ?? '',
     })),
     ...guardianFields.map(f => ({
@@ -217,6 +223,7 @@ export async function editableContactFields(
       editable: false,
       label: f.label,
       dataType: f.dataType,
+      choices: f.choices,
       value: valuesBySubject.get('guardian')?.[f.fieldKey] ?? '',
     })),
     ...nomineeRows.flatMap(row =>
@@ -227,6 +234,7 @@ export async function editableContactFields(
         editable: true,
         label: f.label,
         dataType: f.dataType,
+        choices: f.choices,
         value: row.values[f.fieldKey] ?? '',
       }))
     ),
