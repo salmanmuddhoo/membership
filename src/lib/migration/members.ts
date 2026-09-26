@@ -27,7 +27,7 @@
 // Fourth increment, officer feedback — no new schema: 'guardian' and
 // 'nominee' are subjects application_party has taken since migration 0010,
 // and uniqueness is an application-level check here, not a database
-// constraint (see the NIC/mobile note on validateRows below).
+// constraint (see the NIC note on validateRows below).
 //   - Nominee 1 and Nominee 2 columns, on whatever type configures a
 //     `nominee` subject — the same S-602 relaxation the live capture form
 //     already gives problemsBlockingSubmission: only the first nominee is
@@ -44,9 +44,10 @@
 //     Excel row invents on its own. The guardian has to already be on file
 //     before their minor is: a batch naming both runs once for the
 //     guardian, then again for the minor.
-//   - NIC, mobile and account number are each unique to one member or
-//     non-member, checked against the rest of the batch and against
-//     everyone already on file (migrated or not).
+//   - NIC and account number are each unique to one member or non-member,
+//     checked against the rest of the batch and against everyone already on
+//     file (migrated or not). Mobile is not — the same number may be on
+//     file for more than one member or non-member.
 //   - Officer feedback, fifth increment: the sheet asks only for the
 //     Guardian Member ID now — surname, name, NIC and mobile are pulled
 //     straight from the guardian's own record on import rather than
@@ -96,7 +97,6 @@ import {
   type MembershipTypeField,
 } from '../config/reference';
 import { query, withTransaction } from '../db/pool';
-import { toInternational } from '../applications/phone';
 import { MoneyError, fromCents, toCents } from '../payments/money';
 import {
   hasMigrationBalance,
@@ -162,10 +162,7 @@ function fieldNote(field: MembershipTypeField): string | undefined {
     return 'Unique: no two people in this file or on file may share a NIC.';
   }
   if (field.fieldKey === 'mobile') {
-    return (
-      '8 digits (e.g. 57001234) or with the country code (+230 5700 1234). ' +
-      'Unique: no two people may share a mobile.'
-    );
+    return '8 digits (e.g. 57001234) or with the country code (+230 5700 1234).';
   }
   if (field.dataType === 'choice' && field.choices.length > 0) {
     return `One of: ${field.choices.join(', ')}.`;
@@ -409,7 +406,7 @@ function fillInstructions(sheet: ExcelJS.Worksheet, typeNames: string[]) {
     'A non-member has no AB Number: fill Legacy Member Code and at least one account number with its balance.',
     'Hover over a heading to read its note.',
     'Dates as YYYY-MM-DD. Amounts as plain numbers, e.g. 1500.50.',
-    'NIC, mobile, legacy code and account numbers belong to one person only, in this file and on file. A minor may share their guardian’s mobile.',
+    'NIC, legacy code and account numbers belong to one person only, in this file and on file.',
     'A minor’s guardian must be a member already, or be on the Individual sheet of the same file.',
     'Keep the sheet names and column headings as they are. A sheet or column the template does not have is refused.',
     'Uploading the same Legacy Member Code again updates that person instead of adding them twice.',
@@ -933,7 +930,7 @@ const THOUSANDS_GROUPED = /^-?\d{1,3}(,\d{3})+(\.\d+)?$/;
 // What a cell that is not a plain value says: a formula's result (a
 // Guardian Member ID looked up with VLOOKUP), text with mixed formatting, a
 // hyperlink. Officer QA: each of these was read as "[object Object]".
-function objectCellText(value: ExcelJS.CellValue): string {
+export function objectCellText(value: ExcelJS.CellValue): string {
   if (value === null || value === undefined) return '';
   if (value instanceof Date) return value.toISOString().slice(0, 10);
   if (typeof value !== 'object') return String(value).trim();
@@ -954,16 +951,6 @@ function objectCellText(value: ExcelJS.CellValue): string {
   }
   if ('error' in value) return '';
   return '';
-}
-
-function mobileMatchKey(raw: string): string {
-  const trimmed = raw.trim();
-  if (trimmed === '') return '';
-  try {
-    return toInternational(trimmed).toLowerCase();
-  } catch {
-    return trimmed.toLowerCase();
-  }
 }
 
 // A date in a migration file: YYYY-MM-DD (what an Excel date cell is read
@@ -998,7 +985,11 @@ function parseMigrationDate(
   return date;
 }
 
-function parseAmount(raw: string, label: string, problems: string[]): string {
+export function parseAmount(
+  raw: string,
+  label: string,
+  problems: string[]
+): string {
   if (raw.trim() === '') return '';
   try {
     // "1,500.00" as a spreadsheet shows it: the commas are only grouping.
@@ -1023,13 +1014,15 @@ function parseAmount(raw: string, label: string, problems: string[]): string {
 
 /**
  * Format and mandatory-field checks, member/non-member classification
- * (S-614), and legacy_code / AB Number / account-number / NIC / mobile
- * uniqueness both against what is already on file and against the rest of
- * this same batch — so two rows claiming the same old code, AB Number,
- * account number, NIC or mobile are caught before either is written, not
- * after one of them already is. NIC and mobile are checked only where a
- * type's own applicant fields configure them (Corporate has no 'nic'); a
- * row updating its own existing record is never flagged against itself.
+ * (S-614), and legacy_code / AB Number / account-number / NIC uniqueness
+ * both against what is already on file and against the rest of this same
+ * batch — so two rows claiming the same old code, AB Number, account
+ * number or NIC are caught before either is written, not after one of them
+ * already is. NIC is checked only where a type's own applicant fields
+ * configure it (Corporate has no 'nic'); a row updating its own existing
+ * record is never flagged against itself. Mobile is not checked for
+ * uniqueness — the same number may be on file for more than one member or
+ * non-member.
  *
  * A legacy code already on file is not itself an error: importMembers
  * updates that record instead, provided the row agrees with what is on
@@ -1101,31 +1094,22 @@ export async function validateRows(
     query<{ account_no: string | null }>(
       `select account_no from account where account_no is not null`
     ),
-    // Item 6: NIC and mobile are unique to a member/non-member, checked
-    // against everyone already on file — migrated or approved the ordinary
-    // way, this import does not distinguish. A minor's mobile is left out:
-    // it is usually their guardian's.
-    query<{ id: string; nic: string | null; mobile: string | null }>(
-      `select m.id, p.values->>'nic' as nic,
-              case when g.id is null then p.values->>'mobile' end as mobile
+    // Item 6: NIC is unique to a member/non-member, checked against everyone
+    // already on file — migrated or approved the ordinary way, this import
+    // does not distinguish. Mobile is not unique and is not checked here.
+    query<{ id: string; nic: string | null }>(
+      `select m.id, p.values->>'nic' as nic
          from member m
          join application_party p
            on p.application_id = m.application_id
-          and p.subject = 'applicant' and p.ordinal = 1
-         left join application_party g
-           on g.application_id = m.application_id
-          and g.subject = 'guardian' and g.ordinal = 1`
+          and p.subject = 'applicant' and p.ordinal = 1`
     ),
-    query<{ id: string; nic: string | null; mobile: string | null }>(
-      `select c.id, p.values->>'nic' as nic,
-              case when g.id is null then p.values->>'mobile' end as mobile
+    query<{ id: string; nic: string | null }>(
+      `select c.id, p.values->>'nic' as nic
          from customer c
          join application_party p
            on p.application_id = c.application_id
-          and p.subject = 'applicant' and p.ordinal = 1
-         left join application_party g
-           on g.application_id = c.application_id
-          and g.subject = 'guardian' and g.ordinal = 1`
+          and p.subject = 'applicant' and p.ordinal = 1`
     ),
   ]);
 
@@ -1172,35 +1156,19 @@ export async function validateRows(
   );
 
   // Item 6: keyed by owner (kind + id) so a row updating its own existing
-  // record is never flagged as colliding with itself — only a NIC or mobile
-  // already on file for someone else is a problem.
+  // record is never flagged as colliding with itself — only a NIC already on
+  // file for someone else is a problem.
   const nicOwner = new Map<
-    string,
-    { kind: 'member' | 'customer'; id: string }
-  >();
-  const mobileOwner = new Map<
     string,
     { kind: 'member' | 'customer'; id: string }
   >();
   for (const r of memberApplicantValues.rows) {
     if (r.nic)
       nicOwner.set(r.nic.trim().toLowerCase(), { kind: 'member', id: r.id });
-    if (r.mobile) {
-      mobileOwner.set(r.mobile.trim().toLowerCase(), {
-        kind: 'member',
-        id: r.id,
-      });
-    }
   }
   for (const r of customerApplicantValues.rows) {
     if (r.nic) {
       nicOwner.set(r.nic.trim().toLowerCase(), { kind: 'customer', id: r.id });
-    }
-    if (r.mobile) {
-      mobileOwner.set(r.mobile.trim().toLowerCase(), {
-        kind: 'customer',
-        id: r.id,
-      });
     }
   }
 
@@ -1226,7 +1194,6 @@ export async function validateRows(
   const abOccurrences = new Map<string, number>();
   const accountNoOccurrences = new Map<string, number>();
   const nicOccurrences = new Map<string, number>();
-  const mobileOccurrences = new Map<string, number>();
   const needsGuardian = (row: ParsedRow) => {
     const type = byName.get(row.sheet);
     return type ? guardianFields(type).length > 0 : false;
@@ -1249,24 +1216,10 @@ export async function validateRows(
     }
     // Item 6: same rest-of-batch check as legacy code/AB Number/account
     // number above, on whichever of the applicant fields this type actually
-    // configures 'nic' and 'mobile' for (Corporate has no 'nic' field).
+    // configures 'nic' for (Corporate has none).
     const nicKey = (row.values.nic ?? '').trim().toLowerCase();
     if (nicKey !== '') {
       nicOccurrences.set(nicKey, (nicOccurrences.get(nicKey) ?? 0) + 1);
-    }
-    // Keyed on the number as it will be stored (+230…), the same form the
-    // row-level check below looks it up by: "57001234" and "+230 5700 1234"
-    // are the same mobile.
-    // A minor's own mobile is usually their guardian's (officer direction),
-    // so a minor is not counted here: checked against their guardian below.
-    const mobileKey = needsGuardian(row)
-      ? ''
-      : mobileMatchKey(row.values.mobile ?? '');
-    if (mobileKey !== '') {
-      mobileOccurrences.set(
-        mobileKey,
-        (mobileOccurrences.get(mobileKey) ?? 0) + 1
-      );
     }
   }
 
@@ -1475,37 +1428,8 @@ export async function validateRows(
       }
     }
 
-    // A minor may share their guardian's mobile (officer direction) — and
-    // so may brothers and sisters under the same guardian. Any other number
-    // must not be an adult's, on file or in this sheet.
-    const mobile = (values.mobile ?? '').trim();
-    const guardianMobile = mobileMatchKey(guardianValues.mobile ?? '');
-    const sharesGuardianMobile =
-      !!guardianField &&
-      guardianMobile !== '' &&
-      mobileMatchKey(mobile) === guardianMobile;
-    if (mobile !== '' && !sharesGuardianMobile) {
-      const key = mobile.toLowerCase();
-      const owner = mobileOwner.get(key);
-      const isSelf =
-        !!existing &&
-        !!owner &&
-        owner.kind === existing.kind &&
-        owner.id === existing.id;
-      if (owner && !isSelf) {
-        problems.push(
-          `Mobile "${row.values.mobile}" is already on file for a different ` +
-            'member/non-member.'
-        );
-      } else if (
-        (mobileOccurrences.get(mobileMatchKey(mobile)) ?? 0) >
-        (guardianField ? 0 : 1)
-      ) {
-        problems.push(
-          `Mobile "${row.values.mobile}" appears more than once in this sheet.`
-        );
-      }
-    }
+    // Mobile is no longer checked for uniqueness (officer direction): the
+    // same number may be on file for more than one member or non-member.
 
     // Takaful beneficiary (Minor only). Its own person, not on file
     // anywhere else — typed in full, the same as an applicant field, and
