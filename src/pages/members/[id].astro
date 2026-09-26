@@ -207,6 +207,16 @@ function fieldDisplay(field: EditableContactField): string {
   return field.dataType === 'phone' ? forDisplay(field.value) : field.value;
 }
 
+// The options a choice field's dropdown offers: the type's configured
+// choices, plus the current value too when it is non-empty and not among
+// them (an older record, saved before the choice list changed) — so an
+// edit never silently drops it.
+function choiceOptions(field: EditableContactField): string[] {
+  return field.value && !field.choices.includes(field.value)
+    ? [...field.choices, field.value]
+    : field.choices;
+}
+
 // So the guardian's own Member ID reads as a link to their own page
 // (officer feedback) — resolved the same way a migration import or a live
 // capture's own S-604 check would (findGuardian). Null when it does not
@@ -829,18 +839,38 @@ const documentCount = documentGroups.reduce(
                 </dt>
                 <dd class="w-full text-neutral-800 dark:text-neutral-100">
                   <span data-view>{fieldDisplay(field)}</span>
-                  {canEditContact && field.editable && (
-                    <input
-                      type={field.dataType === 'phone' ? 'tel' : 'text'}
-                      data-edit
-                      value={field.value}
-                      placeholder={
-                        field.dataType === 'phone' ? '5789 1234' : undefined
-                      }
-                      hidden
-                      class={`${INPUT_SM} w-full`}
-                    />
-                  )}
+                  {canEditContact &&
+                    field.editable &&
+                    (field.dataType === 'choice' && field.choices.length > 0 ? (
+                      <select
+                        data-edit
+                        data-original={field.value}
+                        hidden
+                        class={`${INPUT_SM} w-full`}
+                      >
+                        <option value="" />
+                        {choiceOptions(field).map(choice => (
+                          <option
+                            value={choice}
+                            selected={choice === field.value}
+                          >
+                            {choice}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        type={field.dataType === 'phone' ? 'tel' : 'text'}
+                        data-edit
+                        data-original={field.value}
+                        value={field.value}
+                        placeholder={
+                          field.dataType === 'phone' ? '5789 1234' : undefined
+                        }
+                        hidden
+                        class={`${INPUT_SM} w-full`}
+                      />
+                    ))}
                 </dd>
               </div>
             ))}
@@ -863,18 +893,39 @@ const documentCount = documentGroups.reduce(
                   </dt>
                   <dd class="w-full text-neutral-800 dark:text-neutral-100">
                     <span data-view>{fieldDisplay(field)}</span>
-                    {canEditContact && field.editable && (
-                      <input
-                        type={field.dataType === 'phone' ? 'tel' : 'text'}
-                        data-edit
-                        value={field.value}
-                        placeholder={
-                          field.dataType === 'phone' ? '5789 1234' : undefined
-                        }
-                        hidden
-                        class={`${INPUT_SM} w-full`}
-                      />
-                    )}
+                    {canEditContact &&
+                      field.editable &&
+                      (field.dataType === 'choice' &&
+                      field.choices.length > 0 ? (
+                        <select
+                          data-edit
+                          data-original={field.value}
+                          hidden
+                          class={`${INPUT_SM} w-full`}
+                        >
+                          <option value="" />
+                          {choiceOptions(field).map(choice => (
+                            <option
+                              value={choice}
+                              selected={choice === field.value}
+                            >
+                              {choice}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          type={field.dataType === 'phone' ? 'tel' : 'text'}
+                          data-edit
+                          data-original={field.value}
+                          value={field.value}
+                          placeholder={
+                            field.dataType === 'phone' ? '5789 1234' : undefined
+                          }
+                          hidden
+                          class={`${INPUT_SM} w-full`}
+                        />
+                      ))}
                   </dd>
                 </div>
               ))}
@@ -1071,13 +1122,34 @@ const documentCount = documentGroups.reduce(
                       </dt>
                       <dd class="w-full text-neutral-800 dark:text-neutral-100">
                         <span data-view>{fieldDisplay(field)}</span>
-                        <input
-                          type={field.dataType === 'phone' ? 'tel' : 'text'}
-                          data-edit
-                          value={field.value}
-                          hidden
-                          class={`${INPUT_SM} w-full`}
-                        />
+                        {field.dataType === 'choice' &&
+                        field.choices.length > 0 ? (
+                          <select
+                            data-edit
+                            data-original={field.value}
+                            hidden
+                            class={`${INPUT_SM} w-full`}
+                          >
+                            <option value="" />
+                            {choiceOptions(field).map(choice => (
+                              <option
+                                value={choice}
+                                selected={choice === field.value}
+                              >
+                                {choice}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <input
+                            type={field.dataType === 'phone' ? 'tel' : 'text'}
+                            data-edit
+                            data-original={field.value}
+                            value={field.value}
+                            hidden
+                            class={`${INPUT_SM} w-full`}
+                          />
+                        )}
                       </dd>
                     </div>
                   ))}
@@ -1459,9 +1531,14 @@ const documentCount = documentGroups.reduce(
     dataType: string;
   }
 
+  // A choice field edits as a <select>, every other field as an <input> —
+  // both carry [data-edit] and data-original, so the rest of this script
+  // treats them alike.
+  type EditElement = HTMLInputElement | HTMLSelectElement;
+
   function setEditing(block: HTMLElement, editing: boolean): void {
     for (const fieldEl of block.querySelectorAll<HTMLElement>('[data-field]')) {
-      const input = fieldEl.querySelector<HTMLInputElement>('[data-edit]');
+      const input = fieldEl.querySelector<EditElement>('[data-edit]');
       if (!input) continue; // Read-only field — mirrored from elsewhere, nothing to toggle.
       const view = fieldEl.querySelector<HTMLElement>('[data-view]');
       if (view) view.hidden = editing;
@@ -1489,10 +1566,10 @@ const documentCount = documentGroups.reduce(
     toggle?.addEventListener('click', () => setEditing(block, true));
 
     cancelButton?.addEventListener('click', () => {
-      for (const input of block.querySelectorAll<HTMLInputElement>(
-        '[data-edit]'
-      )) {
-        input.value = input.defaultValue;
+      for (const input of block.querySelectorAll<EditElement>('[data-edit]')) {
+        // defaultValue only exists on <input>; data-original covers both,
+        // set once when rendered and refreshed after each save.
+        input.value = input.dataset.original ?? '';
       }
       setEditing(block, false);
     });
@@ -1502,7 +1579,7 @@ const documentCount = documentGroups.reduce(
 
       const changes = [...block.querySelectorAll<HTMLElement>('[data-field]')]
         .map(fieldEl => {
-          const input = fieldEl.querySelector<HTMLInputElement>('[data-edit]');
+          const input = fieldEl.querySelector<EditElement>('[data-edit]');
           if (!input) return null;
           return {
             subject: fieldEl.dataset.subject,
@@ -1546,7 +1623,7 @@ const documentCount = documentGroups.reduce(
           );
           if (!fresh) continue;
           const view = fieldEl.querySelector<HTMLElement>('[data-view]');
-          const input = fieldEl.querySelector<HTMLInputElement>('[data-edit]');
+          const input = fieldEl.querySelector<EditElement>('[data-edit]');
           const display =
             fresh.dataType === 'phone'
               ? forDisplayClient(fresh.value)
@@ -1558,7 +1635,10 @@ const documentCount = documentGroups.reduce(
           if (view) view.textContent = display;
           if (input) {
             input.value = fresh.value;
-            input.defaultValue = fresh.value;
+            input.dataset.original = fresh.value;
+            // Harmless for a <select> (no such property); kept for <input>
+            // so its own defaultValue still tracks the saved value too.
+            if ('defaultValue' in input) input.defaultValue = fresh.value;
           }
         }
         setEditing(block, false);
