@@ -7046,6 +7046,288 @@
         }
       }
     },
+    "/api/v1/member/me/dependents": {
+      "get": {
+        "summary": "The minors the caller is guardian of, with their accounts",
+        "description": "Each active minor — member or non-member account holder — whose guardian block names the caller, with that minor's accounts and the ledger's balance for each. Empty for a member who guards nobody. Read-only; a minor's transactions are under /me/dependents/{dependentId}/accounts/{accountId}/transactions.",
+        "tags": [
+          "Accounts"
+        ],
+        "operationId": "getMemberMeDependents",
+        "x-required-permission": "(a member app session)",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "id",
+                          "kind",
+                          "memberNo",
+                          "name",
+                          "relationship",
+                          "status",
+                          "accounts"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "member",
+                              "customer"
+                            ]
+                          },
+                          "memberNo": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "relationship": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "accounts": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "required": [
+                                "id",
+                                "accountNo",
+                                "typeCode",
+                                "typeName",
+                                "category",
+                                "status",
+                                "openedAt",
+                                "balance"
+                              ],
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "format": "uuid"
+                                },
+                                "accountNo": {
+                                  "type": "string"
+                                },
+                                "typeCode": {
+                                  "type": "string"
+                                },
+                                "typeName": {
+                                  "type": "string"
+                                },
+                                "category": {
+                                  "type": "string"
+                                },
+                                "status": {
+                                  "type": "string"
+                                },
+                                "openedAt": {
+                                  "type": "string",
+                                  "format": "date-time"
+                                },
+                                "balance": {
+                                  "type": "string",
+                                  "nullable": true,
+                                  "description": "Decimal string."
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/member/me/dependents/{dependentId}/accounts/{accountId}/transactions": {
+      "get": {
+        "summary": "A guarded minor's account: credits and debits, oldest first",
+        "description": "The entries behind a minor's balance, read-only. not_found unless the caller guards the minor and the account is that minor’s.",
+        "tags": [
+          "Accounts"
+        ],
+        "operationId": "getMemberMeDependentsDependentIdAccountsAccountIdTransactions",
+        "x-required-permission": "(a member app session)",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "id",
+                          "occurredAt",
+                          "direction",
+                          "amount",
+                          "description",
+                          "receiptNo"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "occurredAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "direction": {
+                            "type": "string",
+                            "enum": [
+                              "credit",
+                              "debit"
+                            ]
+                          },
+                          "amount": {
+                            "type": "string"
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "receiptNo": {
+                            "type": "string",
+                            "nullable": true
+                          }
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/member/me/deposits": {
       "post": {
         "summary": "Pay into one of the caller's accounts",

@@ -157,6 +157,21 @@ export async function memberAccounts(
   principal: MemberPrincipal
 ): Promise<AccountSummary[]> {
   if (!principal.memberId && !principal.customerId) return [];
+  return accountsForHolder(principal.memberId, principal.customerId);
+}
+
+/**
+ * The accounts a single holder — a member or a non-member customer — holds,
+ * with the ledger's balance for each. The one place the accounts query
+ * lives, so a member reading their own and a guardian reading a minor's
+ * (member/dependents) see them shaped identically. Callers are responsible
+ * for establishing that the holder is theirs to read before calling.
+ */
+export async function accountsForHolder(
+  memberId: string | null,
+  customerId: string | null
+): Promise<AccountSummary[]> {
+  if (!memberId && !customerId) return [];
 
   const rows = await query<{
     id: string;
@@ -179,7 +194,7 @@ export async function memberAccounts(
       where ($1::uuid is not null and a.member_id = $1::uuid)
          or ($2::uuid is not null and a.customer_id = $2::uuid)
       order by t.sort_order, t.name`,
-    [principal.memberId, principal.customerId]
+    [memberId, customerId]
   );
 
   return rows.rows.map(r => ({
@@ -267,7 +282,17 @@ export async function accountTransactions(
   accountId: string
 ): Promise<AccountTransaction[]> {
   await ownedAccountId(principal, accountId);
+  return accountTransactionsFor(accountId);
+}
 
+/**
+ * An account's credits and debits, oldest first, in the app's shape. The
+ * caller must first establish the account is theirs to read (their own, or a
+ * minor's they guard — member/dependents); this only reads the ledger.
+ */
+export async function accountTransactionsFor(
+  accountId: string
+): Promise<AccountTransaction[]> {
   // The ledger's own entries, oldest first (S-1309). Bounded: a statement
   // in the app is the recent past; the full history is the officer's page.
   const entries = await accountEntries(accountId, { limit: 500 });
