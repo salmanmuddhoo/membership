@@ -5,6 +5,7 @@
 // importMembers itself decides member vs. non-member per row (an AB Number
 // makes one a member; migration/members.ts's own comment explains why).
 import DashboardLayout from '@layouts/DashboardLayout.astro';
+import MigrationSummaryTable from '@components/MigrationSummaryTable.astro';
 import {
   MigrationError,
   buildImportTemplate,
@@ -16,6 +17,11 @@ import {
   type ImportOutcome,
   type RowError,
 } from '@lib/migration/members';
+import {
+  migrationSummary,
+  summaryDifference,
+  type MigrationSummary,
+} from '@lib/migration/summary';
 import { formatMoney, fromCents, toCents } from '@lib/payments/money';
 import {
   BUTTON,
@@ -51,6 +57,9 @@ if (canMigrate && Astro.url.searchParams.has('template')) {
 let error: string | null = null;
 let rowErrors: RowError[] = [];
 let outcome: ImportOutcome | null = null;
+// What this upload added, by member type and by non-member account
+// (officer direction): the summary after it, less the one before.
+let added: MigrationSummary | null = null;
 // S-710 reconciliation — set when the operator supplies a control total and
 // it does not match what was actually imported.
 // What the uploaded file carries, every balance on every row — shown
@@ -133,12 +142,14 @@ if (Astro.request.method === 'POST') {
               messages,
             };
           } else {
+            const before = await migrationSummary();
             outcome = await importMembers(
               valid,
               { userId: principal.userId, email: principal.email },
               principal.permissions,
               checksum
             );
+            added = summaryDifference(before, await migrationSummary());
             if (expectedRows !== null || expectedBalance !== null) {
               reconciliation = {
                 expectedRows,
@@ -160,6 +171,9 @@ if (Astro.request.method === 'POST') {
     }
   }
 }
+
+// Everything imported to date, whichever upload brought it.
+const toDate = canMigrate ? await migrationSummary() : null;
 
 const memberCount =
   outcome?.imported.filter(m => m.kind === 'member').length ?? 0;
@@ -247,6 +261,12 @@ const customerCount =
                 Reconciliation passed.
               </p>
             )}
+            {added &&
+              (added.total.holders !== 0 || added.total.amountCents !== 0) && (
+                <div class="mt-4">
+                  <MigrationSummaryTable summary={added} />
+                </div>
+              )}
             <p class="mt-2 font-mono text-xs text-neutral-500 dark:text-neutral-500">
               Batch {outcome.batchId} · SHA-256 {outcome.checksum.slice(0, 16)}…
             </p>
@@ -278,6 +298,15 @@ const customerCount =
                 </ul>
               </>
             )}
+          </section>
+        )}
+
+        {toDate && toDate.total.holders > 0 && (
+          <section class={CARD}>
+            <h2 class={CARD_TITLE}>Imported so far</h2>
+            <div class="mt-3">
+              <MigrationSummaryTable summary={toDate} />
+            </div>
           </section>
         )}
 

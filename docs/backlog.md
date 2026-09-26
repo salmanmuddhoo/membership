@@ -5255,3 +5255,16 @@ Transfers reports (their status filter reads "Disbursed or recorded").
 Money paid out keeps Disbursement / Disbursed. And the withdrawal and
 transfer forms refuse an amount that would take the account below the
 minimum its type holds, before the officer submits.
+
+---
+
+### What the migration brought in
+
+Officer direction. The Migration page shows **Imported so far**: members by
+membership type (Individual, Corporate, Minor) and non-members, each with
+how many were imported and the funds that came with them, the non-members'
+funds split by account type (HSA, Investment), and the total. After an
+upload, the same table shows what that upload added. Read from the records
+themselves (`src/lib/migration/summary.ts`): a migrated member or customer
+carries its legacy code, and its funds are the migration payment recorded
+against its application, less any voided receipt.
