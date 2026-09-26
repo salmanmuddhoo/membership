@@ -220,10 +220,11 @@ function assertMayMigrate(permissions: ReadonlySet<string>): void {
 // resolves its guardian the same way problemsBlockingSubmission does
 // (findGuardian, exported from capture.ts for exactly this): an existing
 // member, or an Individual application still on its way to becoming one.
-// A guardian has to be on file before their minor is imported — a batch
-// naming both has to be run once for the guardian, then again for the
-// minor; findGuardian only looks at what is already committed, never at
-// another row still in the same sheet.
+// A minor's guardian is either already on file or a member row of the same
+// upload (officer direction: the Individual sheet goes first, then Minor).
+// validateRows checks every row that needs no guardian before any that
+// does, and returns them in that order, so a batch imports the guardian
+// before the minor who names them.
 function eligible(type: MembershipType): boolean {
   return type.isActive;
 }
@@ -409,7 +410,7 @@ function fillInstructions(sheet: ExcelJS.Worksheet, typeNames: string[]) {
     'Hover over a heading to read its note.',
     'Dates as YYYY-MM-DD. Amounts as plain numbers, e.g. 1500.50.',
     'NIC, mobile, legacy code and account numbers belong to one person only, in this file and on file.',
-    'A minor’s guardian must already be a member: import the guardian first, then the minor.',
+    'A minor’s guardian must be a member already, or be on the Individual sheet of the same file.',
     'Keep the sheet names and column headings as they are. A sheet or column the template does not have is refused.',
     'Uploading the same Legacy Member Code again updates that person instead of adding them twice.',
   ];
@@ -469,8 +470,8 @@ export async function buildImportTemplate(): Promise<Buffer> {
       ...guardian.map(f => ({
         ...fieldColumn(f, f.label, f.isMandatory),
         note:
-          "The guardian's AB Number. The guardian must already be a " +
-          'member: import them first, then this sheet.',
+          "The guardian's AB Number: a member already, or one on the " +
+          'Individual sheet of this file.',
         text: true,
       })),
       ...beneficiary.map(f => fieldColumn(f, f.label, f.isMandatory)),
@@ -1229,7 +1230,22 @@ export async function validateRows(
     }
   }
 
-  for (const row of rows) {
+  // Rows that need no guardian first, then those that do, so a minor can
+  // name a guardian from the same upload — and the rows come back in that
+  // order, which is the order they are imported in.
+  const needsGuardian = (row: ParsedRow) => {
+    const type = byName.get(row.sheet);
+    return type ? guardianFields(type).length > 0 : false;
+  };
+  const ordered = [
+    ...rows.filter(r => !needsGuardian(r)),
+    ...rows.filter(r => needsGuardian(r)),
+  ];
+  // Member rows of this upload that validated, by AB Number: guardians a
+  // minor further down may name.
+  const membersInUpload = new Map<string, Record<string, string>>();
+
+  for (const row of ordered) {
     const problems: string[] = [];
     const type = byName.get(row.sheet);
     if (!type) {
@@ -1404,12 +1420,19 @@ export async function validateRows(
         problems.push(`${guardianField.label} is required.`);
       } else {
         const found = await findGuardian(guardianMemberNo, '');
-        if (!found) {
+        const inUpload = membersInUpload.get(guardianMemberNo.toUpperCase());
+        if (!found && inUpload) {
+          guardianValues = {
+            [guardianField.fieldKey]: guardianMemberNo.toUpperCase(),
+            surname: inUpload.surname ?? '',
+            name: inUpload.name ?? '',
+            nic: inUpload.nic ?? '',
+            mobile: inUpload.mobile ?? '',
+          };
+        } else if (!found) {
           problems.push(
             `${guardianField.label} "${guardianMemberNo}" does not match ` +
-              'any member or in-progress application on file — the ' +
-              'guardian must already be on file before their minor can ' +
-              'be imported.'
+              'any member on file or on the Individual sheet of this file.'
           );
         } else if (found.isMember && found.status !== 'active') {
           problems.push(
@@ -1587,6 +1610,7 @@ export async function validateRows(
       continue;
     }
 
+    if (abGiven) membersInUpload.set(abNumber.toUpperCase(), values);
     valid.push({
       ...row,
       // The effective code — the AB Number, when the column itself was
@@ -1609,6 +1633,16 @@ export async function validateRows(
     });
   }
 
+  // Problems read in the order of the file, whatever order they were
+  // checked in.
+  const position = new Map(
+    rows.map((r, i) => [`${r.sheet}#${r.rowNumber}`, i])
+  );
+  errors.sort(
+    (a, b) =>
+      (position.get(`${a.sheet}#${a.rowNumber}`) ?? 0) -
+      (position.get(`${b.sheet}#${b.rowNumber}`) ?? 0)
+  );
   return { valid, errors };
 }
 
@@ -1817,6 +1851,14 @@ export async function importMembers(
     // Set by the branches that insert an application of their own.
     let newApplicationId: string | null = null;
     try {
+      // A guardian from the same upload is imported first; if their own
+      // row failed, the minor cannot name them.
+      const guardianNo = row.guardian.member_id ?? '';
+      if (guardianNo && !(await findGuardian(guardianNo, ''))) {
+        throw new MigrationError(
+          `The guardian ${guardianNo} is not on file. Import the guardian first.`
+        );
+      }
       const isUpdate =
         row.existingId !== null && row.existingApplicationId !== null;
 

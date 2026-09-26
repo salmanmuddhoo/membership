@@ -5300,3 +5300,16 @@ imported account other than its opening balance, and while a chunk is
 mid-import. A finished batch shows what it added (the summary before it,
 kept on the batch, against the summary after) and the rows it could not
 import.
+
+---
+
+### A guardian and their minor in one upload
+
+Officer direction: the Individual sheet is migrated first, because a Minor
+depends on it. `validateRows` checks every row that needs no guardian before
+any that does and returns them in that order, so a batch imports the
+Individual (and Corporate) rows first and the Minor rows after. A minor's
+Guardian Member ID may name a member on file or a member row on the
+Individual sheet of the same file. If that guardian's own row fails to
+import, the minor's row fails too ("The guardian AB… is not on file"), never
+left naming someone who is not there.
