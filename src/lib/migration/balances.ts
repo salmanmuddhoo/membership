@@ -54,6 +54,9 @@ export interface ValidatedBalance {
   accountId: string;
   // As the officer knows it: the account number, or the AB number and type.
   label: string;
+  // The member or non-member who holds the account.
+  holderId: string;
+  holderKind: 'member' | 'customer';
   previous: string;
   balance: string;
   feeVersionId: string | null;
@@ -63,6 +66,12 @@ export interface BalanceOutcome {
   rows: number;
   changed: number;
   unchanged: number;
+  // Holders with at least one balance changed.
+  members: number;
+  nonMembers: number;
+  // Every balance in the file, and what those accounts held before.
+  totalCents: number;
+  previousCents: number;
 }
 
 function assertMayMigrate(permissions: ReadonlySet<string>): void {
@@ -170,6 +179,8 @@ interface AccountOnFile {
   id: string;
   account_no: string | null;
   member_no: string | null;
+  holder_id: string;
+  holder_kind: 'member' | 'customer';
   type_code: string;
   type_name: string;
   membership_type_id: string | null;
@@ -199,9 +210,22 @@ export async function validateBalanceRows(rows: BalanceRow[]): Promise<{
   errors: BalanceRowError[];
 }> {
   const keys = [...new Set(rows.map(r => r.account.trim().toUpperCase()))];
+  // Joined on the file's own keys rather than filtered by them: a file of
+  // thousands of rows against thousands of accounts stays one hash join.
   const onFile = await query<AccountOnFile>(
-    `select a.id, a.account_no, m.member_no, ty.code as type_code,
-            ty.name as type_name,
+    `with k as (select distinct unnest($1::text[]) as key),
+          matched as (
+            select a.id from k join account a on upper(a.account_no) = k.key
+            union
+            select a.id
+              from k
+              join member m on upper(m.member_no) = k.key
+              join account a on a.member_id = m.id and a.account_no is null)
+     select a.id, a.account_no, m.member_no,
+            coalesce(a.member_id, a.customer_id) as holder_id,
+            case when a.member_id is not null then 'member' else 'customer' end
+              as holder_kind,
+            ty.code as type_code, ty.name as type_name,
             coalesce(m.membership_type_id, app.membership_type_id)
               as membership_type_id,
             coalesce(b.balance, 0)::text as balance,
@@ -218,15 +242,14 @@ export async function validateBalanceRows(rows: BalanceRow[]): Promise<{
                       or p.voided_at is not null)) as has_own,
             (select count(*) from transaction t
               where t.account_id = a.id)::int as openings
-       from account a
+       from matched x
+       join account a on a.id = x.id
        join account_type ty on ty.id = a.account_type_id
        left join member m on m.id = a.member_id
        left join customer c on c.id = a.customer_id
        left join membership_application app
          on app.id = coalesce(m.application_id, c.application_id)
        left join account_balance b on b.account_id = a.id
-      where upper(a.account_no) = any($1::text[])
-         or (a.account_no is null and upper(m.member_no) = any($1::text[]))
       order by ty.sort_order, ty.name`,
     [keys]
   );
@@ -342,6 +365,8 @@ export async function validateBalanceRows(rows: BalanceRow[]): Promise<{
       rowNumber: f.row.rowNumber,
       accountId: f.account.id,
       label: f.label,
+      holderId: f.account.holder_id,
+      holderKind: f.account.holder_kind,
       previous: fromCents(toCents(f.account.balance)),
       balance: balances.get(f.row.rowNumber)!,
       feeVersionId: await feeVersionFor(f.account.membership_type_id),
@@ -385,6 +410,15 @@ export async function applyBalances(
       );
       const changed = result.rows[0].changed;
       const total = valid.reduce((sum, v) => sum + toCents(v.balance), 0);
+      const previous = valid.reduce((sum, v) => sum + toCents(v.previous), 0);
+      const affected = new Map<string, 'member' | 'customer'>();
+      for (const v of valid) {
+        if (toCents(v.previous) !== toCents(v.balance)) {
+          affected.set(v.holderId, v.holderKind);
+        }
+      }
+      const members = [...affected.values()].filter(k => k === 'member').length;
+      const nonMembers = affected.size - members;
       await recordAudit(
         {
           actorUserId: actor.userId,
@@ -396,12 +430,23 @@ export async function applyBalances(
             checksum,
             rows: valid.length,
             changed,
+            members,
+            nonMembers,
             totalBalance: fromCents(total),
+            previousBalance: fromCents(previous),
           },
         },
         client
       );
-      return { rows: valid.length, changed, unchanged: valid.length - changed };
+      return {
+        rows: valid.length,
+        changed,
+        unchanged: valid.length - changed,
+        members,
+        nonMembers,
+        totalCents: total,
+        previousCents: previous,
+      };
     });
   } catch (err) {
     const code = (err as { code?: string }).code;

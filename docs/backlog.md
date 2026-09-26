@@ -5389,3 +5389,17 @@ template: Account Number, Account Type, Balance.
 - The whole file is checked first; one problem and nothing changes. Refused
   while a member import is running. About 2 ms an account, so a file of
   9,000 accounts is one request of under half a minute.
+
+---
+
+### What a balance file did
+
+Officer direction, ahead of a file of over 5,000 members: once a balance
+file is set, the page says how many rows it had, how many balances changed
+and how many already held that figure, how many members and non-members
+were affected (a holder with at least one balance changed), and the total
+balance of the file against what those accounts held before. The same
+figures go into the upload's audit entry. The file's accounts are matched
+with one hash join on its own keys, so the check stays quick at that size,
+and the button shows it is working until the page returns, so a second
+click cannot send the file again.
