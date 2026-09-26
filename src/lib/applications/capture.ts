@@ -1713,11 +1713,16 @@ const GUARDED_NAME_SQL = `
 export interface GuardedParty {
   /** Where their own page is, ready to link to. */
   href: string;
-  /** Their Member No., or their application's reference until they have one. */
+  /**
+   * Their Member No.; a non-member's account number; or their application's
+   * reference until they have either.
+   */
   reference: string;
   name: string;
   status: string;
   isMember: boolean;
+  /** A minor who holds an account without being a member. */
+  isNonMember: boolean;
 }
 
 // findGuardian read the other way round: not "who is this minor's guardian"
@@ -1765,9 +1770,36 @@ export async function guardianOf(
     [memberNo, nic]
   );
 
+  // A minor who holds an account without being a member (officer QA: a
+  // migrated guardian's page left out every minor saver in their care). A
+  // non-member who has since become a member is the member row above.
+  const customers = await query<{
+    id: string;
+    reference: string;
+    status: string;
+    name: string;
+  }>(
+    `select c.id,
+            coalesce((select string_agg(a.account_no, ', ' order by a.account_no)
+                        from account a where a.customer_id = c.id),
+                     app.reference) as reference,
+            c.status, ${GUARDED_NAME_SQL} as name
+       from customer c
+       join membership_application app on app.id = c.application_id
+       join application_party g
+         on g.application_id = c.application_id and g.subject = 'guardian'
+       left join application_party p
+         on p.application_id = c.application_id
+        and p.subject = 'applicant' and p.ordinal = 1
+      where c.status <> 'converted'
+        and ${matchesGuardian}
+      order by 2`,
+    [memberNo, nic]
+  );
+
   // Approved applications are left out here rather than deduplicated after:
-  // every one of them has a member row above, which is the record worth
-  // linking to.
+  // every one of them has a member or customer row above, which is the
+  // record worth linking to.
   const applications = await query<{
     id: string;
     reference: string;
@@ -1794,6 +1826,15 @@ export async function guardianOf(
       name: r.name,
       status: r.status,
       isMember: true,
+      isNonMember: false,
+    })),
+    ...customers.rows.map(r => ({
+      href: `/members/${r.id}`,
+      reference: r.reference,
+      name: r.name,
+      status: r.status,
+      isMember: false,
+      isNonMember: true,
     })),
     ...applications.rows.map(r => ({
       href: `/applications/${r.id}`,
@@ -1801,6 +1842,7 @@ export async function guardianOf(
       name: r.name,
       status: r.status,
       isMember: false,
+      isNonMember: false,
     })),
   ];
 }

@@ -1042,10 +1042,14 @@ const documentCount = documentGroups.reduce(
               <span class="text-neutral-800 dark:text-neutral-100">
                 {party.name}
               </span>
-              <span class="text-neutral-500 capitalize dark:text-neutral-400">
+              <span
+                class={`text-neutral-500 dark:text-neutral-400 ${party.isMember || party.isNonMember ? '' : 'capitalize'}`}
+              >
                 {party.isMember
                   ? statusLabel(party.status)
-                  : `application · ${party.status}`}
+                  : party.isNonMember
+                    ? `Non-member · ${statusLabel(party.status)}`
+                    : `application · ${party.status}`}
               </span>
             </li>
           ))}
@@ -1514,11 +1518,16 @@ const documentCount = documentGroups.reduce(
   //
   // phone.ts's own forDisplay, duplicated here in the shape a client
   // script can run without importing server code: +230XXXXXXXX (12 chars)
-  // becomes "+230 XXXX XXXX", anything else is shown as stored.
+  // becomes "+230 XXXX XXXX", a 7-digit fixed line "+230 XXX XXXX",
+  // anything else is shown as stored.
   function forDisplayClient(e164: string): string {
     if (e164.startsWith('+230') && e164.length === 12) {
       const local = e164.slice(4);
       return `+230 ${local.slice(0, 4)} ${local.slice(4)}`;
+    }
+    if (e164.startsWith('+230') && e164.length === 11) {
+      const local = e164.slice(4);
+      return `+230 ${local.slice(0, 3)} ${local.slice(3)}`;
     }
     return e164;
   }
