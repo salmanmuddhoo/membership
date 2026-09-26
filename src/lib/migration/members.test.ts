@@ -1348,7 +1348,9 @@ describe('fourth increment: Nominee, Minor, and NIC/mobile uniqueness', () => {
     });
     const { errors } = await validateRows(await parseImportFile(minorRow));
     expect(errors).toHaveLength(1);
-    expect(errors[0].message).toMatch(/must already be on file/);
+    expect(errors[0].message).toMatch(
+      /does not match any member on file or on the Individual sheet/
+    );
   });
 
   it('rejects two rows in the same batch sharing a NIC', async () => {
@@ -1908,5 +1910,105 @@ describe('migrationSummary', () => {
       holders: 0,
       amountCents: 0,
     });
+  });
+});
+
+// Officer direction: the Individual sheet goes first, then Minor — a
+// guardian and their minor in one upload.
+describe('a guardian and their minor in the same upload', () => {
+  it('takes the guardian from the Individual sheet and imports them first', async () => {
+    const {
+      buildImportTemplate,
+      parseImportFile,
+      validateRows,
+      importMembers,
+    } = await load();
+    const template = await buildImportTemplate();
+    const minorFirst = await fillSheet(
+      await fillSheet(template, 'Minor', {
+        'Legacy Member Code': 'LEG-700-M',
+        'AB Number': 'AB1781',
+        Surname: 'Joomun',
+        Name: 'Aisha',
+        'Date of birth': '2016-03-01',
+        Gender: 'Female',
+        Address: 'Addr',
+        'Guardian Member ID': 'ab1780',
+        'Beneficiary surname': 'Joomun',
+        'Beneficiary name': 'Rafiq',
+        'Beneficiary NIC': 'J7000000000003',
+        'Nominee 1 Successor guardian surname': 'Joomun',
+        'Nominee 1 Successor guardian name': 'Rafiq',
+        'Nominee 1 Successor guardian NIC': 'J7000000000002',
+      }),
+      'Individual',
+      {
+        'Legacy Member Code': 'LEG-700-G',
+        'AB Number': 'AB1780',
+        Surname: 'Joomun',
+        Name: 'Nadia',
+        NIC: 'J7000000000001',
+        Gender: 'Female',
+        Address: 'Addr',
+        Mobile: '57891700',
+        ...NOMINEE_1,
+      }
+    );
+    const { valid, errors } = await validateRows(
+      await parseImportFile(minorFirst)
+    );
+    expect(errors).toEqual([]);
+    // The guardian comes back first, whatever order the sheets were in.
+    expect(valid.map(r => r.sheet)).toEqual(['Individual', 'Minor']);
+    expect(valid[1].guardian).toMatchObject({
+      member_id: 'AB1780',
+      surname: 'Joomun',
+      nic: 'J7000000000001',
+    });
+
+    // Imported without its guardian, the minor is refused, not left
+    // pointing at nobody.
+    const alone = await importMembers(
+      [valid[1]],
+      actor,
+      MIGRATE_PERMISSIONS,
+      'test'
+    );
+    expect(alone.failed[0].message).toBe(
+      'The guardian AB1780 is not on file. Import the guardian first.'
+    );
+
+    const outcome = await importMembers(
+      valid,
+      actor,
+      MIGRATE_PERMISSIONS,
+      'test'
+    );
+    expect(outcome.failed).toEqual([]);
+    expect(outcome.imported.map(r => r.memberNo)).toEqual(['AB1780', 'AB1781']);
+  });
+
+  it('still refuses a guardian who is neither on file nor in the file', async () => {
+    const { buildImportTemplate, parseImportFile, validateRows } = await load();
+    const file = await fillSheet(await buildImportTemplate(), 'Minor', {
+      'Legacy Member Code': 'LEG-701-M',
+      'AB Number': 'AB1782',
+      Surname: 'Joomun',
+      Name: 'Ilyas',
+      'Date of birth': '2016-03-01',
+      Gender: 'Male',
+      Address: 'Addr',
+      'Guardian Member ID': 'AB1789',
+      'Beneficiary surname': 'Joomun',
+      'Beneficiary name': 'Rafiq',
+      'Beneficiary NIC': 'J7010000000003',
+      'Nominee 1 Successor guardian surname': 'Joomun',
+      'Nominee 1 Successor guardian name': 'Rafiq',
+      'Nominee 1 Successor guardian NIC': 'J7010000000002',
+    });
+    const { errors } = await validateRows(await parseImportFile(file));
+    expect(errors[0].message).toMatch(
+      /does not match any member on file or on the Individual sheet of this file/
+    );
   });
 });
