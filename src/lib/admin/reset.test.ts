@@ -239,6 +239,8 @@ const CLEARED_TABLES = [
   'member_login_challenge',
   'member_session',
   'membership_application',
+  'migration_batch',
+  'migration_batch_row',
   'notification',
   'payment',
   'payment_account_line',

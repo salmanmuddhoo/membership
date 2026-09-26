@@ -1642,8 +1642,19 @@ export interface ImportOutcome {
     legacyCode: string;
     memberNo: string;
     kind: 'member' | 'customer';
+    // The member or customer the row wrote to, and whether this row created
+    // it or only added to one already on file — what cancelling a batch
+    // (summary.ts's neighbour, batches.ts) removes.
+    holderId: string;
+    created: boolean;
   }[];
-  failed: { legacyCode: string; message: string }[];
+  // applicationId: an application this row inserted before it failed, so
+  // cancelling the batch can remove it too.
+  failed: {
+    legacyCode: string;
+    message: string;
+    applicationId: string | null;
+  }[];
 }
 
 function toBalanceLines(
@@ -1789,17 +1800,22 @@ export async function importMembers(
   rows: ValidatedRow[],
   actor: Actor,
   permissions: ReadonlySet<string>,
-  checksum: string
+  checksum: string,
+  // A batch run a chunk at a time (batches.ts) names itself and records its
+  // own completion; a one-shot call is its own batch.
+  options: { batchId?: string } = {}
 ): Promise<ImportOutcome> {
   assertMayMigrate(permissions);
 
-  const batchId = randomUUID();
+  const batchId = options.batchId ?? randomUUID();
   const imported: ImportOutcome['imported'] = [];
   const failed: ImportOutcome['failed'] = [];
   let totalBalance = 0;
 
   for (const row of rows) {
     let allocation: ReceiptAllocation | null = null;
+    // Set by the branches that insert an application of their own.
+    let newApplicationId: string | null = null;
     try {
       const isUpdate =
         row.existingId !== null && row.existingApplicationId !== null;
@@ -1896,6 +1912,8 @@ export async function importMembers(
             legacyCode: row.legacyCode,
             memberNo,
             kind: 'member',
+            holderId: memberId,
+            created: false,
           });
         } else {
           const application = await query<{ id: string }>(
@@ -1906,6 +1924,7 @@ export async function importMembers(
             [row.membershipTypeId, actor.userId]
           );
           const applicationId = application.rows[0].id;
+          newApplicationId = applicationId;
 
           await query(
             `insert into application_party (application_id, subject, ordinal, values)
@@ -1971,7 +1990,7 @@ export async function importMembers(
             ]);
           }
 
-          const memberNo = await withTransaction(async client => {
+          const createdMember = await withTransaction(async client => {
             const created = await createMemberFromApplication(
               client,
               loaded,
@@ -2033,14 +2052,16 @@ export async function importMembers(
               },
               client
             );
-            return created.memberNo;
+            return { memberNo: created.memberNo, memberId: created.id };
           });
 
           totalBalance += rowBalance(row);
           imported.push({
             legacyCode: row.legacyCode,
-            memberNo,
+            memberNo: createdMember.memberNo,
             kind: 'member',
+            holderId: createdMember.memberId,
+            created: true,
           });
         }
       } else {
@@ -2132,6 +2153,8 @@ export async function importMembers(
             legacyCode: row.legacyCode,
             memberNo: '',
             kind: 'customer',
+            holderId: customerId,
+            created: false,
           });
         } else {
           const application = await query<{ id: string }>(
@@ -2142,6 +2165,7 @@ export async function importMembers(
             [row.membershipTypeId, actor.userId]
           );
           const applicationId = application.rows[0].id;
+          newApplicationId = applicationId;
 
           await query(
             `insert into application_party (application_id, subject, ordinal, values)
@@ -2178,7 +2202,7 @@ export async function importMembers(
             ]);
           }
 
-          await withTransaction(async client => {
+          const customerId = await withTransaction(async client => {
             const created = await createMigratedCustomer(client, applicationId);
             await client.query(
               `update customer set legacy_code = $2,
@@ -2233,6 +2257,7 @@ export async function importMembers(
               },
               client
             );
+            return created.id;
           });
 
           totalBalance += rowBalance(row);
@@ -2240,6 +2265,8 @@ export async function importMembers(
             legacyCode: row.legacyCode,
             memberNo: '',
             kind: 'customer',
+            holderId: customerId,
+            created: true,
           });
         }
       }
@@ -2255,10 +2282,14 @@ export async function importMembers(
       failed.push({
         legacyCode: row.legacyCode,
         message: error instanceof Error ? error.message : 'Unknown error.',
+        applicationId: newApplicationId,
       });
     }
   }
 
+  if (options.batchId) {
+    return { batchId, checksum, totalBalance, imported, failed };
+  }
   await recordAuditQuietly({
     actorUserId: actor.userId,
     actorDescription: actor.email,
