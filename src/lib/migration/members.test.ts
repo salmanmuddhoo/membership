@@ -1804,3 +1804,109 @@ describe('officer QA: migration scenarios', () => {
     ).rejects.toThrow(/not an Excel workbook/);
   });
 });
+
+// Officer direction: once a migration has run, how many were imported and
+// what funds came with them — members by type, non-members by account.
+describe('migrationSummary', () => {
+  it('counts what an upload added, by member type and by non-member account', async () => {
+    await runAsConfigurator(
+      appUrl,
+      `insert into account_type
+         (code, name, category, minimum_opening_amount, is_membership_default)
+       values ('hsa_summary_test', 'Hajj Savings (summary test)', 'savings', 0, false)
+       on conflict (code) do nothing`
+    );
+    const {
+      buildImportTemplate,
+      parseImportFile,
+      validateRows,
+      importMembers,
+    } = await load();
+    const { migrationSummary, summaryDifference } = await import('./summary');
+    const before = await migrationSummary();
+
+    const memberFile = await fillSheet(
+      await buildImportTemplate(),
+      'Individual',
+      {
+        'Legacy Member Code': 'LEG-SUM-1',
+        'AB Number': 'AB1901',
+        Surname: 'Summary',
+        Name: 'Member',
+        NIC: 'S1901190119011',
+        Gender: 'Female',
+        Address: 'Addr',
+        Mobile: '57891901',
+        'Shares Balance': '5000',
+        'MSA Deposit Balance': '1500',
+        'Hajj Savings (summary test) Number': 'HSA-1901',
+        'Hajj Savings (summary test) Balance': '700',
+        ...NOMINEE_1,
+      }
+    );
+    const customerFile = await fillSheet(
+      await buildImportTemplate(),
+      'Individual',
+      {
+        'Legacy Member Code': 'LEG-SUM-2',
+        Surname: 'Summary',
+        Name: 'Customer',
+        NIC: 'S1902190219021',
+        Gender: 'Male',
+        Address: 'Addr',
+        Mobile: '57891902',
+        'Hajj Savings (summary test) Number': 'HSA-1902',
+        'Hajj Savings (summary test) Balance': '3000',
+        ...NOMINEE_1,
+      }
+    );
+    for (const file of [memberFile, customerFile]) {
+      const { valid, errors } = await validateRows(await parseImportFile(file));
+      expect(errors).toEqual([]);
+      const outcome = await importMembers(
+        valid,
+        actor,
+        MIGRATE_PERMISSIONS,
+        'test'
+      );
+      expect(outcome.failed).toEqual([]);
+    }
+
+    const after = await migrationSummary();
+    const added = summaryDifference(before, after);
+    expect(added.members).toEqual([
+      { typeName: 'Individual', holders: 1, amountCents: 720000 },
+    ]);
+    expect(added.nonMembers).toEqual({
+      holders: 1,
+      amountCents: 300000,
+      accounts: [
+        {
+          typeName: 'Hajj Savings (summary test)',
+          count: 1,
+          amountCents: 300000,
+        },
+      ],
+    });
+    expect(added.total).toEqual({ holders: 2, amountCents: 1020000 });
+
+    // To date adds up: the members' rows and the non-members' make the
+    // total.
+    expect(after.total.holders).toBe(
+      after.members.reduce((n, r) => n + r.holders, 0) +
+        after.nonMembers.holders
+    );
+    expect(after.total.amountCents).toBe(
+      after.members.reduce((n, r) => n + r.amountCents, 0) +
+        after.nonMembers.amountCents
+    );
+
+    // Uploading the same member again adds nothing.
+    const again = await validateRows(await parseImportFile(memberFile));
+    await importMembers(again.valid, actor, MIGRATE_PERMISSIONS, 'test');
+    expect(summaryDifference(after, await migrationSummary()).total).toEqual({
+      holders: 0,
+      amountCents: 0,
+    });
+  });
+});
