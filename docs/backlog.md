@@ -5338,3 +5338,15 @@ the uniqueness count within the file and of the numbers on file; it is
 checked against their guardian's once the guardian resolves, and any other
 number must not be an adult's. This bites only where Minor is configured with
 a Mobile field — by default it has none.
+
+---
+
+### A minor's Takaful beneficiary on the member page
+
+Officer QA: a minor's page did not show the Takaful beneficiary. It was there,
+as a subheading inside the Nominee card, where nobody looked for it; and a
+minor migrated without one showed nothing at all. It now has its own card on
+a minor's page (member or non-member), after Parent / Guardian and before
+Nominee, in the order surname, name, NIC, with "None on file." when the
+record has none. The Nominee card drops its subheading when it holds a single
+nominee.

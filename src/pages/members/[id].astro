@@ -398,7 +398,20 @@ const partyGroups = await otherPartyGroups(applicationId);
 // correction (nomineeContactGroups); anyone else stays here, read-only.
 const readOnlyPartyGroups = partyGroups.filter(
   group =>
+    !group.key.startsWith('beneficiary-') &&
     !(nomineeContactGroups.length > 0 && group.key.startsWith('nominee-'))
+);
+// A minor's Takaful beneficiary has its own card (officer QA: it read as a
+// nominee, and a minor migrated without one showed nothing at all).
+const beneficiaryGroup = partyGroups.find(group =>
+  group.key.startsWith('beneficiary-')
+);
+// Surname, name, NIC — the order the guardian card reads in.
+const PERSON_ORDER = ['surname', 'name', 'nic'];
+const personOrder = (key: string) =>
+  PERSON_ORDER.includes(key) ? PERSON_ORDER.indexOf(key) : PERSON_ORDER.length;
+const beneficiaryDetails = [...(beneficiaryGroup?.details ?? [])].sort(
+  (a, b) => personOrder(a.key) - personOrder(b.key)
 );
 
 const name = (member ?? customer)!.name;
@@ -989,6 +1002,28 @@ const documentCount = documentGroups.reduce(
       </section>
     )}
 
+    {(isMinor || beneficiaryGroup) && (
+      <section class={CARD}>
+        <h2 class={CARD_TITLE}>Takaful beneficiary</h2>
+        {beneficiaryGroup ? (
+          <dl class="mt-4 grid gap-x-6 gap-y-2 sm:grid-cols-2">
+            {beneficiaryDetails.map(d => (
+              <div class="flex gap-2 text-sm">
+                <dt class="min-w-32 text-neutral-500 capitalize dark:text-neutral-400">
+                  {partyDetailLabel(d.key, d.label)}
+                </dt>
+                <dd class="text-neutral-800 dark:text-neutral-100">
+                  {d.value}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        ) : (
+          <p class={`mt-1 ${HINT}`}>None on file.</p>
+        )}
+      </section>
+    )}
+
     {nomineeContactGroups.length > 0 && (
       <section class={CARD}>
         <div data-edit-block data-record-id={recordId}>
@@ -1079,7 +1114,9 @@ const documentCount = documentGroups.reduce(
         <div class="mt-4 space-y-4">
           {readOnlyPartyGroups.map(group => (
             <div>
-              <h3 class={SUBTITLE}>{group.label}</h3>
+              {readOnlyPartyGroups.length > 1 && (
+                <h3 class={SUBTITLE}>{group.label}</h3>
+              )}
               <dl class="mt-2 grid gap-x-6 gap-y-2 sm:grid-cols-2">
                 {group.details.map(d => (
                   <div class="flex gap-2 text-sm">
