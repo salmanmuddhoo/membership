@@ -261,11 +261,12 @@ const customerCount =
                 Reconciliation passed.
               </p>
             )}
-            {added && (added.total.holders !== 0 || added.total.amountCents !== 0) && (
-              <div class="mt-4">
-                <MigrationSummaryTable summary={added} />
-              </div>
-            )}
+            {added &&
+              (added.total.holders !== 0 || added.total.amountCents !== 0) && (
+                <div class="mt-4">
+                  <MigrationSummaryTable summary={added} />
+                </div>
+              )}
             <p class="mt-2 font-mono text-xs text-neutral-500 dark:text-neutral-500">
               Batch {outcome.batchId} · SHA-256 {outcome.checksum.slice(0, 16)}…
             </p>
