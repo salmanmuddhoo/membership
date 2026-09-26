@@ -5350,3 +5350,42 @@ a minor's page (member or non-member), after Parent / Guardian and before
 Nominee, in the order surname, name, NIC, with "None on file." when the
 record has none. The Nominee card drops its subheading when it holds a single
 nominee.
+
+---
+
+### Mobile no longer unique in the migration
+
+Officer direction: a mobile number need not be unique. The member import no
+longer refuses a mobile that appears twice in the file or is already on file
+for someone else (the minor/guardian exception that preceded this goes with
+it). NIC, legacy code, AB Number and account numbers stay unique. The
+template's Mobile note and Instructions sheet say so. Member sign-in is
+unaffected: it finds the member by AB Number or NIC and sends the code to
+that member's mobile.
+
+---
+
+### Account balances from a file
+
+Officer direction: a second migration upload, account number and balance,
+that overrides the balance on file. Migration → Set account balances
+(`/admin/migration/balances`, `system.migrate_members`), with its own
+template: Account Number, Account Type, Balance.
+
+- A member's Shares and MSA both go by the AB number, so a row with an AB
+  number names the type (Shares or MSA); any other account number (HSA0001,
+  INV0001, a non-member's) needs none.
+- Officer decision: the balance replaces the account's migrated opening
+  balance rather than adding an adjustment. `set_opening_balance` (migration 0111) brings the payment line, the opening deposit, its entry, the balance
+  cache and both financial events to the new amount, so the receipt, the
+  statement and the migration summary agree. Zero takes the deposit off the
+  ledger and leaves the line at zero; an account with no opening balance
+  gets one on a receipt of its own. Each account set is audited with its
+  balance before and after (`migration.balance.set`), the upload as
+  `migration.balances.uploaded`.
+- Any account on file may be set, but only while its opening balance is all
+  it holds: an account with any other transaction is refused and is
+  corrected with a transaction instead.
+- The whole file is checked first; one problem and nothing changes. Refused
+  while a member import is running. About 2 ms an account, so a file of
+  9,000 accounts is one request of under half a minute.

@@ -394,6 +394,22 @@ const progressPct =
             </form>
           </section>
         )}
+
+        {!running && (
+          <section class={CARD}>
+            <h2 class={CARD_TITLE}>Account balances</h2>
+            <p class={`${MUTED} mt-2`}>
+              Replace the balance of accounts already on file from a list of
+              account numbers and balances.
+            </p>
+            <a
+              href="/admin/migration/balances"
+              class={`${SECONDARY_SM} mt-4 inline-block`}
+            >
+              Set account balances
+            </a>
+          </section>
+        )}
       </>
     )}
   </div>
