@@ -77,6 +77,14 @@ export const CARD_DANGER_TITLE =
 export const BUTTON_DESTRUCTIVE =
   'rounded-lg bg-red-700 px-4 py-2 text-sm font-bold text-white transition hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-50';
 
+// A long-running job's progress: PROGRESS is the track, PROGRESS_BAR the
+// fill sized by an inline width (e.g. a migration importing thousands of
+// rows a chunk at a time).
+export const PROGRESS =
+  'h-2 w-full overflow-hidden rounded-full bg-neutral-200 dark:bg-neutral-800';
+export const PROGRESS_BAR =
+  'h-full rounded-full bg-mint-500 transition-[width] duration-300';
+
 // A heading inside a card, below its title.
 export const SUBTITLE =
   'text-sm font-semibold text-neutral-700 dark:text-neutral-200';

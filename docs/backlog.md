@@ -5268,3 +5268,35 @@ upload, the same table shows what that upload added. Read from the records
 themselves (`src/lib/migration/summary.ts`): a migrated member or customer
 carries its legacy code, and its funds are the migration payment recorded
 against its application, less any voided receipt.
+
+---
+
+### The migration runs a chunk at a time, with progress, and can be cancelled
+
+Officer direction: over 4,000 members to bring in. Importing costs tens of
+milliseconds a row, so 4,000 rows in one request would outlast any request.
+An upload is still parsed, checked and reconciled in full before anything
+is written; it is then stored as a **batch** (migration 0110,
+`migration_batch` and `migration_batch_row`) and the Migration page imports
+it fifty rows per request (`importNextRows` in
+`src/lib/migration/batches.ts`), drawing a progress bar from each answer.
+Closing the page pauses it; coming back carries on. One batch runs at a
+time. Each row goes through `importMembers`, the same code as before, and
+keeps the member or customer it wrote to and whether it created it. A row
+left half-done by a request that died is marked failed after ten minutes,
+with a note to check the record and upload it again.
+
+**Cancel import**, while it runs, removes everything the batch has written
+(`cancel_migration_batch`, 0110): every member and customer it created with
+their applications, accounts, opening-balance payments and the ledger
+postings of those, and the accounts and opening balances it added to records
+already on file. The ledger, payments and receipts are append-only, so the
+function uses the one escape hatch their guards honour (0019), for its own
+transaction and only over what the batch names. The receipt numbers it used
+stay in the sequence, void, reason "Migration cancelled"; the audit log keeps
+the batch, its rows and the cancellation. Details it changed on a record
+already on file are not put back. It refuses once money has moved on an
+imported account other than its opening balance, and while a chunk is
+mid-import. A finished batch shows what it added (the summary before it,
+kept on the batch, against the summary after) and the rows it could not
+import.
