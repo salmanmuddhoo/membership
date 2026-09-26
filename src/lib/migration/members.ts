@@ -409,7 +409,7 @@ function fillInstructions(sheet: ExcelJS.Worksheet, typeNames: string[]) {
     'A non-member has no AB Number: fill Legacy Member Code and at least one account number with its balance.',
     'Hover over a heading to read its note.',
     'Dates as YYYY-MM-DD. Amounts as plain numbers, e.g. 1500.50.',
-    'NIC, mobile, legacy code and account numbers belong to one person only, in this file and on file.',
+    'NIC, mobile, legacy code and account numbers belong to one person only, in this file and on file. A minor may share their guardian’s mobile.',
     'A minor’s guardian must be a member already, or be on the Individual sheet of the same file.',
     'Keep the sheet names and column headings as they are. A sheet or column the template does not have is refused.',
     'Uploading the same Legacy Member Code again updates that person instead of adding them twice.',
@@ -794,10 +794,7 @@ export async function parseImportFile(buffer: Buffer): Promise<ParsedRow[]> {
             .toISOString()
             .slice(0, 10);
         }
-        if (typeof value === 'object' && 'text' in value) {
-          return String((value as { text: unknown }).text ?? '').trim();
-        }
-        return String(value).trim();
+        return objectCellText(value);
       };
 
       const legacyCode = cellText(legacyCodeColumn);
@@ -932,6 +929,32 @@ interface ExistingRecord {
 }
 
 const THOUSANDS_GROUPED = /^-?\d{1,3}(,\d{3})+(\.\d+)?$/;
+
+// What a cell that is not a plain value says: a formula's result (a
+// Guardian Member ID looked up with VLOOKUP), text with mixed formatting, a
+// hyperlink. Officer QA: each of these was read as "[object Object]".
+function objectCellText(value: ExcelJS.CellValue): string {
+  if (value === null || value === undefined) return '';
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  if (typeof value !== 'object') return String(value).trim();
+  if ('richText' in value) {
+    return value.richText
+      .map(part => part.text)
+      .join('')
+      .trim();
+  }
+  if ('result' in value) {
+    const result = value.result;
+    if (result === null || result === undefined) return '';
+    if (typeof result === 'object' && !(result instanceof Date)) return '';
+    return objectCellText(result);
+  }
+  if ('text' in value) {
+    return String((value as { text: unknown }).text ?? '').trim();
+  }
+  if ('error' in value) return '';
+  return '';
+}
 
 function mobileMatchKey(raw: string): string {
   const trimmed = raw.trim();
@@ -1080,20 +1103,29 @@ export async function validateRows(
     ),
     // Item 6: NIC and mobile are unique to a member/non-member, checked
     // against everyone already on file — migrated or approved the ordinary
-    // way, this import does not distinguish.
+    // way, this import does not distinguish. A minor's mobile is left out:
+    // it is usually their guardian's.
     query<{ id: string; nic: string | null; mobile: string | null }>(
-      `select m.id, p.values->>'nic' as nic, p.values->>'mobile' as mobile
+      `select m.id, p.values->>'nic' as nic,
+              case when g.id is null then p.values->>'mobile' end as mobile
          from member m
          join application_party p
            on p.application_id = m.application_id
-          and p.subject = 'applicant' and p.ordinal = 1`
+          and p.subject = 'applicant' and p.ordinal = 1
+         left join application_party g
+           on g.application_id = m.application_id
+          and g.subject = 'guardian' and g.ordinal = 1`
     ),
     query<{ id: string; nic: string | null; mobile: string | null }>(
-      `select c.id, p.values->>'nic' as nic, p.values->>'mobile' as mobile
+      `select c.id, p.values->>'nic' as nic,
+              case when g.id is null then p.values->>'mobile' end as mobile
          from customer c
          join application_party p
            on p.application_id = c.application_id
-          and p.subject = 'applicant' and p.ordinal = 1`
+          and p.subject = 'applicant' and p.ordinal = 1
+         left join application_party g
+           on g.application_id = c.application_id
+          and g.subject = 'guardian' and g.ordinal = 1`
     ),
   ]);
 
@@ -1195,6 +1227,10 @@ export async function validateRows(
   const accountNoOccurrences = new Map<string, number>();
   const nicOccurrences = new Map<string, number>();
   const mobileOccurrences = new Map<string, number>();
+  const needsGuardian = (row: ParsedRow) => {
+    const type = byName.get(row.sheet);
+    return type ? guardianFields(type).length > 0 : false;
+  };
   for (const row of rows) {
     const abGiven = row.abNumber.trim() !== '';
     const legacyCode = effectiveLegacyCode(row, abGiven);
@@ -1221,7 +1257,11 @@ export async function validateRows(
     // Keyed on the number as it will be stored (+230…), the same form the
     // row-level check below looks it up by: "57001234" and "+230 5700 1234"
     // are the same mobile.
-    const mobileKey = mobileMatchKey(row.values.mobile ?? '');
+    // A minor's own mobile is usually their guardian's (officer direction),
+    // so a minor is not counted here: checked against their guardian below.
+    const mobileKey = needsGuardian(row)
+      ? ''
+      : mobileMatchKey(row.values.mobile ?? '');
     if (mobileKey !== '') {
       mobileOccurrences.set(
         mobileKey,
@@ -1233,10 +1273,6 @@ export async function validateRows(
   // Rows that need no guardian first, then those that do, so a minor can
   // name a guardian from the same upload — and the rows come back in that
   // order, which is the order they are imported in.
-  const needsGuardian = (row: ParsedRow) => {
-    const type = byName.get(row.sheet);
-    return type ? guardianFields(type).length > 0 : false;
-  };
   const ordered = [
     ...rows.filter(r => !needsGuardian(r)),
     ...rows.filter(r => needsGuardian(r)),
@@ -1244,6 +1280,8 @@ export async function validateRows(
   // Member rows of this upload that validated, by AB Number: guardians a
   // minor further down may name.
   const membersInUpload = new Map<string, Record<string, string>>();
+  // Member rows of this upload that did not validate, by AB Number.
+  const membersWithProblems = new Set<string>();
 
   for (const row of ordered) {
     const problems: string[] = [];
@@ -1371,27 +1409,6 @@ export async function validateRows(
         problems.push(`NIC "${nic}" appears more than once in this sheet.`);
       }
     }
-    const mobile = (values.mobile ?? '').trim();
-    if (mobile !== '') {
-      const key = mobile.toLowerCase();
-      const owner = mobileOwner.get(key);
-      const isSelf =
-        !!existing &&
-        !!owner &&
-        owner.kind === existing.kind &&
-        owner.id === existing.id;
-      if (owner && !isSelf) {
-        problems.push(
-          `Mobile "${row.values.mobile}" is already on file for a different ` +
-            'member/non-member.'
-        );
-      } else if ((mobileOccurrences.get(key) ?? 0) > 1) {
-        problems.push(
-          `Mobile "${row.values.mobile}" appears more than once in this sheet.`
-        );
-      }
-    }
-
     // Employment Details (Occupation, Employment status) — the applicant's
     // own, every entry optional, so nothing is ever required and the only
     // check is the format one normalise does: Employment status must be one
@@ -1429,6 +1446,14 @@ export async function validateRows(
             nic: inUpload.nic ?? '',
             mobile: inUpload.mobile ?? '',
           };
+        } else if (
+          !found &&
+          membersWithProblems.has(guardianMemberNo.toUpperCase())
+        ) {
+          problems.push(
+            `The guardian ${guardianMemberNo.toUpperCase()} has problems on ` +
+              'their own row of this file. Fix that row first.'
+          );
         } else if (!found) {
           problems.push(
             `${guardianField.label} "${guardianMemberNo}" does not match ` +
@@ -1447,6 +1472,38 @@ export async function validateRows(
             mobile: found.applicantValues.mobile ?? '',
           };
         }
+      }
+    }
+
+    // A minor may share their guardian's mobile (officer direction) — and
+    // so may brothers and sisters under the same guardian. Any other number
+    // must not be an adult's, on file or in this sheet.
+    const mobile = (values.mobile ?? '').trim();
+    const guardianMobile = mobileMatchKey(guardianValues.mobile ?? '');
+    const sharesGuardianMobile =
+      !!guardianField &&
+      guardianMobile !== '' &&
+      mobileMatchKey(mobile) === guardianMobile;
+    if (mobile !== '' && !sharesGuardianMobile) {
+      const key = mobile.toLowerCase();
+      const owner = mobileOwner.get(key);
+      const isSelf =
+        !!existing &&
+        !!owner &&
+        owner.kind === existing.kind &&
+        owner.id === existing.id;
+      if (owner && !isSelf) {
+        problems.push(
+          `Mobile "${row.values.mobile}" is already on file for a different ` +
+            'member/non-member.'
+        );
+      } else if (
+        (mobileOccurrences.get(mobileMatchKey(mobile)) ?? 0) >
+        (guardianField ? 0 : 1)
+      ) {
+        problems.push(
+          `Mobile "${row.values.mobile}" appears more than once in this sheet.`
+        );
       }
     }
 
@@ -1607,6 +1664,7 @@ export async function validateRows(
 
     if (problems.length > 0) {
       errors.push({ ...row, message: problems.join(' ') });
+      if (abGiven) membersWithProblems.add(row.abNumber.trim().toUpperCase());
       continue;
     }
 
@@ -1703,12 +1761,11 @@ function toBalanceLines(
 }
 
 // Guardian and Takaful beneficiary (Minor only, always fully required when
-// configured — see validateRows) — member rows only, validateRows already
-// having refused either on a non-member row. Nominee 1/2 (whatever this
-// type's own nomineeCount offers, capped at the sheet's own 2) is written
-// for a member and non-member row alike (officer feedback) — this function
-// is called from both, and simply writes nothing for the guardian/
-// beneficiary objects a non-member row always leaves empty.
+// configured — see validateRows), member and non-member Minor alike.
+// Nominee 1/2 (whatever this type's own nomineeCount offers, capped at the
+// sheet's own 2) is written for a member and non-member row alike (officer
+// feedback) — this function is called from both, and simply writes nothing
+// for the guardian/beneficiary objects any other row leaves empty.
 //
 // On a fresh import (skipBlankOrdinals: false) every ordinal the type
 // configures is written even blank, matching the pre-created-empty-row
@@ -2221,8 +2278,24 @@ export async function importMembers(
               [applicationId, JSON.stringify(row.employment)]
             );
           }
-          // Nominee 1/2 same as a member row (officer feedback) — no
-          // guardian or beneficiary to write here, both stay member-only.
+          // A non-member Minor carries its guardian and Takaful beneficiary
+          // the same as a member one (officer QA: a minor saver came in
+          // with no guardian); every other non-member row leaves both empty.
+          if (Object.keys(row.guardian).length > 0) {
+            await query(
+              `insert into application_party (application_id, subject, ordinal, values)
+               values ($1, 'guardian', 1, $2::jsonb)`,
+              [applicationId, JSON.stringify(row.guardian)]
+            );
+          }
+          if (Object.keys(row.beneficiary).length > 0) {
+            await query(
+              `insert into application_party (application_id, subject, ordinal, values)
+               values ($1, 'beneficiary', 1, $2::jsonb)`,
+              [applicationId, JSON.stringify(row.beneficiary)]
+            );
+          }
+          // Nominee 1/2 same as a member row (officer feedback).
           for (let ordinal = 1; ordinal <= row.nominees.length; ordinal++) {
             await query(
               `insert into application_party (application_id, subject, ordinal, values)

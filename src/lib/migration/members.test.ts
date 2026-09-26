@@ -2011,4 +2011,235 @@ describe('a guardian and their minor in the same upload', () => {
       /does not match any member on file or on the Individual sheet of this file/
     );
   });
+
+  // Guardian AB1780 is on file from the first test in this block.
+  const minorRow = (overrides: Partial<ParsedRow> = {}): ParsedRow => ({
+    sheet: 'Minor',
+    rowNumber: 2,
+    legacyCode: 'LEG-710-M',
+    abNumber: '',
+    joinedAt: '',
+    values: {
+      surname: 'Joomun',
+      name: 'Sara',
+      date_of_birth: '2017-05-01',
+      gender: 'Female',
+      address: 'Addr',
+    },
+    employment: {},
+    guardian: { member_id: 'AB1780' },
+    beneficiary: {
+      surname: 'Joomun',
+      name: 'Rafiq',
+      nic: 'J7100000000003',
+    },
+    nominees: [{ surname: 'Joomun', name: 'Rafiq', nic: 'J7100000000002' }],
+    sharesBalance: '',
+    msaBalance: '',
+    accountNumbers: {},
+    accountBalances: {},
+    ...overrides,
+  });
+
+  it('keeps the guardian and beneficiary of a minor who is not a member', async () => {
+    const {
+      buildImportTemplate,
+      parseImportFile,
+      validateRows,
+      importMembers,
+    } = await load();
+    const file = await fillSheet(await buildImportTemplate(), 'Minor', {
+      'Legacy Member Code': 'LEG-710-M',
+      Surname: 'Joomun',
+      Name: 'Sara',
+      'Date of birth': '2017-05-01',
+      Gender: 'Female',
+      Address: 'Addr',
+      'Guardian Member ID': 'AB1780',
+      'Beneficiary surname': 'Joomun',
+      'Beneficiary name': 'Rafiq',
+      'Beneficiary NIC': 'J7100000000003',
+      'Nominee 1 Successor guardian surname': 'Joomun',
+      'Nominee 1 Successor guardian name': 'Rafiq',
+      'Nominee 1 Successor guardian NIC': 'J7100000000002',
+      'Hajj Savings (customer test) Number': 'HSA-710',
+      'Hajj Savings (customer test) Balance': '250',
+    });
+    const { valid, errors } = await validateRows(await parseImportFile(file));
+    expect(errors).toEqual([]);
+    const outcome = await importMembers(
+      valid,
+      actor,
+      MIGRATE_PERMISSIONS,
+      'test'
+    );
+    expect(outcome.failed).toEqual([]);
+    expect(outcome.imported[0].kind).toBe('customer');
+
+    const parties = await run(
+      appUrl,
+      `select p.subject, p.values
+         from customer c
+         join application_party p on p.application_id = c.application_id
+        where c.legacy_code = 'LEG-710-M' and p.subject in ('guardian', 'beneficiary')
+        order by p.subject`
+    );
+    expect(parties.rows.map(r => r.subject)).toEqual([
+      'beneficiary',
+      'guardian',
+    ]);
+    expect(parties.rows[1].values).toMatchObject({
+      member_id: 'AB1780',
+      surname: 'Joomun',
+      name: 'Nadia',
+    });
+  });
+
+  it('reads a Guardian Member ID filled in by a formula or with mixed formatting', async () => {
+    const { buildImportTemplate, parseImportFile } = await load();
+    const filled = await fillSheet(await buildImportTemplate(), 'Minor', {
+      'Legacy Member Code': 'LEG-711-M',
+      Surname: 'Joomun',
+      Name: 'Yusuf',
+      'Guardian Member ID': 'placeholder',
+      'Beneficiary surname': 'Joomun',
+    });
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(filled as any);
+    const sheet = workbook.getWorksheet('Minor')!;
+    const column = (header: string) => {
+      let found = 0;
+      sheet.getRow(1).eachCell((cell, n) => {
+        if (String(cell.value).replace(/\s*\*$/, '') === header) found = n;
+      });
+      return found;
+    };
+    sheet.getRow(2).getCell(column('Guardian Member ID')).value = {
+      formula: 'VLOOKUP(A2,Individual!A:B,2,FALSE)',
+      result: 'AB1780',
+    } as ExcelJS.CellFormulaValue;
+    sheet.getRow(2).getCell(column('Beneficiary surname')).value = {
+      richText: [{ text: 'Joo' }, { font: { bold: true }, text: 'mun' }],
+    };
+    const [row] = await parseImportFile(
+      Buffer.from(await workbook.xlsx.writeBuffer())
+    );
+    expect(row.guardian.member_id).toBe('AB1780');
+    expect(row.beneficiary.surname).toBe('Joomun');
+  });
+
+  it("says so when the guardian's own row in the file has problems", async () => {
+    const { validateRows } = await load();
+    const { errors } = await validateRows([
+      {
+        ...minorRow({ legacyCode: 'LEG-712-M' }),
+        guardian: { member_id: 'AB1786' },
+      },
+      {
+        sheet: 'Individual',
+        rowNumber: 2,
+        legacyCode: 'LEG-712-G',
+        abNumber: 'AB1786',
+        joinedAt: '',
+        // No surname: the guardian's row cannot be imported.
+        values: {
+          name: 'Omar',
+          nic: 'J7120000000001',
+          gender: 'Male',
+          address: 'Addr',
+          mobile: '57891712',
+        },
+        employment: {},
+        guardian: {},
+        beneficiary: {},
+        nominees: [
+          {
+            surname: 'Nominee Surname',
+            name: 'Nominee Name',
+            nic: 'Nominee NIC',
+            address: 'Nominee Address',
+          },
+          {},
+        ],
+        sharesBalance: '0',
+        msaBalance: '0',
+        accountNumbers: {},
+        accountBalances: {},
+      },
+    ]);
+    expect(errors.map(e => e.sheet)).toEqual(['Minor', 'Individual']);
+    expect(errors[0].message).toBe(
+      'The guardian AB1786 has problems on their own row of this file. Fix that row first.'
+    );
+  });
+
+  // Last in the file: gives the Minor sheet a Mobile column.
+  it("lets a minor share their guardian's mobile, but not another adult's", async () => {
+    await runAsConfigurator(
+      ownerUrl,
+      `insert into membership_type_field
+         (membership_type_id, field_key, label, data_type, subject,
+          is_visible, is_mandatory, sort_order)
+       select id, 'mobile', 'Mobile', 'phone', 'applicant', true, false, 7
+         from membership_type where code = 'minor'`
+    );
+    const { validateRows } = await load();
+    const withMobile = (legacyCode: string, mobile: string) =>
+      minorRow({
+        legacyCode,
+        values: { ...minorRow().values, mobile },
+        accountNumbers: {},
+      });
+
+    // Guardian AB1780's own mobile, typed two ways, by two brothers and
+    // sisters; and one minor with LEG-500's.
+    const { valid, errors } = await validateRows([
+      withMobile('LEG-713-M', '57891700'),
+      withMobile('LEG-714-M', '+230 5789 1700'),
+      withMobile('LEG-715-M', '57891250'),
+    ]);
+    expect(valid.map(r => r.legacyCode)).toEqual(['LEG-713-M', 'LEG-714-M']);
+    expect(errors).toHaveLength(1);
+    expect(errors[0].legacyCode).toBe('LEG-715-M');
+    expect(errors[0].message).toMatch(
+      /Mobile "57891250" is already on file for a different member\/non-member/
+    );
+
+    // A minor with an adult's number from this file is refused; the adult
+    // is not.
+    const adult = await validateRows([
+      {
+        ...minorRow(),
+        sheet: 'Individual',
+        legacyCode: 'LEG-716',
+        abNumber: 'AB1787',
+        values: {
+          surname: 'Other',
+          name: 'Adult',
+          nic: 'J7160000000001',
+          gender: 'Male',
+          address: 'Addr',
+          mobile: '57891799',
+        },
+        guardian: {},
+        beneficiary: {},
+        nominees: [
+          {
+            surname: 'Nominee Surname',
+            name: 'Nominee Name',
+            nic: 'Nominee NIC',
+            address: 'Nominee Address',
+          },
+          {},
+        ],
+        sharesBalance: '0',
+        msaBalance: '0',
+      },
+      withMobile('LEG-717-M', '57891799'),
+    ]);
+    expect(adult.errors.map(e => e.legacyCode)).toEqual(['LEG-717-M']);
+    expect(adult.errors[0].message).toMatch(
+      /Mobile "57891799" appears more than once in this sheet/
+    );
+  });
 });
