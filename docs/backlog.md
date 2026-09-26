@@ -5313,3 +5313,28 @@ Guardian Member ID may name a member on file or a member row on the
 Individual sheet of the same file. If that guardian's own row fails to
 import, the minor's row fails too ("The guardian AB… is not on file"), never
 left naming someone who is not there.
+
+---
+
+### A minor's guardian and mobile in the migration
+
+Officer QA, three causes of "the guardian is not picked up for a minor":
+
+- A minor with no AB Number (a non-member, holding only an account) was
+  imported without its guardian and Takaful beneficiary: the new non-member
+  path wrote the applicant and nominees only. It now writes both, as the
+  member path and the non-member re-import already did.
+- A Guardian Member ID filled in by a formula (a VLOOKUP) or typed with mixed
+  formatting was read as "[object Object]" and matched nobody. A cell is now
+  read as what it shows: a formula's result, rich text joined, a
+  hyperlink's text.
+- When the guardian's own row in the same file has problems, the minor says
+  so ("The guardian AB… has problems on their own row of this file") rather
+  than that the guardian matches nobody.
+
+A minor may share their guardian's mobile, and so may brothers and sisters
+under the same guardian (officer direction). A minor's mobile is left out of
+the uniqueness count within the file and of the numbers on file; it is
+checked against their guardian's once the guardian resolves, and any other
+number must not be an adult's. This bites only where Minor is configured with
+a Mobile field — by default it has none.
