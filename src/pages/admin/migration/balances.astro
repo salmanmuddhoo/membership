@@ -1,0 +1,209 @@
+---
+// Account balances from a migration file (lib/migration/balances.ts): a
+// System Administrator uploads account number and balance, and each
+// account's migrated opening balance is set to it (migration 0111). The
+// whole file is checked first; one problem and nothing changes.
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import {
+  applyBalances,
+  buildBalanceTemplate,
+  parseBalanceFile,
+  validateBalanceRows,
+  type BalanceOutcome,
+  type BalanceRowError,
+} from '@lib/migration/balances';
+import { MigrationError, checksumBuffer } from '@lib/migration/members';
+import { runningBatch } from '@lib/migration/batches';
+import {
+  BUTTON,
+  CARD,
+  CARD_DANGER,
+  CARD_DANGER_TITLE,
+  CARD_OK,
+  CARD_TITLE,
+  HINT,
+  MUTED,
+  NOTICE,
+  NOTICE_ERROR,
+  PAGE,
+  SECONDARY_SM,
+} from '@lib/ui';
+
+const principal = Astro.locals.principal!;
+const canMigrate = principal.permissions.has('system.migrate_members');
+
+if (canMigrate && Astro.url.searchParams.has('template')) {
+  return new Response(await buildBalanceTemplate(), {
+    headers: {
+      'content-type':
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'content-disposition': 'attachment; filename="account-balances.xlsx"',
+    },
+  });
+}
+
+let error: string | null = null;
+let rowErrors: BalanceRowError[] = [];
+let outcome: BalanceOutcome | null = null;
+
+if (Astro.request.method === 'POST') {
+  if (!canMigrate) {
+    error = 'You do not have permission to import members.';
+  } else {
+    const form = await Astro.request.formData();
+    const file = form.get('file');
+    if (!(file instanceof File) || file.size === 0) {
+      error = 'Choose a filled-in file to upload.';
+    } else {
+      try {
+        const buffer = Buffer.from(await file.arrayBuffer());
+        const rows = await parseBalanceFile(buffer);
+        if (rows.length === 0) {
+          error = 'No rows were found in that file.';
+        } else {
+          const { valid, errors } = await validateBalanceRows(rows);
+          if (errors.length > 0) {
+            rowErrors = errors;
+            error =
+              `${errors.length} row${errors.length === 1 ? '' : 's'} ` +
+              'need fixing. No balance was changed.';
+          } else {
+            outcome = await applyBalances(
+              valid,
+              checksumBuffer(buffer),
+              { userId: principal.userId, email: principal.email },
+              principal.permissions
+            );
+          }
+        }
+      } catch (err) {
+        if (err instanceof MigrationError) {
+          error = err.message;
+        } else {
+          console.error('[admin/migration/balances]', err);
+          error = 'That file could not be read. Please try again.';
+        }
+      }
+    }
+  }
+}
+
+const running = canMigrate ? await runningBatch() : null;
+---
+
+<DashboardLayout
+  title="Account balances · Al Barakah MCSL"
+  heading="Account balances"
+>
+  <div class={PAGE.list}>
+    <a href="/admin/migration" class={`${HINT} underline`}>
+      Back to Migration
+    </a>
+
+    {!canMigrate && (
+      <div class={NOTICE}>You do not have permission to import members.</div>
+    )}
+
+    {canMigrate && (
+      <>
+        <section class={CARD}>
+          <h2 class={CARD_TITLE}>Set balances from a file</h2>
+          <p class={`${MUTED} mt-2`}>
+            Each account's balance is replaced by the one in the file.
+          </p>
+          <p class={`${MUTED} mt-2`}>
+            Account Type is needed only with an AB number: Shares or MSA.
+          </p>
+          <a
+            href="/admin/migration/balances?template=1"
+            class={`${BUTTON} mt-4 inline-block`}
+          >
+            Download the template
+          </a>
+        </section>
+
+        {error && <div class={NOTICE_ERROR}>{error}</div>}
+
+        {rowErrors.length > 0 && (
+          <section class={CARD_DANGER}>
+            <h2 class={CARD_DANGER_TITLE}>Rows to fix</h2>
+            <ul class="mt-3 space-y-2 text-sm text-red-800 dark:text-red-200">
+              {rowErrors.map(e => (
+                <li>
+                  <span class="font-medium">
+                    Row {e.rowNumber}
+                    {e.account && ` (${e.account})`}:
+                  </span>{' '}
+                  {e.message}
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+
+        {outcome && (
+          <section class={CARD_OK}>
+            <h2 class={CARD_TITLE}>
+              {outcome.changed} balance{outcome.changed === 1 ? '' : 's'} set
+            </h2>
+            {outcome.unchanged > 0 && (
+              <p class={`${MUTED} mt-1`}>
+                {outcome.unchanged} already held that balance.
+              </p>
+            )}
+          </section>
+        )}
+
+        {running ? (
+          <div class={NOTICE}>
+            An import is still running. Balances can be set once it has
+            finished.
+          </div>
+        ) : (
+          <section class={CARD}>
+            <h2 class={CARD_TITLE}>Upload a filled-in file</h2>
+            <form
+              method="post"
+              enctype="multipart/form-data"
+              class="mt-4 space-y-4"
+            >
+              <div class="flex items-center gap-3">
+                <label class={`${SECONDARY_SM} cursor-pointer`}>
+                  Choose file
+                  <input
+                    type="file"
+                    name="file"
+                    accept=".xlsx"
+                    required
+                    data-balance-file
+                    class="sr-only"
+                  />
+                </label>
+                <span data-balance-filename class={HINT}>
+                  No file selected
+                </span>
+              </div>
+              <button type="submit" class={BUTTON}>
+                Set balances
+              </button>
+            </form>
+          </section>
+        )}
+      </>
+    )}
+  </div>
+</DashboardLayout>
+
+<script>
+  // The native file input's own text is in the browser's language; this
+  // says it in English instead.
+  const input = document.querySelector<HTMLInputElement>('[data-balance-file]');
+  const filename = document.querySelector<HTMLElement>(
+    '[data-balance-filename]'
+  );
+  if (input && filename) {
+    input.addEventListener('change', () => {
+      filename.textContent = input.files?.[0]?.name ?? 'No file selected';
+    });
+  }
+</script>

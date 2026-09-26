@@ -53,6 +53,7 @@ const ROUTE_PERMISSIONS: ReadonlyArray<readonly [string, string]> = [
   ['/admin/migration', 'system.migrate_members'],
   ['/admin/migration/step.json', 'system.migrate_members'],
   ['/admin/migration/cancel.json', 'system.migrate_members'],
+  ['/admin/migration/balances', 'system.migrate_members'],
   ['/admin/audit-log', 'audit.view'],
   // What the Society sent to members (S-904). Its own permission rather than
   // audit.view's: an officer about to ring a member who never replied needs

@@ -1040,7 +1040,7 @@ describe('importMembers', () => {
   });
 });
 
-describe('fourth increment: Nominee, Minor, and NIC/mobile uniqueness', () => {
+describe('fourth increment: Nominee, Minor, and NIC uniqueness', () => {
   it('captures Nominee 1 (mandatory) and Nominee 2 (optional), each its own application_party row', async () => {
     await runAsConfigurator(
       appUrl,
@@ -1684,9 +1684,9 @@ describe('officer QA: migration scenarios', () => {
     expect(sheet.getColumn(byHeader.get('NIC *')!.col).numFmt).toBe('@');
   });
 
-  it('catches the same mobile twice in one file, however it is typed', async () => {
+  it('allows the same mobile twice in one file, however it is typed', async () => {
     const { validateRows } = await load();
-    const { errors } = await validateRows([
+    const { valid, errors } = await validateRows([
       individualRow(),
       individualRow({
         rowNumber: 3,
@@ -1695,10 +1695,8 @@ describe('officer QA: migration scenarios', () => {
         values: { ...individualRow().values, nic: 'Q7002000000000' },
       }),
     ]);
-    expect(errors).toHaveLength(2);
-    expect(
-      errors.every(e => /appears more than once in this sheet/.test(e.message))
-    ).toBe(true);
+    expect(errors).toEqual([]);
+    expect(valid).toHaveLength(2);
   });
 
   it('reads a date as YYYY-MM-DD only, and refuses an impossible one', async () => {
@@ -2174,7 +2172,7 @@ describe('a guardian and their minor in the same upload', () => {
   });
 
   // Last in the file: gives the Minor sheet a Mobile column.
-  it("lets a minor share their guardian's mobile, but not another adult's", async () => {
+  it("no longer checks a minor's mobile against their guardian's, or anyone else's", async () => {
     await runAsConfigurator(
       ownerUrl,
       `insert into membership_type_field
@@ -2192,21 +2190,21 @@ describe('a guardian and their minor in the same upload', () => {
       });
 
     // Guardian AB1780's own mobile, typed two ways, by two brothers and
-    // sisters; and one minor with LEG-500's.
+    // sisters; and one minor with a mobile already on file for someone else
+    // — none of them are a problem any more.
     const { valid, errors } = await validateRows([
       withMobile('LEG-713-M', '57891700'),
       withMobile('LEG-714-M', '+230 5789 1700'),
       withMobile('LEG-715-M', '57891250'),
     ]);
-    expect(valid.map(r => r.legacyCode)).toEqual(['LEG-713-M', 'LEG-714-M']);
-    expect(errors).toHaveLength(1);
-    expect(errors[0].legacyCode).toBe('LEG-715-M');
-    expect(errors[0].message).toMatch(
-      /Mobile "57891250" is already on file for a different member\/non-member/
-    );
+    expect(errors).toEqual([]);
+    expect(valid.map(r => r.legacyCode)).toEqual([
+      'LEG-713-M',
+      'LEG-714-M',
+      'LEG-715-M',
+    ]);
 
-    // A minor with an adult's number from this file is refused; the adult
-    // is not.
+    // Nor is a minor sharing an adult's number from the same file.
     const adult = await validateRows([
       {
         ...minorRow(),
@@ -2237,9 +2235,6 @@ describe('a guardian and their minor in the same upload', () => {
       },
       withMobile('LEG-717-M', '57891799'),
     ]);
-    expect(adult.errors.map(e => e.legacyCode)).toEqual(['LEG-717-M']);
-    expect(adult.errors[0].message).toMatch(
-      /Mobile "57891799" appears more than once in this sheet/
-    );
+    expect(adult.errors).toEqual([]);
   });
 });
