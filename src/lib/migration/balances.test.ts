@@ -266,7 +266,16 @@ describe('setting account balances from a file', () => {
       actor,
       MIGRATE
     );
-    expect(outcome).toEqual({ rows: 5, changed: 4, unchanged: 1 });
+    // Two members (AB2101, AB2102) and one non-member (BAL-3) changed.
+    expect(outcome).toEqual({
+      rows: 5,
+      changed: 4,
+      unchanged: 1,
+      members: 2,
+      nonMembers: 1,
+      totalCents: 1005050,
+      previousCents: 730000,
+    });
 
     expect(await balanceOf('AB2101', 'shares')).toBe('7000.00');
     expect(await balanceOf('AB2101', 'msa')).toBe('0.00');
@@ -353,7 +362,15 @@ describe('setting account balances from a file', () => {
     expect(errors).toEqual([]);
     expect(
       await balances.applyBalances(valid, 'file-3', actor, MIGRATE)
-    ).toEqual({ rows: 1, changed: 1, unchanged: 0 });
+    ).toEqual({
+      rows: 1,
+      changed: 1,
+      unchanged: 0,
+      members: 0,
+      nonMembers: 1,
+      totalCents: 300000,
+      previousCents: 0,
+    });
     expect(await balanceOf('INV-2103')).toBe('3000.00');
     expect(
       Number(
@@ -433,6 +450,8 @@ describe('setting account balances from a file', () => {
             label: 'X',
             previous: '0.00',
             balance: '1.00',
+            holderId: '00000000-0000-0000-0000-000000000000',
+            holderKind: 'member',
             feeVersionId: null,
           },
         ],

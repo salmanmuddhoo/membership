@@ -14,6 +14,7 @@ import {
 } from '@lib/migration/balances';
 import { MigrationError, checksumBuffer } from '@lib/migration/members';
 import { runningBatch } from '@lib/migration/batches';
+import { formatMoney, fromCents } from '@lib/payments/money';
 import {
   BUTTON,
   CARD,
@@ -143,14 +144,37 @@ const running = canMigrate ? await runningBatch() : null;
 
         {outcome && (
           <section class={CARD_OK}>
-            <h2 class={CARD_TITLE}>
-              {outcome.changed} balance{outcome.changed === 1 ? '' : 's'} set
-            </h2>
-            {outcome.unchanged > 0 && (
-              <p class={`${MUTED} mt-1`}>
-                {outcome.unchanged} already held that balance.
-              </p>
-            )}
+            <h2 class={CARD_TITLE}>Balances set</h2>
+            <dl class="mt-3 grid max-w-md grid-cols-[1fr_auto] gap-x-6 gap-y-1 text-sm">
+              <dt class="text-neutral-600 dark:text-neutral-300">Rows</dt>
+              <dd class="text-right tabular-nums">{outcome.rows}</dd>
+              <dt class="text-neutral-600 dark:text-neutral-300">
+                Balances changed
+              </dt>
+              <dd class="text-right tabular-nums">{outcome.changed}</dd>
+              <dt class="text-neutral-600 dark:text-neutral-300">
+                Already at that balance
+              </dt>
+              <dd class="text-right tabular-nums">{outcome.unchanged}</dd>
+              <dt class="text-neutral-600 dark:text-neutral-300">
+                Members affected
+              </dt>
+              <dd class="text-right tabular-nums">{outcome.members}</dd>
+              <dt class="text-neutral-600 dark:text-neutral-300">
+                Non-members affected
+              </dt>
+              <dd class="text-right tabular-nums">{outcome.nonMembers}</dd>
+              <dt class="font-semibold">Total balance</dt>
+              <dd class="text-right font-semibold tabular-nums">
+                {formatMoney(fromCents(outcome.totalCents))}
+              </dd>
+              <dt class="text-neutral-600 dark:text-neutral-300">
+                Before this file
+              </dt>
+              <dd class="text-right tabular-nums">
+                {formatMoney(fromCents(outcome.previousCents))}
+              </dd>
+            </dl>
           </section>
         )}
 
@@ -166,6 +190,7 @@ const running = canMigrate ? await runningBatch() : null;
               method="post"
               enctype="multipart/form-data"
               class="mt-4 space-y-4"
+              data-balance-form
             >
               <div class="flex items-center gap-3">
                 <label class={`${SECONDARY_SM} cursor-pointer`}>
@@ -183,9 +208,13 @@ const running = canMigrate ? await runningBatch() : null;
                   No file selected
                 </span>
               </div>
-              <button type="submit" class={BUTTON}>
+              <button type="submit" class={BUTTON} data-balance-submit>
                 Set balances
               </button>
+              <p class={HINT} data-balance-working hidden>
+                Setting balances. A large file takes up to a minute; keep this
+                page open.
+              </p>
             </form>
           </section>
         )}
@@ -206,4 +235,19 @@ const running = canMigrate ? await runningBatch() : null;
       filename.textContent = input.files?.[0]?.name ?? 'No file selected';
     });
   }
+  // One submission only: a second click would send the file again while
+  // the first is still being set.
+  const form = document.querySelector<HTMLFormElement>('[data-balance-form]');
+  form?.addEventListener('submit', () => {
+    const submit = form.querySelector<HTMLButtonElement>(
+      '[data-balance-submit]'
+    );
+    if (submit) {
+      submit.disabled = true;
+      submit.textContent = 'Setting balances…';
+    }
+    form
+      .querySelector<HTMLElement>('[data-balance-working]')
+      ?.removeAttribute('hidden');
+  });
 </script>
