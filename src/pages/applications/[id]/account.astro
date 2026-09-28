@@ -5,7 +5,7 @@
 //
 // A separate page from [id].astro, not a retrofit of it (docs/backlog.md,
 // phase 3): that page is built entirely around a membership type's field
-// configuration and its four-signature form, neither of which this kind
+// configuration and its signed form, neither of which this kind
 // has. What it needs instead is smaller — there is no applicant to
 // capture, so this page opens straight on documents, payment and the
 // review chain, the same generic engine (workflow.ts) the membership page
@@ -248,8 +248,8 @@ if (Astro.request.method === 'POST') {
           reason: String(form.get('reason') ?? ''),
           // The signed application form needs every signature block confirmed
           // present on the scan before it can be Verified (S-603). One
-          // checkbox, not four — the reviewer confirms all present or none
-          // (reviewDocument refuses to Verify short of all four either way).
+          // checkbox, not one per signature — the reviewer confirms all present
+          // or none (reviewDocument refuses to Verify short of all either way).
           confirmedSignatures:
             form.get('allSignaturesConfirmed') === 'yes' ? [...SIGNATURES] : [],
         },

@@ -234,7 +234,15 @@ export async function reconcileReceipts(
            on t.receipt_number_id = r.id
           and t.payment_line_id is null
           and t.payment_account_line_id is null
-         left join account_entry e on e.transaction_id = t.id
+         -- One entry's direction, not a row per entry: a claim or a
+         -- closure touching several accounts has an entry on each, and
+         -- joining them all counted its receipt, and its amount, once per
+         -- account.
+         left join lateral (
+           select direction from account_entry
+            where transaction_id = t.id
+            limit 1
+         ) e on true
         where r.allocated_at >= $1 and r.allocated_at < $2`,
       [from, to]
     ),
@@ -259,6 +267,144 @@ export async function reconcileReceipts(
       reason: e.reason ?? '',
       at: e.at,
       who: e.who,
+    })),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Every receipt in a period (officer request): the fee receipts and every
+// transaction's — deposit, withdrawal, transfer, closure, resignation,
+// demised claim — in one list, each opening its sheet by number
+// (/receipts/RCT-…, which finds the payment or the transaction behind it).
+// ---------------------------------------------------------------------------
+export type ReceiptKind =
+  | 'payment'
+  | 'refund'
+  | 'deposit'
+  | 'withdrawal'
+  | 'transfer_leg'
+  | 'closure'
+  | 'resignation'
+  | 'demise'
+  | 'reversal';
+
+export const RECEIPT_KIND_LABELS: Record<ReceiptKind, string> = {
+  payment: 'Application payment',
+  refund: 'Refund',
+  deposit: 'Deposit',
+  withdrawal: 'Withdrawal',
+  transfer_leg: 'Transfer',
+  closure: 'Account closure',
+  resignation: 'Resignation',
+  demise: 'Demised claim',
+  reversal: 'Reversal',
+};
+
+export interface ReceiptListRow {
+  receiptNo: string;
+  serialNo: number;
+  state: ReceiptState;
+  at: Date;
+  kind: ReceiptKind;
+  amount: string;
+  holderName: string;
+  memberNo: string | null;
+}
+
+export interface ReceiptListFilter {
+  from: Date;
+  to: Date;
+  kind?: ReceiptKind;
+  // A receipt number, a name or a member number, in part.
+  search?: string;
+  limit: number;
+  offset: number;
+}
+
+// One row per number that became a receipt. The joins are the ones
+// reconciliation uses: a new member's opening deposits carry their fee
+// receipt's number and are that receipt, not another (QA-03), so they are
+// left out; a transfer's receipt is on its debit leg. A number that never
+// became a receipt has nothing to open and is reported under Exceptions.
+const RECEIPT_ROWS = `
+  select distinct on (r.id)
+         r.receipt_no, r.serial_no, r.state,
+         coalesce(p.received_at, t.posted_at, r.settled_at, r.allocated_at)
+           as at,
+         case when p.id is not null
+              then case when p.kind = 'refund' then 'refund' else 'payment' end
+              else t.kind end as kind,
+         coalesce(p.total_amount, t.amount) as amount,
+         trim(coalesce(ap.values->>'name', '') || ' '
+              || coalesce(ap.values->>'surname', '')) as holder_name,
+         coalesce(m.member_no, am.member_no) as member_no
+    from receipt_number r
+    left join payment p on p.receipt_number_id = r.id
+    left join transaction t
+      on t.receipt_number_id = r.id
+     and t.payment_line_id is null
+     and t.payment_account_line_id is null
+    left join member m on m.id = coalesce(p.member_id, t.member_id)
+    left join member am on am.application_id = p.application_id
+    left join customer c on c.id = t.customer_id
+    left join application_party ap
+      on ap.application_id
+           = coalesce(p.application_id, m.application_id, c.application_id)
+     and ap.subject = 'applicant' and ap.ordinal = 1
+   where r.allocated_at >= $1 and r.allocated_at < $2
+     and (p.id is not null or t.id is not null)
+   order by r.id, t.created_at nulls first
+`;
+
+export async function listReceipts(
+  filter: ReceiptListFilter
+): Promise<{ rows: ReceiptListRow[]; total: number }> {
+  const params: unknown[] = [filter.from, filter.to];
+  const add = (value: unknown) => {
+    params.push(value);
+    return `$${params.length}`;
+  };
+  const where: string[] = [];
+  if (filter.kind) where.push(`kind = ${add(filter.kind)}`);
+  const search = filter.search?.trim();
+  if (search) {
+    const like = add(`%${search.replace(/[\\%_]/g, c => `\\${c}`)}%`);
+    where.push(
+      `(receipt_no ilike ${like} or holder_name ilike ${like}
+        or member_no ilike ${like})`
+    );
+  }
+  const clause = where.length ? `where ${where.join(' and ')}` : '';
+  const counted = await query<{ n: number }>(
+    `select count(*)::int as n from (${RECEIPT_ROWS}) rows ${clause}`,
+    params
+  );
+  const rows = await query<{
+    receipt_no: string;
+    serial_no: string;
+    state: ReceiptState;
+    at: Date;
+    kind: ReceiptKind;
+    amount: string;
+    holder_name: string;
+    member_no: string | null;
+  }>(
+    `select * from (${RECEIPT_ROWS}) rows ${clause}
+      order by serial_no desc
+      limit ${add(filter.limit)} offset ${add(filter.offset)}`,
+    params
+  );
+  return {
+    total: counted.rows[0]?.n ?? 0,
+    rows: rows.rows.map(r => ({
+      receiptNo: r.receipt_no,
+      serialNo: Number(r.serial_no),
+      state: r.state,
+      at: r.at,
+      kind: r.kind,
+      amount: r.amount,
+      holderName: r.holder_name,
+      memberNo: r.member_no,
     })),
   };
 }

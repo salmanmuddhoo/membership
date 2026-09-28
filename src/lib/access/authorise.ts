@@ -136,10 +136,11 @@ const ROUTE_PERMISSIONS: ReadonlyArray<readonly [string, string]> = [
   // other report — the longer match wins over the prefix above.
   ['/reports/bank-accounts', 'bank_account.view'],
 
-  // Receipts (M5). Reading a receipt is payment.view; auditing the sequence is
-  // the Treasurer's own permission. The longer prefix wins, so the exact rule
-  // for the reconciliation page tightens the broader one rather than being
-  // shadowed by it.
+  // Receipts (M5). Reading a receipt is payment.view; the Receipts page —
+  // every receipt in a period and the audit of the sequence, at
+  // /receipts/reconciliation — is the Treasurer's own permission. The longer
+  // prefix wins, so the exact rule tightens the broader one rather than
+  // being shadowed by it.
   ['/receipts/', 'payment.view'],
   ['/receipts/reconciliation', 'receipt.reconcile'],
   // Sending every member their statement at once (officer request). The

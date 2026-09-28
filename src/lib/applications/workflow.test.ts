@@ -348,7 +348,7 @@ async function verifyRequiredDocuments(
       entry.documentId!,
       {
         outcome: 'verify',
-        // S-603: the signed form alone needs all four signatures confirmed
+        // S-603: the signed form alone needs every signature confirmed
         // before it can be Verified — every other document type ignores this.
         ...(entry.documentCode === 'signed_form'
           ? { confirmedSignatures: [...documents.SIGNATURES] }

@@ -34,7 +34,7 @@ export const NAV_DESCRIPTIONS: Record<string, string> = {
   '/reports/bank-accounts':
     'What each bank account holds, and every payment in and out.',
   '/receipts/reconciliation':
-    'Gaps, duplicates and voids in the receipt numbers.',
+    'Every receipt issued, and any gap, duplicate or void in the numbers.',
   '/statements': 'Send every member their statement.',
   '/admin/roles': 'Who may do what.',
   '/admin/users': 'Staff sign-ins and their roles.',
@@ -130,7 +130,7 @@ export function navigationFor(input: {
         ...(can('receipt.reconcile')
           ? [
               {
-                label: 'Receipt reconciliation',
+                label: 'Receipts',
                 href: '/receipts/reconciliation',
                 icon: 'reconciliation',
               },

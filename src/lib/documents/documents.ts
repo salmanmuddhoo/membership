@@ -63,17 +63,13 @@ export const ACTION_VERIFIED = 'document.verified';
 export type ChecklistState =
   'missing' | 'uploaded' | 'under_review' | 'verified' | 'rejected' | 'expired';
 
-// S-603, FRD 5.4. The printed form always carries these four signature
-// blocks — print.astro — regardless of membership type, so this is a fixed,
-// universal check rather than something configuration decides. Shared here
-// so the print page and the verification gate below can never disagree
-// about what "all four" means.
-export const SIGNATURES = [
-  'Applicant',
-  'Nominee',
-  'Witness 1',
-  'Witness 2',
-] as const;
+// S-603, FRD 5.4. The printed form always carries these signature blocks —
+// print.astro — regardless of membership type, so this is a fixed, universal
+// check rather than something configuration decides. Shared here so the
+// print page and the verification gate below can never disagree about what
+// "all signatures" means. The nominee no longer signs (officer feedback): a
+// nominee is named on the form, not a party to it.
+export const SIGNATURES = ['Applicant', 'Witness 1', 'Witness 2'] as const;
 
 export interface ChecklistEntry {
   documentTypeId: string;
@@ -1283,7 +1279,7 @@ export async function reviewDocument(
     // scan. Stored whichever way the review goes — a Secretary who rejects
     // for an unrelated reason (a blurry scan) should not lose the signatures
     // they had already checked. Ignored for any document type but
-    // signed_form, which is the only one the printed form's four blocks
+    // signed_form, which is the only one the printed form's signature blocks
     // apply to.
     confirmedSignatures?: string[];
   },
@@ -1375,8 +1371,8 @@ export async function reviewDocument(
     );
   }
 
-  // S-603: fewer than all four signatures confirmed present means this is
-  // not what "Verified" says it is, whatever the scan otherwise looks like.
+  // S-603: fewer than every signature confirmed present means this is not
+  // what "Verified" says it is, whatever the scan otherwise looks like.
   const confirmedSignatures = (decision.confirmedSignatures ?? []).filter(
     (s): s is (typeof SIGNATURES)[number] =>
       (SIGNATURES as readonly string[]).includes(s)
@@ -1388,7 +1384,7 @@ export async function reviewDocument(
   ) {
     const missing = SIGNATURES.filter(s => !confirmedSignatures.includes(s));
     throw new DocumentError(
-      `All four signatures must be confirmed present before this can be ` +
+      `All signatures must be confirmed present before this can be ` +
         `Verified. Still missing: ${missing.join(', ')}.`
     );
   }
