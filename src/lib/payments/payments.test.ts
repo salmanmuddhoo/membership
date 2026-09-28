@@ -1231,6 +1231,7 @@ describe('S-506: reconciliation', () => {
     const paid = all.rows.find(r => r.receiptNo === payment.receiptNo)!;
     expect(paid.kind).toBe('payment');
     expect(paid.state).toBe('issued');
+    expect(paid.methodName).toBe('Cash');
     expect(Number(paid.amount)).toBe(Number(payment.totalAmount));
 
     const refunds = await receipts.listReceipts({ ...window, kind: 'refund' });

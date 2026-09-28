@@ -202,6 +202,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                 <th class={`${TH} text-neutral-600 dark:text-neutral-300`}>
                   Who
                 </th>
+                <th class={`${TH} text-neutral-600 dark:text-neutral-300`}>
+                  Method
+                </th>
                 <th
                   class={`${TH} text-right text-neutral-600 dark:text-neutral-300`}
                 >
@@ -241,6 +244,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                         {` · ${receipt.memberNo}`}
                       </span>
                     )}
+                  </td>
+                  <td class={`${TD} whitespace-nowrap`}>
+                    {receipt.methodName || '—'}
                   </td>
                   <td class={TD_NUM} data-sort-value={receipt.amount}>
                     {formatMoney(receipt.amount)}

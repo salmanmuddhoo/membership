@@ -307,6 +307,8 @@ export interface ReceiptListRow {
   at: Date;
   kind: ReceiptKind;
   amount: string;
+  // How the money moved: Cash, Cheque, Bank transfer, …
+  methodName: string;
   holderName: string;
   memberNo: string | null;
 }
@@ -335,6 +337,7 @@ const RECEIPT_ROWS = `
               then case when p.kind = 'refund' then 'refund' else 'payment' end
               else t.kind end as kind,
          coalesce(p.total_amount, t.amount) as amount,
+         coalesce(pm.name, '') as method_name,
          trim(coalesce(ap.values->>'name', '') || ' '
               || coalesce(ap.values->>'surname', '')) as holder_name,
          coalesce(m.member_no, am.member_no) as member_no
@@ -344,6 +347,7 @@ const RECEIPT_ROWS = `
       on t.receipt_number_id = r.id
      and t.payment_line_id is null
      and t.payment_account_line_id is null
+    left join payment_method pm on pm.code = coalesce(p.method, t.method)
     left join member m on m.id = coalesce(p.member_id, t.member_id)
     left join member am on am.application_id = p.application_id
     left join customer c on c.id = t.customer_id
@@ -386,6 +390,7 @@ export async function listReceipts(
     at: Date;
     kind: ReceiptKind;
     amount: string;
+    method_name: string;
     holder_name: string;
     member_no: string | null;
   }>(
@@ -403,6 +408,7 @@ export async function listReceipts(
       at: r.at,
       kind: r.kind,
       amount: r.amount,
+      methodName: r.method_name,
       holderName: r.holder_name,
       memberNo: r.member_no,
     })),
