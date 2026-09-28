@@ -39,10 +39,10 @@ const action = `${Astro.url.pathname}${Astro.url.search}#doc-${documentId}`;
         type="checkbox"
         name="allSignaturesConfirmed"
         value="yes"
-        checked={confirmedSignatures.length === SIGNATURES.length}
+        checked={SIGNATURES.every(s => confirmedSignatures.includes(s))}
         class="text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600"
       />
-      All four signatures present on the scan ({SIGNATURES.join(', ')})
+      All signatures present on the scan ({SIGNATURES.join(', ')})
     </label>
   )}
   <div data-reject-reason>

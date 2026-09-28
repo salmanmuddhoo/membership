@@ -151,11 +151,12 @@ const SUBJECT_LABELS: Record<string, string> = {
 
 const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
 
-// Officer feedback: the ruled line under "Applicant" and "Nominee" asked the
-// signatory to write in a name the system already captured on the page
-// above. Witness 1 and Witness 2 sign for the society, not for anyone this
-// form has a record of, so there is no name to fill in for them — the line
-// stays theirs to write on, same as always.
+// Officer feedback: the ruled line under "Applicant" asked the signatory to
+// write in a name the system already captured on the page above. Witness 1
+// and Witness 2 sign for the society, not for anyone this form has a record
+// of, so the officer types their name in instead — and must, once they have
+// signed (checked before the form is filed, below). The nominee does not
+// sign at all.
 const fullName = (subject: FieldSubject) => {
   const values = valuesFor(subject);
   return [values.name, values.surname]
@@ -166,7 +167,6 @@ const fullName = (subject: FieldSubject) => {
 const signedOn = dateFormat.format(new Date());
 const SIGNATORY_DETAIL: Partial<Record<(typeof SIGNATURES)[number], string>> = {
   Applicant: fullName('applicant'),
-  Nominee: fullName('nominee'),
 };
 
 // Step 2 of the capture wizard (docs/applications.md): this page IS that
@@ -569,6 +569,9 @@ const fixedViewport =
   .witness-name-input:disabled {
     color: inherit;
     opacity: 1;
+  }
+  .witness-name-input[aria-invalid='true'] {
+    border-bottom: 2px solid #dc2626;
   }
   .witness-name-input:focus {
     outline: none;
@@ -1160,6 +1163,29 @@ const fixedViewport =
       return !!image && !image.hidden;
     };
 
+    // A witness who has signed must be named (officer feedback): a
+    // signature nobody can put a name to is no witness at all. Only a signed
+    // witness — one left blank, to sign on paper, is not held to it.
+    const unnamedWitness = (): HTMLInputElement | null => {
+      for (const input of document.querySelectorAll<HTMLInputElement>(
+        '[data-witness-name-input]'
+      )) {
+        const who = input.dataset.witnessNameInput ?? '';
+        const image = document.querySelector<HTMLImageElement>(
+          `[data-sig-who="${who}"] [data-sig-image]`
+        );
+        if (image && !image.hidden && input.value.trim() === '') return input;
+      }
+      return null;
+    };
+    for (const input of document.querySelectorAll<HTMLInputElement>(
+      '[data-witness-name-input]'
+    )) {
+      input.addEventListener('input', () =>
+        input.removeAttribute('aria-invalid')
+      );
+    }
+
     let busy = false;
 
     fileButton.addEventListener('click', () => {
@@ -1169,6 +1195,18 @@ const fixedViewport =
         sayWithNextLink(
           'There is no signature on screen to file. Sign above first, or ' +
             'print the form and upload the signed copy on the next step.',
+          'error'
+        );
+        return;
+      }
+
+      const unnamed = unnamedWitness();
+      if (unnamed) {
+        unnamed.setAttribute('aria-invalid', 'true');
+        unnamed.focus();
+        say(
+          `${unnamed.dataset.witnessNameInput} has signed. Enter their name ` +
+            'before uploading.',
           'error'
         );
         return;

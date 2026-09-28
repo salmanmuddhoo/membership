@@ -1648,7 +1648,7 @@ describe('S-407: verifying, and who may', () => {
   });
 });
 
-describe('S-603: all four signatures before the signed form can be Verified', () => {
+describe('S-603: every signature before the signed form can be Verified', () => {
   async function fileSignedForm() {
     const { documents } = await load();
     const typeId = (
@@ -1678,7 +1678,12 @@ describe('S-603: all four signatures before the signed form can be Verified', ()
 
     await expect(
       documents.reviewDocument(documentId, { outcome: 'verify' }, secretary)
-    ).rejects.toThrowError(/All four signatures/);
+    ).rejects.toThrowError(/All signatures/);
+  });
+
+  it('no longer asks for the nominee', async () => {
+    const { documents } = await load();
+    expect(documents.SIGNATURES).not.toContain('Nominee');
   });
 
   it('names exactly which are still missing', async () => {
@@ -1687,13 +1692,13 @@ describe('S-603: all four signatures before the signed form can be Verified', ()
     await expect(
       documents.reviewDocument(
         documentId,
-        { outcome: 'verify', confirmedSignatures: ['Applicant', 'Nominee'] },
+        { outcome: 'verify', confirmedSignatures: ['Applicant'] },
         secretary
       )
     ).rejects.toThrowError(/Witness 1, Witness 2/);
   });
 
-  it('verifies once all four are confirmed', async () => {
+  it('verifies once all are confirmed', async () => {
     const { documents, documentId } = await fileSignedForm();
 
     const result = await documents.reviewDocument(
@@ -1744,7 +1749,7 @@ describe('S-603: all four signatures before the signed form can be Verified', ()
       {
         outcome: 'reject',
         reason: 'Scan is too blurry to read the second witness.',
-        confirmedSignatures: ['Applicant', 'Nominee', 'Witness 1'],
+        confirmedSignatures: ['Applicant', 'Witness 1'],
       },
       secretary
     );
@@ -1754,7 +1759,7 @@ describe('S-603: all four signatures before the signed form can be Verified', ()
     )!;
     expect(entry.state).toBe('rejected');
     expect(entry.confirmedSignatures.sort()).toEqual(
-      ['Applicant', 'Nominee', 'Witness 1'].sort()
+      ['Applicant', 'Witness 1'].sort()
     );
   });
 });

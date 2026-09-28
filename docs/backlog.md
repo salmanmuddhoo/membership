@@ -5423,3 +5423,32 @@ Officer requests:
   them, by account number, as "Non-member · Active". And a 7-digit fixed line
   (a Contact Person telephone) showed as +2302080004; it now reads
   +230 208 0004, the way a mobile is grouped.
+
+---
+
+### Receipts; the application form's signatures
+
+Officer requests:
+
+- **Receipt reconciliation is now Receipts.** The page lists every receipt
+  issued in the period, newest number first: fee receipts (and refunds) and
+  every transaction's — deposit, withdrawal, transfer, account closure,
+  resignation, demised claim, reversal — with the date, the kind, who it is
+  for and the amount. Each number opens its receipt. It filters by kind and
+  finds a receipt by number, name or AB number, and pages like every long
+  list. The audit of the sequence (receipts issued, the total, the numbers
+  allocated, and the Exceptions) stays on the page, under the same
+  permission (`receipt.reconcile`) and at the same address. Its count and
+  total were overstated for a transaction with an entry on more than one
+  account (a claim, a closure on a death): the join counted such a receipt,
+  and its amount, once per account. Each receipt now counts once, so the
+  count matches the list.
+- **The nominee no longer signs the application form.** The form carries
+  three signature blocks — Applicant, Witness 1, Witness 2 — and the
+  Secretary confirms those three on the scan before the signed form can be
+  Verified (S-603). A confirmation recorded earlier that included the nominee
+  is read as it stands, less the nominee.
+- **A witness who has signed must be named.** Upload to SharePoint is
+  refused, and the name field marked, while a witness has a signature on the
+  form but no name typed under it. A witness left blank, to sign on paper,
+  is not held to it.

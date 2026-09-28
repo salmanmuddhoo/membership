@@ -330,11 +330,11 @@ if (Astro.request.method === 'POST') {
         {
           outcome,
           reason: String(form.get('reason') ?? ''),
-          // Officer feedback: one checkbox, not four — the reviewer either
-          // confirms every signature block is present on the scan, or
-          // confirms none; there is no case where checking three of four
-          // means anything (reviewDocument refuses to Verify short of all
-          // four either way).
+          // Officer feedback: one checkbox, not one per signature — the
+          // reviewer either confirms every signature block is present on the
+          // scan, or confirms none; there is no case where checking some of
+          // them means anything (reviewDocument refuses to Verify short of
+          // all of them either way).
           confirmedSignatures:
             form.get('allSignaturesConfirmed') === 'yes' ? [...SIGNATURES] : [],
         },
