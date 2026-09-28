@@ -333,6 +333,7 @@ const fixedViewport =
                   disabled={!isEditable}
                   class="witness-name-input"
                 />
+                <span class="witness-name-print" data-witness-name-print />
                 <span data-witness-date-suffix hidden>
                   {` · ${signedOn}`}
                 </span>
@@ -570,6 +571,29 @@ const fixedViewport =
     color: inherit;
     opacity: 1;
   }
+  /* The name as the paper carries it. The field above is a fixed width and
+     cuts a long name short in the PDF and on paper (officer feedback), so
+     both show this text instead, which wraps like the rest of the line. */
+  .witness-name-print {
+    display: none;
+  }
+  .capturing .witness-name-input {
+    display: none;
+  }
+  .capturing .witness-name-print {
+    display: inline;
+  }
+  /* No name typed: the ruled line to write one on by hand, as before. */
+  .witness-name-print:empty {
+    display: none;
+    width: 45mm;
+    height: 1em;
+    border-bottom: 1px solid #999;
+    vertical-align: bottom;
+  }
+  .capturing .witness-name-print:empty {
+    display: inline-block;
+  }
   .witness-name-input[aria-invalid='true'] {
     border-bottom: 2px solid #dc2626;
   }
@@ -787,6 +811,15 @@ const fixedViewport =
     .no-print {
       display: none;
     }
+    .witness-name-input {
+      display: none;
+    }
+    .witness-name-print {
+      display: inline;
+    }
+    .witness-name-print:empty {
+      display: inline-block;
+    }
     .print-page {
       max-width: none;
       padding: 0;
@@ -901,8 +934,12 @@ const fixedViewport =
     const suffix = nameInput.parentElement?.querySelector<HTMLElement>(
       '[data-witness-date-suffix]'
     );
+    const printed = nameInput.parentElement?.querySelector<HTMLElement>(
+      '[data-witness-name-print]'
+    );
     const sync = () => {
       if (suffix) suffix.hidden = nameInput.value.trim() === '';
+      if (printed) printed.textContent = nameInput.value.trim();
     };
     let recalled: string | null = null;
     try {

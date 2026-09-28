@@ -5452,3 +5452,46 @@ Officer requests:
   refused, and the name field marked, while a witness has a signature on the
   form but no name typed under it. A witness left blank, to sign on paper,
   is not held to it.
+
+---
+
+### Configuration export and import; receipts by method; witness names in full
+
+Officer requests:
+
+- **Configuration → Export and import.** _Download the configuration_
+  writes one Excel workbook: a Settings sheet, then a sheet per area —
+  document types, checklists and their items, fee schedules and the fees in
+  force, membership types and their fields, account types and who may hold
+  them, payment methods, bank accounts, workflow statuses, workflows and
+  their steps, approval rules, notification wording and retention periods.
+  "Configuration" is exactly the tables carrying the configuration-audit
+  trigger (0010 onwards) plus `config_entry` (0003); roles and staff are not
+  part of it. A row is named by its code (or the codes of what it belongs
+  to) and refers to other rows by code, never by database id, so a file
+  taken from one environment imports into another.
+  - Import adds and changes rows; it never deletes one. The whole file is
+    read and checked first and applied in one transaction under the
+    importer's name, so every change reaches the audit trail through the
+    same trigger as an edit on screen, plus one `config.import` entry with
+    the counts. One problem — an unknown sheet or column, a code that does
+    not exist, a value a field refuses, a row twice — and nothing changes;
+    each is listed by sheet and row. _Check the file_ runs the same import
+    and rolls it back, so it reports exactly what an import would add and
+    change.
+  - A changed fee is never edited in place: the schedule gets a new version,
+    as publishing one on the Fees page does (S-207). Retention periods are
+    held to the Retention page's bounds.
+  - Downloading needs `config.view`; importing needs `config.manage`, and
+    for a change on a sheet with its own permission, that one too: fees
+    (`fee.manage`), bank accounts (`bank_account.manage`), retention
+    (`retention.manage`). Bank account numbers go out whole only to a holder
+    of `bank_account.manage`; masked otherwise, and a masked number in a
+    file leaves the number on file as it is.
+  - A text stored with Windows line breaks reads as unchanged: an Excel
+    cell keeps a line break as LF.
+- **Receipts** shows how each was paid (Cash, Cheque, Bank transfer, …).
+- **A long witness name** was cut short in the generated PDF and on paper,
+  by the width of the field it is typed into. The PDF and the printout now
+  carry the name as text, which wraps; a witness left blank keeps the ruled
+  line to write a name on by hand.

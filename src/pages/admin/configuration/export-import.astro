@@ -1,0 +1,273 @@
+---
+// Configuration as a workbook (officer request; lib/config/exchange.ts).
+// Anyone who may view the configuration may download it; importing needs
+// config.manage, and each sheet's own permission (fees, bank accounts,
+// retention) for a change on that sheet. A check runs the import and rolls
+// it back, so it reports exactly what an import would do.
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import ConfigNav from '@components/ConfigNav.astro';
+import {
+  ConfigImportError,
+  exportConfiguration,
+  importConfiguration,
+  type ImportOutcome,
+  type ImportProblem,
+} from '@lib/config/exchange';
+import {
+  BUTTON,
+  CARD,
+  CARD_DANGER,
+  CARD_DANGER_TITLE,
+  CARD_OK,
+  CARD_TITLE,
+  HINT,
+  MUTED,
+  NOTICE_ERROR,
+  PAGE,
+  SECONDARY,
+  SECONDARY_SM,
+  TABLE,
+  THEAD,
+  ROW,
+  TH,
+  TD_NUM,
+  TD,
+} from '@lib/ui';
+
+const principal = Astro.locals.principal!;
+const canImport = principal.permissions.has('config.manage');
+
+if (Astro.url.searchParams.has('download')) {
+  const file = await exportConfiguration(principal);
+  const day = new Date().toISOString().slice(0, 10);
+  return new Response(file, {
+    headers: {
+      'content-type':
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'content-disposition': `attachment; filename="configuration-${day}.xlsx"`,
+    },
+  });
+}
+
+let error: string | null = null;
+let problems: ImportProblem[] = [];
+let outcome: ImportOutcome | null = null;
+
+if (Astro.request.method === 'POST') {
+  if (!canImport) {
+    error = 'You may not change the configuration.';
+  } else {
+    const form = await Astro.request.formData();
+    const file = form.get('file');
+    const apply = form.get('intent') === 'import';
+    if (!(file instanceof File) || file.size === 0) {
+      error = 'Choose a configuration file to upload.';
+    } else {
+      try {
+        outcome = await importConfiguration(
+          Buffer.from(await file.arrayBuffer()),
+          principal,
+          { apply }
+        );
+      } catch (err) {
+        if (err instanceof ConfigImportError) {
+          problems = err.problems;
+          error = `${err.message} Nothing was changed.`;
+        } else {
+          console.error('[admin/configuration/export-import]', err);
+          error = 'That file could not be imported. Please try again.';
+        }
+      }
+    }
+  }
+}
+
+const totals = outcome
+  ? outcome.sheets.reduce(
+      (t, s) => ({
+        added: t.added + s.added,
+        changed: t.changed + s.changed,
+      }),
+      { added: 0, changed: 0 }
+    )
+  : null;
+---
+
+<DashboardLayout
+  title="Export and import · Al Barakah MCSL"
+  heading="Export and import"
+>
+  <div class={PAGE.list}>
+    <ConfigNav />
+
+    <section class={CARD}>
+      <h2 class={CARD_TITLE}>Export</h2>
+      <p class={`${MUTED} mt-2`}>
+        Every setting and configuration table, one sheet each.
+      </p>
+      <a
+        href="/admin/configuration/export-import?download=1"
+        class={`${BUTTON} mt-4 inline-block`}
+      >
+        Download the configuration
+      </a>
+    </section>
+
+    {error && <div class={NOTICE_ERROR}>{error}</div>}
+
+    {problems.length > 0 && (
+      <section class={CARD_DANGER}>
+        <h2 class={CARD_DANGER_TITLE}>To fix in the file</h2>
+        <ul class="mt-3 space-y-2 text-sm text-red-800 dark:text-red-200">
+          {problems.map(p => (
+            <li>
+              {p.sheet && (
+                <span class="font-medium">
+                  {p.sheet}
+                  {p.row !== null && `, row ${p.row}`}:
+                </span>
+              )}{' '}
+              {p.message}
+            </li>
+          ))}
+        </ul>
+      </section>
+    )}
+
+    {outcome && totals && (
+      <section class={CARD_OK}>
+        <h2 class={CARD_TITLE}>
+          {outcome.applied
+            ? 'Configuration imported'
+            : 'Checked. Nothing has been changed yet.'}
+        </h2>
+        <p class={`${MUTED} mt-1`}>
+          {totals.added + totals.changed === 0
+            ? 'The file matches the configuration.'
+            : `${totals.added} added, ${totals.changed} changed.`}
+        </p>
+        <div class="mt-3 overflow-x-auto">
+          <table class={TABLE}>
+            <thead>
+              <tr
+                class={`${THEAD} border-b border-neutral-300 dark:border-neutral-700`}
+              >
+                <th class={`${TH} text-neutral-600 dark:text-neutral-300`}>
+                  Sheet
+                </th>
+                <th
+                  class={`${TH} text-right text-neutral-600 dark:text-neutral-300`}
+                >
+                  Added
+                </th>
+                <th
+                  class={`${TH} text-right text-neutral-600 dark:text-neutral-300`}
+                >
+                  Changed
+                </th>
+                <th
+                  class={`${TH} text-right text-neutral-600 dark:text-neutral-300`}
+                >
+                  Unchanged
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {outcome.sheets.map(s => (
+                <tr class={ROW}>
+                  <td class={TD}>{s.sheet}</td>
+                  <td class={TD_NUM}>{s.added}</td>
+                  <td class={TD_NUM}>{s.changed}</td>
+                  <td class={TD_NUM}>{s.unchanged}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    )}
+
+    {canImport && (
+      <section class={CARD}>
+        <h2 class={CARD_TITLE}>Import</h2>
+        <p class={`${MUTED} mt-2`}>
+          Adds and changes what the file holds. Nothing is deleted.
+        </p>
+        <form
+          method="post"
+          enctype="multipart/form-data"
+          class="mt-4 space-y-4"
+          data-import-form
+        >
+          <div class="flex items-center gap-3">
+            <label class={`${SECONDARY_SM} cursor-pointer`}>
+              Choose file
+              <input
+                type="file"
+                name="file"
+                accept=".xlsx"
+                required
+                data-import-file
+                class="sr-only"
+              />
+            </label>
+            <span data-import-filename class={HINT}>
+              No file selected
+            </span>
+          </div>
+          <div class="flex flex-wrap gap-3">
+            <button type="submit" name="intent" value="check" class={SECONDARY}>
+              Check the file
+            </button>
+            <button
+              type="submit"
+              name="intent"
+              value="import"
+              class={BUTTON}
+              data-import-apply
+            >
+              Import
+            </button>
+          </div>
+        </form>
+      </section>
+    )}
+  </div>
+</DashboardLayout>
+
+<script>
+  // The native file input's own text is in the browser's language; this
+  // says it in English instead.
+  const input = document.querySelector<HTMLInputElement>('[data-import-file]');
+  const filename = document.querySelector<HTMLElement>(
+    '[data-import-filename]'
+  );
+  if (input && filename) {
+    input.addEventListener('change', () => {
+      filename.textContent = input.files?.[0]?.name ?? 'No file selected';
+    });
+  }
+  // Import asks first; Check does not, since it changes nothing. Then one
+  // submission at a time.
+  const form = document.querySelector<HTMLFormElement>('[data-import-form]');
+  let confirmed = false;
+  form?.addEventListener('submit', event => {
+    const submitter = event.submitter as HTMLButtonElement | null;
+    if (submitter?.value === 'import' && !confirmed) {
+      event.preventDefault();
+      window
+        .appConfirm('Import this file? It changes the configuration.')
+        .then(ok => {
+          if (!ok) return;
+          confirmed = true;
+          form.requestSubmit(submitter);
+        });
+      return;
+    }
+    setTimeout(() => {
+      form
+        .querySelectorAll<HTMLButtonElement>('button')
+        .forEach(b => (b.disabled = true));
+    });
+  });
+</script>
