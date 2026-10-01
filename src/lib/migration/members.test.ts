@@ -2250,3 +2250,276 @@ describe('a guardian and their minor in the same upload', () => {
     expect(adult.errors).toEqual([]);
   });
 });
+
+// Officer request: the register holds people who have left and accounts
+// that were closed, and the import records them so.
+describe('status: resigned, deceased and closed accounts', () => {
+  const HAJJ = 'Hajj Savings (status test)';
+  beforeAll(async () => {
+    await runAsConfigurator(
+      appUrl,
+      `insert into account_type
+         (code, name, category, minimum_opening_amount, is_membership_default)
+       values ('hsa_status_test', $1, 'savings', 0, false)
+       on conflict (code) do nothing`,
+      [HAJJ]
+    );
+  });
+
+  const person = (n: number) => ({
+    Surname: 'Status',
+    Name: `Person ${n}`,
+    NIC: `S80000000000${String(n).padStart(2, '0')}`,
+    Gender: 'Male',
+    Address: 'Addr',
+    Mobile: `578920${String(n).padStart(2, '0')}`,
+    ...NOMINEE_1,
+  });
+
+  async function check(sheet: string, data: Record<string, string>) {
+    const { buildImportTemplate, parseImportFile, validateRows } = await load();
+    const filled = await fillSheet(await buildImportTemplate(), sheet, data);
+    return validateRows(await parseImportFile(filled));
+  }
+
+  it('offers Status, Status Date and each account’s Status and Closed Date', async () => {
+    const { buildImportTemplate } = await load();
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load((await buildImportTemplate()) as any);
+    const sheet = workbook.getWorksheet('Individual')!;
+    const headers: string[] = [];
+    sheet.getRow(1).eachCell(cell => headers.push(String(cell.value)));
+    for (const header of [
+      'Status',
+      'Status Date',
+      `${HAJJ} Status`,
+      `${HAJJ} Closed Date`,
+    ]) {
+      expect(headers).toContain(header);
+    }
+    const status = sheet.getCell(2, headers.indexOf('Status') + 1);
+    expect(status.dataValidation?.formulae).toEqual([
+      '"Active,Resigned,Deceased"',
+    ]);
+    const account = sheet.getCell(2, headers.indexOf(`${HAJJ} Status`) + 1);
+    expect(account.dataValidation?.formulae).toEqual(['"Open,Closed"']);
+  });
+
+  it('imports a resigned member: Shares and MSA closed on the day, the Hajj account still open', async () => {
+    const {
+      buildImportTemplate,
+      parseImportFile,
+      validateRows,
+      importMembers,
+    } = await load();
+    const filled = await fillSheet(await buildImportTemplate(), 'Individual', {
+      'AB Number': 'AB8001',
+      Status: 'Resigned',
+      'Status Date': '2024-07-25',
+      ...person(1),
+      [`${HAJJ} Number`]: 'HSA-S01',
+      [`${HAJJ} Balance`]: '0',
+    });
+    const { valid, errors } = await validateRows(await parseImportFile(filled));
+    expect(errors).toEqual([]);
+    const outcome = await importMembers(
+      valid,
+      actor,
+      MIGRATE_PERMISSIONS,
+      'test'
+    );
+    expect(outcome.failed).toEqual([]);
+
+    const member = await run(
+      appUrl,
+      `select id, status, status_changed_at::date::text as since
+         from member where member_no = 'AB8001'`
+    );
+    expect(member.rows[0]).toMatchObject({
+      status: 'resigned',
+      since: '2024-07-25',
+    });
+    const accounts = await run(
+      appUrl,
+      `select t.code, a.status, a.closed_at::date::text as closed_on
+         from account a join account_type t on t.id = a.account_type_id
+        where a.member_id = $1 order by a.is_membership_default desc, t.code`,
+      [member.rows[0].id]
+    );
+    const byStatus = accounts.rows.map(a => [a.status, a.closed_on]);
+    expect(byStatus.slice(0, 2)).toEqual([
+      ['closed', '2024-07-25'],
+      ['closed', '2024-07-25'],
+    ]);
+    expect(accounts.rows.find(a => a.code === 'hsa_status_test')?.status).toBe(
+      'active'
+    );
+  });
+
+  it('imports a deceased non-member with every account closed', async () => {
+    const {
+      buildImportTemplate,
+      parseImportFile,
+      validateRows,
+      importMembers,
+    } = await load();
+    const filled = await fillSheet(await buildImportTemplate(), 'Individual', {
+      'Legacy Member Code': 'HSA-S02',
+      Status: 'Deceased',
+      ...person(2),
+      [`${HAJJ} Number`]: 'HSA-S02',
+      [`${HAJJ} Balance`]: '0',
+    });
+    const { valid, errors } = await validateRows(await parseImportFile(filled));
+    expect(errors).toEqual([]);
+    const outcome = await importMembers(
+      valid,
+      actor,
+      MIGRATE_PERMISSIONS,
+      'test'
+    );
+    expect(outcome.failed).toEqual([]);
+    const customer = await run(
+      appUrl,
+      `select c.status, a.status as account_status, a.closed_at
+         from customer c join account a on a.customer_id = c.id
+        where c.legacy_code = 'HSA-S02'`
+    );
+    expect(customer.rows[0].status).toBe('demised');
+    expect(customer.rows[0].account_status).toBe('closed');
+    expect(customer.rows[0].closed_at).not.toBeNull();
+  });
+
+  it('closes an account marked Closed, and a non-member with nothing open is closed too', async () => {
+    const {
+      buildImportTemplate,
+      parseImportFile,
+      validateRows,
+      importMembers,
+    } = await load();
+    const filled = await fillSheet(await buildImportTemplate(), 'Individual', {
+      'Legacy Member Code': 'HSA-S03',
+      ...person(3),
+      [`${HAJJ} Number`]: 'HSA-S03',
+      [`${HAJJ} Balance`]: '0',
+      [`${HAJJ} Status`]: 'Closed',
+      [`${HAJJ} Closed Date`]: '2025-02-28',
+    });
+    const { valid, errors } = await validateRows(await parseImportFile(filled));
+    expect(errors).toEqual([]);
+    const outcome = await importMembers(
+      valid,
+      actor,
+      MIGRATE_PERMISSIONS,
+      'test'
+    );
+    expect(outcome.failed).toEqual([]);
+    const customer = await run(
+      appUrl,
+      `select c.status, a.status as account_status,
+              a.closed_at::date::text as closed_on
+         from customer c join account a on a.customer_id = c.id
+        where c.legacy_code = 'HSA-S03'`
+    );
+    expect(customer.rows[0]).toMatchObject({
+      status: 'closed',
+      account_status: 'closed',
+      closed_on: '2025-02-28',
+    });
+
+    // A closed account holds no balance: a balance upload refuses it.
+    const balances = await import('./balances');
+    const { errors: balanceErrors } = await balances.validateBalanceRows([
+      { rowNumber: 2, account: 'HSA-S03', accountType: '', balance: '100' },
+    ]);
+    expect(balanceErrors[0].message).toContain('is closed');
+  });
+
+  it('refuses what cannot be: a non-member resigning, money left behind, a corporate death, an unknown status', async () => {
+    const nonMember = await check('Individual', {
+      'Legacy Member Code': 'HSA-S04',
+      Status: 'Resigned',
+      ...person(4),
+      [`${HAJJ} Number`]: 'HSA-S04',
+      [`${HAJJ} Balance`]: '0',
+    });
+    expect(nonMember.errors[0].message).toContain('Only a member can resign.');
+
+    const shares = await check('Individual', {
+      'AB Number': 'AB8005',
+      Status: 'Resigned',
+      'Shares Balance': '500',
+      ...person(5),
+    });
+    expect(shares.errors[0].message).toContain(
+      'Shares Balance of a resigned member is 0'
+    );
+
+    const closedWithMoney = await check('Individual', {
+      'Legacy Member Code': 'HSA-S06',
+      ...person(6),
+      [`${HAJJ} Number`]: 'HSA-S06',
+      [`${HAJJ} Balance`]: '100',
+      [`${HAJJ} Status`]: 'Closed',
+    });
+    expect(closedWithMoney.errors[0].message).toContain(
+      `${HAJJ} Balance of a closed account is 0`
+    );
+
+    const corporate = await check('Corporate', {
+      'AB Number': 'AB8007',
+      Status: 'Deceased',
+      'Registered entity name': 'Status Ltd',
+      'Registration No.': 'C0000007',
+      Address: 'Addr',
+      Mobile: '57892007',
+      'Contact Person': 'Someone',
+      'Contact Person — Telephone': '57892008',
+      ...NOMINEE_1,
+    });
+    expect(corporate.errors[0].message).toContain('cannot be Deceased');
+
+    const unknown = await check('Individual', {
+      'AB Number': 'AB8008',
+      Status: 'Left',
+      'Status Date': '2024-01-01',
+      ...person(8),
+    });
+    expect(unknown.errors[0].message).toContain(
+      'Status "Left" must be one of: Active, Resigned, Deceased.'
+    );
+  });
+
+  it('refuses a resigned member as a minor’s guardian in the same upload', async () => {
+    const { buildImportTemplate, parseImportFile, validateRows } = await load();
+    const filled = await fillSheet(
+      await fillSheet(await buildImportTemplate(), 'Individual', {
+        'AB Number': 'AB8009',
+        Status: 'Resigned',
+        ...person(9),
+      }),
+      'Minor',
+      {
+        'Legacy Member Code': 'LEG-S10',
+        'AB Number': 'AB8010',
+        Surname: 'Status',
+        Name: 'Child',
+        'Date of birth': '2016-03-01',
+        Gender: 'Female',
+        Address: 'Addr',
+        'Guardian Member ID': 'AB8009',
+        'Beneficiary surname': 'Status',
+        'Beneficiary name': 'Person',
+        'Beneficiary NIC': 'S8000000000099',
+        'Nominee 1 Successor guardian surname': 'Status',
+        'Nominee 1 Successor guardian name': 'Person',
+        'Nominee 1 Successor guardian NIC': 'S8000000000098',
+      }
+    );
+    const { valid, errors } = await validateRows(await parseImportFile(filled));
+    expect(valid.map(r => r.abNumber)).toEqual(['AB8009']);
+    expect(errors[0].message).toContain(
+      'The guardian (AB8009) is not an active member.'
+    );
+  });
+});

@@ -187,6 +187,7 @@ interface AccountOnFile {
   balance: string;
   has_own: boolean;
   openings: number;
+  status: string;
 }
 
 // Shares, MSA, "Multiplier Savings Account", "msa" — a type as an officer
@@ -221,7 +222,7 @@ export async function validateBalanceRows(rows: BalanceRow[]): Promise<{
               from k
               join member m on upper(m.member_no) = k.key
               join account a on a.member_id = m.id and a.account_no is null)
-     select a.id, a.account_no, m.member_no,
+     select a.id, a.account_no, m.member_no, a.status,
             coalesce(a.member_id, a.customer_id) as holder_id,
             case when a.member_id is not null then 'member' else 'customer' end
               as holder_kind,
@@ -324,7 +325,9 @@ export async function validateBalanceRows(rows: BalanceRow[]): Promise<{
       problems.push(`${number} is not on file.`);
     }
 
-    if (account?.has_own) {
+    if (account?.status === 'closed') {
+      problems.push(`${label} is closed, so it holds no balance.`);
+    } else if (account?.has_own) {
       problems.push(
         `${label} has transactions of its own, so its balance cannot be set here.`
       );
