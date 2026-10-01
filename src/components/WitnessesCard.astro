@@ -1,0 +1,30 @@
+---
+// Who witnessed an application form (officer request; migration 0112):
+// the two names typed on its signature step. Nothing is shown for an
+// application from before witnesses were recorded.
+import { CARD, CARD_TITLE } from '@lib/ui';
+
+interface Props {
+  witnesses: readonly string[];
+}
+const { witnesses } = Astro.props;
+const named = witnesses.some(name => name.trim() !== '');
+---
+
+{named && (
+  <section class={CARD}>
+    <h2 class={CARD_TITLE}>Witnesses</h2>
+    <dl class="mt-4 grid gap-x-6 gap-y-2 sm:grid-cols-2">
+      {witnesses.map((name, i) => (
+        <div class="flex gap-2 text-sm">
+          <dt class="min-w-32 text-neutral-500 dark:text-neutral-400">
+            Witness {i + 1}
+          </dt>
+          <dd class="text-neutral-800 dark:text-neutral-100">
+            {name.trim() || '—'}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  </section>
+)}

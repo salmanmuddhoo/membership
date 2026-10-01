@@ -11,8 +11,11 @@
 import { isEditableStatus } from '@lib/applications/capture';
 import BaseLayout from '@layouts/BaseLayout.astro';
 import {
+  ApplicationError,
   loadApplication,
+  setWitnessNames,
   visibleFields,
+  WITNESS_NAME_MAX,
   type Application,
 } from '@lib/applications/capture';
 import {
@@ -152,11 +155,9 @@ const SUBJECT_LABELS: Record<string, string> = {
 const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
 
 // Officer feedback: the ruled line under "Applicant" asked the signatory to
-// write in a name the system already captured on the page above. Witness 1
-// and Witness 2 sign for the society, not for anyone this form has a record
-// of, so the officer types their name in instead — and must, once they have
-// signed (checked before the form is filed, below). The nominee does not
-// sign at all.
+// write in a name the system already captured on the page above. Only the
+// applicant signs; the two witnesses are named in their own section, typed
+// here and kept with the application (membership_application, 0112).
 const fullName = (subject: FieldSubject) => {
   const values = valuesFor(subject);
   return [values.name, values.surname]
@@ -176,6 +177,40 @@ const SIGNATORY_DETAIL: Partial<Record<(typeof SIGNATURES)[number], string>> = {
 // this is just the print view again; whoever opens it, the printed page
 // itself carries no wizard chrome.
 const isEditable = isEditableStatus(application.status);
+
+// The witnesses' names, saved from the form as they are typed (officer
+// request). Answered as JSON: the page posts them in the background and
+// stays where it is.
+if (Astro.request.method === 'POST') {
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { 'content-type': 'application/json' },
+    });
+  const form = await Astro.request.formData();
+  if (form.get('intent') !== 'witnesses') {
+    return json({ error: 'Nothing to save.' }, 400);
+  }
+  if (!principal.permissions.has('application.capture')) {
+    return json(
+      { error: 'You do not have permission to edit applications.' },
+      403
+    );
+  }
+  try {
+    const witnesses = await setWitnessNames(
+      application.id,
+      form.getAll('witness').map(v => String(v)),
+      { userId: principal.userId, email: principal.email }
+    );
+    return json({ ok: true, witnesses });
+  } catch (error) {
+    if (error instanceof ApplicationError) {
+      return json({ error: error.message }, 400);
+    }
+    throw error;
+  }
+}
 
 // The rest of the app allows pinch-zoom; this page turns it off. The
 // signature box below is `position: fixed` to the real viewport, and mobile
@@ -286,11 +321,43 @@ const fixedViewport =
       </p>
     </section>
 
+    <section class="block witnesses" data-witnesses>
+      <h2>Witnesses</h2>
+      <dl>
+        {[0, 1].map(i => (
+          <div class="row">
+            <dt>
+              Witness {i + 1}
+              <span class="req">*</span>
+            </dt>
+            <dd class={isEditable || application.witnesses[i] ? '' : 'blank'}>
+              {isEditable ? (
+                <>
+                  <input
+                    type="text"
+                    class="witness-name-input"
+                    data-witness-input={i}
+                    value={application.witnesses[i]}
+                    maxlength={WITNESS_NAME_MAX}
+                    autocomplete="off"
+                    aria-label={`Witness ${i + 1}`}
+                  />
+                  <span class="witness-name-print" data-witness-print={i}>
+                    {application.witnesses[i]}
+                  </span>
+                </>
+              ) : (
+                application.witnesses[i]
+              )}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </section>
+
     <section class="block">
       {isEditable && (
-        <p class="sig-help no-print">
-          Tap Sign under each name, or print and sign by hand.
-        </p>
+        <p class="sig-help no-print">Tap Sign, or print and sign by hand.</p>
       )}
       <div
         class="signatures"
@@ -315,30 +382,7 @@ const fixedViewport =
               </div>
             )}
             <p class="sig-name">{who}</p>
-            {SIGNATORY_DETAIL[who] ? (
-              <p class="sig-date">{`${SIGNATORY_DETAIL[who]} · ${signedOn}`}</p>
-            ) : (
-              // No record of who a witness is exists anywhere in this
-              // system — unlike Applicant and Nominee, there is nothing to
-              // fill this in from, so the officer types it here instead of
-              // on a hand-drawn line. Kept client-side only, exactly like
-              // the signature images above: it only has to survive long
-              // enough to reach Print (or Save as PDF), which is what
-              // actually carries it forward once uploaded.
-              <p class="sig-date witness-date">
-                <input
-                  type="text"
-                  data-witness-name-input={who}
-                  placeholder="Name and date"
-                  disabled={!isEditable}
-                  class="witness-name-input"
-                />
-                <span class="witness-name-print" data-witness-name-print />
-                <span data-witness-date-suffix hidden>
-                  {` · ${signedOn}`}
-                </span>
-              </p>
-            )}
+            <p class="sig-date">{`${SIGNATORY_DETAIL[who]} · ${signedOn}`}</p>
             <div class="sig-line short" />
           </div>
         ))}
@@ -554,26 +598,25 @@ const fixedViewport =
     font-size: 9pt;
     color: #555;
   }
-  /* Made to disappear into the plain text either side of it — the box a
-     name gets typed into on screen is not itself part of what a witness's
-     line is meant to show, on paper or in the PDF this becomes. */
+  /* A witness's name is typed straight onto its ruled line: no box of its
+     own, the dd's underline is the field. */
   .witness-name-input {
-    width: 45mm;
-    max-width: 60%;
+    width: 100%;
     border: none;
-    border-bottom: 1px solid #999;
     padding: 0;
     background: transparent;
     font: inherit;
     color: inherit;
   }
-  .witness-name-input:disabled {
-    color: inherit;
-    opacity: 1;
+  .witness-name-input:focus {
+    outline: none;
   }
-  /* The name as the paper carries it. The field above is a fixed width and
-     cuts a long name short in the PDF and on paper (officer feedback), so
-     both show this text instead, which wraps like the rest of the line. */
+  .witness-name-input[aria-invalid='true'] {
+    box-shadow: inset 0 -2px 0 #dc2626;
+  }
+  /* The name as the paper carries it. A field is a fixed width and would
+     cut a long name short in the PDF and on paper, so both show this text
+     instead, which wraps like the rest of the form. */
   .witness-name-print {
     display: none;
   }
@@ -582,24 +625,6 @@ const fixedViewport =
   }
   .capturing .witness-name-print {
     display: inline;
-  }
-  /* No name typed: the ruled line to write one on by hand, as before. */
-  .witness-name-print:empty {
-    display: none;
-    width: 45mm;
-    height: 1em;
-    border-bottom: 1px solid #999;
-    vertical-align: bottom;
-  }
-  .capturing .witness-name-print:empty {
-    display: inline-block;
-  }
-  .witness-name-input[aria-invalid='true'] {
-    border-bottom: 2px solid #dc2626;
-  }
-  .witness-name-input:focus {
-    outline: none;
-    border-bottom-color: #111;
   }
 
   .sig-help {
@@ -817,9 +842,6 @@ const fixedViewport =
     .witness-name-print {
       display: inline;
     }
-    .witness-name-print:empty {
-      display: inline-block;
-    }
     .print-page {
       max-width: none;
       padding: 0;
@@ -921,42 +943,44 @@ const fixedViewport =
     }
   };
 
-  // A witness's name, same lifetime as their signature above and for the
-  // same reason: nothing in this system has a record of who a witness is,
-  // so there is nothing to reload this from beyond what this tab already
-  // typed — it only has to last until Print (or Save as PDF) carries it
-  // into the file the officer uploads.
-  const witnessNameKey = (who: string) => `sig-name:${applicationId}:${who}`;
-  for (const nameInput of document.querySelectorAll<HTMLInputElement>(
-    '[data-witness-name-input]'
-  )) {
-    const who = nameInput.dataset.witnessNameInput ?? '';
-    const suffix = nameInput.parentElement?.querySelector<HTMLElement>(
-      '[data-witness-date-suffix]'
-    );
-    const printed = nameInput.parentElement?.querySelector<HTMLElement>(
-      '[data-witness-name-print]'
-    );
-    const sync = () => {
-      if (suffix) suffix.hidden = nameInput.value.trim() === '';
-      if (printed) printed.textContent = nameInput.value.trim();
-    };
-    let recalled: string | null = null;
-    try {
-      recalled = sessionStorage.getItem(witnessNameKey(who));
-    } catch {
-      // Private browsing or a full quota — typing still works for this
-      // visit, it just starts blank rather than where a prior visit left it.
+  // The witnesses' names are kept with the application: saved as soon as
+  // one is typed (on leaving the field), and again before the form is
+  // filed, so the PDF and the record never disagree. The printed copy of
+  // each name follows the field as it is typed.
+  const witnessInputs = [
+    ...document.querySelectorAll<HTMLInputElement>('[data-witness-input]'),
+  ];
+  const saveWitnesses = async (): Promise<string | null> => {
+    const body = new FormData();
+    body.set('intent', 'witnesses');
+    for (const input of witnessInputs) {
+      body.append('witness', input.value);
     }
-    if (recalled) nameInput.value = recalled;
-    sync();
-    nameInput.addEventListener('input', () => {
-      sync();
-      try {
-        sessionStorage.setItem(witnessNameKey(who), nameInput.value);
-      } catch {
-        // See above — not worth failing the typing over.
+    try {
+      const response = await fetch(window.location.pathname, {
+        method: 'POST',
+        body,
+        headers: { accept: 'application/json' },
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok) {
+        return result?.error ?? 'The witnesses could not be saved.';
       }
+      return null;
+    } catch {
+      return 'The witnesses could not be saved. Check the connection.';
+    }
+  };
+  for (const input of witnessInputs) {
+    const printed = document.querySelector<HTMLElement>(
+      `[data-witness-print="${input.dataset.witnessInput}"]`
+    );
+    input.addEventListener('input', () => {
+      input.removeAttribute('aria-invalid');
+      if (printed) printed.textContent = input.value.trim();
+    });
+    input.addEventListener('change', () => {
+      void saveWitnesses();
     });
   }
 
@@ -1200,29 +1224,6 @@ const fixedViewport =
       return !!image && !image.hidden;
     };
 
-    // A witness who has signed must be named (officer feedback): a
-    // signature nobody can put a name to is no witness at all. Only a signed
-    // witness — one left blank, to sign on paper, is not held to it.
-    const unnamedWitness = (): HTMLInputElement | null => {
-      for (const input of document.querySelectorAll<HTMLInputElement>(
-        '[data-witness-name-input]'
-      )) {
-        const who = input.dataset.witnessNameInput ?? '';
-        const image = document.querySelector<HTMLImageElement>(
-          `[data-sig-who="${who}"] [data-sig-image]`
-        );
-        if (image && !image.hidden && input.value.trim() === '') return input;
-      }
-      return null;
-    };
-    for (const input of document.querySelectorAll<HTMLInputElement>(
-      '[data-witness-name-input]'
-    )) {
-      input.addEventListener('input', () =>
-        input.removeAttribute('aria-invalid')
-      );
-    }
-
     let busy = false;
 
     fileButton.addEventListener('click', () => {
@@ -1237,15 +1238,17 @@ const fixedViewport =
         return;
       }
 
-      const unnamed = unnamedWitness();
+      // Both witnesses are named before the form is filed (officer
+      // request): it is not submitted without them either.
+      const unnamed = witnessInputs.find(input => input.value.trim() === '');
       if (unnamed) {
-        unnamed.setAttribute('aria-invalid', 'true');
+        for (const input of witnessInputs) {
+          if (input.value.trim() === '') {
+            input.setAttribute('aria-invalid', 'true');
+          }
+        }
         unnamed.focus();
-        say(
-          `${unnamed.dataset.witnessNameInput} has signed. Enter their name ` +
-            'before uploading.',
-          'error'
-        );
+        say('Enter both witness names before uploading.', 'error');
         return;
       }
 
@@ -1254,6 +1257,13 @@ const fixedViewport =
       say('Preparing the signed form…');
 
       void (async () => {
+        const unsaved = await saveWitnesses();
+        if (unsaved) {
+          say(unsaved, 'error');
+          busy = false;
+          fileButton.disabled = false;
+          return;
+        }
         const printPage = document.querySelector<HTMLElement>('.print-page');
         if (!printPage) {
           say(

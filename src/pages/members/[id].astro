@@ -1,5 +1,6 @@
 ---
 import DashboardLayout from '@layouts/DashboardLayout.astro';
+import WitnessesCard from '@components/WitnessesCard.astro';
 import { loadMember, loadCustomer } from '@lib/members/create';
 import { accountBalance } from '@lib/ledger/ledger';
 import {
@@ -12,6 +13,7 @@ import {
   startCustomerAdditionalAccountApplication,
   startMembershipApplicationFromCustomer,
   startRejoinApplication,
+  witnessesOf,
 } from '@lib/applications/capture';
 import { forDisplay } from '@lib/applications/phone';
 import {
@@ -404,6 +406,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 // card above, driven by contactFields instead.
 const applicationId = (member ?? customer)!.applicationId;
 const partyGroups = await otherPartyGroups(applicationId);
+const witnesses = await witnessesOf(applicationId);
 // The nominees move to their own editable card when they are offered for
 // correction (nomineeContactGroups); anyone else stays here, read-only.
 const readOnlyPartyGroups = partyGroups.filter(
@@ -1056,6 +1059,8 @@ const documentCount = documentGroups.reduce(
         </ul>
       </section>
     )}
+
+    <WitnessesCard witnesses={witnesses} />
 
     {(isMinor || beneficiaryGroup) && (
       <section class={CARD}>

@@ -13,6 +13,7 @@
 // phase 7).
 import { isEditableStatus } from '@lib/applications/capture';
 import DashboardLayout from '@layouts/DashboardLayout.astro';
+import WitnessesCard from '@components/WitnessesCard.astro';
 import LinkedReason from '@components/LinkedReason.astro';
 import ChainTimeline from '@components/ChainTimeline.astro';
 import { applicationTimeline } from '@lib/applications/timeline';
@@ -938,6 +939,8 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           )}
         </section>
       )}
+
+    {!isEditable && <WitnessesCard witnesses={application!.witnesses} />}
 
     {(!isEditable || currentStep === DOCUMENTS_STEP) &&
       canSeeDocuments &&

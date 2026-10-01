@@ -42,7 +42,9 @@ const action = `${Astro.url.pathname}${Astro.url.search}#doc-${documentId}`;
         checked={SIGNATURES.every(s => confirmedSignatures.includes(s))}
         class="text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600"
       />
-      All signatures present on the scan ({SIGNATURES.join(', ')})
+      {SIGNATURES.length === 1
+        ? `${SIGNATURES[0]}'s signature present on the scan`
+        : `All signatures present on the scan (${SIGNATURES.join(', ')})`}
     </label>
   )}
   <div data-reject-reason>
