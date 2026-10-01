@@ -5516,3 +5516,35 @@ they are matters.
   confirmation recorded earlier that included witnesses reads as it stands.
 - **Both names are required** before the signed form is uploaded, and
   submission is refused without them, whatever route the form took.
+
+---
+
+### Migration: who has left, and closed accounts
+
+Officer request: the legacy register holds resigned members, the deceased
+and closed Hajj accounts, and the migration file had no way to say so.
+Every sheet of the template now carries:
+
+- **Status** (blank or Active, Resigned, Deceased) and an optional **Status
+  Date**.
+  - _Resigned_ is for a member only. The member is `resigned`, dated, and
+    their Shares and MSA are closed; any other account stays as its own
+    column says. A resigned member who still holds an open account is
+    shown as a non-member, as after a resignation in the app.
+  - _Deceased_ makes a member or non-member `demised`, with every account
+    closed. A corporate member cannot be Deceased (as in the app: resign
+    it instead).
+  - Anyone who has left holds nothing in a closed account: their Shares and
+    MSA balances are 0.
+- **<Account> Status** (blank or Open, Closed) and an optional **<Account>
+  Closed Date** for each account beyond Shares and the MSA.
+  - A closed account's balance is 0, and it takes no opening-balance line.
+  - A non-member whose every account is closed is `closed`.
+  - An undated closure is dated the day of the import, because `closed_at`
+    cannot be empty (0077). An undated resignation or death leaves
+    `status_changed_at` empty.
+- A re-import does not change a status or reopen an account. A row that
+  disagrees with what is on file is refused, naming both.
+- A minor's guardian must be an active member, whether they are already on
+  file or on the same upload.
+- The balance upload refuses a closed account.

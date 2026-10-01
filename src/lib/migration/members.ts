@@ -109,6 +109,7 @@ import {
   allocateReceiptNumber,
   type ReceiptAllocation,
 } from '../payments/receipts';
+import { claimableMembershipType } from '../ledger/claimants';
 
 export const PERMISSION_MIGRATE = 'system.migrate_members';
 const ACTION_IMPORTED = 'member.migration.imported';
@@ -122,6 +123,22 @@ const JOINED_COLUMN = 'Joined Date (optional)';
 const SHARES_BALANCE_COLUMN = 'Shares Balance';
 const MSA_BALANCE_COLUMN = 'MSA Deposit Balance';
 const INSTRUCTIONS_SHEET = 'Instructions';
+
+// Officer request: the legacy register holds people who have left — resigned
+// members, the deceased — and accounts that were closed. A row says so in
+// Status (blank is Active) and each account in its own Status column; the
+// import records them the way the app's own exits leave them (S-1701..1704):
+// member.status 'resigned'/'demised' (dated), the Shares and the MSA closed
+// with a resignation, every account closed with a death, a closed account
+// holding nothing. The dates are optional: the register often says only
+// "RESIGNED". An account's closed_at cannot be empty (account_closed_is_dated,
+// 0077), so an undated closure is dated the day it was imported.
+const STATUS_COLUMN = 'Status';
+const STATUS_DATE_COLUMN = 'Status Date';
+const STATUS_CHOICES = ['Active', 'Resigned', 'Deceased'];
+const ACCOUNT_STATUS_CHOICES = ['Open', 'Closed'];
+
+type HolderStatus = 'active' | 'resigned' | 'demised';
 
 // How the template marks each column (officer request: what must be filled
 // in has to be plain on the sheet itself). The header's fill says which:
@@ -140,6 +157,7 @@ interface TemplateColumn {
   note?: string;
   text?: boolean; // keep as typed: no number or date conversion by Excel
   field?: MembershipTypeField; // a choice field gets its dropdown
+  choices?: string[]; // a dropdown for a column that is not a field
 }
 
 const FILLS: Record<ColumnKind, string> = {
@@ -372,6 +390,14 @@ function extraBalanceColumn(accountType: AccountType): string {
   return `${accountType.name} Balance`;
 }
 
+function extraStatusColumn(accountType: AccountType): string {
+  return `${accountType.name} Status`;
+}
+
+function extraClosedDateColumn(accountType: AccountType): string {
+  return `${accountType.name} Closed Date`;
+}
+
 // The template's first sheet: the colour key and the rules that hold on
 // every sheet. Kept short — the column notes carry each column's own rule.
 function fillInstructions(sheet: ExcelJS.Worksheet, typeNames: string[]) {
@@ -404,6 +430,8 @@ function fillInstructions(sheet: ExcelJS.Worksheet, typeNames: string[]) {
     `One row per person, on the sheet of their membership type: ${typeNames.join(', ')}.`,
     'A member has an AB Number, with Shares Balance and MSA Deposit Balance (0 if none).',
     'A non-member has no AB Number: fill Legacy Member Code and at least one account number with its balance.',
+    'Status: leave blank for a current member or non-member. Resigned (members only) or Deceased for someone who has left, with the Status Date if known. Their Shares and MSA close, so both balances are 0; a deceased person’s other accounts close too.',
+    'An account marked Closed is imported closed, with a balance of 0.',
     'Hover over a heading to read its note.',
     'Dates as YYYY-MM-DD. Amounts as plain numbers, e.g. 1500.50.',
     'NIC, legacy code and account numbers belong to one person only, in this file and on file.',
@@ -462,6 +490,19 @@ export async function buildImportTemplate(): Promise<Buffer> {
         text: true,
       },
       { header: JOINED_COLUMN, kind: 'optional', note: DATE_NOTE },
+      {
+        header: STATUS_COLUMN,
+        kind: 'optional',
+        note:
+          'Blank or Active for someone current. Resigned (a member only) or ' +
+          'Deceased for someone who has left.',
+        choices: STATUS_CHOICES,
+      },
+      {
+        header: STATUS_DATE_COLUMN,
+        kind: 'optional',
+        note: `When they resigned or died, if known. ${DATE_NOTE}`,
+      },
       ...fields.map(f => fieldColumn(f, f.label, f.isMandatory)),
       ...employment.map(f => fieldColumn(f, f.label, f.isMandatory)),
       ...guardian.map(f => ({
@@ -511,6 +552,17 @@ export async function buildImportTemplate(): Promise<Buffer> {
           header: extraBalanceColumn(extra),
           kind: 'conditional',
           note: `${pair} ${AMOUNT_NOTE}`,
+        },
+        {
+          header: extraStatusColumn(extra),
+          kind: 'optional',
+          note: 'Blank or Open for an open account. Closed: its balance is 0.',
+          choices: ACCOUNT_STATUS_CHOICES,
+        },
+        {
+          header: extraClosedDateColumn(extra),
+          kind: 'optional',
+          note: `When it was closed, if known. ${DATE_NOTE}`,
         }
       );
     }
@@ -531,7 +583,10 @@ export async function buildImportTemplate(): Promise<Buffer> {
       sheetColumn.width = 24;
       if (column.text) sheetColumn.numFmt = '@';
       const field = column.field;
-      if (field && field.dataType === 'choice' && field.choices.length > 0) {
+      const choices =
+        column.choices ??
+        (field && field.dataType === 'choice' ? field.choices : []);
+      if (choices.length > 0) {
         // A choice field gets a dropdown restricted to its configured
         // choices, so a typo cannot even be typed in — the same guarantee
         // the capture form's own <select> already gives.
@@ -539,7 +594,7 @@ export async function buildImportTemplate(): Promise<Buffer> {
           sheet.getCell(row, index + 1).dataValidation = {
             type: 'list',
             allowBlank: column.kind !== 'required',
-            formulae: [`"${field.choices.join(',')}"`],
+            formulae: [`"${choices.join(',')}"`],
           };
         }
       }
@@ -588,6 +643,14 @@ export interface ParsedRow {
   // it is to say what an unpaired one means.
   accountNumbers: Record<string, string>;
   accountBalances: Record<string, string>;
+  // Status and Status Date as typed; blank is Active. Optional so a row
+  // built by hand (a test, an older stored batch) reads as Active.
+  status?: string;
+  statusDate?: string;
+  // Each account's Status and Closed Date, keyed by account_type.id like
+  // the two above.
+  accountStatuses?: Record<string, string>;
+  accountClosedDates?: Record<string, string>;
 }
 
 // Strip the template's own " *" mandatory marker back off a header before
@@ -691,6 +754,12 @@ export async function parseImportFile(buffer: Buffer): Promise<ParsedRow[]> {
     const extraBalanceByLabel = new Map(
       extras.map(t => [extraBalanceColumn(t), t.id])
     );
+    const extraStatusByLabel = new Map(
+      extras.map(t => [extraStatusColumn(t), t.id])
+    );
+    const extraClosedDateByLabel = new Map(
+      extras.map(t => [extraClosedDateColumn(t), t.id])
+    );
 
     const headerRow = sheet.getRow(1);
     const columnFieldKeys = new Map<number, string>();
@@ -703,10 +772,14 @@ export async function parseImportFile(buffer: Buffer): Promise<ParsedRow[]> {
     >();
     const extraNumberColumns = new Map<number, string>();
     const extraBalanceColumns = new Map<number, string>();
+    const extraStatusColumns = new Map<number, string>();
+    const extraClosedDateColumns = new Map<number, string>();
     const unknownColumns = new Map<number, string>();
     let legacyCodeColumn: number | null = null;
     let abNumberColumn: number | null = null;
     let joinedColumn: number | null = null;
+    let statusColumn: number | null = null;
+    let statusDateColumn: number | null = null;
     let sharesBalanceColumn: number | null = null;
     let msaBalanceColumn: number | null = null;
     headerRow.eachCell((cell, colNumber) => {
@@ -718,6 +791,17 @@ export async function parseImportFile(buffer: Buffer): Promise<ParsedRow[]> {
         abNumberColumn = colNumber;
       } else if (header === JOINED_COLUMN) {
         joinedColumn = colNumber;
+      } else if (header === STATUS_COLUMN) {
+        statusColumn = colNumber;
+      } else if (header === STATUS_DATE_COLUMN) {
+        statusDateColumn = colNumber;
+      } else if (extraStatusByLabel.has(header)) {
+        extraStatusColumns.set(colNumber, extraStatusByLabel.get(header)!);
+      } else if (extraClosedDateByLabel.has(header)) {
+        extraClosedDateColumns.set(
+          colNumber,
+          extraClosedDateByLabel.get(header)!
+        );
       } else if (bareHeader === SHARES_BALANCE_COLUMN) {
         sharesBalanceColumn = colNumber;
       } else if (bareHeader === MSA_BALANCE_COLUMN) {
@@ -762,6 +846,8 @@ export async function parseImportFile(buffer: Buffer): Promise<ParsedRow[]> {
     const dateColumns = new Set<number>(
       [
         joinedColumn,
+        statusDateColumn,
+        ...extraClosedDateColumns.keys(),
         ...[...columnFieldKeys]
           .filter(
             ([, key]) =>
@@ -829,14 +915,30 @@ export async function parseImportFile(buffer: Buffer): Promise<ParsedRow[]> {
         const text = cellText(colNumber);
         if (text !== '') accountBalances[accountTypeId] = text;
       }
+      const accountStatuses: Record<string, string> = {};
+      for (const [colNumber, accountTypeId] of extraStatusColumns) {
+        const text = cellText(colNumber);
+        if (text !== '') accountStatuses[accountTypeId] = text;
+      }
+      const accountClosedDates: Record<string, string> = {};
+      for (const [colNumber, accountTypeId] of extraClosedDateColumns) {
+        const text = cellText(colNumber);
+        if (text !== '') accountClosedDates[accountTypeId] = text;
+      }
       const sharesBalance = cellText(sharesBalanceColumn);
       const msaBalance = cellText(msaBalanceColumn);
+      const status = cellText(statusColumn);
+      const statusDate = cellText(statusDateColumn);
 
       // A blank row (nothing typed anywhere) is not a record to reject —
       // it is the unused rest of the template, left as it was downloaded.
       const hasContent =
         legacyCode !== '' ||
         abNumber !== '' ||
+        status !== '' ||
+        statusDate !== '' ||
+        Object.keys(accountStatuses).length > 0 ||
+        Object.keys(accountClosedDates).length > 0 ||
         Object.values(values).some(v => v !== '') ||
         Object.values(employmentValues).some(v => v !== '') ||
         Object.values(guardianValues).some(v => v !== '') ||
@@ -863,6 +965,10 @@ export async function parseImportFile(buffer: Buffer): Promise<ParsedRow[]> {
         msaBalance,
         accountNumbers,
         accountBalances,
+        status,
+        statusDate,
+        accountStatuses,
+        accountClosedDates,
       });
     });
   }
@@ -885,6 +991,9 @@ export interface ValidatedAccountEntry {
   accountDefaultStatus: string;
   accountNo: string;
   amount: string;
+  // Imported closed, holding nothing: the day it closed (YYYY-MM-DD) when
+  // the register knows it, '' when it does not.
+  closed?: { on: string };
 }
 
 export interface ValidatedRow extends Omit<
@@ -910,12 +1019,21 @@ export interface ValidatedRow extends Omit<
   // legacy code names.
   existingId: string | null;
   existingApplicationId: string | null;
+  // Where the person stands (Status): 'active' unless the register says
+  // they resigned or died. Kept as YYYY-MM-DD text, not a Date, so a row
+  // stored with a chunked batch (batches.ts) reads back the same.
+  holderStatus?: HolderStatus;
+  statusDate?: string;
 }
 
 interface ExistingRecord {
   kind: 'member' | 'customer';
   id: string;
   applicationId: string | null;
+  // member.status or customer.status, as on file.
+  status: string;
+  // account_type.id -> that account's status on file.
+  accountStatuses: Map<string, string>;
   // AB number for a member, null for a customer — a customer has none of
   // its own to compare an AB Number against.
   memberNo: string | null;
@@ -1012,6 +1130,35 @@ export function parseAmount(
   }
 }
 
+// Status as typed: blank or Active, Resigned, Deceased ("Demised" is the
+// app's own word for it, so it is read too).
+function readHolderStatus(raw: string, problems: string[]): HolderStatus {
+  const key = raw.trim().toLowerCase();
+  if (key === '' || key === 'active') return 'active';
+  if (key === 'resigned') return 'resigned';
+  if (key === 'deceased' || key === 'demised') return 'demised';
+  problems.push(
+    `${STATUS_COLUMN} "${raw}" must be one of: ${STATUS_CHOICES.join(', ')}.`
+  );
+  return 'active';
+}
+
+// What a status on file means for Status: a member or non-member who has
+// not left (dormant, inactive, a non-member whose accounts are all closed)
+// reads as Active.
+function statusOnFile(status: string): HolderStatus {
+  return status === 'resigned' || status === 'demised' ? status : 'active';
+}
+
+function describeStatus(status: string): string {
+  const held = statusOnFile(status);
+  return held === 'demised'
+    ? 'Deceased'
+    : held === 'resigned'
+      ? 'Resigned'
+      : 'Active';
+}
+
 /**
  * Format and mandatory-field checks, member/non-member classification
  * (S-614), and legacy_code / AB Number / account-number / NIC uniqueness
@@ -1060,20 +1207,23 @@ export async function validateRows(
       member_no: string;
       application_id: string | null;
       legacy_code: string;
-    }>(`select id, member_no, application_id, legacy_code
+      status: string;
+    }>(`select id, member_no, application_id, legacy_code, status
           from member where legacy_code is not null`),
     query<{
       id: string;
       application_id: string | null;
       legacy_code: string;
-    }>(`select id, application_id, legacy_code
+      status: string;
+    }>(`select id, application_id, legacy_code, status
           from customer where legacy_code is not null`),
     query<{
       legacy_code: string;
       account_type_id: string;
       account_no: string | null;
+      status: string;
     }>(
-      `select m.legacy_code, a.account_type_id, a.account_no
+      `select m.legacy_code, a.account_type_id, a.account_no, a.status
          from account a join member m on m.id = a.member_id
         where m.legacy_code is not null`
     ),
@@ -1081,8 +1231,9 @@ export async function validateRows(
       legacy_code: string;
       account_type_id: string;
       account_no: string | null;
+      status: string;
     }>(
-      `select c.legacy_code, a.account_type_id, a.account_no
+      `select c.legacy_code, a.account_type_id, a.account_no, a.status
          from account a join customer c on c.id = a.customer_id
         where c.legacy_code is not null`
     ),
@@ -1121,6 +1272,8 @@ export async function validateRows(
       applicationId: r.application_id,
       memberNo: r.member_no,
       accountNos: new Map(),
+      status: r.status,
+      accountStatuses: new Map(),
     });
   }
   for (const r of existingCustomers.rows) {
@@ -1136,6 +1289,8 @@ export async function validateRows(
         applicationId: r.application_id,
         memberNo: null,
         accountNos: new Map(),
+        status: r.status,
+        accountStatuses: new Map(),
       });
     }
   }
@@ -1143,6 +1298,7 @@ export async function validateRows(
     if (!r.account_no) continue;
     const existing = existingByLegacyCode.get(r.legacy_code.toLowerCase());
     existing?.accountNos.set(r.account_type_id, r.account_no);
+    existing?.accountStatuses.set(r.account_type_id, r.status);
   }
 
   const memberNosTaken = new Set(
@@ -1235,6 +1391,8 @@ export async function validateRows(
   const membersInUpload = new Map<string, Record<string, string>>();
   // Member rows of this upload that did not validate, by AB Number.
   const membersWithProblems = new Set<string>();
+  // Member rows of this upload who resigned or died: no minor's guardian.
+  const membersWhoLeft = new Set<string>();
 
   for (const row of ordered) {
     const problems: string[] = [];
@@ -1322,6 +1480,39 @@ export async function validateRows(
       joinedAt = parseMigrationDate(row.joinedAt, 'Joined Date', problems);
     }
 
+    // Status: where the person stands. Resigning ends a membership, so only
+    // a member resigns; a corporate member resigns rather than dies, the
+    // same as the app's own exits (claimableMembershipType).
+    const holderStatus = readHolderStatus(row.status ?? '', problems);
+    let statusDate = '';
+    if ((row.statusDate ?? '').trim() !== '') {
+      if (holderStatus === 'active') {
+        problems.push(
+          `${STATUS_DATE_COLUMN} is only for someone who resigned or died.`
+        );
+      } else if (
+        parseMigrationDate(row.statusDate!, STATUS_DATE_COLUMN, problems)
+      ) {
+        statusDate = row.statusDate!.trim();
+      }
+    }
+    if (holderStatus === 'resigned' && !abGiven) {
+      problems.push(
+        'Only a member can resign. Leave Status blank, or choose Deceased.'
+      );
+    }
+    if (holderStatus === 'demised' && !claimableMembershipType(type.code)) {
+      problems.push(
+        `A ${type.name} member cannot be Deceased. Choose Resigned instead.`
+      );
+    }
+    if (existing && holderStatus !== statusOnFile(existing.status)) {
+      problems.push(
+        `"${legacyCode}" is on file as ${describeStatus(existing.status)}. ` +
+          'A re-import does not change it: set Status to match.'
+      );
+    }
+
     const fields = applicantFields(type);
     const { values, errors: formatErrors } = normalise(row.values, fields);
     for (const error of formatErrors) problems.push(error.label);
@@ -1391,7 +1582,12 @@ export async function validateRows(
       } else {
         const found = await findGuardian(guardianMemberNo, '');
         const inUpload = membersInUpload.get(guardianMemberNo.toUpperCase());
-        if (!found && inUpload) {
+        if (!found && membersWhoLeft.has(guardianMemberNo.toUpperCase())) {
+          problems.push(
+            `The guardian (${guardianMemberNo.toUpperCase()}) is not an ` +
+              'active member.'
+          );
+        } else if (!found && inUpload) {
           guardianValues = {
             [guardianField.fieldKey]: guardianMemberNo.toUpperCase(),
             surname: inUpload.surname ?? '',
@@ -1506,14 +1702,72 @@ export async function validateRows(
           'a member holds Shares or an MSA.'
       );
     }
+    // A resignation or a death closed the Shares and the MSA, paying out
+    // what was in them.
+    if (abGiven && holderStatus !== 'active') {
+      const left = holderStatus === 'resigned' ? 'resigned' : 'deceased';
+      for (const [label, amount] of [
+        [SHARES_BALANCE_COLUMN, sharesBalance],
+        [MSA_BALANCE_COLUMN, msaBalance],
+      ]) {
+        if (amount !== '' && toCents(amount) !== 0) {
+          problems.push(`${label} of a ${left} member is 0: it was paid out.`);
+        }
+      }
+    }
 
     const accountEntries: ValidatedAccountEntry[] = [];
     let anyAccountGiven = false;
     for (const extraType of additionalAccountTypes(type, accountTypes)) {
       const rawNumber = (row.accountNumbers[extraType.id] ?? '').trim();
       const rawBalance = (row.accountBalances[extraType.id] ?? '').trim();
-      if (rawNumber === '' && rawBalance === '') continue;
+      const rawStatus = (row.accountStatuses?.[extraType.id] ?? '').trim();
+      const rawClosedDate = (
+        row.accountClosedDates?.[extraType.id] ?? ''
+      ).trim();
+      if (rawNumber === '' && rawBalance === '') {
+        if (rawStatus !== '' || rawClosedDate !== '') {
+          problems.push(
+            `${extraStatusColumn(extraType)} needs ` +
+              `${extraNumberColumn(extraType)} and its balance.`
+          );
+        }
+        continue;
+      }
       anyAccountGiven = true;
+
+      // Closed when the sheet says so, or with a closing date; every
+      // account of someone deceased is closed whatever its column says.
+      let closed: { on: string } | undefined;
+      const statusKey = rawStatus.toLowerCase();
+      if (statusKey !== '' && statusKey !== 'open' && statusKey !== 'closed') {
+        problems.push(
+          `${extraStatusColumn(extraType)} "${rawStatus}" must be Open or ` +
+            'Closed.'
+        );
+      } else if (statusKey === 'open' && rawClosedDate !== '') {
+        problems.push(
+          `${extraClosedDateColumn(extraType)} is only for a closed account.`
+        );
+      } else if (
+        statusKey === 'closed' ||
+        rawClosedDate !== '' ||
+        holderStatus === 'demised'
+      ) {
+        closed = { on: '' };
+        if (
+          rawClosedDate !== '' &&
+          parseMigrationDate(
+            rawClosedDate,
+            extraClosedDateColumn(extraType),
+            problems
+          )
+        ) {
+          closed.on = rawClosedDate;
+        } else if (rawClosedDate === '' && holderStatus === 'demised') {
+          closed.on = statusDate;
+        }
+      }
 
       if (rawNumber === '') {
         problems.push(
@@ -1536,6 +1790,13 @@ export async function validateRows(
         problems
       );
       if (amount === '') continue; // parseAmount already recorded why.
+      if (closed && toCents(amount) !== 0) {
+        problems.push(
+          `${extraBalanceColumn(extraType)} of a closed account is 0: it ` +
+            'was paid out.'
+        );
+        continue;
+      }
 
       const onFile = existing?.accountNos.get(extraType.id);
       if (onFile !== undefined) {
@@ -1544,6 +1805,15 @@ export async function validateRows(
             `${extraType.name} Number "${rawNumber}" does not match ${onFile}, ` +
               `which "${legacyCode}" already holds. Fix the number, or ` +
               'this may be a different account than the one on file.'
+          );
+        } else if (
+          !!closed !==
+          (existing!.accountStatuses.get(extraType.id) === 'closed')
+        ) {
+          problems.push(
+            `${extraType.name} ${onFile} is on file as ` +
+              `${closed ? 'open' : 'closed'}. A re-import does not change ` +
+              `it: set ${extraStatusColumn(extraType)} to match.`
           );
         }
         // Matches what is on file — nothing new to write, the same reason
@@ -1570,6 +1840,7 @@ export async function validateRows(
           accountDefaultStatus: extraType.defaultStatus,
           accountNo: rawNumber,
           amount,
+          ...(closed ? { closed } : {}),
         });
       }
     }
@@ -1592,7 +1863,11 @@ export async function validateRows(
       continue;
     }
 
-    if (abGiven) membersInUpload.set(abNumber.toUpperCase(), values);
+    if (abGiven && holderStatus === 'active') {
+      membersInUpload.set(abNumber.toUpperCase(), values);
+    } else if (abGiven) {
+      membersWhoLeft.add(abNumber.toUpperCase());
+    }
     valid.push({
       ...row,
       // The effective code — the AB Number, when the column itself was
@@ -1612,6 +1887,8 @@ export async function validateRows(
       kind: abGiven ? 'member' : 'customer',
       existingId: existing?.id ?? null,
       existingApplicationId: existing?.applicationId ?? null,
+      holderStatus,
+      statusDate,
     });
   }
 
@@ -1673,15 +1950,19 @@ export interface ImportOutcome {
   }[];
 }
 
+// A closed account holds nothing (validateRows), so it has no opening
+// balance line and takes no receipt.
 function toBalanceLines(
   entries: ValidatedAccountEntry[]
 ): MigrationBalanceLine[] {
-  return entries.map(e => ({
-    accountTypeId: e.accountTypeId,
-    accountTypeCode: e.accountTypeCode,
-    accountTypeName: e.accountTypeName,
-    amount: e.amount,
-  }));
+  return entries
+    .filter(e => !e.closed)
+    .map(e => ({
+      accountTypeId: e.accountTypeId,
+      accountTypeCode: e.accountTypeCode,
+      accountTypeName: e.accountTypeName,
+      amount: e.amount,
+    }));
 }
 
 // Guardian and Takaful beneficiary (Minor only, always fully required when
@@ -1755,6 +2036,101 @@ async function writeGuardianAndNomineeParties(
       [applicationId, ordinal, JSON.stringify(values)]
     );
   }
+}
+
+// Opens the row's new accounts, and returns the ones the register says are
+// closed, to be closed once the opening balances are written.
+async function openRowAccounts(
+  client: PoolClient,
+  owner: { memberId: string } | { customerId: string },
+  applicationId: string,
+  row: ValidatedRow,
+  actor: Actor
+): Promise<{ id: string; on: string }[]> {
+  const closed: { id: string; on: string }[] = [];
+  for (const entry of row.accountEntries) {
+    const account = await openMigrationAccount(
+      client,
+      owner,
+      applicationId,
+      entry.accountNo,
+      {
+        id: entry.accountTypeId,
+        code: entry.accountTypeCode,
+        name: entry.accountTypeName,
+        defaultStatus: entry.accountDefaultStatus,
+      },
+      actor
+    );
+    if (entry.closed) closed.push({ id: account.id, on: entry.closed.on });
+  }
+  return closed;
+}
+
+// What the register says about someone who has left, and the accounts it
+// says are closed, left the way the app's own exits leave them: a
+// resignation closes the Shares and the MSA, a death closes everything, and
+// a non-member with nothing left open is 'closed' (claimants.ts). An
+// undated closure is dated now: closed_at cannot be empty.
+async function recordStatusAndClosures(
+  client: PoolClient,
+  owner: { memberId: string } | { customerId: string },
+  row: ValidatedRow,
+  closedAccounts: { id: string; on: string }[]
+): Promise<void> {
+  for (const account of closedAccounts) {
+    await client.query(
+      `update account
+          set status = 'closed',
+              closed_at = coalesce(nullif($2, '')::date::timestamptz, now()),
+              updated_at = now()
+        where id = $1`,
+      [account.id, account.on]
+    );
+  }
+  const status = row.holderStatus ?? 'active';
+  const statusDate = row.statusDate ?? '';
+  if ('memberId' in owner) {
+    if (status === 'active') return;
+    await client.query(
+      `update account
+          set status = 'closed',
+              closed_at = coalesce(nullif($3, '')::date::timestamptz, now()),
+              updated_at = now()
+        where member_id = $1 and status <> 'closed'
+          and (is_membership_default or $2)`,
+      [owner.memberId, status === 'demised', statusDate]
+    );
+    await client.query(
+      `update member
+          set status = $2,
+              status_changed_at = nullif($3, '')::date::timestamptz,
+              updated_at = now()
+        where id = $1`,
+      [owner.memberId, status, statusDate]
+    );
+    return;
+  }
+  if (status === 'demised') {
+    await client.query(
+      `update account
+          set status = 'closed',
+              closed_at = coalesce(nullif($2, '')::date::timestamptz, now()),
+              updated_at = now()
+        where customer_id = $1 and status <> 'closed'`,
+      [owner.customerId, statusDate]
+    );
+  }
+  await client.query(
+    `update customer c
+        set status = case when $2 = 'demised' then 'demised' else 'closed' end,
+            updated_at = now()
+      where c.id = $1 and c.status = 'active'
+        and exists (select 1 from account a where a.customer_id = c.id)
+        and not exists (select 1 from account a
+                         where a.customer_id = c.id and a.status <> 'closed')`,
+    [owner.customerId, status]
+  );
 }
 
 /**
@@ -1849,7 +2225,7 @@ export async function importMembers(
           const applicationId = row.existingApplicationId!;
 
           let feeVersionId: string | null = null;
-          if (row.accountEntries.length > 0) {
+          if (toBalanceLines(row.accountEntries).length > 0) {
             // Both read fresh before the transaction opens — a pool-level
             // query() from inside it would ask the pool for a second
             // connection while the first is still checked out (the same
@@ -1879,21 +2255,13 @@ export async function importMembers(
               [memberId, row.joinedAt]
             );
 
-            for (const entry of row.accountEntries) {
-              await openMigrationAccount(
-                client,
-                { memberId },
-                applicationId,
-                entry.accountNo,
-                {
-                  id: entry.accountTypeId,
-                  code: entry.accountTypeCode,
-                  name: entry.accountTypeName,
-                  defaultStatus: entry.accountDefaultStatus,
-                },
-                actor
-              );
-            }
+            const closedAccounts = await openRowAccounts(
+              client,
+              { memberId },
+              applicationId,
+              row,
+              actor
+            );
 
             if (allocation) {
               await recordMigrationOpeningBalances(
@@ -1911,6 +2279,13 @@ export async function importMembers(
               );
             }
 
+            await recordStatusAndClosures(
+              client,
+              { memberId },
+              row,
+              closedAccounts
+            );
+
             await recordAudit(
               {
                 actorUserId: actor.userId,
@@ -1921,6 +2296,7 @@ export async function importMembers(
                 newValue: {
                   memberNo: updated.rows[0].member_no,
                   legacyCode: row.legacyCode,
+                  status: row.holderStatus ?? 'active',
                   membershipType: row.sheet,
                 },
               },
@@ -2028,21 +2404,13 @@ export async function importMembers(
             );
             await advanceMemberNumberSeq(client, row.abNumber);
 
-            for (const entry of row.accountEntries) {
-              await openMigrationAccount(
-                client,
-                { memberId: created.id },
-                applicationId,
-                entry.accountNo,
-                {
-                  id: entry.accountTypeId,
-                  code: entry.accountTypeCode,
-                  name: entry.accountTypeName,
-                  defaultStatus: entry.accountDefaultStatus,
-                },
-                actor
-              );
-            }
+            const closedAccounts = await openRowAccounts(
+              client,
+              { memberId: created.id },
+              applicationId,
+              row,
+              actor
+            );
 
             if (allocation) {
               await recordMigrationOpeningBalances(
@@ -2060,6 +2428,13 @@ export async function importMembers(
               );
             }
 
+            await recordStatusAndClosures(
+              client,
+              { memberId: created.id },
+              row,
+              closedAccounts
+            );
+
             await recordAudit(
               {
                 actorUserId: actor.userId,
@@ -2070,6 +2445,7 @@ export async function importMembers(
                 newValue: {
                   memberNo: created.memberNo,
                   legacyCode: row.legacyCode,
+                  status: row.holderStatus ?? 'active',
                   membershipType: row.sheet,
                 },
               },
@@ -2094,7 +2470,7 @@ export async function importMembers(
           const applicationId = row.existingApplicationId!;
 
           let feeVersionId: string | null = null;
-          if (row.accountEntries.length > 0) {
+          if (toBalanceLines(row.accountEntries).length > 0) {
             [allocation, feeVersionId] = await Promise.all([
               allocateReceiptNumber(actor.userId),
               migrationFeeVersionId(row.membershipTypeId),
@@ -2123,21 +2499,13 @@ export async function importMembers(
               [customerId, row.joinedAt]
             );
 
-            for (const entry of row.accountEntries) {
-              await openMigrationAccount(
-                client,
-                { customerId },
-                applicationId,
-                entry.accountNo,
-                {
-                  id: entry.accountTypeId,
-                  code: entry.accountTypeCode,
-                  name: entry.accountTypeName,
-                  defaultStatus: entry.accountDefaultStatus,
-                },
-                actor
-              );
-            }
+            const closedAccounts = await openRowAccounts(
+              client,
+              { customerId },
+              applicationId,
+              row,
+              actor
+            );
 
             if (allocation) {
               await recordMigrationOpeningBalances(
@@ -2155,6 +2523,13 @@ export async function importMembers(
               );
             }
 
+            await recordStatusAndClosures(
+              client,
+              { customerId },
+              row,
+              closedAccounts
+            );
+
             await recordAudit(
               {
                 actorUserId: actor.userId,
@@ -2164,6 +2539,7 @@ export async function importMembers(
                 entityId: customerId,
                 newValue: {
                   legacyCode: row.legacyCode,
+                  status: row.holderStatus ?? 'active',
                   membershipType: row.sheet,
                 },
               },
@@ -2234,7 +2610,7 @@ export async function importMembers(
 
           const accountLines = toBalanceLines(row.accountEntries);
           let feeVersionId: string | null = null;
-          if (row.accountEntries.length > 0) {
+          if (toBalanceLines(row.accountEntries).length > 0) {
             [allocation, feeVersionId] = await Promise.all([
               allocateReceiptNumber(actor.userId),
               migrationFeeVersionId(row.membershipTypeId),
@@ -2250,21 +2626,13 @@ export async function importMembers(
               [created.id, row.legacyCode, row.joinedAt]
             );
 
-            for (const entry of row.accountEntries) {
-              await openMigrationAccount(
-                client,
-                { customerId: created.id },
-                applicationId,
-                entry.accountNo,
-                {
-                  id: entry.accountTypeId,
-                  code: entry.accountTypeCode,
-                  name: entry.accountTypeName,
-                  defaultStatus: entry.accountDefaultStatus,
-                },
-                actor
-              );
-            }
+            const closedAccounts = await openRowAccounts(
+              client,
+              { customerId: created.id },
+              applicationId,
+              row,
+              actor
+            );
 
             if (allocation) {
               await recordMigrationOpeningBalances(
@@ -2282,6 +2650,13 @@ export async function importMembers(
               );
             }
 
+            await recordStatusAndClosures(
+              client,
+              { customerId: created.id },
+              row,
+              closedAccounts
+            );
+
             await recordAudit(
               {
                 actorUserId: actor.userId,
@@ -2291,6 +2666,7 @@ export async function importMembers(
                 entityId: created.id,
                 newValue: {
                   legacyCode: row.legacyCode,
+                  status: row.holderStatus ?? 'active',
                   membershipType: row.sheet,
                 },
               },
