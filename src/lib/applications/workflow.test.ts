@@ -382,6 +382,19 @@ async function recordFullPayment(
   );
 }
 
+// The two witnesses to the form, named on its signature step.
+const WITNESSES = ['Ahmad Peerbux', 'Nadia Rajabally'];
+
+// For tests that start an application inline rather than through
+// captureComplete: names both witnesses as the capturing officer.
+async function nameWitnesses(id: string) {
+  const capture = await import('./capture');
+  await capture.setWitnessNames(id, WITNESSES, {
+    userId: officer.userId,
+    email: officer.email,
+  });
+}
+
 async function captureComplete(capturedBy: Principal = officer) {
   // Plain dynamic imports, not another load(): every caller has already
   // called load() once for its own {capture, workflow, ...}, and load()
@@ -399,6 +412,7 @@ async function captureComplete(capturedBy: Principal = officer) {
   const actor = { userId: capturedBy.userId, email: capturedBy.email };
   const { id } = await capture.startApplication('individual', actor);
   await capture.saveDraft(id, COMPLETE_INDIVIDUAL(), actor);
+  await capture.setWitnessNames(id, WITNESSES, actor);
   await fileRequiredDocuments(documents, id);
   await verifyRequiredDocuments(documents, id, capturedBy);
   await recordFullPayment(payments, id);
@@ -443,6 +457,7 @@ async function captureCompleteCorporate() {
   const actor = { userId: officer.userId, email: officer.email };
   const { id } = await capture.startApplication('corporate', actor);
   await capture.saveDraft(id, COMPLETE_CORPORATE, actor);
+  await capture.setWitnessNames(id, WITNESSES, actor);
   await fileRequiredDocuments(documents, id);
   await verifyRequiredDocuments(documents, id);
   await recordFullPayment(payments, id);
@@ -527,6 +542,7 @@ describe('S-604/S-605: a Minor application with a valid guardian, end to end', (
     await capture.saveDraft(id, parties('AB9999'), actor);
     const documents = await import('../documents/documents');
     const payments = await import('../payments/payments');
+    await nameWitnesses(id);
     await fileRequiredDocuments(documents, id);
     await verifyRequiredDocuments(documents, id);
     await recordFullPayment(payments, id);
@@ -775,6 +791,7 @@ describe('S-304: submission', () => {
     const actor = { userId: officer.userId, email: officer.email };
     const { id } = await capture.startApplication('individual', actor);
     await capture.saveDraft(id, COMPLETE_INDIVIDUAL(), actor);
+    await nameWitnesses(id);
     // Fields are complete, money is taken — only the KYC pack is missing.
     await recordFullPayment(payments, id);
 
@@ -790,12 +807,32 @@ describe('S-304: submission', () => {
     const { id } = await capture.startApplication('individual', actor);
     await capture.saveDraft(id, COMPLETE_INDIVIDUAL(), actor);
     // Fields and the KYC pack are complete — only the money is missing.
+    await nameWitnesses(id);
     await fileRequiredDocuments(documents, id);
 
     await expect(workflow.submitApplication(id, officer)).rejects.toThrowError(
       /Payment must be recorded/
     );
     expect((await capture.loadApplication(id))!.status).toBe('draft');
+  });
+
+  it('refuses while either witness name is missing, then submits once both are named', async () => {
+    const { capture, workflow } = await load();
+    const actor = { userId: officer.userId, email: officer.email };
+    // Fields, documents and payment are all in order; only the second
+    // witness is blank.
+    const id = await captureComplete();
+    await capture.setWitnessNames(id, ['Ahmad Peerbux', ''], actor);
+
+    await expect(workflow.submitApplication(id, officer)).rejects.toThrowError(
+      /both witness names/
+    );
+    expect((await capture.loadApplication(id))!.status).toBe('draft');
+
+    await capture.setWitnessNames(id, WITNESSES, actor);
+    expect(await workflow.submitApplication(id, officer)).toEqual({
+      status: 'new',
+    });
   });
 
   it('reports document and payment readiness the same way submitApplication checks it', async () => {
@@ -808,6 +845,7 @@ describe('S-304: submission', () => {
       fieldProblems: [],
       documentsOutstanding: 0,
       paymentRecorded: true,
+      witnessesNamed: true,
     });
   });
 });
@@ -901,6 +939,7 @@ describe('S-203: segregation of duties, on this record', () => {
       userId: officer.userId,
       email: officer.email,
     });
+    await nameWitnesses(id);
     await fileRequiredDocuments(documents, id);
     await recordFullPayment(payments, id);
 
@@ -1106,6 +1145,7 @@ describe('S-608: nothing incomplete reaches the Board', () => {
     const actor = { userId: officer.userId, email: officer.email };
     const { id } = await capture.startApplication('individual', actor);
     await capture.saveDraft(id, COMPLETE_INDIVIDUAL(), actor);
+    await nameWitnesses(id);
     await fileRequiredDocuments(documents, id);
     await recordFullPayment(payments, id);
     await workflow.submitApplication(id, officer);
@@ -1128,6 +1168,7 @@ describe('S-608: nothing incomplete reaches the Board', () => {
     const actor = { userId: officer.userId, email: officer.email };
     const { id } = await capture.startApplication('individual', actor);
     await capture.saveDraft(id, COMPLETE_INDIVIDUAL(), actor);
+    await nameWitnesses(id);
     await fileRequiredDocuments(documents, id);
     await recordFullPayment(payments, id);
     await workflow.submitApplication(id, officer);
@@ -1222,6 +1263,7 @@ describe('S-608: nothing incomplete reaches the Board', () => {
       },
     ];
     await capture.saveDraft(id, parties, actor);
+    await nameWitnesses(id);
     await fileRequiredDocuments(documents, id);
     // Deliberately left unverified, alongside the guardian problem below —
     // this is also the test that both are named together, not just one.
@@ -1249,6 +1291,7 @@ describe('S-608: nothing incomplete reaches the Board', () => {
     const actor = { userId: officer.userId, email: officer.email };
     const { id } = await capture.startApplication('individual', actor);
     await capture.saveDraft(id, COMPLETE_INDIVIDUAL(), actor);
+    await nameWitnesses(id);
     await fileRequiredDocuments(documents, id);
     await recordFullPayment(payments, id);
     await workflow.submitApplication(id, officer);
@@ -1610,6 +1653,7 @@ describe('S-308 and S-309: what approval creates', () => {
 
     const { id } = await capture.startApplication('individual', actor);
     await capture.saveDraft(id, COMPLETE_INDIVIDUAL(), actor);
+    await nameWitnesses(id);
     await fileRequiredDocuments(documents, id);
     await verifyRequiredDocuments(documents, id);
 
@@ -2728,6 +2772,7 @@ describe('S-613: an additional-account application, end to end', () => {
     // further account must still be signed by the member — the signed form is
     // always on an additional account's checklist (snapshotAccountTypesChecklist),
     // so it is filed and verified here before submission.
+    await nameWitnesses(application.id);
     await fileRequiredDocuments(documents, application.id);
     await verifyRequiredDocuments(documents, application.id);
 
@@ -2814,6 +2859,7 @@ describe('S-613: an additional-account application, end to end', () => {
       [accountTypeId],
       officer
     );
+    await nameWitnesses(application.id);
     await fileRequiredDocuments(documents, application.id);
     await verifyRequiredDocuments(documents, application.id);
     await payments.recordAccountOpeningPayment(
@@ -2855,6 +2901,7 @@ describe('S-613: an additional-account application, end to end', () => {
       [accountTypeId],
       officer
     );
+    await nameWitnesses(first.id);
     await fileRequiredDocuments(documents, first.id);
     await verifyRequiredDocuments(documents, first.id);
     await payments.recordAccountOpeningPayment(
@@ -2889,6 +2936,7 @@ describe('S-613: an additional-account application, end to end', () => {
       [accountTypeId],
       officer
     );
+    await nameWitnesses(second.id);
     await fileRequiredDocuments(documents, second.id);
     await verifyRequiredDocuments(documents, second.id);
     await payments.recordAccountOpeningPayment(
@@ -2972,6 +3020,7 @@ describe('S-614: a customer_account application, end to end', () => {
     // in the same way a membership application's are, against the same
     // fields (S-614 phase 2).
     await capture.saveDraft(application.id, COMPLETE_INDIVIDUAL(), actor);
+    await nameWitnesses(application.id);
     await fileRequiredDocuments(documents, application.id);
     await verifyRequiredDocuments(documents, application.id);
 
@@ -3053,6 +3102,7 @@ describe('S-614: a customer_account application, end to end', () => {
       officer
     );
     await capture.saveDraft(application.id, COMPLETE_INDIVIDUAL(), actor);
+    await nameWitnesses(application.id);
     await fileRequiredDocuments(documents, application.id);
     await verifyRequiredDocuments(documents, application.id);
     await payments.recordAccountOpeningPayment(
@@ -3117,6 +3167,7 @@ describe('S-614: a customer_account application, end to end', () => {
         : p
     );
     await capture.saveDraft(application.id, values, actor);
+    await nameWitnesses(application.id);
     await fileRequiredDocuments(documents, application.id);
     await verifyRequiredDocuments(documents, application.id);
     await payments.recordAccountOpeningPayment(
@@ -3211,6 +3262,7 @@ describe('S-614: the account a non-member already held transfers when they becom
       officer
     );
     await capture.saveDraft(custApp.id, COMPLETE_INDIVIDUAL(), actor);
+    await nameWitnesses(custApp.id);
     await fileRequiredDocuments(documents, custApp.id);
     await verifyRequiredDocuments(documents, custApp.id);
     await payments.recordAccountOpeningPayment(
@@ -3249,6 +3301,7 @@ describe('S-614: the account a non-member already held transfers when they becom
       customerId,
       officer
     );
+    await nameWitnesses(memApp.id);
     await fileRequiredDocuments(documents, memApp.id);
     await verifyRequiredDocuments(documents, memApp.id);
     await recordFullPayment(payments, memApp.id);
@@ -3322,6 +3375,7 @@ describe('S-614: the account a non-member already held transfers when they becom
       officer
     );
     await capture.saveDraft(custApp.id, COMPLETE_INDIVIDUAL(), actor);
+    await nameWitnesses(custApp.id);
     await fileRequiredDocuments(documents, custApp.id);
     await verifyRequiredDocuments(documents, custApp.id);
     await payments.recordAccountOpeningPayment(
@@ -3355,6 +3409,7 @@ describe('S-614: the account a non-member already held transfers when they becom
       customerId,
       officer
     );
+    await nameWitnesses(memApp.id);
     await fileRequiredDocuments(documents, memApp.id);
     await verifyRequiredDocuments(documents, memApp.id);
     const due = await payments.amountDueForApplication(memApp.id);
@@ -3430,6 +3485,7 @@ describe('S-614: the account a non-member already held transfers when they becom
       officer
     );
     await capture.saveDraft(custApp.id, COMPLETE_INDIVIDUAL(), actor);
+    await nameWitnesses(custApp.id);
     await fileRequiredDocuments(documents, custApp.id);
     await verifyRequiredDocuments(documents, custApp.id);
     await payments.recordAccountOpeningPayment(
@@ -3461,6 +3517,7 @@ describe('S-614: the account a non-member already held transfers when they becom
       customerId,
       officer
     );
+    await nameWitnesses(memApp.id);
     await fileRequiredDocuments(documents, memApp.id);
     await verifyRequiredDocuments(documents, memApp.id);
     await recordFullPayment(payments, memApp.id);
@@ -3619,6 +3676,7 @@ describe('a customer opens a further account, end to end', () => {
       officer
     );
     await capture.saveDraft(first.id, COMPLETE_INDIVIDUAL(), actor);
+    await nameWitnesses(first.id);
     await fileRequiredDocuments(documents, first.id);
     await verifyRequiredDocuments(documents, first.id);
     await payments.recordAccountOpeningPayment(
@@ -3664,6 +3722,7 @@ describe('a customer opens a further account, end to end', () => {
     expect(loaded.existingHolderId).toBe(customerId);
     expect(loaded.existingHolderApplicationId).toBe(first.id);
 
+    await nameWitnesses(second.id);
     await fileRequiredDocuments(documents, second.id);
     await verifyRequiredDocuments(documents, second.id);
     await payments.recordAccountOpeningPayment(
@@ -3746,6 +3805,7 @@ describe('a customer opens a further account, end to end', () => {
       officer
     );
     await capture.saveDraft(first.id, COMPLETE_INDIVIDUAL(), actor);
+    await nameWitnesses(first.id);
     await fileRequiredDocuments(documents, first.id);
     await verifyRequiredDocuments(documents, first.id);
     await payments.recordAccountOpeningPayment(
@@ -3776,6 +3836,7 @@ describe('a customer opens a further account, end to end', () => {
       [hsaTypeId],
       actor
     );
+    await nameWitnesses(second.id);
     await fileRequiredDocuments(documents, second.id);
     await verifyRequiredDocuments(documents, second.id);
     await payments.recordAccountOpeningPayment(

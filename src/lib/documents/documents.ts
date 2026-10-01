@@ -63,13 +63,14 @@ export const ACTION_VERIFIED = 'document.verified';
 export type ChecklistState =
   'missing' | 'uploaded' | 'under_review' | 'verified' | 'rejected' | 'expired';
 
-// S-603, FRD 5.4. The printed form always carries these signature blocks —
-// print.astro — regardless of membership type, so this is a fixed, universal
-// check rather than something configuration decides. Shared here so the
-// print page and the verification gate below can never disagree about what
-// "all signatures" means. The nominee no longer signs (officer feedback): a
-// nominee is named on the form, not a party to it.
-export const SIGNATURES = ['Applicant', 'Witness 1', 'Witness 2'] as const;
+// S-603, FRD 5.4. The signatures the printed form carries — print.astro —
+// regardless of membership type, so this is a fixed, universal check rather
+// than something configuration decides. Shared here so the print page and
+// the verification gate below can never disagree about what "all
+// signatures" means. Only the applicant signs (officer feedback): the
+// nominee is named on the form, not a party to it, and the two witnesses
+// are recorded by name (membership_application.witness_*_name, 0112).
+export const SIGNATURES = ['Applicant'] as const;
 
 export interface ChecklistEntry {
   documentTypeId: string;

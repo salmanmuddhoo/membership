@@ -74,6 +74,9 @@ interface ApplicationCommon {
   decidedAt: Date | null;
   updatedAt: Date;
   parties: PartyValues[];
+  // Who witnessed the form, by name (migration 0112): typed on the form
+  // step, printed on it, and needed before the application is submitted.
+  witnesses: [string, string];
 }
 
 // S-301's original application, capturing an applicant and, on approval,
@@ -1104,6 +1107,8 @@ export async function loadApplication(id: string): Promise<Application | null> {
       submitted_at: Date | null;
       decided_at: Date | null;
       updated_at: Date;
+      witness_1_name: string | null;
+      witness_2_name: string | null;
     }>(
       // Both membership_type and member are left joins: exactly one of the two
       // is ever populated for a given row, decided by application_kind, never
@@ -1123,7 +1128,8 @@ export async function loadApplication(id: string): Promise<Application | null> {
             a.status, a.captured_by,
             u.display_name as captured_by_name,
             u.email::text as captured_by_email,
-            a.submitted_at, a.decided_at, a.updated_at
+            a.submitted_at, a.decided_at, a.updated_at,
+            a.witness_1_name, a.witness_2_name
        from membership_application a
        left join membership_type mt on mt.id = a.membership_type_id
        left join member mb          on mb.id = a.existing_member_id
@@ -1164,6 +1170,10 @@ export async function loadApplication(id: string): Promise<Application | null> {
     submittedAt: row.submitted_at,
     decidedAt: row.decided_at,
     updatedAt: row.updated_at,
+    witnesses: [row.witness_1_name ?? '', row.witness_2_name ?? ''] as [
+      string,
+      string,
+    ],
     parties: parties.rows.map(p => ({
       subject: p.subject,
       ordinal: p.ordinal,
@@ -1493,6 +1503,72 @@ export function normalise(
  * (S-304), where the application leaves their hands. Format errors are
  * reported but do not block the save, for the same reason.
  */
+// The longest a witness's name may be: room for a full name and more, but
+// not a paste of something else.
+export const WITNESS_NAME_MAX = 120;
+
+/**
+ * Record who witnessed the application form (officer request): the two
+ * names typed on the form step. Only while the application is still the
+ * officer's to change, like any other part of the capture.
+ */
+export async function setWitnessNames(
+  applicationId: string,
+  names: readonly string[],
+  actor: Actor
+): Promise<[string, string]> {
+  const application = await loadApplication(applicationId);
+  if (!application) {
+    throw new ApplicationError(
+      'That application no longer exists.',
+      'not_found'
+    );
+  }
+  if (!EDITABLE_STATUSES.has(application.status)) {
+    throw new ApplicationError(
+      'This application has been submitted and can no longer be edited.',
+      'locked'
+    );
+  }
+  const cleaned = [0, 1].map(i =>
+    (names[i] ?? '').replace(/\s+/g, ' ').trim()
+  ) as [string, string];
+  for (const [i, name] of cleaned.entries()) {
+    if (name.length > WITNESS_NAME_MAX) {
+      throw new ApplicationError(
+        `Witness ${i + 1}'s name is longer than ${WITNESS_NAME_MAX} characters.`
+      );
+    }
+  }
+  if (
+    cleaned[0] === application.witnesses[0] &&
+    cleaned[1] === application.witnesses[1]
+  ) {
+    return cleaned;
+  }
+  await withTransaction(async client => {
+    await client.query(
+      `update membership_application
+          set witness_1_name = nullif($2, ''), witness_2_name = nullif($3, '')
+        where id = $1`,
+      [applicationId, cleaned[0], cleaned[1]]
+    );
+    await recordAudit(
+      {
+        actorUserId: actor.userId,
+        actorDescription: actor.email,
+        action: 'application.witnesses_set',
+        entityType: 'membership_application',
+        entityId: applicationId,
+        previousValue: { witnesses: application.witnesses },
+        newValue: { witnesses: cleaned },
+      },
+      client
+    );
+  });
+  return cleaned;
+}
+
 export async function saveDraft(
   applicationId: string,
   parties: PartyValues[],
@@ -2688,4 +2764,19 @@ export async function countApplicationsForList(options: {
     ]
   );
   return Number(result.rows[0].n);
+}
+
+// The witnesses to an application's form, for a page that has the
+// application's id but not the application (a member's page).
+export async function witnessesOf(
+  applicationId: string | null
+): Promise<[string, string]> {
+  if (!applicationId) return ['', ''];
+  const result = await query<{ w1: string | null; w2: string | null }>(
+    `select witness_1_name as w1, witness_2_name as w2
+       from membership_application where id = $1`,
+    [applicationId]
+  );
+  const row = result.rows[0];
+  return [row?.w1 ?? '', row?.w2 ?? ''];
 }

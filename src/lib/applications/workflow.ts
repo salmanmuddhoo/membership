@@ -330,6 +330,8 @@ export interface SubmissionReadiness {
   fieldProblems: MissingField[];
   documentsOutstanding: number;
   paymentRecorded: boolean;
+  // Both witnesses named on the form step (officer request).
+  witnessesNamed: boolean;
 }
 
 /**
@@ -358,6 +360,7 @@ export async function submissionReadiness(
       e => e.requirement === 'required' && e.state === 'missing'
     ).length,
     paymentRecorded: payments.some(p => p.kind === 'payment' && !p.voidedAt),
+    witnessesNamed: application.witnesses.every(name => name.trim() !== ''),
   };
 }
 
@@ -383,6 +386,12 @@ export async function submitApplication(
   const readiness = await submissionReadiness(application);
   if (readiness.fieldProblems.length > 0) {
     return { problems: readiness.fieldProblems };
+  }
+  if (!readiness.witnessesNamed) {
+    throw new ApplicationError(
+      'Enter both witness names on the Application signature step before ' +
+        'this can be submitted.'
+    );
   }
   if (readiness.documentsOutstanding > 0) {
     throw new ApplicationError(

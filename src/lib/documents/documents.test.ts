@@ -1681,9 +1681,9 @@ describe('S-603: every signature before the signed form can be Verified', () => 
     ).rejects.toThrowError(/All signatures/);
   });
 
-  it('no longer asks for the nominee', async () => {
+  it('asks for the applicant only: no nominee or witness signs', async () => {
     const { documents } = await load();
-    expect(documents.SIGNATURES).not.toContain('Nominee');
+    expect([...documents.SIGNATURES]).toEqual(['Applicant']);
   });
 
   it('names exactly which are still missing', async () => {
@@ -1692,10 +1692,10 @@ describe('S-603: every signature before the signed form can be Verified', () => 
     await expect(
       documents.reviewDocument(
         documentId,
-        { outcome: 'verify', confirmedSignatures: ['Applicant'] },
+        { outcome: 'verify', confirmedSignatures: [] },
         secretary
       )
-    ).rejects.toThrowError(/Witness 1, Witness 2/);
+    ).rejects.toThrowError(/Still missing: Applicant/);
   });
 
   it('verifies once all are confirmed', async () => {
@@ -1749,7 +1749,7 @@ describe('S-603: every signature before the signed form can be Verified', () => 
       {
         outcome: 'reject',
         reason: 'Scan is too blurry to read the second witness.',
-        confirmedSignatures: ['Applicant', 'Witness 1'],
+        confirmedSignatures: ['Applicant'],
       },
       secretary
     );
@@ -1758,9 +1758,7 @@ describe('S-603: every signature before the signed form can be Verified', () => 
       e => e.documentId === documentId
     )!;
     expect(entry.state).toBe('rejected');
-    expect(entry.confirmedSignatures.sort()).toEqual(
-      ['Applicant', 'Witness 1'].sort()
-    );
+    expect(entry.confirmedSignatures.sort()).toEqual(['Applicant'].sort());
   });
 });
 

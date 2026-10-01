@@ -3,6 +3,7 @@ import { isEditableStatus } from '@lib/applications/capture';
 import ChainTimeline from '@components/ChainTimeline.astro';
 import CaptureFields from '@components/CaptureFields.astro';
 import DashboardLayout from '@layouts/DashboardLayout.astro';
+import WitnessesCard from '@components/WitnessesCard.astro';
 import LinkedReason from '@components/LinkedReason.astro';
 import {
   ApplicationError,
@@ -1108,6 +1109,8 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         )}
       </form>
     )}
+
+    {!isEditable && <WitnessesCard witnesses={application!.witnesses} />}
 
     {(!isEditable || currentStep === DOCUMENTS_STEP) &&
       canSeeDocuments &&

@@ -5495,3 +5495,24 @@ Officer requests:
   by the width of the field it is typed into. The PDF and the printout now
   carry the name as text, which wraps; a witness left blank keeps the ruled
   line to write a name on by hand.
+
+---
+
+### Witnesses by name, not by signature
+
+Officer request: the witnesses no longer sign the application form, but who
+they are matters.
+
+- **The form has a Witnesses section** with two names, both required
+  (migration 0112: `witness_1_name`, `witness_2_name` on
+  `membership_application`). They are typed on the Application signature
+  step, saved as they are left (`application.witnesses_set` in the audit
+  trail), printed in the PDF and on paper, and shown on the application once
+  submitted and on the member's page. Applies to all three kinds of
+  application, which share the form.
+- **Only the applicant signs.** The witness signature blocks are gone, and
+  the Secretary confirms only the applicant's signature on the scan before
+  Verified (S-603, which asked for both witnesses, is superseded). A
+  confirmation recorded earlier that included witnesses reads as it stands.
+- **Both names are required** before the signed form is uploaded, and
+  submission is refused without them, whatever route the form took.
