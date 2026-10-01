@@ -29,12 +29,12 @@
   "dependencies": {
     "@astrojs/check": "^0.9.10",
     "@astrojs/node": "^11.1.6",
-    "@astrojs/vercel": "^11.0.10",
+    "@astrojs/vercel": "^11.0.11",
     "@tailwindcss/forms": "^0.5.11",
     "@tailwindcss/vite": "^4.3.3",
     "astro": "^7.3.3",
     "exceljs": "^4.4.0",
-    "html2canvas-pro": "^2.4.3",
+    "html2canvas-pro": "^2.4.5",
     "jose": "^6.2.12",
     "jspdf": "^4.2.1",
     "pg": "^8.23.0",
@@ -44,12 +44,12 @@
   "devDependencies": {
     "@playwright/test": "^1.63.0",
     "@types/pg": "^8.23.1",
-    "prettier": "^3.9.8",
-    "prettier-plugin-astro": "^1.0.1",
+    "prettier": "^3.9.9",
+    "prettier-plugin-astro": "^1.1.0",
     "prettier-plugin-tailwindcss": "^0.8.1",
-    "tsx": "^4.23.13",
+    "tsx": "^4.23.15",
     "typescript": "^6.0.3",
-    "vitest": "^5.0.1"
+    "vitest": "^5.0.2"
   },
   "pnpm": {
     "overrides": {
