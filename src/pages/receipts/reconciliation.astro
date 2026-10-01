@@ -1,5 +1,7 @@
 ---
-// The receipt sequence, audited (S-506).
+// Receipts (officer request; S-506 beneath it). Every receipt the Society
+// issued in a period — fee receipts and every transaction's — each opening
+// its sheet, and under them the audit of the sequence.
 //
 // The sequence is only evidence if something checks it. Three findings, all
 // from the ledger: a number that never became a receipt, one that was voided,
@@ -7,8 +9,34 @@
 // reconciliation that reads only the payments cannot see a number that never
 // reached one, which is the whole point.
 import DashboardLayout from '@layouts/DashboardLayout.astro';
-import { reconcileReceipts, type ExceptionKind } from '@lib/payments/receipts';
+import Pagination from '@components/Pagination.astro';
+import {
+  listReceipts,
+  reconcileReceipts,
+  RECEIPT_KIND_LABELS,
+  type ExceptionKind,
+  type ReceiptKind,
+} from '@lib/payments/receipts';
 import { formatMoney } from '@lib/payments/money';
+import { pagingFrom, pageCount } from '@lib/paging';
+import {
+  PAGE,
+  CARD,
+  CARD_TITLE,
+  FILTER,
+  HINT,
+  MUTED,
+  INPUT,
+  BUTTON_SM,
+  PILL,
+  PILL_OUTLINE,
+  TABLE,
+  THEAD,
+  ROW,
+  TH,
+  TD,
+  TD_NUM,
+} from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 if (!principal.permissions.has('receipt.reconcile')) {
@@ -34,7 +62,30 @@ const toInclusive = parse(params.get('to'), now);
 // The query is half-open, so the last day the officer typed is included.
 const to = new Date(toInclusive.getTime() + 24 * 60 * 60 * 1000);
 
-const period = await reconcileReceipts(from, to);
+const kindParam = params.get('kind') ?? '';
+const kind =
+  kindParam in RECEIPT_KIND_LABELS ? (kindParam as ReceiptKind) : undefined;
+const search = params.get('q') ?? '';
+const paging = pagingFrom(Astro.url);
+
+const [period, receipts] = await Promise.all([
+  reconcileReceipts(from, to),
+  listReceipts({
+    from,
+    to,
+    kind,
+    search,
+    limit: paging.per,
+    offset: paging.offset,
+  }),
+]);
+// A page past the end (a filter narrowed the list under it) lands on the
+// first page rather than showing nothing.
+if (paging.page > 1 && paging.page > pageCount(receipts.total, paging.per)) {
+  const next = new URL(Astro.url);
+  next.searchParams.delete('page');
+  return Astro.redirect(`${next.pathname}${next.search}`);
+}
 
 const KIND_LABELS: Record<ExceptionKind, string> = {
   unissued: 'No receipt',
@@ -56,58 +107,66 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 });
 ---
 
-<DashboardLayout
-  title="Receipt reconciliation · Al Barakah MCSL"
-  heading="Receipt reconciliation"
->
-  <div class="mx-auto max-w-4xl space-y-6">
-    <form
-      method="get"
-      class="flex flex-wrap items-end gap-3 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
-    >
-      <label class="text-sm text-neutral-600 dark:text-neutral-300">
+<DashboardLayout title="Receipts · Al Barakah MCSL" heading="Receipts">
+  <div class={PAGE.wide}>
+    <form method="get" class={`grid gap-3 ${FILTER} text-sm sm:grid-cols-4`}>
+      <label class="text-neutral-600 dark:text-neutral-300">
         From
-        <input
-          type="date"
-          name="from"
-          value={asDate(from)}
-          class="mt-1 block rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-        />
+        <input type="date" name="from" value={asDate(from)} class={INPUT} />
       </label>
-      <label class="text-sm text-neutral-600 dark:text-neutral-300">
+      <label class="text-neutral-600 dark:text-neutral-300">
         To
         <input
           type="date"
           name="to"
           value={asDate(toInclusive)}
-          class="mt-1 block rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+          class={INPUT}
         />
       </label>
-      <button
-        type="submit"
-        class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
-      >
-        Show
-      </button>
+      <label class="text-neutral-600 dark:text-neutral-300">
+        Kind
+        <select name="kind" class={INPUT}>
+          <option value="">All</option>
+          {Object.entries(RECEIPT_KIND_LABELS).map(([code, label]) => (
+            <option value={code} selected={code === kind}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label class="text-neutral-600 dark:text-neutral-300">
+        Search
+        <input
+          type="search"
+          name="q"
+          value={search}
+          placeholder="RCT-000123, name or AB number"
+          class={INPUT}
+        />
+      </label>
+      <div class="flex items-end gap-2 sm:col-span-4">
+        <button type="submit" class={BUTTON_SM}>
+          Show
+        </button>
+        <span class="ml-auto text-neutral-500 dark:text-neutral-400">
+          {receipts.total} receipt{receipts.total === 1 ? '' : 's'}
+        </span>
+      </div>
     </form>
 
-    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+    <section class={CARD}>
       <div class="grid gap-4 sm:grid-cols-3">
         <div>
           <p class="text-2xl font-bold text-neutral-800 tabular-nums dark:text-neutral-100">
             {period.issuedCount}
           </p>
-          <p class="text-sm text-neutral-500 dark:text-neutral-400">
-            receipts issued
-          </p>
+          <p class={HINT}>receipts issued</p>
         </div>
         <div>
           <p class="text-2xl font-bold text-neutral-800 tabular-nums dark:text-neutral-100">
             {formatMoney(period.issuedTotal)}
           </p>
-          <p class="text-sm text-neutral-500 dark:text-neutral-400">
-            net of refunds
-          </p>
+          <p class={HINT}>net of refunds</p>
         </div>
         <div>
           <p class="text-2xl font-bold text-neutral-800 tabular-nums dark:text-neutral-100">
@@ -115,51 +174,134 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               ? '—'
               : `${period.firstSerial}–${period.lastSerial}`}
           </p>
-          <p class="text-sm text-neutral-500 dark:text-neutral-400">
-            numbers allocated
-          </p>
+          <p class={HINT}>numbers allocated</p>
         </div>
       </div>
     </section>
 
-    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-      <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-        Exceptions
-      </h2>
+    <section class={CARD}>
+      <h2 class={CARD_TITLE}>Receipts</h2>
+      {receipts.rows.length === 0 ? (
+        <p class={`mt-3 ${MUTED}`}>No receipts match.</p>
+      ) : (
+        <div class="mt-4 overflow-x-auto">
+          <table class={TABLE} data-sortable>
+            <thead>
+              <tr
+                class={`${THEAD} border-b border-neutral-300 dark:border-neutral-700`}
+              >
+                <th class={`${TH} text-neutral-600 dark:text-neutral-300`}>
+                  Receipt
+                </th>
+                <th class={`${TH} text-neutral-600 dark:text-neutral-300`}>
+                  Date
+                </th>
+                <th class={`${TH} text-neutral-600 dark:text-neutral-300`}>
+                  Kind
+                </th>
+                <th class={`${TH} text-neutral-600 dark:text-neutral-300`}>
+                  Who
+                </th>
+                <th class={`${TH} text-neutral-600 dark:text-neutral-300`}>
+                  Method
+                </th>
+                <th
+                  class={`${TH} text-right text-neutral-600 dark:text-neutral-300`}
+                >
+                  Amount
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {receipts.rows.map(receipt => (
+                <tr class={ROW}>
+                  <td class={`${TD} whitespace-nowrap`}>
+                    <a
+                      href={`/receipts/${receipt.receiptNo}`}
+                      class="font-medium text-neutral-800 tabular-nums underline dark:text-neutral-100"
+                    >
+                      {receipt.receiptNo}
+                    </a>
+                    {receipt.state === 'void' && (
+                      <span class={`ml-2 ${PILL_OUTLINE}`}>Voided</span>
+                    )}
+                  </td>
+                  <td
+                    class={`${TD} whitespace-nowrap text-neutral-500 dark:text-neutral-400`}
+                    data-sort-value={receipt.at.toISOString()}
+                  >
+                    {dateFormat.format(receipt.at)}
+                  </td>
+                  <td class={TD}>
+                    <span class={PILL}>
+                      {RECEIPT_KIND_LABELS[receipt.kind]}
+                    </span>
+                  </td>
+                  <td class={TD}>
+                    {receipt.holderName || '—'}
+                    {receipt.memberNo && (
+                      <span class="text-neutral-500 dark:text-neutral-400">
+                        {` · ${receipt.memberNo}`}
+                      </span>
+                    )}
+                  </td>
+                  <td class={`${TD} whitespace-nowrap`}>
+                    {receipt.methodName || '—'}
+                  </td>
+                  <td class={TD_NUM} data-sort-value={receipt.amount}>
+                    {formatMoney(receipt.amount)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <div class="mt-4">
+        <Pagination total={receipts.total} paging={paging} noun="receipts" />
+      </div>
+    </section>
+
+    <section class={CARD}>
+      <h2 class={CARD_TITLE}>Exceptions</h2>
 
       {period.exceptions.length === 0 ? (
         /* Said in words. An empty table would read the same whether the
              sequence is clean or the query found nothing to look at. */
-        <p class="mt-3 text-sm text-neutral-600 dark:text-neutral-300">
+        <p class={`mt-3 ${MUTED}`}>
           {period.firstSerial === null
             ? 'No receipt numbers were allocated in this period.'
             : `Every number from ${period.firstSerial} to ${period.lastSerial} is accounted for. No gaps, no duplicates, no voids.`}
         </p>
       ) : (
-        <table class="mt-4 w-full text-sm">
+        <table class={`${TABLE} mt-4`} data-sortable>
           <thead>
-            <tr class="border-b border-neutral-300 text-left dark:border-neutral-700">
-              <th class="py-2 font-medium text-neutral-600 dark:text-neutral-300">
+            <tr
+              class={`${THEAD} border-b border-neutral-300 dark:border-neutral-700`}
+            >
+              <th class={`${TH} text-neutral-600 dark:text-neutral-300`}>
                 Receipt
               </th>
-              <th class="py-2 font-medium text-neutral-600 dark:text-neutral-300">
+              <th class={`${TH} text-neutral-600 dark:text-neutral-300`}>
                 Finding
               </th>
-              <th class="py-2 font-medium text-neutral-600 dark:text-neutral-300">
+              <th class={`${TH} text-neutral-600 dark:text-neutral-300`}>
                 Reason
               </th>
-              <th class="py-2 font-medium text-neutral-600 dark:text-neutral-300">
+              <th class={`${TH} text-neutral-600 dark:text-neutral-300`}>
                 When
               </th>
             </tr>
           </thead>
           <tbody>
             {period.exceptions.map(exception => (
-              <tr class="border-b border-neutral-200 align-top dark:border-neutral-800">
-                <td class="py-2 font-medium text-neutral-800 tabular-nums dark:text-neutral-100">
-                  {exception.paymentId ? (
+              <tr class={`${ROW} align-top`}>
+                <td
+                  class={`${TD} font-medium text-neutral-800 tabular-nums dark:text-neutral-100`}
+                >
+                  {exception.paymentId || exception.transactionId ? (
                     <a
-                      href={`/receipts/${exception.paymentId}`}
+                      href={`/receipts/${exception.paymentId ?? exception.transactionId}`}
                       class="underline"
                     >
                       {exception.receiptNo}
@@ -170,17 +312,22 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                     exception.receiptNo
                   )}
                 </td>
-                <td class="py-2">
+                <td class={TD}>
                   <span
                     class={`rounded px-1.5 py-0.5 text-xs ${KIND_CLASSES[exception.kind]}`}
                   >
                     {KIND_LABELS[exception.kind]}
                   </span>
                 </td>
-                <td class="py-2 text-neutral-600 dark:text-neutral-300">
+                <td class={`${TD} text-neutral-600 dark:text-neutral-300`}>
                   {exception.reason || 'Not recorded'}
                 </td>
-                <td class="py-2 text-neutral-500 dark:text-neutral-400">
+                <td
+                  class={`${TD} text-neutral-500 dark:text-neutral-400`}
+                  data-sort-value={
+                    exception.at ? exception.at.toISOString() : ''
+                  }
+                >
                   {exception.at ? dateFormat.format(exception.at) : '—'}
                   {exception.who && ` · ${exception.who}`}
                 </td>
@@ -192,3 +339,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     </section>
   </div>
 </DashboardLayout>
+
+<script>
+  import { wireSortableTables } from '@lib/client/table-sort';
+
+  wireSortableTables();
+</script>

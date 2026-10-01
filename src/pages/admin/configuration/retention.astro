@@ -21,6 +21,18 @@ import {
   MINIMUM_PERIOD_MONTHS,
   type RetentionClass,
 } from '@lib/retention/policy';
+import {
+  PAGE,
+  CARD,
+  PANEL,
+  HINT,
+  INPUT_BARE,
+  BUTTON_SM,
+  LABEL,
+  NOTICE_ERROR,
+  NOTICE_OK,
+  NOTICE_WARN,
+} from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 const canManage = principal.permissions.has('retention.manage');
@@ -74,19 +86,11 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 ---
 
 <DashboardLayout title="Retention · Al Barakah MCSL" heading="Retention">
-  <div class="mx-auto max-w-5xl space-y-6">
+  <div class={PAGE.list}>
     <ConfigNav />
 
-    {error && (
-      <p class="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200">
-        {error}
-      </p>
-    )}
-    {notice && (
-      <p class="border-mint-400 bg-mint-50 dark:bg-mint-950 rounded-xl border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
-        {notice}
-      </p>
-    )}
+    {error && <p class={NOTICE_ERROR}>{error}</p>}
+    {notice && <p class={NOTICE_OK}>{notice}</p>}
 
     {!canManage && (
       <p class="rounded-xl border border-neutral-300 px-4 py-3 text-sm text-neutral-600 dark:border-neutral-700 dark:text-neutral-300">
@@ -94,16 +98,16 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       </p>
     )}
 
-    <p class="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">
+    <p class={NOTICE_WARN}>
       Setting a period deletes records permanently, on a schedule. There is no
       undo. Leave a period empty to keep those records indefinitely.
     </p>
 
-    <section class="space-y-3 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+    <section class={`${CARD} space-y-3`}>
       {due.map(item => (
         <form
           method="post"
-          class="flex flex-wrap items-end justify-between gap-4 rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900"
+          class={`${PANEL} flex flex-wrap items-end justify-between gap-4`}
         >
           <input type="hidden" name="code" value={item.code} />
 
@@ -111,7 +115,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             <span class="block font-medium text-neutral-800 dark:text-neutral-100">
               {item.label}
             </span>
-            <span class="mt-1 block text-sm text-neutral-500 dark:text-neutral-400">
+            <span class={`${HINT} mt-1 block`}>
               {item.periodMonths === null
                 ? 'Kept indefinitely'
                 : item.dueCount === 0
@@ -120,7 +124,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             </span>
           </div>
 
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             Months
             <input
               type="number"
@@ -132,15 +136,12 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               inputmode="numeric"
               placeholder="—"
               disabled={!canManage}
-              class="mt-1 block w-28 rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-950 dark:text-neutral-100"
+              class={`${INPUT_BARE} mt-1 block w-28`}
             />
           </label>
 
           {canManage && (
-            <button
-              type="submit"
-              class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-semibold text-neutral-800 transition"
-            >
+            <button type="submit" class={BUTTON_SM}>
               Save
             </button>
           )}

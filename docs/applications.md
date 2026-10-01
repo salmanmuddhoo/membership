@@ -32,11 +32,18 @@ client then moves the address bar to `/applications/<id>` with `replaceState`
 rather than navigating: the officer is mid-word, and reloading the page under
 them to show a heading they did not ask for is not worth the interruption.
 
-There is no Save draft button. Saving is automatic — two seconds after typing
-stops, on leaving a field, on a backstop interval, and when the page is hidden.
-That makes the autosave the guarantee rather than a convenience, which is why
-it reports "Not saved" loudly and never reports a save that did not happen. A
-`<noscript>` button is the fallback for a reader with scripting off.
+There is no Save draft button. Saving is automatic: on leaving a field the
+officer changed, when the page is hidden or closed, and on Next — never while
+typing (`src/lib/client/autosave.ts`). S-614 phase 7 had cut it back to Next
+alone, because a save at every pause in typing read as the application being
+slow; the regression run (QA-05) found that an officer interrupted before Next
+then lost everything, so the two moments that cost the officer nothing came
+back. Saves run one after another, never two at once: the first is the one
+that creates the application and moves the address, and a second racing it
+would create another. That makes the autosave the guarantee rather than a
+convenience, which is why it reports "Not saved" loudly and never reports a
+save that did not happen. A `<noscript>` button is the fallback for a reader
+with scripting off.
 
 The rule lives in the service, not on the page: a page that merely declines to
 post is still a page that can post.
@@ -70,7 +77,10 @@ Submit, Approval Stage** — and how far a status/checklist/payment combination
 has got through them. Submission and Secretary review read as the one
 "Submit" step: an officer has exactly one thing left to do at that point, and
 everything from there through the Secretary forwarding it on is out of their
-hands. `ApplicationTimeline.astro` draws the six as a row of arrow-shaped
+hands. The step shape and the one-current rule are
+`src/lib/workflow/timeline.ts`'s, shared with a transaction's chevron
+(`transactionTimeline`, S-1405), which reads its stages off the live chain
+instead of a fixed list. `ChainTimeline.astro` draws the six as a row of arrow-shaped
 boxes — a `clip-path` chevron on both the right edge (pointed) and the left
 (notched to match), so the box's own outline is the arrow rather than a
 rectangle with a point tacked onto one side, with real spacing between them
@@ -104,7 +114,7 @@ is what greets the officer on the id page once Next has actually created the
 application.
 
 On `[id].astro` every step is a real link — `applicationId` is passed in, and
-each step's `href` (`ApplicationTimeline.astro`'s `STEP_HREF` map) goes
+each step's `href` (`ChainTimeline.astro`'s `STEP_HREF` map) goes
 straight to that step: Applicant details, KYC Documents and Payments land on
 their `?step=N`, Application signature lands on the print page, and Submit
 and Approval Stage land on the application as a whole, since neither is a
@@ -117,7 +127,7 @@ its boxes render as plain `<div>`s instead.
 
 The section is `sticky`, positioned just under the app header rather than
 under it: the header's own height varies with viewport and content wrap, so a
-small script in `ApplicationTimeline.astro` measures `#app-header` (added on
+small script in `ChainTimeline.astro` measures `#app-header` (added on
 `DashboardLayout.astro`'s `<header>`) after layout and on resize, and writes
 it to a `--app-header-height` custom property the timeline's `top` reads.
 Scrolling the page never scrolls the timeline out of view.
@@ -644,11 +654,13 @@ cannot be resolved once nobody remembers which entries were Mauritian. Anything
 the normaliser cannot place is **refused** rather than guessed — prefixing +230
 onto nine digits produces something that looks right and can never be dialled.
 
-## Not built yet
+## The API surface
 
-`GET /api/v1/applications/guardian-search` (S-604, above) is the one
-`/api/v1` endpoint applications has today, and it exists to serve the
-capture form's own search widget, not FRD Section 12's public API surface —
-that is still better designed once M4's document flow and M5's payments are
-known. The service layer is already separate from the pages, so adding the
-rest is a wrapper, not a rewrite.
+The two `/api/v1/applications/*` endpoints (`guardian-search`, S-604, and
+`existing-member-search`, S-613) serve the capture form's own search
+widgets. FRD Section 12's public surface is elsewhere, on the same service
+layer: `POST /api/v1/public/applications` (S-908) creates a draft from the
+website through `submitPublicApplication`, on the same capture service the pages use,
+and the member app captures, documents and submits its own under
+`/api/v1/member/applications` (`docs/member-app.md`). `docs/api.md` has how
+every endpoint is declared and documented.

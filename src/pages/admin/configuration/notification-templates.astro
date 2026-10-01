@@ -15,6 +15,19 @@ import {
   updateNotificationTemplate,
   type NotificationChannel,
 } from '@lib/notifications/templates';
+import {
+  PAGE,
+  CARD,
+  CARD_TITLE,
+  HINT,
+  PANEL,
+  LABEL,
+  INPUT,
+  BUTTON,
+  CHECK_LABEL,
+  NOTICE_ERROR,
+  NOTICE_OK,
+} from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 const canManage = principal.permissions.has('config.manage');
@@ -42,6 +55,9 @@ if (Astro.request.method === 'POST') {
           providerTemplateLanguage: String(
             form.get('providerTemplateLanguage') ?? ''
           ).trim(),
+          ...(form.has('attachesDocumentShown')
+            ? { attachesDocument: form.get('attachesDocument') === 'on' }
+            : {}),
         },
         { userId: principal.userId, email: principal.email }
       );
@@ -74,6 +90,29 @@ const EVENT_LABELS: Record<string, string> = {
   'account.returned': 'Account application returned for correction',
   'account.approved': 'Account opened',
   'account.rejected': 'Account application not approved',
+  'receipt.issued': 'Receipt issued',
+  'closure.submitted': 'Account closure received',
+  'closure.under_review': 'Account closure under review',
+  'closure.approved': 'Account closed and paid out',
+  'closure.rejected': 'Account closure not approved',
+  'resignation.submitted': 'Resignation received',
+  'resignation.under_review': 'Resignation under review',
+  'resignation.approved': 'Resignation approved and paid out',
+  'resignation.rejected': 'Resignation not approved',
+  'demised.submitted': 'Demised claim received',
+  'demised.under_review': 'Demised claim under review',
+  'demised.approved': 'Demised claim paid out',
+  'demised.rejected': 'Demised claim not approved',
+  'deposit.posted': 'Deposit received',
+  'withdrawal.submitted': 'Withdrawal received',
+  'withdrawal.under_review': 'Withdrawal under review',
+  'withdrawal.disbursed': 'Withdrawal paid out',
+  'withdrawal.rejected': 'Withdrawal not approved',
+  'transfer.posted': 'Transfer completed',
+  'balance.near_floor': 'Balance near its minimum',
+  'transaction.awaiting': 'Staff: transaction awaiting a step',
+  'transaction.returned': 'Staff: transaction returned to its captor',
+  'receipt.voided': 'Staff: receipt voided',
 };
 
 const eventLabel = (code: string) =>
@@ -93,19 +132,11 @@ for (const template of templates) {
   title="Notification wording · Al Barakah MCSL"
   heading="Notification wording"
 >
-  <div class="mx-auto max-w-5xl space-y-6">
+  <div class={PAGE.list}>
     <ConfigNav />
 
-    {error && (
-      <p class="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200">
-        {error}
-      </p>
-    )}
-    {notice && (
-      <p class="border-mint-400 bg-mint-50 dark:bg-mint-950 rounded-xl border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
-        {notice}
-      </p>
-    )}
+    {error && <p class={NOTICE_ERROR}>{error}</p>}
+    {notice && <p class={NOTICE_OK}>{notice}</p>}
 
     {!canManage && (
       <p class="rounded-xl border border-neutral-300 px-4 py-3 text-sm text-neutral-600 dark:border-neutral-700 dark:text-neutral-300">
@@ -114,10 +145,8 @@ for (const template of templates) {
     )}
 
     {[...byEvent.entries()].map(([eventCode, group]) => (
-      <section class="space-y-3 rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-          {eventLabel(eventCode)}
-        </h2>
+      <section class={`${CARD} space-y-3`}>
+        <h2 class={CARD_TITLE}>{eventLabel(eventCode)}</h2>
 
         {(placeholdersForEvent(eventCode) ?? []).length > 0 && (
           <p class="flex flex-wrap items-center gap-1.5 text-xs text-neutral-500 dark:text-neutral-400">
@@ -146,17 +175,14 @@ for (const template of templates) {
           )}
 
         {group.map(template => (
-          <form
-            method="post"
-            class="space-y-3 rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900"
-          >
+          <form method="post" class={`${PANEL} space-y-3`}>
             <input type="hidden" name="id" value={template.id} />
 
             <div class="flex flex-wrap items-center justify-between gap-2">
               <span class="text-sm font-semibold text-neutral-800 dark:text-neutral-100">
                 {CHANNEL_LABELS[template.channel]}
               </span>
-              <label class="flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-300">
+              <label class={CHECK_LABEL}>
                 <input
                   type="checkbox"
                   name="isActive"
@@ -169,58 +195,71 @@ for (const template of templates) {
             </div>
 
             {template.channel === 'email' && (
-              <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+              <label class={LABEL}>
                 Subject
                 <input
                   type="text"
                   name="subject"
                   value={template.subject ?? ''}
                   disabled={!canManage}
-                  class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-950 dark:text-neutral-100"
+                  class={INPUT}
                 />
               </label>
             )}
 
             {template.channel === 'whatsapp' && (
               <div class="grid gap-3 sm:grid-cols-3">
-                <label class="block text-sm text-neutral-600 sm:col-span-2 dark:text-neutral-300">
+                <label class={`${LABEL} sm:col-span-2`}>
                   WhatsApp template name
                   <input
                     type="text"
                     name="providerTemplateName"
                     value={template.providerTemplateName ?? ''}
                     disabled={!canManage}
-                    class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-950 dark:text-neutral-100"
+                    class={INPUT}
                   />
                 </label>
-                <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+                <label class={LABEL}>
                   Language
                   <input
                     type="text"
                     name="providerTemplateLanguage"
                     value={template.providerTemplateLanguage}
                     disabled={!canManage}
-                    class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-950 dark:text-neutral-100"
+                    class={INPUT}
                   />
                 </label>
               </div>
             )}
 
-            <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+            {template.eventCode === 'receipt.issued' && (
+              <label class={CHECK_LABEL}>
+                <input type="hidden" name="attachesDocumentShown" value="1" />
+                <input
+                  type="checkbox"
+                  name="attachesDocument"
+                  checked={template.attachesDocument}
+                  disabled={!canManage}
+                  class="rounded border-neutral-300 dark:border-neutral-600"
+                />
+                {template.channel === 'whatsapp'
+                  ? 'Attach the receipt as a PDF (the WhatsApp template needs a document header)'
+                  : 'Attach the receipt as a PDF'}
+              </label>
+            )}
+
+            <label class={LABEL}>
               Message
               <textarea
                 name="body"
                 rows={template.channel === 'email' ? 8 : 4}
                 disabled={!canManage}
-                class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 font-mono text-sm dark:border-neutral-600 dark:bg-neutral-950 dark:text-neutral-100"
+                class={`${INPUT} font-mono`}
               >{template.body}</textarea>
             </label>
 
             {canManage && (
-              <button
-                type="submit"
-                class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
-              >
+              <button type="submit" class={BUTTON}>
                 Save
               </button>
             )}
@@ -230,9 +269,7 @@ for (const template of templates) {
     ))}
 
     {templates.length === 0 && (
-      <p class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 text-sm text-neutral-500 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-400">
-        No notification wording has been set up.
-      </p>
+      <p class={`${CARD} ${HINT}`}>No notification wording has been set up.</p>
     )}
   </div>
 </DashboardLayout>

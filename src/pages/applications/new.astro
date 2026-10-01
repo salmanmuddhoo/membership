@@ -9,7 +9,7 @@
 // The application comes into existence on the first save that carries a value,
 // and from then on the officer is working on /applications/<id> without having
 // been interrupted to get there.
-import ApplicationTimeline from '@components/ApplicationTimeline.astro';
+import ChainTimeline from '@components/ChainTimeline.astro';
 import CaptureFields from '@components/CaptureFields.astro';
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import {
@@ -23,6 +23,7 @@ import {
   checklistForMembershipType,
   listMembershipTypes,
 } from '@lib/config/reference';
+import { PAGE, BUTTON, HINT, NOTICE_ERROR } from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 if (!principal.permissions.has('application.capture')) {
@@ -143,27 +144,20 @@ if (Astro.request.method === 'POST') {
   title={`New ${type.name} application · Al Barakah MCSL`}
   heading={`New ${type.name} application`}
 >
-  <div class="mx-auto max-w-5xl space-y-6">
-    <ApplicationTimeline steps={timeline} />
+  <div class={PAGE.list}>
+    <ChainTimeline steps={timeline} label="Application progress" />
 
     <div
       id="application-nav"
       class="sticky z-20 -mx-4 flex flex-wrap items-center gap-2 border-t border-neutral-200/80 bg-neutral-100/95 px-4 py-3 backdrop-blur-md sm:mx-0 sm:rounded-b-2xl sm:px-3 sm:py-1.5 dark:border-neutral-800/80 dark:bg-neutral-950/95"
       style="top: calc(var(--app-header-height, 3.75rem) + var(--app-timeline-height, 0px))"
     >
-      <a
-        href="/applications"
-        class="inline-block text-sm text-neutral-500 underline dark:text-neutral-400"
-      >
+      <a href="/applications" class={`${HINT} inline-block underline`}>
         ← All applications
       </a>
     </div>
 
-    {error && (
-      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-        {error}
-      </div>
-    )}
+    {error && <div class={NOTICE_ERROR}>{error}</div>}
 
     <form method="post" id="capture-form" class="space-y-6">
       <CaptureFields
@@ -176,12 +170,7 @@ if (Astro.request.method === 'POST') {
         {/* Hidden until the script below un-hides it, so a reader with
             scripting off never sees an inert button — they get the noscript
             one, which works by being a real form submission. */}
-        <button
-          type="button"
-          id="next-button"
-          hidden
-          class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50"
-        >
+        <button type="button" id="next-button" hidden class={BUTTON}>
           Next
         </button>
         <span
@@ -193,10 +182,7 @@ if (Astro.request.method === 'POST') {
             button the ordinary way saves and moves on in one step, which is
             the same thing Next does with scripting on. */}
         <noscript>
-          <button
-            type="submit"
-            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
-          >
+          <button type="submit" class={BUTTON}>
             Next
           </button>
         </noscript>
@@ -206,10 +192,10 @@ if (Astro.request.method === 'POST') {
 </DashboardLayout>
 
 <script>
-  // S-614: saves once, when the officer clicks Next, rather than continuously
-  // while typing — a network call on every keystroke read as the app being
-  // slow. (Replaces the continuous background saving from S-302, decision
-  // 14.)
+  import { wireAutosave } from '@lib/client/autosave';
+
+  // Saves on leaving a field the officer changed, on leaving the page, and
+  // on Next (QA-05; see lib/client/autosave.ts). Never while typing.
   //
   // Until the first value is entered this posts nothing at all: an empty form
   // must not create an application, and a request that would create nothing is
@@ -235,23 +221,31 @@ if (Astro.request.method === 'POST') {
           key.startsWith('field.') && String(value).trim() !== ''
       );
 
-    const save = async (): Promise<void> => {
+    const save = async (leaving: boolean): Promise<boolean> => {
       const body = new FormData(form);
       body.set('intent', 'autosave');
 
       try {
+        // Once created, the address is /applications/<id> and a save goes
+        // to that page's own autosave, which updates rather than creates.
         const response = await fetch(
           window.location.pathname + window.location.search,
           {
             method: 'POST',
             body,
             headers: { 'x-requested-with': 'autosave' },
+            keepalive: leaving,
           }
         );
         if (!response.ok) throw new Error(String(response.status));
+        if (leaving) return true;
 
         const result = await response.json();
-        if (!result.created) return;
+        if (applicationId) {
+          status.textContent = `Saved at ${new Date().toLocaleTimeString('en-GB')}`;
+          return true;
+        }
+        if (!result.created) return true;
         applicationId = result.id;
 
         // From here on this IS an application. replaceState rather than a
@@ -259,12 +253,16 @@ if (Astro.request.method === 'POST') {
         // moment anyway.
         window.history.replaceState({}, '', `/applications/${result.id}`);
         status.textContent = `${result.reference} saved.`;
+        return true;
       } catch {
         // Saying "saved" when nothing was saved is the one thing this must
         // never do: the officer would close the tablet trusting it.
-        status.textContent = 'Not saved — check your connection.';
+        if (!leaving) status.textContent = 'Not saved — check your connection.';
+        return false;
       }
     };
+
+    const autosave = wireAutosave({ form, save, worthSaving: anythingEntered });
 
     if (nextButton) {
       nextButton.hidden = false;
@@ -276,7 +274,7 @@ if (Astro.request.method === 'POST') {
         }
 
         nextButton.disabled = true;
-        await save();
+        await autosave.flush();
 
         if (applicationId) {
           // A real navigation, not replaceState: the officer asked to move

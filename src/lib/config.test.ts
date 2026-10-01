@@ -193,3 +193,53 @@ describe('isProductionEnvironment', () => {
     expect(isProductionEnvironment()).toBe(false);
   });
 });
+
+// QA-32: a build made where a .env existed carried its values into the
+// bundle, and they won over the settings of the server it ran on.
+describe('pickEnv', () => {
+  it('takes the server setting over what the build carried', async () => {
+    const { pickEnv } = await loadConfig();
+    expect(
+      pickEnv(
+        'PUBLIC_APP_ENV',
+        { PUBLIC_APP_ENV: 'production' },
+        { PROD: true, PUBLIC_APP_ENV: 'test' }
+      )
+    ).toBe('production');
+  });
+
+  it('never falls back to a baked value in a built server', async () => {
+    const { pickEnv } = await loadConfig();
+    expect(
+      pickEnv(
+        'DATABASE_URL',
+        {},
+        { PROD: true, DATABASE_URL: 'postgres://dev' }
+      )
+    ).toBeUndefined();
+    expect(
+      pickEnv('PUBLIC_APP_ENV', {}, { PROD: true, PUBLIC_APP_ENV: 'test' })
+    ).toBeUndefined();
+  });
+
+  it('reads .env through the build under astro dev', async () => {
+    const { pickEnv } = await loadConfig();
+    expect(
+      pickEnv(
+        'DATABASE_URL',
+        {},
+        { PROD: false, DATABASE_URL: 'postgres://dev' }
+      )
+    ).toBe('postgres://dev');
+  });
+
+  it('reads what the build carried in the browser, which has no process', async () => {
+    const { pickEnv } = await loadConfig();
+    expect(
+      pickEnv('PUBLIC_APP_ENV', undefined, {
+        PROD: true,
+        PUBLIC_APP_ENV: 'test',
+      })
+    ).toBe('test');
+  });
+});

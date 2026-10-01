@@ -605,6 +605,7 @@ describe('S-501: recording a payment', () => {
         {
           applicationId: application.id,
           method: 'bank_transfer',
+          methodReference: 'TRF-1',
           amounts: FULL,
         },
         principalFor(officer)
@@ -676,6 +677,7 @@ describe('S-501: recording a payment', () => {
         {
           applicationId: application.id,
           method: 'bank_transfer',
+          methodReference: 'TRF-1',
           amounts: FULL,
         },
         principalFor(officer)
@@ -877,11 +879,40 @@ describe('a recorded payment is a record, not a row', () => {
 });
 
 describe('S-504: a structured event per payment', () => {
+  // S-1307: whether a method needs a reference is configuration, and the
+  // server holds the line whether or not the form's script hid the field.
+  it('refuses a method that needs a reference without one, and one that is not offered', async () => {
+    const { payments } = await load();
+    const application = await newApplication();
+    await expect(
+      payments.recordPayment(
+        { applicationId: application.id, method: 'cheque', amounts: FULL },
+        principalFor(officer)
+      )
+    ).rejects.toThrowError(/Enter the cheque reference/);
+    await expect(
+      payments.recordPayment(
+        { applicationId: application.id, method: 'migration', amounts: FULL },
+        principalFor(officer)
+      )
+    ).rejects.toThrowError(/Choose how the payment was made/);
+    const payment = await payments.recordPayment(
+      { applicationId: application.id, method: 'card', amounts: FULL },
+      principalFor(officer)
+    );
+    expect(payment.methodName).toBe('Card');
+  });
+
   it('emits one with the fee version, the components and the receipt', async () => {
     const { payments } = await load();
     const application = await newApplication();
     const payment = await payments.recordPayment(
-      { applicationId: application.id, method: 'cheque', amounts: FULL },
+      {
+        applicationId: application.id,
+        method: 'cheque',
+        methodReference: '000123',
+        amounts: FULL,
+      },
       principalFor(officer)
     );
 
@@ -1168,6 +1199,56 @@ describe('S-506: reconciliation', () => {
     expect(after.issuedCount).toBe(before.issuedCount + 1);
     expect(Number(after.issuedTotal)).toBe(Number(before.issuedTotal) - 1000);
   });
+
+  it('lists every receipt in the period, to find by kind or number', async () => {
+    const { payments, receipts } = await load();
+    const application = await newApplication();
+    const payment = await payments.recordPayment(
+      { applicationId: application.id, method: 'cash', amounts: FULL },
+      principalFor(officer)
+    );
+    const refund = await payments.refundPayment(
+      {
+        paymentId: payment.id,
+        method: 'cash',
+        reason: 'Some back.',
+        amounts: { shares: '10.00' },
+      },
+      principalFor(treasurer)
+    );
+    const window = {
+      from: new Date(Date.now() - 60_000),
+      to: new Date(Date.now() + 60_000),
+      limit: 500,
+      offset: 0,
+    };
+
+    const all = await receipts.listReceipts(window);
+    const numbers = all.rows.map(r => r.receiptNo);
+    expect(numbers).toContain(payment.receiptNo);
+    expect(numbers).toContain(refund.receiptNo);
+    expect(all.total).toBe(all.rows.length);
+    const paid = all.rows.find(r => r.receiptNo === payment.receiptNo)!;
+    expect(paid.kind).toBe('payment');
+    expect(paid.state).toBe('issued');
+    expect(paid.methodName).toBe('Cash');
+    expect(Number(paid.amount)).toBe(Number(payment.totalAmount));
+
+    const refunds = await receipts.listReceipts({ ...window, kind: 'refund' });
+    expect(refunds.rows.map(r => r.receiptNo)).toContain(refund.receiptNo);
+    expect(refunds.rows.every(r => r.kind === 'refund')).toBe(true);
+
+    const found = await receipts.listReceipts({
+      ...window,
+      search: payment.receiptNo.toLowerCase(),
+    });
+    expect(found.rows.map(r => r.receiptNo)).toEqual([payment.receiptNo]);
+
+    // Newest number first.
+    expect(all.rows.map(r => r.serialNo)).toEqual(
+      [...all.rows.map(r => r.serialNo)].sort((x, y) => y - x)
+    );
+  });
 });
 
 describe('a draft with a receipt against it', () => {
@@ -1390,6 +1471,12 @@ describe('transactionsForAccount', () => {
        values ($1, $2, true, $3) returning id`,
       [member.rows[0].id, sharesType.rows[0].id, application.id]
     );
+    // What opening the account on approval does (members/create.ts): the
+    // receipt's lines become the account's opening entries (S-1303).
+    await run(appUrl, `select post_opening_balances($1, $2, 'payments.test')`, [
+      application.id,
+      officer.userId,
+    ]);
 
     const transactions = await payments.transactionsForAccount(
       account.rows[0].id
@@ -1436,6 +1523,12 @@ describe('transactionsForAccount', () => {
        values ($1, $2, true, $3) returning id`,
       [member.rows[0].id, sharesType.rows[0].id, application.id]
     );
+    // What opening the account on approval does (members/create.ts): the
+    // receipt's lines become the account's opening entries (S-1303).
+    await run(appUrl, `select post_opening_balances($1, $2, 'payments.test')`, [
+      application.id,
+      officer.userId,
+    ]);
     const refund = await payments.refundPayment(
       {
         paymentId: payment.id,
@@ -1487,6 +1580,12 @@ describe('transactionsForAccount', () => {
        values ($1, $2, true, $3) returning id`,
       [member.rows[0].id, sharesType.rows[0].id, application.id]
     );
+    // What opening the account on approval does (members/create.ts): the
+    // receipt's lines become the account's opening entries (S-1303).
+    await run(appUrl, `select post_opening_balances($1, $2, 'payments.test')`, [
+      application.id,
+      officer.userId,
+    ]);
 
     expect(await payments.transactionsForAccount(account.rows[0].id)).toEqual(
       []

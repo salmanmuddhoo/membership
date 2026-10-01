@@ -1,0 +1,273 @@
+---
+// One account's history (S-1309): every posted entry, newest first, with
+// the balance the account stood at after each — the statement S-1601 later
+// exports. Reached from the person's page; paged 10/25/50 to a page.
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import DocumentViewer from '@components/DocumentViewer.astro';
+import Pagination from '@components/Pagination.astro';
+import { query } from '@lib/db/pool';
+import { sourceOfFundFormsFor } from '@lib/ledger/deposit-requests';
+import {
+  accountBalance,
+  accountEntries,
+  accountEntryCount,
+} from '@lib/ledger/ledger';
+import { formatMoney } from '@lib/payments/money';
+import { pagingFrom, pageCount } from '@lib/paging';
+import {
+  PAGE,
+  CARD_TITLE,
+  FILTER,
+  HINT,
+  MUTED,
+  SECONDARY_SM,
+  TABLE,
+  THEAD,
+  TBODY,
+  TH,
+  TD,
+  TD_NUM,
+  VIEW_BUTTON,
+} from '@lib/ui';
+
+const { id } = Astro.params;
+const found = id
+  ? await query<{
+      account_no: string;
+      type_name: string;
+      status: string;
+      holder_id: string;
+      holder_name: string;
+      holder_kind: 'member' | 'customer';
+    }>(
+      `select coalesce(a.account_no, m.member_no) as account_no,
+              t.name as type_name, a.status,
+              coalesce(a.member_id, a.customer_id) as holder_id,
+              case when a.member_id is not null then 'member' else 'customer' end
+                as holder_kind,
+              trim(coalesce(p.values->>'name', '') || ' '
+                   || coalesce(p.values->>'surname', '')) as holder_name
+         from account a
+         join account_type t on t.id = a.account_type_id
+         left join member m on m.id = a.member_id
+         left join customer c on c.id = a.customer_id
+         left join application_party p
+           on p.application_id = coalesce(m.application_id, c.application_id)
+          and p.subject = 'applicant' and p.ordinal = 1
+        where a.id = $1`,
+      [id]
+    )
+  : null;
+const account = found?.rows[0];
+if (!account) return new Response('Not found', { status: 404 });
+
+const paging = pagingFrom(Astro.url);
+
+const [balance, total, entries] = await Promise.all([
+  accountBalance(id!),
+  accountEntryCount(id!),
+  // The running balance is a window sum over every entry the account has
+  // (accountEntries), so it reads right on any page — only which slice of
+  // rows comes back changes with limit/offset.
+  accountEntries(id!, { limit: paging.per, offset: paging.offset }),
+]);
+// A page past the end lands on the first page rather than showing nothing.
+if (paging.page > 1 && paging.page > pageCount(total, paging.per)) {
+  const next = new URL(Astro.url);
+  next.searchParams.delete('page');
+  return Astro.redirect(`${next.pathname}${next.search}`);
+}
+// Officer feedback: a deposit that needed the Source of Fund form keeps it
+// in reach after it has posted, on its own row.
+const canSeeDocuments =
+  Astro.locals.principal!.permissions.has('document.view');
+// /transactions/ is gated on transaction.view — a row leads there only for
+// someone who can actually open it.
+const canSeeTransaction =
+  Astro.locals.principal!.permissions.has('transaction.view');
+const sourceOfFund = canSeeDocuments
+  ? await sourceOfFundFormsFor([...new Set(entries.map(e => e.transactionId))])
+  : new Map<string, string>();
+
+const dateFormat = new Intl.DateTimeFormat('en-GB', {
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+});
+---
+
+<DashboardLayout
+  title={`${account.account_no} · Al Barakah MCSL`}
+  heading={`${account.account_no} · ${account.type_name}`}
+>
+  <div class={PAGE.list}>
+    <div class="flex flex-wrap items-baseline justify-between gap-3">
+      <p class={MUTED}>
+        <a
+          href={`/members/${account.holder_id}`}
+          class="font-medium underline hover:text-neutral-900 dark:hover:text-neutral-100"
+        >
+          {account.holder_name || account.holder_kind}
+        </a>
+        {' · '}
+        {account.status}
+      </p>
+      <p class={`flex items-baseline gap-4 ${MUTED}`}>
+        <a href={`/accounts/${id}/statement`} class={SECONDARY_SM}>
+          Statement
+        </a>
+        <span>
+          Balance{' '}
+          <span class={`${CARD_TITLE} tabular-nums`}>
+            {balance ? formatMoney(balance.balance) : '—'}
+          </span>
+        </span>
+      </p>
+    </div>
+
+    <section class={`overflow-x-auto ${FILTER}`}>
+      {entries.length === 0 ? (
+        <p class={HINT}>
+          {paging.page > 1
+            ? 'Nothing on this page.'
+            : 'Nothing recorded on this account yet.'}
+        </p>
+      ) : (
+        <table class={TABLE} data-sortable>
+          <thead class={THEAD}>
+            <tr>
+              <th class={TH}>Date</th>
+              <th class={TH}>Reference</th>
+              <th class={TH}>Description</th>
+              <th class={TH}>Method</th>
+              <th class={TH}>Receipt</th>
+              <th class={`${TH} text-right`}>In</th>
+              <th class={`${TH} text-right`}>Out</th>
+              <th class={`${TH} text-right`}>Balance</th>
+            </tr>
+          </thead>
+          <tbody class={TBODY}>
+            {entries.map(entry => (
+              <tr
+                data-href={
+                  canSeeTransaction
+                    ? `/transactions/${entry.transactionId}`
+                    : undefined
+                }
+                class:list={[
+                  'text-neutral-800 dark:text-neutral-100',
+                  canSeeTransaction && 'cursor-pointer',
+                ]}
+              >
+                <td
+                  class={`${TD} whitespace-nowrap`}
+                  data-sort-value={entry.occurredAt.toISOString()}
+                >
+                  {dateFormat.format(entry.occurredAt)}
+                </td>
+                <td class={TD}>
+                  {canSeeTransaction ? (
+                    <a
+                      href={`/transactions/${entry.transactionId}`}
+                      class="underline"
+                    >
+                      <code class="text-xs">{entry.transactionReference}</code>
+                    </a>
+                  ) : (
+                    <code class="text-xs">{entry.transactionReference}</code>
+                  )}
+                </td>
+                <td class={TD}>
+                  {entry.description}
+                  {entry.reason && (
+                    <span class="text-xs text-neutral-500 dark:text-neutral-400">
+                      {' · '}
+                      {entry.reason}
+                    </span>
+                  )}
+                  <span class="block text-xs text-neutral-500 dark:text-neutral-400">
+                    by {entry.capturedByName}
+                  </span>
+                  {sourceOfFund.has(entry.transactionId) && (
+                    <span class="mt-1 flex items-center gap-2 text-xs text-neutral-500 dark:text-neutral-400">
+                      Source of Fund form
+                      <button
+                        type="button"
+                        data-view-document
+                        data-document-id={sourceOfFund.get(entry.transactionId)}
+                        class={VIEW_BUTTON}
+                      >
+                        View
+                      </button>
+                    </span>
+                  )}
+                </td>
+                <td class={TD}>
+                  {entry.methodName}
+                  {entry.methodReference && ` · ${entry.methodReference}`}
+                </td>
+                <td class={TD}>
+                  {entry.receiptNo ? (
+                    <a
+                      href={`/receipts/${entry.transactionId}`}
+                      class="underline"
+                    >
+                      <code class="text-xs">{entry.receiptNo}</code>
+                    </a>
+                  ) : (
+                    <code class="text-xs">—</code>
+                  )}
+                </td>
+                <td
+                  class={TD_NUM}
+                  data-sort-value={
+                    entry.direction === 'credit' ? entry.amount : undefined
+                  }
+                >
+                  {entry.direction === 'credit' && formatMoney(entry.amount)}
+                </td>
+                <td
+                  class={TD_NUM}
+                  data-sort-value={
+                    entry.direction === 'debit' ? entry.amount : undefined
+                  }
+                >
+                  {entry.direction === 'debit' && formatMoney(entry.amount)}
+                </td>
+                <td
+                  class={`${TD_NUM} font-medium`}
+                  data-sort-value={entry.runningBalance}
+                >
+                  {formatMoney(entry.runningBalance)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+
+    <Pagination total={total} paging={paging} noun="entries" />
+  </div>
+  {canSeeDocuments && <DocumentViewer />}
+</DashboardLayout>
+
+<script>
+  import { wireSortableTables } from '@lib/client/table-sort';
+
+  // Each row leads to its own transaction's detail — the row's Receipt link
+  // and, on a deposit, the Source of Fund "View" button stay their own
+  // click targets, exactly as members/index.astro tells the two apart.
+  for (const row of document.querySelectorAll<HTMLTableRowElement>(
+    'tr[data-href]'
+  )) {
+    row.addEventListener('click', e => {
+      const target = e.target as HTMLElement;
+      if (target.closest('a, button')) return;
+      const href = row.dataset.href;
+      if (href) window.location.assign(href);
+    });
+  }
+
+  wireSortableTables();
+</script>

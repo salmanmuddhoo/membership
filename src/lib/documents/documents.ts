@@ -10,6 +10,7 @@
 // (S-208), so what an Individual application requires is a matter of
 // configuration, and this module only reports what has and has not been filed
 // against it.
+import { applicationsOfPerson, type Holder } from '../members/applications-of';
 import { isEditableStatus } from '../applications/capture';
 import type { PoolClient } from 'pg';
 import { recordAudit } from '../access/audit';
@@ -25,6 +26,7 @@ import {
   deleteItemByPath,
   ensureFolder,
   getItemByPath,
+  reachGraph,
   type GraphConfig,
 } from './graph';
 import {
@@ -61,17 +63,14 @@ export const ACTION_VERIFIED = 'document.verified';
 export type ChecklistState =
   'missing' | 'uploaded' | 'under_review' | 'verified' | 'rejected' | 'expired';
 
-// S-603, FRD 5.4. The printed form always carries these four signature
-// blocks — print.astro — regardless of membership type, so this is a fixed,
-// universal check rather than something configuration decides. Shared here
-// so the print page and the verification gate below can never disagree
-// about what "all four" means.
-export const SIGNATURES = [
-  'Applicant',
-  'Nominee',
-  'Witness 1',
-  'Witness 2',
-] as const;
+// S-603, FRD 5.4. The signatures the printed form carries — print.astro —
+// regardless of membership type, so this is a fixed, universal check rather
+// than something configuration decides. Shared here so the print page and
+// the verification gate below can never disagree about what "all
+// signatures" means. Only the applicant signs (officer feedback): the
+// nominee is named on the form, not a party to it, and the two witnesses
+// are recorded by name (membership_application.witness_*_name, 0112).
+export const SIGNATURES = ['Applicant'] as const;
 
 export interface ChecklistEntry {
   documentTypeId: string;
@@ -223,6 +222,10 @@ export async function ensureFolderPath(
 interface OwnerRow {
   application_id: string | null;
   member_id: string | null;
+  // S-1702: a document about one transaction — the signed closure request
+  // — filed in its holder's folder and named by the transaction reference.
+  transaction_id: string | null;
+  transaction_status: string | null;
   application_status: string | null;
   // The application whose checklist was frozen at capture (officer
   // feedback: a later change to document_checklist_item must not reach an
@@ -245,10 +248,57 @@ interface OwnerRow {
   reference: string;
 }
 
+// A transaction's documents are the officer's to file while the request is
+// theirs — a draft, or one a reviewer returned — exactly as an
+// application's are while it is editable (isEditableStatus).
+function isEditableTransactionStatus(status: string): boolean {
+  return status === 'draft' || status === 'returned';
+}
+
 async function resolveOwner(
   applicationId: string | null,
-  memberId: string | null
+  memberId: string | null,
+  transactionId: string | null = null
 ): Promise<OwnerRow> {
+  if (transactionId) {
+    const result = await query<{
+      reference: string;
+      status: string;
+      member_id: string | null;
+      customer_application_id: string | null;
+    }>(
+      `select t.reference, t.status, t.member_id,
+              c.application_id as customer_application_id
+         from transaction t
+         left join customer c on c.id = t.customer_id
+        where t.id = $1`,
+      [transactionId]
+    );
+    if (result.rowCount === 0) {
+      throw new DocumentError(
+        'That transaction no longer exists.',
+        'not_found'
+      );
+    }
+    const row = result.rows[0];
+    // Filed where the holder's other papers are: a member's own folder, or
+    // for a customer the application folder they were captured under.
+    const holder = row.member_id
+      ? await resolveOwner(null, row.member_id)
+      : await resolveOwner(row.customer_application_id, null);
+    return {
+      application_id: null,
+      member_id: null,
+      transaction_id: transactionId,
+      transaction_status: row.status,
+      application_status: null,
+      checklist_application_id: null,
+      membership_type_code: null,
+      folder_path: holder.folder_path,
+      reference: row.reference,
+    };
+  }
+
   if (applicationId) {
     // Officer feedback: a new application for someone who already had one
     // (an existing member opening another account, S-613; a non-member
@@ -289,6 +339,8 @@ async function resolveOwner(
     return {
       application_id: applicationId,
       member_id: null,
+      transaction_id: null,
+      transaction_status: null,
       application_status: row.status,
       checklist_application_id: applicationId,
       membership_type_code: null,
@@ -331,6 +383,8 @@ async function resolveOwner(
   return {
     application_id: null,
     member_id: memberId,
+    transaction_id: null,
+    transaction_status: null,
     application_status: null,
     checklist_application_id: result.rows[0].application_id,
     membership_type_code: result.rows[0].membership_type_code,
@@ -511,31 +565,26 @@ export interface MemberDocumentGroup {
 
 export async function documentsForMember(
   memberId: string,
-  foundingApplicationId: string | null
+  // Kept for its callers; every application of theirs is read now.
+  _foundingApplicationId?: string | null
 ): Promise<MemberDocumentGroup[]> {
-  const additional = await query<{ id: string; reference: string }>(
-    `select id, reference from membership_application
-      where existing_member_id = $1 and application_kind = 'additional_account'
-        and status <> 'draft'
-      order by created_at`,
-    [memberId]
+  return documentsForPerson({ memberId });
+}
+
+/**
+ * What has been filed for one person, application by application, across
+ * every application that is theirs (lifecycle test, LC-02): the founding
+ * one, a rejoin, each further account or reopen, and for a converted member
+ * the non-member account they started with. A draft never finished is left
+ * out, as before — except the one the record itself points at.
+ */
+export async function documentsForPerson(
+  holder: Holder
+): Promise<MemberDocumentGroup[]> {
+  // Their own application always; any other only once it is past draft.
+  const applications = (await applicationsOfPerson(holder)).filter(
+    a => a.isCurrent || a.status !== 'draft'
   );
-
-  const applications: { id: string; reference: string }[] = [];
-  if (foundingApplicationId) {
-    const founding = await query<{ reference: string }>(
-      `select reference from membership_application where id = $1`,
-      [foundingApplicationId]
-    );
-    if (founding.rowCount) {
-      applications.push({
-        id: foundingApplicationId,
-        reference: founding.rows[0].reference,
-      });
-    }
-  }
-  applications.push(...additional.rows);
-
   const groups = await Promise.all(
     applications.map(async application => ({
       applicationId: application.id,
@@ -581,6 +630,60 @@ export async function filedDocumentFor(
   return row ? { documentId: row.document_id, fileName: row.file_name } : null;
 }
 
+export interface TransactionDocument {
+  documentId: string;
+  documentTypeId: string;
+  documentCode: string;
+  documentName: string;
+  state: ChecklistState;
+  fileName: string;
+  uploadedAt: Date;
+  uploadedByName: string;
+}
+
+/**
+ * What is filed against one transaction (S-1702): the signed closure
+ * request today, a resignation's or a claim's papers later. Only live,
+ * committed versions — an upload that never arrived is not a document.
+ */
+export async function documentsForTransaction(
+  transactionId: string
+): Promise<TransactionDocument[]> {
+  const result = await query<{
+    document_id: string;
+    document_type_id: string;
+    document_code: string;
+    document_name: string;
+    state: ChecklistState;
+    file_name: string;
+    committed_at: Date;
+    uploaded_by_name: string;
+  }>(
+    `select d.id as document_id, d.document_type_id, t.code as document_code,
+            t.name as document_name, d.state, v.file_name, v.committed_at,
+            u.display_name as uploaded_by_name
+       from document d
+       join document_type t on t.id = d.document_type_id
+       join document_version v
+         on v.document_id = d.id
+        and v.state = 'committed' and v.superseded_at is null
+       join app_user u on u.id = v.uploaded_by
+      where d.transaction_id = $1
+      order by v.committed_at`,
+    [transactionId]
+  );
+  return result.rows.map(r => ({
+    documentId: r.document_id,
+    documentTypeId: r.document_type_id,
+    documentCode: r.document_code,
+    documentName: r.document_name,
+    state: r.state,
+    fileName: r.file_name,
+    uploadedAt: r.committed_at,
+    uploadedByName: r.uploaded_by_name,
+  }));
+}
+
 /** Whether every required item is Verified — and nothing else may assert it. */
 export function isDocumentComplete(entries: ChecklistEntry[]): boolean {
   return entries
@@ -589,8 +692,9 @@ export function isDocumentComplete(entries: ChecklistEntry[]): boolean {
 }
 
 /**
- * Carry an existing member's documents onto a new additional-account
- * application (officer feedback).
+ * Carry an existing member's documents onto a new application (officer
+ * feedback): a further account, a rejoin, a customer applying to become a
+ * member, or someone applying again after a rejection.
  *
  * A member opening a further account has already given their identity card,
  * proof of address and the like when they joined — asking for them again is
@@ -671,6 +775,14 @@ export async function carryForwardMemberDocuments(
         and v.state = 'committed' and v.superseded_at is null
       where ci.application_id = $1::uuid
         and dt.code <> 'signed_form'
+        -- Nothing this application already has a document for, filed or
+        -- since removed: a carry never doubles a filing, and never brings
+        -- back what the officer took off (the removed row stays).
+        and not exists (
+              select 1 from document t
+               where t.application_id = $1::uuid
+                 and t.document_type_id = ci.document_type_id
+                 and t.subject = ci.subject)
       order by ci.document_type_id, ci.subject, v.committed_at desc`,
     [input.applicationId, input.memberId, input.sourceApplicationIds]
   );
@@ -748,10 +860,19 @@ export interface BeginUploadResult {
  * confirms the bytes are in SharePoint the item still reads Missing — which is
  * exactly what should happen if the tablet loses signal halfway.
  */
+// How a subject reads in a filed document's name.
+const SUBJECT_NAMES: Record<string, string> = {
+  nominee: 'Nominee',
+  guardian: 'Guardian',
+  beneficiary: 'Beneficiary',
+  employment: 'Employment',
+};
+
 export async function beginUpload(
   input: {
     applicationId?: string;
     memberId?: string;
+    transactionId?: string;
     documentTypeId: string;
     subject: FieldSubject;
     fileName: string;
@@ -764,8 +885,20 @@ export async function beginUpload(
 ): Promise<BeginUploadResult> {
   const owner = await resolveOwner(
     input.applicationId ?? null,
-    input.memberId ?? null
+    input.memberId ?? null,
+    input.transactionId ?? null
   );
+
+  if (
+    owner.transaction_status &&
+    !isEditableTransactionStatus(owner.transaction_status)
+  ) {
+    throw new DocumentError(
+      'This request has been submitted. Its documents can only be ' +
+        'replaced if it is returned for correction.',
+      'conflict'
+    );
+  }
 
   // Officer feedback: once an application has left the originating officer's
   // hands (status 'new' and beyond), nothing about it — the signature
@@ -825,12 +958,14 @@ export async function beginUpload(
         `select id from document
           where document_type_id = $1 and subject = $2
             and (($3::uuid is not null and application_id = $3::uuid)
-              or ($4::uuid is not null and member_id = $4::uuid))`,
+              or ($4::uuid is not null and member_id = $4::uuid)
+              or ($5::uuid is not null and transaction_id = $5::uuid))`,
         [
           input.documentTypeId,
           input.subject,
           owner.application_id,
           owner.member_id,
+          owner.transaction_id,
         ]
       );
 
@@ -845,13 +980,15 @@ export async function beginUpload(
       } else {
         const created = await client.query<{ id: string }>(
           `insert into document
-             (document_type_id, subject, application_id, member_id, expires_at)
-           values ($1, $2, $3, $4, $5) returning id`,
+             (document_type_id, subject, application_id, member_id,
+              transaction_id, expires_at)
+           values ($1, $2, $3, $4, $5, $6) returning id`,
           [
             input.documentTypeId,
             input.subject,
             owner.application_id,
             owner.member_id,
+            owner.transaction_id,
             input.expiresAt ?? null,
           ]
         );
@@ -875,11 +1012,36 @@ export async function beginUpload(
       // about the original name is discarded.
       const extensionMatch = /\.[^./\\]+$/.exec(input.fileName);
       const extension = extensionMatch ? extensionMatch[0] : '';
+      // Whose it is goes in the name too, for anyone but the applicant: the
+      // applicant's and the nominee's Identity Card are one document type
+      // filed into one folder, and under one name the second upload
+      // collides with the first — SharePoint renames it on arrival, the
+      // version still records the name it asked for, and the commit then
+      // finds the other person's file there instead.
+      const whose =
+        input.subject === 'applicant'
+          ? ''
+          : ` (${SUBJECT_NAMES[input.subject] ?? input.subject})`;
       const base = sanitiseFileName(
-        `${type.rows[0].name} - ${owner.reference}`
+        `${type.rows[0].name}${whose} - ${owner.reference}`
       );
-      const name =
-        (versionNo === 1 ? base : `${base} v${versionNo}`) + extension;
+      // Numbered by the versions actually filed, not by every attempt: an
+      // upload that never finished (SharePoint unreachable, the browser
+      // closed) still takes a version_no, and naming by it put "v2" — or
+      // "v5" — on the first file ever filed (QA-34). Only a filed version's
+      // name is known to be in the drive; one an unfinished attempt was
+      // given holds nothing there, and is free to be given again.
+      const filed = await client.query<{ file_name: string }>(
+        `select file_name from document_version
+          where document_id = $1 and state = 'committed'`,
+        [id]
+      );
+      const taken = new Set(filed.rows.map(r => r.file_name));
+      let shown = filed.rows.length + 1;
+      const nameFor = (n: number) =>
+        (n === 1 ? base : `${base} v${n}`) + extension;
+      while (taken.has(nameFor(shown))) shown += 1;
+      const name = nameFor(shown);
 
       const version = await client.query<{ id: string }>(
         `insert into document_version
@@ -950,13 +1112,16 @@ export async function commitUpload(
     intended_expires_at: Date | null;
     uploaded_by: string;
     application_status: string | null;
+    transaction_status: string | null;
   }>(
     `select v.id, v.document_id, v.state, v.sharepoint_path, v.size_bytes,
             v.file_name, v.intended_expires_at, v.uploaded_by,
-            a.status as application_status
+            a.status as application_status,
+            t.status as transaction_status
        from document_version v
        join document d on d.id = v.document_id
        left join membership_application a on a.id = d.application_id
+       left join transaction t on t.id = d.transaction_id
       where v.id = $1`,
     [versionId]
   );
@@ -973,6 +1138,16 @@ export async function commitUpload(
   if (row.application_status && !isEditableStatus(row.application_status)) {
     throw new DocumentError(
       'This application has been submitted. Its documents can only be ' +
+        'replaced if it is returned for correction.',
+      'conflict'
+    );
+  }
+  if (
+    row.transaction_status &&
+    !isEditableTransactionStatus(row.transaction_status)
+  ) {
+    throw new DocumentError(
+      'This request has been submitted. Its documents can only be ' +
         'replaced if it is returned for correction.',
       'conflict'
     );
@@ -1105,7 +1280,7 @@ export async function reviewDocument(
     // scan. Stored whichever way the review goes — a Secretary who rejects
     // for an unrelated reason (a blurry scan) should not lose the signatures
     // they had already checked. Ignored for any document type but
-    // signed_form, which is the only one the printed form's four blocks
+    // signed_form, which is the only one the printed form's signature blocks
     // apply to.
     confirmedSignatures?: string[];
   },
@@ -1131,11 +1306,15 @@ export async function reviewDocument(
     state: string;
     document_code: string;
     captured_by: string | null;
+    on_transaction: boolean;
   }>(
-    `select d.id, d.state, t.code as document_code, a.captured_by
+    `select d.id, d.state, t.code as document_code,
+            coalesce(a.captured_by, tx.captured_by) as captured_by,
+            (tx.id is not null) as on_transaction
        from document d
        join document_type t on t.id = d.document_type_id
        left join membership_application a on a.id = d.application_id
+       left join transaction tx on tx.id = d.transaction_id
       where d.id = $1`,
     [documentId]
   );
@@ -1161,15 +1340,20 @@ export async function reviewDocument(
   // application's papers is the same conflict one step out, so the author is
   // refused whatever the permission says and whoever did the filing.
   //
-  // Only for a document that belongs to an application. One filed against a
-  // member directly has no author to be in conflict with.
+  // For a document that belongs to an application, and since S-1306 for one
+  // filed against a transaction — a request's own papers are the officer
+  // who recorded it's to file, and somebody else's to check. One filed
+  // against a member directly has no author to be in conflict with.
   if (
     document.rows[0].captured_by &&
     document.rows[0].captured_by === principal.userId
   ) {
     throw new DocumentError(
-      'You captured this application, so someone else must check its ' +
-        'documents.',
+      document.rows[0].on_transaction
+        ? 'You recorded this transaction, so someone else must check its ' +
+            'papers.'
+        : 'You captured this application, so someone else must check its ' +
+            'documents.',
       'refused'
     );
   }
@@ -1188,8 +1372,8 @@ export async function reviewDocument(
     );
   }
 
-  // S-603: fewer than all four signatures confirmed present means this is
-  // not what "Verified" says it is, whatever the scan otherwise looks like.
+  // S-603: fewer than every signature confirmed present means this is not
+  // what "Verified" says it is, whatever the scan otherwise looks like.
   const confirmedSignatures = (decision.confirmedSignatures ?? []).filter(
     (s): s is (typeof SIGNATURES)[number] =>
       (SIGNATURES as readonly string[]).includes(s)
@@ -1201,7 +1385,7 @@ export async function reviewDocument(
   ) {
     const missing = SIGNATURES.filter(s => !confirmedSignatures.includes(s));
     throw new DocumentError(
-      `All four signatures must be confirmed present before this can be ` +
+      `All signatures must be confirmed present before this can be ` +
         `Verified. Still missing: ${missing.join(', ')}.`
     );
   }
@@ -1311,7 +1495,7 @@ export async function getDocumentContent(
     config
   );
 
-  const response = await fetch(url);
+  const response = await reachGraph(url);
   if (!response.ok || !response.body) {
     throw new DocumentError(
       'The file could not be read from SharePoint. Please try again.',
@@ -1372,13 +1556,16 @@ export async function removeFiledDocument(
         sharepoint_item_id: string | null;
         document_state: string;
         application_status: string | null;
+        transaction_status: string | null;
       }>(
         `select v.id as version_id, v.file_name, v.sharepoint_path,
               v.sharepoint_item_id,
-              d.state as document_state, a.status as application_status
+              d.state as document_state, a.status as application_status,
+              t.status as transaction_status
          from document_version v
          join document d on d.id = v.document_id
          left join membership_application a on a.id = d.application_id
+         left join transaction t on t.id = d.transaction_id
         where v.document_id = $1 and v.state = 'committed'
           and v.superseded_at is null
         for update of v`,
@@ -1397,6 +1584,7 @@ export async function removeFiledDocument(
         sharepoint_item_id: itemId,
         document_state,
         application_status: applicationStatus,
+        transaction_status: transactionStatus,
       } = row.rows[0];
 
       // Officer feedback: once an application has left the originating
@@ -1410,6 +1598,16 @@ export async function removeFiledDocument(
       if (applicationStatus && !isEditableStatus(applicationStatus)) {
         throw new DocumentError(
           'This application has been submitted. Its documents can only be ' +
+            'removed if it is returned for correction.',
+          'refused'
+        );
+      }
+      if (
+        transactionStatus &&
+        !isEditableTransactionStatus(transactionStatus)
+      ) {
+        throw new DocumentError(
+          'This request has been submitted. Its documents can only be ' +
             'removed if it is returned for correction.',
           'refused'
         );
@@ -1678,6 +1876,56 @@ export async function discardApplicationDocuments(
       row.first_name ?? '',
       config
     );
+  }
+}
+
+/**
+ * Every file a former member's documents put in the drive (S-1703,
+ * docs/retention.md): the ones filed against them as a member, against a
+ * request of theirs (a closure, the resignation), and against every
+ * application they made — the founding one, whose folder is theirs and
+ * goes with it, and any further account they opened. Rows are the
+ * retention job's to remove afterwards; this only removes the bytes.
+ */
+export async function discardMemberFiles(
+  memberId: string,
+  config?: GraphConfig
+): Promise<void> {
+  const files = await query<{ sharepoint_path: string }>(
+    `select distinct v.sharepoint_path
+       from document_version v
+       join document d on d.id = v.document_id
+       left join transaction t on t.id = d.transaction_id
+      where (d.member_id = $1 or t.member_id = $1)
+        and v.sharepoint_path is not null
+        and not exists (
+          select 1
+            from document_version o
+            join document od on od.id = o.document_id
+            left join transaction ot on ot.id = od.transaction_id
+           where od.member_id is distinct from $1
+             and ot.member_id is distinct from $1
+             and o.state = 'committed'
+             and o.superseded_at is null
+             and (o.sharepoint_path = v.sharepoint_path
+                  or (o.sharepoint_item_id is not null
+                      and o.sharepoint_item_id = v.sharepoint_item_id))
+        )`,
+    [memberId]
+  );
+  for (const file of files.rows) {
+    await deleteItemByPath(file.sharepoint_path, config);
+  }
+
+  const applications = await query<{ id: string }>(
+    `select id from membership_application
+      where existing_member_id = $1
+         or id = (select application_id from member where id = $1)
+      order by created_at`,
+    [memberId]
+  );
+  for (const application of applications.rows) {
+    await discardApplicationDocuments(application.id, config);
   }
 }
 

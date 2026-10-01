@@ -7,7 +7,6 @@
 // the wrapper fails at the database. The audit entry is therefore written by
 // the database in the same transaction as the change, and this module does not
 // write one itself: two trails would only disagree.
-import type { PoolClient } from 'pg';
 import { query, withConfigurationActor } from '../db/pool';
 import { cached } from './cache';
 import type { ConfigurationActor } from '../db/pool';
@@ -335,6 +334,15 @@ export interface AccountType {
   // this: HSA's own rows naming only Individual and Minor, not a special
   // case anywhere in code.
   eligibleMembershipTypeIds: string[];
+  // S-1304: what the engine reads before it moves money on an account of
+  // this type (migration 0065). One floor, read identically by a withdrawal
+  // and a transfer out; three switches for what the type accepts at all;
+  // and a per-transaction cap, null for none.
+  minimumBalance: string;
+  allowsDeposit: boolean;
+  allowsWithdrawal: boolean;
+  allowsTransfer: boolean;
+  maximumTransactionAmount: string | null;
 }
 
 // numeric comes back from node-postgres as a string, and it stays one all the
@@ -355,11 +363,18 @@ async function readAccountTypes(): Promise<AccountType[]> {
     is_active: boolean;
     sort_order: number;
     number_prefix: string | null;
+    minimum_balance: string;
+    allows_deposit: boolean;
+    allows_withdrawal: boolean;
+    allows_transfer: boolean;
+    maximum_transaction_amount: string | null;
   }>(
     `select a.id, a.code, a.name, a.category, a.minimum_opening_amount,
             a.checklist_id, c.name as checklist_name,
             a.requires_approval, a.default_status, a.is_membership_default,
-            a.is_active, a.sort_order, a.number_prefix
+            a.is_active, a.sort_order, a.number_prefix,
+            a.minimum_balance, a.allows_deposit, a.allows_withdrawal,
+            a.allows_transfer, a.maximum_transaction_amount
        from account_type a
        left join document_checklist c on c.id = a.checklist_id
       order by a.sort_order, a.name`
@@ -396,6 +411,11 @@ async function readAccountTypes(): Promise<AccountType[]> {
     sortOrder: r.sort_order,
     eligibleMembershipTypeIds: eligibleByType.get(r.id) ?? [],
     numberPrefix: r.number_prefix,
+    minimumBalance: r.minimum_balance,
+    allowsDeposit: r.allows_deposit,
+    allowsWithdrawal: r.allows_withdrawal,
+    allowsTransfer: r.allows_transfer,
+    maximumTransactionAmount: r.maximum_transaction_amount,
   }));
 }
 
@@ -410,6 +430,16 @@ export interface AccountTypeInput {
   // S-614: optional — most account types (Shares, the MSA) never open
   // through the customer_account flow and need no number of their own.
   numberPrefix?: string | null;
+  // S-1304: the type's limits. Optional so that a caller with no opinion
+  // on them — a test, an import — can leave them alone: on create an omitted
+  // one takes the column's default (a floor of 0, everything allowed, no
+  // cap), and on update an omitted one is left as it stands. The
+  // configuration screen sends all five, every time.
+  minimumBalance?: string;
+  allowsDeposit?: boolean;
+  allowsWithdrawal?: boolean;
+  allowsTransfer?: boolean;
+  maximumTransactionAmount?: string | null;
 }
 
 const CODE_PATTERN = /^[a-z][a-z0-9_]{1,39}$/;
@@ -421,6 +451,45 @@ function validateAmount(amount: string): void {
       'An amount must be a number with at most two decimal places.'
     );
   }
+}
+
+// The five limit columns as they go to the database: a trimmed amount or
+// null where the caller said nothing, so the same list serves an insert that
+// falls back to the column default and an update that coalesces to the
+// current value. A blank cap is no cap; a cap of zero is refused here, with
+// a reason, rather than by the check constraint with a constraint name.
+function limitsFor(input: {
+  minimumBalance?: string;
+  allowsDeposit?: boolean;
+  allowsWithdrawal?: boolean;
+  allowsTransfer?: boolean;
+  maximumTransactionAmount?: string | null;
+}): [
+  string | null,
+  boolean | null,
+  boolean | null,
+  boolean | null,
+  string | null,
+] {
+  const floor = input.minimumBalance?.trim();
+  if (floor !== undefined) validateAmount(floor);
+  const cap = input.maximumTransactionAmount?.trim() || null;
+  if (cap !== null) {
+    validateAmount(cap);
+    if (Number(cap) === 0) {
+      throw new ConfigError(
+        'A maximum transaction amount must be above zero. Leave it blank ' +
+          'for no limit.'
+      );
+    }
+  }
+  return [
+    floor === undefined ? null : floor,
+    input.allowsDeposit ?? null,
+    input.allowsWithdrawal ?? null,
+    input.allowsTransfer ?? null,
+    input.maximumTransactionAmount === undefined ? null : cap,
+  ];
 }
 
 export async function createAccountType(
@@ -436,6 +505,7 @@ export async function createAccountType(
   }
   if (!input.name.trim()) throw new ConfigError('A name is required.');
   validateAmount(input.minimumOpeningAmount);
+  const limits = limitsFor(input);
 
   return withConfigurationActor(actorFor(actor), async client => {
     const existing = await client.query(
@@ -450,12 +520,19 @@ export async function createAccountType(
     }
 
     const result = await client.query<{ id: string }>(
+      // The limits fall back to the column defaults (0065) where the caller
+      // gave none — `default` in a values list cannot be parameterised, so
+      // the fallback is spelled out here and must agree with the migration.
       `insert into account_type
          (code, name, category, minimum_opening_amount, checklist_id,
           requires_approval, default_status, number_prefix,
-          sort_order)
+          sort_order, minimum_balance, allows_deposit, allows_withdrawal,
+          allows_transfer, maximum_transaction_amount)
        values ($1, $2, $3, $4, $5, $6, $7, $8,
-               coalesce((select max(sort_order) + 1 from account_type), 1))
+               coalesce((select max(sort_order) + 1 from account_type), 1),
+               coalesce($9::numeric, 0), coalesce($10::boolean, true),
+               coalesce($11::boolean, true), coalesce($12::boolean, true),
+               $13::numeric)
        returning id`,
       [
         code,
@@ -466,6 +543,7 @@ export async function createAccountType(
         input.requiresApproval,
         input.defaultStatus,
         input.numberPrefix?.trim() || null,
+        ...limits,
       ]
     );
     return result.rows[0].id;
@@ -479,6 +557,7 @@ export async function updateAccountType(
 ): Promise<void> {
   if (!input.name.trim()) throw new ConfigError('A name is required.');
   validateAmount(input.minimumOpeningAmount);
+  const limits = limitsFor(input);
 
   await withConfigurationActor(actorFor(actor), async client => {
     // Deactivating the last product a membership opens would leave an
@@ -505,10 +584,21 @@ export async function updateAccountType(
     }
 
     const result = await client.query(
+      // A limit the caller did not mention keeps its value. The cap is the
+      // one that cannot coalesce — null is a value there (no limit) — so a
+      // caller who wants it left alone omits the key rather than passing
+      // null, which limitsFor() tells apart.
       `update account_type
           set name = $2, category = $3, minimum_opening_amount = $4,
               checklist_id = $5, requires_approval = $6, default_status = $7,
-              is_active = $8, number_prefix = $9
+              is_active = $8, number_prefix = $9,
+              minimum_balance = coalesce($10::numeric, minimum_balance),
+              allows_deposit = coalesce($11::boolean, allows_deposit),
+              allows_withdrawal = coalesce($12::boolean, allows_withdrawal),
+              allows_transfer = coalesce($13::boolean, allows_transfer),
+              maximum_transaction_amount = case
+                when $15::boolean then $14::numeric
+                else maximum_transaction_amount end
         where id = $1`,
       [
         id,
@@ -520,6 +610,8 @@ export async function updateAccountType(
         input.defaultStatus,
         input.isActive,
         input.numberPrefix?.trim() || null,
+        ...limits,
+        input.maximumTransactionAmount !== undefined,
       ]
     );
     if (result.rowCount === 0) {
@@ -1999,6 +2091,346 @@ export async function setCashMaximum(
   });
 }
 
+// The Takaful benefit a deceased member's claim pays beside the balances
+// of their accounts (S-1704): the Society's figure, Administrator-editable.
+// Seeded 15,000 by migration 0079; the default here is read only before it
+// has run.
+const TAKAFUL_BENEFIT_KEY = 'demised.takaful_benefit';
+const DEFAULT_TAKAFUL_BENEFIT = '15000';
+
+async function readTakafulBenefit(): Promise<string> {
+  const result = await query<{ value: string }>(
+    `select value::text as value from config_entry where key = $1`,
+    [TAKAFUL_BENEFIT_KEY]
+  );
+  return result.rows[0]?.value ?? DEFAULT_TAKAFUL_BENEFIT;
+}
+
+export function takafulBenefit(): Promise<string> {
+  return cached('takaful-benefit', readTakafulBenefit);
+}
+
+export async function setTakafulBenefit(
+  amount: string,
+  actor: Actor
+): Promise<void> {
+  if (!/^\d+(\.\d{1,2})?$/.test(amount.trim())) {
+    throw new ConfigError(`${amount || 'That'} is not an amount in rupees.`);
+  }
+  await withConfigurationActor(actorFor(actor), async client => {
+    await client.query(
+      `insert into config_entry (key, value, value_type, description, updated_by)
+       values (
+         $1, to_jsonb($2::numeric), 'number',
+         'The Takaful benefit (MUR) paid to the claimant of a deceased ' ||
+         'member, beside the balances of their accounts.',
+         $3
+       )
+       on conflict (key) do update
+         set value = excluded.value, updated_by = excluded.updated_by`,
+      [TAKAFUL_BENEFIT_KEY, amount.trim(), actor.userId]
+    );
+  });
+}
+
+// The margin (MUR) within which a posted debit sends the holder the
+// balance.near_floor advisory (S-1803): the Society's figure to widen or
+// narrow. Seeded 500 by migration 0081; the default here is read only
+// before it has run. 0 turns the advisory off.
+const NEAR_FLOOR_MARGIN_KEY = 'balance.near_floor_margin';
+const DEFAULT_NEAR_FLOOR_MARGIN = '500';
+
+async function readNearFloorMargin(): Promise<string> {
+  const result = await query<{ value: string }>(
+    `select value::text as value from config_entry where key = $1`,
+    [NEAR_FLOOR_MARGIN_KEY]
+  );
+  return result.rows[0]?.value ?? DEFAULT_NEAR_FLOOR_MARGIN;
+}
+
+export function nearFloorMargin(): Promise<string> {
+  return cached('near-floor-margin', readNearFloorMargin);
+}
+
+export async function setNearFloorMargin(
+  amount: string,
+  actor: Actor
+): Promise<void> {
+  if (!/^\d+(\.\d{1,2})?$/.test(amount.trim())) {
+    throw new ConfigError(`${amount || 'That'} is not an amount in rupees.`);
+  }
+  await withConfigurationActor(actorFor(actor), async client => {
+    await client.query(
+      `insert into config_entry (key, value, value_type, description, updated_by)
+       values (
+         $1, to_jsonb($2::numeric), 'number',
+         'A posted debit that leaves an account within this amount (MUR) ' ||
+         'of its type''s minimum balance sends the holder a ' ||
+         'balance.near_floor advisory. 0 turns the advisory off.',
+         $3
+       )
+       on conflict (key) do update
+         set value = excluded.value, updated_by = excluded.updated_by`,
+      [NEAR_FLOOR_MARGIN_KEY, amount.trim(), actor.userId]
+    );
+  });
+}
+
+// ---------------------------------------------------------------------------
+// S-2102 · Which transactions a member may start from the app
+// ---------------------------------------------------------------------------
+// Seeded empty by migration 0085: the endpoints exist from day one and
+// refuse until the Society switches each one on. Read on every member write,
+// through the short cache like the rest of the reference configuration.
+export type MemberOperation = 'deposit' | 'withdrawal' | 'transfer';
+export const MEMBER_OPERATIONS: readonly MemberOperation[] = [
+  'deposit',
+  'withdrawal',
+  'transfer',
+];
+const MEMBER_OPERATIONS_KEY = 'member_api.enabled_operations';
+
+function isMemberOperation(value: unknown): value is MemberOperation {
+  return (MEMBER_OPERATIONS as readonly unknown[]).includes(value);
+}
+
+async function readMemberOperations(): Promise<MemberOperation[]> {
+  const result = await query<{ value: unknown }>(
+    `select value from config_entry where key = $1`,
+    [MEMBER_OPERATIONS_KEY]
+  );
+  const value = result.rows[0]?.value;
+  return Array.isArray(value) ? value.filter(isMemberOperation) : [];
+}
+
+export function enabledMemberOperations(): Promise<MemberOperation[]> {
+  return cached('member-operations', readMemberOperations);
+}
+
+export async function setEnabledMemberOperations(
+  operations: readonly string[],
+  actor: Actor
+): Promise<void> {
+  const unknown = operations.find(o => !isMemberOperation(o));
+  if (unknown !== undefined) {
+    throw new ConfigError(`${unknown || 'That'} is not a transaction.`);
+  }
+  const enabled = MEMBER_OPERATIONS.filter(o => operations.includes(o));
+  await withConfigurationActor(actorFor(actor), async client => {
+    await client.query(
+      `insert into config_entry (key, value, value_type, description, updated_by)
+       values (
+         $1, $2::jsonb, 'json',
+         'Which transactions a member may start from the app: any of ' ||
+         '"deposit", "withdrawal" and "transfer". Empty: none.',
+         $3
+       )
+       on conflict (key) do update
+         set value = excluded.value, updated_by = excluded.updated_by`,
+      [MEMBER_OPERATIONS_KEY, JSON.stringify(enabled), actor.userId]
+    );
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Sign-out after inactivity (officer request)
+// ---------------------------------------------------------------------------
+// Seeded by migration 0100; the default here is read only before it has run.
+// Read by the middleware on every request and by the page's own idle timer.
+const SESSION_IDLE_MINUTES_KEY = 'session.idle_minutes';
+const DEFAULT_SESSION_IDLE_MINUTES = 15;
+
+async function readSessionIdleMinutes(): Promise<number> {
+  const result = await query<{ value: unknown }>(
+    `select value from config_entry where key = $1`,
+    [SESSION_IDLE_MINUTES_KEY]
+  );
+  const value = Number(result.rows[0]?.value);
+  return Number.isInteger(value) && value >= 0
+    ? value
+    : DEFAULT_SESSION_IDLE_MINUTES;
+}
+
+export function sessionIdleMinutes(): Promise<number> {
+  return cached('session-idle-minutes', readSessionIdleMinutes);
+}
+
+export async function setSessionIdleMinutes(
+  minutes: string,
+  actor: Actor
+): Promise<void> {
+  const trimmed = minutes.trim();
+  if (!/^\d{1,3}$/.test(trimmed) || Number(trimmed) > 480) {
+    throw new ConfigError(
+      `${minutes || 'That'} is not a whole number of minutes (0 to 480).`
+    );
+  }
+  await withConfigurationActor(actorFor(actor), async client => {
+    await client.query(
+      `insert into config_entry (key, value, value_type, description, updated_by)
+       values (
+         $1, to_jsonb($2::int), 'number',
+         'A staff session with no activity for this many minutes is signed ' ||
+         'out. 0 turns the idle sign-out off.',
+         $3
+       )
+       on conflict (key) do update
+         set value = excluded.value, updated_by = excluded.updated_by`,
+      [SESSION_IDLE_MINUTES_KEY, Number(trimmed), actor.userId]
+    );
+  });
+}
+
+// ---------------------------------------------------------------------------
+// S-804, S-805 · Dormancy: after how long, and how a member comes back
+// ---------------------------------------------------------------------------
+// Seeded by migration 0086; the defaults here are read only before it has
+// run. dormancy.months is what the nightly job measures against (0 turns it
+// off); dormancy.reactivation names the rule a dormant member comes back
+// under — "staff" is the only one built, the backlog's default until the
+// Society confirms another, and naming it here means another is a value.
+const DORMANCY_MONTHS_KEY = 'dormancy.months';
+const DEFAULT_DORMANCY_MONTHS = 12;
+const DORMANCY_REACTIVATION_KEY = 'dormancy.reactivation';
+export const DORMANCY_REACTIVATIONS = ['staff'] as const;
+export type DormancyReactivation = (typeof DORMANCY_REACTIVATIONS)[number];
+
+async function readDormancyMonths(): Promise<number> {
+  const result = await query<{ value: unknown }>(
+    `select value from config_entry where key = $1`,
+    [DORMANCY_MONTHS_KEY]
+  );
+  const value = Number(result.rows[0]?.value);
+  return Number.isInteger(value) && value >= 0
+    ? value
+    : DEFAULT_DORMANCY_MONTHS;
+}
+
+export function dormancyMonths(): Promise<number> {
+  return cached('dormancy-months', readDormancyMonths);
+}
+
+export async function setDormancyMonths(
+  months: string,
+  actor: Actor
+): Promise<void> {
+  const trimmed = months.trim();
+  if (!/^\d{1,3}$/.test(trimmed)) {
+    throw new ConfigError(
+      `${months || 'That'} is not a whole number of months (0 to 999).`
+    );
+  }
+  await withConfigurationActor(actorFor(actor), async client => {
+    await client.query(
+      `insert into config_entry (key, value, value_type, description, updated_by)
+       values (
+         $1, to_jsonb($2::int), 'number',
+         'An active member with no posted transaction and no fee payment ' ||
+         'on any of their accounts for this many months is marked dormant ' ||
+         'by the nightly dormancy-detection job. 0 turns detection off.',
+         $3
+       )
+       on conflict (key) do update
+         set value = excluded.value, updated_by = excluded.updated_by`,
+      [DORMANCY_MONTHS_KEY, Number(trimmed), actor.userId]
+    );
+  });
+}
+
+async function readDormancyReactivation(): Promise<DormancyReactivation> {
+  const result = await query<{ value: unknown }>(
+    `select value from config_entry where key = $1`,
+    [DORMANCY_REACTIVATION_KEY]
+  );
+  const value = result.rows[0]?.value;
+  return (DORMANCY_REACTIVATIONS as readonly unknown[]).includes(value)
+    ? (value as DormancyReactivation)
+    : 'staff';
+}
+
+export function dormancyReactivation(): Promise<DormancyReactivation> {
+  return cached('dormancy-reactivation', readDormancyReactivation);
+}
+
+export async function setDormancyReactivation(
+  rule: string,
+  actor: Actor
+): Promise<void> {
+  if (!(DORMANCY_REACTIVATIONS as readonly string[]).includes(rule)) {
+    throw new ConfigError(`${rule || 'That'} is not a reactivation rule.`);
+  }
+  await withConfigurationActor(actorFor(actor), async client => {
+    await client.query(
+      `insert into config_entry (key, value, value_type, description, updated_by)
+       values (
+         $1, to_jsonb($2::text), 'string',
+         'How a dormant member becomes active again. "staff": an officer ' ||
+         'holding member.reactivate does it on the member''s page, with a ' ||
+         'reason.',
+         $3
+       )
+       on conflict (key) do update
+         set value = excluded.value, updated_by = excluded.updated_by`,
+      [DORMANCY_REACTIVATION_KEY, rule, actor.userId]
+    );
+  });
+}
+
+// The pre-checks a resignation runs before it can be submitted (S-1703),
+// each its own switch: named when it blocks, and the Society's to turn off.
+// Seeded by migration 0078; the defaults here are read only before it has
+// run. Financing is a hook for Phase 3/4 with nothing behind it, off.
+export interface ResignationChecks {
+  pendingTransactions: boolean;
+  unpaidFees: boolean;
+  financing: boolean;
+}
+
+const RESIGNATION_CHECK_KEYS: Record<keyof ResignationChecks, string> = {
+  pendingTransactions: 'resignation.check_pending_transactions',
+  unpaidFees: 'resignation.check_unpaid_fees',
+  financing: 'resignation.check_financing',
+};
+const DEFAULT_RESIGNATION_CHECKS: ResignationChecks = {
+  pendingTransactions: true,
+  unpaidFees: true,
+  financing: false,
+};
+
+async function readResignationChecks(): Promise<ResignationChecks> {
+  const result = await query<{ key: string; value: boolean }>(
+    `select key, value from config_entry where key = any($1::text[])`,
+    [Object.values(RESIGNATION_CHECK_KEYS)]
+  );
+  const byKey = new Map(result.rows.map(r => [r.key, r.value === true]));
+  const checks = { ...DEFAULT_RESIGNATION_CHECKS };
+  for (const name of Object.keys(checks) as (keyof ResignationChecks)[]) {
+    const value = byKey.get(RESIGNATION_CHECK_KEYS[name]);
+    if (value !== undefined) checks[name] = value;
+  }
+  return checks;
+}
+
+export function resignationChecks(): Promise<ResignationChecks> {
+  return cached('resignation-checks', readResignationChecks);
+}
+
+export async function setResignationChecks(
+  checks: ResignationChecks,
+  actor: Actor
+): Promise<void> {
+  await withConfigurationActor(actorFor(actor), async client => {
+    for (const name of Object.keys(checks) as (keyof ResignationChecks)[]) {
+      await client.query(
+        `update config_entry
+            set value = to_jsonb($2::boolean), updated_by = $3
+          where key = $1`,
+        [RESIGNATION_CHECK_KEYS[name], checks[name], actor.userId]
+      );
+    }
+  });
+}
+
 // The checklist an officer works through, on screen, before signing the
 // Source of Fund form for a cash payment above the threshold above. The
 // Society's own wording, not this codebase's — seeded with one placeholder
@@ -2050,5 +2482,638 @@ export async function setCashSourceOfFundChecklist(
          set value = excluded.value, updated_by = excluded.updated_by`,
       [CASH_SOURCE_OF_FUND_CHECKLIST_KEY, cleaned, actor.userId]
     );
+  });
+}
+
+// ---------------------------------------------------------------------------
+// S-1307 · Payment methods
+// ---------------------------------------------------------------------------
+// How money moves, as configuration (migration 0067). A method carries what
+// the rest of the system asks of one: whether the cash controls apply
+// (isCash), whether the form demands a reference (requiresReference),
+// whether the money reaches a bank (touchesBank), and whether it is the
+// system's own — 'migration', the legacy import's mark — which is never
+// offered on a form and not an administrator's to change (isSystem).
+export interface PaymentMethod {
+  id: string;
+  code: string;
+  name: string;
+  isCash: boolean;
+  requiresReference: boolean;
+  touchesBank: boolean;
+  isSystem: boolean;
+  isActive: boolean;
+  sortOrder: number;
+}
+
+async function readPaymentMethods(): Promise<PaymentMethod[]> {
+  const result = await query<{
+    id: string;
+    code: string;
+    name: string;
+    is_cash: boolean;
+    requires_reference: boolean;
+    touches_bank: boolean;
+    is_system: boolean;
+    is_active: boolean;
+    sort_order: number;
+  }>(
+    `select id, code, name, is_cash, requires_reference, touches_bank,
+            is_system, is_active, sort_order
+       from payment_method
+      order by sort_order, name`
+  );
+  return result.rows.map(r => ({
+    id: r.id,
+    code: r.code,
+    name: r.name,
+    isCash: r.is_cash,
+    requiresReference: r.requires_reference,
+    touchesBank: r.touches_bank,
+    isSystem: r.is_system,
+    isActive: r.is_active,
+    sortOrder: r.sort_order,
+  }));
+}
+
+export function listPaymentMethods(): Promise<PaymentMethod[]> {
+  return cached('payment-methods', readPaymentMethods);
+}
+
+// What an officer's form offers: active, and not the system's own.
+export async function offeredPaymentMethods(): Promise<PaymentMethod[]> {
+  return (await listPaymentMethods()).filter(m => m.isActive && !m.isSystem);
+}
+
+// The method a record names, offered or not — a receipt taken by a method
+// since retired still has to say how it was paid.
+export async function paymentMethodByCode(
+  code: string
+): Promise<PaymentMethod | null> {
+  return (await listPaymentMethods()).find(m => m.code === code) ?? null;
+}
+
+export interface PaymentMethodInput {
+  name: string;
+  isCash: boolean;
+  requiresReference: boolean;
+  touchesBank: boolean;
+  isActive: boolean;
+}
+
+export async function createPaymentMethod(
+  input: PaymentMethodInput & { code: string },
+  actor: Actor
+): Promise<string> {
+  const code = input.code.trim().toLowerCase();
+  if (!CODE_PATTERN.test(code)) {
+    throw new ConfigError(
+      'A code must start with a letter and contain only lowercase letters, ' +
+        'digits and underscores.'
+    );
+  }
+  if (!input.name.trim()) throw new ConfigError('A name is required.');
+
+  return withConfigurationActor(actorFor(actor), async client => {
+    const existing = await client.query(
+      'select 1 from payment_method where code = $1',
+      [code]
+    );
+    if (existing.rowCount) {
+      throw new ConfigError(
+        `A payment method with code ${code} already exists.`,
+        'conflict'
+      );
+    }
+    const result = await client.query<{ id: string }>(
+      `insert into payment_method
+         (code, name, is_cash, requires_reference, touches_bank, is_active,
+          sort_order)
+       values ($1, $2, $3, $4, $5, $6,
+               coalesce((select max(sort_order) + 10 from payment_method
+                          where not is_system), 10))
+       returning id`,
+      [
+        code,
+        input.name.trim(),
+        input.isCash,
+        input.requiresReference,
+        input.touchesBank,
+        input.isActive,
+      ]
+    );
+    return result.rows[0].id;
+  });
+}
+
+export async function updatePaymentMethod(
+  id: string,
+  input: PaymentMethodInput,
+  actor: Actor
+): Promise<void> {
+  if (!input.name.trim()) throw new ConfigError('A name is required.');
+
+  await withConfigurationActor(actorFor(actor), async client => {
+    const result = await client.query(
+      `update payment_method
+          set name = $2, is_cash = $3, requires_reference = $4,
+              touches_bank = $5, is_active = $6
+        where id = $1 and not is_system`,
+      [
+        id,
+        input.name.trim(),
+        input.isCash,
+        input.requiresReference,
+        input.touchesBank,
+        input.isActive,
+      ]
+    );
+    if (result.rowCount === 0) {
+      const system = await client.query(
+        'select 1 from payment_method where id = $1 and is_system',
+        [id]
+      );
+      throw system.rowCount
+        ? new ConfigError(
+            'This method is written by the system and cannot be changed.',
+            'conflict'
+          )
+        : new ConfigError('That payment method no longer exists.', 'not_found');
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// S-1401 · The approval matrix
+// ---------------------------------------------------------------------------
+// Which chain — or none — a transaction falls under (migration 0070).
+// Ordered within a kind; the first match wins; a rule with no chain means
+// "post immediately". resolveRoute (ledger/routing.ts) is the reader; this
+// is the administrator's side of it.
+export const TRANSACTION_KINDS = [
+  'deposit',
+  'withdrawal',
+  'transfer',
+  'closure',
+  'resignation',
+  'demise',
+] as const;
+export type TransactionKind = (typeof TRANSACTION_KINDS)[number];
+// What a `transaction` row may be: the matrix's kinds, plus the legs of a
+// transfer (S-1504) and reversals (S-1505), which the matrix never routes
+// by name — a transfer's debit leg goes by 'transfer' or 'withdrawal'.
+export type TransactionRowKind = TransactionKind | 'transfer_leg' | 'reversal';
+
+export interface ApprovalRule {
+  id: string;
+  kind: TransactionKind;
+  accountTypeId: string | null;
+  accountTypeName: string | null;
+  initiatingRoleId: string | null;
+  initiatingRoleCode: string | null;
+  initiatingRoleName: string | null;
+  amountFrom: string;
+  // Null: and above.
+  amountTo: string | null;
+  // Null: post immediately.
+  workflowDefinitionId: string | null;
+  workflowCode: string | null;
+  workflowName: string | null;
+  note: string;
+  sortOrder: number;
+  isActive: boolean;
+}
+
+async function readApprovalRules(): Promise<ApprovalRule[]> {
+  const result = await query<{
+    id: string;
+    kind: TransactionKind;
+    account_type_id: string | null;
+    account_type_name: string | null;
+    initiating_role_id: string | null;
+    initiating_role_code: string | null;
+    initiating_role_name: string | null;
+    amount_from: string;
+    amount_to: string | null;
+    workflow_definition_id: string | null;
+    workflow_code: string | null;
+    workflow_name: string | null;
+    note: string;
+    sort_order: number;
+    is_active: boolean;
+  }>(
+    `select r.id, r.kind, r.account_type_id, t.name as account_type_name,
+            r.initiating_role_id, ro.code as initiating_role_code,
+            ro.name as initiating_role_name,
+            r.amount_from, r.amount_to,
+            r.workflow_definition_id, d.code as workflow_code,
+            d.name as workflow_name,
+            r.note, r.sort_order, r.is_active
+       from approval_rule r
+       left join account_type t on t.id = r.account_type_id
+       left join role ro on ro.id = r.initiating_role_id
+       left join workflow_definition d on d.id = r.workflow_definition_id
+      order by r.kind, r.sort_order, r.created_at`
+  );
+  return result.rows.map(r => ({
+    id: r.id,
+    kind: r.kind,
+    accountTypeId: r.account_type_id,
+    accountTypeName: r.account_type_name,
+    initiatingRoleId: r.initiating_role_id,
+    initiatingRoleCode: r.initiating_role_code,
+    initiatingRoleName: r.initiating_role_name,
+    amountFrom: r.amount_from,
+    amountTo: r.amount_to,
+    workflowDefinitionId: r.workflow_definition_id,
+    workflowCode: r.workflow_code,
+    workflowName: r.workflow_name,
+    note: r.note,
+    sortOrder: r.sort_order,
+    isActive: r.is_active,
+  }));
+}
+
+export function listApprovalRules(): Promise<ApprovalRule[]> {
+  return cached('approval-rules', readApprovalRules);
+}
+
+export interface ApprovalRuleInput {
+  kind: string;
+  accountTypeId: string | null;
+  initiatingRoleId: string | null;
+  amountFrom: string;
+  amountTo: string | null;
+  workflowDefinitionId: string | null;
+  note: string;
+  isActive: boolean;
+}
+
+function validateApprovalRule(input: ApprovalRuleInput): {
+  kind: TransactionKind;
+  amountFrom: string;
+  amountTo: string | null;
+} {
+  if (!(TRANSACTION_KINDS as readonly string[]).includes(input.kind)) {
+    throw new ConfigError('Choose which kind of transaction the rule is for.');
+  }
+  const amountFrom = input.amountFrom.trim() || '0';
+  validateAmount(amountFrom);
+  const amountTo = input.amountTo?.trim() || null;
+  if (amountTo !== null) {
+    validateAmount(amountTo);
+    if (Number(amountTo) < Number(amountFrom)) {
+      throw new ConfigError('The band’s upper amount is below its lower.');
+    }
+  }
+  return { kind: input.kind as TransactionKind, amountFrom, amountTo };
+}
+
+export async function createApprovalRule(
+  input: ApprovalRuleInput,
+  actor: Actor
+): Promise<string> {
+  const { kind, amountFrom, amountTo } = validateApprovalRule(input);
+  return withConfigurationActor(actorFor(actor), async client => {
+    const result = await client.query<{ id: string }>(
+      `insert into approval_rule
+         (kind, account_type_id, initiating_role_id, amount_from, amount_to,
+          workflow_definition_id, note, is_active, sort_order)
+       -- First, not last (QA-29): the first rule that matches decides, so
+       -- a rule added below the general amount bands could never apply.
+       -- The administrator moves it down from here if it should not win.
+       values ($1, $2, $3, $4, $5, $6, $7, $8,
+               coalesce((select min(sort_order) - 10 from approval_rule
+                          where kind = $1), 10))
+       returning id`,
+      [
+        kind,
+        input.accountTypeId,
+        input.initiatingRoleId,
+        amountFrom,
+        amountTo,
+        input.workflowDefinitionId,
+        input.note.trim(),
+        input.isActive,
+      ]
+    );
+    return result.rows[0].id;
+  });
+}
+
+export async function updateApprovalRule(
+  id: string,
+  input: ApprovalRuleInput,
+  actor: Actor
+): Promise<void> {
+  const { kind, amountFrom, amountTo } = validateApprovalRule(input);
+  await withConfigurationActor(actorFor(actor), async client => {
+    const result = await client.query(
+      `update approval_rule
+          set kind = $2, account_type_id = $3, initiating_role_id = $4,
+              amount_from = $5, amount_to = $6, workflow_definition_id = $7,
+              note = $8, is_active = $9
+        where id = $1`,
+      [
+        id,
+        kind,
+        input.accountTypeId,
+        input.initiatingRoleId,
+        amountFrom,
+        amountTo,
+        input.workflowDefinitionId,
+        input.note.trim(),
+        input.isActive,
+      ]
+    );
+    if (result.rowCount === 0) {
+      throw new ConfigError('That rule no longer exists.', 'not_found');
+    }
+  });
+}
+
+// Up or down within its kind: the order is the matrix, since the first
+// match wins.
+export async function moveApprovalRule(
+  id: string,
+  direction: 'up' | 'down',
+  actor: Actor
+): Promise<void> {
+  await withConfigurationActor(actorFor(actor), async client => {
+    const rows = await client.query<{ id: string; sort_order: number }>(
+      `select id, sort_order from approval_rule
+        where kind = (select kind from approval_rule where id = $1)
+        order by sort_order, created_at`,
+      [id]
+    );
+    const index = rows.rows.findIndex(r => r.id === id);
+    if (index === -1) {
+      throw new ConfigError('That rule no longer exists.', 'not_found');
+    }
+    const other = rows.rows[direction === 'up' ? index - 1 : index + 1];
+    if (!other) return;
+    // Renumber the whole kind, swapped: two rules that happened to share a
+    // sort order would otherwise never change places.
+    const order = rows.rows.map(r => r.id);
+    [order[index], order[index + (direction === 'up' ? -1 : 1)]] = [
+      order[index + (direction === 'up' ? -1 : 1)],
+      order[index],
+    ];
+    for (const [position, ruleId] of order.entries()) {
+      await client.query(
+        'update approval_rule set sort_order = $2 where id = $1',
+        [ruleId, (position + 1) * 10]
+      );
+    }
+  });
+}
+
+// A rule a transaction was routed by stays, because the trail names it;
+// deactivate instead.
+export async function deleteApprovalRule(
+  id: string,
+  actor: Actor
+): Promise<void> {
+  await withConfigurationActor(actorFor(actor), async client => {
+    const used = await client.query(
+      `select 1 from transaction where approval_rule_id = $1
+       union all
+       select 1 from transaction_transition where approval_rule_id = $1
+       limit 1`,
+      [id]
+    );
+    if (used.rowCount) {
+      throw new ConfigError(
+        'This rule has routed a transaction, so it stays on the trail. ' +
+          'Deactivate it instead.',
+        'conflict'
+      );
+    }
+    const result = await client.query(
+      'delete from approval_rule where id = $1',
+      [id]
+    );
+    if (result.rowCount === 0) {
+      throw new ConfigError('That rule no longer exists.', 'not_found');
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// S-1901 · The Society's bank accounts
+// ---------------------------------------------------------------------------
+// Configuration (migration 0082): which bank accounts the Society has, so
+// a transaction that touches a bank can say which (S-1902) and Phase 5 can
+// reconcile a statement against it. The number is the sensitive part:
+// bank_account.view reads it masked to its last four digits,
+// bank_account.manage whole. The balance is not here — it is derived from
+// posted transactions (src/lib/ledger/bank-accounts.ts), never stored.
+export interface BankAccount {
+  id: string;
+  code: string;
+  name: string;
+  bankName: string;
+  // Masked unless the caller may see it whole (maskAccountNumber).
+  accountNumber: string;
+  currency: string;
+  openingBalance: string;
+  // ISO date: the day the system started recording against it.
+  openingDate: string;
+  isActive: boolean;
+  sortOrder: number;
+}
+
+export const PERMISSION_BANK_ACCOUNT_VIEW = 'bank_account.view';
+export const PERMISSION_BANK_ACCOUNT_MANAGE = 'bank_account.manage';
+
+// Everything but the last four characters, so a list a clerk can see
+// identifies the account without giving the number away.
+export function maskAccountNumber(number: string): string {
+  const trimmed = number.trim();
+  if (trimmed.length <= 4) return '••••';
+  return '•'.repeat(trimmed.length - 4) + trimmed.slice(-4);
+}
+
+async function readBankAccounts(): Promise<BankAccount[]> {
+  const result = await query<{
+    id: string;
+    code: string;
+    name: string;
+    bank_name: string;
+    account_number: string;
+    currency: string;
+    opening_balance: string;
+    opening_date: string;
+    is_active: boolean;
+    sort_order: number;
+  }>(
+    `select id, code, name, bank_name, account_number, currency,
+            opening_balance::text as opening_balance,
+            opening_date::text as opening_date, is_active, sort_order
+       from bank_account
+      order by sort_order, name`
+  );
+  return result.rows.map(r => ({
+    id: r.id,
+    code: r.code,
+    name: r.name,
+    bankName: r.bank_name,
+    accountNumber: r.account_number,
+    currency: r.currency,
+    openingBalance: r.opening_balance,
+    openingDate: r.opening_date,
+    isActive: r.is_active,
+    sortOrder: r.sort_order,
+  }));
+}
+
+// The full list, numbers whole: for a caller that has checked
+// bank_account.manage, and for the ledger, which names an account by id.
+export function listBankAccounts(): Promise<BankAccount[]> {
+  return cached('bank-accounts', readBankAccounts);
+}
+
+// The list as a holder of bank_account.view may see it.
+export async function listBankAccountsMasked(): Promise<BankAccount[]> {
+  return (await listBankAccounts()).map(a => ({
+    ...a,
+    accountNumber: maskAccountNumber(a.accountNumber),
+  }));
+}
+
+// What a form offers a transaction that touches a bank: the active ones.
+export async function offeredBankAccounts(): Promise<BankAccount[]> {
+  return (await listBankAccounts()).filter(a => a.isActive);
+}
+
+export async function bankAccountById(id: string): Promise<BankAccount | null> {
+  return (await listBankAccounts()).find(a => a.id === id) ?? null;
+}
+
+export interface BankAccountInput {
+  name: string;
+  bankName: string;
+  accountNumber: string;
+  currency?: string;
+  openingBalance: string;
+  openingDate?: string;
+  isActive: boolean;
+}
+
+function validateBankAccount(input: BankAccountInput): {
+  name: string;
+  bankName: string;
+  accountNumber: string;
+  currency: string;
+  openingBalance: string;
+  openingDate: string | null;
+} {
+  const name = input.name.trim();
+  const bankName = input.bankName.trim();
+  const accountNumber = input.accountNumber.trim();
+  const currency = (input.currency ?? 'MUR').trim().toUpperCase() || 'MUR';
+  const openingBalance = input.openingBalance.trim().replace(/,/g, '') || '0';
+  const openingDate = (input.openingDate ?? '').trim() || null;
+  if (!name) throw new ConfigError('A name is required.');
+  if (!bankName) throw new ConfigError('The bank is required.');
+  if (!/^[A-Za-z0-9 -]{4,40}$/.test(accountNumber)) {
+    throw new ConfigError(
+      'The account number is letters, digits, spaces and dashes, 4 to 40 long.'
+    );
+  }
+  if (!/^[A-Z]{3}$/.test(currency)) {
+    throw new ConfigError('The currency is a three-letter code, such as MUR.');
+  }
+  if (!/^-?\d+(\.\d{1,2})?$/.test(openingBalance)) {
+    throw new ConfigError(
+      `${input.openingBalance || 'That'} is not an amount in rupees.`
+    );
+  }
+  if (openingDate !== null && !/^\d{4}-\d{2}-\d{2}$/.test(openingDate)) {
+    throw new ConfigError('The opening date is not a date.');
+  }
+  return {
+    name,
+    bankName,
+    accountNumber,
+    currency,
+    openingBalance,
+    openingDate,
+  };
+}
+
+export async function createBankAccount(
+  input: BankAccountInput & { code: string },
+  actor: Actor
+): Promise<string> {
+  const code = input.code.trim().toLowerCase();
+  if (!CODE_PATTERN.test(code)) {
+    throw new ConfigError(
+      'A code must start with a letter and contain only lowercase letters, ' +
+        'digits and underscores.'
+    );
+  }
+  const fields = validateBankAccount(input);
+  return withConfigurationActor(actorFor(actor), async client => {
+    const existing = await client.query(
+      'select 1 from bank_account where code = $1',
+      [code]
+    );
+    if (existing.rowCount) {
+      throw new ConfigError(
+        `A bank account with code ${code} already exists.`,
+        'conflict'
+      );
+    }
+    const result = await client.query<{ id: string }>(
+      `insert into bank_account
+         (code, name, bank_name, account_number, currency, opening_balance,
+          opening_date, is_active, sort_order)
+       values ($1, $2, $3, $4, $5, $6, coalesce($7::date, current_date), $8,
+               coalesce((select max(sort_order) + 10 from bank_account), 10))
+       returning id`,
+      [
+        code,
+        fields.name,
+        fields.bankName,
+        fields.accountNumber,
+        fields.currency,
+        fields.openingBalance,
+        fields.openingDate,
+        input.isActive,
+      ]
+    );
+    return result.rows[0].id;
+  });
+}
+
+export async function updateBankAccount(
+  id: string,
+  input: BankAccountInput,
+  actor: Actor
+): Promise<void> {
+  const fields = validateBankAccount(input);
+  await withConfigurationActor(actorFor(actor), async client => {
+    const result = await client.query(
+      `update bank_account
+          set name = $2, bank_name = $3, account_number = $4, currency = $5,
+              opening_balance = $6,
+              opening_date = coalesce($7::date, opening_date),
+              is_active = $8
+        where id = $1`,
+      [
+        id,
+        fields.name,
+        fields.bankName,
+        fields.accountNumber,
+        fields.currency,
+        fields.openingBalance,
+        fields.openingDate,
+        input.isActive,
+      ]
+    );
+    if (result.rowCount === 0) {
+      throw new ConfigError('That bank account no longer exists.', 'not_found');
+    }
   });
 }

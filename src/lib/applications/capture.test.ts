@@ -82,6 +82,7 @@ async function load() {
   return {
     capture: await import('./capture'),
     config: await import('../config/reference'),
+    applicationsOf: await import('../members/applications-of'),
   };
 }
 
@@ -532,6 +533,9 @@ describe('S-604/S-605: a minor’s guardian must be a real, findable person', ()
       p => p.subject === 'guardian' && p.fieldKey === 'member_id'
     );
     expect(guardianProblem?.label).toMatch(/not an active member/);
+    // Officer feedback: the number is a way to the member, not a dead end.
+    expect(guardianProblem?.link?.text).toBe(memberNo);
+    expect(guardianProblem?.link?.href).toMatch(/^\/members\/[0-9a-f-]{36}$/);
   });
 
   // The whole point of the relaxation: a parent and their minor can join at
@@ -685,7 +689,7 @@ describe('an applicant’s NIC must not already belong to a member or non-member
       p => p.subject === 'applicant' && p.fieldKey === 'nic'
     );
     expect(nicProblem?.label).toMatch(
-      new RegExp(`already on file for member ${memberNo}`)
+      new RegExp(`on file for member ${memberNo}`)
     );
   });
 
@@ -714,9 +718,7 @@ describe('an applicant’s NIC must not already belong to a member or non-member
     const nicProblem = problems.find(
       p => p.subject === 'applicant' && p.fieldKey === 'nic'
     );
-    expect(nicProblem?.label).toMatch(
-      /already on file for non-member Ismail Peerthum/
-    );
+    expect(nicProblem?.label).toMatch(/on file for non-member Ismail Peerthum/);
   });
 
   // Officer feedback: "opening an additional-account" for someone not yet on
@@ -758,7 +760,7 @@ describe('an applicant’s NIC must not already belong to a member or non-member
       p => p.subject === 'applicant' && p.fieldKey === 'nic'
     );
     expect(nicProblem?.label).toMatch(
-      new RegExp(`already on file for member ${memberNo}`)
+      new RegExp(`on file for member ${memberNo}`)
     );
   });
 
@@ -811,7 +813,7 @@ describe('an applicant’s NIC must not already belong to a member or non-member
       p => p.subject === 'applicant' && p.fieldKey === 'nic'
     );
     expect(nicProblem?.label).toMatch(
-      new RegExp(`already on file for application ${reference}`)
+      new RegExp(`already on application ${reference}`)
     );
   });
 
@@ -872,7 +874,7 @@ describe('an applicant’s NIC must not already belong to a member or non-member
       p => p.subject === 'applicant' && p.fieldKey === 'nic'
     );
     expect(nicProblem?.label).toMatch(
-      new RegExp(`already on file for application ${reference}`)
+      new RegExp(`already on application ${reference}`)
     );
   });
 
@@ -923,6 +925,140 @@ describe('an applicant’s NIC must not already belong to a member or non-member
     expect(
       problems.some(p => p.subject === 'applicant' && p.fieldKey === 'nic')
     ).toBe(false);
+  });
+
+  // Lifecycle test, LC-01 and LC-04: every application of one person shares
+  // a folder. A non-member who became a member, resigned, rejoined and
+  // resigned again rejoins a second time on the same NIC — none of their own
+  // earlier applications is someone else holding it, and a decided one
+  // never reads as a clash.
+  it('reads every application in the person’s own folder as theirs', async () => {
+    const { capture } = await load();
+    const nic = 'N1212121212121';
+    const type = (
+      await run(
+        appUrl,
+        `select id from membership_type where code = 'individual'`
+      )
+    ).rows[0].id;
+    const application = async (
+      kind: string,
+      status: string,
+      extra: { folder?: string; rejoins?: string; sourceCustomer?: string } = {}
+    ) => {
+      const row = await run(
+        appUrl,
+        `insert into membership_application
+           (application_kind, membership_type_id, captured_by, status,
+            folder_application_id, rejoins_member_id, source_customer_id)
+         values ($1, $2, $3, $4, $5, $6, $7) returning id`,
+        [
+          kind,
+          type,
+          officer.userId,
+          status,
+          extra.folder ?? null,
+          extra.rejoins ?? null,
+          extra.sourceCustomer ?? null,
+        ]
+      );
+      await run(
+        appUrl,
+        `insert into application_party (application_id, subject, ordinal, values)
+         values ($1, 'applicant', 1, $2::jsonb)`,
+        [
+          row.rows[0].id,
+          JSON.stringify({ surname: 'Lifecust', name: 'Test', nic }),
+        ]
+      );
+      return row.rows[0].id as string;
+    };
+    // The account they opened first, as a non-member: the folder's root.
+    const first = await application('customer_account', 'approved');
+    const customer = (
+      await run(
+        appUrl,
+        `insert into customer (application_id, status)
+         values ($1, 'converted') returning id`,
+        [first]
+      )
+    ).rows[0].id;
+    const conversion = await application('membership', 'approved', {
+      folder: first,
+      sourceCustomer: customer,
+    });
+    const member = (
+      await run(
+        appUrl,
+        `insert into member (application_id, membership_type_id, status)
+         values ($1, $2, 'resigned') returning id`,
+        [conversion, type]
+      )
+    ).rows[0].id;
+    // Rejoined once, and the member now reads from that application.
+    const rejoined = await application('membership', 'approved', {
+      folder: first,
+      rejoins: member,
+    });
+    await run(appUrl, `update member set application_id = $2 where id = $1`, [
+      member,
+      rejoined,
+    ]);
+
+    const second = await application('membership', 'draft', {
+      folder: first,
+      rejoins: member,
+    });
+    const nicProblems = async (id: string) =>
+      (
+        await capture.problemsBlockingSubmission(
+          (await capture.loadApplication(id))!
+        )
+      ).filter(p => p.subject === 'applicant' && p.fieldKey === 'nic');
+    expect(await nicProblems(second)).toEqual([]);
+    // The approved conversion, looked at after the member moved on.
+    expect(await nicProblems(conversion)).toEqual([]);
+
+    // LC-02: every one of them is the member's, and — from the non-member
+    // record they started as — the customer's too; a stranger's is not.
+    const { applicationsOf } = await load();
+    const ofMember = (
+      await applicationsOf.applicationsOfPerson({ memberId: member })
+    ).map(a => a.id);
+    expect(ofMember).toEqual(
+      expect.arrayContaining([first, conversion, rejoined, second])
+    );
+    expect(
+      (await applicationsOf.applicationsOfPerson({ customerId: customer })).map(
+        a => a.id
+      )
+    ).toEqual(expect.arrayContaining([first, conversion, rejoined, second]));
+
+    // Someone else entirely, on the same NIC, is still refused — and told
+    // how to reach the person on file.
+    const { id: stranger } = await capture.startApplication(
+      'individual',
+      officer
+    );
+    await capture.saveDraft(
+      stranger,
+      [
+        {
+          subject: 'applicant',
+          ordinal: 1,
+          values: { surname: 'Other', name: 'Person', nic },
+        },
+      ],
+      officer
+    );
+    expect((await nicProblems(stranger))[0]?.label).toMatch(
+      /who resigned\. Use Rejoin on their page\./
+    );
+    expect(
+      (await applicationsOf.applicationsOfPerson({ memberId: member })).map(
+        a => a.id
+      )
+    ).not.toContain(stranger);
   });
 
   it('never reads an application’s own applicant as a duplicate of itself', async () => {
@@ -1844,6 +1980,144 @@ describe('the application list staff work from', () => {
       expect(await capture.countApplications({ canHandleReceived: true })).toBe(
         withBefore + 1
       );
+    });
+  });
+
+  // Officer request: a page at a time, 10/25/50 rows.
+  describe('paging the list', () => {
+    async function seedSubmitted(
+      capture: Awaited<ReturnType<typeof load>>['capture'],
+      surname: string,
+      count: number
+    ): Promise<string[]> {
+      const ids: string[] = [];
+      for (let i = 0; i < count; i++) {
+        const { id } = await capture.startApplication('individual', officer);
+        await capture.saveDraft(
+          id,
+          [
+            {
+              subject: 'applicant',
+              ordinal: 1,
+              values: { name: `Row${i}`, surname },
+            },
+          ],
+          officer
+        );
+        await run(
+          appUrl,
+          `update membership_application set status = 'submitted_for_review'
+            where id = $1`,
+          [id]
+        );
+        ids.push(id);
+      }
+      return ids;
+    }
+
+    it('limit and offset page through a search independently of one another', async () => {
+      const { capture } = await load();
+      await seedSubmitted(capture, 'Pageonia', 5);
+
+      const firstPage = await capture.listApplications({
+        search: 'Pageonia',
+        limit: 2,
+        offset: 0,
+      });
+      const secondPage = await capture.listApplications({
+        search: 'Pageonia',
+        limit: 2,
+        offset: 2,
+      });
+      const thirdPage = await capture.listApplications({
+        search: 'Pageonia',
+        limit: 2,
+        offset: 4,
+      });
+      expect(firstPage).toHaveLength(2);
+      expect(secondPage).toHaveLength(2);
+      expect(thirdPage).toHaveLength(1);
+
+      const seen = [...firstPage, ...secondPage, ...thirdPage].map(a => a.id);
+      expect(new Set(seen).size).toBe(5);
+
+      expect(
+        await capture.countApplicationsForList({ search: 'Pageonia' })
+      ).toBe(5);
+    });
+
+    it('countApplicationsForList mirrors listApplications’ own filters — search, status, and a viewer’s own drafts', async () => {
+      const { capture } = await load();
+      const { id } = await capture.startApplication('individual', officer);
+      await capture.saveDraft(
+        id,
+        [
+          {
+            subject: 'applicant',
+            ordinal: 1,
+            values: { name: 'Countme', surname: 'Total' },
+          },
+        ],
+        officer
+      );
+
+      const listedForOfficer = await capture.listApplications({
+        search: 'Countme',
+        viewerUserId: officer.userId,
+      });
+      expect(
+        await capture.countApplicationsForList({
+          search: 'Countme',
+          viewerUserId: officer.userId,
+        })
+      ).toBe(listedForOfficer.length);
+
+      // A colleague cannot see this officer's own draft, so their count
+      // narrows to nothing, the same as listApplications' own visibility.
+      expect(
+        await capture.countApplicationsForList({
+          search: 'Countme',
+          viewerUserId: colleague.userId,
+        })
+      ).toBe(0);
+    });
+
+    // Officer feedback: an application waiting on this officer specifically
+    // leads every page, not only the first — attentionIds are sorted ahead
+    // of everything else in the query itself, and waitingOnly narrows the
+    // list (and its count) to just those.
+    it('sorts attentionIds to the top of the list, and waitingOnly narrows to just those', async () => {
+      const { capture } = await load();
+      const ids = await seedSubmitted(capture, 'Attnville', 4);
+      const attentionIds = [ids[1]!, ids[3]!];
+
+      const ordered = await capture.listApplications({
+        search: 'Attnville',
+        attentionIds,
+      });
+      const flags = ordered.map(a => attentionIds.includes(a.id));
+      const firstNonAttention = flags.indexOf(false);
+      expect(
+        firstNonAttention === -1 ||
+          flags.slice(0, firstNonAttention).every(Boolean)
+      ).toBe(true);
+
+      const onlyWaiting = await capture.listApplications({
+        search: 'Attnville',
+        attentionIds,
+        waitingOnly: true,
+      });
+      expect(onlyWaiting.map(a => a.id).sort()).toEqual(
+        [...attentionIds].sort()
+      );
+
+      expect(
+        await capture.countApplicationsForList({
+          search: 'Attnville',
+          attentionIds,
+          waitingOnly: true,
+        })
+      ).toBe(2);
     });
   });
 });
@@ -2789,7 +3063,9 @@ describe('S-613: starting an additional-account application for an existing memb
           [selectableTypeId],
           officer
         )
-      ).rejects.toThrowError(/active member/);
+      ).rejects.toThrowError(
+        /This member is inactive, so no account can be opened/
+      );
     });
 
     it('refuses a membership-default account type — Shares and the MSA open only on approval', async () => {
@@ -2979,7 +3255,10 @@ describe('S-613: starting an additional-account application for an existing memb
       }
       expect(application.applicationKind).toBe('additional_account');
       expect(application.existingMemberId).toBe(member.rows[0].id);
-      expect(application.existingHolderLabel).toBe(memberNo);
+      // Named as well as numbered (lifecycle test, LC-08).
+      expect(application.existingHolderLabel).toBe(
+        `Farah Ramdin · ${memberNo}`
+      );
       expect(application.selectedAccountTypes).toEqual([
         expect.objectContaining({ id: selectableTypeId, code: 'hsa_test' }),
       ]);
@@ -3265,7 +3544,9 @@ describe('S-614: a non-member applying to become one', () => {
       name: 'Nita',
       nic: 'N1234567890123',
     });
-    await run(appUrl, `update customer set status = 'closed' where id = $1`, [
+    // Not 'closed': a customer whose every account was closed may still
+    // apply (officer feedback) — a deceased one may not.
+    await run(appUrl, `update customer set status = 'demised' where id = $1`, [
       customerId,
     ]);
 

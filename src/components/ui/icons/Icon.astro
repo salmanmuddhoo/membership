@@ -4,9 +4,10 @@ import { Icons } from './icons.ts';
 interface Props {
   name: keyof typeof Icons | string;
   class?: string;
+  id?: string;
 }
 
-const { name, class: className = 'size-5 shrink-0' } = Astro.props;
+const { name, class: className = 'size-5 shrink-0', ...rest } = Astro.props;
 const icon = Icons[name as string];
 ---
 
@@ -20,6 +21,7 @@ const icon = Icons[name as string];
     stroke-linecap="round"
     stroke-linejoin="round"
     aria-hidden="true"
+    {...rest}
   >
     {icon.paths.map(d => (
       <path d={d} />

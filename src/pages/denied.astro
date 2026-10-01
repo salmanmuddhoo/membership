@@ -1,5 +1,6 @@
 ---
 import AuthLayout from '@layouts/AuthLayout.astro';
+import { BUTTON } from '@lib/ui';
 import BrandLogo from '@components/BrandLogo.astro';
 
 // Shown when a signed-in person may not reach what they asked for. It is
@@ -36,10 +37,7 @@ import BrandLogo from '@components/BrandLogo.astro';
         offering it sends them round a loop with no way out. Signing out is the
         one action that always does something.
       */}
-      <a
-        href="/auth/logout"
-        class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition duration-300"
-      >
+      <a href="/auth/logout" class={BUTTON}>
         Sign out
       </a>
     </div>

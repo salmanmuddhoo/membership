@@ -1,0 +1,243 @@
+/* The receipt sheet and the panels around it (S-503, S-1601): shared by
+   /receipts/[id] and the signed link's /receipts/shared/[token]. Set in
+   absolute units against white: this sheet is printed and handed to a
+   person, so it must not follow the reader's dark mode. */
+/* Set in absolute units against white: this sheet is printed and handed to
+     a person, so it must not follow the reader's dark mode. Same reasoning as
+     the application form. */
+.print-page {
+  position: relative;
+  max-width: 150mm;
+  margin: 0 auto;
+  padding: 12mm 10mm;
+  background: #fff;
+  color: #111;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 11pt;
+  line-height: 1.45;
+}
+
+.head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10mm;
+  border-bottom: 2px solid #111;
+  padding-bottom: 4mm;
+}
+h1 {
+  margin: 0;
+  font-size: 15pt;
+}
+.sub {
+  margin: 1mm 0 0;
+  font-size: 11pt;
+}
+.ref {
+  text-align: right;
+  font-size: 10pt;
+}
+.ref p {
+  margin: 0;
+}
+.reprint {
+  margin-top: 1mm !important;
+  font-weight: bold;
+  letter-spacing: 0.08em;
+}
+.reprint-note,
+.void-note {
+  margin: 4mm 0 0;
+  padding: 2mm 3mm;
+  border: 1px solid #444;
+  font-size: 9.5pt;
+}
+
+.facts {
+  margin: 6mm 0 0;
+}
+.facts .row {
+  display: flex;
+  gap: 4mm;
+  padding: 1mm 0;
+}
+.facts dt {
+  flex: 0 0 40mm;
+  color: #444;
+  font-size: 10pt;
+}
+.facts dd {
+  margin: 0;
+}
+
+.lines {
+  width: 100%;
+  margin-top: 6mm;
+  border-collapse: collapse;
+}
+.lines td {
+  padding: 1.8mm 0;
+  border-bottom: 1px solid #ccc;
+  vertical-align: top;
+}
+.amount {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.total td {
+  border-top: 2px solid #111;
+  border-bottom: none;
+  font-weight: bold;
+  padding-top: 2.5mm;
+}
+.note {
+  margin-top: 4mm;
+  font-size: 10pt;
+}
+
+.signature {
+  margin-top: 16mm;
+}
+.sig-line {
+  height: 12mm;
+  border-bottom: 1px solid #444;
+  max-width: 70mm;
+}
+.signature p {
+  margin: 1mm 0 0;
+  font-size: 9pt;
+  color: #444;
+}
+
+.watermark {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 80pt;
+  font-weight: bold;
+  color: rgba(0, 0, 0, 0.1);
+  transform: rotate(-30deg);
+  pointer-events: none;
+  letter-spacing: 0.1em;
+}
+
+.actions {
+  margin-top: 8mm;
+  display: flex;
+  gap: 4mm;
+  align-items: center;
+  font-family: system-ui, sans-serif;
+  font-size: 10pt;
+}
+.actions button {
+  padding: 2mm 5mm;
+  border: 1px solid #333;
+  background: #eee;
+  cursor: pointer;
+  font: inherit;
+}
+
+/* Everything below is for the person working the receipt, not for paper. */
+.messages {
+  max-width: 150mm;
+  margin: 0 auto;
+}
+.message {
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  font-family: system-ui, sans-serif;
+  font-size: 0.875rem;
+}
+.error {
+  border: 1px solid #fca5a5;
+  background: #fef2f2;
+  color: #991b1b;
+}
+.notice {
+  border: 1px solid #86efac;
+  background: #f0fdf4;
+  color: #14532d;
+}
+
+.panel {
+  max-width: 150mm;
+  margin: 1.5rem auto 0;
+  padding: 1.25rem;
+  border: 1px solid #d4d4d4;
+  border-radius: 0.75rem;
+  background: #fff;
+  color: #111;
+  font-family: system-ui, sans-serif;
+  font-size: 0.875rem;
+}
+.panel.danger {
+  border-color: #fca5a5;
+}
+.panel h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1rem;
+}
+.panel label {
+  display: block;
+  margin-top: 0.75rem;
+  color: #444;
+}
+.panel input,
+.panel select {
+  margin-top: 0.25rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid #d4d4d4;
+  border-radius: 0.4rem;
+  font: inherit;
+  width: 100%;
+  max-width: 22rem;
+}
+.panel .amount input {
+  max-width: 8rem;
+  text-align: right;
+}
+.panel .hint {
+  display: block;
+  color: #666;
+  font-size: 0.8125rem;
+}
+.panel button {
+  margin-top: 1rem;
+  padding: 0.5rem 1rem;
+  border: 1px solid #333;
+  border-radius: 0.4rem;
+  background: #eee;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.panel button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.panel ul {
+  margin: 0;
+  padding-left: 1.1rem;
+}
+
+@media print {
+  .screen-only {
+    display: none;
+  }
+  .print-page {
+    max-width: none;
+    padding: 0;
+  }
+  .watermark {
+    position: fixed;
+    color: rgba(0, 0, 0, 0.15);
+  }
+  @page {
+    size: A5;
+    margin: 12mm;
+  }
+}

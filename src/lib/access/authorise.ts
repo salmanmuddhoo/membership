@@ -21,7 +21,11 @@ export type Decision =
 // Routes that require no permission beyond being a signed-in, active user.
 // Kept explicit and small: everything here is readable by every member of
 // staff, so each entry should be obviously harmless.
-const OPEN_TO_ALL_USERS: ReadonlySet<string> = new Set(['/dashboard']);
+//
+// /404 is here so the not-found page middleware rewrites to (see
+// src/middleware.ts) never itself hits an authorisation refusal — every
+// signed-in user is allowed to be told a record or a URL does not exist.
+const OPEN_TO_ALL_USERS: ReadonlySet<string> = new Set(['/dashboard', '/404']);
 
 // The permission each protected route requires. A route absent from both this
 // map and the set above is undeclared, and undeclared means denied.
@@ -37,8 +41,19 @@ const ROUTE_PERMISSIONS: ReadonlyArray<readonly [string, string]> = [
   // be granted to someone who is not a system administrator.
   ['/admin/roles', 'role.view'],
   ['/admin/users', 'user.view'],
+  // The search boxes' suggestions (officer request), under the same
+  // permission as the list they search.
+  ['/admin/users/suggest.json', 'user.view'],
+  ['/admin/notifications/suggest.json', 'notification.view'],
+  ['/admin/audit-log/suggest.json', 'audit.view'],
+  // Segregation of duties (S-203): seen with segregation.view, changed only
+  // with segregation.manage, which the page checks itself.
+  ['/admin/segregation', 'segregation.view'],
   ['/admin/reset-data', 'system.reset_data'],
   ['/admin/migration', 'system.migrate_members'],
+  ['/admin/migration/step.json', 'system.migrate_members'],
+  ['/admin/migration/cancel.json', 'system.migrate_members'],
+  ['/admin/migration/balances', 'system.migrate_members'],
   ['/admin/audit-log', 'audit.view'],
   // What the Society sent to members (S-904). Its own permission rather than
   // audit.view's: an officer about to ring a member who never replied needs
@@ -62,6 +77,13 @@ const ROUTE_PERMISSIONS: ReadonlyArray<readonly [string, string]> = [
   // before it will change anything. Viewing what the fees are is a different
   // thing from setting them.
   ['/admin/configuration/', 'config.view'],
+  // Bank accounts (S-1901): its own permission because an account number is
+  // not a fee schedule. The longer prefix wins over the section rule above.
+  ['/admin/configuration/bank-accounts', 'bank_account.view'],
+  // The fee schedules (officer feedback): their own read permission, so a
+  // Treasurer, who owns them (S-207), reaches this page and no other part
+  // of Configuration.
+  ['/admin/configuration/fees', 'fee.view'],
 
   // Membership applications (M3). A prefix rule so a sub-page added later is
   // covered. Capturing, submitting, reviewing and approving are separate
@@ -69,6 +91,34 @@ const ROUTE_PERMISSIONS: ReadonlyArray<readonly [string, string]> = [
   // is not being able to act on it.
   ['/applications/', 'application.view'],
   ['/members/', 'member.view'],
+  // The document directory (officer feedback): every member's filed papers,
+  // reached from the dashboard and the menu. document.view is what the
+  // member page's own Documents already need.
+  ['/documents/', 'document.view'],
+  // An account's balance and history (S-1309, S-1311): money has its own
+  // permission, held by default by everyone who may see a member, and
+  // removable from a role without taking the member's page away.
+  ['/accounts/', 'account.view'],
+  // Transactions (M13, M14). Seeing one, or the queue of what waits, is
+  // transaction.view; starting one from a number rather than a person
+  // (officer feedback) is transaction.capture, on the exact pages that do
+  // it. Acting at a step is checked by the review page itself
+  // (transaction.review, transaction.approve, transaction.post).
+  ['/transactions/', 'transaction.view'],
+  ['/transactions/deposit', 'transaction.capture'],
+  ['/transactions/withdrawal', 'transaction.capture'],
+  ['/transactions/transfer', 'transaction.capture'],
+  ['/transactions/lookup.json', 'transaction.capture'],
+  // A closure request being built (S-1702): the officer's own wizard,
+  // reached from the member's page. Reviewing one is /transactions/<id>.
+  ['/closures/', 'transaction.capture'],
+  ['/deposits/', 'transaction.capture'],
+  ['/resignations/', 'transaction.capture'],
+  ['/demises/', 'transaction.capture'],
+  // The cash drawer (S-2001): opening and closing your own is cash.session;
+  // seeing every drawer is the separate, wider cash.view.
+  ['/cashier', 'cash.session'],
+  ['/cashier/sessions', 'cash.view'],
   // Details a member sent from the app (docs/member-app.md). Seeing the
   // queue is member.view like the rest of /members; acting on one needs
   // member.details_verify, which the page checks itself — the same split
@@ -80,13 +130,24 @@ const ROUTE_PERMISSIONS: ReadonlyArray<readonly [string, string]> = [
   // payment.view, audit.view — so a URL typed by hand is not a way past the
   // permission that governs the data underneath.
   ['/reports/', 'report.view'],
+  // Bank accounts (S-1901): the Treasurer and the Auditor hold
+  // bank_account.view but not report.view, and this is their report. An
+  // exact rule, so it opens only this one page and not the index or any
+  // other report — the longer match wins over the prefix above.
+  ['/reports/bank-accounts', 'bank_account.view'],
 
-  // Receipts (M5). Reading a receipt is payment.view; auditing the sequence is
-  // the Treasurer's own permission. The longer prefix wins, so the exact rule
-  // for the reconciliation page tightens the broader one rather than being
-  // shadowed by it.
+  // Receipts (M5). Reading a receipt is payment.view; the Receipts page —
+  // every receipt in a period and the audit of the sequence, at
+  // /receipts/reconciliation — is the Treasurer's own permission. The longer
+  // prefix wins, so the exact rule tightens the broader one rather than
+  // being shadowed by it.
   ['/receipts/', 'payment.view'],
   ['/receipts/reconciliation', 'receipt.reconcile'],
+  // Sending every member their statement at once (officer request). The
+  // signed-link PDFs under /statements/shared/ never reach this check: the
+  // middleware lets them through, the token being their credential.
+  ['/statements', 'statement.send_all'],
+  ['/statements/', 'statement.send_all'],
 
   // Further modules are added here as they land (members, financing,
   // documents, ...). The order does not matter: the longest matching prefix

@@ -778,6 +778,310 @@ describe('S-206: the accounts a membership opens', () => {
   });
 });
 
+// S-1304: the limits the transaction engine reads before it moves money on
+// an account of a type (migration 0065). Nothing enforces them yet — that is
+// M14 and M15 — so what is asserted here is that they exist, seed sensibly,
+// round-trip through the service, and audit like the rest of the row.
+describe('S-1304: an account type carries its limits', () => {
+  const base = {
+    category: 'savings',
+    minimumOpeningAmount: '0',
+    checklistId: null,
+    requiresApproval: false,
+    defaultStatus: 'active',
+  };
+
+  it('ships every type with a working value; Shares with a floor equal to its opening minimum', async () => {
+    const { config } = await load();
+    const types = await config.listAccountTypes();
+    const shares = types.find(t => t.code === 'shares')!;
+    const msa = types.find(t => t.code === 'msa')!;
+
+    // Set at migration time from the 5000 the seed carries (0018), whatever
+    // the opening minimum has been changed to since by the tests above.
+    expect(shares.minimumBalance).toBe('5000.00');
+    expect(msa.minimumBalance).toBe('0.00');
+    for (const type of [shares, msa]) {
+      expect(type.allowsDeposit).toBe(true);
+      expect(type.allowsWithdrawal).toBe(true);
+      expect(type.allowsTransfer).toBe(true);
+      expect(type.maximumTransactionAmount).toBeNull();
+    }
+  });
+
+  it('takes the defaults when a caller says nothing about limits', async () => {
+    const { config } = await load();
+    const id = await config.createAccountType(
+      { ...base, code: 'limits_default', name: 'Limits default' },
+      actor
+    );
+    const type = (await config.listAccountTypes()).find(t => t.id === id)!;
+    expect(type.minimumBalance).toBe('0.00');
+    expect(type.allowsDeposit).toBe(true);
+    expect(type.allowsWithdrawal).toBe(true);
+    expect(type.allowsTransfer).toBe(true);
+    expect(type.maximumTransactionAmount).toBeNull();
+  });
+
+  it('stores the limits a caller gives, and leaves alone what a later call does not mention', async () => {
+    const { config } = await load();
+    const id = await config.createAccountType(
+      {
+        ...base,
+        code: 'limits_given',
+        name: 'Limits given',
+        minimumBalance: '250',
+        allowsWithdrawal: false,
+        maximumTransactionAmount: '100000',
+      },
+      actor
+    );
+    const read = async () =>
+      (await config.listAccountTypes()).find(t => t.id === id)!;
+
+    let type = await read();
+    expect(type.minimumBalance).toBe('250.00');
+    expect(type.allowsDeposit).toBe(true);
+    expect(type.allowsWithdrawal).toBe(false);
+    expect(type.allowsTransfer).toBe(true);
+    expect(type.maximumTransactionAmount).toBe('100000.00');
+
+    // An update with no opinion on the limits changes nothing about them.
+    await config.updateAccountType(
+      id,
+      { ...base, name: 'Limits renamed', isActive: true },
+      actor
+    );
+    type = await read();
+    expect(type.name).toBe('Limits renamed');
+    expect(type.minimumBalance).toBe('250.00');
+    expect(type.allowsWithdrawal).toBe(false);
+    expect(type.maximumTransactionAmount).toBe('100000.00');
+
+    // One that names them changes them, and a blank cap is no cap — the
+    // configuration screen sends all five every time, so an emptied field
+    // there has to mean "cleared", not "unchanged".
+    await config.updateAccountType(
+      id,
+      {
+        ...base,
+        name: 'Limits renamed',
+        isActive: true,
+        minimumBalance: '0',
+        allowsDeposit: true,
+        allowsWithdrawal: true,
+        allowsTransfer: false,
+        maximumTransactionAmount: null,
+      },
+      actor
+    );
+    type = await read();
+    expect(type.minimumBalance).toBe('0.00');
+    expect(type.allowsWithdrawal).toBe(true);
+    expect(type.allowsTransfer).toBe(false);
+    expect(type.maximumTransactionAmount).toBeNull();
+  });
+
+  it('refuses a cap of zero, and a floor that is not an amount', async () => {
+    const { config } = await load();
+    await expect(
+      config.createAccountType(
+        {
+          ...base,
+          code: 'limits_zero_cap',
+          name: 'x',
+          maximumTransactionAmount: '0',
+        },
+        actor
+      )
+    ).rejects.toThrowError(/above zero/);
+    await expect(
+      config.createAccountType(
+        { ...base, code: 'limits_bad_floor', name: 'x', minimumBalance: 'ten' },
+        actor
+      )
+    ).rejects.toThrowError(/two decimal places/);
+  });
+
+  it('audits a change to a limit like any other field on the row', async () => {
+    const { config } = await load();
+    const shares = (await config.listAccountTypes()).find(
+      t => t.code === 'shares'
+    )!;
+    const fields = {
+      name: shares.name,
+      category: shares.category,
+      minimumOpeningAmount: shares.minimumOpeningAmount,
+      checklistId: shares.checklistId,
+      requiresApproval: shares.requiresApproval,
+      defaultStatus: shares.defaultStatus,
+      isActive: true,
+    };
+    await config.updateAccountType(
+      shares.id,
+      { ...fields, minimumBalance: '5500' },
+      actor
+    );
+    try {
+      const audited = await run(
+        appUrl,
+        `select previous_value->>'minimum_balance' as before,
+                new_value->>'minimum_balance' as after
+           from audit_event
+          where action = 'config.account_type.update' and entity_id = $1
+          order by occurred_at desc limit 1`,
+        [shares.id]
+      );
+      expect(audited.rows[0]).toEqual({ before: '5000.00', after: '5500.00' });
+    } finally {
+      await config.updateAccountType(
+        shares.id,
+        { ...fields, minimumBalance: '5000' },
+        actor
+      );
+    }
+  });
+});
+
+// S-1307: how money moves is configuration (migration 0067).
+describe('S-1307: payment methods', () => {
+  const flags = {
+    isCash: false,
+    requiresReference: true,
+    touchesBank: true,
+    isActive: true,
+  };
+
+  it("ships today's methods under their codes, the FRD's additions, and the import's own", async () => {
+    const { config } = await load();
+    const methods = await config.listPaymentMethods();
+    const byCode = new Map(methods.map(m => [m.code, m]));
+
+    expect(byCode.get('cash')).toMatchObject({
+      name: 'Cash',
+      isCash: true,
+      requiresReference: false,
+      touchesBank: false,
+      isSystem: false,
+      isActive: true,
+    });
+    expect(byCode.get('cheque')).toMatchObject({
+      isCash: false,
+      requiresReference: true,
+      touchesBank: true,
+    });
+    for (const code of [
+      'bank_transfer',
+      'card',
+      'mobile',
+      'juice',
+      'salary_deduction',
+      'standing_order',
+      'deposit_at_bank',
+      'internet_banking',
+      'other',
+    ]) {
+      expect(byCode.get(code)?.isActive, code).toBe(true);
+    }
+    expect(byCode.get('migration')).toMatchObject({
+      isSystem: true,
+      isActive: true,
+    });
+
+    // The form never offers the import's own mark.
+    const offered = await config.offeredPaymentMethods();
+    expect(offered.map(m => m.code)).not.toContain('migration');
+    expect(offered.map(m => m.code)).toContain('cash');
+  });
+
+  it('adds a method without a release, and retires one without losing it', async () => {
+    const { config } = await load();
+    const id = await config.createPaymentMethod(
+      { code: 'direct_debit', name: 'Direct debit', ...flags },
+      actor
+    );
+    let method = (await config.listPaymentMethods()).find(m => m.id === id)!;
+    expect(method).toMatchObject({
+      code: 'direct_debit',
+      name: 'Direct debit',
+      requiresReference: true,
+      isActive: true,
+    });
+    expect((await config.offeredPaymentMethods()).map(m => m.code)).toContain(
+      'direct_debit'
+    );
+
+    await config.updatePaymentMethod(
+      id,
+      { ...flags, name: 'Direct debit', isActive: false },
+      actor
+    );
+    method = (await config.listPaymentMethods()).find(m => m.id === id)!;
+    expect(method.isActive).toBe(false);
+    expect(
+      (await config.offeredPaymentMethods()).map(m => m.code)
+    ).not.toContain('direct_debit');
+    // Still readable by code: a receipt taken by it must keep its name.
+    expect((await config.paymentMethodByCode('direct_debit'))?.name).toBe(
+      'Direct debit'
+    );
+  });
+
+  it("refuses a duplicate code, a bad code, and a change to the system's own", async () => {
+    const { config } = await load();
+    await expect(
+      config.createPaymentMethod(
+        { code: 'cash', name: 'Cash again', ...flags },
+        actor
+      )
+    ).rejects.toThrowError(/already exists/);
+    await expect(
+      config.createPaymentMethod(
+        { code: 'Not Code', name: 'x', ...flags },
+        actor
+      )
+    ).rejects.toThrowError(/lowercase letters/);
+
+    const migration = (await config.listPaymentMethods()).find(
+      m => m.code === 'migration'
+    )!;
+    await expect(
+      config.updatePaymentMethod(
+        migration.id,
+        { ...flags, name: 'Renamed', isActive: false },
+        actor
+      )
+    ).rejects.toThrowError(/written by the system/);
+  });
+
+  it('audits a change like any other configuration table', async () => {
+    const { config } = await load();
+    const cheque = (await config.listPaymentMethods()).find(
+      m => m.code === 'cheque'
+    )!;
+    await config.updatePaymentMethod(
+      cheque.id,
+      { ...flags, name: 'Cheque', touchesBank: false },
+      actor
+    );
+    const audited = await run(
+      appUrl,
+      `select previous_value->>'touches_bank' as before,
+              new_value->>'touches_bank' as after
+         from audit_event
+        where action = 'config.payment_method.update' and entity_id = $1
+        order by occurred_at desc limit 1`,
+      [cheque.id]
+    );
+    expect(audited.rows[0]).toEqual({ before: 'true', after: 'false' });
+    await config.updatePaymentMethod(
+      cheque.id,
+      { ...flags, name: 'Cheque', touchesBank: true },
+      actor
+    );
+  });
+});
+
 describe('S-207: fee schedules', () => {
   // Shares is what makes someone a member and is mandatory. The MSA deposit is
   // optional: the account opens either way, and whether money goes into it at
@@ -1413,6 +1717,43 @@ describe('S-208: document types and dynamic checklists', () => {
       const union = await config.checklistForNonMemberAccount(code, []);
       expect(union).toEqual(applicantOnly);
     });
+
+    it('reads what migration 0108 seeded for Corporate and Minor, before anyone has changed it', async () => {
+      const { config } = await load();
+
+      const corporate =
+        await config.checklistForNonMemberApplicant('corporate');
+      expect(
+        (corporate.get('applicant') ?? []).map(i => i.documentCode).sort()
+      ).toEqual(
+        [
+          'signed_form',
+          'cert_registration',
+          'memorandum',
+          'written_resolution',
+          'utility_bill',
+        ].sort()
+      );
+      // Unlike corporate_kyc (the MEMBER checklist), no nominee item — a
+      // customer_account application has no nominee of its own.
+      expect(corporate.get('nominee')).toBeUndefined();
+
+      const minor = await config.checklistForNonMemberApplicant('minor');
+      expect(
+        (minor.get('applicant') ?? []).map(i => i.documentCode).sort()
+      ).toEqual(['signed_form', 'birth_certificate'].sort());
+      expect(
+        (minor.get('guardian') ?? []).map(i => i.documentCode).sort()
+      ).toEqual(['id_card', 'utility_bill'].sort());
+      expect(minor.get('nominee')).toBeUndefined();
+      expect(minor.get('beneficiary')).toBeUndefined();
+
+      for (const items of [...corporate.values(), ...minor.values()]) {
+        for (const item of items) {
+          expect(item.requirement).toBe('required');
+        }
+      }
+    });
   });
 
   // S-614: the non-member checklist is set the same way checklistId and
@@ -1703,6 +2044,53 @@ describe('the cash maximum (a system setting, not reference data)', () => {
   });
 });
 
+describe('the near-floor margin (a system setting, not reference data)', () => {
+  afterEach(async () => {
+    const { config } = await load();
+    // Migration 0081 seeds 500; put it back for the same reason the other
+    // system settings' afterEach does.
+    await config.setNearFloorMargin('500', actor);
+  });
+
+  it('reads the value migration 0081 seeded, before anyone has changed it', async () => {
+    const { config } = await load();
+    expect(await config.nearFloorMargin()).toBe('500');
+  });
+
+  it('can be changed, and the new value reads back', async () => {
+    const { config } = await load();
+    await config.setNearFloorMargin('750', actor);
+    expect(await config.nearFloorMargin()).toBe('750');
+  });
+
+  it('refuses a value that is not an amount in rupees', async () => {
+    const { config } = await load();
+    await expect(config.setNearFloorMargin('ten', actor)).rejects.toThrowError(
+      /not an amount/
+    );
+  });
+
+  it('keeps its own history, the same as every other config_entry row', async () => {
+    const { config, pool } = await load();
+    // Other tests in this describe block share the same row and each reset
+    // it to 500 in afterEach, so history already has entries — only the
+    // tail this test itself just wrote is asserted on.
+    await config.setNearFloorMargin('750', actor);
+    await config.setNearFloorMargin('900', actor);
+
+    const rows = await run(
+      appUrl,
+      `select value::text as value, replaced_at is null as is_live
+         from config_entry_history
+        where config_key = 'balance.near_floor_margin'
+        order by effective_at`
+    );
+    expect(rows.rows.slice(-2).map(r => r.value)).toEqual(['750', '900']);
+    expect(rows.rows.at(-1)!.is_live).toBe(true);
+    await pool.closePool();
+  });
+});
+
 describe('the cash source-of-fund checklist (a system setting, not reference data)', () => {
   afterEach(async () => {
     const { config } = await load();
@@ -1778,6 +2166,11 @@ describe('openableAccountTypes', () => {
     isActive: true,
     sortOrder: 0,
     numberPrefix: null,
+    minimumBalance: '0.00',
+    allowsDeposit: true,
+    allowsWithdrawal: true,
+    allowsTransfer: true,
+    maximumTransactionAmount: null,
   };
   const shares = {
     ...base,

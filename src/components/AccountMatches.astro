@@ -1,0 +1,40 @@
+---
+// The holders a name matched on a Transactions lookup page (officer
+// feedback): one line each, the account's number and the holder's name,
+// each a link straight to the form with that account chosen.
+import type { FoundAccount } from '@lib/ledger/lookup';
+import { CARD, CARD_LABEL, PANEL, MUTED } from '@lib/ui';
+
+interface Props {
+  matches: FoundAccount[];
+  // The form under the holder's page: 'deposit', 'withdraw' or 'transfer'.
+  action: string;
+  // The query parameter that names the account on that form.
+  accountParam?: string;
+}
+
+const { matches, action, accountParam = 'account' } = Astro.props;
+---
+
+<section class={`${CARD} space-y-3`}>
+  <h2 class={CARD_LABEL}>
+    {matches.length} match{matches.length === 1 ? '' : 'es'}
+  </h2>
+  <ul class="space-y-2">
+    {matches.map(m => (
+      <li>
+        <a
+          href={`/members/${m.holderId}/${action}?${accountParam}=${m.accountId}&from=transactions`}
+          class={`${PANEL} hover:border-mint-400 flex flex-wrap items-center justify-between gap-2 transition`}
+        >
+          <span class="font-medium text-neutral-800 dark:text-neutral-100">
+            {m.holderName || '(unnamed)'}
+          </span>
+          <span class={MUTED}>
+            <code>{m.accountNo}</code> · {m.accountTypeName}
+          </span>
+        </a>
+      </li>
+    ))}
+  </ul>
+</section>

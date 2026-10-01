@@ -11,8 +11,11 @@
 import { isEditableStatus } from '@lib/applications/capture';
 import BaseLayout from '@layouts/BaseLayout.astro';
 import {
+  ApplicationError,
   loadApplication,
+  setWitnessNames,
   visibleFields,
+  WITNESS_NAME_MAX,
   type Application,
 } from '@lib/applications/capture';
 import {
@@ -151,11 +154,10 @@ const SUBJECT_LABELS: Record<string, string> = {
 
 const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
 
-// Officer feedback: the ruled line under "Applicant" and "Nominee" asked the
-// signatory to write in a name the system already captured on the page
-// above. Witness 1 and Witness 2 sign for the society, not for anyone this
-// form has a record of, so there is no name to fill in for them — the line
-// stays theirs to write on, same as always.
+// Officer feedback: the ruled line under "Applicant" asked the signatory to
+// write in a name the system already captured on the page above. Only the
+// applicant signs; the two witnesses are named in their own section, typed
+// here and kept with the application (membership_application, 0112).
 const fullName = (subject: FieldSubject) => {
   const values = valuesFor(subject);
   return [values.name, values.surname]
@@ -166,7 +168,6 @@ const fullName = (subject: FieldSubject) => {
 const signedOn = dateFormat.format(new Date());
 const SIGNATORY_DETAIL: Partial<Record<(typeof SIGNATURES)[number], string>> = {
   Applicant: fullName('applicant'),
-  Nominee: fullName('nominee'),
 };
 
 // Step 2 of the capture wizard (docs/applications.md): this page IS that
@@ -176,6 +177,40 @@ const SIGNATORY_DETAIL: Partial<Record<(typeof SIGNATURES)[number], string>> = {
 // this is just the print view again; whoever opens it, the printed page
 // itself carries no wizard chrome.
 const isEditable = isEditableStatus(application.status);
+
+// The witnesses' names, saved from the form as they are typed (officer
+// request). Answered as JSON: the page posts them in the background and
+// stays where it is.
+if (Astro.request.method === 'POST') {
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { 'content-type': 'application/json' },
+    });
+  const form = await Astro.request.formData();
+  if (form.get('intent') !== 'witnesses') {
+    return json({ error: 'Nothing to save.' }, 400);
+  }
+  if (!principal.permissions.has('application.capture')) {
+    return json(
+      { error: 'You do not have permission to edit applications.' },
+      403
+    );
+  }
+  try {
+    const witnesses = await setWitnessNames(
+      application.id,
+      form.getAll('witness').map(v => String(v)),
+      { userId: principal.userId, email: principal.email }
+    );
+    return json({ ok: true, witnesses });
+  } catch (error) {
+    if (error instanceof ApplicationError) {
+      return json({ error: error.message }, 400);
+    }
+    throw error;
+  }
+}
 
 // The rest of the app allows pinch-zoom; this page turns it off. The
 // signature box below is `position: fixed` to the real viewport, and mobile
@@ -286,11 +321,43 @@ const fixedViewport =
       </p>
     </section>
 
+    <section class="block witnesses" data-witnesses>
+      <h2>Witnesses</h2>
+      <dl>
+        {[0, 1].map(i => (
+          <div class="row">
+            <dt>
+              Witness {i + 1}
+              <span class="req">*</span>
+            </dt>
+            <dd class={isEditable || application.witnesses[i] ? '' : 'blank'}>
+              {isEditable ? (
+                <>
+                  <input
+                    type="text"
+                    class="witness-name-input"
+                    data-witness-input={i}
+                    value={application.witnesses[i]}
+                    maxlength={WITNESS_NAME_MAX}
+                    autocomplete="off"
+                    aria-label={`Witness ${i + 1}`}
+                  />
+                  <span class="witness-name-print" data-witness-print={i}>
+                    {application.witnesses[i]}
+                  </span>
+                </>
+              ) : (
+                application.witnesses[i]
+              )}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </section>
+
     <section class="block">
       {isEditable && (
-        <p class="sig-help no-print">
-          Tap Sign under each name, or print and sign by hand.
-        </p>
+        <p class="sig-help no-print">Tap Sign, or print and sign by hand.</p>
       )}
       <div
         class="signatures"
@@ -315,29 +382,7 @@ const fixedViewport =
               </div>
             )}
             <p class="sig-name">{who}</p>
-            {SIGNATORY_DETAIL[who] ? (
-              <p class="sig-date">{`${SIGNATORY_DETAIL[who]} · ${signedOn}`}</p>
-            ) : (
-              // No record of who a witness is exists anywhere in this
-              // system — unlike Applicant and Nominee, there is nothing to
-              // fill this in from, so the officer types it here instead of
-              // on a hand-drawn line. Kept client-side only, exactly like
-              // the signature images above: it only has to survive long
-              // enough to reach Print (or Save as PDF), which is what
-              // actually carries it forward once uploaded.
-              <p class="sig-date witness-date">
-                <input
-                  type="text"
-                  data-witness-name-input={who}
-                  placeholder="Name and date"
-                  disabled={!isEditable}
-                  class="witness-name-input"
-                />
-                <span data-witness-date-suffix hidden>
-                  {` · ${signedOn}`}
-                </span>
-              </p>
-            )}
+            <p class="sig-date">{`${SIGNATORY_DETAIL[who]} · ${signedOn}`}</p>
             <div class="sig-line short" />
           </div>
         ))}
@@ -372,8 +417,14 @@ const fixedViewport =
     )}
 
     {/* Three columns rather than a row of gaps, so the upload button sits
-        centred on the page whatever the two links either side of it are
-        called — and stays centred when one of them is not there at all. */}
+        centred on the page whatever is in the column either side of it —
+        and stays centred when a column is empty, as `actions-end` usually
+        is now. Upload to SharePoint carries the officer straight on to KYC
+        Documents itself once it succeeds (officer feedback: a separate Next
+        link that just sat there invited moving on without filing, or filing
+        twice by going back through this step). `actions-end` is left for
+        the one case that still needs a plain way forward without
+        re-filing: a signed form already on file. */}
     <div class="actions">
       <div class="actions-start">
         {isEditable ? (
@@ -388,15 +439,16 @@ const fixedViewport =
             type="button"
             id="file-signed-form"
             data-filed-document-id={filedSignedForm?.documentId ?? ''}
+            data-next-href={`${basePath}?step=3`}
           >
-            Upload to sharepoint
+            Upload to SharePoint
           </button>
         )}
       </div>
       <div class="actions-end">
-        {isEditable && (
-          <a href={`${basePath}?step=3`} class="next">
-            Next: upload documents →
+        {isEditable && signedFormType && filedSignedForm && (
+          <a href={`${basePath}?step=3`} class="secondary-link">
+            KYC Documents →
           </a>
         )}
       </div>
@@ -527,9 +579,9 @@ const fixedViewport =
     break-inside: avoid;
   }
   .sig-line {
-    /* Officer feedback: a captured signature read too small on the printed
-       form — doubled from 14mm so the drawn stroke actually fills the box
-       instead of sitting thin inside it. */
+    /* Officer feedback: a captured signature read too small on the printed */
+    /* form — doubled from 14mm so the drawn stroke actually fills the box */
+    /* instead of sitting thin inside it. */
     height: 28mm;
     border-bottom: 1px solid #444;
   }
@@ -546,26 +598,33 @@ const fixedViewport =
     font-size: 9pt;
     color: #555;
   }
-  /* Made to disappear into the plain text either side of it — the box a
-     name gets typed into on screen is not itself part of what a witness's
-     line is meant to show, on paper or in the PDF this becomes. */
+  /* A witness's name is typed straight onto its ruled line: no box of its
+     own, the dd's underline is the field. */
   .witness-name-input {
-    width: 45mm;
-    max-width: 60%;
+    width: 100%;
     border: none;
-    border-bottom: 1px solid #999;
     padding: 0;
     background: transparent;
     font: inherit;
     color: inherit;
   }
-  .witness-name-input:disabled {
-    color: inherit;
-    opacity: 1;
-  }
   .witness-name-input:focus {
     outline: none;
-    border-bottom-color: #111;
+  }
+  .witness-name-input[aria-invalid='true'] {
+    box-shadow: inset 0 -2px 0 #dc2626;
+  }
+  /* The name as the paper carries it. A field is a fixed width and would
+     cut a long name short in the PDF and on paper, so both show this text
+     instead, which wraps like the rest of the form. */
+  .witness-name-print {
+    display: none;
+  }
+  .capturing .witness-name-input {
+    display: none;
+  }
+  .capturing .witness-name-print {
+    display: inline;
   }
 
   .sig-help {
@@ -579,8 +638,8 @@ const fixedViewport =
      Print (and Save as PDF) actually sees. */
   .sig-pad {
     position: relative;
-    /* Matches .sig-line's own doubled height — this is what the absolutely
-       positioned .sig-image actually sizes against. */
+    /* Matches .sig-line's own doubled height — this is what the absolutely */
+    /* positioned .sig-image actually sizes against. */
     height: 28mm;
   }
   .sig-image {
@@ -588,8 +647,8 @@ const fixedViewport =
     inset: 0;
     width: 100%;
     height: 100%;
-    /* Whatever aspect ratio the signing box drew at, contained rather than
-       stretched — a squashed signature is a strange thing to hand someone. */
+    /* Whatever aspect ratio the signing box drew at, contained rather than */
+    /* stretched — a squashed signature is a strange thing to hand someone. */
     object-fit: contain;
     object-position: left center;
   }
@@ -631,18 +690,18 @@ const fixedViewport =
     background: #fff;
     color: #111;
     font-family: system-ui, sans-serif;
-    /* Scrollable, not clipped: belt and braces in case anything above still
-       runs long on some browser — the officer can reach it by scrolling the
-       box itself rather than being unable to reach it at all. Only the
-       canvas below blocks touch, and only there, since a drag meant for
-       the pen reaching past it and moving the page is what this guards
-       against — the bars need every tap to reach the button underneath it,
-       plainly, the first time. */
+    /* Scrollable, not clipped: belt and braces in case anything above still */
+    /* runs long on some browser — the officer can reach it by scrolling the */
+    /* box itself rather than being unable to reach it at all. Only the */
+    /* canvas below blocks touch, and only there, since a drag meant for */
+    /* the pen reaching past it and moving the page is what this guards */
+    /* against — the bars need every tap to reach the button underneath it, */
+    /* plainly, the first time. */
     overflow-y: auto;
-    /* A scroll that runs past the top or bottom of this box must not chain
-       into the page sitting behind it — that reads as the form showing
-       through the "full screen" popup, the opposite of what a full-screen
-       takeover is for. */
+    /* A scroll that runs past the top or bottom of this box must not chain */
+    /* into the page sitting behind it — that reads as the form showing */
+    /* through the "full screen" popup, the opposite of what a full-screen */
+    /* takeover is for. */
     overscroll-behavior: contain;
   }
   .sig-modal[hidden] {
@@ -663,14 +722,14 @@ const fixedViewport =
     border-top: 1px solid #ddd;
   }
   .sig-modal-canvas {
-    /* flex: 1 1 0, not the shorthand 1 (which defaults its flex-basis to
-       auto, not 0) — paired with min-height: 0 so the canvas is the one
-       thing that shrinks first if the two bars above and below it ever
-       need more room than a short viewport has to spare. A canvas that
-       cannot shrink is exactly how the bottom bar ran off-screen before:
-       a `min-height` on a flex child is a floor flex-shrink may not cross,
-       so 40vh on a short phone viewport pushed the bar after it out past
-       the bottom whether or not the modal itself was sized correctly. */
+    /* flex: 1 1 0, not the shorthand 1 (which defaults its flex-basis to */
+    /* auto, not 0) — paired with min-height: 0 so the canvas is the one */
+    /* thing that shrinks first if the two bars above and below it ever */
+    /* need more room than a short viewport has to spare. A canvas that */
+    /* cannot shrink is exactly how the bottom bar ran off-screen before: */
+    /* a `min-height` on a flex child is a floor flex-shrink may not cross, */
+    /* so 40vh on a short phone viewport pushed the bar after it out past */
+    /* the bottom whether or not the modal itself was sized correctly. */
     flex: 1 1 0;
     min-height: 0;
     width: 100%;
@@ -722,8 +781,7 @@ const fixedViewport =
   .actions-end {
     text-align: right;
   }
-  .actions button,
-  .actions a.next {
+  .actions button {
     /* The arrow belongs on the label's own line, not wrapped below it. */
     white-space: nowrap;
     padding: 2mm 5mm;
@@ -737,6 +795,16 @@ const fixedViewport =
   .actions button:disabled {
     cursor: wait;
     opacity: 0.6;
+  }
+  /* Plain text, not a bordered box like the Upload button — a way past this
+     step for the officer who already has a signed form on file and wants to
+     move on without re-filing, without competing with the button that does
+     the filing. */
+  .actions a.secondary-link {
+    white-space: nowrap;
+    font: inherit;
+    color: #555;
+    text-decoration: underline;
   }
 
   .status-line {
@@ -767,6 +835,12 @@ const fixedViewport =
     .actions,
     .no-print {
       display: none;
+    }
+    .witness-name-input {
+      display: none;
+    }
+    .witness-name-print {
+      display: inline;
     }
     .print-page {
       max-width: none;
@@ -869,38 +943,44 @@ const fixedViewport =
     }
   };
 
-  // A witness's name, same lifetime as their signature above and for the
-  // same reason: nothing in this system has a record of who a witness is,
-  // so there is nothing to reload this from beyond what this tab already
-  // typed — it only has to last until Print (or Save as PDF) carries it
-  // into the file the officer uploads.
-  const witnessNameKey = (who: string) => `sig-name:${applicationId}:${who}`;
-  for (const nameInput of document.querySelectorAll<HTMLInputElement>(
-    '[data-witness-name-input]'
-  )) {
-    const who = nameInput.dataset.witnessNameInput ?? '';
-    const suffix = nameInput.parentElement?.querySelector<HTMLElement>(
-      '[data-witness-date-suffix]'
-    );
-    const sync = () => {
-      if (suffix) suffix.hidden = nameInput.value.trim() === '';
-    };
-    let recalled: string | null = null;
-    try {
-      recalled = sessionStorage.getItem(witnessNameKey(who));
-    } catch {
-      // Private browsing or a full quota — typing still works for this
-      // visit, it just starts blank rather than where a prior visit left it.
+  // The witnesses' names are kept with the application: saved as soon as
+  // one is typed (on leaving the field), and again before the form is
+  // filed, so the PDF and the record never disagree. The printed copy of
+  // each name follows the field as it is typed.
+  const witnessInputs = [
+    ...document.querySelectorAll<HTMLInputElement>('[data-witness-input]'),
+  ];
+  const saveWitnesses = async (): Promise<string | null> => {
+    const body = new FormData();
+    body.set('intent', 'witnesses');
+    for (const input of witnessInputs) {
+      body.append('witness', input.value);
     }
-    if (recalled) nameInput.value = recalled;
-    sync();
-    nameInput.addEventListener('input', () => {
-      sync();
-      try {
-        sessionStorage.setItem(witnessNameKey(who), nameInput.value);
-      } catch {
-        // See above — not worth failing the typing over.
+    try {
+      const response = await fetch(window.location.pathname, {
+        method: 'POST',
+        body,
+        headers: { accept: 'application/json' },
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok) {
+        return result?.error ?? 'The witnesses could not be saved.';
       }
+      return null;
+    } catch {
+      return 'The witnesses could not be saved. Check the connection.';
+    }
+  };
+  for (const input of witnessInputs) {
+    const printed = document.querySelector<HTMLElement>(
+      `[data-witness-print="${input.dataset.witnessInput}"]`
+    );
+    input.addEventListener('input', () => {
+      input.removeAttribute('aria-invalid');
+      if (printed) printed.textContent = input.value.trim();
+    });
+    input.addEventListener('change', () => {
+      void saveWitnesses();
     });
   }
 
@@ -1089,15 +1169,18 @@ const fixedViewport =
   // and file it as the Signed Application Form, so step 3 opens with
   // nothing left to upload for it.
   //
-  // Its own button, not Next. Filing used to ride on "Next: upload
-  // documents", which meant simply passing back through this step filed a
-  // second copy nobody asked for (officer feedback). Next is a plain link
-  // again, and filing happens when — and only when — the officer says so.
+  // Its own button, not a plain Next link. Filing used to ride on "Next:
+  // upload documents", which meant simply passing back through this step
+  // filed a second copy nobody asked for (officer feedback). Filing happens
+  // when — and only when — the officer clicks Upload; once it succeeds this
+  // is also what carries them on to KYC Documents, so there is no longer a
+  // separate Next to click by mistake.
   //
   // Deliberately not a hard gate either. The applicant may still be signing
   // on paper instead (the ruled line under each name is the fallback that
   // was always there), and a SharePoint hiccup must not strand the officer
-  // here: the manual upload on step 3 is still open to them.
+  // here: the manual upload on step 3 is still open to them, and the error
+  // message links straight there.
   const fileButton =
     document.querySelector<HTMLButtonElement>('#file-signed-form');
   const statusLine = document.querySelector<HTMLElement>(
@@ -1108,11 +1191,30 @@ const fixedViewport =
     const reference = signaturesEl.getAttribute('data-reference') ?? '';
     const signedFormTypeId =
       signaturesEl.getAttribute('data-signed-form-type-id') ?? '';
+    // There is no longer a Next link on this page — Upload to SharePoint
+    // moves the officer on itself once it succeeds. When it can't run at
+    // all (no signature) or fails, this is the only way forward left on the
+    // page, so both of those messages carry it too.
+    const nextHref = fileButton.dataset.nextHref ?? '';
 
     const say = (message: string, tone: 'info' | 'error' = 'info') => {
       if (!statusLine) return;
       statusLine.textContent = message;
       statusLine.dataset.tone = tone;
+    };
+
+    // Same as `say`, plus a real link to KYC Documents after the message —
+    // built with DOM methods, not innerHTML, since the message can include
+    // text from a thrown error.
+    const sayWithNextLink = (message: string, tone: 'info' | 'error') => {
+      if (!statusLine) return;
+      statusLine.textContent = `${message} `;
+      statusLine.dataset.tone = tone;
+      if (!nextHref) return;
+      const link = document.createElement('a');
+      link.href = nextHref;
+      link.textContent = 'Go to KYC Documents';
+      statusLine.appendChild(link);
     };
 
     const applicantSigned = (): boolean => {
@@ -1128,11 +1230,25 @@ const fixedViewport =
       if (busy) return;
 
       if (!applicantSigned()) {
-        say(
+        sayWithNextLink(
           'There is no signature on screen to file. Sign above first, or ' +
             'print the form and upload the signed copy on the next step.',
           'error'
         );
+        return;
+      }
+
+      // Both witnesses are named before the form is filed (officer
+      // request): it is not submitted without them either.
+      const unnamed = witnessInputs.find(input => input.value.trim() === '');
+      if (unnamed) {
+        for (const input of witnessInputs) {
+          if (input.value.trim() === '') {
+            input.setAttribute('aria-invalid', 'true');
+          }
+        }
+        unnamed.focus();
+        say('Enter both witness names before uploading.', 'error');
         return;
       }
 
@@ -1141,6 +1257,13 @@ const fixedViewport =
       say('Preparing the signed form…');
 
       void (async () => {
+        const unsaved = await saveWitnesses();
+        if (unsaved) {
+          say(unsaved, 'error');
+          busy = false;
+          fileButton.disabled = false;
+          return;
+        }
         const printPage = document.querySelector<HTMLElement>('.print-page');
         if (!printPage) {
           say(
@@ -1222,20 +1345,24 @@ const fixedViewport =
             onStatus: message => say(message),
           });
           fileButton.dataset.filedDocumentId = documentId;
-          // No file name here: the server names what it files (document type
-          // and reference, plus a version), and naming the one this page sent
-          // would tell the officer a name that is not on the drive. The name
-          // that is appears on the next load of this page, from the server.
-          say('Signed form filed. Filing again replaces it.');
+          // Straight on to KYC Documents — the whole point of this button.
+          // The button stays disabled rather than being handed back to the
+          // officer: this page is on its way out.
+          say('Signed form filed. Opening KYC Documents…');
+          if (nextHref) {
+            window.location.assign(nextHref);
+          } else {
+            busy = false;
+            fileButton.disabled = false;
+          }
         } catch (error) {
-          say(
+          sayWithNextLink(
             (error instanceof Error
               ? error.message
               : 'The signed form could not be filed.') +
               ' Upload it by hand on the next step instead.',
             'error'
           );
-        } finally {
           busy = false;
           fileButton.disabled = false;
         }

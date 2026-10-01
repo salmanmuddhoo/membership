@@ -61,6 +61,28 @@ export function getPool(): pg.Pool {
   return pool;
 }
 
+// A value Postgres could not read as its column's type — in practice an id
+// in a URL or a form field that is not a UUID (regression QA: /members/abc,
+// /transactions/TX-000056 and the like answered "The database is
+// unavailable" with a 500). It is the request that is wrong, not the
+// database: the middleware answers it as not found, the API as 404.
+export class InvalidReferenceError extends Error {
+  constructor(readonly cause: unknown) {
+    super('That reference does not exist.');
+    this.name = 'InvalidReferenceError';
+  }
+}
+
+// invalid_text_representation (22P02): "invalid input syntax for type uuid".
+export function isInvalidReference(error: unknown): boolean {
+  return (
+    error instanceof InvalidReferenceError ||
+    (typeof error === 'object' &&
+      error !== null &&
+      (error as { code?: unknown }).code === '22P02')
+  );
+}
+
 // Run a query against the pool. Driver failures are logged in full server-side
 // and re-thrown as DatabaseUnavailableError so nothing about the connection
 // reaches the caller.
@@ -71,6 +93,7 @@ export async function query<T extends pg.QueryResultRow = pg.QueryResultRow>(
   try {
     return await getPool().query<T>(text, params as unknown[]);
   } catch (err) {
+    if (isInvalidReference(err)) throw new InvalidReferenceError(err);
     console.error('[db] query failed:', err);
     throw new DatabaseUnavailableError(err);
   }

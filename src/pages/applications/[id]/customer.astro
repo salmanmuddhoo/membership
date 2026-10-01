@@ -13,9 +13,11 @@
 // phase 2), workflow.ts unchanged since S-612 — rather than duplicating
 // either.
 import { isEditableStatus } from '@lib/applications/capture';
-import ApplicationTimeline from '@components/ApplicationTimeline.astro';
+import ChainTimeline from '@components/ChainTimeline.astro';
 import CaptureFields from '@components/CaptureFields.astro';
 import DashboardLayout from '@layouts/DashboardLayout.astro';
+import WitnessesCard from '@components/WitnessesCard.astro';
+import LinkedReason from '@components/LinkedReason.astro';
 import {
   ApplicationError,
   deleteDraftApplication,
@@ -26,12 +28,18 @@ import {
   type CustomerAccountApplication,
   type PartyValues,
 } from '@lib/applications/capture';
-import { listMembershipTypes } from '@lib/config/reference';
-import { openAccountsForCustomerApplication } from '@lib/members/create';
+import {
+  listMembershipTypes,
+  offeredPaymentMethods,
+} from '@lib/config/reference';
+import {
+  openAccountsForCustomerApplication,
+  recordForCustomerApplication,
+} from '@lib/members/create';
 import {
   availableActions,
   boardReadiness,
-  boardReadinessReasons,
+  boardReadinessItems,
   decideApplication,
   reopenRejectedApplication,
   returnedByLabel,
@@ -56,8 +64,6 @@ import {
   amountDueForAdditionalAccount,
   paymentsForApplication,
   recordAccountOpeningPayment,
-  METHOD_LABELS,
-  PAYMENT_METHODS,
   PaymentError,
   type AccountAmountDue,
   type Payment,
@@ -71,6 +77,33 @@ import {
 } from '@lib/config/reference';
 import DocumentViewer from '@components/DocumentViewer.astro';
 import DocumentReviewForm from '@components/DocumentReviewForm.astro';
+import {
+  PAGE,
+  CARD,
+  CARD_TITLE,
+  PANEL,
+  HINT,
+  MUTED,
+  LABEL,
+  INPUT,
+  BUTTON,
+  SECONDARY,
+  SECONDARY_SM,
+  DANGER,
+  CARD_DANGER,
+  CARD_OK,
+  INPUT_SM,
+  NOTICE_ERROR,
+  NOTICE_OK,
+  NOTICE_WARN,
+  SUBTITLE,
+  ROW,
+  TABLE,
+  TD,
+  TD_NUM,
+  VIEW_BUTTON,
+  DELETE_BUTTON,
+} from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 const canCapture = principal.permissions.has('application.capture');
@@ -274,11 +307,11 @@ if (Astro.request.method === 'POST') {
         {
           outcome,
           reason: String(form.get('reason') ?? ''),
-          // Officer feedback: one checkbox, not four — the reviewer either
-          // confirms every signature block is present on the scan, or
-          // confirms none; there is no case where checking three of four
-          // means anything (reviewDocument refuses to Verify short of all
-          // four either way).
+          // Officer feedback: one checkbox, not one per signature — the
+          // reviewer either confirms every signature block is present on the
+          // scan, or confirms none; there is no case where checking some of
+          // them means anything (reviewDocument refuses to Verify short of
+          // all of them either way).
           confirmedSignatures:
             form.get('allSignaturesConfirmed') === 'yes' ? [...SIGNATURES] : [],
         },
@@ -485,7 +518,7 @@ const nextStepLabel = (
 
 const forwardAction = actions.find(a => a.stepCode === 'secretary_review');
 const boardReasons = forwardAction
-  ? boardReadinessReasons(
+  ? boardReadinessItems(
       await boardReadiness(application!, {
         checklist,
         payments,
@@ -542,6 +575,25 @@ const signoffs =
   decideAction && decideAction.quorumCount > 1
     ? await signoffsFor(application!.id)
     : [];
+
+// Next on Applicant details (lifecycle test, LC-03): the page saves, then
+// asks here whether the form may be printed. Only with nothing blocking
+// does it go on to print and sign; otherwise the officer stays on the
+// details with the problem named, instead of having the applicant sign a
+// form that cannot be submitted.
+if (
+  Astro.request.method === 'GET' &&
+  Astro.url.searchParams.get('next') === 'print' &&
+  blocking.length === 0
+) {
+  return Astro.redirect(`/applications/${application!.id}/print`);
+}
+
+// Once approved, the way to the person it created (lifecycle test).
+const recordId =
+  application!.status === 'approved'
+    ? await recordForCustomerApplication(application!.id)
+    : null;
 
 const explainedProblems = blocking.filter(b => {
   const party = application!.parties.find(
@@ -620,6 +672,10 @@ const dueProblem: string | null = livePayment
   : (dueRead?.problem ?? null);
 const cashThreshold = due ? await cashSourceOfFundThreshold() : null;
 const cashMax = due ? await cashMaximum() : null;
+// What the method select offers (S-1307): each option carries whether the
+// cash controls apply and whether a reference is demanded, so the script
+// below reads configuration rather than a list of codes.
+const paymentMethods = await offeredPaymentMethods();
 const sourceOfFundDocumentType = (await listDocumentTypes()).find(
   t => t.code === 'source_of_fund_form'
 );
@@ -647,7 +703,8 @@ const signedFormFiled = checklist.some(
 
 const timeline = applicationTimeline({
   status: application!.status,
-  mandatoryFieldsOutstanding: blocking.length,
+  mandatoryFieldsOutstanding: blocking.length - explainedProblems.length,
+  valuesToCorrect: explainedProblems.length,
   signedFormFiled,
   requiredDocumentsOutstanding: requiredDocumentsMissing,
   paymentRecorded: livePayment !== null,
@@ -733,9 +790,10 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
   title={`${application!.reference} · Al Barakah MCSL`}
   heading={`Application ${application!.reference}`}
 >
-  <div class="mx-auto max-w-5xl space-y-6">
-    <ApplicationTimeline
+  <div class={PAGE.list}>
+    <ChainTimeline
       steps={timeline}
+      label="Application progress"
       applicationId={application!.id}
       basePath={`/applications/${application!.id}/customer`}
     />
@@ -749,31 +807,20 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         <a
           href="/applications"
           id="back-link"
-          class="inline-block text-sm text-neutral-500 underline dark:text-neutral-400"
+          class={`${HINT} inline-block underline`}
         >
           ← Back
         </a>
-        <a
-          href="/applications"
-          class="inline-block text-sm text-neutral-500 underline dark:text-neutral-400"
-        >
+        <a href="/applications" class={`${HINT} inline-block underline`}>
           All applications
         </a>
       </div>
     </div>
 
-    {error && (
-      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-        {error}
-      </div>
-    )}
-    {notice && (
-      <div class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-lg border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
-        {notice}
-      </div>
-    )}
+    {error && <div class={NOTICE_ERROR}>{error}</div>}
+    {notice && <div class={NOTICE_OK}>{notice}</div>}
     {formatProblems.length > 0 && (
-      <div class="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+      <div class={NOTICE_WARN}>
         <p class="font-medium">These entries could not be understood:</p>
         <ul class="mt-1 list-inside list-disc">
           {formatProblems.map(p => (
@@ -783,7 +830,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       </div>
     )}
 
-    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+    <section class={CARD}>
       <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
         <span class="font-medium text-neutral-800 dark:text-neutral-100">
           {application!.selectedAccountTypes.map(t => t.name).join(' + ')}
@@ -816,12 +863,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             decision noted and submit again — the payment already recorded still
             stands, so there is nothing to take again.
           </p>
-          <button
-            type="submit"
-            name="intent"
-            value="reopen"
-            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
-          >
+          <button type="submit" name="intent" value="reopen" class={BUTTON}>
             Reopen for correction
           </button>
         </form>
@@ -829,10 +871,8 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     </section>
 
     {openedAccounts && (
-      <section class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-2xl border p-6">
-        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-          Accounts opened
-        </h2>
+      <section class={CARD_OK}>
+        <h2 class={CARD_TITLE}>Accounts opened</h2>
         <ul class="mt-2 space-y-1 text-sm text-neutral-700 dark:text-neutral-200">
           {openedAccounts.accounts.map(a => (
             <li>
@@ -840,11 +880,22 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             </li>
           ))}
         </ul>
+        <a
+          href={`/members/${openedAccounts.id}`}
+          class="mt-2 inline-block text-sm font-medium underline"
+        >
+          Open their record
+        </a>
       </section>
+    )}
+    {!openedAccounts && recordId && (
+      <a href={`/members/${recordId}`} class="text-sm font-medium underline">
+        Open their record
+      </a>
     )}
 
     {explainedProblems.length > 0 && isEditable && (
-      <section class="rounded-2xl border border-red-300 bg-red-50 p-6 dark:border-red-900 dark:bg-red-950">
+      <section class={CARD_DANGER}>
         <h2 class="text-sm font-medium text-red-900 dark:text-red-200">
           Needs attention
         </h2>
@@ -857,7 +908,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     )}
 
     {blockingOnSubmit.length > 0 && (
-      <section class="rounded-2xl border border-red-300 bg-red-50 p-6 dark:border-red-900 dark:bg-red-950">
+      <section class={CARD_DANGER}>
         <h2 class="text-sm font-medium text-red-900 dark:text-red-200">
           Still required before this can be submitted
         </h2>
@@ -890,12 +941,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                 aria-live="polite"
               />
               <noscript>
-                <button
-                  type="submit"
-                  name="intent"
-                  value="save"
-                  class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
-                >
+                <button type="submit" name="intent" value="save" class={BUTTON}>
                   Save draft
                 </button>
               </noscript>
@@ -904,7 +950,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               type="button"
               id="capture-next-button"
               disabled={blocking.length > 0}
-              class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50"
+              class={BUTTON}
             >
               Next
             </button>
@@ -913,18 +959,15 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       </form>
     )}
 
+    {!isEditable && <WitnessesCard witnesses={application!.witnesses} />}
+
     {(!isEditable || currentStep === DOCUMENTS_STEP) &&
       canSeeDocuments &&
       checklist.length > 0 && (
-        <section
-          class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
-          id="documents"
-        >
+        <section class={CARD} id="documents">
           <div class="flex flex-wrap items-baseline justify-between gap-2">
-            <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-              Documents
-            </h2>
-            <p class="text-sm text-neutral-500 dark:text-neutral-400">
+            <h2 class={CARD_TITLE}>Documents</h2>
+            <p class={HINT}>
               {documentsComplete
                 ? 'Every required document has been verified.'
                 : `${requiredOutstanding} required ${
@@ -935,16 +978,14 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 
           {[...documentsBySubject].map(([subject, entries]) => (
             <div class="mt-5">
-              <h3 class="text-sm font-medium text-neutral-700 dark:text-neutral-200">
-                {SUBJECT_LABELS[subject] ?? subject}
-              </h3>
+              <h3 class={SUBTITLE}>{SUBJECT_LABELS[subject] ?? subject}</h3>
               <ul class="mt-2 space-y-3">
                 {entries.map(entry => (
                   <li
                     id={
                       entry.documentId ? `doc-${entry.documentId}` : undefined
                     }
-                    class="scroll-mt-24 rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900"
+                    class={`${PANEL} scroll-mt-24`}
                   >
                     <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
                       <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -982,11 +1023,11 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                               <input
                                 type="date"
                                 data-expires
-                                class="mt-1 block rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                                class={`${INPUT_SM} mt-1 block`}
                               />
                             </label>
                           )}
-                          <label class="cursor-pointer rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-200 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800">
+                          <label class={`${SECONDARY_SM} cursor-pointer`}>
                             Upload
                             <input
                               type="file"
@@ -1006,35 +1047,38 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                         </div>
                       )}
 
-                      {canUpload && isEditable && entry.state !== 'missing' && (
-                        <form method="post" data-confirm-delete-document>
-                          <input
-                            type="hidden"
-                            name="documentId"
-                            value={entry.documentId}
-                          />
+                      {entry.uploadedAt && (
+                        <div class="flex shrink-0 items-center gap-2">
                           <button
-                            type="submit"
-                            name="intent"
-                            value="delete-document"
-                            title="Delete this document"
-                            aria-label="Delete this document"
-                            class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-red-600 transition hover:bg-red-100 dark:text-red-400 dark:hover:bg-red-950"
+                            type="button"
+                            data-view-document
+                            data-document-id={entry.documentId}
+                            class={VIEW_BUTTON}
                           >
-                            <svg
-                              class="size-4"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              stroke-width="2"
-                              stroke-linecap="round"
-                              stroke-linejoin="round"
-                              aria-hidden="true"
-                            >
-                              <path d="M18 6 6 18M6 6l12 12" />
-                            </svg>
+                            View
                           </button>
-                        </form>
+                          {canUpload &&
+                            isEditable &&
+                            entry.state !== 'missing' && (
+                              <form method="post" data-confirm-delete-document>
+                                <input
+                                  type="hidden"
+                                  name="documentId"
+                                  value={entry.documentId}
+                                />
+                                <button
+                                  type="submit"
+                                  name="intent"
+                                  value="delete-document"
+                                  title="Delete"
+                                  aria-label="Delete this document"
+                                  class={DELETE_BUTTON}
+                                >
+                                  ✕
+                                </button>
+                              </form>
+                            )}
+                        </div>
                       )}
                     </div>
 
@@ -1050,14 +1094,6 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                           {entry.expiresAt &&
                             ` · expires ${dateFormat.format(entry.expiresAt)}`}
                         </span>
-                        <button
-                          type="button"
-                          data-view-document
-                          data-document-id={entry.documentId}
-                          class="font-medium text-neutral-700 underline hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-neutral-100"
-                        >
-                          View
-                        </button>
                       </p>
                     )}
 
@@ -1089,11 +1125,11 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               to next used to have no way to read it (officer feedback). */}
           {sourceOfFundFiling && (
             <div class="mt-5">
-              <h3 class="text-sm font-medium text-neutral-700 dark:text-neutral-200">
-                Source of Fund
-              </h3>
+              <h3 class={SUBTITLE}>Source of Fund</h3>
               <ul class="mt-2 space-y-2">
-                <li class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-neutral-200 bg-white px-4 py-3 dark:border-neutral-800 dark:bg-neutral-900">
+                <li
+                  class={`${PANEL} flex flex-wrap items-center justify-between gap-3`}
+                >
                   <span class="text-sm text-neutral-800 dark:text-neutral-100">
                     {sourceOfFundFiling.fileName}
                   </span>
@@ -1101,7 +1137,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                     type="button"
                     data-view-document
                     data-document-id={sourceOfFundFiling.documentId}
-                    class="rounded-lg border border-neutral-300 px-2.5 py-1 text-xs font-medium text-neutral-600 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                    class={VIEW_BUTTON}
                   >
                     View
                   </button>
@@ -1114,7 +1150,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             <div class="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800">
               <a
                 href={`/applications/${application!.id}/print`}
-                class="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                class={SECONDARY}
               >
                 ← Back
               </a>
@@ -1143,14 +1179,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 
     {(!isEditable || currentStep === PAYMENT_STEP) &&
       (livePayment || due || dueProblem) && (
-        <section
-          class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950"
-          id="payment"
-        >
+        <section class={CARD} id="payment">
           <div class="flex flex-wrap items-baseline justify-between gap-2">
-            <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-              Payment
-            </h2>
+            <h2 class={CARD_TITLE}>Payment</h2>
             {livePayment &&
               (canSeePayments ? (
                 <a
@@ -1160,9 +1191,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                   Receipt {livePayment.receiptNo}
                 </a>
               ) : (
-                <span class="text-sm text-neutral-600 dark:text-neutral-300">
-                  Receipt {livePayment.receiptNo}
-                </span>
+                <span class={MUTED}>Receipt {livePayment.receiptNo}</span>
               ))}
           </div>
 
@@ -1174,32 +1203,40 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 
           {livePayment && (
             <div class="mt-4">
-              <p class="text-sm text-neutral-600 dark:text-neutral-300">
+              <p class={MUTED}>
                 {canSeePayments
-                  ? `${formatMoney(livePayment.totalAmount, livePayment.currency)} · ${METHOD_LABELS[livePayment.method]}`
+                  ? `${formatMoney(livePayment.totalAmount, livePayment.currency)} · ${livePayment.methodName}`
                   : 'Recorded'}{' '}
                 · taken by {livePayment.recordedByName} on{' '}
                 {dateFormat.format(livePayment.receivedAt)}
               </p>
 
               {canSeePayments && (
-                <table class="mt-3 w-full text-sm">
+                <table class={`${TABLE} mt-3`}>
                   <tbody>
                     {livePayment.accountLines.map(line => (
-                      <tr class="border-t border-neutral-200 dark:border-neutral-800">
-                        <td class="py-1.5 text-neutral-600 dark:text-neutral-300">
+                      <tr class={ROW}>
+                        <td
+                          class={`${TD} text-neutral-600 dark:text-neutral-300`}
+                        >
                           {line.label}
                         </td>
-                        <td class="py-1.5 text-right text-neutral-800 tabular-nums dark:text-neutral-100">
+                        <td
+                          class={`${TD_NUM} text-neutral-800 dark:text-neutral-100`}
+                        >
                           {formatMoney(line.amount, livePayment.currency)}
                         </td>
                       </tr>
                     ))}
                     <tr class="border-t-2 border-neutral-300 dark:border-neutral-700">
-                      <td class="py-1.5 font-medium text-neutral-800 dark:text-neutral-100">
+                      <td
+                        class={`${TD} font-medium text-neutral-800 dark:text-neutral-100`}
+                      >
                         Total
                       </td>
-                      <td class="py-1.5 text-right font-bold text-neutral-800 tabular-nums dark:text-neutral-100">
+                      <td
+                        class={`${TD_NUM} font-bold text-neutral-800 dark:text-neutral-100`}
+                      >
                         {formatMoney(
                           livePayment.totalAmount,
                           livePayment.currency
@@ -1242,11 +1279,13 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               data-cash-threshold={cashThreshold}
               data-cash-maximum={cashMax}
             >
-              <table class="w-full text-sm">
+              <table class={TABLE}>
                 <tbody>
                   {due.components.map(component => (
-                    <tr class="border-t border-neutral-200 dark:border-neutral-800">
-                      <td class="py-2 text-neutral-600 dark:text-neutral-300">
+                    <tr class={ROW}>
+                      <td
+                        class={`${TD} text-neutral-600 dark:text-neutral-300`}
+                      >
                         <label for={`amount-${component.accountTypeId}`}>
                           {component.label}
                         </label>
@@ -1257,7 +1296,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                           at least {component.amount}
                         </span>
                       </td>
-                      <td class="w-40 py-2 text-right">
+                      <td class={`${TD} w-40 text-right`}>
                         <input
                           id={`amount-${component.accountTypeId}`}
                           type="text"
@@ -1275,12 +1314,14 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                     </tr>
                   ))}
                   <tr class="border-t-2 border-neutral-300 dark:border-neutral-700">
-                    <td class="py-2 font-medium text-neutral-800 dark:text-neutral-100">
+                    <td
+                      class={`${TD} font-medium text-neutral-800 dark:text-neutral-100`}
+                    >
                       Total
                     </td>
                     <td
                       data-payment-total
-                      class="py-2 text-right font-bold text-neutral-800 tabular-nums dark:text-neutral-100"
+                      class={`${TD_NUM} font-bold text-neutral-800 dark:text-neutral-100`}
                     >
                       {formatMoney(initialTotal)}
                     </td>
@@ -1289,32 +1330,30 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               </table>
 
               <div class="flex flex-wrap gap-3">
-                <label class="text-sm text-neutral-600 dark:text-neutral-300">
+                <label class={LABEL}>
                   Method
-                  <select
-                    name="method"
-                    class="mt-1 block rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-                  >
-                    {PAYMENT_METHODS.map(method => (
+                  <select name="method" class={INPUT}>
+                    {paymentMethods.map(method => (
                       <option
-                        value={method}
-                        selected={paymentFormValues?.method === method}
+                        value={method.code}
+                        data-cash={method.isCash ? 'true' : 'false'}
+                        data-requires-reference={
+                          method.requiresReference ? 'true' : 'false'
+                        }
+                        selected={paymentFormValues?.method === method.code}
                       >
-                        {METHOD_LABELS[method]}
+                        {method.name}
                       </option>
                     ))}
                   </select>
                 </label>
-                <label
-                  data-method-reference-field
-                  class="flex-1 text-sm text-neutral-600 dark:text-neutral-300"
-                >
-                  Cheque or transfer reference
+                <label data-method-reference-field class={`${LABEL} flex-1`}>
+                  Reference (cheque number, transfer reference)
                   <input
                     type="text"
                     name="methodReference"
                     value={paymentFormValues?.methodReference ?? ''}
-                    class="mt-1 block w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                    class={INPUT}
                   />
                 </label>
               </div>
@@ -1340,7 +1379,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                 name="intent"
                 value="record-payment"
                 data-payment-submit
-                class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50"
+                class={BUTTON}
               >
                 Record payment and issue receipt
               </button>
@@ -1351,7 +1390,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             <div class="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800">
               <a
                 href={`/applications/${application!.id}/customer?step=${DOCUMENTS_STEP}`}
-                class="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                class={SECONDARY}
               >
                 ← Back
               </a>
@@ -1377,10 +1416,8 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       )}
 
     {(!isEditable || currentStep === SUBMIT_STEP) && actions.length > 0 && (
-      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-          Your next step
-        </h2>
+      <section class={CARD}>
+        <h2 class={CARD_TITLE}>Your next step</h2>
 
         {actions.map(action => {
           const reviewMeta = REVIEW_STEP_META[action.stepCode];
@@ -1392,7 +1429,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                   name="intent"
                   value="submit"
                   disabled={blocking.length > 0}
-                  class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50"
+                  class={BUTTON}
                 >
                   {blocking.length > 0
                     ? `Submit (${blocking.length} item${blocking.length === 1 ? '' : 's'} still need attention)`
@@ -1402,11 +1439,13 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 
               {action.stepCode === 'secretary_review' &&
                 boardReasons.length > 0 && (
-                  <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+                  <div class={NOTICE_ERROR}>
                     <p class="font-medium">Not ready for the Board yet:</p>
                     <ul class="mt-1 list-disc pl-5">
                       {boardReasons.map(reason => (
-                        <li>{reason}</li>
+                        <li>
+                          <LinkedReason reason={reason} />
+                        </li>
                       ))}
                     </ul>
                   </div>
@@ -1418,7 +1457,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                    its own, so this is the only place it hears about it. */}
               {action.stepCode === 'regional_review' &&
                 rejectedDocuments.length > 0 && (
-                  <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
+                  <div class={NOTICE_ERROR}>
                     <p class="font-medium">
                       {rejectedDocuments.length} document
                       {rejectedDocuments.length === 1 ? '' : 's'} rejected —
@@ -1450,12 +1489,12 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 
               {reviewMeta && (
                 <>
-                  <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+                  <label class={LABEL}>
                     Comment
                     <textarea
                       name="comment"
                       rows="3"
-                      class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                      class={INPUT}
                       placeholder={reviewMeta.commentPlaceholder}
                     ></textarea>
                   </label>
@@ -1469,7 +1508,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                           boardReasons.length > 0) ||
                         rejectedDocuments.length > 0
                       }
-                      class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition disabled:cursor-not-allowed disabled:opacity-50"
+                      class={BUTTON}
                     >
                       {reviewMeta.forwardLabel}
                     </button>
@@ -1477,7 +1516,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                       type="submit"
                       name="outcome"
                       value={reviewMeta.returnOutcome}
-                      class="rounded-lg border border-red-300 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
+                      class={DANGER}
                     >
                       {reviewMeta.returnLabel}
                     </button>
@@ -1506,7 +1545,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       <div class="flex">
         <a
           href={`/applications/${application!.id}/customer?step=${PAYMENT_STEP}`}
-          class="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+          class={SECONDARY}
         >
           ← Back
         </a>
@@ -1514,10 +1553,8 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     )}
 
     {(!isEditable || currentStep === SUBMIT_STEP) && history.length > 0 && (
-      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-          History
-        </h2>
+      <section class={CARD}>
+        <h2 class={CARD_TITLE}>History</h2>
         <ol class="mt-4 space-y-3">
           {history.map(entry => (
             <li class="border-l-2 border-neutral-300 pl-3 text-sm dark:border-neutral-700">
@@ -1555,12 +1592,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           This cannot be undone.
         </p>
         <form method="post" class="mt-4" data-confirm-delete>
-          <button
-            type="submit"
-            name="intent"
-            value="delete"
-            class="rounded-lg border border-red-300 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
-          >
+          <button type="submit" name="intent" value="delete" class={DANGER}>
             Delete draft {application!.reference}
           </button>
         </form>
@@ -1572,6 +1604,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 </DashboardLayout>
 
 <script>
+  import { wireAutosave } from '@lib/client/autosave';
   import {
     compressImageForUpload,
     formatBytes,
@@ -1854,9 +1887,8 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     const methodReferenceField = paymentForm.querySelector<HTMLElement>(
       '[data-method-reference-field]'
     );
-    // Officer feedback: only these methods carry a reference to record —
-    // cash and card settle with nothing to write down.
-    const REFERENCED_METHODS = new Set(['cheque', 'bank_transfer', 'mobile']);
+    // Whether a method is cash, and whether it carries a reference, is
+    // configuration (S-1307), read off the selected option.
 
     // Restored before the first recalculation below, so the total and the
     // cash rules are computed against what the officer actually typed
@@ -1868,7 +1900,8 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       for (const input of amountInputs) total += parseCents(input.value);
       if (totalCell) totalCell.textContent = formatCents(total);
 
-      const isCash = methodSelect?.value === 'cash';
+      const selectedMethod = methodSelect?.selectedOptions[0];
+      const isCash = selectedMethod?.dataset.cash === 'true';
 
       // Refused server-side regardless (payments.ts's own
       // applyCashPaymentRules runs first, ahead of every other check) — this
@@ -1898,9 +1931,8 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       }
 
       if (methodReferenceField)
-        methodReferenceField.hidden = !REFERENCED_METHODS.has(
-          methodSelect?.value ?? ''
-        );
+        methodReferenceField.hidden =
+          selectedMethod?.dataset.requiresReference !== 'true';
     };
 
     for (const input of amountInputs) {
@@ -1916,7 +1948,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
   const status = document.getElementById('autosave-status');
 
   if (form && status) {
-    const save = async (): Promise<boolean> => {
+    // Saves on leaving a changed field, on leaving the page, and on Next
+    // (QA-05; see lib/client/autosave.ts). Never while typing.
+    const save = async (leaving: boolean): Promise<boolean> => {
       const body = new FormData(form);
       body.set('intent', 'autosave');
 
@@ -1925,20 +1959,24 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           method: 'POST',
           body,
           headers: { 'x-requested-with': 'autosave' },
+          keepalive: leaving,
         });
         if (!response.ok) throw new Error(String(response.status));
-        status.textContent = `Saved at ${new Date().toLocaleTimeString('en-GB')}`;
+        if (!leaving) {
+          status.textContent = `Saved at ${new Date().toLocaleTimeString('en-GB')}`;
+        }
         return true;
       } catch {
-        status.textContent = 'Not saved — check your connection.';
+        if (!leaving) status.textContent = 'Not saved — check your connection.';
         return false;
       }
     };
+    const autosave = wireAutosave({ form, save });
 
     if (captureNextButton) {
       captureNextButton.addEventListener('click', async () => {
         captureNextButton.disabled = true;
-        const saved = await save();
+        const saved = await autosave.flush();
         if (!saved) {
           captureNextButton.disabled = false;
           return;
@@ -1946,8 +1984,10 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         // S-614, phase 8: the print page now, same as [id].astro's own
         // Next — not straight to documents, since there is something to
         // sign first.
+        // The server decides: print when nothing blocks, else the details
+        // again with the problem named (LC-03).
         window.location.assign(
-          window.location.pathname.replace(/\/customer\/?$/, '') + '/print'
+          window.location.pathname.replace(/\/$/, '') + '?step=1&next=print'
         );
       });
     }

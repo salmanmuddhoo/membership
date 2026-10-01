@@ -7,11 +7,12 @@
 // no workflows, no account types, no administration detail.
 import type { APIRoute } from 'astro';
 import { defineMemberEndpoint, apiSuccess } from '@lib/member/endpoint';
-import { checklistItemId } from '@lib/member/applications';
+import { checklistItemId, isOnlineRegistrable } from '@lib/member/applications';
 import {
   listChecklists,
   listFeeSchedules,
   listMembershipTypes,
+  offeredBankAccounts,
 } from '@lib/config/reference';
 import { COMPONENT_LABELS } from '@lib/payments/payments';
 
@@ -25,13 +26,26 @@ const endpoint = defineMemberEndpoint(
     description:
       'Active membership types with their field configuration, the ' +
       'documents an applicant files from the phone (the signed form is a ' +
-      'branch step and is left out), and the fees in force. Public.',
+      'branch step and is left out), and the fees in force. The ' +
+      "Society's bank accounts a member may pay into, by name. Public.",
     tag: 'Member app',
     caller: 'public',
     responseSchema: {
       type: 'object',
-      required: ['membershipTypes'],
+      required: ['membershipTypes', 'bankAccounts'],
       properties: {
+        bankAccounts: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['id', 'name', 'bankName'],
+            properties: {
+              id: { type: 'string', format: 'uuid' },
+              name: { type: 'string' },
+              bankName: { type: 'string' },
+            },
+          },
+        },
         membershipTypes: {
           type: 'array',
           items: {
@@ -41,6 +55,7 @@ const endpoint = defineMemberEndpoint(
               'code',
               'name',
               'isActive',
+              'onlineRegistration',
               'fields',
               'nomineeCount',
               'checklist',
@@ -52,6 +67,12 @@ const endpoint = defineMemberEndpoint(
               name: { type: 'string' },
               description: { type: 'string' },
               isActive: { type: 'boolean' },
+              onlineRegistration: {
+                type: 'boolean',
+                description:
+                  'Whether a new applicant may apply for this membership ' +
+                  'type from the app. Others are started at a branch.',
+              },
               nomineeCount: { type: 'integer' },
               fields: {
                 type: 'array',
@@ -157,10 +178,11 @@ const endpoint = defineMemberEndpoint(
     },
   },
   async ({ correlationId }) => {
-    const [types, checklists, schedules] = await Promise.all([
+    const [types, checklists, schedules, bankAccounts] = await Promise.all([
       listMembershipTypes(),
       listChecklists(),
       listFeeSchedules(),
+      offeredBankAccounts(),
     ]);
 
     const membershipTypes = types
@@ -174,6 +196,7 @@ const endpoint = defineMemberEndpoint(
           name: t.name,
           description: t.description,
           isActive: t.isActive,
+          onlineRegistration: isOnlineRegistrable(t.code),
           nomineeCount: t.nomineeCount,
           fields: t.fields.map(f => ({
             id: f.id,
@@ -206,7 +229,17 @@ const endpoint = defineMemberEndpoint(
         };
       });
 
-    return apiSuccess({ membershipTypes }, correlationId);
+    return apiSuccess(
+      {
+        membershipTypes,
+        bankAccounts: bankAccounts.map(a => ({
+          id: a.id,
+          name: a.name,
+          bankName: a.bankName,
+        })),
+      },
+      correlationId
+    );
   }
 );
 

@@ -38,6 +38,10 @@ process.env.MEMBER_SESSION_SECRET =
   'a-test-secret-that-is-at-least-32-characters-long';
 process.env.MEMBER_OTP_DELIVERY = 'log';
 process.env.RATE_LIMIT_DISABLED = 'true';
+// One channel, so the member is told once per decision and the row can be
+// read back; what a template renders is templates.test.ts's business.
+process.env.NOTIFY_EMAIL_DELIVERY = 'log';
+delete process.env.NOTIFY_WHATSAPP_DELIVERY;
 
 const requests = await import('./details-requests');
 const profile = await import('../member/profile');
@@ -111,6 +115,20 @@ async function currentValues(): Promise<Record<string, string>> {
     [applicationId]
   );
   return result.rows[0].values;
+}
+
+// What the member was written about one decision — at most one row per
+// test, since each test starts from a fresh request.
+async function toldAbout(eventCode: string) {
+  const told = await run(
+    appUrl,
+    `select recipient, body from notification
+      where entity_type = 'member' and entity_id = $1 and event_code = $2
+        and channel = 'email'
+      order by created_at desc limit 1`,
+    [memberId, eventCode]
+  );
+  return told.rows;
 }
 
 async function clearCooldown() {
@@ -265,6 +283,11 @@ describe('a member’s own details update, verified by staff', () => {
     // The member is no longer told an update is pending.
     const principal = await memberSession();
     expect((await profile.memberProfile(principal)).pendingUpdate).toBeNull();
+
+    // And is told what changed, on the address their application holds.
+    expect(await toldAbout('member.details.applied')).toEqual([
+      { recipient: ORIGINAL.email, body: expect.stringContaining('Address') },
+    ]);
   });
 
   it('does not revert a field an officer corrected while it waited — even though the app sends the whole form back', async () => {
@@ -335,6 +358,16 @@ describe('a member’s own details update, verified by staff', () => {
     await expect(
       requests.declineDetailsRequest(queued.id, 'again', secretary)
     ).rejects.toMatchObject({ reason: 'conflict' });
+
+    // And told the reason, not merely that it was declined.
+    expect(await toldAbout('member.details.declined')).toEqual([
+      {
+        recipient: ORIGINAL.email,
+        body: expect.stringContaining(
+          'Bring your marriage certificate to a branch.'
+        ),
+      },
+    ]);
   });
 
   it('lets the member send another once the first is decided, but not before', async () => {

@@ -11,6 +11,7 @@
 import type { APIContext } from 'astro';
 import { recordAuditQuietly } from '../access/audit';
 import { hasPermission, type Principal } from '../access/principal';
+import { isInvalidReference } from '../db/pool';
 import {
   apiError,
   apiSuccess,
@@ -32,8 +33,9 @@ export interface EndpointDescriptor {
   tag: string;
   // The permission required. `null` means "any signed-in, active account" and
   // has to be written deliberately — there is no way to omit the field and get
-  // an unprotected endpoint by accident.
-  permission: string | null;
+  // an unprotected endpoint by accident. A list means any one of them will
+  // do — an endpoint two separately granted permissions both reach.
+  permission: string | readonly string[] | null;
   // Who reaches this endpoint. Absent means staff, through the session
   // cookie and defineEndpoint. 'member' is the member app's bearer token and
   // 'public' is nobody at all — both are only ever produced by
@@ -51,6 +53,13 @@ export interface EndpointDescriptor {
   // Query-string parameters the endpoint reads. Optional by default: an
   // endpoint that requires one says so with `required: true`.
   query?: QueryParameter[];
+  // A write that must not happen twice (S-1308). Declared here so the
+  // wrapper demands an Idempotency-Key header and the OpenAPI document says
+  // so; the handler receives the key and the service it calls decides what
+  // the same key means (the same request answered with the original, a
+  // different one refused as a conflict). A retried double-click or a
+  // dropped connection therefore cannot move money twice.
+  idempotent?: boolean;
 }
 
 export interface QueryParameter {
@@ -64,6 +73,12 @@ export interface RequestContext {
   principal: Principal;
   correlationId: string;
   context: APIContext;
+  // Read and parse the JSON body, or fail as validation_failed.
+  body<T>(): Promise<T>;
+  // The Idempotency-Key header. Always set on an endpoint declared
+  // idempotent — the wrapper refuses the request without one — and null
+  // otherwise.
+  idempotencyKey: string | null;
 }
 
 export type EndpointHandler = (ctx: RequestContext) => Promise<Response>;
@@ -131,9 +146,15 @@ export function defineEndpoint(
         return finish(apiError(code, correlationId), 'anonymous', code);
       }
 
+      const required =
+        descriptor.permission === null
+          ? null
+          : typeof descriptor.permission === 'string'
+            ? [descriptor.permission]
+            : descriptor.permission;
       if (
-        descriptor.permission !== null &&
-        !hasPermission(principal, descriptor.permission)
+        required !== null &&
+        !required.some(code => hasPermission(principal, code))
       ) {
         await recordAuditQuietly({
           actorUserId: principal.userId,
@@ -141,7 +162,10 @@ export function defineEndpoint(
           action: 'access.denied',
           entityType: 'endpoint',
           entityId: `${descriptor.method} ${descriptor.path}`,
-          newValue: { required: descriptor.permission },
+          newValue: {
+            required:
+              required.length === 1 ? required[0] : required.join(' or '),
+          },
           requestId: correlationId,
           ipAddress: clientAddress(context.request.headers),
         });
@@ -163,8 +187,41 @@ export function defineEndpoint(
         );
       }
 
+      // The key is validated before the handler runs, so a handler on an
+      // idempotent endpoint can rely on having one. Bounded: it is stored on
+      // the row it protects, and a caller who sends a novel is not retrying.
+      const rawKey = context.request.headers.get('idempotency-key')?.trim();
+      const idempotencyKey = rawKey ? rawKey.slice(0, 128) : null;
+      if (descriptor.idempotent && !idempotencyKey) {
+        return finish(
+          apiError(
+            'validation_failed',
+            correlationId,
+            'An Idempotency-Key header is required.'
+          ),
+          principal.email,
+          'validation_failed'
+        );
+      }
+
+      const body = async <T>(): Promise<T> => {
+        const parsed = (await context.request
+          .json()
+          .catch(() => null)) as T | null;
+        if (parsed === null || typeof parsed !== 'object') {
+          throw new ApiError('validation_failed', 'A JSON body is required.');
+        }
+        return parsed;
+      };
+
       try {
-        const response = await handler({ principal, correlationId, context });
+        const response = await handler({
+          principal,
+          correlationId,
+          context,
+          body,
+          idempotencyKey,
+        });
         return finish(response, principal.email);
       } catch (error) {
         if (error instanceof ApiError) {
@@ -172,6 +229,15 @@ export function defineEndpoint(
             apiError(error.code, correlationId, error.message, error.details),
             principal.email,
             error.code
+          );
+        }
+
+        // An id in the path or body that is not one: nothing by that id.
+        if (isInvalidReference(error)) {
+          return finish(
+            apiError('not_found', correlationId),
+            principal.email,
+            'not_found'
           );
         }
 

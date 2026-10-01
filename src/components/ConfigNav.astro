@@ -2,6 +2,8 @@
 // Sub-navigation shared by the reference-configuration pages. Kept in one
 // place so a new section appears in every page's nav at once rather than in
 // whichever ones were remembered.
+import { SECONDARY_SM, TAB_CURRENT } from '@lib/ui';
+
 export const CONFIG_SECTIONS = [
   {
     href: '/admin/configuration/membership-types',
@@ -19,6 +21,16 @@ export const CONFIG_SECTIONS = [
     blurb: 'What is charged at application, versioned so receipts stay true.',
   },
   {
+    href: '/admin/configuration/payment-methods',
+    label: 'Payment methods',
+    blurb: 'How money is received, and which methods need a reference.',
+  },
+  {
+    href: '/admin/configuration/bank-accounts',
+    label: 'Bank accounts',
+    blurb: "The Society's own accounts at the bank, and what each stands at.",
+  },
+  {
     href: '/admin/configuration/checklists',
     label: 'Document checklists',
     blurb: 'Which documents each applicant type and subject must provide.',
@@ -29,32 +41,52 @@ export const CONFIG_SECTIONS = [
     blurb: 'The approval chain, its steps and the statuses they move through.',
   },
   {
+    href: '/admin/configuration/approval-matrix',
+    label: 'Approval matrix',
+    blurb: 'Which transactions post at once, and which go to a chain.',
+  },
+  {
     href: '/admin/configuration/notification-templates',
     label: 'Notification wording',
     blurb:
       'What a member is told when their application moves, and by which channel.',
   },
   {
+    href: '/admin/configuration/member-app',
+    label: 'Member app',
+    blurb: 'Which transactions a member may start from the app.',
+  },
+  {
     href: '/admin/configuration/retention',
     label: 'Retention',
     blurb: 'How long each kind of record is kept before it is disposed of.',
   },
+  {
+    href: '/admin/configuration/export-import',
+    label: 'Export and import',
+    blurb: 'Every setting in one Excel file, to download or bring back in.',
+  },
+  {
+    href: '/admin/configuration/readiness',
+    label: 'Readiness',
+    blurb: 'Every setting, what it stands at, and who last changed it.',
+  },
 ] as const;
 
 const current = Astro.url.pathname;
+// Someone who holds only the fee schedules (a Treasurer) sees no tabs for
+// pages they cannot open.
+const principal = Astro.locals.principal;
+const seesAll = principal?.permissions.has('config.view') ?? false;
+const sections = seesAll ? CONFIG_SECTIONS : [];
 ---
 
 <nav class="flex flex-wrap gap-2" aria-label="Configuration sections">
-  {CONFIG_SECTIONS.map(section => (
+  {sections.map(section => (
     <a
       href={section.href}
       aria-current={current === section.href ? 'page' : undefined}
-      class:list={[
-        'rounded-lg px-3 py-1.5 text-sm font-medium transition',
-        current === section.href
-          ? 'bg-mint-300 text-neutral-800'
-          : 'border border-neutral-300 text-neutral-700 hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800',
-      ]}
+      class:list={[current === section.href ? TAB_CURRENT : SECONDARY_SM]}
     >
       {section.label}
     </a>

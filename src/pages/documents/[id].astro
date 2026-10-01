@@ -1,0 +1,116 @@
+---
+// One holder's folder (officer feedback): everything filed for a member or
+// a non-member customer — under the applications that made them, against
+// the member directly, and on their transactions — with View on each.
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import DocumentViewer from '@components/DocumentViewer.astro';
+import { documentsForHolder } from '@lib/documents/directory';
+import { loadCustomer, loadMember } from '@lib/members/create';
+import {
+  CARD,
+  CARD_TITLE,
+  HINT,
+  MUTED,
+  PAGE,
+  PANEL,
+  PILL,
+  SECONDARY_SM,
+  SUBTITLE,
+  VIEW_BUTTON,
+} from '@lib/ui';
+
+const { id } = Astro.params;
+const member = id ? await loadMember(id) : null;
+const customer = !member && id ? await loadCustomer(id) : null;
+if (!member && !customer) return new Response('Not found', { status: 404 });
+const holder = (member ?? customer)!;
+const name = holder.name;
+const number = member ? member.memberNo : null;
+
+const documents = await documentsForHolder(holder.id);
+
+// Grouped by where each was filed, in the order first seen: the founding
+// application first, since its papers are the oldest.
+const groups = new Map<string, typeof documents>();
+for (const document of [...documents].reverse()) {
+  const key =
+    document.sourceKind === 'member'
+      ? 'Filed against the member'
+      : `${document.sourceKind === 'application' ? 'Application' : 'Transaction'} ${document.source}`;
+  groups.set(key, [...(groups.get(key) ?? []), document]);
+}
+
+const dateFormat = new Intl.DateTimeFormat('en-GB', {
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+});
+---
+
+<DashboardLayout
+  title={`${name} · Documents · Al Barakah MCSL`}
+  heading={number ? `${name} · ${number}` : name}
+>
+  <div class={PAGE.detail}>
+    <div class="flex flex-wrap items-center justify-between gap-2">
+      <a href="/documents" class={`${HINT} inline-block underline`}>
+        ← Documents
+      </a>
+      <a href={`/members/${holder.id}`} class={SECONDARY_SM}>
+        {member ? 'Member page' : 'Customer page'}
+      </a>
+    </div>
+
+    <section class={CARD}>
+      <h2 class={CARD_TITLE}>
+        {documents.length === 0
+          ? 'Nothing on file'
+          : `${documents.length} document${documents.length === 1 ? '' : 's'} on file`}
+      </h2>
+      {groups.size > 0 && (
+        <div class="mt-4 space-y-5">
+          {[...groups.entries()].map(([label, entries]) => (
+            <div>
+              <h3 class={SUBTITLE}>{label}</h3>
+              <ul class="mt-2 space-y-2">
+                {entries.map(document => (
+                  <li
+                    class={`${PANEL} flex flex-wrap items-center justify-between gap-3`}
+                  >
+                    <div class="min-w-0">
+                      <p class="flex flex-wrap items-center gap-2 font-medium text-neutral-800 dark:text-neutral-100">
+                        {document.documentName}
+                        {document.state === 'verified' && (
+                          <span class={PILL}>Verified</span>
+                        )}
+                        {document.state === 'rejected' && (
+                          <span class="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800 dark:bg-red-950 dark:text-red-200">
+                            Rejected
+                          </span>
+                        )}
+                      </p>
+                      <p class={`${MUTED} truncate`}>
+                        {document.fileName} · filed{' '}
+                        {dateFormat.format(document.filedAt)} by{' '}
+                        {document.filedByName}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      data-view-document
+                      data-document-id={document.documentId}
+                      class={VIEW_BUTTON}
+                    >
+                      View
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  </div>
+  <DocumentViewer />
+</DashboardLayout>

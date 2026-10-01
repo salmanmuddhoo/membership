@@ -13,6 +13,19 @@ import {
   DetailsRequestError,
   listDetailsRequests,
 } from '@lib/members/details-requests';
+import {
+  PAGE,
+  CARD,
+  CARD_TITLE,
+  HINT,
+  INPUT_BARE,
+  SECONDARY,
+  TABLE,
+  THEAD,
+  TH,
+  ROW,
+  TD,
+} from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 const canVerify = principal.permissions.has('member.details_verify');
@@ -70,7 +83,7 @@ function display(value: string, dataType: string): string {
   title="Details updates · Al Barakah MCSL"
   heading="Details updates"
 >
-  <div class="mx-auto max-w-4xl space-y-6">
+  <div class={PAGE.list}>
     {error && (
       <p class="rounded-lg border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950 dark:text-rose-200">
         {error}
@@ -82,11 +95,9 @@ function display(value: string, dataType: string): string {
       </p>
     )}
 
-    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-      <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-        Waiting to be verified
-      </h2>
-      <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+    <section class={CARD}>
+      <h2 class={CARD_TITLE}>Waiting to be verified</h2>
+      <p class={`${HINT} mt-1`}>
         {pending.length === 0
           ? 'Nothing waiting. Updates members send from the app appear here.'
           : `${pending.length} member${pending.length === 1 ? '' : 's'} sent an update. Check each change against the evidence it needs before applying it.`}
@@ -103,7 +114,7 @@ function display(value: string, dataType: string): string {
                 >
                   {request.memberName}
                 </a>
-                <span class="ml-2 text-sm text-neutral-500 dark:text-neutral-400">
+                <span class={`${HINT} ml-2`}>
                   {request.memberNo} · {request.membershipTypeName}
                 </span>
               </div>
@@ -113,24 +124,28 @@ function display(value: string, dataType: string): string {
               </span>
             </header>
 
-            <table class="mt-4 w-full text-sm">
+            <table class={`${TABLE} mt-4`} data-sortable>
               <thead>
-                <tr class="text-left text-xs text-neutral-500 dark:text-neutral-400">
-                  <th class="py-1 pr-4 font-medium">Field</th>
-                  <th class="py-1 pr-4 font-medium">On record</th>
-                  <th class="py-1 font-medium">Member says</th>
+                <tr class={THEAD}>
+                  <th class={TH}>Field</th>
+                  <th class={TH}>On record</th>
+                  <th class={TH}>Member says</th>
                 </tr>
               </thead>
               <tbody>
                 {request.changes.map(change => (
-                  <tr class="border-t border-neutral-200 dark:border-neutral-800">
-                    <td class="py-2 pr-4 text-neutral-600 dark:text-neutral-300">
+                  <tr class={ROW}>
+                    <td class={`${TD} text-neutral-600 dark:text-neutral-300`}>
                       {change.label}
                     </td>
-                    <td class="py-2 pr-4 text-neutral-500 line-through dark:text-neutral-400">
+                    <td
+                      class={`${TD} text-neutral-500 line-through dark:text-neutral-400`}
+                    >
                       {display(change.before, change.dataType)}
                     </td>
-                    <td class="py-2 font-medium text-neutral-800 dark:text-neutral-100">
+                    <td
+                      class={`${TD} font-medium text-neutral-800 dark:text-neutral-100`}
+                    >
                       {display(change.after, change.dataType)}
                     </td>
                   </tr>
@@ -160,21 +175,16 @@ function display(value: string, dataType: string): string {
                       name="comment"
                       required
                       placeholder="What the member needs to do"
-                      class="focus:border-mint-400 focus:ring-mint-400 mt-1 block w-72 rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm text-neutral-800 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                      class={`${INPUT_BARE} mt-1 block w-72 text-neutral-800`}
                     />
                   </label>
-                  <button
-                    type="submit"
-                    class="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
-                  >
+                  <button type="submit" class={SECONDARY}>
                     Decline
                   </button>
                 </form>
               </div>
             ) : (
-              <p class="mt-4 text-sm text-neutral-500 dark:text-neutral-400">
-                You can see this, but not act on it.
-              </p>
+              <p class={`${HINT} mt-4`}>You can see this, but not act on it.</p>
             )}
           </article>
         ))}
@@ -182,25 +192,26 @@ function display(value: string, dataType: string): string {
     </section>
 
     {decided.length > 0 && (
-      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-          Already decided
-        </h2>
+      <section class={CARD}>
+        <h2 class={CARD_TITLE}>Already decided</h2>
         <div class="mt-4 overflow-x-auto">
-          <table class="w-full text-sm">
+          <table class={TABLE} data-sortable>
             <thead>
-              <tr class="text-left text-xs text-neutral-500 dark:text-neutral-400">
-                <th class="py-2 pr-4 font-medium">Member</th>
-                <th class="py-2 pr-4 font-medium">Outcome</th>
-                <th class="py-2 pr-4 font-medium">Changes</th>
-                <th class="py-2 pr-4 font-medium">Decided</th>
-                <th class="py-2 font-medium">By</th>
+              <tr class={THEAD}>
+                <th class={TH}>Member</th>
+                <th class={TH}>Outcome</th>
+                <th class={TH}>Changes</th>
+                <th class={TH}>Decided</th>
+                <th class={TH}>By</th>
               </tr>
             </thead>
             <tbody>
               {decided.map(request => (
-                <tr class="border-t border-neutral-200 dark:border-neutral-800">
-                  <td class="py-2 pr-4 text-neutral-700 dark:text-neutral-200">
+                <tr class={ROW}>
+                  <td
+                    class={`${TD} text-neutral-700 dark:text-neutral-200`}
+                    data-sort-value={request.memberName}
+                  >
                     <a href={`/members/${request.memberId}`} class="underline">
                       {request.memberName}
                     </a>
@@ -208,7 +219,12 @@ function display(value: string, dataType: string): string {
                       {request.memberNo}
                     </span>
                   </td>
-                  <td class="py-2 pr-4 text-neutral-600 dark:text-neutral-300">
+                  <td
+                    class={`${TD} text-neutral-600 dark:text-neutral-300`}
+                    data-sort-value={
+                      request.status === 'applied' ? 'Applied' : 'Declined'
+                    }
+                  >
                     {request.status === 'applied' ? 'Applied' : 'Declined'}
                     {request.comment && (
                       <span class="block text-xs text-neutral-500 dark:text-neutral-400">
@@ -216,15 +232,22 @@ function display(value: string, dataType: string): string {
                       </span>
                     )}
                   </td>
-                  <td class="py-2 pr-4 text-neutral-600 dark:text-neutral-300">
+                  <td class={`${TD} text-neutral-600 dark:text-neutral-300`}>
                     {request.changeCount}
                   </td>
-                  <td class="py-2 pr-4 text-xs text-neutral-500 dark:text-neutral-400">
+                  <td
+                    class={`${TD} text-xs text-neutral-500 dark:text-neutral-400`}
+                    data-sort-value={
+                      request.decidedAt ? request.decidedAt.toISOString() : ''
+                    }
+                  >
                     {request.decidedAt
                       ? dateTimeFormat.format(request.decidedAt)
                       : '—'}
                   </td>
-                  <td class="py-2 text-xs text-neutral-500 dark:text-neutral-400">
+                  <td
+                    class={`${TD} text-xs text-neutral-500 dark:text-neutral-400`}
+                  >
                     {request.decidedByName ?? '—'}
                   </td>
                 </tr>
@@ -236,3 +259,9 @@ function display(value: string, dataType: string): string {
     )}
   </div>
 </DashboardLayout>
+
+<script>
+  import { wireSortableTables } from '@lib/client/table-sort';
+
+  wireSortableTables();
+</script>

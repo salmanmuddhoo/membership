@@ -11,10 +11,13 @@
 //   * A receipt number is committed before the payment is attempted, so a
 //     failure leaves a visible gap rather than a silent one. See receipts.ts,
 //     which explains why that is the only design that works.
+import { personApplicationIdsSql } from '../members/applications-of';
 import type { PoolClient } from 'pg';
 import { recordAudit } from '../access/audit';
 import { checkSegregation } from '../admin/segregation';
 import { query, withTransaction } from '../db/pool';
+import { accountEntries, postOpeningBalances } from '../ledger/ledger';
+import { notifyReceiptVoided } from '../ledger/void-notifications';
 import {
   cashMaximum,
   cashSourceOfFundThreshold,
@@ -23,6 +26,8 @@ import {
   listMembershipTypes,
   type FeeComponent,
   type FeeComponentCode,
+  paymentMethodByCode,
+  type PaymentMethod as PaymentMethodConfig,
 } from '../config/reference';
 import type { Principal } from '../access/principal';
 import { fromCents, toCents, MoneyError } from './money';
@@ -44,31 +49,16 @@ export class PaymentError extends Error {
   }
 }
 
-// The methods the Society accepts. A check constraint mirrors this in the
-// schema; both are here rather than in configuration because a method the
-// system has never heard of has nowhere to be reconciled to.
-export const PAYMENT_METHODS = [
-  'cash',
-  'cheque',
-  'bank_transfer',
-  'card',
-  'mobile',
-] as const;
-// Every method a payment can actually carry, including 'migration' — never
-// offered on an officer's own form (PAYMENT_METHODS above is what populates
-// those), written only by the legacy import (migration/members.ts) to mark
-// an opening balance as what it is rather than a counter transaction nobody
-// took (S-708: distinguishable from ordinary data entry).
-export type PaymentMethod = (typeof PAYMENT_METHODS)[number] | 'migration';
-
-export const METHOD_LABELS: Record<PaymentMethod, string> = {
-  cash: 'Cash',
-  cheque: 'Cheque',
-  bank_transfer: 'Bank transfer',
-  card: 'Card',
-  mobile: 'Mobile money',
-  migration: 'Legacy migration',
-};
+// How money moved: a payment_method code (S-1307, migration 0067). Once a
+// constant here and a check constraint in the schema; now configuration
+// (config/reference.ts: listPaymentMethods, offeredPaymentMethods), so the
+// list matches how members actually pay without a release. The type is the
+// code, and a record carries the method's name beside it (methodName) so a
+// receipt taken by a method since retired still says how it was paid.
+// 'migration' is the one code an officer never chooses — written only by
+// the legacy import (migration/members.ts) to mark an opening balance as
+// what it is rather than a counter transaction nobody took (S-708).
+export type PaymentMethod = string;
 
 export const COMPONENT_LABELS: Record<FeeComponentCode, string> = {
   entrance: 'Entrance fee',
@@ -113,7 +103,9 @@ export const FLOOR_FEE_COMPONENTS: ReadonlySet<FeeComponentCode> = new Set([
 // Officer feedback, two rules on a cash payment. Shared between
 // recordPayment and recordAccountOpeningPayment rather than written twice —
 // every application kind takes cash through one of those two functions, so
-// one place is what makes this apply to all of them.
+// one place is what makes this apply to all of them. A deposit (S-1306,
+// ledger/deposits.ts) is a payment for this purpose and calls the same
+// function: FRD 6.7 wants one control, not two.
 //
 // 1. A hard ceiling (payment.cash_maximum). Above it, nothing on this
 //    screen can authorise the payment at all — not a reason, not a form,
@@ -127,12 +119,12 @@ export const FLOOR_FEE_COMPONENTS: ReadonlySet<FeeComponentCode> = new Set([
 //    reason, so asking for a second, free-text note here was asking the
 //    same question twice; this function only knows that the confirmation
 //    must be true, not how it was earned.
-async function applyCashPaymentRules(
-  method: PaymentMethod,
+export async function applyCashPaymentRules(
+  method: PaymentMethodConfig,
   totalCents: number,
   sourceOfFundFormConfirmed: boolean
 ): Promise<void> {
-  if (method !== 'cash') return;
+  if (!method.isCash) return;
 
   const maximumCents = toCents(await cashMaximum());
   if (totalCents > maximumCents) {
@@ -149,6 +141,31 @@ async function applyCashPaymentRules(
       'Sign the Source of Fund form before recording a cash payment over ' +
         `${fromCents(thresholdCents)}.`
     );
+  }
+}
+
+// The method named on a form has to be one an officer may choose today
+// (S-1307): configured, active, and not the system's own. A retired method
+// is still readable on every receipt that used it; it is only not offered.
+export async function offeredMethod(
+  code: string
+): Promise<PaymentMethodConfig> {
+  const method = await paymentMethodByCode(code);
+  if (!method || !method.isActive || method.isSystem) {
+    throw new PaymentError('Choose how the payment was made.');
+  }
+  return method;
+}
+
+// A cheque number, a transfer reference: demanded where the method says so
+// (requires_reference), and only there — the same rule the form applies on
+// screen, enforced here whether or not the script ran.
+export function requireReference(
+  method: PaymentMethodConfig,
+  reference: string | undefined
+): void {
+  if (method.requiresReference && (reference ?? '').trim() === '') {
+    throw new PaymentError(`Enter the ${method.name.toLowerCase()} reference.`);
   }
 }
 
@@ -191,6 +208,9 @@ export interface Payment {
   // see accountLines instead, which is empty for every other payment.
   feeVersionId: string | null;
   method: PaymentMethod;
+  // The method's name as configured — kept beside the code because a method
+  // since retired still has to read as what it was.
+  methodName: string;
   methodReference: string;
   currency: string;
   totalAmount: string;
@@ -229,6 +249,7 @@ const PAYMENT_SELECT = `
          m.member_no,
          u.display_name as recorded_by_name, u.email as recorded_by_email,
          p.recorded_by_role,
+         pm.name as method_name,
          v.display_name as voided_by_name,
          -- Officer feedback: the receipt named the application or the
          -- member, never the person who actually paid. Found three ways,
@@ -249,6 +270,7 @@ const PAYMENT_SELECT = `
     from payment p
     join receipt_number r on r.id = p.receipt_number_id
     join app_user u       on u.id = p.recorded_by
+    join payment_method pm on pm.code = p.method
     left join payment orig_p          on orig_p.id = p.refunds_id
     left join receipt_number orig     on orig.id = orig_p.receipt_number_id
     left join membership_application a on a.id = p.application_id
@@ -272,6 +294,7 @@ interface PaymentRow {
   member_id: string | null;
   fee_version_id: string | null;
   method: PaymentMethod;
+  method_name: string;
   method_reference: string;
   currency: string;
   total_amount: string;
@@ -353,6 +376,7 @@ function assemble(
     applicantName: p.applicant_name || '',
     feeVersionId: p.fee_version_id,
     method: p.method,
+    methodName: p.method_name,
     methodReference: p.method_reference,
     currency: p.currency,
     totalAmount: p.total_amount,
@@ -450,8 +474,34 @@ export async function paymentsForMember(memberId: string): Promise<Payment[]> {
               select opened_by_application_id from account
                where member_id = $1 and opened_by_application_id is not null
             )
+         -- Every other application that is theirs: the one they joined on
+         -- before a rejoin, the non-member account they started with, each
+         -- reopen (lifecycle test, LC-02).
+         or p.application_id in (${personApplicationIdsSql({ memberId })})
       order by p.received_at`,
     [memberId]
+  );
+  const ids = result.rows.map(r => r.id);
+  const [lines, accountLines] = await Promise.all([
+    linesFor(ids),
+    accountLinesFor(ids),
+  ]);
+  return assemble(result.rows, lines, accountLines);
+}
+
+/**
+ * Everything taken from one non-member, across every application that is
+ * theirs — the account they opened first and each further one or reopen
+ * (lifecycle test, LC-02). A payment never names a customer directly.
+ */
+export async function paymentsForCustomer(
+  customerId: string
+): Promise<Payment[]> {
+  const result = await query<PaymentRow>(
+    `${PAYMENT_SELECT}
+      where p.application_id in (${personApplicationIdsSql({ customerId })})
+      order by p.received_at`,
+    [customerId]
   );
   const ids = result.rows.map(r => r.id);
   const [lines, accountLines] = await Promise.all([
@@ -474,17 +524,11 @@ export async function hasLivePayment(applicationId: string): Promise<boolean> {
 }
 
 // Officer feedback: what has actually moved through one account, credit and
-// debit — the Members page's own read, ahead of a real transaction ledger
-// ("later on we will have transaction where there will be deposit or
-// withdrawal or transfer"). Not a running balance built from a ledger,
-// because there is none yet: it is the opening payment, and any refund
-// against it, which today are the only two things that can have happened to
-// this account's money.
-//
-// Deliberately its own small queries rather than a reuse of
-// paymentsForMember/paymentsForApplication above: those load and assemble
-// every payment a member has, which is right for a page about the member —
-// here the caller already knows the one account it is asking about.
+// debit — the Members list's dialogue and the member app's statement. Once a
+// stand-in that read the opening payment and its refund, because there was
+// no ledger; now the ledger's own entries (S-1309), oldest first, which
+// carry those same two lines (S-1303) and everything since. The shape is
+// unchanged for its callers.
 export interface AccountTransaction {
   type: 'credit' | 'debit';
   amount: string;
@@ -496,94 +540,13 @@ export interface AccountTransaction {
 export async function transactionsForAccount(
   accountId: string
 ): Promise<AccountTransaction[]> {
-  const found = await query<{
-    account_type_id: string;
-    type_code: string;
-    is_membership_default: boolean;
-    opened_by_application_id: string | null;
-  }>(
-    `select a.account_type_id, t.code as type_code, a.is_membership_default,
-            a.opened_by_application_id
-       from account a
-       join account_type t on t.id = a.account_type_id
-      where a.id = $1`,
-    [accountId]
-  );
-  if (found.rows.length === 0) return [];
-  const account = found.rows[0];
-
-  // Which application's payment funded this account — set once, at
-  // creation, on the account row itself (opened_by_application_id,
-  // migration 0037), and never touched again: not by S-612's own
-  // additional_account flow, and not by S-614's customer-to-member transfer
-  // either, which is exactly why this column exists rather than re-deriving
-  // the answer from whatever the account's current owner shape happens to
-  // be.
-  const applicationId = account.opened_by_application_id;
-  if (!applicationId) return [];
-
-  // A refund inserts its own payment_line/payment_account_line row, on its
-  // own `payment` (kind = 'refund') — so one query already carries both the
-  // credit that opened the account and any debit paid back against it,
-  // ordered as they happened. A voided payment's money never moved, so it
-  // is excluded the same way it always has been.
-  if (account.is_membership_default) {
-    // The only two membership-default account types this schema seeds
-    // (migrations 0010, 0018); an administrator-added default account has
-    // no fee component to read a transaction from.
-    const componentCode =
-      account.type_code === 'shares'
-        ? 'shares'
-        : account.type_code === 'msa'
-          ? 'msa_deposit'
-          : null;
-    if (!componentCode) return [];
-
-    const rows = await query<{
-      kind: 'payment' | 'refund';
-      amount: string;
-      currency: string;
-      received_at: Date;
-    }>(
-      `select p.kind, pl.amount, p.currency, p.received_at
-         from payment_line pl
-         join payment p on p.id = pl.payment_id
-        where p.application_id = $1
-          and p.voided_at is null
-          and pl.component_code = $2
-        order by p.received_at`,
-      [applicationId, componentCode]
-    );
-    return rows.rows.map(r => ({
-      type: r.kind === 'refund' ? 'debit' : 'credit',
-      amount: r.amount,
-      currency: r.currency,
-      occurredAt: r.received_at,
-      description: r.kind === 'refund' ? 'Refund' : 'Opening deposit',
-    }));
-  }
-
-  const rows = await query<{
-    kind: 'payment' | 'refund';
-    amount: string;
-    currency: string;
-    received_at: Date;
-  }>(
-    `select p.kind, pal.amount, p.currency, p.received_at
-       from payment_account_line pal
-       join payment p on p.id = pal.payment_id
-      where p.application_id = $1
-        and pal.account_type_id = $2
-        and p.voided_at is null
-      order by p.received_at`,
-    [applicationId, account.account_type_id]
-  );
-  return rows.rows.map(r => ({
-    type: r.kind === 'refund' ? 'debit' : 'credit',
-    amount: r.amount,
-    currency: r.currency,
-    occurredAt: r.received_at,
-    description: r.kind === 'refund' ? 'Refund' : 'Opening deposit',
+  const entries = await accountEntries(accountId, { limit: 500 });
+  return entries.reverse().map(e => ({
+    type: e.direction,
+    amount: e.amount,
+    currency: e.currency,
+    occurredAt: e.occurredAt,
+    description: e.description,
   }));
 }
 
@@ -788,9 +751,8 @@ export async function recordPayment(
     );
   }
 
-  if (!(PAYMENT_METHODS as readonly string[]).includes(input.method)) {
-    throw new PaymentError('Choose how the payment was made.');
-  }
+  const paymentMethod = await offeredMethod(input.method);
+  requireReference(paymentMethod, input.methodReference);
 
   // A decided application is not one to take money on: an approved applicant
   // is a member and pays through their account, and a rejected one is owed a
@@ -920,7 +882,7 @@ export async function recordPayment(
 
   const sourceOfFund = (input.sourceOfFund ?? '').trim();
   const sourceOfFundFormConfirmed = input.sourceOfFundFormConfirmed ?? false;
-  await applyCashPaymentRules(input.method, total, sourceOfFundFormConfirmed);
+  await applyCashPaymentRules(paymentMethod, total, sourceOfFundFormConfirmed);
 
   const existing = await query<{ receipt_no: string }>(
     `select r.receipt_no
@@ -1105,9 +1067,8 @@ export async function recordAccountOpeningPayment(
     );
   }
 
-  if (!(PAYMENT_METHODS as readonly string[]).includes(input.method)) {
-    throw new PaymentError('Choose how the payment was made.');
-  }
+  const paymentMethod = await offeredMethod(input.method);
+  requireReference(paymentMethod, input.methodReference);
 
   // Mirrors recordPayment's own status guard: a decided application is not
   // one to take money on.
@@ -1206,7 +1167,7 @@ export async function recordAccountOpeningPayment(
 
   const sourceOfFund = (input.sourceOfFund ?? '').trim();
   const sourceOfFundFormConfirmed = input.sourceOfFundFormConfirmed ?? false;
-  await applyCashPaymentRules(input.method, total, sourceOfFundFormConfirmed);
+  await applyCashPaymentRules(paymentMethod, total, sourceOfFundFormConfirmed);
 
   const existing = await query<{ receipt_no: string }>(
     `select r.receipt_no
@@ -1530,6 +1491,14 @@ export async function recordMigrationOpeningBalances(
     },
     client
   );
+
+  // S-1303: the accounts were opened before this was called (see the input's
+  // own comment), so the balance this receipt records lands on them now.
+  await postOpeningBalances(
+    input.applicationId,
+    { userId: input.actorUserId, description: input.actorEmail },
+    client
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1627,6 +1596,12 @@ export async function refundPayment(
       'forbidden'
     );
   }
+
+  // The money goes back by a method that is offered today, with its
+  // reference where the method demands one — the rule a payment already
+  // follows (S-1307).
+  const refundMethod = await offeredMethod(input.method);
+  requireReference(refundMethod, input.methodReference);
 
   const original = await loadPayment(input.paymentId);
   if (!original) {
@@ -1833,6 +1808,18 @@ export async function refundPayment(
         client
       );
 
+      // S-1303: a refund of a line already carried into the ledger reverses
+      // its deposit, through the engine (a `reversal` naming the original).
+      // Before approval there is no account and nothing happens; the
+      // approval that opens one carries the refund along with the payment.
+      if (original.applicationId) {
+        await postOpeningBalances(
+          original.applicationId,
+          { userId: principal.userId, description: principal.email },
+          client
+        );
+      }
+
       return refundId;
     });
 
@@ -1906,6 +1893,26 @@ export async function voidPayment(
       );
     }
 
+    // S-1303: once a receipt's lines have become entries on an account, the
+    // money is on a balance and a void — "this was never taken" — would be
+    // untrue. The correction with a trail is a refund, which reverses the
+    // entries on its own receipt.
+    const carried = await client.query(
+      `select 1 from transaction t
+         left join payment_line l on l.id = t.payment_line_id
+         left join payment_account_line al on al.id = t.payment_account_line_id
+        where coalesce(l.payment_id, al.payment_id) = $1
+        limit 1`,
+      [payment.id]
+    );
+    if ((carried.rowCount ?? 0) > 0) {
+      throw new PaymentError(
+        `Receipt ${payment.receiptNo} is already on the account. ` +
+          'Refund it instead.',
+        'conflict'
+      );
+    }
+
     const updated = await client.query(
       `update payment
           set voided_at = now(), voided_by = $2, void_reason = $3
@@ -1961,6 +1968,21 @@ export async function voidPayment(
     );
   });
 
+  // Whoever else may void hears of it (S-1805).
+  await notifyReceiptVoided({
+    receiptNo: payment.receiptNo,
+    reference: payment.applicationReference ?? '',
+    kind: payment.kind === 'refund' ? 'Refund' : 'Fee receipt',
+    memberName: payment.applicantName,
+    amount: payment.totalAmount,
+    currency: payment.currency,
+    account: '',
+    reason: trimmed,
+    voidedBy: { userId: principal.userId, name: principal.displayName },
+    path: `/receipts/${payment.id}`,
+    entityType: ENTITY_TYPE,
+    entityId: payment.id,
+  });
   return (await loadPayment(payment.id))!;
 }
 

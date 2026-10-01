@@ -201,6 +201,106 @@ class means and what disposal does to it.
 pnpm job retention-disposal
 ```
 
+## `ledger-verify` (S-1301)
+
+Asks `ledger_drift()` which accounts' cached balance disagrees with the sum of
+their entries, and resolves each one from the entries with
+`rebuild_account_balance()`. On a healthy database this reads nothing back and
+exits; on any other it repairs and writes one `ledger.repaired` audit row per
+account, naming the figure the cache held and the figure the entries prove.
+That trail is the point: a cache that drifted once is a bug somewhere, and
+the row is how it gets found. `docs/ledger.md` has why the entries win.
+
+Not chunked — the drift query is one aggregate over `account_entry`, and the
+repairs are one short transaction each — and idempotent by construction: a
+rebuilt cache does not drift, so a second run finds nothing.
+
+Run **nightly**, alongside `retention-disposal`.
+
+```bash
+pnpm job ledger-verify
+```
+
+## `dormancy-detection` (S-804, FRD 7.11)
+
+Nothing happening is not a request either. `detectDormancy`
+(`src/lib/members/dormancy.ts`) finds every active member whose last
+activity — a posted ledger entry or a fee payment on any of their accounts,
+or the day they joined if neither, and never before the day the record
+came into this system — is older than `dormancy.months`
+(Configuration → Fee schedules, seeded 12; 0 turns the job into a no-op),
+marks each dormant with `status_changed_at`, writes one
+`member.dormancy_detected` audit row per member with `actor_user_id` null
+and the job named as the actor, and after the commit tells each member
+(`member.dormant`, email and WhatsApp). The status already blocks
+transactions (S-1501, S-1701); this is what sets it. A member an officer
+reactivates (`member.reactivated`, with a reason) who then does nothing is
+found again.
+
+Not chunked: the number crossing the threshold on any night is small, and
+the whole night's marks are one short transaction. Idempotent by
+construction — a member marked tonight is not active tomorrow. Run
+**nightly**, alongside `ledger-verify`.
+
+```bash
+pnpm job dormancy-detection
+```
+
+## `job-watch`
+
+The runner records every run faithfully and then nothing reads the table.
+`watchJobs` (`src/lib/jobs/watch.ts`) reads it: every run still `running`
+whose `updated_at` is more than six hours old — a container died and no
+schedule has resumed it yet — and every job whose most recent run is
+`failed`, meaning nobody has re-run it since. Each is told to every active
+System Administrator by email (`job.stalled`, `job.failed`; migration
+0088), with a link to the Jobs report.
+
+Once per run, not once per check: the notification is written against the
+run (`entity_type` `job_run`), and a run already written about is skipped
+the next time — so a stalled run found again the next morning is not news
+again, while the same run failing after it resumes is. A failure followed by
+a success is not a concern at all. The watcher's own runs are on the same
+table and get the same treatment: a `job-watch` run that fails is reported
+by the next one that does not.
+
+Not chunked — the query is two short reads over `job_run` — and idempotent
+by construction. Run **every few hours**; a run with nothing wrong writes
+nothing. It does not know what is scheduled, so a job that simply never
+starts is not something it can see: that is Container Apps' own run
+history, and the Jobs report's "last run" column.
+
+```bash
+pnpm job job-watch
+```
+
+## `statement-send`
+
+Sends every member and non-member with an open account their statement for
+a period — every account they hold, as one PDF, by email and WhatsApp
+(`src/lib/ledger/member-statement.ts`). Nothing happens until someone with
+`statement.send_all` asks for it at **Finance → Statements**, which records a
+`statement_run`; the job picks up the oldest open run and works through the
+holders fifty at a time.
+
+Each holder dealt with is written to `statement_run_item` before the
+checkpoint moves, and a holder already there is skipped, so a run stopped
+and resumed — even mid-chunk — never sends anyone their statement twice. Only
+one run can be waiting or sending at a time.
+
+Schedule it every fifteen minutes. A start with nothing queued reads one row
+and stops.
+
+```
+az containerapp job create --name albarakah-statement-send \
+  --trigger-type Schedule --cron-expression "*/15 * * * *" \
+  --replica-timeout 3600 --replica-retry-limit 1 ... --args "statement-send"
+```
+
+The job needs the same `PUBLIC_APP_URL` and `MEMBER_SESSION_SECRET` as the
+web app: the link in each message, and the PDF attached to it, are signed
+with the member-facing secret and fetched from the app's own address.
+
 ## Recommendation for M7 and M8
 
 - **M7 migration import** — a Manual job. Read the cleansed extract in batches,
@@ -208,15 +308,9 @@ pnpm job retention-disposal
   legacy member code so a repeated chunk updates rather than duplicating. The
   phase-wise plan (members first, finance later) fits naturally as separate job
   names sharing this runner.
-- **M8 dormancy sweep** — a Schedule job, nightly. Decide dormancy per member,
-  write only the ones that changed, and record each change in the audit trail
-  with `actor_user_id` null and an `actorDescription` naming the job — the
-  same shape `minor-majority-transition` (S-610, above) already proves.
-- **Add a job that watches the jobs.** A `job_run` row still `running` with an
-  `updated_at` hours old means a container died and no schedule has picked it up.
-  Nothing currently notices. Now that M9's notification layer exists
-  (`notify()`, and the delivery log that makes a failure visible), this has
-  somewhere to report to.
+- **M8 dormancy sweep** — built as `dormancy-detection` (above), in exactly
+  the shape `minor-majority-transition` (S-610) proved.
+- **A job that watches the jobs** — built as `job-watch` (above).
 
 ## What is proven, and what is not
 

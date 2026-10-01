@@ -3,18 +3,49 @@ import DashboardLayout from '@layouts/DashboardLayout.astro';
 import ConfigNav from '@components/ConfigNav.astro';
 import {
   ConfigError,
+  DORMANCY_REACTIVATIONS,
   FEE_COMPONENTS,
   cashMaximum,
   cashSourceOfFundChecklist,
   cashSourceOfFundThreshold,
+  dormancyMonths,
+  dormancyReactivation,
   listFeeSchedules,
+  nearFloorMargin,
   publishFeeVersion,
+  resignationChecks,
   setCashMaximum,
+  setDormancyMonths,
+  setSessionIdleMinutes,
+  sessionIdleMinutes,
+  setDormancyReactivation,
+  setNearFloorMargin,
+  setResignationChecks,
+  setTakafulBenefit,
+  takafulBenefit,
   setCashSourceOfFundChecklist,
   setCashSourceOfFundThreshold,
   type FeeComponentCode,
   type FeeRequirement,
 } from '@lib/config/reference';
+import {
+  PAGE,
+  CARD,
+  CARD_TITLE,
+  HINT,
+  PANEL,
+  LABEL,
+  BUTTON,
+  BUTTON_SM,
+  INPUT_SM,
+  NOTICE_ERROR,
+  NOTICE_OK,
+  TABLE,
+  THEAD,
+  TH,
+  ROW,
+  TD,
+} from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 const canManage =
@@ -45,6 +76,28 @@ if (Astro.request.method === 'POST') {
           actor
         );
         notice = 'Cash maximum updated.';
+      } else if (intent === 'set-takaful-benefit') {
+        await setTakafulBenefit(
+          String(form.get('takafulBenefit') ?? '').trim(),
+          actor
+        );
+        notice = 'Takaful benefit updated.';
+      } else if (intent === 'set-near-floor-margin') {
+        await setNearFloorMargin(
+          String(form.get('nearFloorMargin') ?? '').trim(),
+          actor
+        );
+        notice = 'Near-floor margin updated.';
+      } else if (intent === 'set-resignation-checks') {
+        await setResignationChecks(
+          {
+            pendingTransactions: form.get('pendingTransactions') === 'on',
+            unpaidFees: form.get('unpaidFees') === 'on',
+            financing: form.get('financing') === 'on',
+          },
+          actor
+        );
+        notice = 'Resignation checks updated.';
       } else if (intent === 'set-cash-checklist') {
         const items = String(form.get('cashChecklist') ?? '')
           .split('\n')
@@ -52,6 +105,24 @@ if (Astro.request.method === 'POST') {
           .filter(item => item !== '');
         await setCashSourceOfFundChecklist(items, actor);
         notice = 'Source of Fund checklist updated.';
+      } else if (intent === 'set-dormancy-months') {
+        await setDormancyMonths(
+          String(form.get('dormancyMonths') ?? '').trim(),
+          actor
+        );
+        notice = 'Dormancy threshold updated.';
+      } else if (intent === 'set-session-idle-minutes') {
+        await setSessionIdleMinutes(
+          String(form.get('sessionIdleMinutes') ?? '').trim(),
+          actor
+        );
+        notice = 'Sign-out after inactivity updated.';
+      } else if (intent === 'set-dormancy-reactivation') {
+        await setDormancyReactivation(
+          String(form.get('dormancyReactivation') ?? '').trim(),
+          actor
+        );
+        notice = 'Dormancy reactivation rule updated.';
       } else {
         const components = FEE_COMPONENTS.map(code => ({
           code: code as FeeComponentCode,
@@ -84,6 +155,33 @@ if (Astro.request.method === 'POST') {
 const schedules = await listFeeSchedules();
 const cashThreshold = await cashSourceOfFundThreshold();
 const cashMax = await cashMaximum();
+const checks = await resignationChecks();
+const takaful = await takafulBenefit();
+const nearFloor = await nearFloorMargin();
+const dormancy = await dormancyMonths();
+const idleMinutes = await sessionIdleMinutes();
+const reactivation = await dormancyReactivation();
+const RESIGNATION_CHECKS: {
+  name: keyof typeof checks;
+  label: string;
+  hint: string;
+}[] = [
+  {
+    name: 'pendingTransactions',
+    label: 'No transaction on its way on Shares or the MSA',
+    hint: 'Anything submitted, under review or approved on either account.',
+  },
+  {
+    name: 'unpaidFees',
+    label: 'Joining fees fully paid',
+    hint: 'What the membership was charged to join, less what was paid.',
+  },
+  {
+    name: 'financing',
+    label: 'No financing outstanding',
+    hint: 'Nothing records financing yet; this passes until something does.',
+  },
+];
 const checklistItems = await cashSourceOfFundChecklist();
 
 const COMPONENT_LABELS: Record<string, string> = {
@@ -117,30 +215,20 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
   title="Fee schedules · Al Barakah MCSL"
   heading="Fee schedules"
 >
-  <div class="mx-auto max-w-5xl space-y-6">
+  <div class={PAGE.list}>
     <ConfigNav />
 
-    {error && (
-      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-        {error}
-      </div>
-    )}
-    {notice && (
-      <div class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-lg border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
-        {notice}
-      </div>
-    )}
+    {error && <div class={NOTICE_ERROR}>{error}</div>}
+    {notice && <div class={NOTICE_OK}>{notice}</div>}
 
-    <p class="text-sm text-neutral-500 dark:text-neutral-400">
+    <p class={HINT}>
       Saving publishes a new version and closes the previous one.
     </p>
 
     {schedules.map(schedule => (
-      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+      <section class={CARD}>
         <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-            {schedule.name}
-          </h2>
+          <h2 class={CARD_TITLE}>{schedule.name}</h2>
           <code class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
             {schedule.code}
           </code>
@@ -151,20 +239,18 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             </span>
           )}
         </div>
-        <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
-          {schedule.description}
-        </p>
+        <p class={`${HINT} mt-1`}>{schedule.description}</p>
 
         <form method="post" class="mt-4">
           <input type="hidden" name="intent" value="publish-fee-version" />
           <input type="hidden" name="scheduleId" value={schedule.id} />
           <div class="overflow-x-auto">
-            <table class="w-full text-sm">
+            <table class={TABLE} data-sortable>
               <thead>
-                <tr class="text-left text-xs text-neutral-500 dark:text-neutral-400">
-                  <th class="py-1 pr-4 font-medium">Component</th>
-                  <th class="py-1 pr-4 font-medium">Amount (Rs)</th>
-                  <th class="py-1 font-medium">Applies</th>
+                <tr class={THEAD}>
+                  <th class={TH}>Component</th>
+                  <th class={TH}>Amount (Rs)</th>
+                  <th class={TH}>Applies</th>
                 </tr>
               </thead>
               <tbody>
@@ -173,25 +259,35 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                     c => c.code === code
                   );
                   return (
-                    <tr class="border-t border-neutral-200 dark:border-neutral-800">
-                      <td class="py-2 pr-4 text-neutral-700 dark:text-neutral-200">
+                    <tr class={ROW}>
+                      <td
+                        class={`${TD} text-neutral-700 dark:text-neutral-200`}
+                      >
                         {COMPONENT_LABELS[code]}
                       </td>
-                      <td class="py-2 pr-4">
+                      <td
+                        class={TD}
+                        data-sort-value={component?.amount ?? '0.00'}
+                      >
                         <input
                           type="text"
                           inputmode="decimal"
                           name={`amount.${code}`}
                           value={component?.amount ?? '0.00'}
                           disabled={!canManage}
-                          class="w-32 rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                          class={`${INPUT_SM} w-32`}
                         />
                       </td>
-                      <td class="py-2">
+                      <td
+                        class={TD}
+                        data-sort-value={
+                          component?.requirement ?? 'not_applicable'
+                        }
+                      >
                         <select
                           name={`requirement.${code}`}
                           disabled={!canManage}
-                          class="rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                          class={INPUT_SM}
                         >
                           {REQUIREMENTS.map(r => (
                             <option
@@ -214,17 +310,14 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           </div>
 
           {canManage && (
-            <button
-              type="submit"
-              class="bg-mint-300 hover:bg-mint-400 mt-4 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
-            >
+            <button type="submit" class={`${BUTTON} mt-4`}>
               Publish new version
             </button>
           )}
         </form>
 
         {schedule.history.length > 0 && (
-          <details class="mt-4 rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+          <details class={`${PANEL} mt-4`}>
             <summary class="cursor-pointer text-sm font-medium text-neutral-700 dark:text-neutral-200">
               Earlier versions ({schedule.history.length})
             </summary>
@@ -253,11 +346,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       </section>
     ))}
 
-    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-      <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-        Cash payments
-      </h2>
-      <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+    <section class={CARD}>
+      <h2 class={CARD_TITLE}>Cash payments</h2>
+      <p class={`${HINT} mt-1`}>
         Above the threshold, recording a cash receipt asks the officer to sign a
         Source of Fund form on screen. Above the maximum, cash is not accepted
         at all — the officer is told to use another method or split the payment.
@@ -266,7 +357,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       <div class="mt-4 flex flex-wrap gap-6">
         <form method="post" class="flex flex-wrap items-end gap-3">
           <input type="hidden" name="intent" value="set-cash-threshold" />
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             Source of fund threshold (Rs)
             <input
               type="text"
@@ -274,14 +365,11 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               name="cashThreshold"
               value={cashThreshold}
               disabled={!canManage}
-              class="mt-1 block w-40 rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+              class={`${INPUT_SM} mt-1 block w-40`}
             />
           </label>
           {canManage && (
-            <button
-              type="submit"
-              class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
-            >
+            <button type="submit" class={BUTTON_SM}>
               Save
             </button>
           )}
@@ -289,7 +377,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 
         <form method="post" class="flex flex-wrap items-end gap-3">
           <input type="hidden" name="intent" value="set-cash-maximum" />
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             Maximum (Rs)
             <input
               type="text"
@@ -297,14 +385,11 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               name="cashMaximum"
               value={cashMax}
               disabled={!canManage}
-              class="mt-1 block w-40 rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+              class={`${INPUT_SM} mt-1 block w-40`}
             />
           </label>
           {canManage && (
-            <button
-              type="submit"
-              class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
-            >
+            <button type="submit" class={BUTTON_SM}>
               Save
             </button>
           )}
@@ -313,7 +398,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 
       <form method="post" class="mt-5 space-y-2">
         <input type="hidden" name="intent" value="set-cash-checklist" />
-        <label class="block text-sm text-neutral-600 dark:text-neutral-300">
+        <label class={LABEL}>
           Source of Fund checklist — one item per line, shown to the officer in
           this order before they sign
           <textarea
@@ -324,10 +409,171 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           >{checklistItems.join('\n')}</textarea>
         </label>
         {canManage && (
-          <button
-            type="submit"
-            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
+          <button type="submit" class={BUTTON_SM}>
+            Save
+          </button>
+        )}
+      </form>
+    </section>
+
+    <section class={CARD}>
+      <h2 class={CARD_TITLE}>Demised claims</h2>
+      <p class={`${HINT} mt-1`}>
+        Paid to the claimant beside the balances of the member's accounts, as
+        set when the claim is submitted.
+      </p>
+      <form method="post" class="mt-4 flex flex-wrap items-end gap-3">
+        <input type="hidden" name="intent" value="set-takaful-benefit" />
+        <label class={LABEL}>
+          Takaful benefit (Rs)
+          <input
+            type="text"
+            inputmode="decimal"
+            name="takafulBenefit"
+            value={takaful}
+            disabled={!canManage}
+            class={`${INPUT_SM} mt-1 block w-40`}
+          />
+        </label>
+        {canManage && (
+          <button type="submit" class={BUTTON_SM}>
+            Save
+          </button>
+        )}
+      </form>
+    </section>
+
+    <section class={CARD}>
+      <h2 class={CARD_TITLE}>Near-floor notice</h2>
+      <p class={`${HINT} mt-1`}>
+        A withdrawal or transfer that leaves an account within this amount of
+        its minimum balance sends the member a notice. 0 sends none.
+      </p>
+      <form method="post" class="mt-4 flex flex-wrap items-end gap-3">
+        <input type="hidden" name="intent" value="set-near-floor-margin" />
+        <label class={LABEL}>
+          Margin (Rs)
+          <input
+            type="text"
+            inputmode="decimal"
+            name="nearFloorMargin"
+            value={nearFloor}
+            disabled={!canManage}
+            class={`${INPUT_SM} mt-1 block w-40`}
+          />
+        </label>
+        {canManage && (
+          <button type="submit" class={BUTTON_SM}>
+            Save
+          </button>
+        )}
+      </form>
+    </section>
+
+    <section class={CARD}>
+      <h2 class={CARD_TITLE}>Sign-out after inactivity</h2>
+      <p class={`${HINT} mt-1`}>
+        Staff are signed out after this many minutes without activity. 0 turns
+        it off.
+      </p>
+      <form method="post" class="mt-4 flex flex-wrap items-end gap-3">
+        <input type="hidden" name="intent" value="set-session-idle-minutes" />
+        <label class={LABEL}>
+          Minutes
+          <input
+            type="text"
+            inputmode="numeric"
+            name="sessionIdleMinutes"
+            value={idleMinutes}
+            disabled={!canManage}
+            class={`${INPUT_SM} mt-1 block w-40`}
+          />
+        </label>
+        {canManage && (
+          <button type="submit" class={BUTTON_SM}>
+            Save
+          </button>
+        )}
+      </form>
+    </section>
+
+    <section class={CARD}>
+      <h2 class={CARD_TITLE}>Dormancy</h2>
+      <p class={`${HINT} mt-1`}>
+        A member with no transaction or fee payment for this long is marked
+        dormant each night. 0 turns it off.
+      </p>
+      <form method="post" class="mt-4 flex flex-wrap items-end gap-3">
+        <input type="hidden" name="intent" value="set-dormancy-months" />
+        <label class={LABEL}>
+          Months
+          <input
+            type="text"
+            inputmode="numeric"
+            name="dormancyMonths"
+            value={dormancy}
+            disabled={!canManage}
+            class={`${INPUT_SM} mt-1 block w-40`}
+          />
+        </label>
+        {canManage && (
+          <button type="submit" class={BUTTON_SM}>
+            Save
+          </button>
+        )}
+      </form>
+
+      <form method="post" class="mt-4 flex flex-wrap items-end gap-3">
+        <input type="hidden" name="intent" value="set-dormancy-reactivation" />
+        <label class={LABEL}>
+          Reactivation
+          <select
+            name="dormancyReactivation"
+            disabled={!canManage}
+            class={`${INPUT_SM} mt-1 block`}
           >
+            {DORMANCY_REACTIVATIONS.map(value => (
+              <option value={value} selected={reactivation === value}>
+                {value === 'staff' ? 'By an officer, with a reason' : value}
+              </option>
+            ))}
+          </select>
+        </label>
+        {canManage && (
+          <button type="submit" class={BUTTON_SM}>
+            Save
+          </button>
+        )}
+      </form>
+    </section>
+
+    <section class={CARD}>
+      <h2 class={CARD_TITLE}>Resignation checks</h2>
+      <p class={`${HINT} mt-1`}>
+        A resignation cannot be submitted while a ticked check fails. Each one
+        is named on the request when it blocks.
+      </p>
+      <form method="post" class="mt-4 space-y-3">
+        <input type="hidden" name="intent" value="set-resignation-checks" />
+        {RESIGNATION_CHECKS.map(check => (
+          <label class="flex items-start gap-3 text-sm text-neutral-700 dark:text-neutral-200">
+            <input
+              type="checkbox"
+              name={check.name}
+              checked={checks[check.name]}
+              disabled={!canManage}
+              class="mt-1"
+            />
+            <span>
+              <span class="font-medium">{check.label}</span>
+              <span class="block text-xs text-neutral-500 dark:text-neutral-400">
+                {check.hint}
+              </span>
+            </span>
+          </label>
+        ))}
+        {canManage && (
+          <button type="submit" class={BUTTON_SM}>
             Save
           </button>
         )}
@@ -335,3 +581,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     </section>
   </div>
 </DashboardLayout>
+
+<script>
+  import { wireSortableTables } from '@lib/client/table-sort';
+
+  wireSortableTables();
+</script>

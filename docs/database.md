@@ -27,13 +27,19 @@ Two further restrictions apply to the application role:
   `payment` and `receipt_number` cannot be deleted from at all. Voiding a
   receipt is an UPDATE, which is why those two keep the privilege. See
   `docs/payments.md`.
+- `account_entry`, `account_balance` — no writes at all. A balance moves only
+  through `post_transaction()`, a `SECURITY DEFINER` function, so there is no
+  road to one that bypasses the ledger. See `docs/ledger.md`.
 
 **One narrow, named exception.** `reset_all_test_data()` (migration 0019) can
 truncate every table above, `audit_event` included — a `SECURITY DEFINER`
 function, since `albarakah_app` cannot, and each guard trigger now checks a
 flag that function sets for the length of its own transaction and nothing
 else ever sets. It exists to let a System Administrator wipe a **test**
-environment back to empty; `resetAllTestData()` (`src/lib/admin/reset.ts`)
+environment back to empty — every application, member, transaction,
+receipt, cash session, message sent and audit row, with every number
+sequence restarted (migration 0094 widened it to the message log, the
+cash sessions and the reference counters 0084 left behind); `resetAllTestData()` (`src/lib/admin/reset.ts`)
 refuses outright unless `PUBLIC_APP_ENV` marks the deployment as non-production
 — see `docs/environments.md` — before this function is ever called. See
 `scripts/schema.test.ts` and `src/lib/admin/reset.test.ts` for what stays
@@ -105,6 +111,18 @@ Burstable B1ms allows around 50.
 If sustained traffic outgrows that, the answer is **Azure's built-in PgBouncer**
 (enable `pgbouncer` on the server and connect on port **6432**), not a larger
 pool here.
+
+**Azure App Service is not serverless.** Production runs as one long-lived
+Node process, so `DATABASE_POOL_MAX` there is the ceiling for the whole
+application, not for one warm instance among many. Performance testing at
+5,000 members found that with 3 connections, fifty simultaneous requests to one
+slow report left cheap lookups on other pages timing out waiting for a
+connection. Capping the reports on screen and paging the members list removed
+that (no errors at fifty at once, pool of 3 or 10 alike — the Node process, not
+the pool, is now the limit), but one process sharing 3 connections still has no
+headroom for a slow query. Set **`DATABASE_POOL_MAX=10`** on App Service (times
+the number of instances, if it is ever scaled out, must stay well under the
+server's `max_connections`). Vercel (Test) keeps the default of 3.
 
 An idle connection is kept for **60 seconds** (`DATABASE_IDLE_TIMEOUT_MS`),
 with TCP keepalives on. Opening a connection to the database's region — TCP,

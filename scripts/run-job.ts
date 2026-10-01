@@ -14,11 +14,18 @@ import {
 import { runJob, JobAlreadyRunning } from '../src/lib/jobs/runner';
 import { expireDocuments } from '../src/lib/documents/documents';
 import { transitionMinorsAtMajority } from '../src/lib/members/majority';
+import { detectDormancy } from '../src/lib/members/dormancy';
+import { verifyLedger } from '../src/lib/ledger/ledger';
 import { retryDueNotifications } from '../src/lib/notifications/retry';
 import {
   disposeDueRecords,
   disposedAnything,
 } from '../src/lib/retention/disposal';
+import { watchJobs } from '../src/lib/jobs/watch';
+import {
+  processStatementRuns,
+  type StatementRunCheckpoint,
+} from '../src/lib/ledger/member-statement';
 
 // Jobs are named here rather than passed as arbitrary strings: the container's
 // arguments are configuration, and configuration should not be able to name a
@@ -65,6 +72,26 @@ const JOBS: Record<string, () => Promise<unknown>> = {
         context.log('minors transitioned at majority', {
           transitioned: transitioned.length,
           memberNos: transitioned.map(t => t.memberNo),
+        });
+      },
+    }),
+
+  // S-804. Marks dormant every active member with nothing moving on their
+  // accounts for dormancy.months (Configuration -> Fee schedules; 0 turns
+  // it off), audited and told. Run nightly; a second run finds nothing.
+  'dormancy-detection': () =>
+    runJob<{ sweptAt: string }>({
+      name: 'dormancy-detection',
+      run: async context => {
+        const { marked, months } = await detectDormancy();
+        await context.save(
+          { sweptAt: new Date().toISOString() },
+          marked.length
+        );
+        context.log('members marked dormant', {
+          months,
+          marked: marked.length,
+          memberNos: marked.map(m => m.memberNo),
         });
       },
     }),
@@ -156,6 +183,72 @@ const JOBS: Record<string, () => Promise<unknown>> = {
 
           context.log('disposed', { ...outcome });
         }
+      },
+    }),
+
+  // S-1301. The balance cache is maintained in the same database transaction
+  // as the entries it summarises, so on a healthy database this finds
+  // nothing. If it ever finds something, the entries win: each account is
+  // rebuilt from them and the disagreement is written to the audit trail,
+  // because a cache that drifted once is a bug somewhere and the row is how
+  // it gets found. Run nightly.
+  'ledger-verify': () =>
+    runJob<{ checkedAt: string }>({
+      name: 'ledger-verify',
+      run: async context => {
+        const outcome = await verifyLedger({
+          userId: null,
+          description: 'ledger-verify job',
+        });
+        await context.save(
+          { checkedAt: new Date().toISOString() },
+          outcome.repaired
+        );
+        if (outcome.drifted.length === 0) {
+          context.log('cache agrees with the entries');
+          return;
+        }
+        // Loud on purpose: this should never happen, and a quiet repair
+        // would let whatever caused it keep happening.
+        console.error(
+          `[ledger-verify] ${outcome.drifted.length} account(s) drifted and were rebuilt from their entries`,
+          outcome.drifted
+        );
+        context.log('repaired', {
+          accounts: outcome.drifted.map(d => d.accountId),
+        });
+      },
+    }),
+
+  // The job that watches the jobs (docs/jobs.md). A run still open and not
+  // touched for hours means a container died and nothing resumed it; a job
+  // whose latest run failed is one nobody has re-run. Both are told to the
+  // System Administrators, once per run — the delivery log remembers what
+  // was said. Run every few hours; a run with nothing wrong writes nothing.
+  // Officer request: every member and non-member sent their statement, once
+  // someone asks for it from Finance → Statements. A run with nothing
+  // queued reads one row and stops, so schedule it every fifteen minutes;
+  // a long run is stopped and resumed across starts, and never sends
+  // anyone their statement twice (statement_run_item).
+  'statement-send': () =>
+    runJob<StatementRunCheckpoint>({
+      name: 'statement-send',
+      run: context => processStatementRuns(context),
+    }),
+
+  'job-watch': () =>
+    runJob<{ sweptAt: string }>({
+      name: 'job-watch',
+      run: async context => {
+        const { concerns, reported } = await watchJobs();
+        // processedCount is what was newly reported, not what is wrong: a
+        // stalled run found again tonight is not news.
+        await context.save({ sweptAt: new Date().toISOString() }, reported);
+        context.log('job history checked', {
+          concerns: concerns.length,
+          reported,
+          runs: concerns.map(c => `${c.jobName}#${c.runId} ${c.kind}`),
+        });
       },
     }),
 };

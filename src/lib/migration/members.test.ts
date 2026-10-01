@@ -6,6 +6,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ExcelJS from 'exceljs';
+import type { ParsedRow } from './members';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { migrate } from '../../../scripts/migrate';
@@ -128,6 +129,15 @@ async function fillSheet(
   // treat as already-occupied and append after — exactly what a person
   // typing into the downloaded template never does.
   const row = sheet.getRow(2);
+  // A row naming an AB Number states both core balances; a fixture that is
+  // not about balances states 0 for each, as an officer would.
+  if (data['AB Number']) {
+    data = {
+      'Shares Balance': '0',
+      'MSA Deposit Balance': '0',
+      ...data,
+    };
+  }
   for (const [header, value] of Object.entries(data)) {
     const col = columnFor.get(header);
     if (col) row.getCell(col).value = value;
@@ -211,6 +221,54 @@ describe('validateRows', () => {
     expect(errors).toEqual([]);
     expect(valid).toHaveLength(1);
     expect(valid[0].values.mobile).toBe('+23057891234');
+  });
+
+  it('requires both core balances on a row with an AB Number, where 0 counts as filled', async () => {
+    const { buildImportTemplate, parseImportFile, validateRows } = await load();
+    const base = {
+      'Legacy Member Code': 'LEG-105',
+      'AB Number': 'AB1105',
+      Surname: 'Ramtoola',
+      Name: 'Zahra',
+      NIC: 'B9999999999995',
+      Gender: 'Female',
+      Address: '1 Church Street',
+      Mobile: '57891239',
+      ...NOMINEE_1,
+    };
+    const blank = await fillSheet(await buildImportTemplate(), 'Individual', {
+      ...base,
+      'Shares Balance': '',
+      'MSA Deposit Balance': '',
+    });
+    const refused = await validateRows(await parseImportFile(blank));
+    expect(refused.valid).toEqual([]);
+    expect(refused.errors[0].message).toMatch(
+      /Shares Balance is required with an AB Number/
+    );
+    expect(refused.errors[0].message).toMatch(
+      /MSA Deposit Balance is required with an AB Number/
+    );
+
+    const zeros = await fillSheet(await buildImportTemplate(), 'Individual', {
+      ...base,
+      'Shares Balance': '0',
+      'MSA Deposit Balance': '0',
+    });
+    const accepted = await validateRows(await parseImportFile(zeros));
+    expect(accepted.errors).toEqual([]);
+    expect(accepted.valid).toHaveLength(1);
+
+    // A non-member's row still leaves them blank.
+    const customer = await fillSheet(
+      await buildImportTemplate(),
+      'Individual',
+      { ...base, 'Legacy Member Code': 'LEG-106', 'AB Number': '' }
+    );
+    const asCustomer = await validateRows(await parseImportFile(customer));
+    expect(asCustomer.errors.map(e => e.message).join(' ')).not.toMatch(
+      /Balance is required with an AB Number/
+    );
   });
 
   it('rejects a row missing a mandatory field', async () => {
@@ -982,7 +1040,7 @@ describe('importMembers', () => {
   });
 });
 
-describe('fourth increment: Nominee, Minor, and NIC/mobile uniqueness', () => {
+describe('fourth increment: Nominee, Minor, and NIC uniqueness', () => {
   it('captures Nominee 1 (mandatory) and Nominee 2 (optional), each its own application_party row', async () => {
     await runAsConfigurator(
       appUrl,
@@ -1290,7 +1348,9 @@ describe('fourth increment: Nominee, Minor, and NIC/mobile uniqueness', () => {
     });
     const { errors } = await validateRows(await parseImportFile(minorRow));
     expect(errors).toHaveLength(1);
-    expect(errors[0].message).toMatch(/must already be on file/);
+    expect(errors[0].message).toMatch(
+      /does not match any member on file or on the Individual sheet/
+    );
   });
 
   it('rejects two rows in the same batch sharing a NIC', async () => {
@@ -1555,5 +1615,638 @@ describe('sixth increment: Employment Details columns and trimmed Nominee column
         where m.legacy_code = 'LEG-EMP-3' and p.subject = 'employment'`
     );
     expect(employment.rows).toHaveLength(0);
+  });
+});
+
+// Officer QA: migration scenarios run against the template, and what they
+// showed — each case below failed, or failed silently, before.
+describe('officer QA: migration scenarios', () => {
+  const individualRow = (overrides: Partial<ParsedRow> = {}): ParsedRow => ({
+    sheet: 'Individual',
+    rowNumber: 2,
+    legacyCode: 'QA-1',
+    abNumber: 'AB7001',
+    joinedAt: '',
+    values: {
+      surname: 'Qa',
+      name: 'One',
+      nic: 'Q7001000000000',
+      gender: 'Male',
+      address: 'Addr',
+      mobile: '57007001',
+    },
+    employment: {},
+    guardian: {},
+    beneficiary: {},
+    nominees: [
+      {
+        surname: 'Nominee Surname',
+        name: 'Nominee Name',
+        nic: 'Nominee NIC',
+        address: 'Nominee Address',
+      },
+      {} as Record<string, string>,
+    ],
+    sharesBalance: '0',
+    msaBalance: '0',
+    accountNumbers: {},
+    accountBalances: {},
+    ...overrides,
+  });
+
+  async function workbookFrom(buffer: Buffer) {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(buffer as any);
+    return workbook;
+  }
+
+  it('marks what must be filled in: colour, note and an Instructions sheet', async () => {
+    const { buildImportTemplate } = await load();
+    const workbook = await workbookFrom(await buildImportTemplate());
+    expect(workbook.worksheets[0].name).toBe('Instructions');
+
+    const sheet = workbook.getWorksheet('Individual')!;
+    const byHeader = new Map<string, ExcelJS.Cell>();
+    sheet.getRow(1).eachCell(cell => byHeader.set(String(cell.value), cell));
+    const fill = (header: string) =>
+      (byHeader.get(header)!.fill as ExcelJS.FillPattern).fgColor?.argb;
+
+    expect(fill('Surname *')).toBe('FFF4B6B6');
+    expect(fill('Legacy Member Code')).toBe('FFFFE08A');
+    expect(fill('AB Number')).toBe('FFFFE08A');
+    expect(fill('Shares Balance')).toBe('FFFFE08A');
+    expect(fill('Joined Date (optional)')).toBe('FFE5E7EB');
+    expect(String(byHeader.get('Legacy Member Code')!.note)).toMatch(
+      /Required for a non-member/
+    );
+    expect(String(byHeader.get('AB Number')!.note)).toMatch(/AB2001/);
+    expect(String(byHeader.get('Mobile *')!.note)).toMatch(/57001234/);
+    expect(sheet.getColumn(byHeader.get('NIC *')!.col).numFmt).toBe('@');
+  });
+
+  it('allows the same mobile twice in one file, however it is typed', async () => {
+    const { validateRows } = await load();
+    const { valid, errors } = await validateRows([
+      individualRow(),
+      individualRow({
+        rowNumber: 3,
+        legacyCode: 'QA-2',
+        abNumber: 'AB7002',
+        values: { ...individualRow().values, nic: 'Q7002000000000' },
+      }),
+    ]);
+    expect(errors).toEqual([]);
+    expect(valid).toHaveLength(2);
+  });
+
+  it('reads a date as YYYY-MM-DD only, and refuses an impossible one', async () => {
+    const { validateRows } = await load();
+    const check = async (joinedAt: string) =>
+      (await validateRows([individualRow({ joinedAt })])).errors.map(
+        e => e.message
+      );
+    expect(await check('2000-06-15')).toEqual([]);
+    expect((await check('15/06/2000'))[0]).toMatch(/use YYYY-MM-DD/);
+    expect((await check('36688'))[0]).toMatch(/use YYYY-MM-DD/);
+    expect((await check('2000-02-30'))[0]).toMatch(/use YYYY-MM-DD/);
+    expect((await check('2999-01-01'))[0]).toMatch(/not a possible date/);
+  });
+
+  it('reads a Joined Date that lost its date formatting as the day it was', async () => {
+    const { buildImportTemplate, parseImportFile } = await load();
+    const workbook = await workbookFrom(await buildImportTemplate());
+    const sheet = workbook.getWorksheet('Individual')!;
+    let joined = 0;
+    let surname = 0;
+    sheet.getRow(1).eachCell((cell, col) => {
+      if (cell.value === 'Joined Date (optional)') joined = col;
+      if (cell.value === 'Surname *') surname = col;
+    });
+    sheet.getCell(2, joined).value = 36692; // Excel's day number for 15 June 2000
+    sheet.getCell(2, surname).value = 'Serial';
+    const rows = await parseImportFile(
+      Buffer.from(await workbook.xlsx.writeBuffer())
+    );
+    expect(rows[0].joinedAt).toBe('2000-06-15');
+  });
+
+  it('refuses a Date of birth in the future', async () => {
+    const { validateRows } = await load();
+    const { errors } = await validateRows([
+      individualRow({
+        sheet: 'Minor',
+        values: { ...individualRow().values, date_of_birth: '2999-01-01' },
+      }),
+    ]);
+    expect(errors[0].message).toMatch(
+      /Date of birth 2999-01-01 is not a possible date/
+    );
+  });
+
+  it('accepts a balance written with thousands commas', async () => {
+    const { validateRows } = await load();
+    const { valid, errors } = await validateRows([
+      individualRow({ sharesBalance: '1,500.00' }),
+    ]);
+    expect(errors).toEqual([]);
+    expect(valid[0].sharesBalance).toBe('1500.00');
+  });
+
+  it('reads a sheet whose name was retyped in another case', async () => {
+    const { buildImportTemplate, parseImportFile } = await load();
+    const filled = await fillSheet(await buildImportTemplate(), 'Individual', {
+      Surname: 'Renamed',
+    });
+    const workbook = await workbookFrom(filled);
+    const renamed = workbook.getWorksheet('Individual')!;
+    renamed.name = 'Renaming';
+    renamed.name = 'individual';
+    const rows = await parseImportFile(
+      Buffer.from(await workbook.xlsx.writeBuffer())
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].sheet).toBe('Individual');
+  });
+
+  it('refuses a sheet or a column the template does not have, when anything is in it', async () => {
+    const { buildImportTemplate, parseImportFile, MigrationError } =
+      await load();
+    const template = await buildImportTemplate();
+
+    const withSheet = await workbookFrom(template);
+    withSheet.addWorksheet('Empty');
+    withSheet.addWorksheet('Notes').addRow(['Header']).commit();
+    withSheet.getWorksheet('Notes')!.addRow(['Something typed']);
+    await expect(
+      parseImportFile(Buffer.from(await withSheet.xlsx.writeBuffer()))
+    ).rejects.toThrow(/Sheet "Notes" is not one of the template's sheets/);
+
+    const withColumn = await workbookFrom(template);
+    const sheet = withColumn.getWorksheet('Individual')!;
+    const next = sheet.getRow(1).cellCount + 1;
+    sheet.getCell(1, next).value = 'Passport Number';
+    sheet.getCell(2, next).value = 'P123';
+    await expect(
+      parseImportFile(Buffer.from(await withColumn.xlsx.writeBuffer()))
+    ).rejects.toThrow(MigrationError);
+    await expect(
+      parseImportFile(Buffer.from(await withColumn.xlsx.writeBuffer()))
+    ).rejects.toThrow(/column "Passport Number" is not in the template/);
+
+    // The untouched template, Instructions sheet and all, reads as empty.
+    expect(await parseImportFile(template)).toEqual([]);
+  });
+
+  it('says plainly when the file is not an Excel workbook', async () => {
+    const { parseImportFile } = await load();
+    await expect(
+      parseImportFile(Buffer.from('Legacy Member Code,AB Number\nX,AB1\n'))
+    ).rejects.toThrow(/not an Excel workbook/);
+  });
+});
+
+// Officer direction: once a migration has run, how many were imported and
+// what funds came with them — members by type, non-members by account.
+describe('migrationSummary', () => {
+  it('counts what an upload added, by member type and by non-member account', async () => {
+    await runAsConfigurator(
+      appUrl,
+      `insert into account_type
+         (code, name, category, minimum_opening_amount, is_membership_default)
+       values ('hsa_summary_test', 'Hajj Savings (summary test)', 'savings', 0, false)
+       on conflict (code) do nothing`
+    );
+    const {
+      buildImportTemplate,
+      parseImportFile,
+      validateRows,
+      importMembers,
+    } = await load();
+    const { migrationSummary, summaryDifference } = await import('./summary');
+    const before = await migrationSummary();
+
+    const memberFile = await fillSheet(
+      await buildImportTemplate(),
+      'Individual',
+      {
+        'Legacy Member Code': 'LEG-SUM-1',
+        'AB Number': 'AB1901',
+        Surname: 'Summary',
+        Name: 'Member',
+        NIC: 'S1901190119011',
+        Gender: 'Female',
+        Address: 'Addr',
+        Mobile: '57891901',
+        'Shares Balance': '5000',
+        'MSA Deposit Balance': '1500',
+        'Hajj Savings (summary test) Number': 'HSA-1901',
+        'Hajj Savings (summary test) Balance': '700',
+        ...NOMINEE_1,
+      }
+    );
+    const customerFile = await fillSheet(
+      await buildImportTemplate(),
+      'Individual',
+      {
+        'Legacy Member Code': 'LEG-SUM-2',
+        Surname: 'Summary',
+        Name: 'Customer',
+        NIC: 'S1902190219021',
+        Gender: 'Male',
+        Address: 'Addr',
+        Mobile: '57891902',
+        'Hajj Savings (summary test) Number': 'HSA-1902',
+        'Hajj Savings (summary test) Balance': '3000',
+        ...NOMINEE_1,
+      }
+    );
+    for (const file of [memberFile, customerFile]) {
+      const { valid, errors } = await validateRows(await parseImportFile(file));
+      expect(errors).toEqual([]);
+      const outcome = await importMembers(
+        valid,
+        actor,
+        MIGRATE_PERMISSIONS,
+        'test'
+      );
+      expect(outcome.failed).toEqual([]);
+    }
+
+    const after = await migrationSummary();
+    const added = summaryDifference(before, after);
+    expect(added.members).toEqual([
+      { typeName: 'Individual', holders: 1, amountCents: 720000 },
+    ]);
+    expect(added.nonMembers).toEqual({
+      holders: 1,
+      amountCents: 300000,
+      accounts: [
+        {
+          typeName: 'Hajj Savings (summary test)',
+          count: 1,
+          amountCents: 300000,
+        },
+      ],
+    });
+    expect(added.total).toEqual({ holders: 2, amountCents: 1020000 });
+
+    // To date adds up: the members' rows and the non-members' make the
+    // total.
+    expect(after.total.holders).toBe(
+      after.members.reduce((n, r) => n + r.holders, 0) +
+        after.nonMembers.holders
+    );
+    expect(after.total.amountCents).toBe(
+      after.members.reduce((n, r) => n + r.amountCents, 0) +
+        after.nonMembers.amountCents
+    );
+
+    // Uploading the same member again adds nothing.
+    const again = await validateRows(await parseImportFile(memberFile));
+    await importMembers(again.valid, actor, MIGRATE_PERMISSIONS, 'test');
+    expect(summaryDifference(after, await migrationSummary()).total).toEqual({
+      holders: 0,
+      amountCents: 0,
+    });
+  });
+});
+
+// Officer direction: the Individual sheet goes first, then Minor — a
+// guardian and their minor in one upload.
+describe('a guardian and their minor in the same upload', () => {
+  it('takes the guardian from the Individual sheet and imports them first', async () => {
+    const {
+      buildImportTemplate,
+      parseImportFile,
+      validateRows,
+      importMembers,
+    } = await load();
+    const template = await buildImportTemplate();
+    const minorFirst = await fillSheet(
+      await fillSheet(template, 'Minor', {
+        'Legacy Member Code': 'LEG-700-M',
+        'AB Number': 'AB1781',
+        Surname: 'Joomun',
+        Name: 'Aisha',
+        'Date of birth': '2016-03-01',
+        Gender: 'Female',
+        Address: 'Addr',
+        'Guardian Member ID': 'ab1780',
+        'Beneficiary surname': 'Joomun',
+        'Beneficiary name': 'Rafiq',
+        'Beneficiary NIC': 'J7000000000003',
+        'Nominee 1 Successor guardian surname': 'Joomun',
+        'Nominee 1 Successor guardian name': 'Rafiq',
+        'Nominee 1 Successor guardian NIC': 'J7000000000002',
+      }),
+      'Individual',
+      {
+        'Legacy Member Code': 'LEG-700-G',
+        'AB Number': 'AB1780',
+        Surname: 'Joomun',
+        Name: 'Nadia',
+        NIC: 'J7000000000001',
+        Gender: 'Female',
+        Address: 'Addr',
+        Mobile: '57891700',
+        ...NOMINEE_1,
+      }
+    );
+    const { valid, errors } = await validateRows(
+      await parseImportFile(minorFirst)
+    );
+    expect(errors).toEqual([]);
+    // The guardian comes back first, whatever order the sheets were in.
+    expect(valid.map(r => r.sheet)).toEqual(['Individual', 'Minor']);
+    expect(valid[1].guardian).toMatchObject({
+      member_id: 'AB1780',
+      surname: 'Joomun',
+      nic: 'J7000000000001',
+    });
+
+    // Imported without its guardian, the minor is refused, not left
+    // pointing at nobody.
+    const alone = await importMembers(
+      [valid[1]],
+      actor,
+      MIGRATE_PERMISSIONS,
+      'test'
+    );
+    expect(alone.failed[0].message).toBe(
+      'The guardian AB1780 is not on file. Import the guardian first.'
+    );
+
+    const outcome = await importMembers(
+      valid,
+      actor,
+      MIGRATE_PERMISSIONS,
+      'test'
+    );
+    expect(outcome.failed).toEqual([]);
+    expect(outcome.imported.map(r => r.memberNo)).toEqual(['AB1780', 'AB1781']);
+  });
+
+  it('still refuses a guardian who is neither on file nor in the file', async () => {
+    const { buildImportTemplate, parseImportFile, validateRows } = await load();
+    const file = await fillSheet(await buildImportTemplate(), 'Minor', {
+      'Legacy Member Code': 'LEG-701-M',
+      'AB Number': 'AB1782',
+      Surname: 'Joomun',
+      Name: 'Ilyas',
+      'Date of birth': '2016-03-01',
+      Gender: 'Male',
+      Address: 'Addr',
+      'Guardian Member ID': 'AB1789',
+      'Beneficiary surname': 'Joomun',
+      'Beneficiary name': 'Rafiq',
+      'Beneficiary NIC': 'J7010000000003',
+      'Nominee 1 Successor guardian surname': 'Joomun',
+      'Nominee 1 Successor guardian name': 'Rafiq',
+      'Nominee 1 Successor guardian NIC': 'J7010000000002',
+    });
+    const { errors } = await validateRows(await parseImportFile(file));
+    expect(errors[0].message).toMatch(
+      /does not match any member on file or on the Individual sheet of this file/
+    );
+  });
+
+  // Guardian AB1780 is on file from the first test in this block.
+  const minorRow = (overrides: Partial<ParsedRow> = {}): ParsedRow => ({
+    sheet: 'Minor',
+    rowNumber: 2,
+    legacyCode: 'LEG-710-M',
+    abNumber: '',
+    joinedAt: '',
+    values: {
+      surname: 'Joomun',
+      name: 'Sara',
+      date_of_birth: '2017-05-01',
+      gender: 'Female',
+      address: 'Addr',
+    },
+    employment: {},
+    guardian: { member_id: 'AB1780' },
+    beneficiary: {
+      surname: 'Joomun',
+      name: 'Rafiq',
+      nic: 'J7100000000003',
+    },
+    nominees: [{ surname: 'Joomun', name: 'Rafiq', nic: 'J7100000000002' }],
+    sharesBalance: '',
+    msaBalance: '',
+    accountNumbers: {},
+    accountBalances: {},
+    ...overrides,
+  });
+
+  it('keeps the guardian and beneficiary of a minor who is not a member', async () => {
+    const {
+      buildImportTemplate,
+      parseImportFile,
+      validateRows,
+      importMembers,
+    } = await load();
+    const file = await fillSheet(await buildImportTemplate(), 'Minor', {
+      'Legacy Member Code': 'LEG-710-M',
+      Surname: 'Joomun',
+      Name: 'Sara',
+      'Date of birth': '2017-05-01',
+      Gender: 'Female',
+      Address: 'Addr',
+      'Guardian Member ID': 'AB1780',
+      'Beneficiary surname': 'Joomun',
+      'Beneficiary name': 'Rafiq',
+      'Beneficiary NIC': 'J7100000000003',
+      'Nominee 1 Successor guardian surname': 'Joomun',
+      'Nominee 1 Successor guardian name': 'Rafiq',
+      'Nominee 1 Successor guardian NIC': 'J7100000000002',
+      'Hajj Savings (customer test) Number': 'HSA-710',
+      'Hajj Savings (customer test) Balance': '250',
+    });
+    const { valid, errors } = await validateRows(await parseImportFile(file));
+    expect(errors).toEqual([]);
+    const outcome = await importMembers(
+      valid,
+      actor,
+      MIGRATE_PERMISSIONS,
+      'test'
+    );
+    expect(outcome.failed).toEqual([]);
+    expect(outcome.imported[0].kind).toBe('customer');
+
+    const parties = await run(
+      appUrl,
+      `select p.subject, p.values
+         from customer c
+         join application_party p on p.application_id = c.application_id
+        where c.legacy_code = 'LEG-710-M' and p.subject in ('guardian', 'beneficiary')
+        order by p.subject`
+    );
+    expect(parties.rows.map(r => r.subject)).toEqual([
+      'beneficiary',
+      'guardian',
+    ]);
+    expect(parties.rows[1].values).toMatchObject({
+      member_id: 'AB1780',
+      surname: 'Joomun',
+      name: 'Nadia',
+    });
+
+    // And the guardian's page names them under Guardian of, by their account.
+    const { guardianOf } = await import('../applications/capture');
+    const guarded = await guardianOf('AB1780', '');
+    expect(guarded).toContainEqual(
+      expect.objectContaining({
+        reference: 'HSA-710',
+        name: 'Sara Joomun',
+        isMember: false,
+        isNonMember: true,
+      })
+    );
+  });
+
+  it('reads a Guardian Member ID filled in by a formula or with mixed formatting', async () => {
+    const { buildImportTemplate, parseImportFile } = await load();
+    const filled = await fillSheet(await buildImportTemplate(), 'Minor', {
+      'Legacy Member Code': 'LEG-711-M',
+      Surname: 'Joomun',
+      Name: 'Yusuf',
+      'Guardian Member ID': 'placeholder',
+      'Beneficiary surname': 'Joomun',
+    });
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(filled as any);
+    const sheet = workbook.getWorksheet('Minor')!;
+    const column = (header: string) => {
+      let found = 0;
+      sheet.getRow(1).eachCell((cell, n) => {
+        if (String(cell.value).replace(/\s*\*$/, '') === header) found = n;
+      });
+      return found;
+    };
+    sheet.getRow(2).getCell(column('Guardian Member ID')).value = {
+      formula: 'VLOOKUP(A2,Individual!A:B,2,FALSE)',
+      result: 'AB1780',
+    } as ExcelJS.CellFormulaValue;
+    sheet.getRow(2).getCell(column('Beneficiary surname')).value = {
+      richText: [{ text: 'Joo' }, { font: { bold: true }, text: 'mun' }],
+    };
+    const [row] = await parseImportFile(
+      Buffer.from(await workbook.xlsx.writeBuffer())
+    );
+    expect(row.guardian.member_id).toBe('AB1780');
+    expect(row.beneficiary.surname).toBe('Joomun');
+  });
+
+  it("says so when the guardian's own row in the file has problems", async () => {
+    const { validateRows } = await load();
+    const { errors } = await validateRows([
+      {
+        ...minorRow({ legacyCode: 'LEG-712-M' }),
+        guardian: { member_id: 'AB1786' },
+      },
+      {
+        sheet: 'Individual',
+        rowNumber: 2,
+        legacyCode: 'LEG-712-G',
+        abNumber: 'AB1786',
+        joinedAt: '',
+        // No surname: the guardian's row cannot be imported.
+        values: {
+          name: 'Omar',
+          nic: 'J7120000000001',
+          gender: 'Male',
+          address: 'Addr',
+          mobile: '57891712',
+        },
+        employment: {},
+        guardian: {},
+        beneficiary: {},
+        nominees: [
+          {
+            surname: 'Nominee Surname',
+            name: 'Nominee Name',
+            nic: 'Nominee NIC',
+            address: 'Nominee Address',
+          },
+          {},
+        ],
+        sharesBalance: '0',
+        msaBalance: '0',
+        accountNumbers: {},
+        accountBalances: {},
+      },
+    ]);
+    expect(errors.map(e => e.sheet)).toEqual(['Minor', 'Individual']);
+    expect(errors[0].message).toBe(
+      'The guardian AB1786 has problems on their own row of this file. Fix that row first.'
+    );
+  });
+
+  // Last in the file: gives the Minor sheet a Mobile column.
+  it("no longer checks a minor's mobile against their guardian's, or anyone else's", async () => {
+    await runAsConfigurator(
+      ownerUrl,
+      `insert into membership_type_field
+         (membership_type_id, field_key, label, data_type, subject,
+          is_visible, is_mandatory, sort_order)
+       select id, 'mobile', 'Mobile', 'phone', 'applicant', true, false, 7
+         from membership_type where code = 'minor'`
+    );
+    const { validateRows } = await load();
+    const withMobile = (legacyCode: string, mobile: string) =>
+      minorRow({
+        legacyCode,
+        values: { ...minorRow().values, mobile },
+        accountNumbers: {},
+      });
+
+    // Guardian AB1780's own mobile, typed two ways, by two brothers and
+    // sisters; and one minor with a mobile already on file for someone else
+    // — none of them are a problem any more.
+    const { valid, errors } = await validateRows([
+      withMobile('LEG-713-M', '57891700'),
+      withMobile('LEG-714-M', '+230 5789 1700'),
+      withMobile('LEG-715-M', '57891250'),
+    ]);
+    expect(errors).toEqual([]);
+    expect(valid.map(r => r.legacyCode)).toEqual([
+      'LEG-713-M',
+      'LEG-714-M',
+      'LEG-715-M',
+    ]);
+
+    // Nor is a minor sharing an adult's number from the same file.
+    const adult = await validateRows([
+      {
+        ...minorRow(),
+        sheet: 'Individual',
+        legacyCode: 'LEG-716',
+        abNumber: 'AB1787',
+        values: {
+          surname: 'Other',
+          name: 'Adult',
+          nic: 'J7160000000001',
+          gender: 'Male',
+          address: 'Addr',
+          mobile: '57891799',
+        },
+        guardian: {},
+        beneficiary: {},
+        nominees: [
+          {
+            surname: 'Nominee Surname',
+            name: 'Nominee Name',
+            nic: 'Nominee NIC',
+            address: 'Nominee Address',
+          },
+          {},
+        ],
+        sharesBalance: '0',
+        msaBalance: '0',
+      },
+      withMobile('LEG-717-M', '57891799'),
+    ]);
+    expect(adult.errors).toEqual([]);
   });
 });

@@ -1,0 +1,228 @@
+---
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import ConfigNav from '@components/ConfigNav.astro';
+import {
+  ConfigError,
+  createPaymentMethod,
+  listPaymentMethods,
+  updatePaymentMethod,
+} from '@lib/config/reference';
+import {
+  PAGE,
+  CARD,
+  CARD_TITLE,
+  HINT,
+  PANEL,
+  INPUT,
+  BUTTON,
+  BUTTON_SM,
+  LABEL,
+  NOTICE_ERROR,
+  NOTICE_OK,
+} from '@lib/ui';
+
+const principal = Astro.locals.principal!;
+const canManage = principal.permissions.has('config.manage');
+
+let error: string | null = null;
+let notice: string | null = null;
+
+function flagsFrom(form: FormData) {
+  return {
+    name: String(form.get('name') ?? ''),
+    isCash: form.get('isCash') === 'on',
+    requiresReference: form.get('requiresReference') === 'on',
+    touchesBank: form.get('touchesBank') === 'on',
+    isActive: form.get('isActive') === 'on',
+  };
+}
+
+if (Astro.request.method === 'POST') {
+  if (!canManage) {
+    error = 'You do not have permission to change configuration.';
+  } else {
+    const form = await Astro.request.formData();
+    const intent = String(form.get('intent') ?? '');
+    const actor = { userId: principal.userId, email: principal.email };
+
+    try {
+      if (intent === 'create') {
+        await createPaymentMethod(
+          { code: String(form.get('code') ?? ''), ...flagsFrom(form) },
+          actor
+        );
+        notice = 'Payment method added.';
+      } else if (intent === 'update') {
+        await updatePaymentMethod(
+          String(form.get('methodId')),
+          flagsFrom(form),
+          actor
+        );
+        notice = 'Payment method updated.';
+      }
+    } catch (err) {
+      if (err instanceof ConfigError) {
+        error = err.message;
+      } else {
+        console.error('[config/payment-methods]', err);
+        error = 'Something went wrong. Please try again.';
+      }
+    }
+  }
+}
+
+const methods = await listPaymentMethods();
+
+const CHECK =
+  'text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600';
+const FLAGS = [
+  ['isCash', 'Cash (source of fund and ceiling apply)'],
+  ['requiresReference', 'Needs a reference'],
+  ['touchesBank', 'Reaches a bank account'],
+] as const;
+---
+
+<DashboardLayout
+  title="Payment methods · Al Barakah MCSL"
+  heading="Payment methods"
+>
+  <div class={PAGE.list}>
+    <ConfigNav />
+
+    {error && <div class={NOTICE_ERROR}>{error}</div>}
+    {notice && <div class={NOTICE_OK}>{notice}</div>}
+
+    <section class={CARD}>
+      <h2 class={CARD_TITLE}>How money is received</h2>
+      <p class={`${HINT} mt-1`}>
+        An inactive method is no longer offered. Receipts already taken by it
+        are not affected.
+      </p>
+
+      <div class="mt-5 space-y-4">
+        {methods.map(method => (
+          <details class={PANEL}>
+            <summary class="flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-1">
+              <span class="font-medium text-neutral-800 dark:text-neutral-100">
+                {method.name}
+              </span>
+              <code class="rounded bg-neutral-100 px-1.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
+                {method.code}
+              </code>
+              {method.isCash && (
+                <span class="bg-mint-200 dark:bg-mint-900 rounded px-1.5 py-0.5 text-xs text-neutral-800 dark:text-neutral-100">
+                  cash
+                </span>
+              )}
+              {method.requiresReference && (
+                <span class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200">
+                  reference
+                </span>
+              )}
+              {method.isSystem && (
+                <span class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200">
+                  system
+                </span>
+              )}
+              {!method.isActive && (
+                <span class="rounded bg-red-100 px-1.5 py-0.5 text-xs text-red-800 dark:bg-red-950 dark:text-red-200">
+                  inactive
+                </span>
+              )}
+            </summary>
+
+            {method.isSystem ? (
+              <p class={`${HINT} mt-3`}>
+                Written by the legacy import only. Not offered on a form and not
+                editable.
+              </p>
+            ) : (
+              <form method="post" class="mt-4 grid gap-3 sm:grid-cols-2">
+                <input type="hidden" name="methodId" value={method.id} />
+                <label class={`${LABEL} sm:col-span-2`}>
+                  Name
+                  <input
+                    type="text"
+                    name="name"
+                    value={method.name}
+                    disabled={!canManage}
+                    class={INPUT}
+                  />
+                </label>
+                {FLAGS.map(([field, label]) => (
+                  <label class="flex items-center gap-x-2 text-sm text-neutral-600 dark:text-neutral-300">
+                    <input
+                      type="checkbox"
+                      name={field}
+                      checked={method[field]}
+                      disabled={!canManage}
+                      class={CHECK}
+                    />
+                    {label}
+                  </label>
+                ))}
+                <label class="flex items-center gap-x-2 text-sm text-neutral-600 dark:text-neutral-300">
+                  <input
+                    type="checkbox"
+                    name="isActive"
+                    checked={method.isActive}
+                    disabled={!canManage}
+                    class={CHECK}
+                  />
+                  Active
+                </label>
+                {canManage && (
+                  <div class="pt-2 sm:col-span-2">
+                    <button
+                      type="submit"
+                      name="intent"
+                      value="update"
+                      class={BUTTON_SM}
+                    >
+                      Save
+                    </button>
+                  </div>
+                )}
+              </form>
+            )}
+          </details>
+        ))}
+      </div>
+    </section>
+
+    {canManage && (
+      <section class={CARD}>
+        <h2 class={CARD_TITLE}>Add a payment method</h2>
+        <form method="post" class="mt-4 grid gap-3 sm:grid-cols-2">
+          <input type="hidden" name="intent" value="create" />
+          <input type="hidden" name="isActive" value="on" />
+          <label class={LABEL}>
+            Code
+            <input
+              type="text"
+              name="code"
+              required
+              placeholder="direct_debit"
+              class={INPUT}
+            />
+          </label>
+          <label class={LABEL}>
+            Name
+            <input type="text" name="name" required class={INPUT} />
+          </label>
+          {FLAGS.map(([field, label]) => (
+            <label class="flex items-center gap-x-2 text-sm text-neutral-600 dark:text-neutral-300">
+              <input type="checkbox" name={field} class={CHECK} />
+              {label}
+            </label>
+          ))}
+          <div class="sm:col-span-2">
+            <button type="submit" class={BUTTON}>
+              Add
+            </button>
+          </div>
+        </form>
+      </section>
+    )}
+  </div>
+</DashboardLayout>

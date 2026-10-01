@@ -330,6 +330,8 @@ export interface SubmissionReadiness {
   fieldProblems: MissingField[];
   documentsOutstanding: number;
   paymentRecorded: boolean;
+  // Both witnesses named on the form step (officer request).
+  witnessesNamed: boolean;
 }
 
 /**
@@ -358,6 +360,7 @@ export async function submissionReadiness(
       e => e.requirement === 'required' && e.state === 'missing'
     ).length,
     paymentRecorded: payments.some(p => p.kind === 'payment' && !p.voidedAt),
+    witnessesNamed: application.witnesses.every(name => name.trim() !== ''),
   };
 }
 
@@ -383,6 +386,12 @@ export async function submitApplication(
   const readiness = await submissionReadiness(application);
   if (readiness.fieldProblems.length > 0) {
     return { problems: readiness.fieldProblems };
+  }
+  if (!readiness.witnessesNamed) {
+    throw new ApplicationError(
+      'Enter both witness names on the Application signature step before ' +
+        'this can be submitted.'
+    );
   }
   if (readiness.documentsOutstanding > 0) {
     throw new ApplicationError(
@@ -545,21 +554,35 @@ export async function boardReadiness(
   };
 }
 
+// One outstanding item, and the record it is about when there is one to go
+// to (the application pages link it; the refusal below is plain text).
+export interface BoardReason {
+  text: string;
+  link?: { href: string; text: string };
+}
+
 // Shared by the throw below and by the id page's proactive "not ready yet"
 // list, so the two can never name the outstanding items differently.
-export function boardReadinessReasons(readiness: BoardReadiness): string[] {
-  const reasons: string[] = [];
+export function boardReadinessItems(readiness: BoardReadiness): BoardReason[] {
+  const reasons: BoardReason[] = [];
   if (readiness.documentsUnverified > 0) {
-    reasons.push(
-      `${readiness.documentsUnverified} required document(s) still need ` +
-        'to be Verified'
-    );
+    reasons.push({
+      text:
+        `${readiness.documentsUnverified} required document(s) still need ` +
+        'to be Verified',
+    });
   }
   if (!readiness.paymentRecorded) {
-    reasons.push('payment has not been recorded');
+    reasons.push({ text: 'payment has not been recorded' });
   }
-  reasons.push(...readiness.guardianProblems.map(p => p.label));
+  reasons.push(
+    ...readiness.guardianProblems.map(p => ({ text: p.label, link: p.link }))
+  );
   return reasons;
+}
+
+export function boardReadinessReasons(readiness: BoardReadiness): string[] {
+  return boardReadinessItems(readiness).map(r => r.text);
 }
 
 /**
@@ -698,7 +721,11 @@ export interface DecisionResult {
       typeCode: string;
       typeName: string;
       accountNo?: string;
+      // M26: brought back under its own number rather than opened.
+      reopened?: boolean;
     }[];
+    // M26: an existing member re-admitted, not a new one created.
+    rejoined?: boolean;
   };
   // Present when a quorum above one (S-609) has not yet been reached by this
   // sign-off: it was recorded, but the step has not completed and `status`

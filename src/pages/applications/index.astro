@@ -1,17 +1,44 @@
 ---
 import DashboardLayout from '@layouts/DashboardLayout.astro';
+import Pagination from '@components/Pagination.astro';
 import {
   ApplicationError,
   countApplications,
+  countApplicationsForList,
   deleteDraftApplication,
   listApplications,
 } from '@lib/applications/capture';
+import {
+  PAGE,
+  CARD,
+  CARD_TITLE,
+  INPUT,
+  INPUT_BARE,
+  BUTTON_SM,
+  SECONDARY_SM,
+  HINT,
+  LINK_CARD,
+  MUTED,
+  DANGER_XS,
+  LABEL,
+  NOTICE_ERROR,
+  NOTICE_OK,
+  PILL,
+  TABLE,
+  THEAD,
+  TH,
+  ROW,
+  TD,
+  COL_OPTIONAL,
+} from '@lib/ui';
+import { pagingFrom, pageHref, pageCount } from '@lib/paging';
 import { listMembershipTypes } from '@lib/config/reference';
 import {
   pendingApplicationIds,
   returnedByLabelsFor,
   reviewStageLabelsFor,
 } from '@lib/applications/workflow';
+import { APPLICATION_STATUS_LABELS as STATUS_LABELS } from '@lib/applications/status-labels';
 
 const principal = Astro.locals.principal!;
 const canCapture = principal.permissions.has('application.capture');
@@ -83,6 +110,8 @@ const created = Astro.url.searchParams.get('created');
 
 const filter = Astro.url.searchParams.get('status') ?? '';
 const search = Astro.url.searchParams.get('q') ?? '';
+// Officer feedback: the applications waiting on this officer, alone.
+const waitingOnly = Astro.url.searchParams.get('waiting') === '1';
 // Officer feedback: 'received' (submitted from the mobile app) used to be
 // visible to any officer who could submit at all — the business wants it
 // handled by specific staff instead (S-303, application.submit_online).
@@ -90,35 +119,55 @@ const canHandleReceived = principal.permissions.has(
   'application.submit_online'
 );
 
-const [unsortedApplications, types, nonDraftCount, attentionIds] =
-  await Promise.all([
-    listApplications({
-      ...(filter ? { statuses: [filter] } : {}),
-      viewerUserId: principal.userId,
-      search,
-      canHandleReceived,
-    }),
-    listMembershipTypes(),
-    // Meaningless filtered to Draft specifically — countApplications excludes
-    // every draft regardless, so that combination would always read 0 beside
-    // a table that is, in fact, showing rows.
-    filter === 'draft'
-      ? null
-      : countApplications({
-          ...(filter ? { statuses: [filter] } : {}),
-          canHandleReceived,
-        }),
-    pendingApplicationIds(principal),
-  ]);
+// Officer request: a page at a time, 10/25/50 as chosen (src/lib/paging.ts).
+const paging = pagingFrom(Astro.url);
 
-// Officer feedback: an application waiting on this person specifically —
-// theirs to review, approve, or correct — reads as a row to scroll past
-// like any other otherwise, easy to miss on a list sorted only by when it
-// last changed. Array.prototype.sort is stable, so this only moves those
-// rows ahead of everything else; within each group, still newest first.
-const applications = [...unsortedApplications].sort(
-  (a, b) => Number(attentionIds.has(b.id)) - Number(attentionIds.has(a.id))
-);
+// pendingApplicationIds depends only on the signed-in officer, not on this
+// page's filters, so it is resolved before the paged query rather than
+// alongside it — listApplications needs the ids themselves, to sort
+// "Waiting on you" ahead of everything else on every page (not just
+// whichever one happened to be asked for) and, with waitingOnly, to narrow
+// to just these.
+const attentionIds = await pendingApplicationIds(principal);
+const attentionIdList = [...attentionIds];
+
+const [applications, total, types, nonDraftCount] = await Promise.all([
+  listApplications({
+    ...(filter ? { statuses: [filter] } : {}),
+    viewerUserId: principal.userId,
+    search,
+    canHandleReceived,
+    attentionIds: attentionIdList,
+    waitingOnly,
+    limit: paging.per,
+    offset: paging.offset,
+  }),
+  countApplicationsForList({
+    viewerUserId: principal.userId,
+    ...(filter ? { statuses: [filter] } : {}),
+    search,
+    canHandleReceived,
+    attentionIds: attentionIdList,
+    waitingOnly,
+  }),
+  listMembershipTypes(),
+  // Meaningless filtered to Draft specifically — countApplications excludes
+  // every draft regardless, so that combination would always read 0 beside
+  // a table that is, in fact, showing rows.
+  filter === 'draft'
+    ? null
+    : countApplications({
+        ...(filter ? { statuses: [filter] } : {}),
+        canHandleReceived,
+      }),
+]);
+
+// A page past the end — a stale link, or the filter narrowing since it was
+// followed — lands on the first page rather than an empty table with no
+// way back.
+if (paging.page > pageCount(total, paging.per)) {
+  return Astro.redirect(pageHref(Astro.url, { page: 1 }));
+}
 
 // S-611 follow-up: a status names a stage, never the person holding it.
 // 'new' means as many different things as the configured chain has steps
@@ -136,24 +185,6 @@ const [reviewStageLabels, returnedStageLabels] = await Promise.all([
     applications.filter(a => a.status === 'returned').map(a => a.id)
   ),
 ]);
-
-// No 'approved' entry: an approved application no longer appears in this
-// list at all (listApplications excludes it — it lives on the Members page
-// from then on), so offering it as a filter would only ever show "no
-// applications match."
-const STATUS_LABELS: Record<string, string> = {
-  draft: 'Draft',
-  // Submitted from the member app and with the branch — worked exactly as a
-  // draft (docs/member-app.md). Named for what an officer has to do with it
-  // rather than for where it came from.
-  received: 'Received online',
-  new: 'New',
-  submitted_for_review: 'Submit for Review',
-  submitted_for_approval: 'Submit for Approval',
-  rejected: 'Rejected',
-  returned: 'Returned for Correction',
-  abeyance: 'Abeyance',
-};
 
 const STATUS_CLASSES: Record<string, string> = {
   draft:
@@ -174,32 +205,34 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 ---
 
 <DashboardLayout title="Applications · Al Barakah MCSL" heading="Applications">
-  <div class="mx-auto max-w-5xl space-y-6">
-    {error && (
-      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-        {error}
-      </div>
-    )}
+  <div class={PAGE.list}>
+    {error && <div class={NOTICE_ERROR}>{error}</div>}
 
     {deletedCount > 0 && (
-      <div class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-lg border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
+      <div class={NOTICE_OK}>
         {deletedCount === 1
           ? '1 draft was deleted.'
           : `${deletedCount} drafts were deleted.`}
       </div>
     )}
 
-    {created && (
-      <div class="border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950 rounded-lg border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
-        Application {created} started.
-      </div>
+    {created && <div class={NOTICE_OK}>Application {created} started.</div>}
+
+    {attentionIds.size > 0 && !waitingOnly && (
+      <a href="/applications?waiting=1" class={LINK_CARD}>
+        <span class="font-semibold text-neutral-800 dark:text-neutral-100">
+          Waiting on you
+        </span>
+        <span class={MUTED}>
+          {`${attentionIds.size} application${attentionIds.size === 1 ? '' : 's'}`}
+          {' →'}
+        </span>
+      </a>
     )}
 
     {canCapture && (
-      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-          Start an application
-        </h2>
+      <section class={CARD}>
+        <h2 class={CARD_TITLE}>Start an application</h2>
         <div class="mt-4 flex flex-wrap items-end justify-between gap-4">
           {/* A GET, deliberately. Opening the form creates nothing — the
                 application exists once a detail is entered. */}
@@ -208,12 +241,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             action="/applications/new"
             class="flex flex-wrap items-end gap-2"
           >
-            <label class="text-sm text-neutral-600 dark:text-neutral-300">
+            <label class={LABEL}>
               Applicant status
-              <select
-                name="type"
-                class="mt-1 block rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-              >
+              <select name="type" class={INPUT}>
                 {types
                   .filter(t => t.isActive)
                   .map(t => (
@@ -221,32 +251,26 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                   ))}
               </select>
             </label>
-            <button
-              type="submit"
-              class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
-            >
+            <button type="submit" class={BUTTON_SM}>
               Member Registration
             </button>
           </form>
 
-          <a
-            href="/applications/new-account"
-            class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
-          >
+          <a href="/applications/new-account" class={SECONDARY_SM}>
             Open other account
           </a>
         </div>
       </section>
     )}
 
-    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+    <section class={CARD}>
       <div class="flex flex-wrap items-center justify-between gap-2">
-        <h2 class="flex items-center gap-2 text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-          Applications
-          {nonDraftCount !== null && (
-            <span class="rounded-full bg-neutral-200 px-2 py-0.5 text-xs font-medium text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
-              {nonDraftCount}
-            </span>
+        <h2 class={`${CARD_TITLE} flex items-center gap-2`}>
+          {waitingOnly ? 'Waiting on you' : 'Applications'}
+          {waitingOnly ? (
+            <span class={PILL}>{total}</span>
+          ) : (
+            nonDraftCount !== null && <span class={PILL}>{nonDraftCount}</span>
           )}
         </h2>
         <form method="get" class="flex flex-wrap items-center gap-2">
@@ -259,16 +283,13 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             name="q"
             value={search}
             placeholder="Search applicant or reference"
-            class="rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+            class={INPUT_BARE}
+            data-suggest="/applications/suggest.json"
           />
           <label for="status" class="sr-only">
             Filter by status
           </label>
-          <select
-            id="status"
-            name="status"
-            class="rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-          >
+          <select id="status" name="status" class={INPUT_BARE}>
             <option value="">All statuses</option>
             {Object.entries(STATUS_LABELS).map(([code, label]) => (
               <option value={code} selected={code === filter}>
@@ -276,17 +297,12 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               </option>
             ))}
           </select>
-          <button
-            type="submit"
-            class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
-          >
+          <button type="submit" class={SECONDARY_SM}>
             Filter
           </button>
-          {(search || filter) && (
-            <a
-              href="/applications"
-              class="text-sm text-neutral-500 underline dark:text-neutral-400"
-            >
+          {waitingOnly && <input type="hidden" name="waiting" value="1" />}
+          {(search || filter || waitingOnly) && (
+            <a href="/applications" class={`${HINT} underline`}>
               Clear
             </a>
           )}
@@ -294,12 +310,14 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       </div>
 
       {applications.length === 0 ? (
-        <p class="mt-4 text-sm text-neutral-500 dark:text-neutral-400">
+        <p class={`mt-4 ${HINT}`}>
           {search
             ? `Nothing matches "${search}".`
-            : filter
-              ? `No applications with status ${STATUS_LABELS[filter] ?? filter}.`
-              : 'No applications yet.'}
+            : waitingOnly
+              ? 'Nothing is waiting for you.'
+              : filter
+                ? `No applications with status ${STATUS_LABELS[filter] ?? filter}.`
+                : 'No applications yet.'}
         </p>
       ) : (
         <form method="post" id="applications-form" data-confirm-delete>
@@ -317,18 +335,18 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                 value="delete"
                 data-bulk-delete
                 disabled
-                class="rounded-lg border border-red-300 px-3 py-1.5 text-xs font-medium text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950"
+                class={DANGER_XS}
               >
                 Delete selected
               </button>
             </div>
           )}
           <div class="mt-2 overflow-x-auto">
-            <table class="w-full text-sm">
+            <table class={TABLE} data-sortable>
               <thead>
-                <tr class="text-left text-xs text-neutral-500 dark:text-neutral-400">
+                <tr class={THEAD}>
                   {canCapture && (
-                    <th class="py-2 pr-2 font-medium">
+                    <th class={TH} data-no-sort>
                       <input
                         type="checkbox"
                         data-select-all
@@ -337,32 +355,27 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                       />
                     </th>
                   )}
-                  {[
-                    ['Reference', 'reference'],
-                    ['Applicant', 'applicant'],
-                    ['Type', 'type'],
-                    ['Status', 'status'],
-                    ['Captured by', 'capturedBy'],
-                    ['Updated', 'updated'],
-                  ].map(([label, key]) => (
-                    <th class="py-2 pr-4 font-medium">
-                      <button
-                        type="button"
-                        data-sort-key={key}
-                        class="inline-flex items-center gap-1 hover:text-neutral-700 dark:hover:text-neutral-200"
-                      >
-                        {label}
-                        <span data-sort-indicator class="text-[10px]" />
-                      </button>
+                  {(
+                    [
+                      ['Reference', false],
+                      ['Applicant', false],
+                      ['Type', true],
+                      ['Status', false],
+                      ['Captured by', true],
+                      ['Updated', true],
+                    ] as const
+                  ).map(([label, optional]) => (
+                    <th class={optional ? `${TH} ${COL_OPTIONAL}` : TH}>
+                      {label}
                     </th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {applications.map(a => (
-                  <tr class="border-t border-neutral-200 dark:border-neutral-800">
+                  <tr class={ROW}>
                     {canCapture && (
-                      <td class="py-2 pr-2">
+                      <td class={TD}>
                         {a.status === 'draft' && (
                           <>
                             <input
@@ -382,7 +395,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                         )}
                       </td>
                     )}
-                    <td class="py-2 pr-4" data-sort-value={a.reference}>
+                    <td class={TD} data-sort-value={a.reference}>
                       <a
                         href={
                           a.applicationKind === 'membership'
@@ -397,19 +410,19 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                       </a>
                     </td>
                     <td
-                      class="py-2 pr-4 text-neutral-700 dark:text-neutral-200"
+                      class={`${TD} text-neutral-700 dark:text-neutral-200`}
                       data-sort-value={a.applicantName}
                     >
                       {a.applicantName}
                     </td>
                     <td
-                      class="py-2 pr-4 text-neutral-600 dark:text-neutral-300"
+                      class={`${TD} ${COL_OPTIONAL} text-neutral-600 dark:text-neutral-300`}
                       data-sort-value={a.membershipTypeName}
                     >
                       {a.membershipTypeName}
                     </td>
                     <td
-                      class="py-2 pr-4"
+                      class={TD}
                       data-sort-value={STATUS_LABELS[a.status] ?? a.status}
                     >
                       <span
@@ -422,19 +435,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                         {STATUS_LABELS[a.status] ?? a.status}
                       </span>
                       {reviewStageLabels.has(a.id) && (
-                        <span
-                          class:list={[
-                            'mt-1 block text-xs',
-                            // Gold and bold only for the person whose own
-                            // role is the one holding it up: a Secretary
-                            // scanning this list needs the rows waiting on
-                            // them to stand out from the rows waiting on
-                            // somebody else, which read the same otherwise.
-                            attentionIds.has(a.id)
-                              ? 'font-semibold text-amber-700 dark:text-amber-400'
-                              : 'text-neutral-500 dark:text-neutral-400',
-                          ]}
-                        >
+                        <span class="mt-1 block text-xs text-neutral-500 dark:text-neutral-400">
                           {reviewStageLabels.get(a.id)}
                         </span>
                       )}
@@ -446,13 +447,13 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                         )}
                     </td>
                     <td
-                      class="py-2 pr-4 text-xs text-neutral-500 dark:text-neutral-400"
+                      class={`${TD} ${COL_OPTIONAL} text-xs text-neutral-500 dark:text-neutral-400`}
                       data-sort-value={a.capturedByName}
                     >
                       {a.capturedByName}
                     </td>
                     <td
-                      class="py-2 pr-4 text-xs text-neutral-500 dark:text-neutral-400"
+                      class={`${TD} ${COL_OPTIONAL} text-xs text-neutral-500 dark:text-neutral-400`}
                       data-sort-value={a.updatedAt.toISOString()}
                     >
                       {dateFormat.format(a.updatedAt)}
@@ -462,6 +463,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               </tbody>
             </table>
           </div>
+          <Pagination total={total} paging={paging} noun="applications" />
         </form>
       )}
     </section>
@@ -469,6 +471,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 </DashboardLayout>
 
 <script>
+  import { wireSortableTables } from '@lib/client/table-sort';
   const form = document.getElementById(
     'applications-form'
   ) as HTMLFormElement | null;
@@ -534,49 +537,5 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
     });
   }
 
-  // Client-side, against the rows already on the page — the list is capped
-  // at 100 and already loaded, so re-asking the server for the same rows in
-  // a different order would be a round trip spent on nothing new.
-  const table = document.querySelector('table');
-  const tbody = table?.querySelector('tbody');
-  if (table && tbody) {
-    const headerRow = table.querySelector('thead tr');
-    let activeKey: string | null = null;
-    let ascending = true;
-
-    for (const button of table.querySelectorAll<HTMLButtonElement>(
-      '[data-sort-key]'
-    )) {
-      button.addEventListener('click', () => {
-        const key = button.dataset.sortKey ?? '';
-        const th = button.closest('th');
-        const cellIndex = th
-          ? [...(headerRow?.children ?? [])].indexOf(th)
-          : -1;
-        if (cellIndex < 0) return;
-
-        ascending = activeKey === key ? !ascending : true;
-        activeKey = key;
-
-        const rows = [...tbody.querySelectorAll('tr')];
-        rows.sort((a, b) => {
-          const av =
-            a.children[cellIndex]?.getAttribute('data-sort-value') ?? '';
-          const bv =
-            b.children[cellIndex]?.getAttribute('data-sort-value') ?? '';
-          const cmp = av.localeCompare(bv, undefined, { numeric: true });
-          return ascending ? cmp : -cmp;
-        });
-        for (const row of rows) tbody.appendChild(row);
-
-        for (const indicator of table.querySelectorAll(
-          '[data-sort-indicator]'
-        )) {
-          indicator.textContent = '';
-        }
-        const ownIndicator = button.querySelector('[data-sort-indicator]');
-        if (ownIndicator) ownIndicator.textContent = ascending ? '▲' : '▼';
-      });
-    }
-  }
+  wireSortableTables();
 </script>

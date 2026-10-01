@@ -1,0 +1,226 @@
+---
+// Every cash drawer, for a holder of cash.view (S-2001).
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import Pagination from '@components/Pagination.astro';
+import {
+  countSessions,
+  listSessions,
+  PERMISSION_VIEW,
+  sessionTotals,
+} from '@lib/cash/sessions';
+import { query } from '@lib/db/pool';
+import { pagingFrom, pageCount } from '@lib/paging';
+import { formatMoney, fromCents, toCents } from '@lib/payments/money';
+import {
+  BUTTON,
+  CARD,
+  HINT,
+  INPUT_BARE,
+  MUTED,
+  PAGE,
+  LABEL,
+  TABLE,
+  THEAD,
+  TH,
+  TD,
+  TD_NUM,
+  ROW,
+} from '@lib/ui';
+
+const principal = Astro.locals.principal!;
+if (!principal.permissions.has(PERMISSION_VIEW)) {
+  return Astro.redirect('/denied');
+}
+
+// Default to the current month, matching the reconciliation page.
+const now = new Date();
+const monthStart = new Date(
+  Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)
+);
+const asDate = (value: Date) => value.toISOString().slice(0, 10);
+
+const params = Astro.url.searchParams;
+const parse = (value: string | null, fallback: Date) => {
+  if (!value) return fallback;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return Number.isNaN(parsed.getTime()) ? fallback : parsed;
+};
+
+const from = parse(params.get('from'), monthStart);
+const toInclusive = parse(params.get('to'), now);
+// The query is half-open, so the last day typed is included.
+const to = new Date(toInclusive.getTime() + 24 * 60 * 60 * 1000);
+const cashierId = params.get('cashierId') || null;
+const paging = pagingFrom(Astro.url);
+const filter = { from, to, cashierId };
+
+const [sessions, total, totals, cashiers] = await Promise.all([
+  listSessions({ ...filter, limit: paging.per, offset: paging.offset }),
+  countSessions(filter),
+  sessionTotals(filter),
+  query<{ id: string; display_name: string }>(
+    `select id, display_name from app_user
+     where is_active and (entra_subject is null or entra_subject not like 'system:%')
+     order by display_name`
+  ),
+]);
+// A page past the end (a filter narrowed the list under it) lands on the
+// first page rather than showing nothing.
+if (paging.page > 1 && paging.page > pageCount(total, paging.per)) {
+  const next = new URL(Astro.url);
+  next.searchParams.delete('page');
+  return Astro.redirect(`${next.pathname}${next.search}`);
+}
+
+const openCount = totals.open;
+const netOverShortCents = toCents(totals.netOverShort);
+
+const dateFormat = new Intl.DateTimeFormat('en-GB', {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+});
+
+function overShortClass(value: string | null): string {
+  if (value === null) return 'text-neutral-500 dark:text-neutral-400';
+  const amount = Number(value);
+  if (amount === 0) return 'text-emerald-700 dark:text-emerald-400';
+  if (amount < 0) return 'text-red-700 dark:text-red-400';
+  return 'text-amber-700 dark:text-amber-400';
+}
+---
+
+<DashboardLayout title="Cash drawers · Al Barakah MCSL" heading="Cash drawers">
+  <div class={PAGE.list}>
+    <form method="get" class={`${CARD} flex flex-wrap items-end gap-3`}>
+      <label class={LABEL}>
+        From
+        <input
+          type="date"
+          name="from"
+          value={asDate(from)}
+          class={`${INPUT_BARE} mt-1 block`}
+        />
+      </label>
+      <label class={LABEL}>
+        To
+        <input
+          type="date"
+          name="to"
+          value={asDate(toInclusive)}
+          class={`${INPUT_BARE} mt-1 block`}
+        />
+      </label>
+      <label class={LABEL}>
+        Cashier
+        <select name="cashierId" class={`${INPUT_BARE} mt-1 block`}>
+          <option value="" selected={!cashierId}>
+            All
+          </option>
+          {cashiers.rows.map(c => (
+            <option value={c.id} selected={c.id === cashierId}>
+              {c.display_name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <button type="submit" class={BUTTON}>
+        Show
+      </button>
+    </form>
+
+    <section class={CARD}>
+      <p class={MUTED}>
+        {total} drawer{total === 1 ? '' : 's'} · {openCount} still open · net
+        over/short {formatMoney(fromCents(netOverShortCents))}
+      </p>
+
+      {sessions.length === 0 ? (
+        <p class={`${HINT} mt-4`}>No drawers in this period.</p>
+      ) : (
+        <table class={`${TABLE} mt-4`} data-sortable>
+          <thead>
+            <tr
+              class={`${THEAD} border-b border-neutral-300 dark:border-neutral-700`}
+            >
+              <th class={TH}>Cashier</th>
+              <th class={TH}>Opened</th>
+              <th class={TH}>Closed</th>
+              <th class={`${TH} text-right`}>Float</th>
+              <th class={`${TH} text-right`}>Expected</th>
+              <th class={`${TH} text-right`}>Counted</th>
+              <th class={`${TH} text-right`}>Over/short</th>
+              <th class={TH}>Note</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sessions.map(s => (
+              <tr class={`${ROW} align-top`}>
+                <td class={`${TD} text-neutral-800 dark:text-neutral-100`}>
+                  {s.cashierName}
+                </td>
+                <td
+                  class={`${TD} text-neutral-500 dark:text-neutral-400`}
+                  data-sort-value={s.openedAt.toISOString()}
+                >
+                  {dateFormat.format(s.openedAt)}
+                </td>
+                <td
+                  class={TD}
+                  data-sort-value={
+                    s.closedAt ? s.closedAt.toISOString() : undefined
+                  }
+                >
+                  {s.closedAt === null ? (
+                    <span class="bg-mint-200 dark:bg-mint-900 rounded px-1.5 py-0.5 text-xs text-neutral-800 dark:text-neutral-100">
+                      Open
+                    </span>
+                  ) : (
+                    <span class="text-neutral-500 dark:text-neutral-400">
+                      {dateFormat.format(s.closedAt)}
+                    </span>
+                  )}
+                </td>
+                <td
+                  class={`${TD_NUM} text-neutral-800 dark:text-neutral-100`}
+                  data-sort-value={s.openingFloat}
+                >
+                  {formatMoney(s.openingFloat)}
+                </td>
+                <td
+                  class={`${TD_NUM} text-neutral-800 dark:text-neutral-100`}
+                  data-sort-value={s.expectedAtClose ?? undefined}
+                >
+                  {s.expectedAtClose === null
+                    ? '—'
+                    : formatMoney(s.expectedAtClose)}
+                </td>
+                <td
+                  class={`${TD_NUM} text-neutral-800 dark:text-neutral-100`}
+                  data-sort-value={s.closingCount ?? undefined}
+                >
+                  {s.closingCount === null ? '—' : formatMoney(s.closingCount)}
+                </td>
+                <td
+                  class={`${TD_NUM} font-medium ${overShortClass(s.overShort)}`}
+                  data-sort-value={s.overShort ?? undefined}
+                >
+                  {s.overShort === null ? '—' : formatMoney(s.overShort)}
+                </td>
+                <td class={`${TD} text-neutral-600 dark:text-neutral-300`}>
+                  {s.note || '—'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <Pagination total={total} paging={paging} noun="drawers" />
+    </section>
+  </div>
+</DashboardLayout>
+
+<script>
+  import { wireSortableTables } from '@lib/client/table-sort';
+
+  wireSortableTables();
+</script>

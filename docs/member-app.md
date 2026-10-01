@@ -19,7 +19,7 @@ app ends up letting a card number open an account:
 
 | Concern                      | What it is                                                                                                            | Where                                         |
 | ---------------------------- | --------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
-| **Identification / linking** | NIC + AB Number name exactly one active member                                                                        | `POST /auth/link-member`                      |
+| **Identification / linking** | NIC + AB Number name exactly one member who may use the app                                                           | `POST /auth/link-member`                      |
 | **Verification**             | A one-time code proves the person holds the mobile on that member's record                                            | `POST /auth/verify-otp`                       |
 | **Authentication**           | The session that results — access token + refresh token in the device keychain — is what every later request presents | `Authorization: Bearer`; `POST /auth/refresh` |
 | **The link**                 | `member_session.member_id`, from that session to the `member` row                                                     | Server-side only; never sent to the phone     |
@@ -32,7 +32,7 @@ ID. A lost card, a NIC read off a form, or both together get an attacker
 exactly as far as the SMS they will not receive.
 
 **The answer never says whether the pair exists.** A NIC + AB Number that
-names nobody — wrong NIC, wrong AB Number, right pair but not active —
+names nobody — wrong NIC, wrong AB Number, right pair but not entitled —
 gets the same response as one that does: a challenge id, purpose
 `link_member`, `sentTo: null`, five minutes. Behind it is a
 `link_member_miss` challenge row with a random hash nothing can match and
@@ -65,13 +65,13 @@ import gives it one; that is the import's job, not this endpoint's.
 
 ### Linking an existing member
 
-| Step | Endpoint                                        | Rules                                                                                                                                                                                                                                                                                                                                              |
-| ---- | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1    | `POST /auth/link-member` `{ nic, abNumber }`    | 422 if either is malformed (`details.nic`, `details.abNumber`). **404 if the pair does not name one active member** — one message for "no such NIC", "no such AB Number", "not together" and "not active". Returns the challenge with the registered mobile masked. Audit: `member.link.requested` on the member, `member.link.refused` on a miss. |
-| 2    | `POST /auth/verify-otp` `{ challengeId, code }` | Five wrong codes burn the challenge (404 from then on); a code lives five minutes and works once. On success a `member_session` with `member_id` set. Audit: `member.link.completed`.                                                                                                                                                              |
-| 3    | `POST /auth/refresh` `{ refreshToken }`         | New pair; the old refresh token is dead the moment it is used. Ninety days from last use, so a phone that opens the app now and then never re-links. A member no longer active is signed out here rather than when a token happens to lapse.                                                                                                       |
-| 4    | `POST /auth/logout`                             | Revokes the session. The device must link again to get back in. Audit: `member.session.revoked`.                                                                                                                                                                                                                                                   |
-| —    | `POST /auth/resend-otp` `{ challengeId }`       | Fresh code, same purpose, same number; the previous code is dead.                                                                                                                                                                                                                                                                                  |
+| Step | Endpoint                                        | Rules                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ---- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1    | `POST /auth/link-member` `{ nic, abNumber }`    | 422 if either is malformed (`details.nic`, `details.abNumber`). **404 if the pair does not name one member who may use the app** (active, or resigned with an account still open; `mayUseAppSql`) — one message for "no such NIC", "no such AB Number", "not together" and "not entitled". Returns the challenge with the registered mobile masked. Audit: `member.link.requested` on the member, `member.link.refused` on a miss. |
+| 2    | `POST /auth/verify-otp` `{ challengeId, code }` | Five wrong codes burn the challenge (404 from then on); a code lives five minutes and works once. On success a `member_session` with `member_id` set. Audit: `member.link.completed`.                                                                                                                                                                                                                                              |
+| 3    | `POST /auth/refresh` `{ refreshToken }`         | New pair; the old refresh token is dead the moment it is used. Ninety days from last use, so a phone that opens the app now and then never re-links. A member no longer entitled to the app is signed out here rather than when a token happens to lapse.                                                                                                                                                                          |
+| 4    | `POST /auth/logout`                             | Revokes the session. The device must link again to get back in. Audit: `member.session.revoked`.                                                                                                                                                                                                                                                                                                                                   |
+| —    | `POST /auth/resend-otp` `{ challengeId }`       | Fresh code, same purpose, same number; the previous code is dead.                                                                                                                                                                                                                                                                                                                                                                  |
 
 This is **not** the staff `GET /api/v1/applications/existing-member-search`.
 That matches a fragment of a name, NIC or Member No. against every active
@@ -138,7 +138,10 @@ was written for the applicant (a return or a rejection).
 
 ## Endpoints
 
-All under `/api/v1/member`; the generated document has the schemas.
+All under `/api/v1/member`; the generated document has the schemas. In
+the in-app explorer (`/admin/api`) the account reads and the transaction
+writes are grouped under Accounts and Transactions beside the staff
+endpoints they mirror (S-2103); the rest is under Member app.
 Where a rule says 422, `details` carries one entry per problem, keyed
 `subject.ordinal.fieldKey` for a party field and `document.<code>` for a
 missing document — the app folds those onto the fields by that key.
@@ -157,22 +160,41 @@ ones this catches, and it catches them before any handler runs, so the
 answer is a bare 403 with no envelope and no correlation id. Sending the
 header is the whole of what is needed; a body is not.
 
-| Method | Path                                         | Caller | What                                                                                                                                                                   |
-| ------ | -------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| GET    | `/reference`                                 | public | Active membership types with their fields, applicant-facing checklist (`signed_form` left out — a branch step) and fees in force.                                      |
-| GET    | `/me`                                        | member | Membership, the founding application's parties, and any pending details request.                                                                                       |
-| PUT    | `/me/details`                                | member | A `member_details_request`. 422 on a blank mandatory field or an unplaceable phone; 409 while one is pending; 403 for an applicant. Audit: `member.details.requested`. |
-| GET    | `/me/accounts`                               | member | Balance is the opening payment less any refund, or null with nothing recorded — there is no ledger yet.                                                                |
-| GET    | `/me/accounts/{id}/transactions`             | member | `transactionsForAccount`; 404 unless the caller's.                                                                                                                     |
-| GET    | `/me/documents`                              | member | `documentsForMember`. No download URL.                                                                                                                                 |
-| GET    | `/applications`                              | member | Those started from the caller's verified mobile, plus a member's founding one.                                                                                         |
-| POST   | `/applications`                              | member | `startApplication` as the system user; 409 while one is in progress.                                                                                                   |
-| GET    | `/applications/{id}`                         | member | 404 unless the caller's.                                                                                                                                               |
-| DELETE | `/applications/{id}`                         | member | `deleteDraftApplication`; draft only.                                                                                                                                  |
-| PUT    | `/applications/{id}/parties`                 | member | `saveDraft` — never fails on content; only fields the type configures are kept. 409 once submitted.                                                                    |
-| POST   | `/applications/{id}/documents/begin-upload`  | member | `beginUpload` through the same broker as staff (`docs/documents.md`); `checklistItemId` is `<documentTypeId>:<subject>`.                                               |
-| POST   | `/applications/{id}/documents/commit-upload` | member | `commitUpload`; only a version begun on this application.                                                                                                              |
-| POST   | `/applications/{id}/submit`                  | member | `problemsBlockingSubmission` plus every required document not filed, all in one 422; on success `received`. Audit: `membership.application.received`.                  |
+| Method | Path                                                             | Caller | What                                                                                                                                                                                                                                                                |
+| ------ | ---------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/reference`                                                     | public | Active membership types with their fields, applicant-facing checklist (`signed_form` left out — a branch step), fees in force, and the Society's bank accounts by name (S-2102).                                                                                    |
+| GET    | `/me`                                                            | member | Membership, the founding application's parties, and any pending details request.                                                                                                                                                                                    |
+| PUT    | `/me/details`                                                    | member | A `member_details_request`. 422 on a blank mandatory field or an unplaceable phone; 409 while one is pending; 403 for an applicant. Audit: `member.details.requested`.                                                                                              |
+| GET    | `/me/accounts`                                                   | member | Balance from the ledger's cache (S-1309), or null for an account nothing has ever posted to.                                                                                                                                                                        |
+| GET    | `/me/accounts/{id}/transactions`                                 | member | The ledger's entries, oldest first (`accountEntries`); 404 unless the caller's.                                                                                                                                                                                     |
+| GET    | `/me/accounts/{id}/balance`                                      | member | The staff `/accounts/{id}/balance` payload — balance, pending debits, available — for the caller's own account; 404 unless the caller's (S-2101).                                                                                                                   |
+| GET    | `/me/accounts/{id}/history`                                      | member | The staff `/accounts/{id}/history` payload, newest first, paged by `before`; 404 unless the caller's.                                                                                                                                                               |
+| GET    | `/me/accounts/{id}/statement`                                    | member | The staff `/accounts/{id}/statement` payload for a period (`from`, `to`; the month to date by default), or the spreadsheet with `format=xlsx`; 404 unless the caller's.                                                                                             |
+| POST   | `/me/deposits`                                                   | member | A deposit into the caller's own account, captured by the system user in the Member role and routed by the matrix; never cash; 403 until deposits from the app are switched on (S-2102).                                                                             |
+| POST   | `/me/withdrawals`                                                | member | A withdrawal from the caller's own account, the same way; 403 until switched on.                                                                                                                                                                                    |
+| POST   | `/me/transfers`                                                  | member | A transfer from the caller's own account to an account here, the same way; 403 until switched on.                                                                                                                                                                   |
+| GET    | `/me/documents`                                                  | member | `documentsForMember`; each entry's `id` opens at the row below.                                                                                                                                                                                                     |
+| GET    | `/me/dependents`                                                 | member | The active minors the caller is guardian of (member or non-member account holder), each with their accounts and balances. Matched on the guardian block by the caller's Member No. or NIC (`members/guardian.ts`); empty for a member who guards nobody. Read-only. |
+| GET    | `/me/dependents/{dependentId}/accounts/{accountId}/transactions` | member | The entries behind a guarded minor's balance, oldest first; 404 unless the caller guards the minor and the account is that minor's.                                                                                                                                 |
+| GET    | `/me/documents/{id}/content`                                     | member | The file itself, streamed from this origin for the app to render in place; 404 unless the document is the caller's own — one listed above (`ownedDocumentId`).                                                                                                      |
+| GET    | `/applications`                                                  | member | Those started from the caller's verified mobile, plus a member's founding one.                                                                                                                                                                                      |
+| POST   | `/applications`                                                  | member | `startApplication` as the system user; 409 while one is in progress.                                                                                                                                                                                                |
+| GET    | `/applications/{id}`                                             | member | 404 unless the caller's.                                                                                                                                                                                                                                            |
+| DELETE | `/applications/{id}`                                             | member | `deleteDraftApplication`; draft only.                                                                                                                                                                                                                               |
+| PUT    | `/applications/{id}/parties`                                     | member | `saveDraft` — never fails on content; only fields the type configures are kept. 409 once submitted.                                                                                                                                                                 |
+| POST   | `/applications/{id}/documents/begin-upload`                      | member | `beginUpload` through the same broker as staff (`docs/documents.md`); `checklistItemId` is `<documentTypeId>:<subject>`.                                                                                                                                            |
+| POST   | `/applications/{id}/documents/commit-upload`                     | member | `commitUpload`; only a version begun on this application.                                                                                                                                                                                                           |
+| POST   | `/applications/{id}/submit`                                      | member | `problemsBlockingSubmission` plus every required document not filed, all in one 422; on success `received`. Audit: `membership.application.received`.                                                                                                               |
+
+The three account reads that arrived with S-2101 are the staff endpoints'
+own payloads: the schema and the mapping live once, in
+`src/lib/ledger/api-payloads.ts`, and the staff endpoint under
+`/api/v1/accounts/{id}` and the member's under `/me/accounts/{id}` both
+call it. A member in the app and an officer at the branch are reading one
+ledger, and the member endpoint adds exactly one thing — `ownedAccountId`
+in `src/lib/member/profile.ts`, which answers not found for any account
+that is not the caller's own, another member's and a non-existent one
+alike.
 
 ### What a member never gets
 
@@ -218,9 +240,42 @@ The request is history once made: the application role has no `delete` on
 as they were, and the field-by-field change — in the audit trail
 (`member.details.applied`, `member.details.declined`).
 
-**Not built yet:** nothing notifies the member that their update was
-decided; they see it the next time they open the app. That is the same
-push/WhatsApp piece an application status change wants (M9).
+**The member is told.** Applying or declining raises
+`member.details.applied` (the fields that changed, by label) or
+`member.details.declined` (the officer's reason) after the decision
+commits — email and WhatsApp wording each, migration 0087, on the address
+the founding application recorded (`src/lib/members/tell-member.ts`, the
+same path dormancy uses). The app still shows the outcome under
+`lastUpdate` for a member with no address on file.
+
+## Transactions from the app
+
+A deposit, a withdrawal or a transfer a member starts from the phone
+(S-2102, `src/lib/member/transactions.ts`) is the transaction an officer
+would record at the branch — the same service function, the same account
+rules, the same approval matrix — with two differences.
+
+**Who captures it.** The member-app system user, acting in the Member role
+(migration 0085; assigned to nobody, holding no permission) with
+`transaction.capture` and nothing more. The matrix reads that role, so a
+rule "by Member" at Configuration → Approval matrix, moved above the band
+it would otherwise fall into, routes a member's own transaction to the
+chain of the Society's choosing. Because the app never holds
+`transaction.post`, a route that would post at once is refused with 403
+and "please visit the branch": a member's transaction goes to a chain or it
+goes nowhere, and the officers on that chain decide. It can never be more
+lenient than a clerk's.
+
+**Whether it may be started at all.** `member_api.enabled_operations`, set
+at Configuration → Member app (`config.manage`), lists which of the three
+are on. Empty is the default: the endpoints exist from day one and answer
+403 until switched on, and Readiness shows the setting. A cash deposit is
+refused whatever the switch says — nobody took cash from a phone — so a
+deposit names a bank or mobile money method, its reference and the
+Society's bank account from `/reference`. A transfer goes to an account on
+the system by id, never to a payee outside: that is a withdrawal in another
+name, and the branch's to record. Every write demands an `Idempotency-Key`
+header, as the staff API does.
 
 ## Configuration
 

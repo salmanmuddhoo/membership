@@ -8,7 +8,14 @@
 import type { PoolClient } from 'pg';
 import { recordAudit } from '../access/audit';
 import { query } from '../db/pool';
-import type { Actor, Application } from '../applications/capture';
+import { postOpeningBalances } from '../ledger/ledger';
+import { PAGE_SIZES } from '../paging';
+import { canOpenAccount } from './status';
+import type {
+  Actor,
+  Application,
+  MembershipApplication,
+} from '../applications/capture';
 
 export class MemberCreationError extends Error {
   constructor(message: string) {
@@ -32,7 +39,13 @@ export interface CreatedMember {
     typeCode: string;
     typeName: string;
     accountNo?: string;
+    // M26: brought back under its own number rather than opened.
+    reopened?: boolean;
   }[];
+  // M26: an existing member re-admitted, not a new one created.
+  rejoined?: boolean;
+  // Who they are, for the approval page to name them (lifecycle test).
+  name?: string;
 }
 
 /**
@@ -93,6 +106,16 @@ export async function createMemberFromApplication(
         'so there is no account to open. Set one in Configuration → Account ' +
         'types before approving.'
     );
+  }
+
+  // M26 · A rejoin: the application names the resigned member it re-admits.
+  // They come back as the member they were — same row, same AB number —
+  // rather than as a second member with a second number, which is the
+  // whole point of naming them. The Shares and MSA the resignation closed
+  // are reactivated below under their own ids, so their history reads as
+  // one account that closed and reopened.
+  if (application.rejoinsMemberId) {
+    return rejoinMember(client, application, actor);
   }
 
   const member = options?.memberNo
@@ -303,6 +326,16 @@ export async function createMemberFromApplication(
     );
   }
 
+  // S-1303: what the application's receipts paid into these accounts is
+  // their opening balance, posted through the engine now that the accounts
+  // exist. Nothing to carry — an import that records its balance after this
+  // returns, an application paid nothing — posts nothing, and the next
+  // caller with something to carry does it.
+  await postOpeningBalances(
+    application.id,
+    { userId: actor.userId, description: actor.email },
+    client
+  );
   return { id: memberId, memberNo, accounts };
 }
 
@@ -391,6 +424,198 @@ export async function createMigratedCustomer(
   return { id: customer.rows[0].id };
 }
 
+// M26 · Which of a member's accounts of the given types stand closed, so
+// approval reactivates them rather than opening a second one — the unique
+// index (account_one_per_type_per_member_idx) ignores closed rows, so a
+// second row of the type would be allowed, and the member would then hold
+// two of one type, one of them the old number nobody could reach.
+async function closedAccountsOf(
+  client: PoolClient,
+  owner: { memberId: string } | { customerId: string },
+  accountTypeIds: string[]
+): Promise<Map<string, string>> {
+  const closed = await client.query<{ id: string; account_type_id: string }>(
+    'memberId' in owner
+      ? `select id, account_type_id from account
+          where member_id = $1 and account_type_id = any($2::uuid[])
+            and status = 'closed'
+          order by closed_at desc`
+      : `select id, account_type_id from account
+          where customer_id = $1 and account_type_id = any($2::uuid[])
+            and status = 'closed'
+          order by closed_at desc`,
+    ['memberId' in owner ? owner.memberId : owner.customerId, accountTypeIds]
+  );
+  const byType = new Map<string, string>();
+  for (const row of closed.rows) {
+    if (!byType.has(row.account_type_id))
+      byType.set(row.account_type_id, row.id);
+  }
+  return byType;
+}
+
+// M26 · Bring a closed account back under its own id and number, dated so
+// the page can say "reopened on". The balance is whatever the ledger says
+// it is — a closure paid it out, so it stands at nil until the opening
+// receipt posts.
+async function reopenClosedAccount(
+  client: PoolClient,
+  accountId: string,
+  status: string,
+  applicationId: string
+): Promise<void> {
+  await client.query(
+    `update account
+        set status = $2, closed_at = null, reopened_at = now(),
+            opened_by_application_id = $3, updated_at = now()
+      where id = $1 and status = 'closed'`,
+    [accountId, status, applicationId]
+  );
+}
+
+/**
+ * M26 · Re-admit a resigned member on the approval of the membership
+ * application that names them (rejoins_member_id).
+ *
+ * The member row is the one they always had: status back to active,
+ * rejoined_at set, and the application that brought them back recorded as
+ * theirs. Their Shares and MSA — closed by the resignation — are
+ * reactivated under their own ids; a membership-default type they never
+ * held (one configured since they left) opens fresh, as it would on any
+ * approval. The application keeps its APP reference: the AB number already
+ * belongs to the founding application, and one reference cannot name two.
+ */
+async function rejoinMember(
+  client: PoolClient,
+  application: MembershipApplication,
+  actor: Actor
+): Promise<CreatedMember> {
+  const member = await client.query<{ member_no: string; status: string }>(
+    `select member_no, status from member where id = $1 for no key update`,
+    [application.rejoinsMemberId]
+  );
+  if (member.rowCount === 0) {
+    throw new MemberCreationError('That member no longer exists.');
+  }
+  if (member.rows[0].status !== 'resigned') {
+    throw new MemberCreationError(
+      'This member is not resigned, so there is no membership to rejoin.'
+    );
+  }
+  const memberId = application.rejoinsMemberId!;
+  const memberNo = member.rows[0].member_no;
+
+  const openOnApproval = await client.query<{
+    id: string;
+    code: string;
+    name: string;
+    default_status: string;
+  }>(
+    `select id, code, name, default_status from account_type
+      where is_membership_default and is_active
+      order by sort_order, name`
+  );
+  if (openOnApproval.rowCount === 0) {
+    throw new MemberCreationError(
+      'No active account type is set to open when a membership is approved, ' +
+        'so there is no account to open. Set one in Configuration → Account ' +
+        'types before approving.'
+    );
+  }
+
+  await client.query(
+    `update member
+        set status = 'active', status_changed_at = now(), rejoined_at = now(),
+            application_id = $2, membership_type_id = $3, updated_at = now()
+      where id = $1`,
+    [memberId, application.id, application.membershipTypeId]
+  );
+
+  const closed = await closedAccountsOf(
+    client,
+    { memberId },
+    openOnApproval.rows.map(t => t.id)
+  );
+  const accounts: CreatedMember['accounts'] = [];
+  const reopened = new Set<string>();
+  for (const type of openOnApproval.rows) {
+    const existing = closed.get(type.id);
+    if (existing) {
+      await reopenClosedAccount(
+        client,
+        existing,
+        type.default_status,
+        application.id
+      );
+      reopened.add(existing);
+      accounts.push({
+        id: existing,
+        typeCode: type.code,
+        typeName: type.name,
+        reopened: true,
+      });
+      continue;
+    }
+    const account = await client.query<{ id: string }>(
+      `insert into account
+         (member_id, account_type_id, is_membership_default, status,
+          opened_by_application_id)
+       values ($1, $2, true, $3, $4)
+       returning id`,
+      [memberId, type.id, type.default_status, application.id]
+    );
+    accounts.push({
+      id: account.rows[0].id,
+      typeCode: type.code,
+      typeName: type.name,
+    });
+  }
+
+  await recordAudit(
+    {
+      actorUserId: actor.userId,
+      actorDescription: actor.email,
+      action: 'member.rejoined',
+      entityType: 'member',
+      entityId: memberId,
+      previousValue: { status: 'resigned' },
+      newValue: {
+        status: 'active',
+        memberNo,
+        fromApplication: application.reference,
+        membershipType: application.membershipTypeCode,
+      },
+    },
+    client
+  );
+  for (const account of accounts) {
+    await recordAudit(
+      {
+        actorUserId: actor.userId,
+        actorDescription: actor.email,
+        action: reopened.has(account.id)
+          ? 'account.reopened'
+          : 'account.opened',
+        entityType: 'account',
+        entityId: account.id,
+        newValue: {
+          memberNo,
+          accountType: account.typeCode,
+          openedBecause: 'membership rejoined',
+        },
+      },
+      client
+    );
+  }
+
+  await postOpeningBalances(
+    application.id,
+    { userId: actor.userId, description: actor.email },
+    client
+  );
+  return { id: memberId, memberNo, accounts, rejoined: true };
+}
+
 /**
  * S-613 · Turn an approved additional_account application into the
  * selected account(s), under the member it already names.
@@ -429,9 +654,9 @@ export async function openAccountsForApplication(
   if (member.rowCount === 0) {
     throw new MemberCreationError('That member no longer exists.');
   }
-  if (member.rows[0].status !== 'active') {
+  if (!canOpenAccount(member.rows[0].status)) {
     throw new MemberCreationError(
-      'This member is no longer active, so no account can be opened for them.'
+      `This member is ${member.rows[0].status}, so no account can be opened for them.`
     );
   }
   const memberNo = member.rows[0].member_no;
@@ -480,11 +705,14 @@ export async function openAccountsForApplication(
   // unique index (account_one_per_type_per_member_idx, migration 0018) to
   // turn a second HSA into an opaque constraint violation for whoever
   // approves this.
+  // A closed one does not count (M26): it is exactly what this application
+  // reopens, below, under its own number.
   const already = await client.query<{ name: string }>(
     `select t.name
        from account a
        join account_type t on t.id = a.account_type_id
-      where a.member_id = $1 and a.account_type_id = any($2::uuid[])`,
+      where a.member_id = $1 and a.account_type_id = any($2::uuid[])
+        and a.status <> 'closed'`,
     [application.existingMemberId, typeIds]
   );
   if ((already.rowCount ?? 0) > 0) {
@@ -493,9 +721,40 @@ export async function openAccountsForApplication(
     );
   }
 
+  // M26 · A closed account of a selected type comes back as itself — the
+  // HSA0001 they had, not an HSA0002 beside a dead HSA0001 — dated so the
+  // page can say so.
+  const closed = await closedAccountsOf(
+    client,
+    { memberId: application.existingMemberId! },
+    typeIds
+  );
   const accounts: CreatedMember['accounts'] = [];
+  const reopened = new Set<string>();
   for (const selected of application.selectedAccountTypes) {
     const type = byId.get(selected.id)!;
+    const existing = closed.get(type.id);
+    if (existing) {
+      await reopenClosedAccount(
+        client,
+        existing,
+        type.default_status,
+        application.id
+      );
+      const number = await client.query<{ account_no: string }>(
+        `select account_no from account where id = $1`,
+        [existing]
+      );
+      reopened.add(existing);
+      accounts.push({
+        id: existing,
+        typeCode: type.code,
+        typeName: type.name,
+        accountNo: number.rows[0].account_no,
+        reopened: true,
+      });
+      continue;
+    }
     // Its own number, from the same per-type counter a non-member's account
     // draws from (next_customer_account_number) — a member's HSA and a
     // customer's HSA are numbered from one sequence, and account_no_unique_idx
@@ -537,7 +796,9 @@ export async function openAccountsForApplication(
       {
         actorUserId: actor.userId,
         actorDescription: actor.email,
-        action: 'account.opened',
+        action: reopened.has(account.id)
+          ? 'account.reopened'
+          : 'account.opened',
         entityType: 'account',
         entityId: account.id,
         newValue: {
@@ -552,6 +813,16 @@ export async function openAccountsForApplication(
   }
 
   // Narrowed above: the customer branch returned early, so a member owns this.
+  // S-1303: what the application's receipts paid into these accounts is
+  // their opening balance, posted through the engine now that the accounts
+  // exist. Nothing to carry — an import that records its balance after this
+  // returns, an application paid nothing — posts nothing, and the next
+  // caller with something to carry does it.
+  await postOpeningBalances(
+    application.id,
+    { userId: actor.userId, description: actor.email },
+    client
+  );
   return { id: application.existingMemberId!, memberNo, accounts };
 }
 
@@ -596,9 +867,18 @@ async function openAccountsUnderCustomer(
   if (customer.rowCount === 0) {
     throw new MemberCreationError('That customer no longer exists.');
   }
-  if (customer.rows[0].status !== 'active') {
+  // A customer whose every account was closed ('closed') may open a new one,
+  // and is active again once it opens (below).
+  if (!['active', 'closed'].includes(customer.rows[0].status)) {
     throw new MemberCreationError(
       'This customer is no longer active, so no account can be opened for them.'
+    );
+  }
+  if (customer.rows[0].status === 'closed') {
+    await client.query(
+      `update customer set status = 'active', updated_at = now()
+        where id = $1 and status = 'closed'`,
+      [customerId]
     );
   }
   const label = customer.rows[0].name?.trim() || 'the customer';
@@ -640,7 +920,8 @@ async function openAccountsUnderCustomer(
     `select t.name
        from account a
        join account_type t on t.id = a.account_type_id
-      where a.customer_id = $1 and a.account_type_id = any($2::uuid[])`,
+      where a.customer_id = $1 and a.account_type_id = any($2::uuid[])
+        and a.status <> 'closed'`,
     [customerId, typeIds]
   );
   if ((already.rowCount ?? 0) > 0) {
@@ -649,9 +930,34 @@ async function openAccountsUnderCustomer(
     );
   }
 
+  // M26: a closed one of the type comes back as itself, as for a member.
+  const closed = await closedAccountsOf(client, { customerId }, typeIds);
   const accounts: CreatedMember['accounts'] = [];
+  const reopened = new Set<string>();
   for (const selected of application.selectedAccountTypes) {
     const type = byId.get(selected.id)!;
+    const existing = closed.get(type.id);
+    if (existing) {
+      await reopenClosedAccount(
+        client,
+        existing,
+        type.default_status,
+        application.id
+      );
+      const number = await client.query<{ account_no: string }>(
+        `select account_no from account where id = $1`,
+        [existing]
+      );
+      reopened.add(existing);
+      accounts.push({
+        id: existing,
+        typeCode: type.code,
+        typeName: type.name,
+        accountNo: number.rows[0].account_no,
+        reopened: true,
+      });
+      continue;
+    }
     const numbered = await client.query<{ account_no: string }>(
       `select next_customer_account_number($1) as account_no`,
       [type.id]
@@ -679,7 +985,9 @@ async function openAccountsUnderCustomer(
       {
         actorUserId: actor.userId,
         actorDescription: actor.email,
-        action: 'account.opened',
+        action: reopened.has(account.id)
+          ? 'account.reopened'
+          : 'account.opened',
         entityType: 'account',
         entityId: account.id,
         newValue: {
@@ -692,6 +1000,16 @@ async function openAccountsUnderCustomer(
     );
   }
 
+  // S-1303: what the application's receipts paid into these accounts is
+  // their opening balance, posted through the engine now that the accounts
+  // exist. Nothing to carry — an import that records its balance after this
+  // returns, an application paid nothing — posts nothing, and the next
+  // caller with something to carry does it.
+  await postOpeningBalances(
+    application.id,
+    { userId: actor.userId, description: actor.email },
+    client
+  );
   return { id: customerId, memberNo: label, accounts };
 }
 
@@ -818,6 +1136,16 @@ export async function openAccountsForCustomerApplication(
     );
   }
 
+  // S-1303: what the application's receipts paid into these accounts is
+  // their opening balance, posted through the engine now that the accounts
+  // exist. Nothing to carry — an import that records its balance after this
+  // returns, an application paid nothing — posts nothing, and the next
+  // caller with something to carry does it.
+  await postOpeningBalances(
+    application.id,
+    { userId: actor.userId, description: actor.email },
+    client
+  );
   return { id: customerId, memberNo: '', accounts };
 }
 
@@ -832,6 +1160,9 @@ export interface MemberListAccount {
   // customer's each carry their own (S-614) — identifier already differs
   // per row above for the same reason, this is that same value per account.
   no: string;
+  // Officer feedback: the closing balance shown in the account's dialog on
+  // this list, from the same ledger cache total_funds sums above.
+  balance: string;
 }
 
 export interface MemberSummary {
@@ -850,6 +1181,8 @@ export interface MemberSummary {
   // they hold instead — there is no membership type to name.
   membershipTypeName: string;
   status: string;
+  // When the status last moved (S-1701); null while it never has.
+  statusChangedAt: Date | null;
   name: string;
   joinedAt: Date;
   applicationReference: string | null;
@@ -871,10 +1204,16 @@ export interface MemberAccount {
   // account this member goes on to open live afterwards still reads
   // "opened".
   openedViaMigration: boolean;
+  // M26: when it closed, while it stands closed; when it last came back.
+  closedAt: Date | null;
+  reopenedAt: Date | null;
 }
 
 export interface MemberDetail extends MemberSummary {
   accounts: MemberAccount[];
+  // M26: when a resigned membership was last re-admitted; null for one
+  // that never left.
+  rejoinedAt: Date | null;
   // The membership type's own code (individual, corporate, minor) — the
   // detail page tags a minor from this, where the name alone would not
   // survive an administrator renaming the type.
@@ -899,97 +1238,100 @@ const NAME_SQL = `
   trim(coalesce(p.values->>'name', '') || ' ' || coalesce(p.values->>'surname', ''))
 `;
 
+// Officer pagination (src/lib/paging.ts): the largest of the 10/25/50 an
+// officer may choose, and the cap this list refuses to hand back more of
+// regardless of what is asked — the page reads its own limit/offset from
+// pagingFrom rather than this.
+export const MEMBER_LIST_PAGE_SIZE = Math.max(...PAGE_SIZES);
+
+// Status filter (officer request): the values the Members page's own
+// status <select> may send, matching exactly what the Status column shows
+// (shownStatus/isNonMember, status.ts) rather than the raw stored status —
+// 'active' and 'non_member' both span more than one stored status, and
+// 'resigned' here means only a resigned member with nothing left open (one
+// still holding an account is counted under 'active'/'non_member' instead,
+// same as the column reads them).
+export type MemberListStatusFilter =
+  | ''
+  | 'active'
+  | 'dormant'
+  | 'inactive'
+  | 'resigned'
+  | 'demised'
+  | 'non_member'
+  | 'closed';
+
+const MEMBER_LIST_STATUS_FILTERS = new Set<string>([
+  'active',
+  'dormant',
+  'inactive',
+  'resigned',
+  'demised',
+  'non_member',
+  'closed',
+]);
+
 export async function listMembers(
-  options: { search?: string; limit?: number } = {}
+  options: {
+    search?: string;
+    status?: string;
+    limit?: number;
+    offset?: number;
+  } = {}
 ) {
   const search = options.search?.trim() ? options.search.trim() : null;
-  const limit = Math.min(Math.max(options.limit ?? 100, 1), 100);
+  // Anything not one of the select's own values is treated as no filter,
+  // the same forgiving handling pagingFrom gives an out-of-range page.
+  const status = MEMBER_LIST_STATUS_FILTERS.has(options.status ?? '')
+    ? (options.status as MemberListStatusFilter)
+    : null;
+  const limit = Math.min(
+    Math.max(options.limit ?? MEMBER_LIST_PAGE_SIZE, 1),
+    MEMBER_LIST_PAGE_SIZE
+  );
+  const offset = Math.max(options.offset ?? 0, 0);
 
   // S-614: a customer (never a member — customer table, migration 0027)
   // appears in the same list, tagged, since an officer searching by name or
   // number does not know in advance which one they are looking for. Unioned
   // rather than two separate lists, so one search and one page of results
   // covers both.
+  //
+  // Performance QA: the accounts and balances of every member used to be
+  // gathered before the list was cut to its first 100 — at 5,000 members,
+  // a third of a second per visit and six seconds under load. The rows are
+  // now filtered, counted, ordered and paged on what is cheap (who they are,
+  // whether anything of theirs is open), and the accounts and balances are
+  // gathered for the one page actually shown.
   const result = await query<{
     id: string;
     kind: 'member' | 'customer';
     identifier: string;
     type_label: string;
     status: string;
+    status_changed_at: Date | null;
     name: string;
     joined_at: Date;
     application_reference: string | null;
     accounts: MemberListAccount[];
     total_funds: string;
+    non_member: boolean;
     total_count: string;
     member_count: string;
     non_member_count: string;
   }>(
     `with rows as (
        select m.id, 'member'::text as kind, m.member_no as identifier,
-              t.name as type_label, m.status,
+              t.name as type_label, m.status, m.status_changed_at,
               ${NAME_SQL} as name, m.joined_at,
               a.reference as application_reference,
-              coalesce(
-                (select json_agg(json_build_object(
-                           'id', acc.id, 'code', act.code,
-                           'name', act.name,
-                           -- A Shares or MSA account carries no number of
-                           -- its own (migration 0018) and shows the
-                           -- member's — but one carried over from the
-                           -- non-member customer this member used to be
-                           -- (S-614) keeps its own HSA0001-style number,
-                           -- which this member never had reassigned to
-                           -- them (account_owner_shape, migration 0038).
-                           'no', coalesce(acc.account_no, m.member_no)
-                         ) order by act.sort_order, act.name)
-                   from account acc
-                   join account_type act on act.id = acc.account_type_id
-                  where acc.member_id = m.id),
-                '[]'
-              ) as accounts,
-              -- Officer feedback: what the member actually has in the
-              -- Society — Shares, the MSA, and any HSA/Investment/other
-              -- account — never Entrance, the processing fee or Takaful,
-              -- which are one-time charges with no account behind them and
-              -- so never appear in payment_line/payment_account_line under
-              -- these components. Netted against any refund the same way
-              -- transactionsForAccount (payments.ts) treats one account's
-              -- own history — a refund is its own payment row (kind =
-              -- 'refund') carrying the same application_id.
-              coalesce(
-                (select sum(case when p.kind = 'payment' then pl.amount
-                                  else -pl.amount end)
-                   from payment_line pl
-                   join payment p on p.id = pl.payment_id
-                  where p.application_id = m.application_id
-                    and p.voided_at is null
-                    and pl.component_code in ('shares', 'msa_deposit')),
-                0
-              )
-              +
-              -- Each of the member's own accounts (Shares/MSA excluded —
-              -- summed above) joined straight to whichever application
-              -- opened IT, via account.opened_by_application_id (migration
-              -- 0037) — rather than re-deriving which applications belong to
-              -- this member (existing_member_id, or the founding one). That
-              -- derivation had no path back to a customer_account
-              -- application, so an account transferred to this member from
-              -- the non-member customer they used to be (S-614) summed to
-              -- nothing despite the money never having moved.
-              coalesce(
-                (select sum(case when p.kind = 'payment' then pal.amount
-                                  else -pal.amount end)
-                   from account acc
-                   join payment_account_line pal
-                     on pal.account_type_id = acc.account_type_id
-                   join payment p
-                     on p.id = pal.payment_id
-                    and p.application_id = acc.opened_by_application_id
-                  where acc.member_id = m.id
-                    and p.voided_at is null),
-                0
-              ) as total_funds
+              -- Officer feedback: a closed account (a closure, or the
+              -- Shares and MSA a resignation closed) is no longer something
+              -- they hold.
+              exists (
+                select 1 from account acc
+                 where acc.member_id = m.id and acc.status <> 'closed'
+              ) as has_open
          from member m
          join membership_type t on t.id = m.membership_type_id
          left join membership_application a on a.id = m.application_id
@@ -1013,45 +1355,13 @@ export async function listMembers(
                   where acc.customer_id = c.id),
                 ''
               ) as type_label,
-              c.status,
+              c.status, null::timestamptz as status_changed_at,
               ${NAME_SQL} as name, c.joined_at,
               capp.reference as application_reference,
-              coalesce(
-                (select json_agg(json_build_object(
-                           'id', acc.id, 'code', act.code,
-                           'name', act.name, 'no', acc.account_no
-                         ) order by act.sort_order, act.name)
-                   from account acc
-                   join account_type act on act.id = acc.account_type_id
-                  where acc.customer_id = c.id),
-                '[]'
-              ) as accounts,
-              -- A customer never has Shares or an MSA (they are not a
-              -- member) — only whatever account type(s) their own
-              -- applications opened, the same payment_account_line source
-              -- HSA/Investment use for a member above.
-              --
-              -- Joined through account.opened_by_application_id exactly as
-              -- the member arm is, and for the same reason: this used to
-              -- read c.application_id, the one application that created the
-              -- customer, so a non-member who opened a second account later
-              -- (an Investment beside their HSA — its own application, its
-              -- own id) had that second deposit counted as nothing. The
-              -- money had not moved; only the application it was taken
-              -- against was a different one (officer feedback).
-              coalesce(
-                (select sum(case when p.kind = 'payment' then pal.amount
-                                  else -pal.amount end)
-                   from account acc
-                   join payment_account_line pal
-                     on pal.account_type_id = acc.account_type_id
-                   join payment p
-                     on p.id = pal.payment_id
-                    and p.application_id = acc.opened_by_application_id
-                  where acc.customer_id = c.id
-                    and p.voided_at is null),
-                0
-              ) as total_funds
+              exists (
+                select 1 from account acc
+                 where acc.customer_id = c.id and acc.status <> 'closed'
+              ) as has_open
          from customer c
          join membership_application capp on capp.id = c.application_id
          left join application_party p
@@ -1061,32 +1371,106 @@ export async function listMembers(
         -- second record alongside the member they became — their account(s)
         -- already moved (createMemberFromApplication), leaving nothing here
         -- but an empty row with the same name that would otherwise sit
-        -- beside the real one.
-        where c.status = 'active'
+        -- beside the real one. A customer whose every account is closed
+        -- stays listed (counted as former).
+        where c.status in ('active', 'closed')
+     ),
+     page as (
+       select rows.*,
+              -- LC-10/officer direction: a non-member is a customer, or a
+              -- resigned member, still holding an account that is not
+              -- closed — one with nothing open has nothing left to deal on
+              -- and is "former" instead (counted below, never tagged).
+              ((kind = 'customer' or status = 'resigned') and has_open)
+                as non_member,
+              count(*) over () as total_count,
+              -- LC-10: the header splits the total three ways — members
+              -- (holding their membership open), non-members (see above),
+              -- and former (nothing open, membership or account). A resigned
+              -- or demised member is never counted as a member here. Counted
+              -- after the search filter, so the three always add up to the
+              -- total the list is showing.
+              count(*) filter (
+                where kind = 'member' and status not in ('resigned', 'demised')
+              ) over () as member_count,
+              count(*) filter (
+                where (kind = 'customer' or status = 'resigned') and has_open
+              ) over () as non_member_count
+         from rows
+        where ($1::text is null
+               or strpos(lower(identifier), lower($1::text)) > 0
+               or strpos(lower(name), lower($1::text)) > 0)
+          -- The status filter, in has_open/status/kind rather than the
+          -- non_member alias above (a WHERE here cannot see it): each arm
+          -- matches one option of the Members page's own <select>, in the
+          -- same terms shownStatus/isNonMember (status.ts) use for the
+          -- Status column, so a filter and what the column shows never
+          -- disagree.
+          and ($4::text is null
+               or ($4::text = 'active'
+                   -- A customer's own status is 'active' too (a different
+                   -- column, the same word) — kind = 'member' keeps this
+                   -- arm to an actually-active membership, not a customer.
+                   and ((kind = 'member' and status = 'active')
+                        or (status = 'resigned' and has_open)))
+               or ($4::text = 'dormant' and status = 'dormant')
+               or ($4::text = 'inactive' and status = 'inactive')
+               or ($4::text = 'resigned' and status = 'resigned' and not has_open)
+               or ($4::text = 'demised' and status = 'demised')
+               or ($4::text = 'non_member'
+                   and (kind = 'customer' or status = 'resigned') and has_open)
+               or ($4::text = 'closed' and kind = 'customer' and status = 'closed'))
+        order by identifier
+        limit $2::int offset $3::int
      )
-     select id, kind, identifier, type_label, status, name, joined_at,
-            application_reference, accounts, total_funds::numeric(14,2)::text as total_funds,
-            count(*) over () as total_count,
-            -- Officer feedback: the header splits the total into members
-            -- (Shares/MSA holders) and non-members (only an additional
-            -- account). Counted here, after the search filter, so the two
-            -- always add up to the same total the list is showing.
-            count(*) filter (where kind = 'member') over () as member_count,
-            count(*) filter (where kind = 'customer') over () as non_member_count
-       from rows
-      where $1::text is null
-         or strpos(lower(identifier), lower($1::text)) > 0
-         or strpos(lower(name), lower($1::text)) > 0
-      order by identifier
-      limit $2::int`,
-    [search, limit]
+     select page.id, page.kind, page.identifier, page.type_label,
+            page.status, page.status_changed_at, page.name, page.joined_at,
+            page.application_reference, page.non_member, page.total_count,
+            page.member_count, page.non_member_count,
+            coalesce(
+              (select json_agg(json_build_object(
+                         'id', acc.id, 'code', act.code, 'name', act.name,
+                         -- A Shares or MSA account carries no number of its
+                         -- own (migration 0018) and shows the member's — but
+                         -- one carried over from the non-member customer this
+                         -- member used to be (S-614) keeps its own
+                         -- HSA0001-style number (account_owner_shape,
+                         -- migration 0038). A customer's always has one.
+                         'no', coalesce(acc.account_no, page.identifier),
+                         'balance', coalesce(b.balance, 0)::numeric(14,2)::text
+                       ) order by act.sort_order, act.name)
+                 from account acc
+                 join account_type act on act.id = acc.account_type_id
+                 left join account_balance b on b.account_id = acc.id
+                where (acc.member_id = page.id or acc.customer_id = page.id)
+                  and acc.status <> 'closed'),
+              '[]'
+            ) as accounts,
+            -- Officer feedback: what they actually have in the Society —
+            -- every account of theirs, whichever application opened it and
+            -- whether it came with them from the customer they used to be
+            -- (S-614), summed from the ledger's own balance cache
+            -- (docs/ledger.md). Never Entrance, the processing fee or
+            -- Takaful: one-time charges with no account behind them.
+            coalesce(
+              (select sum(b.balance)
+                 from account acc
+                 join account_balance b on b.account_id = acc.id
+                where acc.member_id = page.id or acc.customer_id = page.id),
+              0
+            )::numeric(14,2)::text as total_funds
+       from page
+      order by page.identifier`,
+    [search, limit, offset, status]
   );
 
-  const total = result.rows.length > 0 ? Number(result.rows[0].total_count) : 0;
-  const memberCount =
-    result.rows.length > 0 ? Number(result.rows[0].member_count) : 0;
-  const nonMemberCount =
-    result.rows.length > 0 ? Number(result.rows[0].non_member_count) : 0;
+  const first = result.rows[0];
+  const total = first ? Number(first.total_count) : 0;
+  const memberCount = first ? Number(first.member_count) : 0;
+  const nonMemberCount = first ? Number(first.non_member_count) : 0;
+  // LC-10: everyone neither a member nor a non-member — a resigned or
+  // demised member with nothing open, or a customer with nothing open.
+  const formerCount = total - memberCount - nonMemberCount;
 
   return {
     members: result.rows.map(r => ({
@@ -1095,16 +1479,21 @@ export async function listMembers(
       memberNo: r.identifier,
       membershipTypeName: r.type_label,
       status: r.status,
+      statusChangedAt: r.status_changed_at,
       name: r.name || '(unnamed)',
       joinedAt: r.joined_at,
       applicationReference: r.application_reference,
       accountBadges: r.accounts ?? [],
+      nonMember: r.non_member,
       totalFunds: r.total_funds,
     })),
     total,
     memberCount,
     nonMemberCount,
-    truncated: result.rows.length < total,
+    formerCount,
+    offset,
+    pageSize: limit,
+    truncated: offset + result.rows.length < total,
   };
 }
 
@@ -1117,8 +1506,10 @@ export async function loadMember(id: string): Promise<MemberDetail | null> {
     membership_type_code: string;
     membership_type_id: string;
     status: string;
+    status_changed_at: Date | null;
     name: string;
     joined_at: Date;
+    rejoined_at: Date | null;
     application_reference: string | null;
     application_id: string | null;
     applicant_values: Record<string, string> | null;
@@ -1126,7 +1517,8 @@ export async function loadMember(id: string): Promise<MemberDetail | null> {
   }>(
     `select m.id, m.member_no, t.name as membership_type_name,
             t.code as membership_type_code, m.membership_type_id, m.status,
-            ${NAME_SQL} as name, m.joined_at,
+            m.status_changed_at,
+            ${NAME_SQL} as name, m.joined_at, m.rejoined_at,
             a.reference as application_reference,
             m.application_id,
             p.values as applicant_values,
@@ -1154,11 +1546,13 @@ export async function loadMember(id: string): Promise<MemberDetail | null> {
     is_membership_default: boolean;
     opened_at: Date;
     opened_via_migration: boolean;
+    closed_at: Date | null;
+    reopened_at: Date | null;
   }>(
     `select a.id, a.account_no, a.account_type_id,
             t.name as account_type_name, t.category,
             a.status, a.is_membership_default, a.opened_at,
-            a.opened_via_migration
+            a.opened_via_migration, a.closed_at, a.reopened_at
        from account a
        join account_type t on t.id = a.account_type_id
       where a.member_id = $1
@@ -1177,8 +1571,10 @@ export async function loadMember(id: string): Promise<MemberDetail | null> {
     membershipTypeCode: row.membership_type_code,
     membershipTypeId: row.membership_type_id,
     status: row.status,
+    statusChangedAt: row.status_changed_at,
     name: row.name || '(unnamed)',
     joinedAt: row.joined_at,
+    rejoinedAt: row.rejoined_at,
     applicationReference: row.application_reference,
     applicationId: row.application_id,
     applicantValues: row.applicant_values ?? {},
@@ -1197,6 +1593,8 @@ export async function loadMember(id: string): Promise<MemberDetail | null> {
       isMembershipDefault: a.is_membership_default,
       openedAt: a.opened_at,
       openedViaMigration: a.opened_via_migration,
+      closedAt: a.closed_at,
+      reopenedAt: a.reopened_at,
     })),
   };
 }
@@ -1214,6 +1612,8 @@ export interface CustomerAccount {
   // See MemberAccount's own field — "migrated on", not "opened", for one
   // the legacy import created.
   openedViaMigration: boolean;
+  closedAt: Date | null;
+  reopenedAt: Date | null;
 }
 
 export interface CustomerDetail {
@@ -1278,10 +1678,13 @@ export async function loadCustomer(id: string): Promise<CustomerDetail | null> {
     status: string;
     opened_at: Date;
     opened_via_migration: boolean;
+    closed_at: Date | null;
+    reopened_at: Date | null;
   }>(
     `select a.id, a.account_no, a.account_type_id,
             t.name as account_type_name, t.category,
-            a.status, a.opened_at, a.opened_via_migration
+            a.status, a.opened_at, a.opened_via_migration,
+            a.closed_at, a.reopened_at
        from account a
        join account_type t on t.id = a.account_type_id
       where a.customer_id = $1
@@ -1309,6 +1712,31 @@ export async function loadCustomer(id: string): Promise<CustomerDetail | null> {
       status: a.status,
       openedAt: a.opened_at,
       openedViaMigration: a.opened_via_migration,
+      closedAt: a.closed_at,
+      reopenedAt: a.reopened_at,
     })),
   };
+}
+
+/**
+ * The non-member record an approved customer_account application created,
+ * for its page to link to (lifecycle test: the approved application named
+ * the accounts but offered no way to the person). Follows a conversion: a
+ * customer who has since become a member is found under the member.
+ */
+export async function recordForCustomerApplication(
+  applicationId: string
+): Promise<string | null> {
+  const result = await query<{ id: string }>(
+    `select coalesce(
+              (select m.id from membership_application ma
+                 join member m on m.application_id = ma.id
+                where ma.source_customer_id = c.id
+                order by ma.created_at desc limit 1),
+              c.id) as id
+       from customer c
+      where c.application_id = $1`,
+    [applicationId]
+  );
+  return result.rows[0]?.id ?? null;
 }

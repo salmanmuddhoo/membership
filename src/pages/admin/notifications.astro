@@ -3,11 +3,11 @@
 // own permission (notification.view, migration 0056) so who may see it is
 // Configuration -> Roles' decision, not this page's own.
 import DashboardLayout from '@layouts/DashboardLayout.astro';
+import Pagination from '@components/Pagination.astro';
 import { getNotificationConfig } from '@lib/config';
 import {
   listNotifications,
   notificationCounts,
-  NOTIFICATION_PAGE_LIMIT,
   type NotificationLogRow,
   type NotificationStatus,
 } from '@lib/notifications/log';
@@ -20,6 +20,23 @@ import {
   listNotificationTemplates,
   type NotificationChannel,
 } from '@lib/notifications/templates';
+import { pagingFrom } from '@lib/paging';
+import {
+  BUTTON,
+  CARD,
+  CARD_TITLE,
+  FILTER,
+  HINT,
+  INPUT,
+  MUTED,
+  PAGE,
+  PANEL,
+  SECONDARY,
+  LABEL,
+  NOTICE_ERROR,
+  NOTICE_OK,
+  PILL_WARN,
+} from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 // Reading the log is notification.view (this page's own rule). Sending a real
@@ -78,14 +95,15 @@ const channel = CHANNELS.includes(channelParam as NotificationChannel)
   ? (channelParam as NotificationChannel)
   : undefined;
 const search = params.get('search')?.trim() || '';
-const page = Math.max(Number(params.get('page') ?? '1') || 1, 1);
+const paging = pagingFrom(Astro.url);
 
 const [{ rows, total }, counts, templates] = await Promise.all([
   listNotifications({
     status,
     channel,
     search: search || undefined,
-    offset: (page - 1) * NOTIFICATION_PAGE_LIMIT,
+    limit: paging.per,
+    offset: paging.offset,
   }),
   notificationCounts(),
   listNotificationTemplates(),
@@ -94,18 +112,10 @@ const [{ rows, total }, counts, templates] = await Promise.all([
 const statuses = channelStatuses(getNotificationConfig());
 const sendable = templates.filter(t => t.isActive);
 
-const totalPages = Math.max(Math.ceil(total / NOTIFICATION_PAGE_LIMIT), 1);
-
 const dateTimeFormat = new Intl.DateTimeFormat('en-GB', {
   dateStyle: 'medium',
   timeStyle: 'short',
 });
-
-const pageHref = (target: number) => {
-  const next = new URLSearchParams(params);
-  next.set('page', String(target));
-  return `/admin/notifications?${next.toString()}`;
-};
 
 // A link that filters to one status, from the counts at the top.
 const statusHref = (target: NotificationStatus) =>
@@ -132,28 +142,52 @@ const STATUS_CLASSES: Record<NotificationStatus, string> = {
 };
 
 // What a message is about, in the words the officer uses for it. The event
-// code is the system's name for the thing, not a person's.
+// code is the system's name for the thing, not a person's. Kept in step
+// with the canonical labels on Configuration -> Notification wording
+// (src/pages/admin/configuration/notification-templates.astro); anything
+// that page does not name falls back to a sentence-cased code.
+const EVENT_LABELS: Record<string, string> = {
+  'application.submitted': 'Application received',
+  'application.returned': 'Application returned for correction',
+  'application.approved': 'Membership approved',
+  'application.rejected': 'Application not approved',
+  'account.submitted': 'Account application received',
+  'account.returned': 'Account application returned for correction',
+  'account.approved': 'Account opened',
+  'account.rejected': 'Account application not approved',
+  'receipt.issued': 'Receipt issued',
+  'statement.issued': 'Statement',
+  'closure.submitted': 'Account closure received',
+  'closure.under_review': 'Account closure under review',
+  'closure.approved': 'Account closed and paid out',
+  'closure.rejected': 'Account closure not approved',
+  'resignation.submitted': 'Resignation received',
+  'resignation.under_review': 'Resignation under review',
+  'resignation.approved': 'Resignation approved and paid out',
+  'resignation.rejected': 'Resignation not approved',
+  'demised.submitted': 'Demised claim received',
+  'demised.under_review': 'Demised claim under review',
+  'demised.approved': 'Demised claim paid out',
+  'demised.rejected': 'Demised claim not approved',
+  'deposit.posted': 'Deposit received',
+  'withdrawal.submitted': 'Withdrawal received',
+  'withdrawal.under_review': 'Withdrawal under review',
+  'withdrawal.disbursed': 'Withdrawal paid out',
+  'withdrawal.rejected': 'Withdrawal not approved',
+  'transfer.posted': 'Transfer completed',
+  'balance.near_floor': 'Balance near its minimum',
+  'transaction.awaiting': 'Staff: transaction awaiting a step',
+  'transaction.returned': 'Staff: transaction returned to its captor',
+  'receipt.voided': 'Staff: receipt voided',
+};
+
+function sentenceCase(eventCode: string): string {
+  const words = eventCode.split('.').join(' ');
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
 function describeEventCode(eventCode: string): string {
-  switch (eventCode) {
-    case 'application.submitted':
-      return 'Application received';
-    case 'application.returned':
-      return 'Application returned for correction';
-    case 'application.approved':
-      return 'Membership approved';
-    case 'application.rejected':
-      return 'Application not approved';
-    case 'account.submitted':
-      return 'Account application received';
-    case 'account.returned':
-      return 'Account application returned for correction';
-    case 'account.approved':
-      return 'Account opened';
-    case 'account.rejected':
-      return 'Account application not approved';
-    default:
-      return eventCode.replace(/\./g, ' · ');
-  }
+  return EVENT_LABELS[eventCode] ?? sentenceCase(eventCode);
 }
 
 const describeEvent = (row: NotificationLogRow) =>
@@ -174,22 +208,12 @@ function whenLine(row: NotificationLogRow): string {
   title="Notifications · Al Barakah MCSL"
   heading="Notifications"
 >
-  <div class="mx-auto max-w-6xl space-y-6">
-    {testError && (
-      <p class="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200">
-        {testError}
-      </p>
-    )}
-    {testNotice && (
-      <p class="border-mint-400 bg-mint-50 dark:bg-mint-950 rounded-xl border px-4 py-3 text-sm text-neutral-800 dark:text-neutral-100">
-        {testNotice}
-      </p>
-    )}
+  <div class={PAGE.wide}>
+    {testError && <p class={NOTICE_ERROR}>{testError}</p>}
+    {testNotice && <p class={NOTICE_OK}>{testNotice}</p>}
 
-    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-      <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-        Delivery
-      </h2>
+    <section class={CARD}>
+      <h2 class={CARD_TITLE}>Delivery</h2>
       <ul class="mt-3 space-y-1">
         {statuses.map(s => (
           <li class="flex flex-wrap items-center gap-2 text-sm">
@@ -200,9 +224,7 @@ function whenLine(row: NotificationLogRow): string {
               {s.provider}
             </span>
             {!s.configured && (
-              <span class="rounded-full bg-amber-200 px-2 py-0.5 text-xs font-semibold text-amber-900 dark:bg-amber-900 dark:text-amber-100">
-                Nothing is being sent
-              </span>
+              <span class={PILL_WARN}>Nothing is being sent</span>
             )}
           </li>
         ))}
@@ -210,12 +232,9 @@ function whenLine(row: NotificationLogRow): string {
 
       {canTest && sendable.length > 0 && (
         <form method="post" class="mt-4 grid gap-3 sm:grid-cols-3">
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             Message
-            <select
-              name="templateId"
-              class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-            >
+            <select name="templateId" class={INPUT}>
               {sendable.map(t => (
                 <option value={t.id}>
                   {describeEventCode(t.eventCode)} · {CHANNEL_LABELS[t.channel]}
@@ -223,20 +242,17 @@ function whenLine(row: NotificationLogRow): string {
               ))}
             </select>
           </label>
-          <label class="text-sm text-neutral-600 dark:text-neutral-300">
+          <label class={LABEL}>
             Send to
             <input
               type="text"
               name="recipient"
               placeholder="you@albarakah.mu or +23057891234"
-              class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+              class={INPUT}
             />
           </label>
           <div class="flex items-end">
-            <button
-              type="submit"
-              class="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-200 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
-            >
+            <button type="submit" class={SECONDARY}>
               Send test
             </button>
           </div>
@@ -247,41 +263,38 @@ function whenLine(row: NotificationLogRow): string {
     <section class="grid gap-3 sm:grid-cols-3">
       <a
         href={statusHref('pending')}
-        class="rounded-2xl border border-neutral-200 bg-neutral-100 p-4 transition hover:bg-neutral-200 dark:border-neutral-800 dark:bg-neutral-950 dark:hover:bg-neutral-900"
+        class={`${FILTER} transition hover:bg-neutral-200 dark:hover:bg-neutral-900`}
       >
         <p class="text-2xl font-bold text-neutral-800 dark:text-neutral-100">
           {counts.waiting}
         </p>
-        <p class="text-sm text-neutral-600 dark:text-neutral-300">Waiting</p>
+        <p class={MUTED}>Waiting</p>
       </a>
       <a
         href={statusHref('failed')}
-        class="rounded-2xl border border-neutral-200 bg-neutral-100 p-4 transition hover:bg-neutral-200 dark:border-neutral-800 dark:bg-neutral-950 dark:hover:bg-neutral-900"
+        class={`${FILTER} transition hover:bg-neutral-200 dark:hover:bg-neutral-900`}
       >
         <p class="text-2xl font-bold text-neutral-800 dark:text-neutral-100">
           {counts.failed}
         </p>
-        <p class="text-sm text-neutral-600 dark:text-neutral-300">Retrying</p>
+        <p class={MUTED}>Retrying</p>
       </a>
       <a
         href={statusHref('abandoned')}
-        class="rounded-2xl border border-neutral-200 bg-neutral-100 p-4 transition hover:bg-neutral-200 dark:border-neutral-800 dark:bg-neutral-950 dark:hover:bg-neutral-900"
+        class={`${FILTER} transition hover:bg-neutral-200 dark:hover:bg-neutral-900`}
       >
         <p class="text-2xl font-bold text-neutral-800 dark:text-neutral-100">
           {counts.abandoned}
         </p>
-        <p class="text-sm text-neutral-600 dark:text-neutral-300">Given up</p>
+        <p class={MUTED}>Given up</p>
       </a>
     </section>
 
-    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+    <section class={CARD}>
       <form method="get" class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <label class="text-sm text-neutral-600 dark:text-neutral-300">
+        <label class={LABEL}>
           Status
-          <select
-            name="status"
-            class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-          >
+          <select name="status" class={INPUT}>
             <option value="">All</option>
             {STATUSES.map(s => (
               <option value={s} selected={s === status}>
@@ -290,12 +303,9 @@ function whenLine(row: NotificationLogRow): string {
             ))}
           </select>
         </label>
-        <label class="text-sm text-neutral-600 dark:text-neutral-300">
+        <label class={LABEL}>
           Channel
-          <select
-            name="channel"
-            class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-          >
+          <select name="channel" class={INPUT}>
             <option value="">All</option>
             {CHANNELS.map(c => (
               <option value={c} selected={c === channel}>
@@ -304,20 +314,18 @@ function whenLine(row: NotificationLogRow): string {
             ))}
           </select>
         </label>
-        <label class="text-sm text-neutral-600 dark:text-neutral-300">
+        <label class={LABEL}>
           Address or reference
           <input
             type="text"
             name="search"
             value={search}
-            class="mt-1 w-full rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+            data-suggest="/admin/notifications/suggest.json"
+            class={INPUT}
           />
         </label>
         <div class="flex items-end gap-3">
-          <button
-            type="submit"
-            class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
-          >
+          <button type="submit" class={BUTTON}>
             Filter
           </button>
           {(status || channel || search) && (
@@ -332,26 +340,19 @@ function whenLine(row: NotificationLogRow): string {
       </form>
     </section>
 
-    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+    <section class={CARD}>
       <div class="flex flex-wrap items-center justify-between gap-2">
-        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
+        <h2 class={CARD_TITLE}>
           {total} message{total === 1 ? '' : 's'}
         </h2>
-        {totalPages > 1 && (
-          <p class="text-sm text-neutral-500 dark:text-neutral-400">
-            Page {page} of {totalPages}
-          </p>
-        )}
       </div>
 
       {rows.length === 0 ? (
-        <p class="mt-4 text-sm text-neutral-500 dark:text-neutral-400">
-          Nothing matches those filters.
-        </p>
+        <p class={`${HINT} mt-4`}>Nothing matches those filters.</p>
       ) : (
         <ul class="mt-4 space-y-2">
           {rows.map(row => (
-            <li class="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+            <li class={PANEL}>
               <div class="flex flex-wrap items-start justify-between gap-2">
                 <div>
                   <p class="text-sm font-medium text-neutral-800 dark:text-neutral-100">
@@ -408,28 +409,7 @@ function whenLine(row: NotificationLogRow): string {
         </ul>
       )}
 
-      {totalPages > 1 && (
-        <div class="mt-4 flex items-center justify-between gap-2 text-sm">
-          {page > 1 ? (
-            <a
-              href={pageHref(page - 1)}
-              class="rounded-lg border border-neutral-300 px-3 py-1.5 font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
-            >
-              ← Newer
-            </a>
-          ) : (
-            <span />
-          )}
-          {page < totalPages && (
-            <a
-              href={pageHref(page + 1)}
-              class="rounded-lg border border-neutral-300 px-3 py-1.5 font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
-            >
-              Older →
-            </a>
-          )}
-        </div>
-      )}
+      <Pagination total={total} paging={paging} noun="messages" />
     </section>
   </div>
 </DashboardLayout>

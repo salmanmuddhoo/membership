@@ -1,0 +1,1326 @@
+---
+// One transaction, whatever its kind (S-1403, S-1404, S-1406): what it is,
+// where it stands, what this person may do with it now — review, decide,
+// post, or correct and resubmit — and the trail of who did what.
+import ChainTimeline from '@components/ChainTimeline.astro';
+import DocumentViewer from '@components/DocumentViewer.astro';
+import { recordedLabel, transactionStatusLabel } from '@lib/ledger/labels';
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import {
+  documentsForTransaction,
+  DocumentError,
+  reviewDocument,
+} from '@lib/documents/documents';
+import {
+  cashMaximum,
+  cashSourceOfFundThreshold,
+  listAccountTypes,
+  offeredBankAccounts,
+  offeredPaymentMethods,
+} from '@lib/config/reference';
+import {
+  DepositError,
+  PERMISSION_CAPTURE,
+  resubmitDeposit,
+} from '@lib/ledger/deposits';
+import {
+  PERMISSION_REVERSE,
+  ReversalError,
+  reversalOf,
+  reverseTransaction,
+  EXIT_KINDS,
+} from '@lib/ledger/reversals';
+import {
+  accountsClosedTogether,
+  draftsLeftOnDeath,
+} from '@lib/ledger/claimants';
+import { guardianGoneMessage } from '@lib/members/guardian';
+import DraftsCancelledOnDeath from '@components/DraftsCancelledOnDeath.astro';
+import { resubmitTransfer, TransferError } from '@lib/ledger/transfers';
+import { resubmitWithdrawal, WithdrawalError } from '@lib/ledger/withdrawals';
+import {
+  IN_FLIGHT,
+  loadTransaction,
+  loadTransactionByReference,
+  mayActAt,
+  needsDisbursement,
+  permissionToPost,
+  positionOf,
+  postApprovedTransaction,
+  ReviewError,
+  reviewTransaction,
+  transitionsFor,
+} from '@lib/ledger/review';
+import { loadCustomer, loadMember } from '@lib/members/create';
+import { formatMoney, toCents } from '@lib/payments/money';
+import {
+  chainTimeline,
+  initialRouteBand,
+  routePreviewGroups,
+} from '@lib/workflow/timeline';
+import {
+  PAGE,
+  CARD,
+  FORM_CARD,
+  CARD_LABEL,
+  HINT,
+  MUTED,
+  LABEL,
+  INPUT,
+  BUTTON,
+  BUTTON_SM,
+  DANGER,
+  DANGER_SM,
+  INPUT_SM,
+  NOTICE_ERROR,
+  NOTICE_WARN,
+  NOTICE_OK,
+  TAG,
+  VIEW_BUTTON,
+} from '@lib/ui';
+
+const principal = Astro.locals.principal!;
+const { id } = Astro.params;
+// By id, or by the reference an auditor reads off the audit log (S-1406).
+let transaction = !id
+  ? null
+  : /^tx-\d+$/i.test(id)
+    ? await loadTransactionByReference(id)
+    : await loadTransaction(id);
+if (!transaction) return new Response('Not found', { status: 404 });
+
+const KIND_LABELS: Record<string, string> = {
+  deposit: 'Deposit',
+  withdrawal: 'Withdrawal',
+  transfer: 'Transfer',
+  transfer_leg: 'Transfer',
+  reversal: 'Reversal',
+  closure: 'Account closure',
+  resignation: 'Resignation',
+  demise: 'Demised claim',
+};
+
+let error: string | null = null;
+let notice: string | null = null;
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const text = (name: string) => String(form.get(name) ?? '');
+  const intent = text('intent');
+  try {
+    if (intent === 'review') {
+      const outcome = text('outcome');
+      if (
+        outcome !== 'forward' &&
+        outcome !== 'return' &&
+        outcome !== 'reject'
+      ) {
+        throw new ReviewError('Choose what to do with it.');
+      }
+      const result = await reviewTransaction(
+        transaction.id,
+        { outcome, comment: text('comment') },
+        principal
+      );
+      notice = `${transaction.displayReference} ${transactionStatusLabel({ ...transaction, status: result.status }).toLowerCase()}.`;
+    } else if (intent === 'post') {
+      // A withdrawal says how it was paid out (S-1503); a deposit already
+      // said how it arrived.
+      const posted = await postApprovedTransaction(
+        transaction.id,
+        principal,
+        needsDisbursement(transaction)
+          ? {
+              method: text('method'),
+              methodReference: text('methodReference'),
+              bankAccountId: text('bankAccountId'),
+            }
+          : undefined
+      );
+      const done = (recordedLabel(transaction) ?? 'Disbursed').toLowerCase();
+      notice = posted.receiptNo
+        ? `${transaction.displayReference} ${done}. Receipt ${posted.receiptNo}.`
+        : `${transaction.displayReference} ${done}.`;
+    } else if (intent === 'reverse') {
+      const result = await reverseTransaction(
+        transaction.id,
+        { reason: text('reason') },
+        principal
+      );
+      const refs = result.reversals.map(r => r.reference).join(' and ');
+      notice = `${transaction.displayReference} reversed by ${refs}. Receipt ${result.reversals[0]?.receiptNo ?? ''}.`;
+    } else if (intent === 'verify-document' || intent === 'reject-document') {
+      const outcome = intent === 'verify-document' ? 'verify' : 'reject';
+      const result = await reviewDocument(
+        text('documentId'),
+        { outcome, reason: text('reason') },
+        principal
+      );
+      notice =
+        result.state === 'verified'
+          ? 'Document verified.'
+          : 'Document rejected.';
+    } else if (intent === 'resubmit') {
+      const edit = {
+        accountId: text('accountId'),
+        amount: text('amount'),
+        method: text('method'),
+        methodReference: text('methodReference'),
+        bankAccountId: text('bankAccountId'),
+        reason: text('reason'),
+      };
+      const result =
+        transaction.kind === 'transfer_leg'
+          ? (await resubmitTransfer(transaction.id, edit, principal)).debitLeg
+          : transaction.kind === 'withdrawal'
+            ? await resubmitWithdrawal(transaction.id, edit, principal)
+            : await resubmitDeposit(
+                transaction.id,
+                {
+                  ...edit,
+                  sourceOfFundFormConfirmed:
+                    form.get('sourceOfFundFormConfirmed') === 'true',
+                },
+                principal
+              );
+      notice =
+        result.status === 'posted'
+          ? `${transaction.displayReference} ${(recordedLabel(transaction) ?? 'Disbursed').toLowerCase()}. Receipt ${result.receiptNo}.`
+          : `${transaction.displayReference} sent back for ${result.currentStepName ?? 'review'}.`;
+    }
+  } catch (err) {
+    if (
+      err instanceof ReviewError ||
+      err instanceof DepositError ||
+      err instanceof WithdrawalError ||
+      err instanceof TransferError ||
+      err instanceof ReversalError ||
+      err instanceof DocumentError
+    ) {
+      error = err.message;
+    } else {
+      console.error('[transactions/review]', err);
+      error = 'Something went wrong. Please try again.';
+    }
+  }
+  transaction = (await loadTransaction(transaction.id))!;
+}
+
+const position = (IN_FLIGHT as readonly string[]).includes(transaction.status)
+  ? await positionOf(transaction)
+  : null;
+const canAct = position ? mayActAt(position, principal) : false;
+// A posted mistake is undone by a reversal, never an edit (S-1505). A
+// transfer is reversed from its debit leg, whole.
+// Once reversed, there is nothing left to reverse: the block gives way to
+// a line naming the reversal.
+const reversedBy =
+  transaction.status === 'posted' && transaction.kind !== 'reversal'
+    ? await reversalOf(transaction.id)
+    : null;
+// Nor is an exit: it closed the accounts it paid out of (QA-04).
+const canReverse =
+  transaction.status === 'posted' &&
+  transaction.kind !== 'reversal' &&
+  !(EXIT_KINDS as readonly string[]).includes(transaction.kind) &&
+  transaction.legDirection !== 'credit' &&
+  !reversedBy &&
+  principal.permissions.has(PERMISSION_REVERSE);
+const canPost =
+  transaction.status === 'approved' &&
+  principal.permissions.has(permissionToPost(transaction)) &&
+  transaction.capturedById !== principal.userId &&
+  transaction.legDirection !== 'credit';
+// A transfer is reviewed, posted and corrected from its debit leg; the
+// credit leg only follows (S-1504).
+const isCreditLeg = transaction.legDirection === 'credit';
+const isTransfer = transaction.kind === 'transfer_leg';
+const canEdit =
+  transaction.status === 'returned' &&
+  transaction.capturedById === principal.userId &&
+  principal.permissions.has(PERMISSION_CAPTURE) &&
+  !isCreditLeg &&
+  (transaction.kind === 'deposit' ||
+    transaction.kind === 'withdrawal' ||
+    isTransfer);
+const isDeposit = transaction.kind === 'deposit';
+// A closure (S-1702) is corrected in its own wizard, not here: the signed
+// request may need signing again.
+const isClosure = transaction.kind === 'closure';
+const isResignation = transaction.kind === 'resignation';
+const isDemise = transaction.kind === 'demise';
+// A closure on a death and a demised claim cover every account the holder
+// has, and a resignation the Shares and the MSA, not just
+// transaction.accountId (the lead one) — shown as their own list below.
+const closedOnDeathAccounts =
+  (isClosure && transaction.claimant) || isDemise || isResignation
+    ? await accountsClosedTogether(transaction.id)
+    : [];
+// A claim not yet disbursed names the holder's drafts it will cancel.
+const draftsOnDeath =
+  ((isClosure && transaction.claimant) || isDemise) &&
+  !['posted', 'rejected', 'cancelled'].includes(transaction.status)
+    ? await draftsLeftOnDeath(transaction.holderId, transaction.id)
+    : [];
+// Money out of a minor whose guardian is demised goes no further until a
+// new guardian is recorded (review.ts refuseWhileGuardianGone); it can
+// still be returned or rejected.
+const guardianGone =
+  ['withdrawal', 'transfer_leg', 'closure', 'resignation'].includes(
+    transaction.kind
+  ) && ['submitted', 'under_review', 'approved'].includes(transaction.status)
+    ? await guardianGoneMessage(
+        isCreditLeg ? transaction.counterpartHolderId : transaction.holderId
+      )
+    : null;
+// A request the officer built (a closure, a resignation, a claim): its
+// papers are on it, and it is corrected in its own wizard.
+const isExit = isClosure || isResignation || isDemise;
+const exitInHand =
+  isExit &&
+  (transaction.status === 'returned' || transaction.status === 'draft');
+const canEditClosure =
+  exitInHand &&
+  transaction.capturedById === principal.userId &&
+  principal.permissions.has(PERMISSION_CAPTURE);
+// Officer feedback: a colleague's draft looked stuck — nothing to do on it,
+// and no word on why. Its captor is the only one who can continue or
+// cancel it (the wizard is theirs), so say so.
+const heldByColleague = exitInHand && !canEditClosure;
+const closureDocuments =
+  isExit || transaction.kind === 'deposit'
+    ? await documentsForTransaction(transaction.id)
+    : [];
+// A document's own author may not check it — reviewDocument refuses
+// regardless, this only keeps the controls off the screen when they could
+// never work (the same officer-feedback rule the application pages follow).
+// A deposit's Source of Fund form is not checked by anyone else (officer
+// direction): its captor submits on the signed form alone.
+const canVerifyDocuments =
+  principal.permissions.has('document.verify') &&
+  transaction.capturedById !== principal.userId &&
+  transaction.kind !== 'deposit';
+// A deposit request still its captor's to finish (S-1306): the wizard has
+// the amount, the signature and the submission, not this page.
+const canContinueDepositRequest =
+  transaction.kind === 'deposit' &&
+  transaction.status === 'draft' &&
+  transaction.capturedById === principal.userId;
+// Posting money that leaves the Society is paying it out: the method and
+// reference are recorded then (S-1503).
+const disburses = needsDisbursement(transaction);
+const stalled =
+  (IN_FLIGHT as readonly string[]).includes(transaction.status) && !position;
+
+const trail = await transitionsFor(transaction.id);
+// The chevron, from the chain as it is now (S-1405).
+const timeline = (await chainTimeline('transaction', transaction.id)) ?? [];
+const canReadAudit = principal.permissions.has('audit.view');
+// The comment that sent it back, for the officer correcting it.
+const returnComment =
+  transaction.status === 'returned'
+    ? [...trail].reverse().find(t => t.toStatus === 'returned')?.comment
+    : null;
+
+// The correction form's choices, only when it is offered.
+const person =
+  canEdit && !isTransfer
+    ? transaction.holderKind === 'member'
+      ? await loadMember(transaction.holderId)
+      : await loadCustomer(transaction.holderId)
+    : null;
+const types = canEdit
+  ? new Map((await listAccountTypes()).map(t => [t.id, t]))
+  : new Map();
+const accounts = (person?.accounts ?? []).map(a => ({
+  ...a,
+  allowed: isDeposit
+    ? (types.get(a.accountTypeId)?.allowsDeposit ?? false)
+    : (types.get(a.accountTypeId)?.allowsWithdrawal ?? false),
+}));
+const paymentMethods =
+  canEdit || (canPost && disburses) ? await offeredPaymentMethods() : [];
+const bankAccounts =
+  canEdit || (canPost && disburses) ? await offeredBankAccounts() : [];
+
+// Disbursing: the method on the record is only the placeholder capture
+// offered first (Cash), not what the Treasurer actually pays by — so the
+// form starts at cheque, the Society's usual way of paying out, when it is
+// offered. A bank account the transaction already names is kept; failing
+// that, the one account offered is preselected rather than left for the
+// Treasurer to pick from a list of one.
+const disbursementMethod =
+  canPost && disburses && paymentMethods.some(m => m.code === 'cheque')
+    ? 'cheque'
+    : transaction.method;
+const disbursementBankAccountId =
+  canPost && disburses
+    ? (transaction.bankAccountId ??
+      (bankAccounts.length === 1 ? bankAccounts[0].id : null))
+    : transaction.bankAccountId;
+
+// A returned withdrawal asks how it is paid out only if, as corrected, it
+// is paid out at once; one that goes for approval is paid how the
+// Treasurer says at Disburse. The bands say which, by account and amount.
+const withdrawalBands =
+  canEdit && transaction.kind === 'withdrawal'
+    ? await routePreviewGroups(
+        'withdrawal',
+        accounts.filter(a => a.status === 'active' && a.allowed),
+        principal.roles
+      )
+    : [];
+const editPaidAtOnce =
+  transaction.kind !== 'withdrawal' ||
+  (initialRouteBand(
+    withdrawalBands,
+    transaction.accountId,
+    toCents(transaction.amount)
+  )?.atOnce ??
+    true);
+const withdrawalBandData = JSON.stringify(
+  withdrawalBands.flatMap(g =>
+    g.bands.map(b => ({
+      account: g.accountId,
+      from: b.fromCents,
+      to: b.toCents,
+      atOnce: b.atOnce,
+    }))
+  )
+);
+
+const cashThreshold =
+  canEdit && isDeposit ? await cashSourceOfFundThreshold() : '';
+const cashMax = canEdit && isDeposit ? await cashMaximum() : '';
+
+const dateFormat = new Intl.DateTimeFormat('en-GB', {
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+});
+---
+
+<DashboardLayout
+  title={`${transaction.displayReference} · Al Barakah MCSL`}
+  heading={`${KIND_LABELS[transaction.kind] ?? transaction.kind} ${transaction.displayReference}`}
+>
+  <div class={PAGE.detail}>
+    <ChainTimeline steps={timeline} label="Transaction progress" />
+
+    <div
+      class="sticky z-20 -mx-4 flex flex-wrap items-center justify-between gap-2 border-t border-neutral-200/80 bg-neutral-100/95 px-4 py-3 text-sm backdrop-blur-md sm:mx-0 sm:rounded-b-2xl sm:px-3 sm:py-1.5 dark:border-neutral-800/80 dark:bg-neutral-950/95"
+      style="top: calc(var(--app-header-height, 3.75rem) + var(--app-timeline-height, 0px))"
+    >
+      <a
+        href="/transactions/pending"
+        class="text-neutral-500 underline dark:text-neutral-400"
+      >
+        ← Waiting on you
+      </a>
+      <span class="flex flex-wrap items-center gap-2">
+        {canReadAudit && (
+          <a
+            href={`/admin/audit-log?entityType=transaction&entityId=${encodeURIComponent(transaction.reference)}`}
+            class="text-neutral-500 underline dark:text-neutral-400"
+          >
+            Audit log
+          </a>
+        )}
+        <span class={TAG}>
+          {transactionStatusLabel(transaction)}
+          {position && ` · ${position.step.name} (${position.step.roleName})`}
+        </span>
+      </span>
+    </div>
+
+    {canContinueDepositRequest && (
+      <p class="text-sm">
+        <a
+          href={`/deposits/${transaction.id}`}
+          class="text-neutral-500 underline dark:text-neutral-400"
+        >
+          Continue the request
+        </a>
+      </p>
+    )}
+
+    {error && <div class={NOTICE_ERROR}>{error}</div>}
+    {notice && <div class={NOTICE_OK}>{notice}</div>}
+
+    <section class={CARD}>
+      <dl class="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
+        <dt class="text-neutral-500 dark:text-neutral-400">Who</dt>
+        <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+          <a href={`/members/${transaction.holderId}`} class="underline">
+            {transaction.holderName || transaction.holderKind}
+          </a>
+          {transaction.memberNo && ` · ${transaction.memberNo}`}
+        </dd>
+        {closedOnDeathAccounts.length > 0 ? (
+          <>
+            <dt class="text-neutral-500 dark:text-neutral-400">Accounts</dt>
+            <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+              <ul class="space-y-1">
+                {closedOnDeathAccounts.map(account => (
+                  <li>
+                    <a href={`/accounts/${account.id}`} class="underline">
+                      {account.accountNo}
+                    </a>
+                    {' · '}
+                    {account.typeName}
+                    {' · '}
+                    {formatMoney(account.amount, transaction.currency)}
+                  </li>
+                ))}
+              </ul>
+            </dd>
+          </>
+        ) : (
+          <>
+            <dt class="text-neutral-500 dark:text-neutral-400">Account</dt>
+            <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+              <a href={`/accounts/${transaction.accountId}`} class="underline">
+                {transaction.accountNo}
+              </a>
+              {' · '}
+              {transaction.accountTypeName}
+            </dd>
+          </>
+        )}
+        {isTransfer && (
+          <>
+            <dt class="text-neutral-500 dark:text-neutral-400">
+              {isCreditLeg ? 'From' : 'To'}
+            </dt>
+            <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+              {transaction.counterpartAccountId ? (
+                <>
+                  <a
+                    href={`/members/${transaction.counterpartHolderId}`}
+                    class="underline"
+                  >
+                    {transaction.counterpartHolderName || 'account'}
+                  </a>
+                  {' · '}
+                  {transaction.counterpartAccountNo} ·{' '}
+                  {transaction.counterpartAccountTypeName}
+                </>
+              ) : (
+                transaction.payeeName
+              )}
+            </dd>
+          </>
+        )}
+        <dt class="text-neutral-500 dark:text-neutral-400">
+          {isDemise
+            ? 'Total to pay out'
+            : isExit
+              ? 'Balance to pay out'
+              : 'Amount'}
+        </dt>
+        <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+          {formatMoney(transaction.amount, transaction.currency)}
+          {/* How money out was paid is the Treasurer's to say at Disburse;
+              until then there is nothing to show. */}
+          {transaction.method !== 'internal_transfer' &&
+            !(disburses && transaction.status !== 'posted') && (
+              <>
+                {' by '}
+                {transaction.methodName}
+                {transaction.methodReference &&
+                  ` · ${transaction.methodReference}`}
+                {transaction.bankAccountName &&
+                  ` · ${transaction.bankAccountName}`}
+              </>
+            )}
+        </dd>
+        {isDemise && transaction.claimant && (
+          <>
+            <dt class="text-neutral-500 dark:text-neutral-400">Claimant</dt>
+            <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+              {transaction.claimant.name} · {transaction.claimant.relation}
+              <span class="block text-xs font-normal text-neutral-500 dark:text-neutral-400">
+                {[transaction.claimant.nic, transaction.claimant.address]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </span>
+            </dd>
+            <dt class="text-neutral-500 dark:text-neutral-400">
+              Takaful benefit
+            </dt>
+            <dd class="text-neutral-800 dark:text-neutral-100">
+              {formatMoney(transaction.takafulBenefit, transaction.currency)}
+            </dd>
+          </>
+        )}
+        {/* A closure on a death (business decision): paid to the nominee
+            or another person, a death certificate on file — no Takaful
+            benefit, unlike a demised claim. It covers every account the
+            holder has, not just this one, paid to the claimant together. */}
+        {isClosure && transaction.claimant && (
+          <>
+            <dt class="text-neutral-500 dark:text-neutral-400">Paid to</dt>
+            <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+              {transaction.claimant.name} · {transaction.claimant.relation}
+              <span class="block text-xs font-normal text-neutral-500 dark:text-neutral-400">
+                {[transaction.claimant.nic, transaction.claimant.address]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </span>
+            </dd>
+          </>
+        )}
+        {transaction.reason && (
+          <>
+            <dt class="text-neutral-500 dark:text-neutral-400">
+              {isExit && !isDemise ? 'Reason' : 'Note'}
+            </dt>
+            <dd class="text-neutral-800 dark:text-neutral-100">
+              {transaction.reason}
+            </dd>
+          </>
+        )}
+        {(closureDocuments.length > 0 || isExit) && (
+          <>
+            <dt class="text-neutral-500 dark:text-neutral-400">
+              {isDeposit
+                ? 'Source of Fund form'
+                : isDemise
+                  ? 'Documents'
+                  : transaction.claimant
+                    ? 'Death certificate'
+                    : 'Signed request'}
+            </dt>
+            <dd class="text-neutral-800 dark:text-neutral-100">
+              {closureDocuments.length === 0 ? (
+                <span class="text-red-700 dark:text-red-300">Not on file</span>
+              ) : (
+                <ul class="space-y-2">
+                  {closureDocuments.map(document => (
+                    <li class="flex flex-wrap items-center gap-x-2 gap-y-2">
+                      <span class="flex flex-wrap items-center gap-x-2">
+                        <span class="font-medium text-neutral-800 dark:text-neutral-100">
+                          {document.documentName}
+                        </span>
+                        <button
+                          type="button"
+                          data-view-document
+                          data-document-id={document.documentId}
+                          class={VIEW_BUTTON}
+                        >
+                          View
+                        </button>
+                        {document.state === 'verified' && (
+                          <span class="text-xs text-neutral-500 dark:text-neutral-400">
+                            verified
+                          </span>
+                        )}
+                        {document.state === 'rejected' && (
+                          <span class="text-xs text-red-700 dark:text-red-300">
+                            rejected
+                          </span>
+                        )}
+                      </span>
+                      {canVerifyDocuments &&
+                        document.state === 'under_review' && (
+                          <span class="flex flex-wrap items-center gap-2">
+                            <form method="post" class="flex items-center gap-2">
+                              <input
+                                type="hidden"
+                                name="intent"
+                                value="verify-document"
+                              />
+                              <input
+                                type="hidden"
+                                name="documentId"
+                                value={document.documentId}
+                              />
+                              <button type="submit" class={BUTTON_SM}>
+                                Verify
+                              </button>
+                            </form>
+                            <form method="post" class="flex items-center gap-2">
+                              <input
+                                type="hidden"
+                                name="intent"
+                                value="reject-document"
+                              />
+                              <input
+                                type="hidden"
+                                name="documentId"
+                                value={document.documentId}
+                              />
+                              <input
+                                type="text"
+                                name="reason"
+                                required
+                                placeholder="Why is this being rejected?"
+                                class={INPUT_SM}
+                              />
+                              <button type="submit" class={DANGER_SM}>
+                                Reject
+                              </button>
+                            </form>
+                          </span>
+                        )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </dd>
+          </>
+        )}
+        <dt class="text-neutral-500 dark:text-neutral-400">Recorded by</dt>
+        <dd class="text-neutral-800 dark:text-neutral-100">
+          {transaction.capturedByName} ·{' '}
+          {dateFormat.format(transaction.createdAt)}
+        </dd>
+        {transaction.receiptNo && (
+          <>
+            <dt class="text-neutral-500 dark:text-neutral-400">Receipt</dt>
+            <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+              <a href={`/receipts/${transaction.id}`} class="underline">
+                {transaction.receiptNo}
+              </a>
+            </dd>
+          </>
+        )}
+        {transaction.workflowName && (
+          <>
+            <dt class="text-neutral-500 dark:text-neutral-400">Chain</dt>
+            <dd class="text-neutral-800 dark:text-neutral-100">
+              {transaction.workflowName}
+            </dd>
+          </>
+        )}
+      </dl>
+    </section>
+
+    {isCreditLeg && (
+      <p class="rounded-lg border border-neutral-300 px-4 py-3 text-sm text-neutral-700 dark:border-neutral-700 dark:text-neutral-200">
+        This is the receiving side of a transfer. It posts with the other side.
+      </p>
+    )}
+
+    {isDemise && transaction.status !== 'posted' && (
+      <p class="rounded-lg border border-neutral-300 px-4 py-3 text-sm text-neutral-700 dark:border-neutral-700 dark:text-neutral-200">
+        {`Settles ${transaction.holderName || 'this member'}: every account closes, the total is paid to the claimant when it is approved, and the membership ends with it.`}
+      </p>
+    )}
+
+    {isResignation && transaction.status !== 'posted' && (
+      <p class="rounded-lg border border-neutral-300 px-4 py-3 text-sm text-neutral-700 dark:border-neutral-700 dark:text-neutral-200">
+        Resigns {transaction.holderName || 'this member'}: Shares and the
+        Multiplier Savings Account close together, their balances paid out when
+        it is approved, and the membership ends with it.
+      </p>
+    )}
+
+    {isClosure && transaction.status !== 'posted' && (
+      <p class="rounded-lg border border-neutral-300 px-4 py-3 text-sm text-neutral-700 dark:border-neutral-700 dark:text-neutral-200">
+        {transaction.claimant
+          ? `Closes every account above and pays the total to ${transaction.claimant.name} when it is approved.`
+          : `Closes ${transaction.accountNo} · ${transaction.accountTypeName}. The balance is paid out when it is approved, as it stands then, and the account closes with it.`}
+      </p>
+    )}
+
+    <DraftsCancelledOnDeath drafts={draftsOnDeath} />
+
+    {guardianGone && <p class={NOTICE_WARN}>{guardianGone}</p>}
+
+    {heldByColleague && (
+      <p class={NOTICE_WARN}>
+        {transaction.status === 'returned' ? 'Returned to' : 'Draft with'}{' '}
+        {transaction.capturedByName}. Only they can continue or cancel it.
+      </p>
+    )}
+
+    {canEditClosure && (
+      <div class={`flex flex-wrap items-center gap-3 ${CARD}`}>
+        {returnComment && (
+          <p class="w-full rounded-lg border border-amber-300 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200">
+            {returnComment}
+          </p>
+        )}
+        <a
+          href={`/${isDemise ? 'demises' : isResignation ? 'resignations' : 'closures'}/${transaction.id}`}
+          class={BUTTON}
+        >
+          {transaction.status === 'returned'
+            ? 'Correct and resubmit'
+            : 'Continue the request'}
+        </a>
+      </div>
+    )}
+
+    {stalled && !isCreditLeg && (
+      <p class="rounded-lg border border-amber-300 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200">
+        No enabled step remains on this chain. Ask an administrator to enable
+        one.
+      </p>
+    )}
+
+    {canAct && position && !isCreditLeg && (
+      <form method="post" class={`space-y-3 ${CARD}`}>
+        <h2 class={CARD_LABEL}>{position.step.name}</h2>
+        <label class={LABEL}>
+          Comment
+          <textarea
+            name="comment"
+            rows="3"
+            class={INPUT}
+            placeholder={
+              position.isLast
+                ? 'Required if you reject it.'
+                : 'Required if you return or reject it.'
+            }
+          ></textarea>
+        </label>
+        <div class="flex flex-wrap gap-2">
+          {!guardianGone && (
+            <button type="submit" name="outcome" value="forward" class={BUTTON}>
+              {position.isLast ? 'Approve' : 'Forward'}
+            </button>
+          )}
+          <button type="submit" name="outcome" value="return" class={DANGER}>
+            Return
+          </button>
+          <button type="submit" name="outcome" value="reject" class={DANGER}>
+            Reject
+          </button>
+        </div>
+        <input type="hidden" name="intent" value="review" />
+      </form>
+    )}
+
+    {canPost && !guardianGone && (
+      <form method="post" data-disbursement-form class={`space-y-3 ${CARD}`}>
+        <p class="text-sm text-neutral-700 dark:text-neutral-200">
+          {isDemise
+            ? 'Approved. Record how the claimant was paid; every account closes, the membership ends and the receipt is issued now.'
+            : isResignation
+              ? 'Approved. Record how the balances were paid out; both accounts close, the membership ends and the receipt is issued now.'
+              : isClosure
+                ? transaction.claimant
+                  ? 'Approved. Record how the claimant was paid; every account closes and the receipt is issued now.'
+                  : 'Approved. Record how the balance was paid out; the account closes and the receipt is issued now.'
+                : disburses
+                  ? 'Approved. Record how it is paid out; disbursing moves the money and issues the receipt.'
+                  : 'Approved. Recording it moves the money and issues the receipt.'}
+        </p>
+        {disburses && (
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label class={LABEL}>
+              Paid by
+              <select name="method" class={INPUT}>
+                {paymentMethods.map(method => (
+                  <option
+                    value={method.code}
+                    data-requires-reference={
+                      method.requiresReference || method.touchesBank
+                        ? 'true'
+                        : 'false'
+                    }
+                    data-touches-bank={method.touchesBank ? 'true' : 'false'}
+                    selected={method.code === disbursementMethod}
+                  >
+                    {method.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label data-method-reference-field class={LABEL}>
+              Reference (cheque number, transfer reference)
+              <input
+                type="text"
+                name="methodReference"
+                value={transaction.methodReference}
+                class={INPUT}
+              />
+            </label>
+            <label data-bank-account-field class={LABEL}>
+              Bank account
+              <select name="bankAccountId" class={INPUT}>
+                <option value="">Choose…</option>
+                {bankAccounts.map(account => (
+                  <option
+                    value={account.id}
+                    selected={account.id === disbursementBankAccountId}
+                  >
+                    {account.name} · {account.bankName}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        )}
+        <input type="hidden" name="intent" value="post" />
+        <button type="submit" class={BUTTON}>
+          {isDeposit
+            ? 'Record deposit'
+            : isTransfer && !disburses
+              ? 'Record transfer'
+              : 'Disburse'}
+        </button>
+      </form>
+    )}
+
+    {canEdit && isTransfer && (
+      <form method="post" data-transfer-edit-form class={FORM_CARD}>
+        <h2 class={CARD_LABEL}>Correct and resubmit</h2>
+        {returnComment && (
+          <p class="rounded-lg border border-amber-300 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200">
+            {returnComment}
+          </p>
+        )}
+        <input type="hidden" name="intent" value="resubmit" />
+        <input type="hidden" name="accountId" value={transaction.accountId} />
+        <div class="grid gap-3 sm:grid-cols-2">
+          <label class={LABEL}>
+            Amount (Rs)
+            <input
+              type="text"
+              inputmode="decimal"
+              name="amount"
+              required
+              value={transaction.amount}
+              class={INPUT}
+            />
+          </label>
+          <label class={LABEL}>
+            Note
+            <input
+              type="text"
+              name="reason"
+              value={transaction.reason}
+              maxlength="200"
+              class={INPUT}
+            />
+          </label>
+          {transaction.payeeName && (
+            <>
+              <label class={LABEL}>
+                Paid by
+                <select name="method" class={INPUT}>
+                  {paymentMethods.map(method => (
+                    <option
+                      value={method.code}
+                      data-touches-bank={method.touchesBank ? 'true' : 'false'}
+                      selected={method.code === transaction!.method}
+                    >
+                      {method.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label class={LABEL}>
+                Reference (cheque number, transfer reference)
+                <input
+                  type="text"
+                  name="methodReference"
+                  value={transaction.methodReference}
+                  class={INPUT}
+                />
+              </label>
+              <label data-bank-account-field class={LABEL}>
+                Bank account
+                <select name="bankAccountId" class={INPUT}>
+                  <option value="">Choose…</option>
+                  {bankAccounts.map(account => (
+                    <option
+                      value={account.id}
+                      selected={account.id === transaction!.bankAccountId}
+                    >
+                      {account.name} · {account.bankName}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </>
+          )}
+        </div>
+        <div class="flex flex-wrap gap-2 pt-2">
+          <button type="submit" class={BUTTON}>
+            Resubmit
+          </button>
+        </div>
+      </form>
+    )}
+
+    {canEdit && person && (
+      <form
+        method="post"
+        data-deposit-form
+        data-cash-threshold={cashThreshold}
+        data-cash-maximum={cashMax}
+        data-route-bands={
+          transaction.kind === 'withdrawal' ? withdrawalBandData : undefined
+        }
+        class={FORM_CARD}
+      >
+        <h2 class={CARD_LABEL}>Correct and resubmit</h2>
+        {returnComment && (
+          <p class="rounded-lg border border-amber-300 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200">
+            {returnComment}
+          </p>
+        )}
+        <input type="hidden" name="intent" value="resubmit" />
+        <label class={LABEL}>
+          Account
+          <select name="accountId" class={INPUT}>
+            {accounts.map(account => (
+              <option
+                value={account.id}
+                selected={account.id === transaction!.accountId}
+                disabled={!(account.status === 'active' && account.allowed)}
+              >
+                {account.accountNo} · {account.accountTypeName}
+                {account.status !== 'active'
+                  ? ` · ${account.status}`
+                  : account.allowed
+                    ? ''
+                    : isDeposit
+                      ? ' · no deposits'
+                      : ' · no withdrawals'}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <label class={LABEL}>
+            Amount (Rs)
+            <input
+              type="text"
+              inputmode="decimal"
+              name="amount"
+              required
+              value={transaction.amount}
+              data-amount
+              class={INPUT}
+            />
+          </label>
+          <label data-payout-field hidden={!editPaidAtOnce} class={LABEL}>
+            {isDeposit ? 'Method' : 'Paid by'}
+            <select name="method" disabled={!editPaidAtOnce} class={INPUT}>
+              {paymentMethods.map(method => (
+                <option
+                  value={method.code}
+                  data-cash={isDeposit && method.isCash ? 'true' : 'false'}
+                  data-requires-reference={
+                    method.requiresReference ||
+                    (!isDeposit && method.touchesBank)
+                      ? 'true'
+                      : 'false'
+                  }
+                  data-touches-bank={method.touchesBank ? 'true' : 'false'}
+                  selected={method.code === transaction!.method}
+                >
+                  {method.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label data-method-reference-field class={LABEL}>
+            Reference (cheque number, transfer reference)
+            <input
+              type="text"
+              name="methodReference"
+              value={transaction.methodReference}
+              class={INPUT}
+            />
+          </label>
+          <label data-bank-account-field class={LABEL}>
+            Bank account
+            <select name="bankAccountId" class={INPUT}>
+              <option value="">Choose…</option>
+              {bankAccounts.map(account => (
+                <option
+                  value={account.id}
+                  selected={account.id === transaction!.bankAccountId}
+                >
+                  {account.name} · {account.bankName}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label class={LABEL}>
+            Note
+            <input
+              type="text"
+              name="reason"
+              value={transaction.reason}
+              maxlength="200"
+              class={INPUT}
+            />
+          </label>
+        </div>
+        {isDeposit && (
+          <>
+            <div
+              data-cash-reminder
+              hidden
+              class="space-y-2 rounded-lg border border-amber-300 px-3 py-3 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200"
+            >
+              <p class="font-medium">
+                Cash above {formatMoney(cashThreshold)} needs the Source of Fund
+                form.
+              </p>
+              <label class="flex items-start gap-x-2">
+                <input
+                  type="checkbox"
+                  name="sourceOfFundFormConfirmed"
+                  value="true"
+                  checked={transaction.sourceOfFundFormConfirmed}
+                  data-cash-form-confirm
+                  class="text-mint-500 focus:ring-mint-400 mt-0.5 rounded border-neutral-300 dark:border-neutral-600"
+                />
+                The depositor has completed and signed the Source of Fund form,
+                and it is filed.
+              </label>
+            </div>
+            <p
+              data-cash-maximum-warning
+              hidden
+              class="rounded-lg border border-red-300 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:text-red-200"
+            >
+              Cash deposits above {formatMoney(cashMax)} are not authorised. Use
+              another method, or split the deposit.
+            </p>
+          </>
+        )}
+        <div class="flex flex-wrap gap-2 pt-2">
+          <button type="submit" data-deposit-submit class={BUTTON}>
+            Resubmit
+          </button>
+        </div>
+      </form>
+    )}
+
+    {reversedBy && (
+      <p class={`${CARD} text-sm`}>
+        Reversed by{' '}
+        <a
+          href={`/transactions/${reversedBy.id}`}
+          class="font-medium underline"
+        >
+          {reversedBy.reference}
+        </a>
+        .
+      </p>
+    )}
+
+    {canReverse && (
+      <form method="post" class={`space-y-3 ${CARD}`}>
+        <h2 class={CARD_LABEL}>Reverse</h2>
+        <p class={MUTED}>
+          A reversal posts the opposite entry on the same account
+          {isTransfer && ', on both sides of the transfer,'} with its own
+          receipt. This one stays as it is.
+        </p>
+        <label class={LABEL}>
+          Reason
+          <textarea
+            name="reason"
+            rows="2"
+            required
+            class={INPUT}
+            placeholder="Required."
+          ></textarea>
+        </label>
+        <input type="hidden" name="intent" value="reverse" />
+        <button type="submit" class={DANGER}>
+          Reverse
+        </button>
+      </form>
+    )}
+
+    <section class={CARD}>
+      <h2 class={CARD_LABEL}>Trail</h2>
+      {trail.length === 0 ? (
+        <p class={`mt-2 ${HINT}`}>Nothing yet.</p>
+      ) : (
+        <ol class="mt-3 space-y-3 text-sm">
+          {trail.map(entry => (
+            <li class="border-l-2 border-neutral-300 pl-3 dark:border-neutral-700">
+              <p class="text-neutral-800 dark:text-neutral-100">
+                <span class="font-medium">
+                  {transactionStatusLabel({
+                    ...transaction,
+                    status: entry.toStatus,
+                  })}
+                </span>
+                {' · '}
+                {entry.actorName}
+                {entry.actorRole && ` (${entry.actorRole})`}
+                {' · '}
+                {dateFormat.format(entry.occurredAt)}
+              </p>
+              {(entry.ruleNote || entry.workflowName) &&
+                entry.fromStatus !== 'approved' && (
+                  <p class="text-xs text-neutral-500 dark:text-neutral-400">
+                    {[entry.ruleNote, entry.workflowName]
+                      .filter(Boolean)
+                      .join(' · ')}
+                  </p>
+                )}
+              {entry.comment && (
+                <p class="mt-1 rounded-lg bg-white px-3 py-2 text-neutral-700 dark:bg-neutral-900 dark:text-neutral-200">
+                  {entry.comment}
+                </p>
+              )}
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
+  </div>
+  {(isExit || closureDocuments.length > 0) && <DocumentViewer />}
+</DashboardLayout>
+
+<script>
+  // A visual nudge only — every rule is enforced server-side
+  // (ledger/deposits.ts) whether or not this script runs. The same script
+  // as the deposit form's.
+  const disbursement = document.querySelector<HTMLFormElement>(
+    '[data-disbursement-form]'
+  );
+  if (disbursement) {
+    const select =
+      disbursement.querySelector<HTMLSelectElement>('[name="method"]');
+    const field = disbursement.querySelector<HTMLElement>(
+      '[data-method-reference-field]'
+    );
+    const bankField = disbursement.querySelector<HTMLElement>(
+      '[data-bank-account-field]'
+    );
+    const sync = () => {
+      const selected = select?.selectedOptions[0];
+      if (field) {
+        field.hidden = selected?.dataset.requiresReference !== 'true';
+      }
+      if (bankField) {
+        bankField.hidden = selected?.dataset.touchesBank !== 'true';
+      }
+    };
+    select?.addEventListener('change', sync);
+    sync();
+  }
+
+  const transferEdit = document.querySelector<HTMLFormElement>(
+    '[data-transfer-edit-form]'
+  );
+  if (transferEdit) {
+    const select =
+      transferEdit.querySelector<HTMLSelectElement>('[name="method"]');
+    const bankField = transferEdit.querySelector<HTMLElement>(
+      '[data-bank-account-field]'
+    );
+    const sync = () => {
+      if (bankField) {
+        bankField.hidden =
+          select?.selectedOptions[0]?.dataset.touchesBank !== 'true';
+      }
+    };
+    select?.addEventListener('change', sync);
+    sync();
+  }
+
+  const form = document.querySelector<HTMLFormElement>('[data-deposit-form]');
+  if (form) {
+    const toCents = (value: string | undefined): number | null => {
+      const trimmed = (value ?? '').trim();
+      if (!/^\d{1,12}(\.\d{1,2})?$/.test(trimmed)) return null;
+      const [whole, fraction = ''] = trimmed.split('.');
+      return Number(whole) * 100 + Number(fraction.padEnd(2, '0'));
+    };
+    const thresholdCents = toCents(form.dataset.cashThreshold);
+    const maximumCents = toCents(form.dataset.cashMaximum);
+    const amountInput = form.querySelector<HTMLInputElement>('[data-amount]');
+    const methodSelect =
+      form.querySelector<HTMLSelectElement>('[name="method"]');
+    const referenceField = form.querySelector<HTMLElement>(
+      '[data-method-reference-field]'
+    );
+    const bankField = form.querySelector<HTMLElement>(
+      '[data-bank-account-field]'
+    );
+    const reminder = form.querySelector<HTMLElement>('[data-cash-reminder]');
+    const confirm = form.querySelector<HTMLInputElement>(
+      '[data-cash-form-confirm]'
+    );
+    const maximumWarning = form.querySelector<HTMLElement>(
+      '[data-cash-maximum-warning]'
+    );
+    const submit = form.querySelector<HTMLButtonElement>(
+      '[data-deposit-submit]'
+    );
+    // A withdrawal: whether, as corrected, it is paid out at once — the
+    // only case in which how it is paid out is asked here.
+    const bands: {
+      account: string;
+      from: number;
+      to: number | null;
+      atOnce: boolean;
+    }[] = form.dataset.routeBands ? JSON.parse(form.dataset.routeBands) : [];
+    const accountSelect =
+      form.querySelector<HTMLSelectElement>('[name="accountId"]');
+    const payoutField = form.querySelector<HTMLElement>('[data-payout-field]');
+    const paidAtOnce = (cents: number | null): boolean => {
+      if (!form.dataset.routeBands) return true;
+      const mine = bands.filter(b => b.account === accountSelect?.value);
+      const band =
+        mine.find(
+          b =>
+            cents !== null &&
+            cents >= b.from &&
+            (b.to === null || cents <= b.to)
+        ) ?? mine[0];
+      return band?.atOnce ?? true;
+    };
+    // A hidden field is also disabled, so it is not sent.
+    const toggle = (field: HTMLElement | null, show: boolean) => {
+      if (!field) return;
+      field.hidden = !show;
+      for (const input of field.querySelectorAll<
+        HTMLInputElement | HTMLSelectElement
+      >('input, select')) {
+        input.disabled = !show;
+      }
+    };
+    const recompute = () => {
+      const selected = methodSelect?.selectedOptions[0];
+      const isCash = selected?.dataset.cash === 'true';
+      const cents = toCents(amountInput?.value);
+      const atOnce = paidAtOnce(cents);
+      toggle(payoutField, atOnce);
+      toggle(
+        referenceField,
+        atOnce && selected?.dataset.requiresReference === 'true'
+      );
+      toggle(bankField, atOnce && selected?.dataset.touchesBank === 'true');
+      const overMaximum =
+        isCash &&
+        cents !== null &&
+        maximumCents !== null &&
+        cents > maximumCents;
+      if (maximumWarning) maximumWarning.hidden = !overMaximum;
+      const needsSourceOfFund =
+        !overMaximum &&
+        isCash &&
+        cents !== null &&
+        thresholdCents !== null &&
+        cents > thresholdCents;
+      if (reminder) reminder.hidden = !needsSourceOfFund;
+      const sourceOfFundMissing =
+        needsSourceOfFund && !(confirm?.checked ?? false);
+      if (submit) submit.disabled = overMaximum || sourceOfFundMissing;
+    };
+    amountInput?.addEventListener('input', recompute);
+    methodSelect?.addEventListener('change', recompute);
+    confirm?.addEventListener('change', recompute);
+    accountSelect?.addEventListener('change', recompute);
+    recompute();
+  }
+</script>

@@ -256,3 +256,360 @@ describe('least privilege', () => {
     ).rejects.toThrowError(/permission denied/);
   });
 });
+
+// The account ledger (0064). FRD 6.1's "no transaction type may be
+// implemented as a one-off balance update outside this engine" is a grant,
+// and these are what make a second road to a balance fail the build rather
+// than a review. Posting itself, and the triggers that need a row to fire
+// on, are exercised in src/lib/ledger/ledger.test.ts.
+describe('S-1301, S-1302 the ledger', () => {
+  it('denies the application any direct write to the entries', async () => {
+    await expect(
+      run(
+        appUrl,
+        `insert into account_entry (account_id, transaction_id, direction, amount)
+         values (gen_random_uuid(), gen_random_uuid(), 'credit', 1)`
+      )
+    ).rejects.toThrowError(/permission denied for table account_entry/);
+    await expect(
+      run(appUrl, `update account_entry set amount = 1`)
+    ).rejects.toThrowError(/permission denied for table account_entry/);
+    await expect(run(appUrl, `delete from account_entry`)).rejects.toThrowError(
+      /permission denied for table account_entry/
+    );
+  });
+
+  it('denies the application any direct write to the balance cache', async () => {
+    await expect(
+      run(
+        appUrl,
+        `insert into account_balance (account_id, balance) values (gen_random_uuid(), 1)`
+      )
+    ).rejects.toThrowError(/permission denied for table account_balance/);
+    await expect(
+      run(appUrl, `update account_balance set balance = 0`)
+    ).rejects.toThrowError(/permission denied for table account_balance/);
+    await expect(
+      run(appUrl, `delete from account_balance`)
+    ).rejects.toThrowError(/permission denied for table account_balance/);
+  });
+
+  it('lets the application read both, and post through the one function', async () => {
+    await run(appUrl, `select * from account_entry`);
+    await run(appUrl, `select * from account_balance`);
+    await run(appUrl, `select * from ledger_drift()`);
+    // Execute is granted: a made-up id fails on the lookup, not at the door.
+    await expect(
+      run(appUrl, `select post_transaction(gen_random_uuid(), null, 'test')`)
+    ).rejects.toThrowError(/no transaction/);
+  });
+
+  it('refuses a truncate of the ledger, for the owner too', async () => {
+    await expect(run(ownerUrl, `truncate account_entry`)).rejects.toThrowError(
+      /append-only/
+    );
+    // A bare truncate of transaction is refused by its foreign keys before any
+    // trigger runs; cascade reaches the entries, whose guard refuses it.
+    await expect(
+      run(ownerUrl, `truncate transaction cascade`)
+    ).rejects.toThrowError(/append-only/);
+    await expect(
+      run(ownerUrl, `truncate account_balance`)
+    ).rejects.toThrowError(/maintained by the ledger/);
+  });
+
+  // 0066: a transaction is a member's or a customer's, never both or
+  // neither; a reversal names what it reverses; and the actor a data
+  // migration posts as exists and can never sign in.
+  it('requires exactly one holder, and a reversal to name its original', async () => {
+    await expect(
+      run(
+        ownerUrl,
+        `insert into transaction (kind, account_id, amount, method, captured_by)
+         values ('deposit', gen_random_uuid(), 1, 'cash',
+                 (select id from app_user limit 1))`
+      )
+    ).rejects.toThrowError(/transaction_has_one_holder/);
+    await expect(
+      run(
+        ownerUrl,
+        `insert into transaction
+           (kind, member_id, account_id, amount, method, captured_by)
+         values ('reversal', gen_random_uuid(), gen_random_uuid(), 1, 'cash',
+                 (select id from app_user limit 1))`
+      )
+    ).rejects.toThrowError(/transaction_reversal_names_its_original/);
+  });
+
+  // 0067: a method is a payment_method row, on a payment and on a
+  // transaction alike — asserted from the catalogue, because a bare insert
+  // trips the row's other foreign keys before it reaches this one.
+  it('references the configured payment methods from a payment and a transaction', async () => {
+    const result = await run(
+      appUrl,
+      `select conrelid::regclass::text as on_table, confrelid::regclass::text as to_table
+         from pg_constraint
+        where conname in ('payment_method_fkey', 'transaction_method_fkey')
+        order by conname`
+    );
+    expect(result.rows).toEqual([
+      { on_table: 'payment', to_table: 'payment_method' },
+      { on_table: 'transaction', to_table: 'payment_method' },
+    ]);
+    // And the check constraint the reference replaced is gone.
+    const check = await run(
+      appUrl,
+      `select 1 from pg_constraint where conname = 'payment_method_check'`
+    );
+    expect(check.rowCount).toBe(0);
+  });
+
+  // 0068: recording a deposit is the counter officer's act, as recording a
+  // payment is — whoever held payment.record holds it from the same
+  // migration.
+  it('gives transaction.capture to every role that records payments', async () => {
+    const result = await run(
+      appUrl,
+      `select r.code
+         from role r
+         join role_permission rp on rp.role_id = r.id
+         join permission p on p.id = rp.permission_id
+        where p.code = 'transaction.capture'
+        order by r.code`
+    );
+    expect(result.rows.map(r => r.code)).toEqual([
+      'account_officer',
+      'clerk',
+      'regional_officer',
+      'system_administrator',
+    ]);
+  });
+
+  // 0069: FRD Section 5's table — a Clerk captures, an Account Officer
+  // posts, a Treasurer voids, an Auditor views — and money's own views ride
+  // on what a role already sees.
+  it('maps the transaction permissions onto FRD Section 5 and seeds its rules', async () => {
+    const holders = async (code: string) =>
+      (
+        await run(
+          appUrl,
+          `select r.code from role r
+             join role_permission rp on rp.role_id = r.id
+             join permission p on p.id = rp.permission_id
+            where p.code = $1 order by r.code`,
+          [code]
+        )
+      ).rows.map(r => r.code);
+    expect(await holders('transaction.post')).toEqual([
+      'account_officer',
+      'regional_officer',
+      'system_administrator',
+    ]);
+    expect(await holders('receipt.void')).toEqual([
+      'system_administrator',
+      'treasurer',
+    ]);
+    expect(await holders('account.view')).toEqual(
+      expect.arrayContaining([
+        'auditor',
+        'clerk',
+        'regional_officer',
+        'treasurer',
+      ])
+    );
+    expect(await holders('transaction.view')).toEqual(
+      expect.arrayContaining(['auditor', 'regional_manager', 'treasurer'])
+    );
+
+    const rules = await run(
+      appUrl,
+      `select earlier_action, later_action from segregation_rule
+        where entity_type = 'transaction' and is_enabled
+        order by later_action, earlier_action`
+    );
+    expect(rules.rows).toEqual([
+      {
+        earlier_action: 'transaction.captured',
+        later_action: 'transaction.approved',
+      },
+      {
+        earlier_action: 'transaction.approved',
+        later_action: 'transaction.posted',
+      },
+      {
+        earlier_action: 'transaction.captured',
+        later_action: 'transaction.posted',
+      },
+      {
+        earlier_action: 'transaction.captured',
+        later_action: 'transaction.reversed',
+      },
+      {
+        earlier_action: 'transaction.captured',
+        later_action: 'transaction.reviewed',
+      },
+      {
+        earlier_action: 'transaction.captured',
+        later_action: 'transaction.voided',
+      },
+    ]);
+
+    // 0071: the chain's own permissions — the Secretary reviews, the
+    // President decides, and both can see what they act on.
+    expect(await holders('transaction.review')).toEqual([
+      'secretary',
+      'system_administrator',
+    ]);
+    expect(await holders('transaction.approve')).toEqual([
+      'president',
+      'system_administrator',
+    ]);
+    expect(await holders('transaction.view')).toEqual(
+      expect.arrayContaining(['president', 'secretary'])
+    );
+    expect(await holders('account.view')).toEqual(
+      expect.arrayContaining(['president', 'secretary'])
+    );
+  });
+
+  // 0070: a chain per kind on the tables applications already use, a
+  // status vocabulary for a step to name, and the matrix seeded to FRD 6.5.
+  it('seeds a Secretary → President chain per transaction kind and the matrix', async () => {
+    const chains = await run(
+      appUrl,
+      `select d.code, array_agg(s.code order by s.step_no) as steps
+         from workflow_definition d
+         join workflow_step s on s.definition_id = d.id
+        where d.entity_type = 'transaction'
+        group by d.code order by d.code`
+    );
+    expect(chains.rows.map(r => r.code)).toEqual([
+      'transaction_closure',
+      'transaction_demise',
+      'transaction_deposit',
+      'transaction_resignation',
+      'transaction_transfer',
+      'transaction_withdrawal',
+    ]);
+    for (const row of chains.rows) {
+      expect(row.steps).toEqual(['secretary_review', 'president_decision']);
+    }
+    const statuses = await run(
+      appUrl,
+      `select code from workflow_status where entity_type = 'transaction'
+        order by sort_order`
+    );
+    expect(statuses.rows.map(r => r.code)).toEqual([
+      'draft',
+      'submitted',
+      'under_review',
+      'approved',
+      'posted',
+      'returned',
+      'rejected',
+      'cancelled',
+    ]);
+    const rules = await run(
+      appUrl,
+      `select kind, amount_from, amount_to,
+              (workflow_definition_id is not null) as reviewed
+         from approval_rule order by kind, sort_order`
+    );
+    expect(rules.rows).toEqual([
+      { kind: 'closure', amount_from: '0.00', amount_to: null, reviewed: true },
+      { kind: 'demise', amount_from: '0.00', amount_to: null, reviewed: true },
+      {
+        kind: 'deposit',
+        amount_from: '0.00',
+        amount_to: '100000.00',
+        reviewed: false,
+      },
+      {
+        kind: 'deposit',
+        amount_from: '100000.01',
+        amount_to: null,
+        reviewed: true,
+      },
+      {
+        kind: 'resignation',
+        amount_from: '0.00',
+        amount_to: null,
+        reviewed: true,
+      },
+      {
+        kind: 'transfer',
+        amount_from: '0.00',
+        amount_to: '100000.00',
+        reviewed: false,
+      },
+      {
+        kind: 'transfer',
+        amount_from: '100000.01',
+        amount_to: null,
+        reviewed: true,
+      },
+      {
+        kind: 'withdrawal',
+        amount_from: '0.00',
+        amount_to: '100000.00',
+        reviewed: false,
+      },
+      {
+        kind: 'withdrawal',
+        amount_from: '100000.01',
+        amount_to: null,
+        reviewed: true,
+      },
+    ]);
+  });
+
+  // Row-level guards refuse any update or delete of a row (exercised on a
+  // real trail in deposits.test); the truncate guard and the revoke are
+  // asserted here.
+  it('keeps the transaction trail append-only', async () => {
+    await expect(
+      run(ownerUrl, `truncate transaction_transition`)
+    ).rejects.toThrowError(/append-only/);
+    await expect(
+      run(appUrl, `update transaction_transition set comment = 'x'`)
+    ).rejects.toThrowError(/permission denied/);
+    await expect(
+      run(appUrl, `delete from transaction_transition`)
+    ).rejects.toThrowError(/permission denied/);
+    const guards = await run(
+      ownerUrl,
+      `select tgname from pg_trigger
+        where tgrelid = 'transaction_transition'::regclass and not tgisinternal
+        order by tgname`
+    );
+    expect(guards.rows.map(r => r.tgname)).toEqual([
+      'transaction_transition_append_only',
+      'transaction_transition_no_truncate',
+    ]);
+  });
+
+  it('has a service account for data migrations to post as', async () => {
+    const result = await run(
+      appUrl,
+      `select entra_subject, display_name,
+              not exists (select 1 from user_role where user_id = u.id) as roleless
+         from app_user u where email = 'migration@system.albarakah.mu'`
+    );
+    expect(result.rows).toEqual([
+      {
+        entra_subject: 'system:migration',
+        display_name: 'Data migration',
+        roleless: true,
+      },
+    ]);
+  });
+
+  it('refuses a financial event with no subject, or two', async () => {
+    await expect(
+      run(
+        ownerUrl,
+        `insert into financial_event (event_type, payload) values ('transaction.posted', '{}')`
+      )
+    ).rejects.toThrowError(/financial_event_has_one_subject/);
+  });
+});

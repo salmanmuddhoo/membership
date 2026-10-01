@@ -109,6 +109,8 @@ export interface AuditEventFilters {
   actor?: string;
   action?: string;
   entityType?: string;
+  // A record ID as the trail holds it, or a reference as the screens show
+  // it: a transfer's TR- reference, a member number or an account number.
   entityId?: string;
   from?: Date;
   to?: Date;
@@ -154,7 +156,31 @@ export async function listAuditEvents(
        left join app_user u on u.id = e.actor_user_id
       where ($1::text is null or e.action = $1::text)
         and ($2::text is null or e.entity_type = $2::text)
-        and ($3::text is null or e.entity_id = $3::text)
+        and ($3::text is null or e.entity_id in (
+              -- The record ID an officer types is whatever the screen
+              -- showed them, not always what the trail is keyed on
+              -- (functional round): a transfer's TR- reference is recorded
+              -- under its two legs' TX- references, and a member or an
+              -- account under its internal id. Each resolves to those.
+              select $3::text
+              union
+              select t.reference
+                from transaction t join transfer tr on tr.id = t.transfer_id
+               where upper(tr.reference) = upper($3::text)
+              union
+              select m.id::text from member m
+               where lower(m.member_no) = lower($3::text)
+              union
+              select m.application_id::text from member m
+               where lower(m.member_no) = lower($3::text)
+                 and m.application_id is not null
+              union
+              select a.id::text from account a
+                left join member m on m.id = a.member_id
+               where lower(a.account_no) = lower($3::text)
+                  or (a.account_no is null
+                      and lower(m.member_no) = lower($3::text))
+            ))
         and ($4::timestamptz is null or e.occurred_at >= $4::timestamptz)
         and ($5::timestamptz is null or e.occurred_at <= $5::timestamptz)
         and (
@@ -190,6 +216,112 @@ export async function listAuditEvents(
       entityId: r.entity_id,
       previousValue: r.previous_value,
       newValue: r.new_value,
+      ipAddress: r.ip_address,
+    })),
+    total: result.rowCount ? Number(result.rows[0].total_count) : 0,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Who was signed in, and when (officer request) — one row per session,
+// grouped from the auth_session rows session-audit.ts writes (auth.signed_in,
+// auth.signed_out, auth.timed_out, all under the session id as entity_id).
+// ---------------------------------------------------------------------------
+
+export interface SignInRow {
+  sessionId: string;
+  person: string;
+  signedInAt: Date | null;
+  endedAt: Date | null;
+  // Absent means no ending row has been written for this session yet.
+  endedBy: 'signed_out' | 'timed_out' | null;
+  ipAddress: string | null;
+}
+
+export interface SignInFilters {
+  person?: string;
+  from?: Date;
+  to?: Date;
+  limit?: number;
+  offset?: number;
+}
+
+export interface SignInPage {
+  sessions: SignInRow[];
+  total: number;
+}
+
+export async function listSignIns(
+  filters: SignInFilters = {}
+): Promise<SignInPage> {
+  const limit = Math.min(Math.max(filters.limit ?? AUDIT_PAGE_LIMIT, 1), 500);
+  const offset = Math.max(filters.offset ?? 0, 0);
+
+  const result = await query<{
+    session_id: string;
+    person: string;
+    signed_in_at: Date | null;
+    ended_at: Date | null;
+    ended_by: 'auth.signed_out' | 'auth.timed_out' | null;
+    ip_address: string | null;
+    total_count: string;
+  }>(
+    `with sessions as (
+       select e.entity_id as session_id,
+              min(e.occurred_at) filter (where e.action = 'auth.signed_in')
+                as signed_in_at,
+              max(e.occurred_at)
+                filter (where e.action in ('auth.signed_out', 'auth.timed_out'))
+                as ended_at,
+              (array_agg(e.action order by e.occurred_at desc)
+                 filter (where e.action in ('auth.signed_out', 'auth.timed_out'))
+              )[1] as ended_by,
+              coalesce(
+                max(coalesce(u.display_name, e.actor_description))
+                  filter (where e.action = 'auth.signed_in'),
+                max(coalesce(u.display_name, e.actor_description))
+              ) as person,
+              coalesce(
+                max(host(e.ip_address)) filter (where e.action = 'auth.signed_in'),
+                max(host(e.ip_address))
+              ) as ip_address
+         from audit_event e
+         left join app_user u on u.id = e.actor_user_id
+        where e.entity_type = 'auth_session'
+        group by e.entity_id
+     )
+     select session_id, signed_in_at, ended_at, ended_by, person, ip_address,
+            count(*) over () as total_count
+       from sessions
+      where ($1::text is null
+             or strpos(lower(person), lower($1::text)) > 0)
+        and ($2::timestamptz is null
+             or coalesce(signed_in_at, ended_at) >= $2::timestamptz)
+        and ($3::timestamptz is null
+             or coalesce(signed_in_at, ended_at) <= $3::timestamptz)
+      order by coalesce(signed_in_at, ended_at) desc nulls last
+      limit $4::int offset $5::int`,
+    [
+      filters.person ?? null,
+      filters.from ?? null,
+      filters.to ?? null,
+      limit,
+      offset,
+    ]
+  );
+
+  return {
+    sessions: result.rows.map(r => ({
+      sessionId: r.session_id,
+      person: r.person,
+      signedInAt: r.signed_in_at,
+      endedAt: r.ended_at,
+      endedBy:
+        r.ended_by === 'auth.signed_out'
+          ? 'signed_out'
+          : r.ended_by === 'auth.timed_out'
+            ? 'timed_out'
+            : null,
       ipAddress: r.ip_address,
     })),
     total: result.rowCount ? Number(result.rows[0].total_count) : 0,

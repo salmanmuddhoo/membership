@@ -75,7 +75,9 @@ NOTIFY_EMAIL_WEBHOOK_URL=https://<gateway>/send
 NOTIFY_EMAIL_WEBHOOK_TOKEN=<optional bearer token>
 ```
 
-The gateway receives `{ channel, to, subject, message }` as JSON.
+The gateway receives `{ channel, to, subject, message }` as JSON, plus
+`attachment: { url, filename, contentType }` when the wording attaches the
+receipt — the gateway fetches the file from `url`.
 
 ## WhatsApp
 
@@ -113,7 +115,9 @@ sent, so the body and the approved template have to agree.
 4. Under **Message templates**, create one template per WhatsApp wording, with
    body variables in the same order as the placeholders here. Submit each for
    approval — this takes minutes to hours, and an unapproved template is
-   rejected at send time.
+   rejected at send time. A template that is to carry the receipt as a
+   document must be created with a **document header**; then tick **Attach
+   the receipt as a PDF** on that wording.
 5. Set:
 
    ```
@@ -141,7 +145,9 @@ NOTIFY_WHATSAPP_WEBHOOK_URL=https://<gateway>/send
 NOTIFY_WHATSAPP_WEBHOOK_TOKEN=<optional bearer token>
 ```
 
-The gateway receives `{ channel, to, message }`. Note that the 24-hour rule
+The gateway receives `{ channel, to, message }`, plus `attachment: { url,
+filename, contentType }` when the wording attaches the receipt — the gateway
+fetches the file from `url`. Note that the 24-hour rule
 still applies at the provider behind it — a reseller that accepts text is
 mapping it onto an approved template of its own, and that mapping is theirs to
 configure.
@@ -169,6 +175,127 @@ What the failures mean:
 | `template name does not exist`                  | The name here does not match an approved Meta template |
 | `(#132001)`                                     | Template exists but not in that language               |
 | Sent, but nothing arrives on WhatsApp           | Trial number: recipient not on Meta's allowed list     |
+
+## A receipt to its member
+
+`receipt.issued` (S-1602) is raised by the ledger whenever a transaction's
+receipt is issued, and again when an officer presses **Send** on the
+receipt. Its placeholders are `member_name`, `receipt_no`, `reference`,
+`kind` (Deposit, Withdrawal, Transfer, Reversal), `amount` (the bare
+figure, `7,000.00` — the wording carries "Rs"), `account` and `link`. The
+link opens the receipt without a sign-in for thirty days; where the link
+cannot be made — no `MEMBER_SESSION_SECRET`, or no `PUBLIC_APP_URL` and no
+`ENTRA_REDIRECT_URI` to take an origin from — `{{link}}` reads "Ask at your
+branch for a printed copy." rather than nothing. How the link is signed and
+what opens it is in `docs/ledger.md`.
+
+Since migration 0089 the receipt can travel as a document too: `{{link}}`
+with `.pdf` on the end serves the sheet as a one-page PDF
+(`src/lib/ledger/receipt-pdf.ts`, drawn with jsPDF on the server, the same
+token so message and file expire together). Whether a wording carries it is
+its own switch — **Attach the receipt as a PDF** at Configuration →
+Notification wording, per channel, off by default. On WhatsApp it goes as
+the template's document header, which Meta fetches from the link itself, so
+the template registered with Meta must have a document header or Meta
+refuses the message; on email it goes as an attachment, fetched at send
+time; a gateway receives its address under `attachment`. What was attached
+is stored on the notification row, so a retry sends the same document.
+
+## An exit, at every stage
+
+A closure, a resignation and a demised claim (S-1705, M17) each raise four
+events — `closure.*`, `resignation.*`, `demised.*` for `submitted`,
+`under_review`, `approved` and `rejected` — with an email and a WhatsApp
+template each (migration 0080), edited like any other. `submitted` goes
+when the request reaches its chain; `under_review` when a reviewer forwards
+it to a further step, with their comment; `rejected` with the reason;
+`approved` at the payout, not at the decision — the money leaving is what
+the member or claimant hears about, with the amount, the method and the
+receipt number. A request the matrix posts at once raises only `approved`.
+
+A closure or a resignation writes to the member, at the address their
+application recorded, exactly as a receipt does. A claim writes to the
+claimant — the nominee's email and mobile as captured, or the ones the
+officer recorded for another person — and never to the deceased member's
+own address. Placeholders: `recipient_name`, `member_name`, `reference`,
+`account`, `amount` (bare figure; the wording carries "Rs"), plus `comment`
+on the review and rejection events and `method` and `receipt_no` on the
+payout. `src/lib/ledger/exit-notifications.ts` raises them.
+
+## A member's own transactions
+
+The ledger raises seven events about a member's own money (S-1803, M18,
+migration 0081), email and WhatsApp wording each, edited like any other:
+`deposit.posted` once the money is on the account, with the balance;
+`withdrawal.submitted` when a withdrawal reaches its chain,
+`withdrawal.under_review` when a reviewer forwards it, with their comment,
+`withdrawal.disbursed` at the payout, with the method, receipt number and
+balance, `withdrawal.rejected` with the reason; `transfer.posted` to the
+holder of each side that is an account here, naming both accounts and
+that holder's own balance — one message when both sides are theirs, from
+the account the money left; and `balance.near_floor`, an advisory when a
+posted withdrawal or transfer leaves an account within
+`balance.near_floor_margin` (Configuration → Fee schedules, seeded Rs 500,
+0 for none) of its type's minimum balance. A withdrawal resubmitted after
+a return does not tell the member again that it is in.
+
+The address is the one the holder's application recorded, exactly as a
+receipt's. Placeholders: `member_name`, `reference` (a transfer's own),
+`amount` and `account` on every one; `balance` on a posting; `comment` on
+the review and rejection; `method` and `receipt_no` on the payout;
+`from_account` and `to_account` on a transfer; `floor` on the advisory.
+Amounts are bare figures — the wording carries "Rs".
+`src/lib/ledger/transaction-notifications.ts` raises them, after the
+transaction has committed and never failing it.
+
+## The office
+
+Five events go to staff, by email only — `app_user` has an email and
+nothing else (S-1804, S-1805, `src/lib/notifications/staff.ts`):
+
+- `transaction.awaiting`, to every active holder of a step's role when a
+  transaction arrives at that step — on submission, on a reviewer's
+  forward, and on resubmission after a return — except whoever sent it
+  there. Every kind, exits included. Placeholders add `step` and
+  `captured_by`.
+- `transaction.returned`, to the officer who captured it when a reviewer
+  returns it, with `returned_by` and the `comment`.
+- `receipt.voided`, to every active holder of `receipt.void` other than the
+  user who voided, for a transaction's receipt and a fee receipt alike:
+  `receipt_no`, `voided_by` and the `reason`.
+- `job.stalled`, to every active System Administrator when a job run has
+  been left open for more than six hours — `job`, `run_id`, `attempt`,
+  `started_at`, `last_update`.
+- `job.failed`, the same people, when a job's most recent run failed —
+  `job`, `run_id`, `attempt`, `started_at`, `finished_at`, `error`.
+
+The first three carry `recipient_name`, `kind`, `reference`, `member_name`,
+`amount`, `account` and `link` — the transaction or receipt page at
+`PUBLIC_APP_URL` (or the origin of `ENTRA_REDIRECT_URI`); with neither set
+the placeholder reads "Sign in to open it." A deactivated user is not
+written to, whatever roles they still hold. The two job events carry
+`recipient_name` and a `link` to the Jobs report, and are written once per
+run: `docs/jobs.md`.
+
+## A member's standing
+
+Two events about a membership itself (S-804, S-805, migration 0086),
+email and WhatsApp wording each: `member.dormant`, when the nightly
+dormancy job marks a member dormant — `member_name`, `member_no`,
+`last_activity` (the day, in words) and `months` (the threshold) — and
+`member.reactivated`, when an officer brings them back, with the `reason`
+they gave. The address is the one the member's application recorded; a
+legacy member with no application is marked and reactivated all the same,
+and told nothing. `src/lib/members/dormancy.ts` raises both after the
+status has committed and never failing it.
+
+Two more since the app's details updates are decided (migration 0087):
+`member.details.applied`, with `fields` — the labels of what changed,
+comma-separated — and `member.details.declined`, with the `reason` the
+officer wrote. `src/lib/members/details-requests.ts` raises them after the
+decision has committed, through the same `tellMember` the dormancy job
+uses, so a member with no application on file is decided about and told
+nothing.
 
 ## Retrying, and giving up
 

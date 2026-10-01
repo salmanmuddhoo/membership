@@ -210,6 +210,84 @@ const BUSINESS_TABLES = [
   'sharepoint_folder',
 ];
 
+// Every table in the schema is on exactly one of these two lists, and the
+// test below fails when one is added to neither: whoever adds a table decides
+// whether "Reset test data" clears it (it records activity) or keeps it (it
+// is how the system is set up). Officer request: the reset leaves a fresh
+// database, configuration aside.
+const CLEARED_TABLES = [
+  'account',
+  'account_balance',
+  'account_entry',
+  'account_number_counter',
+  'application_account_selection',
+  'application_checklist_item',
+  'application_party',
+  'application_step_signoff',
+  'application_transition',
+  'audit_event',
+  'cash_session',
+  'config_entry_history',
+  'customer',
+  'document',
+  'document_version',
+  'financial_event',
+  'guardian_change',
+  'job_run',
+  'member',
+  'member_details_request',
+  'member_login_challenge',
+  'member_session',
+  'membership_application',
+  'migration_batch',
+  'migration_batch_row',
+  'notification',
+  'payment',
+  'payment_account_line',
+  'payment_line',
+  'rate_limit_window',
+  'receipt_number',
+  'receipt_print',
+  'sharepoint_folder',
+  'statement_run',
+  'statement_run_item',
+  'transaction',
+  'transaction_transition',
+  'transfer',
+];
+
+// app_user and user_role keep one account: the System Administrator running
+// the reset, with their roles (see the test below).
+const KEPT_TABLES = [
+  'account_type',
+  'account_type_membership_type',
+  'api_credential',
+  'app_user',
+  'approval_rule',
+  'bank_account',
+  'config_entry',
+  'document_checklist',
+  'document_checklist_item',
+  'document_type',
+  'fee_component',
+  'fee_schedule',
+  'fee_schedule_version',
+  'membership_type',
+  'membership_type_field',
+  'notification_template',
+  'payment_method',
+  'permission',
+  'retention_policy',
+  'role',
+  'role_permission',
+  'schema_migrations',
+  'segregation_rule',
+  'user_role',
+  'workflow_definition',
+  'workflow_status',
+  'workflow_step',
+];
+
 async function countsOf(tables: string[]): Promise<Record<string, number>> {
   const counts: Record<string, number> = {};
   for (const table of tables) {
@@ -281,12 +359,34 @@ describe('resetAllTestData', () => {
               nextval('receipt_number_seq') as receipt`
     );
     expect(nextvals.rows[0]).toEqual({ app: '1', member: '1', receipt: '1' });
+    // Transactions and transfers number from the start again too.
+    const ledgerNumbers = await run(
+      ownerUrl,
+      `select nextval('transaction_reference_seq') as transaction,
+              nextval('transfer_reference_seq') as transfer`
+    );
+    expect(ledgerNumbers.rows[0]).toEqual({ transaction: '1', transfer: '1' });
 
     const counters = await run(
       appUrl,
       `select count(*)::int as n from account_number_counter`
     );
     expect(counters.rows[0].n).toBe(0);
+  });
+
+  it('clears every message sent', async () => {
+    const { resetAllTestData } = await load();
+    await run(
+      appUrl,
+      `insert into notification (event_code, channel, recipient, body)
+       values ('receipt.issued', 'email', 'someone@example.com', 'Sent')`
+    );
+    await resetAllTestData(actor);
+    const left = await run(
+      appUrl,
+      `select count(*)::int as n from notification`
+    );
+    expect(left.rows[0].n).toBe(0);
   });
 
   it('leaves exactly one audit row: the reset itself', async () => {
@@ -309,30 +409,219 @@ describe('resetAllTestData', () => {
     });
   });
 
-  it('leaves staff accounts, roles and reference configuration untouched', async () => {
+  // Officer request: staff accounts go too, all but the one running the
+  // reset — nobody could sign in to add the others back otherwise.
+  it('removes every staff account but the one running the reset, and keeps configuration', async () => {
     const { resetAllTestData } = await load();
     await seedOneOfEverything();
+    const admin = await run(
+      ownerUrl,
+      `insert into user_role (user_id, role_id)
+       select $1, id from role where code = 'system_administrator'
+       on conflict do nothing`,
+      [userId]
+    );
+    expect(admin.rowCount).toBe(1);
+    const other = await run(
+      ownerUrl,
+      `insert into app_user (email, display_name)
+       values ('officer@albarakah.mu', 'Officer')
+       returning id`
+    );
+    const otherId = other.rows[0].id;
+    await run(
+      ownerUrl,
+      `insert into user_role (user_id, role_id, granted_by)
+       select $1, id, $1 from role where code = 'system_administrator'`,
+      [otherId]
+    );
+    // A setting last changed by the staff member about to go.
+    await run(
+      ownerUrl,
+      `with actor as (
+         select set_config('albarakah.actor_description', 'test', false)
+       )
+       update notification_template set updated_by = $1
+         from actor
+        where id = (select id from notification_template limit 1)`,
+      [otherId]
+    );
+    const template = await run(
+      ownerUrl,
+      `select id, updated_at from notification_template where updated_by = $1`,
+      [otherId]
+    );
 
-    const before = await run(
-      appUrl,
-      `select
-         (select count(*)::int from app_user) as users,
+    const configuration = `select
          (select count(*)::int from role) as roles,
          (select count(*)::int from permission) as permissions,
-         (select count(*)::int from membership_type) as membership_types`
+         (select count(*)::int from role_permission) as role_permissions,
+         (select count(*)::int from membership_type) as membership_types,
+         (select count(*)::int from config_entry) as settings,
+         (select count(*)::int from notification_template) as templates,
+         (select count(*)::int from fee_schedule_version) as fee_versions`;
+    const before = await run(ownerUrl, configuration);
+
+    await resetAllTestData(actor);
+
+    const users = await run(ownerUrl, `select id from app_user`);
+    expect(users.rows).toEqual([{ id: userId }]);
+    const roles = await run(
+      ownerUrl,
+      `select r.code from user_role ur join role r on r.id = ur.role_id
+        where ur.user_id = $1`,
+      [userId]
     );
+    expect(roles.rows).toEqual([{ code: 'system_administrator' }]);
+    expect((await run(ownerUrl, configuration)).rows[0]).toEqual(
+      before.rows[0]
+    );
+    // The setting stays as it was, only no longer naming who changed it.
+    const after = await run(
+      ownerUrl,
+      `select updated_by, updated_at from notification_template where id = $1`,
+      [template.rows[0].id]
+    );
+    expect(after.rows[0]).toEqual({
+      updated_by: null,
+      updated_at: template.rows[0].updated_at,
+    });
+  });
+
+  it('clears the history of setting changes', async () => {
+    const { resetAllTestData } = await load();
+    await run(
+      ownerUrl,
+      `set albarakah.actor_description = 'test';
+       update config_entry set value = value
+        where key = (select key from config_entry limit 1);`
+    );
+    const before = await run(
+      ownerUrl,
+      `select count(*)::int as n from config_entry_history`
+    );
+    expect(before.rows[0].n).toBeGreaterThan(0);
 
     await resetAllTestData(actor);
 
     const after = await run(
-      appUrl,
-      `select
-         (select count(*)::int from app_user) as users,
-         (select count(*)::int from role) as roles,
-         (select count(*)::int from permission) as permissions,
-         (select count(*)::int from membership_type) as membership_types`
+      ownerUrl,
+      `select count(*)::int as n from config_entry_history`
     );
-    expect(after.rows[0]).toEqual(before.rows[0]);
+    expect(after.rows[0].n).toBe(0);
+  });
+
+  it('refuses without the staff account running it', async () => {
+    const { resetAllTestData } = await load();
+    await expect(
+      resetAllTestData({
+        userId: '00000000-0000-0000-0000-000000000000',
+        email: 'nobody@albarakah.mu',
+      })
+    ).rejects.toMatchObject({
+      cause: { message: expect.stringMatching(/staff account running it/) },
+    });
+    const users = await run(
+      ownerUrl,
+      `select count(*)::int as n from app_user where id = $1`,
+      [userId]
+    );
+    expect(users.rows[0].n).toBe(1);
+  });
+
+  it('places every table on the cleared list or the kept list', async () => {
+    const tables = await run(
+      ownerUrl,
+      `select table_name from information_schema.tables
+        where table_schema = 'public' and table_type = 'BASE TABLE'
+        order by table_name`
+    );
+    const all = tables.rows.map(r => r.table_name as string);
+    const unplaced = all.filter(
+      t => !CLEARED_TABLES.includes(t) && !KEPT_TABLES.includes(t)
+    );
+    expect(unplaced, 'tables on neither list').toEqual([]);
+    const missing = [...CLEARED_TABLES, ...KEPT_TABLES].filter(
+      t => !all.includes(t)
+    );
+    expect(missing, 'listed tables that no longer exist').toEqual([]);
+  });
+
+  it('leaves every cleared table empty, the reset itself aside', async () => {
+    const { resetAllTestData } = await load();
+    await seedOneOfEverything();
+    await run(
+      ownerUrl,
+      `insert into job_run (job_name, status, finished_at)
+       values ('dormancy', 'succeeded', now())`
+    );
+
+    await resetAllTestData(actor);
+
+    const after = await countsOf(CLEARED_TABLES);
+    for (const table of CLEARED_TABLES) {
+      expect(after[table], table).toBe(table === 'audit_event' ? 1 : 0);
+    }
+  });
+
+  it('restarts every numbering sequence but those of kept tables', async () => {
+    const { resetAllTestData } = await load();
+    // Every sequence outside the kept tables — reference numbers, ledger,
+    // audit, job runs, setting history — starts again.
+    const sequences = await run(
+      ownerUrl,
+      `select s.relname as sequence, t.relname as owner
+         from pg_class s
+         join pg_namespace n on n.oid = s.relnamespace
+         left join pg_depend d
+           on d.objid = s.oid and d.deptype in ('a', 'i')
+          and d.classid = 'pg_class'::regclass
+         left join pg_class t on t.oid = d.refobjid
+        where s.relkind = 'S' and n.nspname = 'public'`
+    );
+    const restarted = sequences.rows
+      .filter(r => !KEPT_TABLES.includes(r.owner as string))
+      .map(r => r.sequence as string);
+    expect(restarted.length).toBeGreaterThan(5);
+    for (const sequence of restarted) {
+      await run(ownerUrl, `select nextval('${sequence}')`);
+    }
+
+    await resetAllTestData(actor);
+
+    const values = await run(
+      ownerUrl,
+      `select sequencename, last_value from pg_sequences
+        where schemaname = 'public'`
+    );
+    const lastValue = new Map(
+      values.rows.map(r => [r.sequencename as string, r.last_value])
+    );
+    for (const sequence of restarted) {
+      // The reset writes one audit row of its own, so that one reads 1.
+      expect(lastValue.get(sequence), sequence).toBe(
+        sequence === 'audit_event_id_seq' ? '1' : null
+      );
+    }
+  });
+
+  it('keeps API credentials but forgets when they were last used', async () => {
+    const { resetAllTestData } = await load();
+    await run(
+      ownerUrl,
+      `insert into api_credential
+         (name, client_id, secret_hash, scopes, last_used_at, created_by)
+       values ('Website', 'website-client', 'hash', '{}', now(), $1)`,
+      [userId]
+    );
+
+    await resetAllTestData(actor);
+
+    const credentials = await run(
+      ownerUrl,
+      `select name, last_used_at from api_credential`
+    );
+    expect(credentials.rows).toEqual([{ name: 'Website', last_used_at: null }]);
   });
 
   it('does not reopen the guard for an ordinary delete afterwards', async () => {

@@ -27,7 +27,7 @@
 // Fourth increment, officer feedback — no new schema: 'guardian' and
 // 'nominee' are subjects application_party has taken since migration 0010,
 // and uniqueness is an application-level check here, not a database
-// constraint (see the NIC/mobile note on validateRows below).
+// constraint (see the NIC note on validateRows below).
 //   - Nominee 1 and Nominee 2 columns, on whatever type configures a
 //     `nominee` subject — the same S-602 relaxation the live capture form
 //     already gives problemsBlockingSubmission: only the first nominee is
@@ -44,9 +44,10 @@
 //     Excel row invents on its own. The guardian has to already be on file
 //     before their minor is: a batch naming both runs once for the
 //     guardian, then again for the minor.
-//   - NIC, mobile and account number are each unique to one member or
-//     non-member, checked against the rest of the batch and against
-//     everyone already on file (migrated or not).
+//   - NIC and account number are each unique to one member or non-member,
+//     checked against the rest of the batch and against everyone already on
+//     file (migrated or not). Mobile is not — the same number may be on
+//     file for more than one member or non-member.
 //   - Officer feedback, fifth increment: the sheet asks only for the
 //     Guardian Member ID now — surname, name, NIC and mobile are pulled
 //     straight from the guardian's own record on import rather than
@@ -120,6 +121,71 @@ const AB_NUMBER_COLUMN = 'AB Number';
 const JOINED_COLUMN = 'Joined Date (optional)';
 const SHARES_BALANCE_COLUMN = 'Shares Balance';
 const MSA_BALANCE_COLUMN = 'MSA Deposit Balance';
+const INSTRUCTIONS_SHEET = 'Instructions';
+
+// How the template marks each column (officer request: what must be filled
+// in has to be plain on the sheet itself). The header's fill says which:
+// red, always required (also " *"); amber, required in some cases, the
+// header's note saying when; grey, optional. Every rule a column carries
+// is in its header note.
+const REQUIRED_FILL = 'FFF4B6B6';
+const CONDITIONAL_FILL = 'FFFFE08A';
+const OPTIONAL_FILL = 'FFE5E7EB';
+
+type ColumnKind = 'required' | 'conditional' | 'optional';
+
+interface TemplateColumn {
+  header: string;
+  kind: ColumnKind;
+  note?: string;
+  text?: boolean; // keep as typed: no number or date conversion by Excel
+  field?: MembershipTypeField; // a choice field gets its dropdown
+}
+
+const FILLS: Record<ColumnKind, string> = {
+  required: REQUIRED_FILL,
+  conditional: CONDITIONAL_FILL,
+  optional: OPTIONAL_FILL,
+};
+
+const DATE_NOTE = 'Date as YYYY-MM-DD, e.g. 2000-06-15.';
+const AMOUNT_NOTE = 'A plain amount, e.g. 1500 or 1500.50.';
+
+function fieldNote(field: MembershipTypeField): string | undefined {
+  if (field.dataType === 'date') return DATE_NOTE;
+  if (field.subject !== 'applicant') {
+    return field.dataType === 'choice' && field.choices.length > 0
+      ? `One of: ${field.choices.join(', ')}.`
+      : undefined;
+  }
+  if (field.fieldKey === 'nic') {
+    return 'Unique: no two people in this file or on file may share a NIC.';
+  }
+  if (field.fieldKey === 'mobile') {
+    return '8 digits (e.g. 57001234) or with the country code (+230 5700 1234).';
+  }
+  if (field.dataType === 'choice' && field.choices.length > 0) {
+    return `One of: ${field.choices.join(', ')}.`;
+  }
+  return undefined;
+}
+
+function fieldColumn(
+  field: MembershipTypeField,
+  header: string,
+  mandatory: boolean
+): TemplateColumn {
+  return {
+    header: header + (mandatory ? ' *' : ''),
+    kind: mandatory ? 'required' : 'optional',
+    note: fieldNote(field),
+    text:
+      field.dataType === 'phone' ||
+      field.fieldKey === 'nic' ||
+      field.dataType === 'text',
+    field,
+  };
+}
 
 // 'AB' followed by digits, case-insensitive on the way in — the exact shape
 // next_member_number() (migration 0018) itself generates, "AB" plus however
@@ -151,10 +217,11 @@ function assertMayMigrate(permissions: ReadonlySet<string>): void {
 // resolves its guardian the same way problemsBlockingSubmission does
 // (findGuardian, exported from capture.ts for exactly this): an existing
 // member, or an Individual application still on its way to becoming one.
-// A guardian has to be on file before their minor is imported — a batch
-// naming both has to be run once for the guardian, then again for the
-// minor; findGuardian only looks at what is already committed, never at
-// another row still in the same sheet.
+// A minor's guardian is either already on file or a member row of the same
+// upload (officer direction: the Individual sheet goes first, then Minor).
+// validateRows checks every row that needs no guardian before any that
+// does, and returns them in that order, so a batch imports the guardian
+// before the minor who names them.
 function eligible(type: MembershipType): boolean {
   return type.isActive;
 }
@@ -305,6 +372,51 @@ function extraBalanceColumn(accountType: AccountType): string {
   return `${accountType.name} Balance`;
 }
 
+// The template's first sheet: the colour key and the rules that hold on
+// every sheet. Kept short — the column notes carry each column's own rule.
+function fillInstructions(sheet: ExcelJS.Worksheet, typeNames: string[]) {
+  sheet.getColumn(1).width = 28;
+  sheet.getColumn(2).width = 90;
+  const title = sheet.addRow(['Member migration file']);
+  title.font = { bold: true, size: 14 };
+  sheet.addRow([]);
+  const key: [ColumnKind, string, string][] = [
+    ['required', 'Red heading, marked *', 'Required on every row.'],
+    [
+      'conditional',
+      'Amber heading',
+      'Required in some cases: the heading’s note says when.',
+    ],
+    ['optional', 'Grey heading', 'Optional.'],
+  ];
+  sheet.addRow(['Column headings']).font = { bold: true };
+  for (const [kind, label, meaning] of key) {
+    const row = sheet.addRow([label, meaning]);
+    row.getCell(1).fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: FILLS[kind] },
+    };
+  }
+  sheet.addRow([]);
+  sheet.addRow(['Rules']).font = { bold: true };
+  const rules = [
+    `One row per person, on the sheet of their membership type: ${typeNames.join(', ')}.`,
+    'A member has an AB Number, with Shares Balance and MSA Deposit Balance (0 if none).',
+    'A non-member has no AB Number: fill Legacy Member Code and at least one account number with its balance.',
+    'Hover over a heading to read its note.',
+    'Dates as YYYY-MM-DD. Amounts as plain numbers, e.g. 1500.50.',
+    'NIC, legacy code and account numbers belong to one person only, in this file and on file.',
+    'A minor’s guardian must be a member already, or be on the Individual sheet of the same file.',
+    'Keep the sheet names and column headings as they are. A sheet or column the template does not have is refused.',
+    'Uploading the same Legacy Member Code again updates that person instead of adding them twice.',
+  ];
+  rules.forEach((rule, index) => {
+    const row = sheet.addRow([`${index + 1}.`, rule]);
+    row.getCell(2).alignment = { wrapText: true };
+  });
+}
+
 // One sheet per eligible membership type, its columns exactly the fields
 // that type's own capture form asks for — read live, the same as the
 // capture form itself, so a field an administrator adds or relabels
@@ -318,27 +430,7 @@ export async function buildImportTemplate(): Promise<Buffer> {
   workbook.creator = 'Al Barakah MCSL';
   workbook.created = new Date();
 
-  // A choice field gets a dropdown restricted to its configured choices, so a
-  // typo cannot even be typed in — the same guarantee the capture form's own
-  // <select> already gives. Applied to whichever column block a field list
-  // occupies, by its 1-based starting column.
-  const applyChoiceDropdowns = (
-    sheet: ExcelJS.Worksheet,
-    fieldList: MembershipTypeField[],
-    startColumn: number
-  ) => {
-    fieldList.forEach((field, index) => {
-      if (field.dataType !== 'choice' || field.choices.length === 0) return;
-      const column = startColumn + index;
-      for (let row = 2; row <= 500; row++) {
-        sheet.getCell(row, column).dataValidation = {
-          type: 'list',
-          allowBlank: !field.isMandatory,
-          formulae: [`"${field.choices.join(',')}"`],
-        };
-      }
-    });
-  };
+  const instructions = workbook.addWorksheet(INSTRUCTIONS_SHEET);
 
   for (const type of types) {
     const fields = applicantFields(type);
@@ -350,58 +442,115 @@ export async function buildImportTemplate(): Promise<Buffer> {
     const extras = additionalAccountTypes(type, accountTypes);
     const sheet = workbook.addWorksheet(type.name.slice(0, 31));
 
-    const nomineeHeaders: string[] = [];
+    // Employment Details sit right after the applicant's own fields — the
+    // same grouping the member page gives them — and before Nominee.
+    const columns: TemplateColumn[] = [
+      {
+        header: LEGACY_CODE_COLUMN,
+        kind: 'conditional',
+        note:
+          'Required for a non-member (AB Number left blank). ' +
+          'Each code once only.',
+        text: true,
+      },
+      {
+        header: AB_NUMBER_COLUMN,
+        kind: 'conditional',
+        note:
+          'A member: AB followed by digits, e.g. AB2001. Leave blank for a ' +
+          'non-member, who then needs an account number and balance below.',
+        text: true,
+      },
+      { header: JOINED_COLUMN, kind: 'optional', note: DATE_NOTE },
+      ...fields.map(f => fieldColumn(f, f.label, f.isMandatory)),
+      ...employment.map(f => fieldColumn(f, f.label, f.isMandatory)),
+      ...guardian.map(f => ({
+        ...fieldColumn(f, f.label, f.isMandatory),
+        note:
+          "The guardian's AB Number: a member already, or one on the " +
+          'Individual sheet of this file.',
+        text: true,
+      })),
+      ...beneficiary.map(f => fieldColumn(f, f.label, f.isMandatory)),
+    ];
     for (let ordinal = 1; ordinal <= nomineeOrdinals; ordinal++) {
       for (const field of nominees) {
         // S-602, relaxed on officer feedback: only the first nominee is
         // ever mandatory (problemsBlockingSubmission's own exemption) — a
         // second is there for a family that wants to name one, never
         // demanded.
-        nomineeHeaders.push(
-          nomineeColumnHeader(
-            field,
-            ordinal,
-            ordinal === 1 && field.isMandatory
-          )
-        );
+        const mandatory = ordinal === 1 && field.isMandatory;
+        columns.push({
+          ...fieldColumn(field, '', false),
+          header: nomineeColumnHeader(field, ordinal, mandatory),
+          kind: mandatory ? 'required' : 'optional',
+        });
       }
     }
-
-    // Employment Details sit right after the applicant's own fields — the
-    // same grouping the member page gives them — and before Nominee.
-    const headers = [
-      LEGACY_CODE_COLUMN,
-      AB_NUMBER_COLUMN,
-      JOINED_COLUMN,
-      ...fields.map(f => f.label + (f.isMandatory ? ' *' : '')),
-      ...employment.map(f => f.label + (f.isMandatory ? ' *' : '')),
-      ...guardian.map(f => f.label + (f.isMandatory ? ' *' : '')),
-      ...beneficiary.map(f => f.label + (f.isMandatory ? ' *' : '')),
-      ...nomineeHeaders,
-      SHARES_BALANCE_COLUMN,
-      MSA_BALANCE_COLUMN,
-      ...extras.flatMap(t => [extraNumberColumn(t), extraBalanceColumn(t)]),
-    ];
-    sheet.addRow(headers);
-    sheet.getRow(1).font = { bold: true };
-    sheet.columns.forEach(col => {
-      col.width = 24;
-    });
-
-    // Note on the Joined Date column (column 3) and Date of Birth column
-    // (wherever it falls in the applicant fields block).
-    sheet.getCell(1, 3).note = 'Format: YYYY-MM-DD (e.g. 2000-06-15)';
-    const dobIndex = fields.findIndex(f => f.fieldKey === 'date_of_birth');
-    if (dobIndex >= 0) {
-      sheet.getCell(1, 4 + dobIndex).note =
-        'Format: YYYY-MM-DD (e.g. 2015-01-15)';
+    for (const header of [SHARES_BALANCE_COLUMN, MSA_BALANCE_COLUMN]) {
+      columns.push({
+        header,
+        kind: 'conditional',
+        note:
+          'Required when AB Number is filled; 0 if there is no balance. ' +
+          AMOUNT_NOTE,
+      });
+    }
+    for (const extra of extras) {
+      const pair =
+        `Fill ${extraNumberColumn(extra)} and ${extraBalanceColumn(extra)} ` +
+        'together, or leave both blank.';
+      columns.push(
+        {
+          header: extraNumberColumn(extra),
+          kind: 'conditional',
+          note: `${pair} Each account number once only.`,
+          text: true,
+        },
+        {
+          header: extraBalanceColumn(extra),
+          kind: 'conditional',
+          note: `${pair} ${AMOUNT_NOTE}`,
+        }
+      );
     }
 
-    // Column 1: legacy code, 2: AB number, 3: joined date, then the
-    // applicant fields, then the employment fields.
-    applyChoiceDropdowns(sheet, fields, 4);
-    applyChoiceDropdowns(sheet, employment, 4 + fields.length);
+    sheet.addRow(columns.map(c => c.header));
+    sheet.views = [{ state: 'frozen', ySplit: 1 }];
+    columns.forEach((column, index) => {
+      const cell = sheet.getCell(1, index + 1);
+      cell.font = { bold: true };
+      cell.alignment = { wrapText: true, vertical: 'middle' };
+      cell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: FILLS[column.kind] },
+      };
+      if (column.note) cell.note = column.note;
+      const sheetColumn = sheet.getColumn(index + 1);
+      sheetColumn.width = 24;
+      if (column.text) sheetColumn.numFmt = '@';
+      const field = column.field;
+      if (field && field.dataType === 'choice' && field.choices.length > 0) {
+        // A choice field gets a dropdown restricted to its configured
+        // choices, so a typo cannot even be typed in — the same guarantee
+        // the capture form's own <select> already gives.
+        for (let row = 2; row <= 500; row++) {
+          sheet.getCell(row, index + 1).dataValidation = {
+            type: 'list',
+            allowBlank: column.kind !== 'required',
+            formulae: [`"${field.choices.join(',')}"`],
+          };
+        }
+      }
+    });
+    sheet.getRow(1).height = 32;
   }
+
+  fillInstructions(
+    instructions,
+    types.map(t => t.name)
+  );
 
   const buffer = await workbook.xlsx.writeBuffer();
   return Buffer.from(buffer);
@@ -448,23 +597,63 @@ function stripMandatoryMarker(header: string): string {
   return header.replace(/\s*\*\s*$/, '').trim();
 }
 
+// Day 0 of Excel's date numbering (1899-12-30, which absorbs Excel's own
+// 1900 leap-year slip), in milliseconds.
+const EXCEL_EPOCH = Date.UTC(1899, 11, 30);
+
+function sheetHasData(sheet: ExcelJS.Worksheet): boolean {
+  let found = false;
+  sheet.eachRow((row, rowNumber) => {
+    if (found || rowNumber === 1) return;
+    row.eachCell(cell => {
+      if (String(cell.value ?? '').trim() !== '') found = true;
+    });
+  });
+  return found;
+}
+
 export async function parseImportFile(buffer: Buffer): Promise<ParsedRow[]> {
   const workbook = new ExcelJS.Workbook();
-  // exceljs bundles its own @types/node, whose Buffer generic instantiation
-  // does not structurally match this project's — an assertion, not an
-  // actual type difference.
-  await workbook.xlsx.load(buffer as any);
+  try {
+    // exceljs bundles its own @types/node, whose Buffer generic instantiation
+    // does not structurally match this project's — an assertion, not an
+    // actual type difference.
+    await workbook.xlsx.load(buffer as any);
+  } catch {
+    throw new MigrationError(
+      'That file is not an Excel workbook (.xlsx). Fill in the template and upload it as it is saved.'
+    );
+  }
 
   const [types, accountTypes] = await Promise.all([
     eligibleMembershipTypesForMigration(),
     listAccountTypes(),
   ]);
-  const byName = new Map(types.map(t => [t.name, t]));
+  // Matched ignoring case and surrounding spaces (officer QA: a tab retyped
+  // as "individual" used to drop its whole sheet without a word). A sheet
+  // that matches no type is refused if anything is typed in it, rather
+  // than silently skipped; the template's own Instructions sheet and an
+  // empty sheet are passed over.
+  const sheetKey = (name: string) => name.trim().toLowerCase();
+  const byName = new Map(types.map(t => [sheetKey(t.name), t]));
+  const problems: string[] = [];
 
   const rows: ParsedRow[] = [];
   for (const sheet of workbook.worksheets) {
-    const type = byName.get(sheet.name);
-    if (!type) continue; // A sheet this template never produced — ignored.
+    const type = byName.get(sheetKey(sheet.name));
+    if (!type) {
+      if (
+        sheetKey(sheet.name) !== sheetKey(INSTRUCTIONS_SHEET) &&
+        sheetHasData(sheet)
+      ) {
+        problems.push(
+          `Sheet "${sheet.name}" is not one of the template's sheets (` +
+            `${types.map(t => t.name).join(', ')}). Move its rows to the ` +
+            'right sheet, or delete it.'
+        );
+      }
+      continue;
+    }
     const fields = applicantFields(type);
     const byLabel = new Map(
       fields.map(f => [stripMandatoryMarker(f.label), f.fieldKey])
@@ -514,6 +703,7 @@ export async function parseImportFile(buffer: Buffer): Promise<ParsedRow[]> {
     >();
     const extraNumberColumns = new Map<number, string>();
     const extraBalanceColumns = new Map<number, string>();
+    const unknownColumns = new Map<number, string>();
     let legacyCodeColumn: number | null = null;
     let abNumberColumn: number | null = null;
     let joinedColumn: number | null = null;
@@ -528,9 +718,9 @@ export async function parseImportFile(buffer: Buffer): Promise<ParsedRow[]> {
         abNumberColumn = colNumber;
       } else if (header === JOINED_COLUMN) {
         joinedColumn = colNumber;
-      } else if (header === SHARES_BALANCE_COLUMN) {
+      } else if (bareHeader === SHARES_BALANCE_COLUMN) {
         sharesBalanceColumn = colNumber;
-      } else if (header === MSA_BALANCE_COLUMN) {
+      } else if (bareHeader === MSA_BALANCE_COLUMN) {
         msaBalanceColumn = colNumber;
       } else if (extraNumberByLabel.has(header)) {
         extraNumberColumns.set(colNumber, extraNumberByLabel.get(header)!);
@@ -547,8 +737,39 @@ export async function parseImportFile(buffer: Buffer): Promise<ParsedRow[]> {
       } else {
         const fieldKey = byLabel.get(bareHeader);
         if (fieldKey) columnFieldKeys.set(colNumber, fieldKey);
+        else if (header !== '') unknownColumns.set(colNumber, header);
       }
     });
+    // A column the template does not have is refused when anything is typed
+    // under it: what is in it would otherwise be lost without a word
+    // (officer QA). An empty one — a spacer, a note to self — is ignored.
+    for (const [colNumber, header] of unknownColumns) {
+      let used = false;
+      sheet.eachRow((row, rowNumber) => {
+        if (rowNumber === 1 || used) return;
+        const value = row.getCell(colNumber).value;
+        if (value !== null && value !== undefined && String(value).trim())
+          used = true;
+      });
+      if (used) {
+        problems.push(
+          `Sheet "${sheet.name}": column "${header}" is not in the template. ` +
+            "Use the template's own column headings, or delete the column."
+        );
+      }
+    }
+
+    const dateColumns = new Set<number>(
+      [
+        joinedColumn,
+        ...[...columnFieldKeys]
+          .filter(
+            ([, key]) =>
+              fields.find(f => f.fieldKey === key)?.dataType === 'date'
+          )
+          .map(([column]) => column),
+      ].filter((c): c is number => c !== null)
+    );
 
     sheet.eachRow((row, rowNumber) => {
       if (rowNumber === 1) return;
@@ -557,10 +778,20 @@ export async function parseImportFile(buffer: Buffer): Promise<ParsedRow[]> {
         const value = row.getCell(colNumber).value;
         if (value === null || value === undefined) return '';
         if (value instanceof Date) return value.toISOString().slice(0, 10);
-        if (typeof value === 'object' && 'text' in value) {
-          return String((value as { text: unknown }).text ?? '').trim();
+        // A date column holding a bare number is an Excel date that lost
+        // its date formatting (36688 is 15 June 2000): read it as that day.
+        if (
+          typeof value === 'number' &&
+          dateColumns.has(colNumber) &&
+          Number.isInteger(value) &&
+          value > 0 &&
+          value < 2_958_466
+        ) {
+          return new Date(EXCEL_EPOCH + value * 86_400_000)
+            .toISOString()
+            .slice(0, 10);
         }
-        return String(value).trim();
+        return objectCellText(value);
       };
 
       const legacyCode = cellText(legacyCodeColumn);
@@ -618,7 +849,7 @@ export async function parseImportFile(buffer: Buffer): Promise<ParsedRow[]> {
       if (!hasContent) return;
 
       rows.push({
-        sheet: sheet.name,
+        sheet: type.name,
         rowNumber,
         legacyCode,
         abNumber,
@@ -636,6 +867,7 @@ export async function parseImportFile(buffer: Buffer): Promise<ParsedRow[]> {
     });
   }
 
+  if (problems.length > 0) throw new MigrationError(problems.join(' '));
   return rows;
 }
 
@@ -693,10 +925,78 @@ interface ExistingRecord {
   accountNos: Map<string, string>;
 }
 
-function parseAmount(raw: string, label: string, problems: string[]): string {
+const THOUSANDS_GROUPED = /^-?\d{1,3}(,\d{3})+(\.\d+)?$/;
+
+// What a cell that is not a plain value says: a formula's result (a
+// Guardian Member ID looked up with VLOOKUP), text with mixed formatting, a
+// hyperlink. Officer QA: each of these was read as "[object Object]".
+export function objectCellText(value: ExcelJS.CellValue): string {
+  if (value === null || value === undefined) return '';
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  if (typeof value !== 'object') return String(value).trim();
+  if ('richText' in value) {
+    return value.richText
+      .map(part => part.text)
+      .join('')
+      .trim();
+  }
+  if ('result' in value) {
+    const result = value.result;
+    if (result === null || result === undefined) return '';
+    if (typeof result === 'object' && !(result instanceof Date)) return '';
+    return objectCellText(result);
+  }
+  if ('text' in value) {
+    return String((value as { text: unknown }).text ?? '').trim();
+  }
+  if ('error' in value) return '';
+  return '';
+}
+
+// A date in a migration file: YYYY-MM-DD (what an Excel date cell is read
+// as, too), a real calendar day, not before 1900 and not in the future.
+// Officer QA: "15/06/2000" and a bare Excel day number like 36688 were
+// either refused unhelpfully or read as the year 36688.
+const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+function parseMigrationDate(
+  raw: string,
+  label: string,
+  problems: string[]
+): Date | null {
+  const match = ISO_DATE.exec(raw.trim());
+  const date = match
+    ? new Date(Date.UTC(+match[1], +match[2] - 1, +match[3]))
+    : null;
+  if (
+    !match ||
+    !date ||
+    date.getUTCFullYear() !== +match[1] ||
+    date.getUTCMonth() !== +match[2] - 1 ||
+    date.getUTCDate() !== +match[3]
+  ) {
+    problems.push(`${label} "${raw}" is not a date; use YYYY-MM-DD.`);
+    return null;
+  }
+  if (date.getUTCFullYear() < 1900 || date.getTime() > Date.now()) {
+    problems.push(`${label} ${raw.trim()} is not a possible date.`);
+    return null;
+  }
+  return date;
+}
+
+export function parseAmount(
+  raw: string,
+  label: string,
+  problems: string[]
+): string {
   if (raw.trim() === '') return '';
   try {
-    const cents = toCents(raw);
+    // "1,500.00" as a spreadsheet shows it: the commas are only grouping.
+    const bare = THOUSANDS_GROUPED.test(raw.trim())
+      ? raw.trim().replace(/,/g, '')
+      : raw;
+    const cents = toCents(bare);
     if (cents < 0) {
       problems.push(`${label} cannot be negative.`);
       return '';
@@ -714,13 +1014,15 @@ function parseAmount(raw: string, label: string, problems: string[]): string {
 
 /**
  * Format and mandatory-field checks, member/non-member classification
- * (S-614), and legacy_code / AB Number / account-number / NIC / mobile
- * uniqueness both against what is already on file and against the rest of
- * this same batch — so two rows claiming the same old code, AB Number,
- * account number, NIC or mobile are caught before either is written, not
- * after one of them already is. NIC and mobile are checked only where a
- * type's own applicant fields configure them (Corporate has no 'nic'); a
- * row updating its own existing record is never flagged against itself.
+ * (S-614), and legacy_code / AB Number / account-number / NIC uniqueness
+ * both against what is already on file and against the rest of this same
+ * batch — so two rows claiming the same old code, AB Number, account
+ * number or NIC are caught before either is written, not after one of them
+ * already is. NIC is checked only where a type's own applicant fields
+ * configure it (Corporate has no 'nic'); a row updating its own existing
+ * record is never flagged against itself. Mobile is not checked for
+ * uniqueness — the same number may be on file for more than one member or
+ * non-member.
  *
  * A legacy code already on file is not itself an error: importMembers
  * updates that record instead, provided the row agrees with what is on
@@ -792,18 +1094,18 @@ export async function validateRows(
     query<{ account_no: string | null }>(
       `select account_no from account where account_no is not null`
     ),
-    // Item 6: NIC and mobile are unique to a member/non-member, checked
-    // against everyone already on file — migrated or approved the ordinary
-    // way, this import does not distinguish.
-    query<{ id: string; nic: string | null; mobile: string | null }>(
-      `select m.id, p.values->>'nic' as nic, p.values->>'mobile' as mobile
+    // Item 6: NIC is unique to a member/non-member, checked against everyone
+    // already on file — migrated or approved the ordinary way, this import
+    // does not distinguish. Mobile is not unique and is not checked here.
+    query<{ id: string; nic: string | null }>(
+      `select m.id, p.values->>'nic' as nic
          from member m
          join application_party p
            on p.application_id = m.application_id
           and p.subject = 'applicant' and p.ordinal = 1`
     ),
-    query<{ id: string; nic: string | null; mobile: string | null }>(
-      `select c.id, p.values->>'nic' as nic, p.values->>'mobile' as mobile
+    query<{ id: string; nic: string | null }>(
+      `select c.id, p.values->>'nic' as nic
          from customer c
          join application_party p
            on p.application_id = c.application_id
@@ -854,35 +1156,19 @@ export async function validateRows(
   );
 
   // Item 6: keyed by owner (kind + id) so a row updating its own existing
-  // record is never flagged as colliding with itself — only a NIC or mobile
-  // already on file for someone else is a problem.
+  // record is never flagged as colliding with itself — only a NIC already on
+  // file for someone else is a problem.
   const nicOwner = new Map<
-    string,
-    { kind: 'member' | 'customer'; id: string }
-  >();
-  const mobileOwner = new Map<
     string,
     { kind: 'member' | 'customer'; id: string }
   >();
   for (const r of memberApplicantValues.rows) {
     if (r.nic)
       nicOwner.set(r.nic.trim().toLowerCase(), { kind: 'member', id: r.id });
-    if (r.mobile) {
-      mobileOwner.set(r.mobile.trim().toLowerCase(), {
-        kind: 'member',
-        id: r.id,
-      });
-    }
   }
   for (const r of customerApplicantValues.rows) {
     if (r.nic) {
       nicOwner.set(r.nic.trim().toLowerCase(), { kind: 'customer', id: r.id });
-    }
-    if (r.mobile) {
-      mobileOwner.set(r.mobile.trim().toLowerCase(), {
-        kind: 'customer',
-        id: r.id,
-      });
     }
   }
 
@@ -908,7 +1194,10 @@ export async function validateRows(
   const abOccurrences = new Map<string, number>();
   const accountNoOccurrences = new Map<string, number>();
   const nicOccurrences = new Map<string, number>();
-  const mobileOccurrences = new Map<string, number>();
+  const needsGuardian = (row: ParsedRow) => {
+    const type = byName.get(row.sheet);
+    return type ? guardianFields(type).length > 0 : false;
+  };
   for (const row of rows) {
     const abGiven = row.abNumber.trim() !== '';
     const legacyCode = effectiveLegacyCode(row, abGiven);
@@ -927,21 +1216,27 @@ export async function validateRows(
     }
     // Item 6: same rest-of-batch check as legacy code/AB Number/account
     // number above, on whichever of the applicant fields this type actually
-    // configures 'nic' and 'mobile' for (Corporate has no 'nic' field).
+    // configures 'nic' for (Corporate has none).
     const nicKey = (row.values.nic ?? '').trim().toLowerCase();
     if (nicKey !== '') {
       nicOccurrences.set(nicKey, (nicOccurrences.get(nicKey) ?? 0) + 1);
     }
-    const mobileKey = (row.values.mobile ?? '').trim().toLowerCase();
-    if (mobileKey !== '') {
-      mobileOccurrences.set(
-        mobileKey,
-        (mobileOccurrences.get(mobileKey) ?? 0) + 1
-      );
-    }
   }
 
-  for (const row of rows) {
+  // Rows that need no guardian first, then those that do, so a minor can
+  // name a guardian from the same upload — and the rows come back in that
+  // order, which is the order they are imported in.
+  const ordered = [
+    ...rows.filter(r => !needsGuardian(r)),
+    ...rows.filter(r => needsGuardian(r)),
+  ];
+  // Member rows of this upload that validated, by AB Number: guardians a
+  // minor further down may name.
+  const membersInUpload = new Map<string, Record<string, string>>();
+  // Member rows of this upload that did not validate, by AB Number.
+  const membersWithProblems = new Set<string>();
+
+  for (const row of ordered) {
     const problems: string[] = [];
     const type = byName.get(row.sheet);
     if (!type) {
@@ -1024,17 +1319,19 @@ export async function validateRows(
 
     let joinedAt: Date | null = null;
     if (row.joinedAt !== '') {
-      const parsed = new Date(row.joinedAt);
-      if (Number.isNaN(parsed.getTime())) {
-        problems.push(`${JOINED_COLUMN} "${row.joinedAt}" is not a date.`);
-      } else {
-        joinedAt = parsed;
-      }
+      joinedAt = parseMigrationDate(row.joinedAt, 'Joined Date', problems);
     }
 
     const fields = applicantFields(type);
     const { values, errors: formatErrors } = normalise(row.values, fields);
     for (const error of formatErrors) problems.push(error.label);
+    // A date field (Date of birth) is taken as typed by normalise — the
+    // capture form's own date picker cannot produce a bad one; a sheet can.
+    for (const field of fields) {
+      if (field.dataType !== 'date') continue;
+      const raw = (row.values[field.fieldKey] ?? '').trim();
+      if (raw !== '') parseMigrationDate(raw, field.label, problems);
+    }
     for (const field of fields) {
       if (!field.isMandatory) continue;
       if ((values[field.fieldKey] ?? '').trim() === '') {
@@ -1065,27 +1362,6 @@ export async function validateRows(
         problems.push(`NIC "${nic}" appears more than once in this sheet.`);
       }
     }
-    const mobile = (values.mobile ?? '').trim();
-    if (mobile !== '') {
-      const key = mobile.toLowerCase();
-      const owner = mobileOwner.get(key);
-      const isSelf =
-        !!existing &&
-        !!owner &&
-        owner.kind === existing.kind &&
-        owner.id === existing.id;
-      if (owner && !isSelf) {
-        problems.push(
-          `Mobile "${row.values.mobile}" is already on file for a different ` +
-            'member/non-member.'
-        );
-      } else if ((mobileOccurrences.get(key) ?? 0) > 1) {
-        problems.push(
-          `Mobile "${row.values.mobile}" appears more than once in this sheet.`
-        );
-      }
-    }
-
     // Employment Details (Occupation, Employment status) — the applicant's
     // own, every entry optional, so nothing is ever required and the only
     // check is the format one normalise does: Employment status must be one
@@ -1114,12 +1390,27 @@ export async function validateRows(
         problems.push(`${guardianField.label} is required.`);
       } else {
         const found = await findGuardian(guardianMemberNo, '');
-        if (!found) {
+        const inUpload = membersInUpload.get(guardianMemberNo.toUpperCase());
+        if (!found && inUpload) {
+          guardianValues = {
+            [guardianField.fieldKey]: guardianMemberNo.toUpperCase(),
+            surname: inUpload.surname ?? '',
+            name: inUpload.name ?? '',
+            nic: inUpload.nic ?? '',
+            mobile: inUpload.mobile ?? '',
+          };
+        } else if (
+          !found &&
+          membersWithProblems.has(guardianMemberNo.toUpperCase())
+        ) {
+          problems.push(
+            `The guardian ${guardianMemberNo.toUpperCase()} has problems on ` +
+              'their own row of this file. Fix that row first.'
+          );
+        } else if (!found) {
           problems.push(
             `${guardianField.label} "${guardianMemberNo}" does not match ` +
-              'any member or in-progress application on file — the ' +
-              'guardian must already be on file before their minor can ' +
-              'be imported.'
+              'any member on file or on the Individual sheet of this file.'
           );
         } else if (found.isMember && found.status !== 'active') {
           problems.push(
@@ -1136,6 +1427,9 @@ export async function validateRows(
         }
       }
     }
+
+    // Mobile is no longer checked for uniqueness (officer direction): the
+    // same number may be on file for more than one member or non-member.
 
     // Takaful beneficiary (Minor only). Its own person, not on file
     // anywhere else — typed in full, the same as an applicant field, and
@@ -1191,6 +1485,21 @@ export async function validateRows(
       'MSA Deposit Balance',
       problems
     );
+    // Officer direction: a member's two balances are part of what the old
+    // register says about them, so a row naming an AB Number states both —
+    // 0 where there is nothing — rather than leaving either to be guessed.
+    if (abGiven) {
+      if (row.sharesBalance.trim() === '') {
+        problems.push(
+          'Shares Balance is required with an AB Number (0 if none).'
+        );
+      }
+      if (row.msaBalance.trim() === '') {
+        problems.push(
+          'MSA Deposit Balance is required with an AB Number (0 if none).'
+        );
+      }
+    }
     if (!abGiven && (sharesBalance !== '' || msaBalance !== '')) {
       problems.push(
         'Shares Balance and MSA Deposit Balance need an AB Number — only ' +
@@ -1279,9 +1588,11 @@ export async function validateRows(
 
     if (problems.length > 0) {
       errors.push({ ...row, message: problems.join(' ') });
+      if (abGiven) membersWithProblems.add(row.abNumber.trim().toUpperCase());
       continue;
     }
 
+    if (abGiven) membersInUpload.set(abNumber.toUpperCase(), values);
     valid.push({
       ...row,
       // The effective code — the AB Number, when the column itself was
@@ -1304,6 +1615,16 @@ export async function validateRows(
     });
   }
 
+  // Problems read in the order of the file, whatever order they were
+  // checked in.
+  const position = new Map(
+    rows.map((r, i) => [`${r.sheet}#${r.rowNumber}`, i])
+  );
+  errors.sort(
+    (a, b) =>
+      (position.get(`${a.sheet}#${a.rowNumber}`) ?? 0) -
+      (position.get(`${b.sheet}#${b.rowNumber}`) ?? 0)
+  );
   return { valid, errors };
 }
 
@@ -1337,8 +1658,19 @@ export interface ImportOutcome {
     legacyCode: string;
     memberNo: string;
     kind: 'member' | 'customer';
+    // The member or customer the row wrote to, and whether this row created
+    // it or only added to one already on file — what cancelling a batch
+    // (summary.ts's neighbour, batches.ts) removes.
+    holderId: string;
+    created: boolean;
   }[];
-  failed: { legacyCode: string; message: string }[];
+  // applicationId: an application this row inserted before it failed, so
+  // cancelling the batch can remove it too.
+  failed: {
+    legacyCode: string;
+    message: string;
+    applicationId: string | null;
+  }[];
 }
 
 function toBalanceLines(
@@ -1353,12 +1685,11 @@ function toBalanceLines(
 }
 
 // Guardian and Takaful beneficiary (Minor only, always fully required when
-// configured — see validateRows) — member rows only, validateRows already
-// having refused either on a non-member row. Nominee 1/2 (whatever this
-// type's own nomineeCount offers, capped at the sheet's own 2) is written
-// for a member and non-member row alike (officer feedback) — this function
-// is called from both, and simply writes nothing for the guardian/
-// beneficiary objects a non-member row always leaves empty.
+// configured — see validateRows), member and non-member Minor alike.
+// Nominee 1/2 (whatever this type's own nomineeCount offers, capped at the
+// sheet's own 2) is written for a member and non-member row alike (officer
+// feedback) — this function is called from both, and simply writes nothing
+// for the guardian/beneficiary objects any other row leaves empty.
 //
 // On a fresh import (skipBlankOrdinals: false) every ordinal the type
 // configures is written even blank, matching the pre-created-empty-row
@@ -1453,22 +1784,62 @@ function rowBalance(row: ValidatedRow): number {
   return cents;
 }
 
+/**
+ * The balance a file carries, in cents: every Shares, MSA and account
+ * balance on every row, whether or not the record is already on file. The
+ * control total the operator types comes from the old register, which knows
+ * nothing about what an earlier run already imported — so this, not what a
+ * run ends up writing, is what it is compared with (QA-22).
+ */
+export function fileBalanceCents(rows: ParsedRow[]): number {
+  let cents = 0;
+  for (const row of rows) {
+    for (const amount of [
+      row.sharesBalance,
+      row.msaBalance,
+      ...Object.values(row.accountBalances),
+    ]) {
+      if (amount.trim() === '') continue;
+      try {
+        cents += toCents(amount);
+      } catch {
+        // Not an amount: validateRows names the row and the column, and
+        // nothing is imported while it does.
+      }
+    }
+  }
+  return cents;
+}
+
 export async function importMembers(
   rows: ValidatedRow[],
   actor: Actor,
   permissions: ReadonlySet<string>,
-  checksum: string
+  checksum: string,
+  // A batch run a chunk at a time (batches.ts) names itself and records its
+  // own completion; a one-shot call is its own batch.
+  options: { batchId?: string } = {}
 ): Promise<ImportOutcome> {
   assertMayMigrate(permissions);
 
-  const batchId = randomUUID();
+  const batchId = options.batchId ?? randomUUID();
   const imported: ImportOutcome['imported'] = [];
   const failed: ImportOutcome['failed'] = [];
   let totalBalance = 0;
 
   for (const row of rows) {
     let allocation: ReceiptAllocation | null = null;
+    // Set by the branches that insert an application of their own.
+    let newApplicationId: string | null = null;
     try {
+      // A guardian from the same upload is imported first; if their own
+      // row failed, the minor cannot name them.
+      const guardianNo = row.guardian.member_id ?? '';
+      if (guardianNo && !(await findGuardian(guardianNo, ''))) {
+        throw new MigrationError(
+          `The guardian ${guardianNo} is not on file. Import the guardian first.`
+        );
+      }
       const isUpdate =
         row.existingId !== null && row.existingApplicationId !== null;
 
@@ -1564,6 +1935,8 @@ export async function importMembers(
             legacyCode: row.legacyCode,
             memberNo,
             kind: 'member',
+            holderId: memberId,
+            created: false,
           });
         } else {
           const application = await query<{ id: string }>(
@@ -1574,6 +1947,7 @@ export async function importMembers(
             [row.membershipTypeId, actor.userId]
           );
           const applicationId = application.rows[0].id;
+          newApplicationId = applicationId;
 
           await query(
             `insert into application_party (application_id, subject, ordinal, values)
@@ -1620,8 +1994,16 @@ export async function importMembers(
             );
           }
 
-          const shares = row.sharesBalance || null;
-          const msaDeposit = row.msaBalance || null;
+          // A stated 0 is "nothing held": no line, and no receipt used up
+          // on a zero payment.
+          const shares =
+            row.sharesBalance && toCents(row.sharesBalance) > 0
+              ? row.sharesBalance
+              : null;
+          const msaDeposit =
+            row.msaBalance && toCents(row.msaBalance) > 0
+              ? row.msaBalance
+              : null;
           const accountLines = toBalanceLines(row.accountEntries);
           let feeVersionId: string | null = null;
           if (hasMigrationBalance({ shares, msaDeposit, accountLines })) {
@@ -1631,7 +2013,7 @@ export async function importMembers(
             ]);
           }
 
-          const memberNo = await withTransaction(async client => {
+          const createdMember = await withTransaction(async client => {
             const created = await createMemberFromApplication(
               client,
               loaded,
@@ -1693,14 +2075,16 @@ export async function importMembers(
               },
               client
             );
-            return created.memberNo;
+            return { memberNo: created.memberNo, memberId: created.id };
           });
 
           totalBalance += rowBalance(row);
           imported.push({
             legacyCode: row.legacyCode,
-            memberNo,
+            memberNo: createdMember.memberNo,
             kind: 'member',
+            holderId: createdMember.memberId,
+            created: true,
           });
         }
       } else {
@@ -1792,6 +2176,8 @@ export async function importMembers(
             legacyCode: row.legacyCode,
             memberNo: '',
             kind: 'customer',
+            holderId: customerId,
+            created: false,
           });
         } else {
           const application = await query<{ id: string }>(
@@ -1802,6 +2188,7 @@ export async function importMembers(
             [row.membershipTypeId, actor.userId]
           );
           const applicationId = application.rows[0].id;
+          newApplicationId = applicationId;
 
           await query(
             `insert into application_party (application_id, subject, ordinal, values)
@@ -1815,8 +2202,24 @@ export async function importMembers(
               [applicationId, JSON.stringify(row.employment)]
             );
           }
-          // Nominee 1/2 same as a member row (officer feedback) — no
-          // guardian or beneficiary to write here, both stay member-only.
+          // A non-member Minor carries its guardian and Takaful beneficiary
+          // the same as a member one (officer QA: a minor saver came in
+          // with no guardian); every other non-member row leaves both empty.
+          if (Object.keys(row.guardian).length > 0) {
+            await query(
+              `insert into application_party (application_id, subject, ordinal, values)
+               values ($1, 'guardian', 1, $2::jsonb)`,
+              [applicationId, JSON.stringify(row.guardian)]
+            );
+          }
+          if (Object.keys(row.beneficiary).length > 0) {
+            await query(
+              `insert into application_party (application_id, subject, ordinal, values)
+               values ($1, 'beneficiary', 1, $2::jsonb)`,
+              [applicationId, JSON.stringify(row.beneficiary)]
+            );
+          }
+          // Nominee 1/2 same as a member row (officer feedback).
           for (let ordinal = 1; ordinal <= row.nominees.length; ordinal++) {
             await query(
               `insert into application_party (application_id, subject, ordinal, values)
@@ -1838,7 +2241,7 @@ export async function importMembers(
             ]);
           }
 
-          await withTransaction(async client => {
+          const customerId = await withTransaction(async client => {
             const created = await createMigratedCustomer(client, applicationId);
             await client.query(
               `update customer set legacy_code = $2,
@@ -1893,6 +2296,7 @@ export async function importMembers(
               },
               client
             );
+            return created.id;
           });
 
           totalBalance += rowBalance(row);
@@ -1900,6 +2304,8 @@ export async function importMembers(
             legacyCode: row.legacyCode,
             memberNo: '',
             kind: 'customer',
+            holderId: customerId,
+            created: true,
           });
         }
       }
@@ -1915,10 +2321,14 @@ export async function importMembers(
       failed.push({
         legacyCode: row.legacyCode,
         message: error instanceof Error ? error.message : 'Unknown error.',
+        applicationId: newApplicationId,
       });
     }
   }
 
+  if (options.batchId) {
+    return { batchId, checksum, totalBalance, imported, failed };
+  }
   await recordAuditQuietly({
     actorUserId: actor.userId,
     actorDescription: actor.email,

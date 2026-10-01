@@ -1,22 +1,48 @@
 ---
 // M7 · Legacy migration (docs/backlog.md): a System Administrator imports
-// people straight from the legacy register. Direct, no review or approval —
-// the whole batch lands approved in one step, per business direction.
-// importMembers itself decides member vs. non-member per row (an AB Number
-// makes one a member; migration/members.ts's own comment explains why).
+// people straight from the legacy register, a chunk at a time
+// (src/lib/migration/batches.ts) so a file of thousands of rows survives a
+// closed tab. Direct, no review or approval — the whole batch lands
+// approved in one step, per business direction. importMembers itself
+// decides member vs. non-member per row (an AB Number makes one a member;
+// migration/members.ts's own comment explains why).
 import DashboardLayout from '@layouts/DashboardLayout.astro';
+import MigrationSummaryTable from '@components/MigrationSummaryTable.astro';
 import {
   MigrationError,
   buildImportTemplate,
   checksumBuffer,
-  eligibleMembershipTypesForMigration,
-  importMembers,
+  fileBalanceCents,
   parseImportFile,
   validateRows,
-  type ImportOutcome,
   type RowError,
 } from '@lib/migration/members';
-import { fromCents, toCents } from '@lib/payments/money';
+import {
+  batchOutcome,
+  runningBatch,
+  startMigrationBatch,
+} from '@lib/migration/batches';
+import { migrationSummary } from '@lib/migration/summary';
+import { formatMoney, fromCents, toCents } from '@lib/payments/money';
+import {
+  BUTTON,
+  CARD,
+  CARD_OK,
+  CARD_TITLE,
+  DANGER,
+  HINT,
+  MUTED,
+  PAGE,
+  SECONDARY_SM,
+  CARD_DANGER,
+  CARD_DANGER_TITLE,
+  NOTICE,
+  NOTICE_ERROR,
+  PROGRESS,
+  PROGRESS_BAR,
+} from '@lib/ui';
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const principal = Astro.locals.principal!;
 const canMigrate = principal.permissions.has('system.migrate_members');
@@ -37,7 +63,6 @@ if (canMigrate && Astro.url.searchParams.has('template')) {
 
 let error: string | null = null;
 let rowErrors: RowError[] = [];
-let outcome: ImportOutcome | null = null;
 // S-710 reconciliation — set when the operator supplies a control total and
 // it does not match what was actually imported.
 let reconciliation: {
@@ -71,56 +96,65 @@ if (Astro.request.method === 'POST') {
           error = 'No rows were found in that file.';
         } else {
           const { valid, errors } = await validateRows(rows);
-          if (errors.length > 0) {
+          // S-710 control totals, checked against the file before anything
+          // is written (QA-22): a mismatch means the file is not the one
+          // the totals describe, and importing it first — then saying so —
+          // left the operator to undo rows by hand.
+          const expectedRows = expectedRowsRaw ? Number(expectedRowsRaw) : null;
+          let expectedBalance: number | null = null;
+          let totalsUnreadable = false;
+          if (expectedRows !== null && !Number.isInteger(expectedRows)) {
+            totalsUnreadable = true;
+          }
+          if (expectedBalanceRaw) {
+            try {
+              expectedBalance = toCents(expectedBalanceRaw);
+            } catch {
+              totalsUnreadable = true;
+            }
+          }
+          // What the uploaded file carries, every balance on every row —
+          // checked against what the file has, not what a run happened to
+          // write (QA-22).
+          const fileBalance = fileBalanceCents(rows);
+          const messages: string[] = [];
+          if (expectedRows !== null && rows.length !== expectedRows) {
+            messages.push(
+              `Expected ${expectedRows} row${expectedRows === 1 ? '' : 's'}, the file has ${rows.length}.`
+            );
+          }
+          if (expectedBalance !== null && fileBalance !== expectedBalance) {
+            messages.push(
+              `Expected balance ${formatMoney(fromCents(expectedBalance))}, the file has ${formatMoney(fromCents(fileBalance))}.`
+            );
+          }
+          if (totalsUnreadable) {
+            error =
+              'Enter the expected rows as a whole number and the expected balance as an amount.';
+          } else if (errors.length > 0) {
             rowErrors = errors;
             error =
               `${errors.length} row${errors.length === 1 ? '' : 's'} ` +
               'need fixing before anything is imported. Nothing was written.';
+          } else if (messages.length > 0) {
+            reconciliation = {
+              expectedRows,
+              expectedBalance,
+              passed: false,
+              messages,
+            };
           } else {
-            outcome = await importMembers(
+            const batchId = await startMigrationBatch(
               valid,
+              checksum,
               { userId: principal.userId, email: principal.email },
-              principal.permissions,
-              checksum
+              principal.permissions
             );
-
-            // S-710: compare against operator-supplied control totals.
-            const expectedRows = expectedRowsRaw
-              ? parseInt(expectedRowsRaw, 10)
-              : null;
-            let expectedBalance: number | null = null;
-            if (expectedBalanceRaw) {
-              try {
-                expectedBalance = toCents(expectedBalanceRaw);
-              } catch {
-                // Ignore a non-numeric entry — treat as no control total.
-              }
-            }
-            if (expectedRows !== null || expectedBalance !== null) {
-              const messages: string[] = [];
-              if (
-                expectedRows !== null &&
-                outcome.imported.length !== expectedRows
-              ) {
-                messages.push(
-                  `Expected ${expectedRows} row${expectedRows === 1 ? '' : 's'}, imported ${outcome.imported.length}.`
-                );
-              }
-              if (
-                expectedBalance !== null &&
-                outcome.totalBalance !== expectedBalance
-              ) {
-                messages.push(
-                  `Expected balance Rs ${fromCents(expectedBalance)}, imported Rs ${fromCents(outcome.totalBalance)}.`
-                );
-              }
-              reconciliation = {
-                expectedRows,
-                expectedBalance,
-                passed: messages.length === 0,
-                messages,
-              };
-            }
+            const reconciled =
+              expectedRows !== null || expectedBalance !== null;
+            return Astro.redirect(
+              `/admin/migration?batch=${batchId}${reconciled ? '&reconciled=1' : ''}`
+            );
           }
         }
       } catch (err) {
@@ -135,71 +169,93 @@ if (Astro.request.method === 'POST') {
   }
 }
 
-const types = canMigrate ? await eligibleMembershipTypesForMigration() : [];
-const memberCount =
-  outcome?.imported.filter(m => m.kind === 'member').length ?? 0;
-const customerCount =
-  outcome?.imported.filter(m => m.kind === 'customer').length ?? 0;
+// Everything imported to date, whichever upload brought it.
+const toDate = canMigrate ? await migrationSummary() : null;
+
+// A batch already under way — this operator's, or anyone else's — takes
+// over the screen: only one import runs at a time.
+const running = canMigrate ? await runningBatch() : null;
+
+const batchParam = Astro.url.searchParams.get('batch');
+const viewed =
+  canMigrate && batchParam && UUID.test(batchParam)
+    ? await batchOutcome(batchParam)
+    : null;
+const reconciled = Astro.url.searchParams.get('reconciled') === '1';
+
+const dateTimeFormat = new Intl.DateTimeFormat('en-GB', {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+  timeZone: 'Indian/Mauritius',
+});
+
+const progressPct =
+  running && running.total > 0
+    ? Math.round((running.processed / running.total) * 100)
+    : 0;
 ---
 
 <DashboardLayout title="Migration · Al Barakah MCSL" heading="Migration">
-  <div class="mx-auto max-w-3xl space-y-6">
+  <div class={PAGE.list}>
     {!canMigrate && (
-      <div class="rounded-lg border border-neutral-300 bg-neutral-100 px-4 py-3 text-sm text-neutral-700 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200">
-        You do not have permission to import members.
-      </div>
+      <div class={NOTICE}>You do not have permission to import members.</div>
     )}
 
     {canMigrate && (
       <>
-        <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-          <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-            Import from the legacy register
-          </h2>
-          <p class="mt-2 text-sm text-neutral-600 dark:text-neutral-300">
-            Every row is approved immediately — no review, no approval step. Run
-            it as many times as needed; each upload is its own batch. A Legacy
-            Member Code already on file updates that record instead of creating
-            a second one.
-          </p>
-          <p class="mt-2 text-sm text-neutral-600 dark:text-neutral-300">
-            A row with an AB Number is a member — Shares and the MSA always come
-            together, and the number carries over unchanged, never reassigned. A
-            row with none, only an account of its own (HSA, Investment, …), is a
-            non-member. Give that account its own number and balance together;
-            leave both blank if it is not yet known, and add it on a later
-            upload.
-          </p>
-          <p class="mt-2 text-sm text-neutral-600 dark:text-neutral-300">
-            Covers {types.map(t => t.name).join(', ')}. A Minor's guardian must
-            already be on file — import the guardian first, then the minor with
-            just their Member ID; the rest of the guardian's details are filled
-            in automatically.
-          </p>
-          <p class="mt-2 text-sm text-neutral-600 dark:text-neutral-300">
-            NIC, mobile and account numbers must each be unique to one member or
-            non-member. Legacy Member Code can be left blank for a member row —
-            the AB Number is used instead.
-          </p>
-          <a
-            href="/admin/migration?template=1"
-            class="bg-mint-300 hover:bg-mint-400 mt-4 inline-block rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
-          >
-            Download the template
-          </a>
-        </section>
-
-        {error && (
-          <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-            {error}
-          </div>
+        {running && (
+          <section class={CARD} data-batch-progress data-batch-id={running.id}>
+            <h2 class={CARD_TITLE}>Importing</h2>
+            <p class={`${MUTED} mt-2`} data-batch-rows>
+              {running.processed} of {running.total} rows
+            </p>
+            <div class={`${PROGRESS} mt-2`}>
+              <div
+                class={PROGRESS_BAR}
+                style={`width: ${progressPct}%`}
+                data-batch-bar
+              />
+            </div>
+            <p class={`${MUTED} mt-2`} data-batch-counts>
+              {running.imported} imported · {running.failed} could not be
+              imported
+            </p>
+            <p class={`${HINT} mt-2`}>
+              Started by {running.startedByName ?? 'Unknown'} ·{' '}
+              {dateTimeFormat.format(running.startedAt)}
+            </p>
+            <div class={`${NOTICE_ERROR} mt-3`} data-batch-error hidden></div>
+            <button type="button" class={`${DANGER} mt-4`} data-batch-cancel>
+              Cancel import
+            </button>
+          </section>
         )}
 
+        {!running && (
+          <section class={CARD}>
+            <h2 class={CARD_TITLE}>Import from the legacy register</h2>
+            <p class={`${MUTED} mt-2`}>
+              Every row is approved as soon as it is imported.
+            </p>
+            <p class={`${MUTED} mt-2`}>
+              In the template, a red heading is required on every row, an amber
+              one in some cases (its note says when), a grey one is optional.
+              The Instructions sheet lists the rules.
+            </p>
+            <a
+              href="/admin/migration?template=1"
+              class={`${BUTTON} mt-4 inline-block`}
+            >
+              Download the template
+            </a>
+          </section>
+        )}
+
+        {error && <div class={NOTICE_ERROR}>{error}</div>}
+
         {rowErrors.length > 0 && (
-          <section class="rounded-2xl border border-red-300 bg-red-50 p-6 dark:border-red-900 dark:bg-red-950">
-            <h2 class="text-lg font-semibold text-red-900 dark:text-red-200">
-              Rows to fix
-            </h2>
+          <section class={CARD_DANGER}>
+            <h2 class={CARD_DANGER_TITLE}>Rows to fix</h2>
             <ul class="mt-3 space-y-2 text-sm text-red-800 dark:text-red-200">
               {rowErrors.map(e => (
                 <li>
@@ -214,10 +270,10 @@ const customerCount =
           </section>
         )}
 
-        {outcome && reconciliation && !reconciliation.passed && (
-          <section class="rounded-2xl border border-red-300 bg-red-50 p-6 dark:border-red-900 dark:bg-red-950">
-            <h2 class="text-lg font-semibold text-red-900 dark:text-red-200">
-              Reconciliation failed
+        {reconciliation && !reconciliation.passed && (
+          <section class={CARD_DANGER}>
+            <h2 class={CARD_DANGER_TITLE}>
+              Reconciliation failed. Nothing was written.
             </h2>
             <ul class="mt-2 space-y-1 text-sm text-red-800 dark:text-red-200">
               {reconciliation.messages.map(m => (
@@ -227,52 +283,31 @@ const customerCount =
           </section>
         )}
 
-        {outcome && (
-          <section
-            class={`rounded-2xl border p-6 ${reconciliation && !reconciliation.passed ? 'border-neutral-200 bg-neutral-100 dark:border-neutral-800 dark:bg-neutral-950' : 'border-mint-400 bg-mint-50 dark:border-mint-700 dark:bg-mint-950'}`}
-          >
-            <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-              {outcome.imported.length} row
-              {outcome.imported.length === 1 ? '' : 's'} processed
+        {viewed && viewed.progress.status === 'completed' && (
+          <section class={CARD_OK}>
+            <h2 class={CARD_TITLE}>
+              {viewed.progress.imported} of {viewed.progress.total} rows
+              imported
             </h2>
-            {outcome.imported.length > 0 && (
-              <p class="mt-1 text-sm text-neutral-600 dark:text-neutral-300">
-                {memberCount} member{memberCount === 1 ? '' : 's'},{' '}
-                {customerCount} non-member{customerCount === 1 ? '' : 's'}
-                {outcome.totalBalance > 0 && (
-                  <> · Rs {fromCents(outcome.totalBalance)} total balance</>
-                )}
-              </p>
-            )}
-            {reconciliation?.passed && (
+            {reconciled && (
               <p class="mt-1 text-sm font-medium text-green-700 dark:text-green-400">
                 Reconciliation passed.
               </p>
             )}
-            <p class="mt-2 font-mono text-xs text-neutral-500 dark:text-neutral-500">
-              Batch {outcome.batchId} · SHA-256 {outcome.checksum.slice(0, 16)}…
-            </p>
-            {outcome.imported.length > 0 && (
-              <ul class="mt-3 space-y-1 text-sm text-neutral-700 dark:text-neutral-200">
-                {outcome.imported.map(m => (
-                  <li>
-                    {m.legacyCode}
-                    {m.kind === 'member' ? (
-                      <> → {m.memberNo}</>
-                    ) : (
-                      ' (non-member)'
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-            {outcome.failed.length > 0 && (
+            {viewed.added &&
+              (viewed.added.total.holders !== 0 ||
+                viewed.added.total.amountCents !== 0) && (
+                <div class="mt-4">
+                  <MigrationSummaryTable summary={viewed.added} />
+                </div>
+              )}
+            {viewed.failures.length > 0 && (
               <>
                 <h3 class="mt-4 text-sm font-semibold text-red-800 dark:text-red-200">
-                  {outcome.failed.length} could not be processed
+                  {viewed.failures.length} could not be imported
                 </h3>
                 <ul class="mt-2 space-y-1 text-sm text-red-800 dark:text-red-200">
-                  {outcome.failed.map(f => (
+                  {viewed.failures.map(f => (
                     <li>
                       {f.legacyCode}: {f.message}
                     </li>
@@ -283,73 +318,98 @@ const customerCount =
           </section>
         )}
 
-        <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-          <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-            Upload a filled-in template
-          </h2>
-          <form
-            method="post"
-            enctype="multipart/form-data"
-            class="mt-4 space-y-4"
-            data-migration-form
-          >
-            <div class="flex items-center gap-3">
-              <label class="cursor-pointer rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-200 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800">
-                Choose file
-                <input
-                  type="file"
-                  name="file"
-                  accept=".xlsx"
-                  required
-                  data-migration-file
-                  class="sr-only"
-                />
-              </label>
-              <span
-                data-migration-filename
-                class="text-sm text-neutral-500 dark:text-neutral-400"
-              >
-                No file selected
-              </span>
+        {viewed && viewed.progress.status === 'cancelled' && (
+          <div class={NOTICE}>
+            Import cancelled. Everything it had imported was removed.
+          </div>
+        )}
+
+        {toDate && toDate.total.holders > 0 && (
+          <section class={CARD}>
+            <h2 class={CARD_TITLE}>Imported so far</h2>
+            <div class="mt-3">
+              <MigrationSummaryTable summary={toDate} />
             </div>
-            <fieldset class="rounded-lg border border-neutral-200 p-4 dark:border-neutral-700">
-              <legend class="px-1 text-xs font-medium text-neutral-500 dark:text-neutral-400">
-                Control totals (optional — leave blank to skip reconciliation)
-              </legend>
-              <div class="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <label class="flex flex-col gap-1">
-                  <span class="text-xs text-neutral-600 dark:text-neutral-300">
-                    Expected rows
-                  </span>
-                  <input
-                    type="number"
-                    name="expected_rows"
-                    min="0"
-                    placeholder="e.g. 250"
-                    class="rounded border border-neutral-300 bg-white px-3 py-1.5 text-sm text-neutral-800 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-                  />
-                </label>
-                <label class="flex flex-col gap-1">
-                  <span class="text-xs text-neutral-600 dark:text-neutral-300">
-                    Expected total balance (Rs)
-                  </span>
-                  <input
-                    type="text"
-                    name="expected_balance"
-                    placeholder="e.g. 1500000"
-                    class="rounded border border-neutral-300 bg-white px-3 py-1.5 text-sm text-neutral-800 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-                  />
-                </label>
-              </div>
-            </fieldset>
-            <button
-              type="submit"
-              class="bg-mint-300 hover:bg-mint-400 rounded-lg px-4 py-2 text-sm font-bold text-neutral-800 transition"
+          </section>
+        )}
+
+        {!running && (
+          <section class={CARD}>
+            <h2 class={CARD_TITLE}>Upload a filled-in template</h2>
+            <form
+              method="post"
+              enctype="multipart/form-data"
+              class="mt-4 space-y-4"
+              data-migration-form
             >
-              Import
-            </button>
-          </form>
-        </section>
+              <div class="flex items-center gap-3">
+                <label class={`${SECONDARY_SM} cursor-pointer`}>
+                  Choose file
+                  <input
+                    type="file"
+                    name="file"
+                    accept=".xlsx"
+                    required
+                    data-migration-file
+                    class="sr-only"
+                  />
+                </label>
+                <span data-migration-filename class={HINT}>
+                  No file selected
+                </span>
+              </div>
+              <fieldset class="rounded-lg border border-neutral-200 p-4 dark:border-neutral-700">
+                <legend class="px-1 text-xs font-medium text-neutral-500 dark:text-neutral-400">
+                  Control totals (optional — leave blank to skip reconciliation)
+                </legend>
+                <div class="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <label class="flex flex-col gap-1">
+                    <span class="text-xs text-neutral-600 dark:text-neutral-300">
+                      Expected rows
+                    </span>
+                    <input
+                      type="number"
+                      name="expected_rows"
+                      min="0"
+                      placeholder="e.g. 250"
+                      class="rounded border border-neutral-300 bg-white px-3 py-1.5 text-sm text-neutral-800 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                    />
+                  </label>
+                  <label class="flex flex-col gap-1">
+                    <span class="text-xs text-neutral-600 dark:text-neutral-300">
+                      Expected total balance (Rs)
+                    </span>
+                    <input
+                      type="text"
+                      name="expected_balance"
+                      placeholder="e.g. 1500000"
+                      class="rounded border border-neutral-300 bg-white px-3 py-1.5 text-sm text-neutral-800 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+                    />
+                  </label>
+                </div>
+              </fieldset>
+              <button type="submit" class={BUTTON}>
+                Import
+              </button>
+            </form>
+          </section>
+        )}
+
+        {!running && (
+          <section class={CARD}>
+            <h2 class={CARD_TITLE}>Account balances</h2>
+            <p class={`${MUTED} mt-2`}>
+              Replace the balance of accounts already on file from a list of
+              account numbers and balances.
+            </p>
+            <a
+              href="/admin/migration/balances"
+              class={`${SECONDARY_SM} mt-4 inline-block`}
+            >
+              Set account balances
+            </a>
+          </section>
+        )}
       </>
     )}
   </div>
@@ -368,6 +428,147 @@ const customerCount =
   if (input && filename) {
     input.addEventListener('change', () => {
       filename.textContent = input.files?.[0]?.name ?? 'No file selected';
+    });
+  }
+</script>
+
+<script>
+  // Drives the "Importing" card: polls step.json a chunk at a time
+  // (src/lib/migration/batches.ts, 50 rows a request) and updates the bar
+  // in place. Closing the tab only pauses the import — coming back to this
+  // page picks the same batch back up.
+  interface ChunkProgress {
+    status: 'running' | 'completed' | 'cancelled';
+    total: number;
+    processed: number;
+    imported: number;
+    failed: number;
+  }
+
+  const card = document.querySelector<HTMLElement>('[data-batch-progress]');
+  if (card) {
+    const batchId = card.dataset.batchId!;
+    const rowsEl = card.querySelector<HTMLElement>('[data-batch-rows]');
+    const barEl = card.querySelector<HTMLElement>('[data-batch-bar]');
+    const countsEl = card.querySelector<HTMLElement>('[data-batch-counts]');
+    const errorEl = card.querySelector<HTMLElement>('[data-batch-error]');
+    const cancelBtn = card.querySelector<HTMLButtonElement>(
+      '[data-batch-cancel]'
+    );
+
+    let stopped = false;
+    let consecutiveFailures = 0;
+    let runPromise: Promise<void> | null = null;
+
+    function showError(message: string) {
+      if (!errorEl) return;
+      errorEl.textContent = message;
+      errorEl.hidden = false;
+    }
+
+    function hideError() {
+      if (errorEl) errorEl.hidden = true;
+    }
+
+    function applyProgress(progress: ChunkProgress) {
+      if (rowsEl) {
+        rowsEl.textContent = `${progress.processed} of ${progress.total} rows`;
+      }
+      if (barEl) {
+        const pct =
+          progress.total > 0
+            ? Math.round((progress.processed / progress.total) * 100)
+            : 0;
+        barEl.style.width = `${pct}%`;
+      }
+      if (countsEl) {
+        countsEl.textContent = `${progress.imported} imported · ${progress.failed} could not be imported`;
+      }
+    }
+
+    async function errorMessage(response: Response): Promise<string> {
+      try {
+        const body = await response.json();
+        if (body?.error) return body.error as string;
+      } catch {
+        // Keep the default message below.
+      }
+      return 'Something went wrong. Please try again.';
+    }
+
+    // Waits out one failure and says whether to try again: five in a row
+    // and the operator has to reload rather than this hammering the server.
+    async function pause(message: string): Promise<boolean> {
+      consecutiveFailures += 1;
+      showError(message);
+      if (consecutiveFailures >= 5) {
+        showError('The import has paused. Reload the page to carry on.');
+        return false;
+      }
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      return !stopped;
+    }
+
+    async function run(): Promise<void> {
+      while (!stopped) {
+        const body = new FormData();
+        body.set('batchId', batchId);
+        let response: Response;
+        try {
+          response = await fetch('/admin/migration/step.json', {
+            method: 'POST',
+            body,
+          });
+        } catch {
+          if (!(await pause('Could not reach the server.'))) return;
+          continue;
+        }
+        if (!response.ok) {
+          if (!(await pause(await errorMessage(response)))) return;
+          continue;
+        }
+        consecutiveFailures = 0;
+        hideError();
+        const progress: ChunkProgress = await response.json();
+        applyProgress(progress);
+        if (stopped) return;
+        if (progress.status !== 'running') {
+          location.href = `/admin/migration?batch=${batchId}`;
+          return;
+        }
+      }
+    }
+
+    runPromise = run();
+
+    cancelBtn?.addEventListener('click', async () => {
+      const ok = await window.appConfirm(
+        'Cancel this import? Everything it has imported so far is removed.',
+        { okLabel: 'Cancel import', danger: true }
+      );
+      if (!ok) return;
+      cancelBtn.disabled = true;
+      stopped = true;
+      if (runPromise) await runPromise;
+      try {
+        const body = new FormData();
+        body.set('batchId', batchId);
+        const response = await fetch('/admin/migration/cancel.json', {
+          method: 'POST',
+          body,
+        });
+        if (!response.ok) throw new Error(await errorMessage(response));
+        location.href = `/admin/migration?batch=${batchId}`;
+      } catch (err) {
+        showError(
+          err instanceof Error
+            ? err.message
+            : 'Something went wrong. Please try again.'
+        );
+        cancelBtn.disabled = false;
+        stopped = false;
+        runPromise = run();
+      }
     });
   }
 </script>

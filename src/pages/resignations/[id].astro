@@ -1,0 +1,500 @@
+---
+// A resignation request while it is the officer's (S-1703): the details,
+// the member's signature on the request, what is filed, the checks, and
+// the submission that sends it to its chain. Once submitted it is reviewed
+// at /transactions/<id> like any transaction, and comes back here only if
+// a reviewer returns it.
+import ChainTimeline from '@components/ChainTimeline.astro';
+import DocumentViewer from '@components/DocumentViewer.astro';
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import {
+  offeredBankAccounts,
+  offeredPaymentMethods,
+} from '@lib/config/reference';
+import { checklistComplete, isEditable } from '@lib/ledger/closures';
+import {
+  blockingChecks,
+  cancelResignation,
+  checksFor,
+  coreAccounts,
+  resignationChecklist,
+  ResignationError,
+  submitResignation,
+  totalCents,
+  updateResignation,
+} from '@lib/ledger/resignations';
+import { loadTransaction, transitionsFor } from '@lib/ledger/review';
+import { resolveRoute } from '@lib/ledger/routing';
+import { DocumentError, removeFiledDocument } from '@lib/documents/documents';
+import { formatMoney, fromCents } from '@lib/payments/money';
+import { chainTimeline } from '@lib/workflow/timeline';
+import {
+  PAGE,
+  FORM_CARD,
+  PANEL,
+  CARD_LABEL,
+  MUTED,
+  LABEL,
+  INPUT,
+  BUTTON,
+  DANGER,
+  NOTICE_ERROR,
+  TAG,
+  VIEW_BUTTON,
+  DELETE_BUTTON,
+} from '@lib/ui';
+
+const principal = Astro.locals.principal!;
+const { id } = Astro.params;
+let request = id ? await loadTransaction(id) : null;
+if (!request || request.kind !== 'resignation') {
+  return new Response('Not found', { status: 404 });
+}
+if (!isEditable(request.status)) {
+  return Astro.redirect(`/transactions/${request.id}`);
+}
+if (request.capturedById !== principal.userId) {
+  return Astro.redirect(`/transactions/${request.id}`);
+}
+
+const STEPS = ['details', 'signature', 'documents', 'submit'] as const;
+type Step = (typeof STEPS)[number];
+const base = `/resignations/${request.id}`;
+const stepHrefs: Record<string, string> = {
+  details: `${base}?step=details`,
+  signature: `${base}?step=signature`,
+  documents: `${base}?step=documents`,
+  capture: `${base}?step=submit`,
+};
+
+let error: string | null = null;
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const text = (name: string) => String(form.get(name) ?? '');
+  const intent = text('intent');
+  try {
+    if (intent === 'details') {
+      // Only the reason: the payout is the posting officer's to record.
+      request = await updateResignation(
+        request.id,
+        { reason: text('reason') },
+        principal
+      );
+      return Astro.redirect(`${base}?step=signature`);
+    } else if (intent === 'submit') {
+      // Where the matrix posts it at once, submitting IS the posting, and
+      // the payout is asked here (postsAtOnce, below).
+      if (form.has('method')) {
+        request = await updateResignation(
+          request.id,
+          {
+            reason: request.reason,
+            method: text('method'),
+            methodReference: text('methodReference'),
+            bankAccountId: text('bankAccountId'),
+          },
+          principal
+        );
+      }
+      const submitted = await submitResignation(request.id, principal);
+      return Astro.redirect(`/transactions/${submitted.id}`);
+    } else if (intent === 'remove-form') {
+      // The signed request on THIS resignation, read here rather than
+      // taken from the page. Deleting it means signing again.
+      const current = (await resignationChecklist(request.id))[0]?.filed;
+      if (current) await removeFiledDocument(current.documentId, principal);
+      return Astro.redirect(`${base}?step=signature`);
+    } else if (intent === 'cancel') {
+      await cancelResignation(request.id, principal);
+      return Astro.redirect(`/members/${request.holderId}`);
+    }
+  } catch (err) {
+    if (err instanceof ResignationError || err instanceof DocumentError) {
+      error = err.message;
+    } else {
+      console.error('[resignations]', err);
+      error = 'Something went wrong. Please try again.';
+    }
+  }
+}
+
+const requested = Astro.url.searchParams.get('step') ?? 'details';
+const step: Step = (STEPS as readonly string[]).includes(requested)
+  ? (requested as Step)
+  : 'details';
+
+const [
+  checklist,
+  timeline,
+  trail,
+  paymentMethods,
+  bankAccounts,
+  accounts,
+  checks,
+] = await Promise.all([
+  resignationChecklist(request.id),
+  chainTimeline('transaction', request.id),
+  transitionsFor(request.id),
+  offeredPaymentMethods(),
+  offeredBankAccounts(),
+  coreAccounts(request.holderId),
+  checksFor(request.holderId, request.id),
+]);
+const complete = checklistComplete(checklist);
+const blocking = blockingChecks(checks);
+const total = fromCents(totalCents(accounts));
+// Posted at once when the matrix routes it nowhere: only then is the payout
+// asked before the posting step, because submitting is the posting.
+const postsAtOnce =
+  accounts.length > 0 &&
+  !(
+    await resolveRoute({
+      kind: 'resignation',
+      accountTypeId: accounts[0].accountTypeId,
+      amountCents: totalCents(accounts),
+      roleCodes: principal.roles,
+    })
+  ).definition;
+const form = checklist[0] ?? null;
+const returnComment =
+  request.status === 'returned'
+    ? [...trail].reverse().find(t => t.toStatus === 'returned')?.comment
+    : null;
+const dateFormat = new Intl.DateTimeFormat('en-GB', {
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+});
+---
+
+<DashboardLayout
+  title={`${request.reference} · Al Barakah MCSL`}
+  heading={`Resignation ${request.reference}`}
+>
+  <div class={PAGE.detail}>
+    <ChainTimeline
+      steps={timeline ?? []}
+      hrefs={stepHrefs}
+      label="Resignation progress"
+    />
+
+    <div class="-mx-4 flex flex-wrap items-center justify-between gap-2 border-t border-neutral-200/80 bg-neutral-100/95 px-4 py-3 text-sm sm:mx-0 sm:rounded-b-2xl sm:px-3 sm:py-1.5 dark:border-neutral-800/80 dark:bg-neutral-950/95">
+      <a
+        href={`/members/${request.holderId}`}
+        class="text-neutral-500 underline dark:text-neutral-400"
+      >
+        ← {request.holderName || 'member'}
+        {request.memberNo && ` · ${request.memberNo}`}
+      </a>
+      <span class={TAG}>
+        {accounts.map(a => a.typeName).join(' + ')} · {formatMoney(total)}
+      </span>
+    </div>
+
+    {error && <div class={NOTICE_ERROR}>{error}</div>}
+    {returnComment && (
+      <div class="rounded-lg border border-amber-300 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200">
+        Returned: {returnComment}
+      </div>
+    )}
+
+    {step === 'details' && (
+      <form method="post" class={FORM_CARD}>
+        <h2 class={CARD_LABEL}>Details</h2>
+        <ul class="divide-y divide-neutral-200 text-sm dark:divide-neutral-800">
+          {accounts.map(account => (
+            <li class="flex items-center justify-between py-2">
+              <span class="text-neutral-800 dark:text-neutral-100">
+                {account.accountNo} · {account.typeName}
+              </span>
+              <span class="tabular-nums">{formatMoney(account.balance)}</span>
+            </li>
+          ))}
+          <li class="flex items-center justify-between py-2 font-semibold">
+            <span>Paid out</span>
+            <span class="tabular-nums">{formatMoney(total)}</span>
+          </li>
+        </ul>
+        <label class={LABEL}>
+          Reason
+          <textarea
+            name="reason"
+            rows="3"
+            required
+            maxlength="500"
+            class={INPUT}
+          >{request.reason}</textarea>
+        </label>
+        <input type="hidden" name="intent" value="details" />
+        <div class="flex flex-wrap gap-2 pt-2">
+          <button type="submit" class={BUTTON}>
+            Save and continue
+          </button>
+        </div>
+      </form>
+    )}
+
+    {step === 'signature' && (
+      <section class={FORM_CARD}>
+        <h2 class={CARD_LABEL}>Signature</h2>
+        {form?.filed ? (
+          <>
+            <div
+              class={`${PANEL} flex flex-wrap items-center justify-between gap-3`}
+            >
+              <div class="min-w-0">
+                <p class="truncate font-medium text-neutral-800 dark:text-neutral-100">
+                  {form.filed.fileName}
+                </p>
+                <p class={MUTED}>
+                  Signed {dateFormat.format(form.filed.uploadedAt)} ·{' '}
+                  {form.filed.uploadedByName}
+                </p>
+              </div>
+              <div class="flex shrink-0 items-center gap-2">
+                <button
+                  type="button"
+                  data-view-document
+                  data-document-id={form.filed.documentId}
+                  class={VIEW_BUTTON}
+                >
+                  View
+                </button>
+                <form method="post" data-confirm-remove>
+                  <button
+                    type="submit"
+                    name="intent"
+                    value="remove-form"
+                    aria-label="Delete the signed request"
+                    title="Delete"
+                    class={DELETE_BUTTON}
+                  >
+                    ✕
+                  </button>
+                </form>
+              </div>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <a href={`${base}?step=documents`} class={BUTTON}>
+                Next
+              </a>
+            </div>
+          </>
+        ) : (
+          <div class="flex flex-wrap gap-2">
+            <a href={`${base}/form`} class={BUTTON}>
+              Sign the request
+            </a>
+          </div>
+        )}
+      </section>
+    )}
+
+    {step === 'documents' && (
+      <section class={FORM_CARD}>
+        <h2 class={CARD_LABEL}>Documents</h2>
+        {checklist.length === 0 ? (
+          <p class="text-sm text-red-700 dark:text-red-300">
+            The resignation request document type is not configured. Ask an
+            administrator.
+          </p>
+        ) : (
+          <ul class="space-y-2">
+            {checklist.map(item => (
+              <li
+                class={`flex items-center justify-between gap-3 ${PANEL} text-sm`}
+              >
+                <span>
+                  <span class="font-medium text-neutral-800 dark:text-neutral-100">
+                    {item.documentName}
+                  </span>
+                  <span class="block text-xs text-neutral-500 dark:text-neutral-400">
+                    {item.filed
+                      ? `${item.filed.fileName} · ${dateFormat.format(item.filed.uploadedAt)}`
+                      : 'Missing'}
+                  </span>
+                </span>
+                {item.filed ? (
+                  <button
+                    type="button"
+                    data-view-document
+                    data-document-id={item.filed.documentId}
+                    class={VIEW_BUTTON}
+                  >
+                    View
+                  </button>
+                ) : (
+                  <a href={`${base}?step=signature`} class="shrink-0 underline">
+                    Sign
+                  </a>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+        <div class="flex flex-wrap gap-2">
+          <a href={`${base}?step=submit`} class={BUTTON}>
+            Next
+          </a>
+        </div>
+      </section>
+    )}
+
+    {step === 'submit' && (
+      <form method="post" data-resignation-details-form class={FORM_CARD}>
+        <h2 class={CARD_LABEL}>Submit</h2>
+        <dl class="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
+          <dt class="text-neutral-500 dark:text-neutral-400">Closing</dt>
+          <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+            {accounts.map(a => `${a.accountNo} · ${a.typeName}`).join(', ')}
+          </dd>
+          <dt class="text-neutral-500 dark:text-neutral-400">Paid out</dt>
+          <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+            {formatMoney(total)}
+          </dd>
+          <dt class="text-neutral-500 dark:text-neutral-400">Reason</dt>
+          <dd class="text-neutral-800 dark:text-neutral-100">
+            {request.reason}
+          </dd>
+          <dt class="text-neutral-500 dark:text-neutral-400">Signed request</dt>
+          <dd
+            class:list={[
+              complete
+                ? 'text-neutral-800 dark:text-neutral-100'
+                : 'text-red-700 dark:text-red-300',
+            ]}
+          >
+            {complete ? 'On file' : 'Missing'}
+          </dd>
+        </dl>
+        {postsAtOnce && (
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label class={LABEL}>
+              Balance paid out by
+              <select name="method" class={INPUT}>
+                {paymentMethods.map(method => (
+                  <option
+                    value={method.code}
+                    data-touches-bank={method.touchesBank ? 'true' : 'false'}
+                    selected={method.code === request!.method}
+                  >
+                    {method.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label class={LABEL}>
+              Reference (cheque number, transfer reference)
+              <input
+                type="text"
+                name="methodReference"
+                value={request.methodReference}
+                class={INPUT}
+              />
+            </label>
+            <label data-bank-account-field class={LABEL}>
+              Bank account
+              <select name="bankAccountId" class={INPUT}>
+                <option value="">Choose…</option>
+                {bankAccounts.map(account => (
+                  <option
+                    value={account.id}
+                    selected={account.id === request!.bankAccountId}
+                  >
+                    {account.name} · {account.bankName}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        )}
+        <ul class="space-y-1 text-sm">
+          {checks.map(check => (
+            <li class="flex flex-wrap items-baseline gap-x-2">
+              <span
+                class:list={[
+                  'font-medium',
+                  !check.enabled
+                    ? 'text-neutral-400 dark:text-neutral-500'
+                    : check.passed
+                      ? 'text-neutral-800 dark:text-neutral-100'
+                      : 'text-red-700 dark:text-red-300',
+                ]}
+              >
+                {check.label}
+              </span>
+              <span class="text-xs text-neutral-500 dark:text-neutral-400">
+                {check.enabled ? check.detail : 'Not checked'}
+              </span>
+            </li>
+          ))}
+        </ul>
+        <p class={MUTED}>
+          Once submitted, nothing else moves on these accounts until the
+          resignation is decided. When it is approved and paid out, both close
+          and the membership ends.
+        </p>
+        <div class="flex flex-wrap gap-2 pt-2">
+          <button
+            type="submit"
+            class={BUTTON}
+            name="intent"
+            value="submit"
+            disabled={!complete || blocking.length > 0}
+          >
+            {request.status === 'returned' ? 'Resubmit' : 'Submit'}
+          </button>
+          <button
+            type="submit"
+            class={DANGER}
+            name="intent"
+            value="cancel"
+            formnovalidate
+          >
+            Withdraw the request
+          </button>
+        </div>
+      </form>
+    )}
+  </div>
+  <DocumentViewer />
+</DashboardLayout>
+
+<script>
+  // A destructive action warns once.
+  for (const remove of document.querySelectorAll<HTMLFormElement>(
+    'form[data-confirm-remove]'
+  )) {
+    remove.addEventListener('submit', event => {
+      if (!confirm('Delete the signed request? It will need signing again.')) {
+        event.preventDefault();
+      }
+    });
+  }
+</script>
+
+<script>
+  // A visual nudge only — enforced server-side (ledger/resignations.ts)
+  // whether or not this script runs.
+  const form = document.querySelector<HTMLFormElement>(
+    '[data-resignation-details-form]'
+  );
+  if (form) {
+    const methodSelect =
+      form.querySelector<HTMLSelectElement>('[name="method"]');
+    const bankField = form.querySelector<HTMLElement>(
+      '[data-bank-account-field]'
+    );
+    const recompute = () => {
+      const selected = methodSelect?.selectedOptions[0];
+      if (bankField) {
+        bankField.hidden = selected?.dataset.touchesBank !== 'true';
+      }
+    };
+    methodSelect?.addEventListener('change', recompute);
+    recompute();
+  }
+</script>

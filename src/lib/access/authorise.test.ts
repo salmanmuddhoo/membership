@@ -140,6 +140,25 @@ describe('the live route map', () => {
   // and are reachable from the sidebar, so what they require has to be true —
   // a menu entry whose permission does not match the route's is how a person
   // ends up clicking a link and being refused.
+  it("protects an account's history with money's own permission (S-1311)", () => {
+    expect(requiredPermissionFor('/accounts/some-id')).toBe('account.view');
+    expect(requiredPermissionFor('/members/some-id/deposit')).toBe(
+      'member.view'
+    );
+    // S-1403: seeing transactions and the queue is transaction.view; only
+    // starting one is transaction.capture.
+    expect(requiredPermissionFor('/transactions')).toBe('transaction.view');
+    expect(requiredPermissionFor('/transactions/pending')).toBe(
+      'transaction.view'
+    );
+    expect(requiredPermissionFor('/transactions/some-id')).toBe(
+      'transaction.view'
+    );
+    expect(requiredPermissionFor('/transactions/deposit')).toBe(
+      'transaction.capture'
+    );
+  });
+
   it('protects the administration pages by name', () => {
     expect(requiredPermissionFor('/admin/roles')).toBe('role.view');
     expect(requiredPermissionFor('/admin/users')).toBe('user.view');
@@ -156,7 +175,6 @@ describe('the live route map', () => {
     for (const page of [
       '/admin/configuration/membership-types',
       '/admin/configuration/account-types',
-      '/admin/configuration/fees',
       '/admin/configuration/checklists',
       '/admin/configuration/workflows',
       '/admin/configuration/something-added-later',
@@ -170,10 +188,28 @@ describe('the live route map', () => {
     // before it will write. Someone granted only the first can read what the
     // fees are without being able to set them.
     const viewer = principal({ permissions: new Set(['config.view']) });
-    expect(authorise(viewer, '/admin/configuration/fees').allowed).toBe(true);
+    expect(
+      authorise(viewer, '/admin/configuration/account-types').allowed
+    ).toBe(true);
 
     const manager = principal({ permissions: new Set(['config.manage']) });
-    expect(authorise(manager, '/admin/configuration/fees').allowed).toBe(false);
+    expect(
+      authorise(manager, '/admin/configuration/account-types').allowed
+    ).toBe(false);
+  });
+
+  it('opens the fee schedules, and only them, on fee.view', () => {
+    // A Treasurer owns the fees (S-207) and nothing else of Configuration.
+    const treasurer = principal({
+      permissions: new Set(['fee.view', 'fee.manage']),
+    });
+    expect(authorise(treasurer, '/admin/configuration/fees').allowed).toBe(
+      true
+    );
+    expect(authorise(treasurer, '/admin/configuration').allowed).toBe(false);
+    expect(authorise(treasurer, '/admin/configuration/workflows').allowed).toBe(
+      false
+    );
   });
 
   it('does not rely on the system-administrator exemption for them', () => {
@@ -213,5 +249,21 @@ describe('the live route map', () => {
       permissions: new Set(['payment.view', 'receipt.reconcile']),
     });
     expect(authorise(treasurer, '/receipts/reconciliation').allowed).toBe(true);
+  });
+
+  // S-1901: the Treasurer and the Auditor hold bank_account.view but not
+  // report.view, and this is their report — the exact rule has to beat the
+  // /reports/ prefix without opening any other report to them.
+  it('opens the bank accounts report on bank_account.view alone', () => {
+    expect(requiredPermissionFor('/reports/bank-accounts')).toBe(
+      'bank_account.view'
+    );
+    expect(requiredPermissionFor('/reports/transactions')).toBe('report.view');
+
+    const treasurer = principal({
+      permissions: new Set(['bank_account.view']),
+    });
+    expect(authorise(treasurer, '/reports/bank-accounts').allowed).toBe(true);
+    expect(authorise(treasurer, '/reports/transactions').allowed).toBe(false);
   });
 });

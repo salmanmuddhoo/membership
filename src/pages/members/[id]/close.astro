@@ -1,0 +1,492 @@
+---
+// Start closing one of a person's accounts (S-1702): which account and
+// why. What this makes is a draft; the member signs the request on the
+// next screen and the officer submits it from there. The payout is the
+// Treasurer's to record at disbursement, except where the matrix posts
+// the closure at once — then the submit step (closures/[id].astro) asks
+// for it, as submitting is the posting.
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import { claimableMembershipType } from '@lib/ledger/claimants';
+import { accountBalance } from '@lib/ledger/ledger';
+import {
+  accountsOnDeath,
+  ClosureError,
+  closuresInFlightFor,
+  onItsWayMessage,
+  startClosure,
+  transactionsOnTheirWay,
+  PERMISSION_CAPTURE,
+} from '@lib/ledger/closures';
+import { nomineeOnApplication } from '@lib/ledger/claimants';
+import { loadCustomer, loadMember } from '@lib/members/create';
+import { formatMoney } from '@lib/payments/money';
+import {
+  PAGE,
+  HINT,
+  CARD,
+  CARD_LABEL,
+  FORM_CARD,
+  LABEL,
+  INPUT,
+  BUTTON,
+  NOTICE_ERROR,
+  TABLE,
+  THEAD,
+  TH,
+  TD,
+  TD_NUM,
+} from '@lib/ui';
+
+const principal = Astro.locals.principal!;
+if (!principal.permissions.has(PERMISSION_CAPTURE)) {
+  return Astro.redirect('/denied');
+}
+
+const { id } = Astro.params;
+const member = id ? await loadMember(id) : null;
+const customer = !member && id ? await loadCustomer(id) : null;
+if (!member && !customer) return new Response('Not found', { status: 404 });
+const person = (member ?? customer)!;
+const personLabel = member
+  ? `${member.name} · ${member.memberNo}`
+  : person.name;
+
+const closing = await closuresInFlightFor(
+  member ? { memberId: member.id } : { customerId: customer!.id }
+);
+const closable = await Promise.all(
+  person.accounts
+    .filter(
+      a =>
+        a.status === 'active' &&
+        !('isMembershipDefault' in a && a.isMembershipDefault) &&
+        !closing.has(a.id)
+    )
+    .map(async a => ({
+      ...a,
+      balance: (await accountBalance(a.id))?.balance ?? '0.00',
+    }))
+);
+const requestedAccount = Astro.url.searchParams.get('account') ?? '';
+
+// A closure on a death (business decision) is only for a non-member: a
+// customer, or a member who resigned but kept an account open. A member
+// still active who dies is refused by the library — settled by a demised
+// claim instead — so the choice is not even offered here.
+const isNonMember = !member || member.status === 'resigned';
+// The cause no longer switches on this page — it arrives from which button
+// sent the officer here: Close (a closure) or Demised claim (?cause=death).
+// A company does not die (claimableMembershipType): no closure on a death.
+const canCloseOnDeath =
+  isNonMember && claimableMembershipType(person.membershipTypeCode);
+const onDeathMode =
+  canCloseOnDeath && Astro.url.searchParams.get('cause') === 'death';
+const nominee = isNonMember
+  ? await nomineeOnApplication(person.applicationId)
+  : null;
+const onDeathAccounts = isNonMember
+  ? await accountsOnDeath(
+      member
+        ? { memberId: member.id, customerId: null }
+        : { memberId: null, customerId: customer!.id }
+    )
+  : null;
+
+const onItsWay = await transactionsOnTheirWay([
+  ...new Set([
+    ...closable.map(a => a.id),
+    ...(onDeathAccounts?.accounts.map(a => a.id) ?? []),
+  ]),
+]);
+const deathBlockedEntries = (onDeathAccounts?.accounts ?? [])
+  .map(a => [a.id, onItsWay.get(a.id)] as const)
+  .filter(
+    (entry): entry is [string, { reference: string; accountNo: string }] =>
+      entry[1] !== undefined
+  );
+const deathBlocked =
+  deathBlockedEntries.length > 0
+    ? onItsWayMessage(new Map(deathBlockedEntries), true)
+    : null;
+
+let values = {
+  accountId:
+    closable.find(a => a.id === requestedAccount)?.id ?? closable[0]?.id ?? '',
+  reason: '',
+  cause: onDeathMode ? 'death' : 'request',
+  kind: nominee ? 'nominee' : 'other',
+  name: '',
+  nic: '',
+  address: '',
+  relation: '',
+  email: '',
+  mobile: '',
+};
+let error: string | null = null;
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const text = (name: string) => String(form.get(name) ?? '');
+  values = {
+    accountId: text('accountId'),
+    reason: text('reason'),
+    cause: text('cause') || 'request',
+    kind: text('kind'),
+    name: text('name'),
+    nic: text('nic'),
+    address: text('address'),
+    relation: text('relation'),
+    email: text('email'),
+    mobile: text('mobile'),
+  };
+  const onDeath = canCloseOnDeath && values.cause === 'death';
+  if (!onDeath && !person.accounts.some(a => a.id === values.accountId)) {
+    error = 'Choose which account is closing.';
+  } else {
+    // On a death, the account is just the lead of the accounts covered —
+    // the select for it is hidden, so fall back to the first covered
+    // account when what was posted (if anything) is not one of them.
+    const accountId = onDeath
+      ? onDeathAccounts?.accounts.some(a => a.id === values.accountId)
+        ? values.accountId
+        : (onDeathAccounts?.accounts[0]?.id ?? values.accountId)
+      : values.accountId;
+    try {
+      const closure = await startClosure(
+        {
+          accountId,
+          reason: values.reason,
+          ...(onDeath
+            ? {
+                onDeath: {
+                  claimant: {
+                    kind: values.kind === 'nominee' ? 'nominee' : 'other',
+                    name: values.name,
+                    nic: values.nic,
+                    address: values.address,
+                    relation: values.relation,
+                    email: values.email,
+                    mobile: values.mobile,
+                  },
+                },
+              }
+            : {}),
+        },
+        principal
+      );
+      return Astro.redirect(
+        `/closures/${closure.id}?step=${onDeath ? 'documents' : 'signature'}`
+      );
+    } catch (err) {
+      if (err instanceof ClosureError) {
+        error = err.message;
+      } else {
+        console.error('[members/close]', err);
+        error = 'Something went wrong. Please try again.';
+      }
+    }
+  }
+}
+
+const causeIsDeath = canCloseOnDeath && values.cause === 'death';
+const selectedEntry = onItsWay.get(values.accountId);
+const blockedMessage = causeIsDeath
+  ? deathBlocked
+  : selectedEntry
+    ? onItsWayMessage(new Map([[values.accountId, selectedEntry]]), false)
+    : null;
+---
+
+<DashboardLayout
+  title={
+    causeIsDeath
+      ? 'Demised claim · Al Barakah MCSL'
+      : 'Close an account · Al Barakah MCSL'
+  }
+  heading={causeIsDeath ? 'Demised claim' : 'Close an account'}
+>
+  <div class={PAGE.form}>
+    <a href={`/members/${id}`} class={`${HINT} inline-block underline`}>
+      ← {personLabel}
+    </a>
+
+    {error && <div class={NOTICE_ERROR}>{error}</div>}
+
+    {closable.length === 0 ? (
+      <p class={`${CARD} text-sm text-neutral-600 dark:text-neutral-300`}>
+        No account here can close. Shares and the Multiplier Savings Account go
+        together: leaving them is a resignation.
+      </p>
+    ) : (
+      <form
+        method="post"
+        data-close-form
+        class={FORM_CARD}
+        data-death-blocked={deathBlocked}
+      >
+        <div
+          data-account-field
+          hidden={canCloseOnDeath && values.cause === 'death'}
+        >
+          <label class={LABEL}>
+            Account
+            <select name="accountId" class={INPUT}>
+              {closable.map(account => {
+                const entry = onItsWay.get(account.id);
+                return (
+                  <option
+                    value={account.id}
+                    selected={account.id === values.accountId}
+                    data-blocked={
+                      entry
+                        ? onItsWayMessage(new Map([[account.id, entry]]), false)
+                        : undefined
+                    }
+                  >
+                    {account.accountNo} · {account.accountTypeName} ·{' '}
+                    {formatMoney(account.balance)}
+                  </option>
+                );
+              })}
+            </select>
+          </label>
+        </div>
+        {canCloseOnDeath && onDeathAccounts && (
+          <div
+            data-death-accounts
+            class="space-y-2"
+            hidden={values.cause !== 'death'}
+          >
+            <h3 class={CARD_LABEL}>Accounts closing</h3>
+            <table class={TABLE}>
+              <thead>
+                <tr class={THEAD}>
+                  <th class={TH}>Account</th>
+                  <th class={TH}>Balance</th>
+                </tr>
+              </thead>
+              <tbody>
+                {onDeathAccounts.accounts.map(account => (
+                  <tr>
+                    <td class={TD}>
+                      {account.accountNo} · {account.typeName}
+                    </td>
+                    <td class={TD_NUM}>{formatMoney(account.balance)}</td>
+                  </tr>
+                ))}
+                <tr class="font-semibold">
+                  <td class={TD}>Total</td>
+                  <td class={TD_NUM}>{formatMoney(onDeathAccounts.total)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )}
+        {canCloseOnDeath && (
+          <input type="hidden" name="cause" value={values.cause} />
+        )}
+        {canCloseOnDeath && (
+          <div
+            data-claimant-block
+            class="space-y-2"
+            hidden={values.cause !== 'death'}
+          >
+            <div class="space-y-2 text-sm text-neutral-700 dark:text-neutral-200">
+              {nominee && (
+                <label class="flex items-start gap-3">
+                  <input
+                    type="radio"
+                    name="kind"
+                    value="nominee"
+                    checked={values.kind !== 'other'}
+                    class="mt-1"
+                  />
+                  <span>
+                    <span class="font-medium">Nominee: {nominee.name}</span>
+                    <span class="block text-xs text-neutral-500 dark:text-neutral-400">
+                      {[nominee.nic, nominee.address]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </span>
+                  </span>
+                </label>
+              )}
+              <label class="flex items-start gap-3">
+                <input
+                  type="radio"
+                  name="kind"
+                  value="other"
+                  checked={values.kind === 'other' || !nominee}
+                  class="mt-1"
+                />
+                <span class="font-medium">Another person</span>
+              </label>
+            </div>
+            <div
+              data-other-fields
+              class="grid gap-3 sm:grid-cols-2"
+              hidden={values.kind !== 'other'}
+            >
+              <label class={LABEL}>
+                Name
+                <input
+                  type="text"
+                  name="name"
+                  value={values.name}
+                  class={INPUT}
+                />
+              </label>
+              <label class={LABEL}>
+                NIC
+                <input
+                  type="text"
+                  name="nic"
+                  value={values.nic}
+                  class={INPUT}
+                />
+              </label>
+              <label class={LABEL}>
+                Address
+                <input
+                  type="text"
+                  name="address"
+                  value={values.address}
+                  class={INPUT}
+                />
+              </label>
+              <label class={LABEL}>
+                Relation
+                <input
+                  type="text"
+                  name="relation"
+                  value={values.relation}
+                  class={INPUT}
+                />
+              </label>
+              <label class={LABEL}>
+                Email
+                <input
+                  type="email"
+                  name="email"
+                  value={values.email}
+                  class={INPUT}
+                />
+              </label>
+              <label class={LABEL}>
+                Mobile
+                <input
+                  type="tel"
+                  name="mobile"
+                  value={values.mobile}
+                  class={INPUT}
+                />
+              </label>
+            </div>
+          </div>
+        )}
+        <label class={LABEL}>
+          Reason
+          <textarea
+            name="reason"
+            rows="3"
+            required={!(canCloseOnDeath && values.cause === 'death')}
+            maxlength="500"
+            class={INPUT}
+          >{values.reason}</textarea>
+        </label>
+        <p
+          data-payout-note
+          class="text-xs text-neutral-500 dark:text-neutral-400"
+        >
+          {canCloseOnDeath && values.cause === 'death'
+            ? 'The balances are paid out together when it is approved, as they stand then.'
+            : 'The balance is paid out when the closure is approved, as it stands then.'}
+        </p>
+        <p data-blocked-note class={NOTICE_ERROR} hidden={!blockedMessage}>
+          {blockedMessage}
+        </p>
+        <button
+          type="submit"
+          data-continue-button
+          class={BUTTON}
+          disabled={!!blockedMessage}
+        >
+          {canCloseOnDeath && values.cause === 'death'
+            ? 'Continue to documents'
+            : 'Continue to signature'}
+        </button>
+      </form>
+    )}
+  </div>
+</DashboardLayout>
+
+<script>
+  // The cause is fixed for the page (the hidden cause input), set from which
+  // button sent the officer here. This reads it once to show the claimant
+  // block, the Accounts closing list, and the death wording in place of the
+  // Account select and the closure wording — enforced server-side
+  // (ledger/closures.ts) whether or not this script runs.
+  const form = document.querySelector<HTMLFormElement>('[data-close-form]');
+  const claimantBlock = form?.querySelector<HTMLElement>(
+    '[data-claimant-block]'
+  );
+  const accountField = form?.querySelector<HTMLElement>('[data-account-field]');
+  const deathAccounts = form?.querySelector<HTMLElement>(
+    '[data-death-accounts]'
+  );
+  const otherFields = form?.querySelector<HTMLElement>('[data-other-fields]');
+  const reason = form?.querySelector<HTMLTextAreaElement>('[name="reason"]');
+  const continueButton = form?.querySelector<HTMLButtonElement>(
+    '[data-continue-button]'
+  );
+  const payoutNote = form?.querySelector<HTMLElement>('[data-payout-note]');
+  const accountSelect = form?.querySelector<HTMLSelectElement>(
+    'select[name="accountId"]'
+  );
+  const blockedNote = form?.querySelector<HTMLElement>('[data-blocked-note]');
+  if (form) {
+    // Blocks Continue the moment a transaction still on its way makes the
+    // Submit step certain to refuse — enforced server-side too (S-1702).
+    const syncBlocked = () => {
+      const onDeath =
+        form.querySelector<HTMLInputElement>('input[name="cause"]')?.value ===
+        'death';
+      const message = onDeath
+        ? (form.dataset.deathBlocked ?? null)
+        : (accountSelect?.selectedOptions[0]?.dataset.blocked ?? null);
+      if (blockedNote) {
+        blockedNote.textContent = message ?? '';
+        blockedNote.hidden = !message;
+      }
+      if (continueButton) continueButton.disabled = !!message;
+    };
+    const refresh = () => {
+      const onDeath =
+        form.querySelector<HTMLInputElement>('input[name="cause"]')?.value ===
+        'death';
+      if (claimantBlock) claimantBlock.hidden = !onDeath;
+      if (accountField) accountField.hidden = onDeath;
+      if (deathAccounts) deathAccounts.hidden = !onDeath;
+      if (reason) reason.required = !onDeath;
+      if (continueButton) {
+        continueButton.textContent = onDeath
+          ? 'Continue to documents'
+          : 'Continue to signature';
+      }
+      if (payoutNote) {
+        payoutNote.textContent = onDeath
+          ? 'The balances are paid out together when it is approved, as they stand then.'
+          : 'The balance is paid out when the closure is approved, as it stands then.';
+      }
+      if (otherFields) {
+        const kind = form.querySelector<HTMLInputElement>(
+          'input[name="kind"]:checked'
+        )?.value;
+        otherFields.hidden = kind !== 'other';
+      }
+      syncBlocked();
+    };
+    form.addEventListener('change', refresh);
+    refresh();
+  }
+</script>

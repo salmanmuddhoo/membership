@@ -144,13 +144,14 @@ describe('S-201: roles and their permissions', () => {
 
   it('refuses a duplicate code', async () => {
     const { roles } = await load();
+    // A code of this test's own: 'clerk' is a seeded role since 0069.
     await roles.createRole(
-      { code: 'clerk', name: 'Clerk', permissions: [] },
+      { code: 'duplicate_test', name: 'Duplicate', permissions: [] },
       actor
     );
     await expect(
       roles.createRole(
-        { code: 'clerk', name: 'Clerk Again', permissions: [] },
+        { code: 'duplicate_test', name: 'Duplicate Again', permissions: [] },
         actor
       )
     ).rejects.toThrowError(/already exists/);
@@ -672,6 +673,52 @@ describe('the staff list stays bounded', () => {
     }
   });
 
+  it('pages with limit and offset, in display-name order (officer request: 10/25/50 rows)', async () => {
+    const { roles } = await load();
+    await run(
+      appUrl,
+      `insert into app_user (email, display_name)
+       select 'page' || lpad(i::text, 3, '0') || '@albarakah.mu',
+              'Page ' || lpad(i::text, 3, '0')
+         from generate_series(1, 12) as i`
+    );
+
+    try {
+      const firstPage = await roles.listUsers({
+        search: 'page ',
+        limit: 5,
+        offset: 0,
+      });
+      const secondPage = await roles.listUsers({
+        search: 'page ',
+        limit: 5,
+        offset: 5,
+      });
+
+      expect(firstPage.total).toBe(12);
+      expect(secondPage.total).toBe(12);
+      expect(firstPage.users.map(u => u.displayName)).toEqual([
+        'Page 001',
+        'Page 002',
+        'Page 003',
+        'Page 004',
+        'Page 005',
+      ]);
+      expect(secondPage.users.map(u => u.displayName)).toEqual([
+        'Page 006',
+        'Page 007',
+        'Page 008',
+        'Page 009',
+        'Page 010',
+      ]);
+      // Never the same row twice across two pages.
+      const firstIds = new Set(firstPage.users.map(u => u.id));
+      expect(secondPage.users.every(u => !firstIds.has(u.id))).toBe(true);
+    } finally {
+      await run(appUrl, `delete from app_user where email like 'page%'`);
+    }
+  });
+
   it('finds an account by a fragment of its email, whatever the case', async () => {
     const { roles } = await load();
     const page = await roles.listUsers({ search: 'OFFICER@albarakah' });
@@ -818,5 +865,117 @@ describe('S-203: segregation of duties, per record', () => {
     expect(pairs).toContain(
       'membership.application.reviewed -> membership.application.approved'
     );
+  });
+});
+
+describe('the Segregation of duties page: switching and adding rules', () => {
+  it('switches a rule off and on again, audited, and the check follows it', async () => {
+    const { segregation } = await load();
+    const rule = (await segregation.listSegregationRules()).find(
+      r =>
+        r.earlierAction === 'membership.application.captured' &&
+        r.laterAction === 'membership.application.approved'
+    )!;
+
+    await segregation.setSegregationRuleEnabled(rule.id, false, actor);
+    let rules = await segregation.listSegregationRules();
+    expect(rules.find(r => r.id === rule.id)?.isEnabled).toBe(false);
+
+    await segregation.setSegregationRuleEnabled(rule.id, true, actor);
+    rules = await segregation.listSegregationRules();
+    expect(rules.find(r => r.id === rule.id)?.isEnabled).toBe(true);
+
+    const trail = await run(
+      appUrl,
+      `select action from audit_event
+        where entity_type = 'segregation_rule' and entity_id = $1
+        order by id`,
+      [rule.id]
+    );
+    expect(trail.rows.map(r => r.action)).toEqual([
+      'segregation.rule.disabled',
+      'segregation.rule.enabled',
+    ]);
+  });
+
+  it('adds a pair from the catalogue, worded from the pair, and enforces it', async () => {
+    const { segregation } = await load();
+    await segregation.addSegregationRule(
+      {
+        entityType: 'transaction',
+        earlierAction: 'transaction.reviewed',
+        laterAction: 'transaction.approved',
+      },
+      actor
+    );
+    const added = (await segregation.listSegregationRules()).find(
+      r =>
+        r.earlierAction === 'transaction.reviewed' &&
+        r.laterAction === 'transaction.approved'
+    );
+    expect(added?.isEnabled).toBe(true);
+    expect(added?.description).toBe(
+      'Whoever reviewed a transaction may not approve it.'
+    );
+
+    await run(
+      appUrl,
+      `insert into audit_event (actor_user_id, actor_description, action,
+                                entity_type, entity_id)
+       values ($1, 'officer', 'transaction.reviewed', 'transaction', 'TR-SEG-1')`,
+      [officerId]
+    );
+    const verdict = await segregation.checkSegregation(
+      officerId,
+      'transaction',
+      'TR-SEG-1',
+      'transaction.approved'
+    );
+    expect(verdict.allowed).toBe(false);
+
+    await expect(
+      segregation.addSegregationRule(
+        {
+          entityType: 'transaction',
+          earlierAction: 'transaction.reviewed',
+          laterAction: 'transaction.approved',
+        },
+        actor
+      )
+    ).rejects.toThrow('That rule is already on.');
+  });
+
+  it('refuses a pair the system never checks, or the same action twice', async () => {
+    const { segregation } = await load();
+    await expect(
+      segregation.addSegregationRule(
+        {
+          entityType: 'transaction',
+          earlierAction: 'transaction.captured',
+          laterAction: 'transaction.captured',
+        },
+        actor
+      )
+    ).rejects.toThrow('Choose both actions.');
+    await expect(
+      segregation.addSegregationRule(
+        {
+          entityType: 'transaction',
+          earlierAction: 'transaction.approved',
+          laterAction: 'transaction.approved',
+        },
+        actor
+      )
+    ).rejects.toThrow('Choose two different actions.');
+    await expect(
+      segregation.addSegregationRule(
+        {
+          entityType: 'document',
+          earlierAction: 'transaction.captured',
+          laterAction: 'document.verified',
+        },
+        actor
+      )
+    ).rejects.toThrow('Choose both actions.');
   });
 });

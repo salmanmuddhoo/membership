@@ -1,0 +1,392 @@
+---
+// Configuration -> Approval matrix (S-1401): which transactions post at
+// once and which go to a chain, by kind, amount band, account type and the
+// role that started them. Ordered within a kind; the first match wins.
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import ConfigNav from '@components/ConfigNav.astro';
+import { listRoles } from '@lib/admin/roles';
+import {
+  ConfigError,
+  createApprovalRule,
+  deleteApprovalRule,
+  listAccountTypes,
+  listApprovalRules,
+  listWorkflows,
+  moveApprovalRule,
+  updateApprovalRule,
+  TRANSACTION_KINDS,
+} from '@lib/config/reference';
+import { formatMoney } from '@lib/payments/money';
+import {
+  PAGE,
+  CARD,
+  CARD_TITLE,
+  HINT,
+  PANEL,
+  INPUT,
+  BUTTON,
+  BUTTON_SM,
+  DANGER_XS,
+  LABEL,
+  NOTICE_ERROR,
+  NOTICE_OK,
+} from '@lib/ui';
+
+const principal = Astro.locals.principal!;
+const canManage = principal.permissions.has('config.manage');
+
+let error: string | null = null;
+let notice: string | null = null;
+
+function ruleFrom(form: FormData) {
+  const text = (name: string) => String(form.get(name) ?? '');
+  return {
+    kind: text('kind'),
+    accountTypeId: text('accountTypeId') || null,
+    initiatingRoleId: text('initiatingRoleId') || null,
+    amountFrom: text('amountFrom'),
+    amountTo: text('amountTo') || null,
+    workflowDefinitionId: text('workflowDefinitionId') || null,
+    note: text('note'),
+    isActive: form.get('isActive') === 'on',
+  };
+}
+
+if (Astro.request.method === 'POST') {
+  if (!canManage) {
+    error = 'You do not have permission to change configuration.';
+  } else {
+    const form = await Astro.request.formData();
+    const intent = String(form.get('intent') ?? '');
+    const ruleId = String(form.get('ruleId') ?? '');
+    const actor = { userId: principal.userId, email: principal.email };
+    try {
+      if (intent === 'create') {
+        await createApprovalRule(ruleFrom(form), actor);
+        notice = 'Rule added.';
+      } else if (intent === 'update') {
+        await updateApprovalRule(ruleId, ruleFrom(form), actor);
+        notice = 'Rule updated.';
+      } else if (intent === 'up' || intent === 'down') {
+        await moveApprovalRule(ruleId, intent, actor);
+        notice = 'Order updated.';
+      } else if (intent === 'delete') {
+        await deleteApprovalRule(ruleId, actor);
+        notice = 'Rule deleted.';
+      }
+    } catch (err) {
+      if (err instanceof ConfigError) {
+        error = err.message;
+      } else {
+        console.error('[config/approval-matrix]', err);
+        error = 'Something went wrong. Please try again.';
+      }
+    }
+  }
+}
+
+const [rules, accountTypes, workflows, roles] = await Promise.all([
+  listApprovalRules(),
+  listAccountTypes(),
+  listWorkflows(),
+  listRoles(),
+]);
+const chains = workflows.filter(w => w.entityType === 'transaction');
+
+const KIND_LABELS: Record<string, string> = {
+  deposit: 'Deposit',
+  withdrawal: 'Withdrawal',
+  transfer: 'Transfer',
+  closure: 'Account closure',
+  resignation: 'Resignation',
+  demise: 'Demised member claim',
+};
+
+const SMALL_BUTTON =
+  'rounded-lg border border-neutral-300 px-2.5 py-1 text-xs font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800';
+---
+
+<DashboardLayout
+  title="Approval matrix · Al Barakah MCSL"
+  heading="Approval matrix"
+>
+  <div class={PAGE.list}>
+    <ConfigNav />
+
+    {error && <div class={NOTICE_ERROR}>{error}</div>}
+    {notice && <div class={NOTICE_OK}>{notice}</div>}
+
+    {TRANSACTION_KINDS.map(kind => {
+      const own = rules.filter(r => r.kind === kind);
+      return (
+        <section class={CARD}>
+          <h2 class={CARD_TITLE}>{KIND_LABELS[kind]}</h2>
+          <p class={`${HINT} mt-1`}>
+            Top to bottom, the first rule that fits decides. None fitting sends
+            it to the most demanding chain.
+          </p>
+          {own.length === 0 ? (
+            <p class={`${HINT} mt-3`}>
+              No rule. Everything of this kind goes for review.
+            </p>
+          ) : (
+            <ol class="mt-4 space-y-3">
+              {own.map((rule, index) => (
+                <li class={PANEL}>
+                  <details>
+                    <summary class="flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+                      <span class="font-medium text-neutral-800 dark:text-neutral-100">
+                        {index + 1}.
+                      </span>
+                      <span class="text-neutral-800 dark:text-neutral-100">
+                        {formatMoney(rule.amountFrom)}
+                        {rule.amountTo
+                          ? ` to ${formatMoney(rule.amountTo)}`
+                          : ' and above'}
+                      </span>
+                      {rule.accountTypeName && (
+                        <span class="rounded bg-neutral-100 px-1.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
+                          {rule.accountTypeName}
+                        </span>
+                      )}
+                      {rule.initiatingRoleName && (
+                        <span class="rounded bg-neutral-100 px-1.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
+                          by {rule.initiatingRoleName}
+                        </span>
+                      )}
+                      <span class="font-medium text-neutral-700 dark:text-neutral-200">
+                        → {rule.workflowName ?? 'Posts at once'}
+                      </span>
+                      {!rule.isActive && (
+                        <span class="rounded bg-red-100 px-1.5 py-0.5 text-xs text-red-800 dark:bg-red-950 dark:text-red-200">
+                          inactive
+                        </span>
+                      )}
+                      {rule.note && (
+                        <span class="text-xs text-neutral-500 dark:text-neutral-400">
+                          {rule.note}
+                        </span>
+                      )}
+                    </summary>
+
+                    <form method="post" class="mt-4 grid gap-3 sm:grid-cols-3">
+                      <input type="hidden" name="ruleId" value={rule.id} />
+                      <input type="hidden" name="kind" value={rule.kind} />
+                      <label class={LABEL}>
+                        From (Rs)
+                        <input
+                          type="text"
+                          inputmode="decimal"
+                          name="amountFrom"
+                          value={rule.amountFrom}
+                          disabled={!canManage}
+                          class={INPUT}
+                        />
+                      </label>
+                      <label class={LABEL}>
+                        To (Rs, blank for and above)
+                        <input
+                          type="text"
+                          inputmode="decimal"
+                          name="amountTo"
+                          value={rule.amountTo ?? ''}
+                          disabled={!canManage}
+                          class={INPUT}
+                        />
+                      </label>
+                      <label class={LABEL}>
+                        Goes to
+                        <select
+                          name="workflowDefinitionId"
+                          disabled={!canManage}
+                          class={INPUT}
+                        >
+                          <option value="">Posts at once</option>
+                          {chains.map(c => (
+                            <option
+                              value={c.id}
+                              selected={c.id === rule.workflowDefinitionId}
+                            >
+                              {c.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label class={LABEL}>
+                        Account type
+                        <select
+                          name="accountTypeId"
+                          disabled={!canManage}
+                          class={INPUT}
+                        >
+                          <option value="">Any</option>
+                          {accountTypes.map(t => (
+                            <option
+                              value={t.id}
+                              selected={t.id === rule.accountTypeId}
+                            >
+                              {t.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label class={LABEL}>
+                        Started by
+                        <select
+                          name="initiatingRoleId"
+                          disabled={!canManage}
+                          class={INPUT}
+                        >
+                          <option value="">Any role</option>
+                          {roles.map(r => (
+                            <option
+                              value={r.id}
+                              selected={r.id === rule.initiatingRoleId}
+                            >
+                              {r.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label class={LABEL}>
+                        Note
+                        <input
+                          type="text"
+                          name="note"
+                          value={rule.note}
+                          disabled={!canManage}
+                          class={INPUT}
+                        />
+                      </label>
+                      <label class="flex items-center gap-x-2 text-sm text-neutral-600 dark:text-neutral-300">
+                        <input
+                          type="checkbox"
+                          name="isActive"
+                          checked={rule.isActive}
+                          disabled={!canManage}
+                          class="text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600"
+                        />
+                        Active
+                      </label>
+                      {canManage && (
+                        <div class="flex flex-wrap gap-2 pt-2 sm:col-span-3">
+                          <button
+                            type="submit"
+                            name="intent"
+                            value="update"
+                            class={BUTTON_SM}
+                          >
+                            Save
+                          </button>
+                          <button
+                            type="submit"
+                            name="intent"
+                            value="up"
+                            disabled={index === 0}
+                            class={`${SMALL_BUTTON} disabled:opacity-40`}
+                          >
+                            Move up
+                          </button>
+                          <button
+                            type="submit"
+                            name="intent"
+                            value="down"
+                            disabled={index === own.length - 1}
+                            class={`${SMALL_BUTTON} disabled:opacity-40`}
+                          >
+                            Move down
+                          </button>
+                          <button
+                            type="submit"
+                            name="intent"
+                            value="delete"
+                            class={DANGER_XS}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      )}
+                    </form>
+                  </details>
+                </li>
+              ))}
+            </ol>
+          )}
+        </section>
+      );
+    })}
+
+    {canManage && (
+      <section class={CARD}>
+        <h2 class={CARD_TITLE}>Add a rule</h2>
+        <form method="post" class="mt-4 grid gap-3 sm:grid-cols-3">
+          <input type="hidden" name="intent" value="create" />
+          <input type="hidden" name="isActive" value="on" />
+          <label class={LABEL}>
+            Kind
+            <select name="kind" class={INPUT}>
+              {TRANSACTION_KINDS.map(kind => (
+                <option value={kind}>{KIND_LABELS[kind]}</option>
+              ))}
+            </select>
+          </label>
+          <label class={LABEL}>
+            From (Rs)
+            <input
+              type="text"
+              inputmode="decimal"
+              name="amountFrom"
+              value="0.00"
+              class={INPUT}
+            />
+          </label>
+          <label class={LABEL}>
+            To (Rs, blank for and above)
+            <input
+              type="text"
+              inputmode="decimal"
+              name="amountTo"
+              class={INPUT}
+            />
+          </label>
+          <label class={LABEL}>
+            Goes to
+            <select name="workflowDefinitionId" class={INPUT}>
+              <option value="">Posts at once</option>
+              {chains.map(c => (
+                <option value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </label>
+          <label class={LABEL}>
+            Account type
+            <select name="accountTypeId" class={INPUT}>
+              <option value="">Any</option>
+              {accountTypes.map(t => (
+                <option value={t.id}>{t.name}</option>
+              ))}
+            </select>
+          </label>
+          <label class={LABEL}>
+            Started by
+            <select name="initiatingRoleId" class={INPUT}>
+              <option value="">Any role</option>
+              {roles.map(r => (
+                <option value={r.id}>{r.name}</option>
+              ))}
+            </select>
+          </label>
+          <label class={`${LABEL} sm:col-span-2`}>
+            Note
+            <input type="text" name="note" class={INPUT} />
+          </label>
+          <div class="sm:col-span-3">
+            <button type="submit" class={BUTTON}>
+              Add rule
+            </button>
+          </div>
+        </form>
+      </section>
+    )}
+  </div>
+</DashboardLayout>

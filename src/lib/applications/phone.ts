@@ -82,5 +82,11 @@ export function forDisplay(e164: string): string {
     const local = e164.slice(4);
     return `${MAURITIUS} ${local.slice(0, 4)} ${local.slice(4)}`;
   }
+  // A 7-digit fixed line (208 0004) reads in groups too (officer QA: a
+  // migrated contact's landline showed as +2302080004).
+  if (e164.startsWith(`${MAURITIUS}`) && e164.length === 11) {
+    const local = e164.slice(4);
+    return `${MAURITIUS} ${local.slice(0, 3)} ${local.slice(3)}`;
+  }
   return e164;
 }

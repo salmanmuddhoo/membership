@@ -1,0 +1,139 @@
+---
+// Every Phase 2 setting, what it stands at, and who last changed it (S-1802).
+//
+// Read-only: reaching it needs only config.view, like every page under
+// /admin/configuration/ (the prefix rule in authorise.ts) — there is nothing
+// here to manage, only to read before go-live.
+//
+// "Still at default" is shown as information, not as an error. A seeded
+// value is a working value; the Society may well keep it. The list exists
+// for the go-live walk-through, so an administrator can read down it and
+// confirm each figure is the Society's, not a placeholder left over from
+// seeding.
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import ConfigNav from '@components/ConfigNav.astro';
+import {
+  readiness,
+  summarise,
+  type ReadinessItem,
+} from '@lib/config/readiness';
+import {
+  PAGE,
+  CARD,
+  CARD_TITLE,
+  PILL_OUTLINE,
+  PILL_OUTLINE_WARN,
+  TABLE,
+  THEAD,
+  TH,
+  ROW,
+  TD,
+} from '@lib/ui';
+
+const items = await readiness();
+const summary = summarise(items);
+
+const groups = new Map<string, ReadinessItem[]>();
+for (const item of items) {
+  const group = groups.get(item.group);
+  if (group) {
+    group.push(item);
+  } else {
+    groups.set(item.group, [item]);
+  }
+}
+
+const dateFormat = new Intl.DateTimeFormat('en-GB', {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+});
+---
+
+<DashboardLayout title="Readiness · Al Barakah MCSL" heading="Readiness">
+  <div class={PAGE.list}>
+    <ConfigNav />
+
+    <p
+      class:list={[
+        'rounded-xl border px-4 py-3 text-sm',
+        summary.missing > 0
+          ? 'border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100'
+          : 'border-neutral-300 text-neutral-600 dark:border-neutral-700 dark:text-neutral-300',
+      ]}
+    >
+      {summary.total} settings · {summary.changed} changed since seeding ·{' '}
+      {summary.atDefault} still at default · {summary.missing} missing
+    </p>
+
+    {[...groups].map(([group, groupItems]) => (
+      <section class={`${CARD} space-y-3`}>
+        <h2 class={CARD_TITLE}>{group}</h2>
+
+        <div class="overflow-x-auto">
+          <table class={`${TABLE} mt-4`} data-sortable>
+            <thead>
+              <tr class={THEAD}>
+                <th class={TH}>Setting</th>
+                <th class={TH}>Value</th>
+                <th class={TH}>Last changed</th>
+                <th class={TH} data-no-sort></th>
+              </tr>
+            </thead>
+            <tbody>
+              {groupItems.map(item => (
+                <tr class={ROW}>
+                  <td
+                    class={`${TD} align-top text-neutral-800 dark:text-neutral-100`}
+                  >
+                    {item.label}
+                  </td>
+                  <td
+                    class={`${TD} align-top text-neutral-700 dark:text-neutral-200`}
+                  >
+                    {item.value}
+                    {item.note && (
+                      <span class="block text-xs text-amber-700 dark:text-amber-300">
+                        {item.note}
+                      </span>
+                    )}
+                  </td>
+                  <td
+                    class={`${TD} align-top text-neutral-600 dark:text-neutral-300`}
+                    data-sort-value={
+                      item.state === 'changed' && item.changedAt
+                        ? item.changedAt.toISOString()
+                        : undefined
+                    }
+                  >
+                    {item.state === 'changed' && item.changedAt && (
+                      <span>
+                        {dateFormat.format(item.changedAt)} · {item.changedBy}
+                      </span>
+                    )}
+                    {item.state === 'default' && (
+                      <span class={PILL_OUTLINE}>Default</span>
+                    )}
+                    {item.state === 'missing' && (
+                      <span class={PILL_OUTLINE_WARN}>Missing</span>
+                    )}
+                  </td>
+                  <td class={`${TD} align-top`}>
+                    <a href={item.href} class="underline">
+                      Change
+                    </a>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    ))}
+  </div>
+</DashboardLayout>
+
+<script>
+  import { wireSortableTables } from '@lib/client/table-sort';
+
+  wireSortableTables();
+</script>

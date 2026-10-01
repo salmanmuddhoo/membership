@@ -603,4 +603,34 @@ describe('the delivery log', () => {
     expect(found).toHaveLength(1);
     expect(found[0].reference).toBeNull();
   });
+
+  // Officer request: the delivery log is paged 10, 25 or 50 rows at a time,
+  // the officer's choice (src/lib/paging.ts) — `limit` is how the page says
+  // which, and `total` still counts every row the filters match, not just
+  // the page.
+  it('pages with a custom limit and offset, newest first', async () => {
+    await run(
+      appUrl,
+      `insert into notification
+         (event_code, channel, recipient, subject, body, created_at)
+       select 'application.approved', 'email',
+              'page' || i || '@example.mu', 'S', 'B',
+              now() - (i || ' minutes')::interval
+         from generate_series(1, 5) as i`
+    );
+
+    const firstPage = await listNotifications({ limit: 2, offset: 0 });
+    const secondPage = await listNotifications({ limit: 2, offset: 2 });
+
+    expect(firstPage.total).toBe(5);
+    expect(secondPage.total).toBe(5);
+    expect(firstPage.rows.map(r => r.recipient)).toEqual([
+      'page1@example.mu',
+      'page2@example.mu',
+    ]);
+    expect(secondPage.rows.map(r => r.recipient)).toEqual([
+      'page3@example.mu',
+      'page4@example.mu',
+    ]);
+  });
 });

@@ -1,9 +1,35 @@
 ---
 import DashboardLayout from '@layouts/DashboardLayout.astro';
-import { listMembers, type MemberListAccount } from '@lib/members/create';
+import Pagination from '@components/Pagination.astro';
+import {
+  listMembers,
+  type MemberListAccount,
+  type MemberListStatusFilter,
+} from '@lib/members/create';
 import { countPendingDetailsRequests } from '@lib/members/details-requests';
 import { listAccountTypes } from '@lib/config/reference';
 import { formatMoney } from '@lib/payments/money';
+import { statusLabel } from '@lib/members/labels';
+import { shownStatus } from '@lib/members/status';
+import { pagingFrom, pageHref } from '@lib/paging';
+import {
+  PAGE,
+  CARD,
+  CARD_TITLE,
+  HINT,
+  INPUT_BARE,
+  SECONDARY_SM,
+  DIALOG,
+  DIALOG_HEADER,
+  SECONDARY_XS,
+  TABLE,
+  THEAD,
+  TH,
+  COL_OPTIONAL,
+  ROW,
+  TD,
+  TD_NUM,
+} from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 const canSeePayments = principal.permissions.has('payment.view');
@@ -15,7 +41,26 @@ const canSeePayments = principal.permissions.has('payment.view');
 // noticing.
 const pendingDetailsUpdates = await countPendingDetailsRequests();
 
+// The status <select>'s own options, in the order the officer sees them —
+// what the Status column would show for each, not the raw stored value
+// (listMembers' own status filter matches this exactly).
+const STATUS_FILTERS: [MemberListStatusFilter, string][] = [
+  ['', 'All statuses'],
+  ['active', 'Active'],
+  ['non_member', 'Non-member'],
+  ['dormant', 'Dormant'],
+  ['inactive', 'Inactive'],
+  ['resigned', 'Resigned'],
+  ['demised', 'Demised'],
+  ['closed', 'Closed'],
+];
+
 const search = Astro.url.searchParams.get('q') ?? '';
+const statusParam = Astro.url.searchParams.get('status') ?? '';
+const status = STATUS_FILTERS.some(([value]) => value === statusParam)
+  ? statusParam
+  : '';
+const paging = pagingFrom(Astro.url);
 // Officer feedback: every account button lines up under the others of its
 // own type across every row — Investment never under Shares — rather than
 // packing left to right per row. A fixed table column per active account
@@ -23,9 +68,21 @@ const search = Astro.url.searchParams.get('q') ?? '';
 // them in, gets that alignment from the browser's own table layout, no
 // per-row logic needed.
 const [
-  { members, total, memberCount, nonMemberCount, truncated },
+  { members, total, memberCount, nonMemberCount, formerCount },
   accountTypeColumns,
-] = await Promise.all([listMembers({ search }), listAccountTypes()]);
+] = await Promise.all([
+  listMembers({
+    search,
+    status,
+    limit: paging.per,
+    offset: paging.offset,
+  }),
+  listAccountTypes(),
+]);
+// A page past the end (the list shrank, or a filter narrowed it, since the
+// link was made) goes back to the first.
+if (members.length === 0 && paging.page > 1)
+  return Astro.redirect(pageHref(Astro.url, { page: 1 }));
 const activeAccountTypeColumns = accountTypeColumns.filter(t => t.isActive);
 
 const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium' });
@@ -71,12 +128,10 @@ function accountButtonClasses(account: MemberListAccount): string {
 ---
 
 <DashboardLayout title="Members · Al Barakah MCSL" heading="Members">
-  <div class="mx-auto max-w-5xl space-y-6">
-    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+  <div class={PAGE.list}>
+    <section class={CARD}>
       <div class="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-          Members
-        </h2>
+        <h2 class={CARD_TITLE}>Members</h2>
         {pendingDetailsUpdates > 0 && (
           <a
             href="/members/details-updates"
@@ -98,57 +153,75 @@ function accountButtonClasses(account: MemberListAccount): string {
           name="q"
           value={search}
           placeholder="Search by ID or name"
-          class="focus:border-mint-400 focus:ring-mint-400 min-w-64 flex-1 rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm text-neutral-800 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
+          data-suggest="/members/suggest.json"
+          class={`${INPUT_BARE} min-w-64 flex-1 text-neutral-800`}
         />
-        <button
-          type="submit"
-          class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+        <label for="status" class="sr-only">
+          Status
+        </label>
+        <select
+          id="status"
+          name="status"
+          class={INPUT_BARE}
+          onchange="this.form.submit()"
         >
+          {STATUS_FILTERS.map(([value, label]) => (
+            <option value={value} selected={value === status}>
+              {label}
+            </option>
+          ))}
+        </select>
+        <button type="submit" class={SECONDARY_SM}>
           Search
         </button>
-        {search && (
-          <a
-            href="/members"
-            class="px-2 py-1.5 text-sm text-neutral-500 underline dark:text-neutral-400"
-          >
+        {(search || status) && (
+          <a href="/members" class={`${HINT} px-2 py-1.5 underline`}>
             Clear
           </a>
         )}
       </form>
 
-      <p class="mt-3 text-sm text-neutral-500 dark:text-neutral-400">
+      <p class={`${HINT} mt-3`}>
         {total === 0
-          ? search
-            ? `No members match “${search}”.`
+          ? search || status
+            ? 'No member matches.'
             : 'No members yet. One is created when an application is approved.'
           : (() => {
-              // Officer feedback: split the count into members (they hold
-              // Shares/MSA) and non-members (only an additional account).
-              const breakdown =
+              // Officer feedback: split the count into members (their
+              // membership is open) and non-members (a customer, or a
+              // resigned member, still holding an open account); LC-10
+              // adds former — a resigned or demised member, or a customer,
+              // with nothing open — shown only when there is one to report.
+              return (
                 `${memberCount} member${memberCount === 1 ? '' : 's'}, ` +
-                `${nonMemberCount} non-member${nonMemberCount === 1 ? '' : 's'}`;
-              return truncated
-                ? `Showing the first ${members.length} of ${total} — ${breakdown}. Search to narrow the list.`
-                : `${breakdown}.`;
+                `${nonMemberCount} non-member${nonMemberCount === 1 ? '' : 's'}` +
+                (formerCount > 0 ? `, ${formerCount} former` : '') +
+                '.'
+              );
             })()}
       </p>
 
       {members.length > 0 && (
         <div class="mt-4 overflow-x-auto">
-          <table class="w-full text-sm">
+          <table class={TABLE} data-sortable>
             <thead>
-              <tr class="text-left text-xs text-neutral-500 dark:text-neutral-400">
-                <th class="py-2 pr-4 pl-4 font-medium">Name</th>
-                <th class="py-2 pr-4 font-medium">Status</th>
-                <th class="py-2 pr-4 font-medium">Joined</th>
-                <th
-                  class="py-2 pr-4 font-medium"
-                  colspan={Math.max(1, activeAccountTypeColumns.length)}
-                >
-                  Accounts
-                </th>
+              <tr class={THEAD}>
+                <th class={TH}>Name</th>
+                <th class={TH}>Status</th>
+                <th class={`${TH} ${COL_OPTIONAL}`}>Joined</th>
+                {activeAccountTypeColumns.length === 0 ? (
+                  <th class={`${TH} ${COL_OPTIONAL}`} data-no-sort>
+                    Accounts
+                  </th>
+                ) : (
+                  activeAccountTypeColumns.map((_, i) => (
+                    <th class={`${TH} ${COL_OPTIONAL}`} data-no-sort>
+                      {i === 0 ? 'Accounts' : ''}
+                    </th>
+                  ))
+                )}
                 {canSeePayments && (
-                  <th class="py-2 pr-4 text-right font-medium">Total funds</th>
+                  <th class={`${TH} text-right`}>Total funds</th>
                 )}
               </tr>
             </thead>
@@ -156,14 +229,15 @@ function accountButtonClasses(account: MemberListAccount): string {
               {members.map(m => (
                 <tr
                   data-href={`/members/${m.id}`}
-                  class="group cursor-pointer border-t border-neutral-200 dark:border-neutral-800"
+                  class={`${ROW} group cursor-pointer`}
                 >
                   <td
-                    class={`py-2 pr-4 text-neutral-700 dark:text-neutral-200 ${ROW_HOVER}`}
+                    class={`${TD} text-neutral-700 dark:text-neutral-200 ${ROW_HOVER}`}
+                    data-sort-value={m.name}
                   >
                     <span class="flex flex-wrap items-center gap-x-2">
                       {m.name}
-                      {m.kind === 'customer' && (
+                      {m.nonMember && (
                         <span class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
                           Non-member
                         </span>
@@ -171,17 +245,18 @@ function accountButtonClasses(account: MemberListAccount): string {
                     </span>
                   </td>
                   <td
-                    class={`py-2 pr-4 text-neutral-600 dark:text-neutral-300 ${ROW_HOVER}`}
+                    class={`${TD} text-neutral-600 dark:text-neutral-300 ${ROW_HOVER}`}
                   >
-                    {m.status}
+                    {statusLabel(shownStatus(m.status, m.nonMember))}
                   </td>
                   <td
-                    class={`py-2 pr-4 text-xs text-neutral-500 dark:text-neutral-400 ${ROW_HOVER}`}
+                    class={`${TD} ${COL_OPTIONAL} text-xs text-neutral-500 dark:text-neutral-400 ${ROW_HOVER}`}
+                    data-sort-value={m.joinedAt.toISOString()}
                   >
                     {dateFormat.format(m.joinedAt)}
                   </td>
                   {activeAccountTypeColumns.length === 0 ? (
-                    <td class={`py-2 pr-4 ${ROW_HOVER}`}>
+                    <td class={`${TD} ${COL_OPTIONAL} ${ROW_HOVER}`}>
                       {m.accountBadges.length === 0 && (
                         <span class="text-xs text-neutral-400 dark:text-neutral-500">
                           —
@@ -194,7 +269,7 @@ function accountButtonClasses(account: MemberListAccount): string {
                         a => a.code === type.code
                       );
                       return (
-                        <td class={`py-2 pr-4 ${ROW_HOVER}`}>
+                        <td class={`${TD} ${COL_OPTIONAL} ${ROW_HOVER}`}>
                           {account &&
                             (canSeePayments ? (
                               <button
@@ -202,6 +277,10 @@ function accountButtonClasses(account: MemberListAccount): string {
                                 data-account-id={account.id}
                                 data-account-name={account.name}
                                 data-account-no={account.no}
+                                data-account-balance={account.balance}
+                                data-account-balance-label={formatMoney(
+                                  account.balance
+                                )}
                                 class:list={[
                                   'cursor-pointer rounded-md px-2 py-1 text-xs font-semibold whitespace-nowrap',
                                   accountButtonClasses(account),
@@ -227,7 +306,8 @@ function accountButtonClasses(account: MemberListAccount): string {
                   )}
                   {canSeePayments && (
                     <td
-                      class={`py-2 text-right font-medium text-neutral-800 tabular-nums dark:text-neutral-100 ${ROW_HOVER}`}
+                      class={`${TD_NUM} font-medium text-neutral-800 dark:text-neutral-100 ${ROW_HOVER}`}
+                      data-sort-value={m.totalFunds}
                     >
                       {formatMoney(m.totalFunds)}
                     </td>
@@ -238,14 +318,16 @@ function accountButtonClasses(account: MemberListAccount): string {
           </table>
         </div>
       )}
+
+      <Pagination total={total} paging={paging} noun="members" />
     </section>
 
     {canSeePayments && (
       <dialog
         id="account-transactions-dialog"
-        class="fixed top-1/2 left-1/2 m-0 w-[calc(100vw-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-neutral-200 bg-neutral-100 p-0 text-neutral-800 backdrop:bg-neutral-900/50 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-100"
+        class={`${DIALOG} w-[90vw] max-w-lg p-0`}
       >
-        <div class="flex items-center justify-between gap-3 border-b border-neutral-200 px-5 py-3 dark:border-neutral-800">
+        <div class={DIALOG_HEADER}>
           <div>
             <p
               data-dialog-name
@@ -255,12 +337,15 @@ function accountButtonClasses(account: MemberListAccount): string {
               data-dialog-no
               class="text-xs text-neutral-500 dark:text-neutral-400"
             />
+            <p class="mt-1 text-sm text-neutral-600 dark:text-neutral-300">
+              Balance{' '}
+              <span
+                data-dialog-balance
+                class="font-bold text-neutral-900 dark:text-neutral-100"
+              />
+            </p>
           </div>
-          <button
-            type="button"
-            data-dialog-close
-            class="rounded-lg border border-neutral-300 px-2.5 py-1 text-xs font-medium text-neutral-600 transition hover:bg-neutral-200 dark:border-neutral-600 dark:text-neutral-300 dark:hover:bg-neutral-800"
-          >
+          <button type="button" data-dialog-close class={SECONDARY_XS}>
             Close
           </button>
         </div>
@@ -276,6 +361,8 @@ function accountButtonClasses(account: MemberListAccount): string {
 </DashboardLayout>
 
 <script>
+  import { wireSortableTables } from '@lib/client/table-sort';
+
   // Officer feedback: the row itself opens the member's full record — the
   // account buttons inside it are their own click target (see below), so a
   // click landing on one of those must not also navigate the row.
@@ -299,13 +386,30 @@ function accountButtonClasses(account: MemberListAccount): string {
   ) as HTMLDialogElement | null;
   const dialogName = dialog?.querySelector<HTMLElement>('[data-dialog-name]');
   const dialogNo = dialog?.querySelector<HTMLElement>('[data-dialog-no]');
+  const dialogBalance = dialog?.querySelector<HTMLElement>(
+    '[data-dialog-balance]'
+  );
   const dialogBody = dialog?.querySelector<HTMLElement>('[data-dialog-body]');
   const dialogClose = dialog?.querySelector<HTMLButtonElement>(
     '[data-dialog-close]'
   );
 
-  if (dialog && dialogName && dialogNo && dialogBody && dialogClose) {
+  if (
+    dialog &&
+    dialogName &&
+    dialogNo &&
+    dialogBalance &&
+    dialogBody &&
+    dialogClose
+  ) {
     dialogClose.addEventListener('click', () => dialog.close());
+    // QA-15: a click on the backdrop closes the dialog too, not only Escape
+    // and Close. A click landing on the dialog's own content bubbles with a
+    // target inside it; one on the backdrop bubbles with the dialog element
+    // itself as the target, which is how the two are told apart here.
+    dialog.addEventListener('click', e => {
+      if (e.target === dialog) dialog.close();
+    });
 
     const amountFormat = (amount: string) =>
       Number(amount).toLocaleString('en-US', {
@@ -328,6 +432,7 @@ function accountButtonClasses(account: MemberListAccount): string {
 
         dialogName.textContent = button.dataset.accountName ?? '';
         dialogNo.textContent = button.dataset.accountNo ?? '';
+        dialogBalance.textContent = button.dataset.accountBalanceLabel ?? '';
         dialogBody.textContent = 'Loading…';
         dialog.showModal();
 
@@ -392,4 +497,6 @@ function accountButtonClasses(account: MemberListAccount): string {
       });
     }
   }
+
+  wireSortableTables();
 </script>

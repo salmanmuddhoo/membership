@@ -233,6 +233,46 @@ describe('identification: NIC + AB Number', () => {
       ]);
     }
   });
+  // Officer direction: a resigned member keeps the app while an account of
+  // theirs is still open; with none at all, they are a miss.
+  it('keeps a resigned member with an open account, and drops one with none', async () => {
+    await clearCooldowns();
+    const type = await run(
+      appUrl,
+      `select id from account_type where code = 'msa'`
+    );
+    await run(appUrl, `update member set status = 'resigned' where id = $1`, [
+      memberId,
+    ]);
+    await run(
+      appUrl,
+      `insert into account (member_id, account_type_id, is_membership_default, status, account_no)
+       values ($1, $2, false, 'active', null)`,
+      [memberId, type.rows[0].id]
+    );
+    try {
+      // A hit sends the code; a miss sends nothing and looks the same.
+      let before = sent.length;
+      await expect(link()).resolves.toMatchObject({ purpose: 'link_member' });
+      expect(sent.length).toBe(before + 1);
+      await clearCooldowns();
+      await run(
+        appUrl,
+        `update account set status = 'closed', closed_at = now()
+          where member_id = $1`,
+        [memberId]
+      );
+      before = sent.length;
+      await expect(link()).resolves.toMatchObject({ sentTo: null });
+      expect(sent.length).toBe(before);
+    } finally {
+      await run(appUrl, `delete from account where member_id = $1`, [memberId]);
+      await run(appUrl, `update member set status = 'active' where id = $1`, [
+        memberId,
+      ]);
+    }
+  });
+
   it('separates "no such pair" from "no mobile to send to", in the log as well as the trail', async () => {
     // Both refusals look identical from the phone — that is the point — so
     // the only way anyone finds out why a link failed is the audit trail or

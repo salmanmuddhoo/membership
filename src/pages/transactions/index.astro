@@ -1,0 +1,106 @@
+---
+// Transactions (officer feedback): one place to start any movement of money,
+// rather than finding the person first. Each card is a kind; the ones a
+// later milestone brings are here already, unavailable, so the shape of the
+// page does not change under an officer as they arrive.
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import TransactionTable from '@components/TransactionTable.astro';
+import { listTransactions } from '@lib/ledger/history';
+import { pendingTransactionCount } from '@lib/ledger/review';
+import {
+  PAGE,
+  CARD,
+  CARD_TITLE,
+  CARD_LABEL,
+  HINT,
+  LINK_CARD,
+  MUTED,
+} from '@lib/ui';
+
+const principal = Astro.locals.principal!;
+const canCapture = principal.permissions.has('transaction.capture');
+// S-1403: what waits on this person, up front. Someone who only reviews —
+// the Secretary, the President — has nothing to start here, so the queue
+// is their page.
+const waiting = await (Astro.locals.pendingTransactions ??
+  pendingTransactionCount(principal));
+if (!canCapture) return Astro.redirect('/transactions/pending');
+
+// The three an officer starts here. Resignations, closures and claims
+// start from the member's own page.
+const KINDS: { label: string; href: string; blurb: string }[] = [
+  {
+    label: 'Deposit',
+    href: '/transactions/deposit',
+    blurb: 'Money into a Shares, MSA or other account.',
+  },
+  {
+    label: 'Withdrawal',
+    href: '/transactions/withdrawal',
+    blurb: 'Money out of an account.',
+  },
+  {
+    label: 'Transfer',
+    href: '/transactions/transfer',
+    blurb: 'Between accounts, or out.',
+  },
+];
+
+// Today's transactions, under the cards (officer feedback): the day's list,
+// scoped as /transactions/all is — what this officer recorded, unless they
+// hold transaction.view_all.
+const seesAll = principal.permissions.has('transaction.view_all');
+const todayStart = new Date();
+todayStart.setHours(0, 0, 0, 0);
+const today = await listTransactions({
+  capturedBy: seesAll ? undefined : principal.userId,
+  from: todayStart,
+  pageSize: 20,
+});
+---
+
+<DashboardLayout title="Transactions · Al Barakah MCSL" heading="Transactions">
+  <div class={PAGE.list}>
+    {waiting > 0 && (
+      <a href="/transactions/pending" class={LINK_CARD}>
+        <span class="font-semibold text-neutral-800 dark:text-neutral-100">
+          Waiting on you
+        </span>
+        <span class={MUTED}>
+          {`${waiting} transaction${waiting === 1 ? '' : 's'}`}
+          {' →'}
+        </span>
+      </a>
+    )}
+
+    <ul class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      {KINDS.map(kind => (
+        <li>
+          <a
+            href={kind.href}
+            class={`block ${CARD} transition hover:border-mint-400 hover:bg-white dark:hover:border-mint-700 dark:hover:bg-neutral-900`}
+          >
+            <span class={`block ${CARD_TITLE}`}>{kind.label}</span>
+            <span class={`mt-1 block ${HINT}`}>{kind.blurb}</span>
+          </a>
+        </li>
+      ))}
+    </ul>
+
+    <section class="space-y-2">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <h2 class={CARD_LABEL}>
+          {seesAll ? 'Today’s transactions' : 'Your transactions today'}
+        </h2>
+        <a href="/transactions/all" class={`${HINT} underline`}>
+          Every day, every status →
+        </a>
+      </div>
+      <TransactionTable
+        transactions={today.transactions}
+        showHolder
+        empty="Nothing recorded today."
+      />
+    </section>
+  </div>
+</DashboardLayout>

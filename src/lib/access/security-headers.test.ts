@@ -56,6 +56,14 @@ describe('the response headers every request carries', () => {
     }
   });
 
+  it('never allows eval, and never sends a page address to another site', async () => {
+    const source = await readFile(SOURCE, 'utf8');
+    expect(source).not.toContain("'unsafe-eval'");
+    expect(source).toContain(
+      "'Referrer-Policy': 'strict-origin-when-cross-origin'"
+    );
+  });
+
   it('sends HSTS only over HTTPS', async () => {
     const source = await readFile(SOURCE, 'utf8');
     // Sent unconditionally it would pin HTTPS for localhost, which has no

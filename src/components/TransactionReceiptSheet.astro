@@ -1,0 +1,283 @@
+---
+// A transaction's receipt (S-1601): the sheet the member is handed, for a
+// deposit, a withdrawal, a transfer (both sides on the one receipt) or a
+// reversal, read entirely from the transaction — nothing typed twice. The
+// Treasurer's void is on screen only; the paper carries the receipt.
+// Rendered inside /receipts/[id], whose styles it shares.
+import type { PrintHistory, TransactionReceipt } from '@lib/ledger/receipts';
+import { formatMoney, fromCents, toCents } from '@lib/payments/money';
+
+export interface ReceiptSendRecord {
+  channel: string;
+  recipient: string;
+  status: string;
+  at: Date;
+}
+
+interface Props {
+  receipt: TransactionReceipt;
+  prints: PrintHistory;
+  canVoid: boolean;
+  // Opened from the signed link the member was sent (S-1602): the sheet
+  // alone, with nothing that leads back into the officer's screens.
+  shared?: boolean;
+  // Where this receipt has been sent, most recent first, and whether the
+  // officer may send it again.
+  sent?: ReceiptSendRecord[];
+  canSend?: boolean;
+  // The sheet as a file, where the page has one to offer (S-1602).
+  pdfHref?: string | null;
+}
+const {
+  receipt,
+  prints,
+  canVoid,
+  shared = false,
+  sent = [],
+  canSend = false,
+  pdfHref = null,
+} = Astro.props;
+const CHANNEL_WORDS: Record<string, string> = {
+  email: 'Email',
+  whatsapp: 'WhatsApp',
+};
+const STATUS_WORDS: Record<string, string> = {
+  pending: 'sending',
+  sent: 'sent',
+  failed: 'failed',
+  abandoned: 'not delivered',
+};
+const t = receipt.transaction;
+const isReprint = prints.count > 0;
+const dateFormat = new Intl.DateTimeFormat('en-GB', {
+  dateStyle: 'long',
+  timeStyle: 'short',
+});
+const TITLES: Record<string, string> = {
+  deposit: 'Deposit receipt',
+  withdrawal: 'Withdrawal receipt',
+  transfer_leg: 'Transfer receipt',
+  reversal: 'Reversal',
+  closure: 'Account closure receipt',
+  resignation: 'Resignation receipt',
+  demise: 'Demised claim receipt',
+};
+const LINES: Record<string, string> = {
+  deposit: 'Deposit',
+  withdrawal: 'Withdrawal',
+  transfer_leg: 'Transfer',
+  reversal: 'Reversal',
+  closure: 'Account closed · balance paid out',
+  resignation: 'Membership resigned · Shares and MSA paid out',
+  demise: 'Entitlements paid to the claimant',
+};
+// A demised claim pays the accounts and the Takaful benefit together; the
+// benefit is its own line (DEM-US-004), the accounts' line the rest.
+const takaful =
+  t.kind === 'demise' && toCents(t.takafulBenefit) > 0
+    ? t.takafulBenefit
+    : null;
+const fromAccounts = takaful
+  ? fromCents(toCents(t.amount) - toCents(takaful))
+  : t.amount;
+const holder = [t.holderName || t.holderKind, t.memberNo]
+  .filter(Boolean)
+  .join(' · ');
+const account = `${t.accountNo} · ${t.accountTypeName}`;
+const otherSide =
+  t.kind === 'transfer_leg'
+    ? t.payeeName
+      ? t.payeeName
+      : [
+          t.counterpartHolderName,
+          t.counterpartAccountNo &&
+            `${t.counterpartAccountNo} · ${t.counterpartAccountTypeName}`,
+        ]
+          .filter(Boolean)
+          .join(' · ')
+    : null;
+const moneyIn = t.kind === 'deposit' || t.legDirection === 'credit';
+const backHref = `/transactions/${t.id}`;
+---
+
+<div class="print-page">
+  {receipt.state === 'void' && <div class="watermark">VOID</div>}
+
+  <header class="head">
+    <div>
+      <h1>Al Barakah MCSL</h1>
+      <p class="sub">{TITLES[t.kind] ?? 'Receipt'}</p>
+    </div>
+    <div class="ref">
+      <p>
+        <strong>{receipt.receiptNo}</strong>
+      </p>
+      <p>{dateFormat.format(t.postedAt ?? t.createdAt)}</p>
+      {isReprint && <p class="reprint">REPRINT</p>}
+    </div>
+  </header>
+
+  {isReprint && (
+    <p class="reprint-note">
+      Reprint. First issued {dateFormat.format(prints.firstPrintedAt!)} by{' '}
+      {prints.firstPrintedByName}.
+    </p>
+  )}
+
+  {receipt.state === 'void' && (
+    <p class="void-note">
+      Voided {receipt.voidedAt && dateFormat.format(receipt.voidedAt)}.{' '}
+      {receipt.voidReason}
+    </p>
+  )}
+
+  <dl class="facts">
+    <div class="row">
+      <dt>{moneyIn ? 'Received from' : 'Paid to'}</dt>
+      <dd>{t.payeeName || receipt.atTheCounter || holder}</dd>
+    </div>
+    {receipt.atTheCounter && (
+      <div class="row">
+        <dt>On behalf of</dt>
+        <dd>{holder}</dd>
+      </div>
+    )}
+    <div class="row">
+      <dt>{receipt.accountsClosed.length > 0 ? 'Accounts' : 'Account'}</dt>
+      <dd>
+        {receipt.accountsClosed.length > 0
+          ? receipt.accountsClosed.map((a, i) => (
+              <>
+                {i > 0 && <br />}
+                {a.accountNo} · {a.typeName} ·{' '}
+                {formatMoney(a.amount, t.currency)}
+              </>
+            ))
+          : account}
+      </dd>
+    </div>
+    {otherSide && !t.payeeName && (
+      <div class="row">
+        <dt>{t.legDirection === 'credit' ? 'From' : 'To'}</dt>
+        <dd>{otherSide}</dd>
+      </div>
+    )}
+    {t.payeeName && (
+      <div class="row">
+        <dt>{t.kind === 'demise' ? 'Entitlements of' : 'On behalf of'}</dt>
+        <dd>{holder}</dd>
+      </div>
+    )}
+    <div class="row">
+      <dt>Transaction</dt>
+      <dd>{t.displayReference}</dd>
+    </div>
+    {t.method !== 'internal_transfer' && (
+      <div class="row">
+        <dt>Method</dt>
+        <dd>
+          {t.methodName}
+          {t.methodReference && ` · ${t.methodReference}`}
+        </dd>
+      </div>
+    )}
+    <div class="row">
+      <dt>Recorded by</dt>
+      <dd>
+        {t.capturedByName}
+        {receipt.capturedByRole && ` · ${receipt.capturedByRole}`}
+      </dd>
+    </div>
+    {receipt.postedByName && receipt.postedByName !== t.capturedByName && (
+      <div class="row">
+        <dt>Disbursed by</dt>
+        <dd>{receipt.postedByName}</dd>
+      </div>
+    )}
+  </dl>
+
+  <table class="lines">
+    <tbody>
+      <tr>
+        <td>
+          {receipt.accountsClosed.length > 0
+            ? 'Accounts closed · balances paid out'
+            : (LINES[t.kind] ?? t.kind)}
+          {t.reason && ` · ${t.reason}`}
+        </td>
+        <td class="amount">{formatMoney(fromAccounts, t.currency)}</td>
+      </tr>
+      {takaful && (
+        <tr>
+          <td>Takaful benefit</td>
+          <td class="amount">{formatMoney(takaful, t.currency)}</td>
+        </tr>
+      )}
+      <tr class="total">
+        <td>Total</td>
+        <td class="amount">{formatMoney(t.amount, t.currency)}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  {t.balanceAfter && receipt.accountsClosed.length === 0 && (
+    <p class="note">Balance after: {formatMoney(t.balanceAfter, t.currency)}</p>
+  )}
+
+  <div class="signature">
+    <div class="sig-line"></div>
+    <p>For Al Barakah Multipurpose Co-operative Society Limited</p>
+  </div>
+
+  <div class="actions screen-only">
+    <button type="button" id="print">
+      Print
+    </button>
+    {pdfHref && <a href={pdfHref}>Download PDF</a>}
+    {!shared && <a href={backHref}>Back</a>}
+  </div>
+</div>
+
+{!shared && (canSend || sent.length > 0) && (
+  <section class="screen-only panel">
+    <h2>{t.claimant ? 'Send to the claimant' : 'Send to the member'}</h2>
+    {sent.length > 0 ? (
+      <ul>
+        {sent.map(s => (
+          <li>
+            {CHANNEL_WORDS[s.channel] ?? s.channel} to {s.recipient} ·{' '}
+            {STATUS_WORDS[s.status] ?? s.status} · {dateFormat.format(s.at)}
+          </li>
+        ))}
+      </ul>
+    ) : (
+      <p class="hint">Not sent yet.</p>
+    )}
+    {canSend && receipt.state === 'issued' && (
+      <form method="post">
+        <button type="submit" name="intent" value="send">
+          {sent.length > 0 ? 'Send again' : 'Send'}
+        </button>
+      </form>
+    )}
+  </section>
+)}
+
+{canVoid && receipt.state === 'issued' && (
+  <section class="screen-only panel danger">
+    <h2>Void this receipt</h2>
+    <p>
+      The number is withdrawn; the transaction stays disbursed. To undo the
+      money, reverse the transaction.
+    </p>
+    <form method="post" id="void-form">
+      <label>
+        Reason
+        <input type="text" name="reason" required />
+      </label>
+      <button type="submit" name="intent" value="void">
+        Void {receipt.receiptNo}
+      </button>
+    </form>
+  </section>
+)}

@@ -178,6 +178,13 @@ nothing changes. An additional account captures nobody of its own, so the
 rule is applied to the holder's founding application, which is where their
 guardian or contact person was captured.
 
+The same holds for the Phase 2 Cash Deposit Form on a large cash deposit
+request (`/deposits/{id}/form`), and on the way out: a Minor's withdrawal
+receipt reads "Paid to" the guardian, on behalf of the child
+(`collectorForApplication`). A Corporate member's withdrawal is paid to the
+company itself — a cheque or a transfer is the company's, not its Contact
+Person's.
+
 **The filed form follows the money.** It used to be readable only from the
 Payments step of the application that took it, which meant the people it
 most concerns could not see it: the Regional Manager, Secretary and
@@ -230,13 +237,23 @@ client-side work with no server equivalent — so a `<noscript>` block falls
 back to the plain confirmation checkbox this replaces, which still satisfies
 the same server-side rule if the paper form is completed the old way.
 
-**A reference is asked for only where there is one.** Cheque, bank transfer
-and mobile money each settle with a number worth recording; cash and card do
-not, and a box labelled "Cheque or transfer reference" under a cash payment
-is a question with no answer (officer feedback). The field appears for those
-three methods and is hidden for the other two, recomputed as the method
-changes. Without scripting it simply stays visible, which is what it was
-before.
+**A reference is asked for only where there is one.** A cheque, a bank
+transfer, mobile money each settle with a number worth recording; cash and
+card do not, and a box for a reference under a cash payment is a question
+with no answer (officer feedback). Which methods is configuration
+(`payment_method.requires_reference`, S-1307, `docs/configuration.md`): each
+option on the form carries the flag, the field shows for a method that has
+it and is mandatory on the server for the same one, recomputed as the method
+changes. Without scripting it simply stays visible. The same table's
+`is_cash` is what makes the cash controls above apply — on the method, not
+on a list of names in code.
+
+**A deposit follows the same two rules** through the very function a
+payment calls (S-1306). Cash above the Source of Fund threshold is not a
+tick on the deposit screen, though: it becomes a request, and the form —
+this same document type — is signed on screen, filed against the
+transaction and verified by somebody else before the deposit is submitted
+(`docs/ledger.md`, "Recording a deposit").
 
 ## Refunds
 
@@ -246,6 +263,15 @@ what was paid, less what has already gone back, less anything the approval has
 earned: **once the application is approved, the entrance fee and the Takaful
 contribution are not returned** (FRD 7.10.6). Shares and the MSA deposit are the
 member's money and always come back.
+
+Once the application is approved and its Shares and MSA lines are on the
+member's accounts (`docs/ledger.md`, S-1303), a refund of either line also
+posts a **reversal** on that account, through the engine, in the same
+database transaction as the refund. Before approval there is no account and
+the refund is only a receipt; the approval carries both the payment and the
+refund. A **void** of a receipt whose lines are already on a balance is
+refused: the money is on an account, so "this was never taken" would be
+untrue, and the correction is a refund.
 
 ## Who does what
 
@@ -278,6 +304,11 @@ has confirmed is running.
 When there are no exceptions the page says so in words. An empty table would
 read the same whether the sequence is clean or the query found nothing.
 
+Since M13 the same sequence numbers every transaction's receipt (S-1601,
+`docs/ledger.md`), so the reconciliation reads both: a voided transaction
+receipt is a finding that opens the transaction, and the period's total
+counts a transaction by the direction of its entry.
+
 ## The event stream
 
 Every payment, refund and void emits a `financial_event` inside the same
@@ -298,7 +329,8 @@ answerable if the first print is on the record. `receipt_print` logs each one,
 written when the officer **clicks Print** — opening a receipt to read it is not
 a reprint, and marking it as one would make the stamp meaningless within a week.
 A failure to record does not stop the print: there is an applicant waiting, and
-a stamp one print behind is the lesser problem.
+a stamp one print behind is the lesser problem. A transaction's receipt is
+printed and recorded the same way (`receipt_print.transaction_id`, 0075).
 
 ## Reading a member's payments
 

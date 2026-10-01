@@ -19,6 +19,7 @@
  * print — the form asks for no NIC against the Contact Person, and a ruled
  * blank is what the paper form leaves there.
  */
+import { query } from '../db/pool';
 import { loadApplication, type PartyValues } from './capture';
 
 export interface Depositor {
@@ -71,33 +72,75 @@ export function depositorFor(
 }
 
 /**
- * The same rule, for a caller that has an application's id and not its
- * parties — the receipt, and the Cash Deposit Form.
- *
- * An additional account captures nobody of its own, so the rule is applied
- * to whoever holds it: their founding application is where a guardian or a
- * contact person was captured. Where that cannot be read there is nothing to
- * name, and the caller falls back to the holder's own label as the paper
- * form did.
+ * The application a holder's people were captured on. An additional
+ * account captures nobody of its own, so it is whoever holds it: their
+ * founding application is where a guardian or a contact person was
+ * captured. Null where that cannot be read.
  */
-export async function depositorForApplication(
-  applicationId: string | null
-): Promise<Depositor> {
-  const blank = { name: '', nic: '' };
-  if (!applicationId) return blank;
-
+async function foundingApplication(applicationId: string | null) {
+  if (!applicationId) return null;
   const application = await loadApplication(applicationId);
-  if (!application) return blank;
-
+  if (!application) return null;
   const source =
     application.applicationKind === 'additional_account'
       ? application.existingHolderApplicationId
         ? await loadApplication(application.existingHolderApplicationId)
         : null
       : application;
-
   // A founding application is never itself an additional account, but the
   // type says it might be, and it carries no membership type to read.
-  if (!source || source.applicationKind === 'additional_account') return blank;
+  if (!source || source.applicationKind === 'additional_account') return null;
+  return source;
+}
+
+/**
+ * The same rule, for a caller that has an application's id and not its
+ * parties — the receipt, and the Cash Deposit Form. Where there is nothing
+ * to name, the caller falls back to the holder's own label as the paper
+ * form did.
+ */
+export async function depositorForApplication(
+  applicationId: string | null
+): Promise<Depositor> {
+  const source = await foundingApplication(applicationId);
+  if (!source || (await guardianDemised(source))) return { name: '', nic: '' };
   return depositorFor(source.membershipTypeCode, source.parties);
+}
+
+/**
+ * A Minor's guardian who has died since they were named (migration 0107):
+ * whoever pays in now is not them, so nobody is named until the guardian
+ * is replaced and the caller falls back to the holder.
+ */
+async function guardianDemised(source: {
+  membershipTypeCode: string;
+  parties: readonly PartyValues[];
+}): Promise<boolean> {
+  if (source.membershipTypeCode !== 'minor') return false;
+  const guardian = source.parties.find(
+    p => p.subject === 'guardian' && p.ordinal === 1
+  );
+  const memberNo = (guardian?.values.member_id ?? '').trim();
+  if (!memberNo) return false;
+  const result = await query<{ status: string }>(
+    `select status from member where lower(member_no) = lower($1)`,
+    [memberNo]
+  );
+  return result.rows[0]?.status === 'demised';
+}
+
+/**
+ * Who collects money paid out of a holder's account, where that is not the
+ * holder: a Minor's guardian, as for money paid in. A Corporate member is
+ * paid as itself — the cheque or the transfer is the company's, not its
+ * Contact Person's — so a Minor is the only case that names anyone. Empty
+ * otherwise.
+ */
+export async function collectorForApplication(
+  applicationId: string | null
+): Promise<string> {
+  const source = await foundingApplication(applicationId);
+  if (!source || source.membershipTypeCode !== 'minor') return '';
+  if (await guardianDemised(source)) return '';
+  return depositorFor('minor', source.parties).name;
 }

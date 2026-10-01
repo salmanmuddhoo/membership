@@ -30,7 +30,11 @@ export interface Principal {
 export type PrincipalRejection =
   | { reason: 'no-session' }
   | { reason: 'unknown-subject'; subject: string }
-  | { reason: 'deactivated'; subject: string; userId: string };
+  | { reason: 'deactivated'; subject: string; userId: string }
+  // Signed out, or signed out for inactivity, already: the cookie is a copy
+  // of a session that has ended (security review — signing out used only to
+  // delete the cookie, so a copy of it stayed good for up to 8 hours).
+  | { reason: 'session-ended'; subject: string };
 
 export type PrincipalResult =
   | { ok: true; principal: Principal }
@@ -45,6 +49,7 @@ interface PrincipalRow {
   roles: string[] | null;
   role_names: string[] | null;
   permissions: string[] | null;
+  session_ended: boolean;
 }
 
 // One round trip: the user, their roles, and the union of those roles'
@@ -67,7 +72,14 @@ const PRINCIPAL_QUERY = `
          coalesce(
            array_agg(distinct p.code) filter (where p.code is not null),
            '{}'
-         )                          as permissions
+         )                          as permissions,
+         -- The session's own sign-out, or idle sign-out, on the audit trail
+         -- (session-audit.ts writes both under the session id).
+         ($2::text is not null and exists (
+           select 1 from audit_event e
+            where e.entity_type = 'auth_session' and e.entity_id = $2::text
+              and e.action in ('auth.signed_out', 'auth.timed_out')
+         ))                         as session_ended
     from app_user u
     left join user_role       ur on ur.user_id = u.id
     left join role            r  on r.id = ur.role_id
@@ -126,13 +138,19 @@ export async function resolvePrincipal(
     return { ok: false, rejection: { reason: 'no-session' } };
   }
 
-  let result = await query<PrincipalRow>(PRINCIPAL_QUERY, [user.id]);
+  let result = await query<PrincipalRow>(PRINCIPAL_QUERY, [
+    user.id,
+    user.sessionId ?? null,
+  ]);
 
   if (result.rows.length === 0) {
     // No account bound to this subject yet — perhaps one is waiting under this
     // person's email address.
     if (await claimPreProvisionedAccount(user.id, user.email)) {
-      result = await query<PrincipalRow>(PRINCIPAL_QUERY, [user.id]);
+      result = await query<PrincipalRow>(PRINCIPAL_QUERY, [
+        user.id,
+        user.sessionId ?? null,
+      ]);
     }
   }
 
@@ -142,6 +160,13 @@ export async function resolvePrincipal(
     return {
       ok: false,
       rejection: { reason: 'unknown-subject', subject: user.id },
+    };
+  }
+
+  if (row.session_ended) {
+    return {
+      ok: false,
+      rejection: { reason: 'session-ended', subject: user.id },
     };
   }
 

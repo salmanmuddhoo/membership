@@ -1,0 +1,492 @@
+---
+// Record a withdrawal from one of a member's (or a customer's) accounts
+// (S-1501, S-1502). The rules are ledger/withdrawals.ts's; this page gathers
+// the form, shows the balance and what is available beside it, and shows
+// the receipt or the step it waits at.
+import IdempotencyKeyField from '@components/IdempotencyKeyField.astro';
+import { canTransact } from '@lib/members/status';
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import {
+  listAccountTypes,
+  offeredBankAccounts,
+  offeredPaymentMethods,
+} from '@lib/config/reference';
+import { availableBalance } from '@lib/ledger/ledger';
+import {
+  PERMISSION_CAPTURE,
+  recordWithdrawal,
+  WithdrawalError,
+  type Withdrawal,
+} from '@lib/ledger/withdrawals';
+import { loadCustomer, loadMember } from '@lib/members/create';
+import { formatMoney, toCents } from '@lib/payments/money';
+import { initialRouteBand, routePreviewGroups } from '@lib/workflow/timeline';
+import RoutePreview from '@components/RoutePreview.astro';
+import {
+  PAGE,
+  MUTED,
+  CARD,
+  CARD_TITLE,
+  FORM_CARD,
+  LABEL,
+  INPUT,
+  SECONDARY_SM,
+  BUTTON,
+  CARD_OK,
+  NOTICE_ERROR,
+} from '@lib/ui';
+
+const principal = Astro.locals.principal!;
+if (!principal.permissions.has(PERMISSION_CAPTURE)) {
+  return Astro.redirect('/denied');
+}
+
+const { id } = Astro.params;
+const member = id ? await loadMember(id) : null;
+const customer = !member && id ? await loadCustomer(id) : null;
+if (!member && !customer) return new Response('Not found', { status: 404 });
+const person = (member ?? customer)!;
+const personLabel = member
+  ? `${member.name} · ${member.memberNo}`
+  : person.name;
+
+const types = new Map((await listAccountTypes()).map(t => [t.id, t]));
+const accounts = await Promise.all(
+  person.accounts.map(async account => {
+    const figures = await availableBalance(account.id);
+    const type = types.get(account.accountTypeId);
+    return {
+      ...account,
+      balance: figures.balance,
+      available: figures.available,
+      pendingDebits: figures.pendingDebits,
+      floor: type?.minimumBalance ?? '0.00',
+      allowsWithdrawal: type?.allowsWithdrawal ?? false,
+    };
+  })
+);
+const withdrawable = accounts.filter(
+  a => a.status === 'active' && a.allowsWithdrawal
+);
+
+const paymentMethods = await offeredPaymentMethods();
+const bankAccounts = await offeredBankAccounts();
+const requestedAccount = Astro.url.searchParams.get('account') ?? '';
+const fromTransactions = Astro.url.searchParams.get('from') === 'transactions';
+
+let values: Record<
+  | 'accountId'
+  | 'amount'
+  | 'method'
+  | 'methodReference'
+  | 'bankAccountId'
+  | 'reason'
+  | 'idempotencyKey',
+  string
+> = {
+  accountId:
+    withdrawable.find(a => a.id === requestedAccount)?.id ??
+    withdrawable[0]?.id ??
+    '',
+  amount: '',
+  method: paymentMethods[0]?.code ?? '',
+  methodReference: '',
+  bankAccountId: '',
+  reason: '',
+  idempotencyKey: crypto.randomUUID(),
+};
+let error: string | null = null;
+let withdrawal: Withdrawal | null = null;
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const text = (name: string) => String(form.get(name) ?? '');
+  values = {
+    accountId: text('accountId'),
+    amount: text('amount'),
+    method: text('method'),
+    methodReference: text('methodReference'),
+    bankAccountId: text('bankAccountId'),
+    reason: text('reason'),
+    idempotencyKey: text('idempotencyKey') || crypto.randomUUID(),
+  };
+  if (!person.accounts.some(a => a.id === values.accountId)) {
+    error = 'Choose which account the withdrawal comes from.';
+  } else {
+    try {
+      withdrawal = await recordWithdrawal(values, principal);
+    } catch (err) {
+      if (err instanceof WithdrawalError) {
+        // A conflict here is this form posted a second time — Back, then
+        // a change and Post again — under the key it was first posted
+        // with (QA-01). The key is not something the officer knows about.
+        error =
+          err.reason === 'conflict'
+            ? 'This withdrawal was already recorded. Open a new withdrawal form to record another.'
+            : err.message;
+      } else {
+        console.error('[members/withdraw]', err);
+        error = 'Something went wrong. Please try again.';
+      }
+    }
+  }
+}
+// The timeline experience: what will happen to this transaction, by
+// account and amount, drawn over the form before it is recorded.
+const routeGroups = await routePreviewGroups(
+  'withdrawal',
+  withdrawable,
+  principal.roles
+);
+const initialCents = /^\d{1,12}(\.\d{1,2})?$/.test(values.amount ?? '')
+  ? toCents(values.amount)
+  : null;
+// How it is paid out is asked here only when it is paid out here: a
+// withdrawal that goes for approval is paid by the Treasurer, who says how
+// at Disburse. The route preview tells the form which, as the account and
+// the amount change.
+const paidAtOnce =
+  initialRouteBand(routeGroups, values.accountId, initialCents)?.atOnce ?? true;
+---
+
+<DashboardLayout
+  title="Withdrawal · Al Barakah MCSL"
+  heading="Record a withdrawal"
+>
+  <div class={PAGE.form}>
+    <p class={`flex flex-wrap items-center gap-x-3 ${MUTED}`}>
+      {fromTransactions && (
+        <a
+          href="/transactions"
+          class="text-neutral-500 underline dark:text-neutral-400"
+        >
+          ← Transactions
+        </a>
+      )}
+      <a
+        href={`/members/${person.id}`}
+        class="font-medium underline hover:text-neutral-900 dark:hover:text-neutral-100"
+      >
+        {personLabel}
+      </a>
+    </p>
+
+    {error && <div class={NOTICE_ERROR}>{error}</div>}
+
+    {withdrawal ? (
+      <section class={CARD_OK}>
+        <h2 class={CARD_TITLE}>
+          {withdrawal.status === 'posted'
+            ? `Withdrawal ${withdrawal.reference} paid out`
+            : `Withdrawal ${withdrawal.reference} submitted for approval`}
+        </h2>
+        {withdrawal.status !== 'posted' && withdrawal.currentStepName && (
+          <p class={`${MUTED} mt-1`}>
+            Waiting for {withdrawal.currentStepName}
+            {withdrawal.currentStepRole && ` (${withdrawal.currentStepRole})`}.
+            It is paid out once approved.
+          </p>
+        )}
+        <dl class="mt-4 grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
+          {withdrawal.receiptNo && (
+            <>
+              <dt class="text-neutral-500 dark:text-neutral-400">Receipt</dt>
+              <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+                <a href={`/receipts/${withdrawal.id}`} class="underline">
+                  {withdrawal.receiptNo}
+                </a>
+              </dd>
+            </>
+          )}
+          <dt class="text-neutral-500 dark:text-neutral-400">Amount</dt>
+          <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+            {formatMoney(withdrawal.amount, withdrawal.currency)}
+            {/* Only once paid out: one waiting for approval is paid how the
+                Treasurer says at Disburse. */}
+            {withdrawal.status === 'posted' && (
+              <>
+                {' by '}
+                {withdrawal.methodName}
+                {withdrawal.methodReference &&
+                  ` · ${withdrawal.methodReference}`}
+              </>
+            )}
+          </dd>
+          <dt class="text-neutral-500 dark:text-neutral-400">From</dt>
+          <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+            {withdrawal.accountNo} · {withdrawal.accountTypeName}
+          </dd>
+          {withdrawal.balanceAfter && (
+            <>
+              <dt class="text-neutral-500 dark:text-neutral-400">
+                Balance now
+              </dt>
+              <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+                {formatMoney(withdrawal.balanceAfter, withdrawal.currency)}
+              </dd>
+            </>
+          )}
+        </dl>
+        <div class="mt-5 flex flex-wrap gap-2">
+          <a href={`/members/${person.id}`} class={BUTTON}>
+            Back to {member ? 'member' : 'customer'}
+          </a>
+          {withdrawal.status !== 'posted' && (
+            <a href={`/transactions/${withdrawal.id}`} class={SECONDARY_SM}>
+              Follow it
+            </a>
+          )}
+          <a
+            href={
+              fromTransactions
+                ? '/transactions/withdrawal'
+                : `/members/${person.id}/withdraw`
+            }
+            class={SECONDARY_SM}
+          >
+            Record another
+          </a>
+        </div>
+      </section>
+    ) : withdrawable.length === 0 ? (
+      <section class={`${CARD} text-sm text-neutral-600 dark:text-neutral-300`}>
+        {!canTransact(person.status)
+          ? `This ${member ? 'member' : 'customer'} is ${person.status}, so nothing can be withdrawn.`
+          : 'None of these accounts allows a withdrawal.'}
+      </section>
+    ) : (
+      <>
+        <RoutePreview
+          groups={routeGroups}
+          accountField="accountId"
+          initialAccountId={values.accountId}
+          initialAmountCents={initialCents}
+        />
+        <form
+          method="post"
+          data-withdrawal-form
+          data-at-once={paidAtOnce ? 'true' : 'false'}
+          class={FORM_CARD}
+        >
+          <IdempotencyKeyField value={values.idempotencyKey} />
+
+          <label class={LABEL}>
+            Account
+            <select name="accountId" class={INPUT}>
+              {accounts.map(account => (
+                <option
+                  value={account.id}
+                  selected={account.id === values.accountId}
+                  disabled={
+                    !(account.status === 'active' && account.allowsWithdrawal)
+                  }
+                  data-available={account.available}
+                  data-floor={account.floor}
+                >
+                  {account.accountNo} · {account.accountTypeName} ·{' '}
+                  {formatMoney(account.balance)}
+                  {account.pendingDebits !== '0.00' &&
+                    ` · ${formatMoney(account.available)} available`}
+                  {account.status !== 'active'
+                    ? ` · ${account.status}`
+                    : account.allowsWithdrawal
+                      ? ''
+                      : ' · no withdrawals'}
+                </option>
+              ))}
+            </select>
+          </label>
+          <p
+            data-available-note
+            class="text-xs text-neutral-500 dark:text-neutral-400"
+          ></p>
+
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label class={LABEL}>
+              Amount (Rs)
+              <input
+                type="text"
+                inputmode="decimal"
+                name="amount"
+                required
+                value={values.amount}
+                aria-describedby="withdraw-amount-error"
+                class={INPUT}
+              />
+              <p
+                data-amount-error
+                id="withdraw-amount-error"
+                class="text-xs text-red-700 dark:text-red-300"
+                hidden
+              ></p>
+            </label>
+            <label data-payout-field hidden={!paidAtOnce} class={LABEL}>
+              Paid by
+              <select name="method" disabled={!paidAtOnce} class={INPUT}>
+                {paymentMethods.map(method => (
+                  <option
+                    value={method.code}
+                    data-requires-reference={
+                      method.requiresReference || method.touchesBank
+                        ? 'true'
+                        : 'false'
+                    }
+                    data-touches-bank={method.touchesBank ? 'true' : 'false'}
+                    selected={method.code === values.method}
+                  >
+                    {method.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label data-method-reference-field class={LABEL}>
+              Reference (cheque number, transfer reference)
+              <input
+                type="text"
+                name="methodReference"
+                value={values.methodReference}
+                class={INPUT}
+              />
+            </label>
+            <label data-bank-account-field class={LABEL}>
+              Bank account
+              <select name="bankAccountId" class={INPUT}>
+                <option value="">Choose…</option>
+                {bankAccounts.map(account => (
+                  <option
+                    value={account.id}
+                    selected={account.id === values.bankAccountId}
+                  >
+                    {account.name} · {account.bankName}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label class={LABEL}>
+              Note
+              <input
+                type="text"
+                name="reason"
+                value={values.reason}
+                maxlength="200"
+                class={INPUT}
+              />
+            </label>
+          </div>
+
+          <div class="flex flex-wrap gap-2 pt-2">
+            <button type="submit" class={BUTTON}>
+              Record withdrawal
+            </button>
+            <a href={`/members/${person.id}`} class={SECONDARY_SM}>
+              Cancel
+            </a>
+          </div>
+        </form>
+      </>
+    )}
+  </div>
+</DashboardLayout>
+
+<script>
+  // A visual nudge only — every rule is enforced server-side
+  // (ledger/withdrawals.ts) whether or not this script runs: what is
+  // available on the chosen account, its floor, and whether the method
+  // carries a reference.
+  const form = document.querySelector<HTMLFormElement>(
+    '[data-withdrawal-form]'
+  );
+  if (form) {
+    const accountSelect =
+      form.querySelector<HTMLSelectElement>('[name="accountId"]');
+    const note = form.querySelector<HTMLElement>('[data-available-note]');
+    const methodSelect =
+      form.querySelector<HTMLSelectElement>('[name="method"]');
+    const referenceField = form.querySelector<HTMLElement>(
+      '[data-method-reference-field]'
+    );
+    const bankField = form.querySelector<HTMLElement>(
+      '[data-bank-account-field]'
+    );
+    const payoutField = form.querySelector<HTMLElement>('[data-payout-field]');
+    const amountInput = form.querySelector<HTMLInputElement>('[name="amount"]');
+    const amountError = form.querySelector<HTMLElement>('[data-amount-error]');
+    const submitButton = form.querySelector<HTMLButtonElement>(
+      'button[type="submit"]'
+    );
+    // A hidden field is also disabled, so it is not sent: the Treasurer
+    // chooses how at Disburse.
+    const toggle = (field: HTMLElement | null, show: boolean) => {
+      if (!field) return;
+      field.hidden = !show;
+      for (const input of field.querySelectorAll<
+        HTMLInputElement | HTMLSelectElement
+      >('input, select')) {
+        input.disabled = !show;
+      }
+    };
+    const money = (value: string) =>
+      `Rs ${Number(value).toLocaleString('en-GB', { minimumFractionDigits: 2 })}`;
+    // What the chosen account can pay out without falling under its type's
+    // minimum balance — kept up to date by recompute() as the account
+    // changes, and checked against the typed amount below.
+    let room = 0;
+    // Parsed the way the server parses it (ledger/withdrawals.ts): strip
+    // commas and spaces, then Number(). Over room is a client-side nudge
+    // only — the server refuses it regardless.
+    const checkAmount = () => {
+      if (!amountInput) return;
+      amountInput.dataset.max = room.toFixed(2);
+      const typed = amountInput.value.replace(/[,\s]/g, '');
+      const amount = typed === '' ? 0 : Number(typed);
+      const overRoom = typed !== '' && Number.isFinite(amount) && amount > room;
+      if (overRoom) {
+        const message = `At most ${money(room.toFixed(2))} can be withdrawn from this account.`;
+        amountInput.setCustomValidity(message);
+        if (amountError) {
+          amountError.textContent = message;
+          amountError.hidden = false;
+        }
+      } else {
+        amountInput.setCustomValidity('');
+        if (amountError) {
+          amountError.textContent = '';
+          amountError.hidden = true;
+        }
+      }
+      if (submitButton) submitButton.disabled = overRoom;
+    };
+    const recompute = () => {
+      const account = accountSelect?.selectedOptions[0];
+      if (account) {
+        const available = account.dataset.available ?? '0';
+        const floor = account.dataset.floor ?? '0';
+        room = Math.max(0, Number(available) - Number(floor));
+        if (note) {
+          note.textContent =
+            Number(floor) > 0
+              ? `${money(available)} available; the account keeps at least ${money(floor)}, so up to ${money(room.toFixed(2))} can be withdrawn.`
+              : `${money(available)} available.`;
+        }
+      }
+      const atOnce = form.dataset.atOnce === 'true';
+      const method = methodSelect?.selectedOptions[0];
+      toggle(payoutField, atOnce);
+      toggle(
+        referenceField,
+        atOnce && method?.dataset.requiresReference === 'true'
+      );
+      toggle(bankField, atOnce && method?.dataset.touchesBank === 'true');
+      checkAmount();
+    };
+    document.addEventListener('route-band', event => {
+      const { atOnce } = (event as CustomEvent<{ atOnce: boolean }>).detail;
+      form.dataset.atOnce = atOnce ? 'true' : 'false';
+      recompute();
+    });
+    accountSelect?.addEventListener('change', recompute);
+    methodSelect?.addEventListener('change', recompute);
+    amountInput?.addEventListener('input', checkAmount);
+    recompute();
+  }
+</script>

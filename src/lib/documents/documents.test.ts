@@ -970,9 +970,6 @@ describe('documentsForMember: everything filed for a member, grouped by applicat
     });
     await documents.commitUpload(foundingUpload.versionId, officer);
 
-    const noGroups = await documents.documentsForMember(memberId, null);
-    expect(noGroups).toEqual([]);
-
     const oneGroup = await documents.documentsForMember(memberId, foundingId);
     expect(oneGroup).toHaveLength(1);
     expect(oneGroup[0].applicationId).toBe(foundingId);
@@ -1651,7 +1648,7 @@ describe('S-407: verifying, and who may', () => {
   });
 });
 
-describe('S-603: all four signatures before the signed form can be Verified', () => {
+describe('S-603: every signature before the signed form can be Verified', () => {
   async function fileSignedForm() {
     const { documents } = await load();
     const typeId = (
@@ -1681,7 +1678,12 @@ describe('S-603: all four signatures before the signed form can be Verified', ()
 
     await expect(
       documents.reviewDocument(documentId, { outcome: 'verify' }, secretary)
-    ).rejects.toThrowError(/All four signatures/);
+    ).rejects.toThrowError(/All signatures/);
+  });
+
+  it('asks for the applicant only: no nominee or witness signs', async () => {
+    const { documents } = await load();
+    expect([...documents.SIGNATURES]).toEqual(['Applicant']);
   });
 
   it('names exactly which are still missing', async () => {
@@ -1690,13 +1692,13 @@ describe('S-603: all four signatures before the signed form can be Verified', ()
     await expect(
       documents.reviewDocument(
         documentId,
-        { outcome: 'verify', confirmedSignatures: ['Applicant', 'Nominee'] },
+        { outcome: 'verify', confirmedSignatures: [] },
         secretary
       )
-    ).rejects.toThrowError(/Witness 1, Witness 2/);
+    ).rejects.toThrowError(/Still missing: Applicant/);
   });
 
-  it('verifies once all four are confirmed', async () => {
+  it('verifies once all are confirmed', async () => {
     const { documents, documentId } = await fileSignedForm();
 
     const result = await documents.reviewDocument(
@@ -1747,7 +1749,7 @@ describe('S-603: all four signatures before the signed form can be Verified', ()
       {
         outcome: 'reject',
         reason: 'Scan is too blurry to read the second witness.',
-        confirmedSignatures: ['Applicant', 'Nominee', 'Witness 1'],
+        confirmedSignatures: ['Applicant'],
       },
       secretary
     );
@@ -1756,9 +1758,7 @@ describe('S-603: all four signatures before the signed form can be Verified', ()
       e => e.documentId === documentId
     )!;
     expect(entry.state).toBe('rejected');
-    expect(entry.confirmedSignatures.sort()).toEqual(
-      ['Applicant', 'Nominee', 'Witness 1'].sort()
-    );
+    expect(entry.confirmedSignatures.sort()).toEqual(['Applicant'].sort());
   });
 });
 
@@ -1969,7 +1969,7 @@ describe('S-410: expiry', () => {
   });
 
   it('records the expiry as the system, not as a person', async () => {
-    const { documents } = await load();
+    await load();
     const audited = await run(
       appUrl,
       `select actor_user_id, actor_description from audit_event
@@ -2028,6 +2028,37 @@ describe('S-403: viewing a filed document', () => {
     );
     expect(result.contentType).toBe('application/pdf');
     expect(result.url).toContain(encodeURIComponent(begun.ticket.itemPath));
+  });
+
+  it("names the nominee's copy of a document apart from the applicant's", async () => {
+    const { documents } = await load();
+    const type = await run(
+      appUrl,
+      `select id from document_type where code = 'utility_bill'`
+    );
+    const application = await run(
+      appUrl,
+      `select reference from membership_application where id = $1`,
+      [applicationId]
+    );
+    const begun = await documents.beginUpload(
+      {
+        applicationId,
+        documentTypeId: type.rows[0].id,
+        subject: 'nominee',
+        fileName: 'scan.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 300,
+      },
+      officer
+    );
+    // One document type, one folder: without the subject in the name the
+    // nominee's file would land on the applicant's path.
+    expect(begun.ticket.itemPath).toMatch(
+      new RegExp(
+        `/Utility Bill \\(Nominee\\) - ${application.rows[0].reference}\\.pdf$`
+      )
+    );
   });
 
   it('refuses when nothing has been committed yet', async () => {
@@ -2155,7 +2186,7 @@ describe('undoing a mistaken upload, so it can be filed again', () => {
     // version above still counts (S-409), so this is version 2 — and the
     // original file's own extension, not its name (bill3.pdf), which the
     // stored name never carries at all.
-    expect(live.fileName).toMatch(/^Utility Bill - .+ v2\.pdf$/);
+    expect(live.fileName).toMatch(/^Utility Bill \(Guardian\) - .+ v2\.pdf$/);
   });
 
   it('still returns Missing when the SharePoint delete itself fails', async () => {
@@ -2548,5 +2579,282 @@ describe("officer feedback: a member's documents carry onto a new account openin
     });
     const foundingId = foundingEntries.find(e => e.documentCode === 'id_card');
     expect(foundingId?.state).not.toBe('missing');
+  });
+});
+
+describe('officer feedback: a person’s documents are picked up by any new application of theirs', () => {
+  // Files an ID card for the applicant on an application (draft while
+  // filing), then leaves the application in the status given.
+  async function withIdCardOn(
+    documents: Awaited<ReturnType<typeof load>>['documents'],
+    status: string,
+    nic: string,
+    name: string
+  ) {
+    const type = await run(
+      appUrl,
+      `select id, checklist_id from membership_type where code = 'individual'`
+    );
+    const application = await run(
+      appUrl,
+      `insert into membership_application (membership_type_id, captured_by)
+       values ($1, $2) returning id`,
+      [type.rows[0].id, officer.userId]
+    );
+    const id = application.rows[0].id as string;
+    await snapshotChecklist(id, [type.rows[0].checklist_id]);
+    await run(
+      appUrl,
+      `insert into application_party (application_id, subject, ordinal, values)
+       values ($1, 'applicant', 1, $2)`,
+      [id, JSON.stringify({ name, nic })]
+    );
+    const begun = await documents.beginUpload(
+      {
+        applicationId: id,
+        documentTypeId: idCardTypeId,
+        subject: 'applicant',
+        fileName: `${name}-id.jpg`,
+        contentType: 'image/jpeg',
+        sizeBytes: 120,
+      },
+      officer
+    );
+    drive.files.set(begun.ticket.itemPath, { id: `graph-${name}`, size: 120 });
+    await documents.commitUpload(begun.versionId, officer);
+    await run(
+      appUrl,
+      `update membership_application set status = $2 where id = $1`,
+      [id, status]
+    );
+    return {
+      id,
+      typeId: type.rows[0].id as string,
+      path: begun.ticket.itemPath,
+    };
+  }
+
+  it('carries a customer’s ID card onto their application to become a member', async () => {
+    const { capture, documents } = await load();
+    const source = await withIdCardOn(
+      documents,
+      'approved',
+      'C1234567890123',
+      'convert'
+    );
+    const customer = await run(
+      appUrl,
+      `insert into customer (application_id) values ($1) returning id`,
+      [source.id]
+    );
+
+    const { id } = await capture.startMembershipApplicationFromCustomer(
+      customer.rows[0].id,
+      officer
+    );
+
+    const idCard = (await documents.checklistFor({ applicationId: id })).find(
+      e => e.subject === 'applicant' && e.documentCode === 'id_card'
+    );
+    expect(idCard?.state).toBe('under_review');
+    const versions = await documents.versionsOf(idCard!.documentId!);
+    expect(versions[0].sharepointPath).toBe(source.path);
+  });
+
+  it('carries the ID card from a rejected application once the NIC is entered, and never brings back one removed', async () => {
+    const { capture, documents } = await load();
+    const nic = 'R1234567890123';
+    const rejected = await withIdCardOn(documents, 'rejected', nic, 'again');
+
+    const fresh = await run(
+      appUrl,
+      `insert into membership_application (membership_type_id, captured_by)
+       values ($1, $2) returning id`,
+      [rejected.typeId, officer.userId]
+    );
+    const freshId = fresh.rows[0].id as string;
+    const checklistId = (
+      await run(
+        appUrl,
+        `select checklist_id from membership_type where id = $1`,
+        [rejected.typeId]
+      )
+    ).rows[0].checklist_id;
+    await snapshotChecklist(freshId, [checklistId]);
+    const idCard = async () =>
+      (await documents.checklistFor({ applicationId: freshId })).find(
+        e => e.subject === 'applicant' && e.documentCode === 'id_card'
+      );
+
+    // Nothing to go on before the NIC.
+    await capture.saveDraft(
+      freshId,
+      [{ subject: 'applicant', ordinal: 1, values: { name: 'Again' } }],
+      officer
+    );
+    expect((await idCard())?.state).toBe('missing');
+
+    await capture.saveDraft(
+      freshId,
+      [{ subject: 'applicant', ordinal: 1, values: { name: 'Again', nic } }],
+      officer
+    );
+    const carried = await idCard();
+    expect(carried?.state).toBe('under_review');
+    expect(
+      (await documents.versionsOf(carried!.documentId!))[0].sharepointPath
+    ).toBe(rejected.path);
+
+    // Removed by the officer: saving again, or entering the NIC afresh,
+    // does not bring it back.
+    await documents.removeFiledDocument(carried!.documentId!, {
+      ...officer,
+      permissions: new Set(['document.upload']),
+    });
+    await capture.saveDraft(
+      freshId,
+      [
+        {
+          subject: 'applicant',
+          ordinal: 1,
+          values: { name: 'Again', nic: '' },
+        },
+      ],
+      officer
+    );
+    await capture.saveDraft(
+      freshId,
+      [{ subject: 'applicant', ordinal: 1, values: { name: 'Again', nic } }],
+      officer
+    );
+    expect((await idCard())?.state).toBe('missing');
+    expect(drive.files.has(rejected.path)).toBe(true);
+  });
+});
+
+describe("S-1702: a request's own paper is filed against the transaction", () => {
+  it("files the signed closure request in the member's folder, named by the transaction, one per request", async () => {
+    const { documents } = await load();
+    const membershipTypeId = (
+      await run(
+        appUrl,
+        `select id from membership_type where code = 'individual'`
+      )
+    ).rows[0].id;
+    const approved = await run(
+      appUrl,
+      `insert into membership_application (membership_type_id, captured_by, status)
+       values ($1, $2, 'approved') returning id`,
+      [membershipTypeId, officer.userId]
+    );
+    await run(
+      appUrl,
+      `insert into application_party (application_id, subject, ordinal, values)
+       values ($1, 'applicant', 1, '{"name": "Zainab", "surname": "Closure"}')`,
+      [approved.rows[0].id]
+    );
+    const member = await run(
+      appUrl,
+      `insert into member (application_id, membership_type_id)
+       values ($1, $2) returning id, member_no`,
+      [approved.rows[0].id, membershipTypeId]
+    );
+    const msaType = (
+      await run(appUrl, `select id from account_type where code = 'msa'`)
+    ).rows[0].id;
+    const account = await run(
+      appUrl,
+      `insert into account (member_id, account_type_id, status)
+       values ($1, $2, 'active') returning id`,
+      [member.rows[0].id, msaType]
+    );
+    const closure = async () =>
+      (
+        await run(
+          appUrl,
+          `insert into transaction
+             (kind, member_id, account_id, amount, method, reason, status, captured_by)
+           values ('closure', $1, $2, 0, 'cash', 'Test', 'draft', $3)
+           returning id, reference`,
+          [member.rows[0].id, account.rows[0].id, officer.userId]
+        )
+      ).rows[0] as { id: string; reference: string };
+    const first = await closure();
+    const second = await closure();
+    const requestType = (
+      await run(
+        appUrl,
+        `select id from document_type where code = 'closure_request'`
+      )
+    ).rows[0].id;
+
+    const begun = await documents.beginUpload(
+      {
+        transactionId: first.id,
+        documentTypeId: requestType,
+        subject: 'applicant',
+        fileName: 'whatever.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 2048,
+      },
+      officer
+    );
+    expect(begun.ticket.itemPath).toBe(
+      `${documents.memberFolderPath(member.rows[0].member_no, 'Zainab Closure')}` +
+        `/Account closure request - ${first.reference}.pdf`
+    );
+    drive.files.set(begun.ticket.itemPath, { id: 'item-1', size: 2048 });
+    await documents.commitUpload(begun.versionId, officer);
+
+    const filed = await documents.documentsForTransaction(first.id);
+    expect(filed).toHaveLength(1);
+    expect(filed[0]).toMatchObject({
+      documentCode: 'closure_request',
+      fileName: `Account closure request - ${first.reference}.pdf`,
+      uploadedByName: 'Officer',
+    });
+    expect(await documents.documentsForTransaction(second.id)).toEqual([]);
+
+    // A second request on the same member takes its own document rather
+    // than colliding with the first's.
+    const other = await documents.beginUpload(
+      {
+        transactionId: second.id,
+        documentTypeId: requestType,
+        subject: 'applicant',
+        fileName: 'again.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 1024,
+      },
+      officer
+    );
+    expect(other.documentId).not.toBe(begun.documentId);
+    expect(other.ticket.itemPath).toContain(second.reference);
+
+    // Once submitted, the request's paper is a record.
+    await run(
+      appUrl,
+      `update transaction set status = 'submitted', submitted_at = now() where id = $1`,
+      [first.id]
+    );
+    await expect(
+      documents.beginUpload(
+        {
+          transactionId: first.id,
+          documentTypeId: requestType,
+          subject: 'applicant',
+          fileName: 'late.pdf',
+          contentType: 'application/pdf',
+          sizeBytes: 1024,
+        },
+        officer
+      )
+    ).rejects.toThrowError(/This request has been submitted/);
+    await expect(
+      documents.removeFiledDocument(begun.documentId, {
+        ...officer,
+        permissions: new Set(['document.upload']),
+      })
+    ).rejects.toThrowError(/This request has been submitted/);
   });
 });

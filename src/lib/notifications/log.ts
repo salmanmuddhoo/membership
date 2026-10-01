@@ -41,6 +41,9 @@ export interface NotificationFilters {
   // Matched against the address and against the application reference, which
   // are the two things someone chasing a member actually has to hand.
   search?: string;
+  // Rows to a page (officer request: 10, 25 or 50, the officer's choice —
+  // src/lib/paging.ts). Defaults to NOTIFICATION_PAGE_LIMIT.
+  limit?: number;
   offset?: number;
 }
 
@@ -48,6 +51,10 @@ export async function listNotifications(
   filters: NotificationFilters = {}
 ): Promise<{ rows: NotificationLogRow[]; total: number }> {
   const search = filters.search?.trim() || null;
+  const limit = Math.min(
+    Math.max(filters.limit ?? NOTIFICATION_PAGE_LIMIT, 1),
+    500
+  );
 
   // Counted over the same predicate as the page, so "23 messages" and the
   // rows below it can never disagree.
@@ -97,7 +104,7 @@ export async function listNotifications(
         filters.status ?? null,
         filters.channel ?? null,
         search,
-        NOTIFICATION_PAGE_LIMIT,
+        limit,
         filters.offset ?? 0,
       ]
     ),

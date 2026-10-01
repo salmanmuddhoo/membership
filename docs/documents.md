@@ -148,6 +148,16 @@ filed:
 Between the two the version is `pending`, and the checklist reads **Missing** —
 so a tablet that loses signal halfway leaves nothing that looks filed.
 
+A document belongs to exactly one of three owners: an application before
+approval, a member after, and — since S-1702 — a transaction, for a
+request's own paper (the signed closure request; a resignation form, a death
+certificate and an affidavit later). A transaction's document is filed in
+its holder's own folder, named by the transaction reference, and is the
+officer's to replace or remove only while the request is a draft or has
+been returned — the same rule an application's documents already follow.
+`documentsForTransaction()` reads what is filed; a request's checklist is in
+code (`closureChecklist`, `src/lib/ledger/closures.ts`), not configuration.
+
 Three rules are worth knowing because they are not obvious from the endpoints:
 
 - **Only the person who began an upload may commit it.** Not a theft concern —
@@ -375,3 +385,18 @@ one, so the thumbnail is a generic icon), and resuming a dropped transfer via
 - Expect HEIC from iPads. It is in the allow-list, but a browser cannot preview
   it, so M4 should either convert on the device or accept that the thumbnail is
   a generic icon.
+
+## The document directory
+
+`/documents` (officer feedback; `document.view`, the same permission as
+the member page's own Documents) is a folder per member and non-member
+customer, searchable like the members list, with how much is on file for
+each; `/documents/{id}` is the folder. `src/lib/documents/directory.ts`
+gathers a holder's papers from all three owners a document can have:
+the applications that made them (the founding one and every approved
+additional-account one — a draft's upload is not on file), the member row
+itself (a document carried forward), and their transactions (a signed
+closure or resignation request, a deposit's Source of Fund form). Only a
+document with a committed version counts. Each opens in the viewer; the
+directory files nothing and deletes nothing — that stays with the
+application, wizard or member page the document belongs to.

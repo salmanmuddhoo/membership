@@ -59,6 +59,7 @@ describe('storing a telephone number in full international form (S-301)', () => 
 
   it('reads back in a form a person can check', () => {
     expect(forDisplay('+23057891234')).toBe('+230 5789 1234');
+    expect(forDisplay('+2302080004')).toBe('+230 208 0004');
     // Anything not Mauritian is shown as stored rather than mis-grouped.
     expect(forDisplay('+33612345678')).toBe('+33612345678');
   });

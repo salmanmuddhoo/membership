@@ -25,6 +25,18 @@ them.
 The reasoning behind a design belongs in a code comment or in `docs/`, never on
 screen.
 
+## Building a screen
+
+`src/lib/ui.ts` is the screen's vocabulary: a page is one of four widths
+(`PAGE.form`, `.detail`, `.list`, `.wide`) chosen by what it is for; a section
+is a `CARD`, an item inside it a `PANEL`, a bar of controls a `FILTER`; a
+field is a `LABEL` over an `INPUT`; the action of a form is a `BUTTON`, a
+row's action a `BUTTON_SM`. A line of feedback is a `NOTICE_*`, a status a
+`PILL`, a table `TABLE`/`THEAD`/`TH`/`TD`, a dialog `DIALOG`. Reach for the
+name, never the classes — a page that spells them out is how two forms end
+up different widths. When nothing in `ui.ts` fits, add the name there with
+a line on what it is for, rather than spelling the classes on the page.
+
 ## Elsewhere
 
 - Schema changes reach a database only through `migrations/`, applied by the

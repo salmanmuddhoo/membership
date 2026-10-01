@@ -33,10 +33,13 @@ function membershipApplication(
     decidedAt: null,
     updatedAt: new Date(),
     parties,
+    witnesses: ['', ''],
     membershipTypeId: '33333333-3333-3333-3333-333333333333',
     membershipTypeCode: 'individual',
     membershipTypeName: 'Individual',
     sourceCustomerId: null,
+    rejoinsMemberId: null,
+    rejoinsMemberNo: null,
     ...overrides,
   };
 }
@@ -157,6 +160,7 @@ describe('who an application is about, and where to write to them', () => {
       decidedAt: null,
       updatedAt: new Date(),
       parties: [],
+      witnesses: ['', ''],
       existingMemberId: '55555555-5555-5555-5555-555555555555',
       existingCustomerId: null,
       existingHolderId: '55555555-5555-5555-5555-555555555555',

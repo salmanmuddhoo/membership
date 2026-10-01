@@ -41,7 +41,6 @@ const applications = await import('./applications');
 const profile = await import('./profile');
 const pool = await import('../db/pool');
 const capture = await import('../applications/capture');
-const workflow = await import('../applications/workflow');
 
 const sent: string[] = [];
 const delivery: CodeDelivery = {
@@ -109,6 +108,26 @@ describe('an application from the phone', () => {
       applicant_mobile: '+23059990001',
       entra_subject: 'system:member-app',
     });
+  });
+
+  it('offers individual only — any other type is refused before a row exists', async () => {
+    const ken = await applicantSession('5999 0009');
+    for (const code of ['corporate', 'minor']) {
+      await expect(
+        applications.startMemberApplication(ken, code, origin)
+      ).rejects.toMatchObject({
+        code: 'validation_failed',
+        details: { membershipType: expect.any(Array) },
+      });
+    }
+    // The refusal is before the row is created, so nothing was started and
+    // the applicant is still free to apply for the one type the app offers.
+    const app = await applications.startMemberApplication(
+      ken,
+      'individual',
+      origin
+    );
+    expect(app.membershipTypeCode).toBe('individual');
   });
 
   it('one in progress at a time', async () => {

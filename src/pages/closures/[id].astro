@@ -1,0 +1,885 @@
+---
+// A closure request while it is the officer's (S-1702): the details, the
+// member's signature on the request, what is filed, and the submission
+// that sends it to its chain. Once submitted it is reviewed at
+// /transactions/<id> like any transaction, and comes back here only if a
+// reviewer returns it.
+import ChainTimeline from '@components/ChainTimeline.astro';
+import DraftsCancelledOnDeath from '@components/DraftsCancelledOnDeath.astro';
+import DocumentViewer from '@components/DocumentViewer.astro';
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import {
+  offeredBankAccounts,
+  offeredPaymentMethods,
+} from '@lib/config/reference';
+import {
+  cancelClosure,
+  checklistComplete,
+  closureChecklist,
+  ClosureError,
+  isEditable,
+  submitClosure,
+  updateClosure,
+} from '@lib/ledger/closures';
+import {
+  accountsClosedTogether,
+  draftsLeftOnDeath,
+  nomineeOnApplication,
+} from '@lib/ledger/claimants';
+import { DocumentError, removeFiledDocument } from '@lib/documents/documents';
+import { accountBalance } from '@lib/ledger/ledger';
+import { loadCustomer, loadMember } from '@lib/members/create';
+import { loadTransaction, transitionsFor } from '@lib/ledger/review';
+import { resolveRoute } from '@lib/ledger/routing';
+import { formatMoney, fromCents, toCents } from '@lib/payments/money';
+import { chainTimeline } from '@lib/workflow/timeline';
+import {
+  PAGE,
+  FORM_CARD,
+  PANEL,
+  CARD_LABEL,
+  MUTED,
+  LABEL,
+  INPUT,
+  BUTTON,
+  SECONDARY,
+  SECONDARY_SM,
+  DANGER,
+  NOTICE_ERROR,
+  NOTICE_OK,
+  TAG,
+  VIEW_BUTTON,
+  DELETE_BUTTON,
+  TABLE,
+  THEAD,
+  TH,
+  TD,
+  TD_NUM,
+} from '@lib/ui';
+
+// What the file picker offers, matching what the upload service accepts
+// (copied from the demise wizard's own Documents step — demises/[id].astro).
+const ACCEPTED_FILES =
+  'image/jpeg,image/png,image/heic,image/webp,application/pdf';
+
+const principal = Astro.locals.principal!;
+const { id } = Astro.params;
+let closure = id ? await loadTransaction(id) : null;
+if (!closure || closure.kind !== 'closure') {
+  return new Response('Not found', { status: 404 });
+}
+if (!isEditable(closure.status)) {
+  return Astro.redirect(`/transactions/${closure.id}`);
+}
+// A request is its officer's to build; anyone else reads it as a
+// transaction.
+if (closure.capturedById !== principal.userId) {
+  return Astro.redirect(`/transactions/${closure.id}`);
+}
+
+// A closure on a death (business decision): no signature to take, a death
+// certificate filed instead. The step never exists for one.
+const onDeath = closure.claimantKind !== null;
+type Step = 'details' | 'signature' | 'documents' | 'submit';
+const STEPS: Step[] = onDeath
+  ? ['details', 'documents', 'submit']
+  : ['details', 'signature', 'documents', 'submit'];
+const base = `/closures/${closure.id}`;
+const stepHrefs: Record<string, string> = {
+  details: `${base}?step=details`,
+  signature: `${base}?step=signature`,
+  documents: `${base}?step=documents`,
+  capture: `${base}?step=submit`,
+};
+
+let error: string | null = null;
+let notice: string | null = null;
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const text = (name: string) => String(form.get(name) ?? '');
+  const intent = text('intent');
+  try {
+    if (intent === 'details') {
+      // The reason and, on a death, who is paid: the payout itself is the
+      // Treasurer's to record at disbursement, unless the matrix posts the
+      // closure at once (below).
+      closure = await updateClosure(
+        closure.id,
+        {
+          reason: text('reason'),
+          ...(onDeath
+            ? {
+                claimant: {
+                  kind: text('kind') === 'nominee' ? 'nominee' : 'other',
+                  name: text('name'),
+                  nic: text('nic'),
+                  address: text('address'),
+                  relation: text('relation'),
+                  email: text('email'),
+                  mobile: text('mobile'),
+                },
+              }
+            : {}),
+        },
+        principal
+      );
+      return Astro.redirect(
+        `${base}?step=${onDeath ? 'documents' : 'signature'}`
+      );
+    } else if (intent === 'submit') {
+      // Where the matrix posts it at once, submitting IS the posting, and
+      // the payout is asked here (postsAtOnce, below).
+      if (form.has('method')) {
+        closure = await updateClosure(
+          closure.id,
+          {
+            reason: closure.reason,
+            method: text('method'),
+            methodReference: text('methodReference'),
+            bankAccountId: text('bankAccountId'),
+          },
+          principal
+        );
+      }
+      const submitted = await submitClosure(closure.id, principal);
+      return Astro.redirect(`/transactions/${submitted.id}`);
+    } else if (intent === 'remove-form') {
+      // The signed request on THIS closure, read here rather than taken
+      // from the page. Deleting it means signing again.
+      const current = (await closureChecklist(closure.id))[0]?.filed;
+      if (current) await removeFiledDocument(current.documentId, principal);
+      return Astro.redirect(`${base}?step=signature`);
+    } else if (intent === 'cancel') {
+      await cancelClosure(closure.id, principal);
+      return Astro.redirect(`/members/${closure.holderId}`);
+    }
+  } catch (err) {
+    if (err instanceof ClosureError || err instanceof DocumentError) {
+      error = err.message;
+    } else {
+      console.error('[closures]', err);
+      error = 'Something went wrong. Please try again.';
+    }
+  }
+}
+
+const requested = Astro.url.searchParams.get('step') ?? 'details';
+const step: Step = (STEPS as readonly string[]).includes(requested)
+  ? (requested as Step)
+  : 'details';
+
+const [checklist, timeline, trail, paymentMethods, bankAccounts] =
+  await Promise.all([
+    closureChecklist(closure.id),
+    chainTimeline('transaction', closure.id),
+    transitionsFor(closure.id),
+    offeredPaymentMethods(),
+    offeredBankAccounts(),
+  ]);
+const complete = checklistComplete(checklist);
+const request = checklist[0] ?? null;
+// The claimant, on a death: who is paid now, and the nominee on file (if
+// any), offered again so the officer can switch back to them.
+const claimant = onDeath ? closure.claimant! : null;
+const holder = onDeath
+  ? closure.holderKind === 'member'
+    ? await loadMember(closure.holderId)
+    : await loadCustomer(closure.holderId)
+  : null;
+const nominee = holder
+  ? await nomineeOnApplication(holder.applicationId)
+  : null;
+// Every account the death closes, with what each holds now (or, once
+// posted, paid) — while in flight, the sum of these is what submitting
+// would post (ledger/closures.ts works it out the same way).
+const deathAccounts = onDeath ? await accountsClosedTogether(closure.id) : [];
+const drafts = onDeath
+  ? await draftsLeftOnDeath(closure.holderId, closure.id)
+  : [];
+const deathTotal = fromCents(
+  deathAccounts.reduce((sum, a) => sum + toCents(a.amount), 0)
+);
+// The balance as it stands now — what submitting would actually post,
+// same as submitClosure (ledger/closures.ts) works out.
+const currentBalance =
+  (await accountBalance(closure.accountId))?.balance ?? '0.00';
+// Posted at once when the matrix routes it nowhere: only then is the payout
+// asked before the posting step, because submitting is the posting.
+const postsAtOnce = !(
+  await resolveRoute({
+    kind: 'closure',
+    accountTypeId: closure.accountTypeId,
+    amountCents: toCents(currentBalance),
+    roleCodes: principal.roles,
+  })
+).definition;
+const returnComment =
+  closure.status === 'returned'
+    ? [...trail].reverse().find(t => t.toStatus === 'returned')?.comment
+    : null;
+const dateFormat = new Intl.DateTimeFormat('en-GB', {
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+});
+---
+
+<DashboardLayout
+  title={`${closure.reference} · Al Barakah MCSL`}
+  heading={`Account closure ${closure.reference}`}
+>
+  <div class={PAGE.detail}>
+    <ChainTimeline
+      steps={timeline ?? []}
+      hrefs={stepHrefs}
+      label="Closure progress"
+    />
+
+    <div class="-mx-4 flex flex-wrap items-center justify-between gap-2 border-t border-neutral-200/80 bg-neutral-100/95 px-4 py-3 text-sm sm:mx-0 sm:rounded-b-2xl sm:px-3 sm:py-1.5 dark:border-neutral-800/80 dark:bg-neutral-950/95">
+      <a
+        href={`/members/${closure.holderId}`}
+        class="text-neutral-500 underline dark:text-neutral-400"
+      >
+        ← {closure.holderName || closure.holderKind}
+        {closure.memberNo && ` · ${closure.memberNo}`}
+      </a>
+      <span class={TAG}>
+        {onDeath
+          ? `${deathAccounts.length} accounts · ${formatMoney(deathTotal)}`
+          : `${closure.accountNo} · ${closure.accountTypeName} · ${formatMoney(closure.amount)}`}
+      </span>
+    </div>
+
+    {error && <div class={NOTICE_ERROR}>{error}</div>}
+    {notice && <div class={NOTICE_OK}>{notice}</div>}
+    {returnComment && (
+      <div class="rounded-lg border border-amber-300 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200">
+        Returned: {returnComment}
+      </div>
+    )}
+
+    <DraftsCancelledOnDeath drafts={drafts} />
+
+    {step === 'details' && (
+      <form method="post" data-details-form class={FORM_CARD}>
+        <h2 class={CARD_LABEL}>Details</h2>
+        {onDeath ? (
+          <div class="space-y-2">
+            <h3 class={CARD_LABEL}>Accounts closing</h3>
+            <table class={TABLE}>
+              <thead>
+                <tr class={THEAD}>
+                  <th class={TH}>Account</th>
+                  <th class={TH}>Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {deathAccounts.map(account => (
+                  <tr>
+                    <td class={TD}>
+                      {account.accountNo} · {account.typeName}
+                    </td>
+                    <td class={TD_NUM}>{formatMoney(account.amount)}</td>
+                  </tr>
+                ))}
+                <tr class="font-semibold">
+                  <td class={TD}>Total</td>
+                  <td class={TD_NUM}>{formatMoney(deathTotal)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <dl class="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
+            <dt class="text-neutral-500 dark:text-neutral-400">Account</dt>
+            <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+              {closure.accountNo} · {closure.accountTypeName}
+            </dd>
+            <dt class="text-neutral-500 dark:text-neutral-400">Balance</dt>
+            <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+              {formatMoney(closure.amount)}
+            </dd>
+          </dl>
+        )}
+        <label class={LABEL}>
+          Reason
+          <textarea
+            name="reason"
+            rows="3"
+            required={!onDeath}
+            maxlength="500"
+            class={INPUT}
+          >{closure.reason}</textarea>
+        </label>
+        {onDeath && (
+          <div class="space-y-3">
+            <h3 class={CARD_LABEL}>Claimant</h3>
+            <div class="space-y-2 text-sm text-neutral-700 dark:text-neutral-200">
+              {nominee && (
+                <label class="flex items-start gap-3">
+                  <input
+                    type="radio"
+                    name="kind"
+                    value="nominee"
+                    checked={closure.claimantKind === 'nominee'}
+                    class="mt-1"
+                  />
+                  <span>
+                    <span class="font-medium">Nominee: {nominee.name}</span>
+                    <span class="block text-xs text-neutral-500 dark:text-neutral-400">
+                      {[nominee.nic, nominee.address]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </span>
+                  </span>
+                </label>
+              )}
+              <label class="flex items-start gap-3">
+                <input
+                  type="radio"
+                  name="kind"
+                  value="other"
+                  checked={closure.claimantKind === 'other'}
+                  class="mt-1"
+                />
+                <span class="font-medium">Another person</span>
+              </label>
+            </div>
+            <div
+              data-other-fields
+              class="grid gap-3 sm:grid-cols-2"
+              hidden={closure.claimantKind !== 'other'}
+            >
+              <label class={LABEL}>
+                Name
+                <input
+                  type="text"
+                  name="name"
+                  value={closure.claimantKind === 'other' ? claimant!.name : ''}
+                  class={INPUT}
+                />
+              </label>
+              <label class={LABEL}>
+                NIC
+                <input
+                  type="text"
+                  name="nic"
+                  value={closure.claimantKind === 'other' ? claimant!.nic : ''}
+                  class={INPUT}
+                />
+              </label>
+              <label class={LABEL}>
+                Address
+                <input
+                  type="text"
+                  name="address"
+                  value={
+                    closure.claimantKind === 'other' ? claimant!.address : ''
+                  }
+                  class={INPUT}
+                />
+              </label>
+              <label class={LABEL}>
+                Relation
+                <input
+                  type="text"
+                  name="relation"
+                  value={
+                    closure.claimantKind === 'other' ? claimant!.relation : ''
+                  }
+                  class={INPUT}
+                />
+              </label>
+              <label class={LABEL}>
+                Email
+                <input
+                  type="email"
+                  name="email"
+                  value={
+                    closure.claimantKind === 'other'
+                      ? (claimant!.email ?? '')
+                      : ''
+                  }
+                  class={INPUT}
+                />
+              </label>
+              <label class={LABEL}>
+                Mobile
+                <input
+                  type="tel"
+                  name="mobile"
+                  value={
+                    closure.claimantKind === 'other'
+                      ? (claimant!.mobile ?? '')
+                      : ''
+                  }
+                  class={INPUT}
+                />
+              </label>
+            </div>
+          </div>
+        )}
+        <input type="hidden" name="intent" value="details" />
+        <div class="flex flex-wrap gap-2 pt-2">
+          <button type="submit" class={BUTTON}>
+            Save and continue
+          </button>
+        </div>
+      </form>
+    )}
+
+    {step === 'signature' && (
+      <section class={FORM_CARD}>
+        <h2 class={CARD_LABEL}>Signature</h2>
+        {/* Officer feedback: the signed request is shown with View and the
+            red cross that deletes it, as on every other filed document;
+            deleting it means signing again. */}
+        {request?.filed ? (
+          <>
+            <div
+              class={`${PANEL} flex flex-wrap items-center justify-between gap-3`}
+            >
+              <div class="min-w-0">
+                <p class="truncate font-medium text-neutral-800 dark:text-neutral-100">
+                  {request.filed.fileName}
+                </p>
+                <p class={MUTED}>
+                  Signed {dateFormat.format(request.filed.uploadedAt)} ·{' '}
+                  {request.filed.uploadedByName}
+                </p>
+              </div>
+              <div class="flex shrink-0 items-center gap-2">
+                <button
+                  type="button"
+                  data-view-document
+                  data-document-id={request.filed.documentId}
+                  class={VIEW_BUTTON}
+                >
+                  View
+                </button>
+                <form method="post" data-confirm-remove>
+                  <button
+                    type="submit"
+                    name="intent"
+                    value="remove-form"
+                    aria-label="Delete the signed request"
+                    title="Delete"
+                    class={DELETE_BUTTON}
+                  >
+                    ✕
+                  </button>
+                </form>
+              </div>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <a href={`${base}?step=documents`} class={BUTTON}>
+                Next
+              </a>
+            </div>
+          </>
+        ) : (
+          <div class="flex flex-wrap gap-2">
+            <a href={`${base}/form`} class={BUTTON}>
+              Sign the request
+            </a>
+          </div>
+        )}
+      </section>
+    )}
+
+    {step === 'documents' && (
+      <section class={FORM_CARD}>
+        <h2 class={CARD_LABEL}>Documents</h2>
+        {checklist.length === 0 ? (
+          <p class="text-sm text-red-700 dark:text-red-300">
+            {onDeath
+              ? 'The death certificate document type is not configured. Ask an administrator.'
+              : 'The closure request document type is not configured. Ask an administrator.'}
+          </p>
+        ) : (
+          <ul class="space-y-2">
+            {checklist.map(item => (
+              <li
+                class={`flex flex-wrap items-center justify-between gap-3 ${PANEL} text-sm`}
+              >
+                <span>
+                  <span class="font-medium text-neutral-800 dark:text-neutral-100">
+                    {item.documentName}
+                  </span>
+                  <span class="block text-xs text-neutral-500 dark:text-neutral-400">
+                    {item.filed
+                      ? `${item.filed.fileName} · ${dateFormat.format(item.filed.uploadedAt)}`
+                      : 'Missing'}
+                  </span>
+                </span>
+                {item.filed ? (
+                  onDeath ? (
+                    // A death certificate is uploaded straight into the
+                    // request, like the demise wizard's own papers — deleted
+                    // and refiled here rather than through a signed sheet.
+                    <div class="flex shrink-0 items-center gap-2">
+                      <button
+                        type="button"
+                        data-view-document
+                        data-document-id={item.filed.documentId}
+                        class={VIEW_BUTTON}
+                      >
+                        View
+                      </button>
+                      <button
+                        type="button"
+                        data-remove-document={item.filed.documentId}
+                        title="Delete"
+                        aria-label="Remove this document"
+                        class={DELETE_BUTTON}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      data-view-document
+                      data-document-id={item.filed.documentId}
+                      class={VIEW_BUTTON}
+                    >
+                      View
+                    </button>
+                  )
+                ) : onDeath ? (
+                  <span
+                    class="flex flex-wrap items-center gap-3"
+                    data-upload
+                    data-transaction-id={closure.id}
+                    data-document-type-id={item.documentTypeId}
+                  >
+                    <label class={`${SECONDARY_SM} cursor-pointer`}>
+                      Upload
+                      <input
+                        type="file"
+                        data-file
+                        accept={ACCEPTED_FILES}
+                        capture="environment"
+                        disabled
+                        class="sr-only"
+                      />
+                    </label>
+                    <span
+                      data-status
+                      class="text-xs text-neutral-500 dark:text-neutral-400"
+                    >
+                      Uploading requires JavaScript.
+                    </span>
+                  </span>
+                ) : (
+                  <a href={`${base}?step=signature`} class="shrink-0 underline">
+                    Sign
+                  </a>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+        <div class="flex flex-wrap gap-2">
+          <a href={`${base}?step=submit`} class={BUTTON}>
+            Next
+          </a>
+        </div>
+      </section>
+    )}
+
+    {step === 'submit' && (
+      <form method="post" data-closure-submit-form class={FORM_CARD}>
+        <h2 class={CARD_LABEL}>Submit</h2>
+        {onDeath && (
+          <div class="space-y-2">
+            <h3 class={CARD_LABEL}>Accounts closing</h3>
+            <table class={TABLE}>
+              <thead>
+                <tr class={THEAD}>
+                  <th class={TH}>Account</th>
+                  <th class={TH}>Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {deathAccounts.map(account => (
+                  <tr>
+                    <td class={TD}>
+                      {account.accountNo} · {account.typeName}
+                    </td>
+                    <td class={TD_NUM}>{formatMoney(account.amount)}</td>
+                  </tr>
+                ))}
+                <tr class="font-semibold">
+                  <td class={TD}>Total</td>
+                  <td class={TD_NUM}>{formatMoney(deathTotal)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )}
+        <dl class="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
+          {!onDeath && (
+            <>
+              <dt class="text-neutral-500 dark:text-neutral-400">Account</dt>
+              <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+                {closure.accountNo} · {closure.accountTypeName}
+              </dd>
+              <dt class="text-neutral-500 dark:text-neutral-400">Balance</dt>
+              <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+                {formatMoney(closure.amount)}
+              </dd>
+            </>
+          )}
+          <dt class="text-neutral-500 dark:text-neutral-400">Reason</dt>
+          <dd class="text-neutral-800 dark:text-neutral-100">
+            {closure.reason}
+          </dd>
+          {onDeath ? (
+            <>
+              <dt class="text-neutral-500 dark:text-neutral-400">Paid to</dt>
+              <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+                {claimant!.name} · {claimant!.relation}
+              </dd>
+              <dt class="text-neutral-500 dark:text-neutral-400">
+                Death certificate
+              </dt>
+              <dd
+                class:list={[
+                  complete
+                    ? 'text-neutral-800 dark:text-neutral-100'
+                    : 'text-red-700 dark:text-red-300',
+                ]}
+              >
+                {complete ? 'On file' : 'Missing'}
+              </dd>
+            </>
+          ) : (
+            <>
+              <dt class="text-neutral-500 dark:text-neutral-400">
+                Signed request
+              </dt>
+              <dd
+                class:list={[
+                  complete
+                    ? 'text-neutral-800 dark:text-neutral-100'
+                    : 'text-red-700 dark:text-red-300',
+                ]}
+              >
+                {complete ? 'On file' : 'Missing'}
+              </dd>
+            </>
+          )}
+        </dl>
+        {postsAtOnce && (
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label class={LABEL}>
+              Balance paid out by
+              <select name="method" class={INPUT}>
+                {paymentMethods.map(method => (
+                  <option
+                    value={method.code}
+                    data-touches-bank={method.touchesBank ? 'true' : 'false'}
+                    selected={method.code === closure!.method}
+                  >
+                    {method.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label class={LABEL}>
+              Reference (cheque number, transfer reference)
+              <input
+                type="text"
+                name="methodReference"
+                value={closure.methodReference}
+                class={INPUT}
+              />
+            </label>
+            <label data-bank-account-field class={LABEL}>
+              Bank account
+              <select name="bankAccountId" class={INPUT}>
+                <option value="">Choose…</option>
+                {bankAccounts.map(account => (
+                  <option
+                    value={account.id}
+                    selected={account.id === closure!.bankAccountId}
+                  >
+                    {account.name} · {account.bankName}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        )}
+        <p class={MUTED}>
+          {onDeath
+            ? 'Once submitted, nothing else moves on these accounts until the closure is decided.'
+            : 'Once submitted, nothing else moves on this account until the closure is decided.'}
+        </p>
+        <div class="flex flex-wrap gap-2 pt-2">
+          <button
+            type="submit"
+            class={BUTTON}
+            name="intent"
+            value="submit"
+            disabled={!complete}
+          >
+            {closure.status === 'returned' ? 'Resubmit' : 'Submit'}
+          </button>
+          <button
+            type="submit"
+            class={DANGER}
+            name="intent"
+            value="cancel"
+            formnovalidate
+          >
+            Withdraw the request
+          </button>
+        </div>
+      </form>
+    )}
+  </div>
+  <DocumentViewer />
+</DashboardLayout>
+
+<script>
+  // A destructive action warns once.
+  for (const remove of document.querySelectorAll<HTMLFormElement>(
+    'form[data-confirm-remove]'
+  )) {
+    remove.addEventListener('submit', event => {
+      if (!confirm('Delete the signed request? It will need signing again.')) {
+        event.preventDefault();
+      }
+    });
+  }
+</script>
+
+<script>
+  // The details form on a death: the other person's fields only when they
+  // are the claimant (demise.astro's own claimant script).
+  const detailsForm = document.querySelector<HTMLFormElement>(
+    '[data-details-form]'
+  );
+  const otherFields = detailsForm?.querySelector<HTMLElement>(
+    '[data-other-fields]'
+  );
+  if (detailsForm && otherFields) {
+    const refresh = () => {
+      const picked = detailsForm.querySelector<HTMLInputElement>(
+        'input[name="kind"]:checked'
+      );
+      otherFields.hidden = picked?.value !== 'other';
+    };
+    detailsForm.addEventListener('change', refresh);
+    refresh();
+  }
+</script>
+
+<script>
+  import { uploadDocumentBlob } from '@lib/client/document-upload';
+  import {
+    compressImageForUpload,
+    formatBytes,
+  } from '@lib/client/image-compression';
+
+  // Filing the death certificate: the same three-phase transfer the demise
+  // wizard's Documents step uses, through uploadDocumentBlob, so the
+  // backend decides where it goes and confirms it landed.
+  for (const panel of document.querySelectorAll<HTMLElement>('[data-upload]')) {
+    const file = panel.querySelector<HTMLInputElement>('[data-file]');
+    const status = panel.querySelector<HTMLElement>('[data-status]');
+    if (!file || !status) continue;
+    file.disabled = false;
+    status.textContent = '';
+    const say = (message: string) => {
+      status.textContent = message;
+    };
+    file.addEventListener('change', async () => {
+      const picked = file.files?.[0];
+      if (!picked) return;
+      file.disabled = true;
+      say('Preparing…');
+      let chosen = picked;
+      try {
+        chosen = await compressImageForUpload(picked);
+        if (chosen.size < picked.size) {
+          say(
+            `Compressed ${formatBytes(picked.size)} to ${formatBytes(chosen.size)}…`
+          );
+        }
+      } catch {
+        // Nothing here is worth failing an upload over.
+      }
+      try {
+        await uploadDocumentBlob({
+          transactionId: panel.dataset.transactionId,
+          documentTypeId: panel.dataset.documentTypeId ?? '',
+          subject: 'applicant',
+          fileName: chosen.name,
+          blob: chosen,
+          onStatus: message => say(message),
+        });
+        window.location.reload();
+      } catch (error) {
+        say(
+          (error instanceof Error ? error.message : 'The upload failed.') +
+            ' Please try again.'
+        );
+        file.disabled = false;
+        file.value = '';
+      }
+    });
+  }
+
+  for (const button of document.querySelectorAll<HTMLButtonElement>(
+    '[data-remove-document]'
+  )) {
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      try {
+        const response = await fetch('/api/v1/documents/remove', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ documentId: button.dataset.removeDocument }),
+        });
+        if (!response.ok) {
+          const body = await response.json().catch(() => null);
+          throw new Error(body?.error?.message ?? 'It could not be removed.');
+        }
+        window.location.reload();
+      } catch (error) {
+        button.disabled = false;
+        button.textContent =
+          error instanceof Error ? error.message : 'It could not be removed.';
+      }
+    });
+  }
+</script>
+
+<script>
+  // A visual nudge only — enforced server-side (ledger/closures.ts)
+  // whether or not this script runs.
+  const form = document.querySelector<HTMLFormElement>(
+    '[data-closure-submit-form]'
+  );
+  if (form) {
+    const methodSelect =
+      form.querySelector<HTMLSelectElement>('[name="method"]');
+    const bankField = form.querySelector<HTMLElement>(
+      '[data-bank-account-field]'
+    );
+    const recompute = () => {
+      const selected = methodSelect?.selectedOptions[0];
+      if (bankField) {
+        bankField.hidden = selected?.dataset.touchesBank !== 'true';
+      }
+    };
+    methodSelect?.addEventListener('change', recompute);
+    recompute();
+  }
+</script>

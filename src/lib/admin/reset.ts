@@ -1,12 +1,16 @@
 // Wiping a test environment back to empty (System Administrator only).
 //
-// "All data" here means every member, application, document, payment and
-// receipt — and their permanent history, application_transition and
-// audit_event included. Staff accounts, roles and permissions, and reference
-// configuration (membership types, fee schedules, the document checklist,
-// workflow steps) are untouched: this is a test environment being reset, not
-// a factory reset of the system that runs it. See migration 0019 for exactly
-// what gets removed and why it is safe to.
+// "All data" here means everything anyone did: every member, application,
+// document, payment, transaction and receipt, every message sent, the audit
+// log (sign-ins included), the history of job runs and of setting changes,
+// with every reference number starting again — and every staff account but
+// the System Administrator running it (the last one left is how the others
+// get added back). Roles and permissions, API credentials and all
+// configuration are kept: this is a test environment emptied, not a factory
+// reset of the system that runs it. The latest
+// reset_all_test_data() migration says exactly what is removed, and
+// reset.test.ts fails when a table is added without deciding which side it
+// is on.
 //
 // The refusal below is the one that matters most: it runs before any
 // connection to the database is even opened, on the same PUBLIC_APP_ENV
@@ -37,22 +41,33 @@ export interface ResetCounts {
   applications: number;
   payments: number;
   documents: number;
+  transactions: number;
+  // Staff accounts other than the one looking at the screen: the reset
+  // removes all of them.
+  otherStaff: number;
 }
 
 // What the confirmation screen shows before anyone commits to the button —
 // the scale of what "all data" actually means right now, not an abstraction.
-export async function countsBeforeReset(): Promise<ResetCounts> {
+export async function countsBeforeReset(
+  viewerUserId: string
+): Promise<ResetCounts> {
   const result = await query<{
     members: string;
     applications: string;
     payments: string;
     documents: string;
+    transactions: string;
+    other_staff: string;
   }>(
     `select
        (select count(*) from member)                as members,
        (select count(*) from membership_application) as applications,
        (select count(*) from payment)                as payments,
-       (select count(*) from document)                as documents`
+       (select count(*) from document)                as documents,
+       (select count(*) from transaction)             as transactions,
+       (select count(*) from app_user where id <> $1) as other_staff`,
+    [viewerUserId]
   );
   const row = result.rows[0];
   return {
@@ -60,6 +75,8 @@ export async function countsBeforeReset(): Promise<ResetCounts> {
     applications: Number(row.applications),
     payments: Number(row.payments),
     documents: Number(row.documents),
+    transactions: Number(row.transactions),
+    otherStaff: Number(row.other_staff),
   };
 }
 

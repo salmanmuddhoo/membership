@@ -1,29 +1,42 @@
 ---
 import DashboardLayout from '@layouts/DashboardLayout.astro';
+import WitnessesCard from '@components/WitnessesCard.astro';
 import { loadMember, loadCustomer } from '@lib/members/create';
+import { accountBalance } from '@lib/ledger/ledger';
 import {
+  accountApplicationsInFlightFor,
   ApplicationError,
   findGuardian,
   guardianOf,
+  rejoinInFlightFor,
+  startAdditionalAccountApplication,
+  startCustomerAdditionalAccountApplication,
   startMembershipApplicationFromCustomer,
+  startRejoinApplication,
+  witnessesOf,
 } from '@lib/applications/capture';
 import { forDisplay } from '@lib/applications/phone';
+import {
+  guardianGoneMessage,
+  openGuardianChange,
+  PERMISSION_APPROVE as GUARDIAN_APPROVE,
+  PERMISSION_CHANGE as GUARDIAN_CHANGE,
+} from '@lib/members/guardian';
 import { otherPartyGroups } from '@lib/applications/parties';
 import {
-  paymentsForApplication,
+  paymentsForCustomer,
   paymentsForMember,
-  METHOD_LABELS,
   type Payment,
 } from '@lib/payments/payments';
 import { formatMoney } from '@lib/payments/money';
 import {
-  checklistFor,
-  documentsForMember,
+  documentsForPerson,
   filedDocumentFor,
   type MemberDocumentGroup,
 } from '@lib/documents/documents';
 import {
   editableContactFields,
+  mayEditAllDetails,
   PERMISSION_EDIT_CONTACT,
   type EditableContactField,
 } from '@lib/members/contact';
@@ -34,9 +47,62 @@ import {
 } from '@lib/config/reference';
 import { approvalCommentsFor } from '@lib/applications/workflow';
 import DocumentViewer from '@components/DocumentViewer.astro';
+import {
+  closuresInFlightFor,
+  deathClosureInFlightFor,
+} from '@lib/ledger/closures';
+import { resignationInFlightFor } from '@lib/ledger/resignations';
+import {
+  claimableMembershipType,
+  demiseInFlightFor,
+} from '@lib/ledger/demises';
+import {
+  canOpenAccount,
+  canTransact,
+  isNonMember,
+  shownStatus,
+  statusNotice,
+} from '@lib/members/status';
+import {
+  DormancyError,
+  PERMISSION_REACTIVATE,
+  reactivateMember,
+} from '@lib/members/dormancy';
+import {
+  formatDateOnly,
+  guardianFieldLabel,
+  partyDetailLabel,
+  statusLabel,
+} from '@lib/members/labels';
+import {
+  PAGE,
+  CARD,
+  CARD_TITLE,
+  HINT,
+  MUTED,
+  PANEL,
+  BUTTON_SM,
+  SECONDARY_SM,
+  DANGER_SM,
+  DANGER_XS,
+  DIALOG,
+  DIALOG_HEADER,
+  ICON_BUTTON,
+  INPUT_SM,
+  LABEL,
+  NOTICE_ERROR,
+  NOTICE_WARN,
+  PILL,
+  SECONDARY_XS,
+  SUBTITLE,
+  VIEW_BUTTON,
+} from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 const canSeePayments = principal.permissions.has('payment.view');
+// S-1311: the balance and the history are money, with a permission of their
+// own; without it the accounts still list, without figures.
+const canSeeAccounts = principal.permissions.has('account.view');
 const canSeeDocuments = principal.permissions.has('document.view');
 // Officer feedback: who may turn a non-member customer into a membership
 // applicant is its own, narrower question than who may capture applications
@@ -50,7 +116,11 @@ const canCapture = principal.permissions.has('application.capture');
 // the spot, no review or approval (migration 0045) — its own permission,
 // separate from member.details_verify, which gates a change the member sent
 // in unattended from the app.
-const canEditContact = principal.permissions.has(PERMISSION_EDIT_CONTACT);
+// member.edit_all_details opens every applicant field, name and NIC
+// included, not just the contact ones (officer request).
+const canEditAllDetails = mayEditAllDetails(principal);
+const canEditContact =
+  principal.permissions.has(PERMISSION_EDIT_CONTACT) || canEditAllDetails;
 
 const { id } = Astro.params;
 // Two different tables (member, customer — migration 0027), and no way to
@@ -59,12 +129,13 @@ const { id } = Astro.params;
 // account. S-614's own "not all members" — member is tried first only
 // because it is the far more common case, not because a customer is any
 // less a real record.
-const member = id ? await loadMember(id) : null;
+let member = id ? await loadMember(id) : null;
 const customer = !member && id ? await loadCustomer(id) : null;
 if (!member && !customer) return new Response('Not found', { status: 404 });
 const recordId = (member ?? customer)!.id;
 
 let error: string | null = null;
+let notice: string | null = null;
 
 // The application that carries this person's applicant party — where a
 // phone number or address actually lives (member/customer rows carry
@@ -79,7 +150,9 @@ const contactApplicationId = (member ?? customer)!.applicationId;
 // canEditContact: a viewer without the permission still sees the same
 // values, just no pencil icon or inputs — see contact.ts.
 const contactFields: EditableContactField[] = contactApplicationId
-  ? await editableContactFields(contactApplicationId)
+  ? await editableContactFields(contactApplicationId, {
+      allDetails: canEditAllDetails,
+    })
   : [];
 
 // Officer feedback: Name, Surname, Address, Gender, Marital status, NIC,
@@ -116,8 +189,34 @@ const employmentContactFields = contactFields.filter(
 const guardianContactFields = contactFields.filter(
   f => f.subject === 'guardian'
 );
+// Officer request: with member.edit_all_details the nominees are corrected
+// here too, in their own card — one group of fields per nominee on file.
+// Only offered with that permission (contact.ts), so without it the
+// read-only Nominee card below stays exactly as it was.
+const nomineeContactGroups = [
+  ...contactFields
+    .filter(f => f.subject === 'nominee')
+    .reduce((groups, f) => {
+      groups.set(f.ordinal, [...(groups.get(f.ordinal) ?? []), f]);
+      return groups;
+    }, new Map<number, EditableContactField[]>())
+    .entries(),
+].map(([ordinal, fields]) => ({ ordinal, fields }));
 function fieldDisplay(field: EditableContactField): string {
+  if (field.dataType === 'date') {
+    return field.value ? formatDateOnly(field.value) : field.value;
+  }
   return field.dataType === 'phone' ? forDisplay(field.value) : field.value;
+}
+
+// The options a choice field's dropdown offers: the type's configured
+// choices, plus the current value too when it is non-empty and not among
+// them (an older record, saved before the choice list changed) — so an
+// edit never silently drops it.
+function choiceOptions(field: EditableContactField): string[] {
+  return field.value && !field.choices.includes(field.value)
+    ? [...field.choices, field.value]
+    : field.choices;
 }
 
 // So the guardian's own Member ID reads as a link to their own page
@@ -175,19 +274,86 @@ if (Astro.request.method === 'POST') {
         }
       }
     }
+  } else if (intent === 'reactivate' && member) {
+    try {
+      await reactivateMember(
+        member.id,
+        String(form.get('reason') ?? ''),
+        principal
+      );
+      notice = 'Member reactivated.';
+      member = id ? await loadMember(id) : null;
+    } catch (err) {
+      if (err instanceof DormancyError) {
+        error = err.message;
+      } else {
+        console.error('[members/reactivate]', err);
+        error = 'Something went wrong. Please try again.';
+      }
+    }
+  } else if (intent === 'rejoin' && member) {
+    // M26: a resigned member applies to rejoin — the same membership
+    // application, through the same chain, under the number they had.
+    // Lands on Applicant details like a customer's conversion does: the
+    // parties are copied from the founding application and want a look.
+    if (!canCapture) {
+      error = 'You do not have permission to do this.';
+    } else {
+      try {
+        const created = await startRejoinApplication(member.id, {
+          userId: principal.userId,
+          email: principal.email,
+        });
+        return Astro.redirect(`/applications/${created.id}?step=1`);
+      } catch (err) {
+        if (err instanceof ApplicationError) {
+          error = err.message;
+        } else {
+          console.error('[members/rejoin]', err);
+          error = 'Something went wrong. Please try again.';
+        }
+      }
+    }
+  } else if (intent === 'reopen' && (member || customer)) {
+    // M26: a closed additional account reopens through the same
+    // additional-account application that opened it, for that one type —
+    // for a member or, LC-06, a non-member customer alike.
+    if (!canCapture) {
+      error = 'You do not have permission to do this.';
+    } else {
+      try {
+        const created = member
+          ? await startAdditionalAccountApplication(
+              member.id,
+              [String(form.get('accountTypeId') ?? '')],
+              { userId: principal.userId, email: principal.email }
+            )
+          : await startCustomerAdditionalAccountApplication(
+              customer!.id,
+              [String(form.get('accountTypeId') ?? '')],
+              { userId: principal.userId, email: principal.email }
+            );
+        return Astro.redirect(`/applications/${created.id}/account?step=1`);
+      } catch (err) {
+        if (err instanceof ApplicationError) {
+          error = err.message;
+        } else {
+          console.error('[members/reopen]', err);
+          error = 'Something went wrong. Please try again.';
+        }
+      }
+    }
   }
 }
 
-// What has been paid: for a member, including the receipt that admitted
-// them (paymentsForMember reads member_id and, falling back, the
-// application that created them — they did not exist when that one was
-// taken). A customer carries no such member_id-equivalent column on
-// payment; the account-opening receipt is the only one there ever is today,
-// and it is found the same way it was on the application itself.
+// What has been paid, across every application that is this person's
+// (lifecycle test, LC-02): for a member, including the receipt that
+// admitted them (paymentsForMember also reads member_id); for a customer,
+// every account opened or reopened.
 const payments: Payment[] = canSeePayments
   ? member
     ? await paymentsForMember(member.id)
-    : await paymentsForApplication(customer!.applicationId)
+    : await paymentsForCustomer(customer!.id)
   : [];
 
 // Officer feedback: a cash deposit over the threshold was signed for on a
@@ -216,25 +382,15 @@ if (sourceOfFundType) {
 }
 
 // Officer feedback: what has been filed for this person, everywhere it was
-// filed — a member can have more than one application on file (the founding
-// membership application plus any additional_account application since),
-// each carrying its own checklist; a customer only ever has the one. Only
-// what has actually been uploaded — the checklist's own Missing rows belong
-// on the application page, not this summary.
+// filed — every application that is theirs, each carrying its own
+// checklist (lifecycle test, LC-02: a rejoin, a reopen or a converted
+// member's first account was being left out). Only what has actually been
+// uploaded — the checklist's own Missing rows belong on the application
+// page, not this summary.
 const documentGroups: MemberDocumentGroup[] = canSeeDocuments
-  ? member
-    ? await documentsForMember(member.id, member.applicationId)
-    : customer!.applicationId
-      ? [
-          {
-            applicationId: customer!.applicationId,
-            applicationReference: customer!.applicationReference!,
-            entries: (
-              await checklistFor({ applicationId: customer!.applicationId })
-            ).filter(entry => entry.uploadedAt !== null),
-          },
-        ].filter(g => g.entries.length > 0)
-      : []
+  ? await documentsForPerson(
+      member ? { memberId: member.id } : { customerId: customer!.id }
+    )
   : [];
 
 const dateFormat = new Intl.DateTimeFormat('en-GB', {
@@ -250,6 +406,26 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 // card above, driven by contactFields instead.
 const applicationId = (member ?? customer)!.applicationId;
 const partyGroups = await otherPartyGroups(applicationId);
+const witnesses = await witnessesOf(applicationId);
+// The nominees move to their own editable card when they are offered for
+// correction (nomineeContactGroups); anyone else stays here, read-only.
+const readOnlyPartyGroups = partyGroups.filter(
+  group =>
+    !group.key.startsWith('beneficiary-') &&
+    !(nomineeContactGroups.length > 0 && group.key.startsWith('nominee-'))
+);
+// A minor's Takaful beneficiary has its own card (officer QA: it read as a
+// nominee, and a minor migrated without one showed nothing at all).
+const beneficiaryGroup = partyGroups.find(group =>
+  group.key.startsWith('beneficiary-')
+);
+// Surname, name, NIC — the order the guardian card reads in.
+const PERSON_ORDER = ['surname', 'name', 'nic'];
+const personOrder = (key: string) =>
+  PERSON_ORDER.includes(key) ? PERSON_ORDER.indexOf(key) : PERSON_ORDER.length;
+const beneficiaryDetails = [...(beneficiaryGroup?.details ?? [])].sort(
+  (a, b) => personOrder(a.key) - personOrder(b.key)
+);
 
 const name = (member ?? customer)!.name;
 // Officer feedback: a minor — member or non-member alike — carries a tag so
@@ -257,6 +433,14 @@ const name = (member ?? customer)!.name;
 // which an administrator renaming the type would not change.
 const isMinor = (member ?? customer)!.membershipTypeCode === 'minor';
 const status = (member ?? customer)!.status;
+// Officer direction: a resigned member still holding an open account reads,
+// on screen, as an active non-member. Stored status is untouched by this.
+const resignedNonMember =
+  !!member && isNonMember(member.status, member.accounts);
+// Officer feedback: a customer, or a resigned member still holding an open
+// account, is a non-member — their death is a closure on a death, not a
+// demised claim (that path stays a member-only one, Takaful included).
+const isNonMemberHolder = !!customer || resignedNonMember;
 
 // Officer feedback: a member opens a further account from their own page now
 // (not by searching for themselves on the Applications page). The button —
@@ -266,14 +450,139 @@ const status = (member ?? customer)!.status;
 // offer and the button is gone. Gated on application.capture, like starting
 // any application. Skipped entirely for a converted/inactive record.
 const person = (member ?? customer)!;
+// LC-11: a type of which this person holds a closed account is still held,
+// for this button's purposes — it is reopened from its own row (Reopen)
+// rather than offered again here, which would otherwise show both for the
+// same type.
 const canOpenAnotherAccount =
   canCapture &&
-  person.status === 'active' &&
+  canOpenAccount(person.status) &&
   openableAccountTypes(
     await listAccountTypes(),
     person.membershipTypeId,
     new Set(person.accounts.map(a => a.accountTypeId))
   ).length > 0;
+// S-1305: a deposit into one of their accounts. Gated on transaction.capture
+// (the counter officer's, like payment.record) and on there being an active
+// account to take it — the deposit page itself decides the rest.
+const canDeposit =
+  principal.permissions.has('transaction.capture') &&
+  canTransact(person.status) &&
+  person.accounts.some(a => a.status === 'active');
+// S-1701: a member who cannot transact, and why, in one line — unless a
+// POST above already set a notice of its own (a reactivation just done),
+// which takes priority over the status line it would otherwise replace.
+if (!notice) {
+  notice =
+    member && !resignedNonMember
+      ? statusNotice(member.status, member.statusChangedAt)
+      : null;
+}
+// S-804/S-805: a dormant member, put back to active by an officer with a
+// reason. Recomputed against the (possibly just-reloaded) member so the
+// button is gone the moment reactivation succeeds.
+const canReactivate =
+  !!member &&
+  member.status === 'dormant' &&
+  principal.permissions.has(PERMISSION_REACTIVATE);
+// M26: a resigned member rejoins through a membership application that
+// names them, offered until one is on its way.
+const rejoining =
+  member && member.status === 'resigned'
+    ? await rejoinInFlightFor(member.id)
+    : null;
+const canRejoin =
+  !!member && member.status === 'resigned' && canCapture && !rejoining;
+// A resigned member's Open other account moves up beside Rejoin.
+const resignedMember = member?.status === 'resigned';
+// M26: the additional-account applications on their way, by the type each
+// would reopen — a closed account's row links to its own rather than
+// offering to start another. A customer's too (lifecycle test, LC-06).
+const reopening = await accountApplicationsInFlightFor(
+  member ? member.id : { customerId: customer!.id }
+);
+const canReopen = (account: { status: string; accountTypeId: string }) =>
+  canCapture &&
+  canOpenAccount(person.status) &&
+  account.status === 'closed' &&
+  !reopening.has(account.accountTypeId);
+// A minor — member or non-member — whose guardian is demised
+// (members/guardian.ts): money still comes in, but none leaves until a new
+// guardian is recorded and approved — the ledger refuses it, and the buttons
+// that would start it are not offered.
+const minorHolderId = isMinor ? (member ?? customer)!.id : null;
+const guardianGone = minorHolderId
+  ? await guardianGoneMessage(minorHolderId)
+  : null;
+const guardianChange = minorHolderId
+  ? await openGuardianChange(minorHolderId)
+  : null;
+// Offered only while there is one to make or decide: a guardian is replaced
+// once they are demised, never while they are alive (officer direction).
+const canChangeGuardian =
+  !!minorHolderId &&
+  (!!guardianGone || !!guardianChange) &&
+  (principal.permissions.has(GUARDIAN_CHANGE) ||
+    principal.permissions.has(GUARDIAN_APPROVE));
+const canClose = canDeposit && !guardianGone;
+// S-1703: leaving the Society, and the request on its way where there is
+// one. Only a member resigns; a customer holds no membership to end.
+const resigning =
+  member && principal.permissions.has('transaction.view')
+    ? await resignationInFlightFor(member.id)
+    : null;
+// Only a member still in the membership resigns or is claimed for: a
+// resigned one deals as a non-member and has no membership left to end.
+const inMembership = member?.status === 'active';
+const canResign = inMembership && canDeposit && !resigning && !guardianGone;
+// S-1704: settling a deceased member's entitlements.
+const settling =
+  member && principal.permissions.has('transaction.view')
+    ? await demiseInFlightFor(member.id)
+    : null;
+// A Corporate member has no claim (claimableMembershipType): it resigns.
+const canClaim =
+  inMembership &&
+  canDeposit &&
+  !resigning &&
+  !settling &&
+  claimableMembershipType(member!.membershipTypeCode);
+// Officer feedback: the same button, for a non-member — a closure on a
+// death instead of a demised claim, no Takaful. Offered wherever Deposit
+// is (canDeposit), same as the member's Demised claim above.
+const dying = principal.permissions.has('transaction.view')
+  ? isNonMemberHolder
+    ? await deathClosureInFlightFor(
+        member
+          ? { memberId: member.id, customerId: null }
+          : { memberId: null, customerId: customer!.id }
+      )
+    : null
+  : null;
+// Not for a company (claimableMembershipType), which does not die.
+const canClaimNonMember =
+  isNonMemberHolder &&
+  canDeposit &&
+  !dying &&
+  claimableMembershipType((member ?? customer)!.membershipTypeCode);
+const closing = principal.permissions.has('transaction.view')
+  ? await closuresInFlightFor(
+      member ? { memberId: member.id } : { customerId: customer!.id }
+    )
+  : new Map<string, { id: string; reference: string; status: string }>();
+// S-1309: each account's balance, from the ledger's cache. Null for one
+// nothing has ever posted to, which the page shows as a dash rather than
+// a zero that would read as a fact.
+const balances = new Map(
+  canSeeAccounts
+    ? await Promise.all(
+        person.accounts.map(
+          async a =>
+            [a.id, (await accountBalance(a.id))?.balance ?? null] as const
+        )
+      )
+    : []
+);
 const joinedAt = (member ?? customer)!.joinedAt;
 const applicationReference = (member ?? customer)!.applicationReference;
 // Officer feedback: what the Secretary and the President said on the way to
@@ -284,45 +593,181 @@ const approvalComments = applicationId
   ? await approvalCommentsFor(applicationId)
   : [];
 const pageTitle = member ? member.memberNo : name;
+const documentCount = documentGroups.reduce(
+  (sum, group) => sum + group.entries.length,
+  0
+);
 ---
 
 <DashboardLayout
   title={`${pageTitle} · Al Barakah MCSL`}
   heading={member ? `Member ${member.memberNo}` : name}
 >
-  <div class="mx-auto max-w-4xl space-y-6">
-    <a
-      href="/members"
-      class="inline-block text-sm text-neutral-500 underline dark:text-neutral-400"
-    >
-      ← All members
-    </a>
+  <div class={PAGE.detail}>
+    <div class="flex flex-wrap items-center justify-between gap-2">
+      <a href="/members" class={`${HINT} inline-block underline`}>
+        ← All members
+      </a>
+      {/* Officer feedback: the transactions an officer starts on this
+          person, up here where they are reached first. Deposit today; each
+          later kind (Transfer, Withdrawal, …) joins it as it arrives, and the
+          Transactions page starts the same ones from a number instead. */}
+      {canDeposit && (
+        <div class="flex flex-wrap gap-2">
+          <a href={`/members/${recordId}/deposit`} class={BUTTON_SM}>
+            Deposit
+          </a>
+          {!guardianGone && (
+            <a href={`/members/${recordId}/withdraw`} class={BUTTON_SM}>
+              Withdrawal
+            </a>
+          )}
+          {!guardianGone && (
+            <a href={`/members/${recordId}/transfer`} class={BUTTON_SM}>
+              Transfer
+            </a>
+          )}
+          {canResign && (
+            <a href={`/members/${recordId}/resign`} class={DANGER_SM}>
+              Resign
+            </a>
+          )}
+          {resigning && (
+            <a
+              href={
+                resigning.status === 'draft' || resigning.status === 'returned'
+                  ? `/resignations/${resigning.id}`
+                  : `/transactions/${resigning.id}`
+              }
+              class="rounded-lg bg-amber-100 px-3 py-1.5 text-sm font-medium text-amber-900 underline dark:bg-amber-950 dark:text-amber-200"
+            >
+              Resigning · {resigning.reference}
+            </a>
+          )}
+          {canClaim && (
+            <a href={`/members/${recordId}/demise`} class={SECONDARY_SM}>
+              Demised claim
+            </a>
+          )}
+          {settling && (
+            <a
+              href={
+                settling.status === 'draft' || settling.status === 'returned'
+                  ? `/demises/${settling.id}`
+                  : `/transactions/${settling.id}`
+              }
+              class="rounded-lg bg-amber-100 px-3 py-1.5 text-sm font-medium text-amber-900 underline dark:bg-amber-950 dark:text-amber-200"
+            >
+              Claim · {settling.reference}
+            </a>
+          )}
+          {canClaimNonMember && (
+            <a
+              href={`/members/${recordId}/close?cause=death`}
+              class={SECONDARY_SM}
+            >
+              Demised claim
+            </a>
+          )}
+          {dying && (
+            <a
+              href={
+                dying.status === 'draft' || dying.status === 'returned'
+                  ? `/closures/${dying.id}`
+                  : `/transactions/${dying.id}`
+              }
+              class="rounded-lg bg-amber-100 px-3 py-1.5 text-sm font-medium text-amber-900 underline dark:bg-amber-950 dark:text-amber-200"
+            >
+              Claim · {dying.reference}
+            </a>
+          )}
+        </div>
+      )}
+    </div>
 
-    {error && (
-      <div class="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-        {error}
+    {error && <div class={NOTICE_ERROR}>{error}</div>}
+    {(guardianGone || guardianChange) && (
+      <div class={NOTICE_WARN}>
+        {guardianChange
+          ? 'A new guardian is waiting for approval.'
+          : guardianGone}{' '}
+        {canChangeGuardian && (
+          <a href={`/members/${recordId}/guardian`} class="underline">
+            {guardianChange ? 'Open it' : 'Change guardian'}
+          </a>
+        )}
       </div>
     )}
+    {notice && (
+      <div class="rounded-lg border border-amber-300 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:text-amber-200">
+        {notice}
+      </div>
+    )}
+    {/* Officer feedback: a resigned member's two ways back sit on one row —
+        Rejoin on the left, Open other account on the far right. */}
+    {(canRejoin || rejoining || (resignedMember && canOpenAnotherAccount)) && (
+      <div class="flex flex-wrap items-center gap-3">
+        {canRejoin && (
+          <form method="post">
+            <input type="hidden" name="intent" value="rejoin" />
+            <button type="submit" class={BUTTON_SM}>
+              Rejoin
+            </button>
+          </form>
+        )}
+        {rejoining && (
+          <a
+            href={`/applications/${rejoining.id}`}
+            class="rounded-lg bg-amber-100 px-3 py-1.5 text-sm font-medium text-amber-900 underline dark:bg-amber-950 dark:text-amber-200"
+          >
+            Rejoining · {rejoining.reference}
+          </a>
+        )}
+        {resignedMember && canOpenAnotherAccount && (
+          <a
+            href={`/applications/new-account?member=${member!.id}`}
+            class={`${SECONDARY_SM} ml-auto`}
+          >
+            Open other account
+          </a>
+        )}
+      </div>
+    )}
+    {canReactivate && (
+      <form method="post" class="flex flex-wrap items-end gap-3">
+        <input type="hidden" name="intent" value="reactivate" />
+        <label class={LABEL}>
+          Reason
+          <input
+            type="text"
+            name="reason"
+            required
+            class={`${INPUT_SM} mt-1 block w-64`}
+          />
+        </label>
+        <button type="submit" class={BUTTON_SM}>
+          Reactivate
+        </button>
+      </form>
+    )}
 
-    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
+    <section class={CARD}>
       <div data-edit-block data-record-id={recordId}>
         <div class="flex flex-wrap items-start justify-between gap-2">
           <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-              {name}
-            </h2>
+            <h2 class={CARD_TITLE}>{name}</h2>
             {member && (
               <code class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
                 {member.memberNo}
               </code>
             )}
-            {customer && (
+            {(customer || resignedNonMember) && (
               <span class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
                 Non-member
               </span>
             )}
             <span class="bg-mint-200 dark:bg-mint-900 rounded px-1.5 py-0.5 text-xs text-neutral-800 dark:text-neutral-100">
-              {status}
+              {statusLabel(shownStatus(status, resignedNonMember))}
             </span>
             {isMinor && (
               <span class="rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-900 dark:bg-amber-950 dark:text-amber-200">
@@ -335,7 +780,7 @@ const pageTitle = member ? member.memberNo : name;
               type="button"
               data-edit-toggle
               aria-label="Edit details"
-              class="shrink-0 rounded-lg border border-neutral-300 p-1.5 text-neutral-600 transition hover:bg-neutral-200 dark:border-neutral-600 dark:text-neutral-300 dark:hover:bg-neutral-800"
+              class={ICON_BUTTON}
             >
               <svg
                 xmlns="http://www.w3.org/2000/svg"
@@ -349,9 +794,14 @@ const pageTitle = member ? member.memberNo : name;
             </button>
           )}
         </div>
-        <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+        <p class={`${HINT} mt-1`}>
           {member && `${member.membershipTypeName} · `}joined{' '}
-          {dateFormat.format(joinedAt)}
+          {formatDateOnly(joinedAt)}
+          {member?.rejoinedAt &&
+            ` · rejoined ${formatDateOnly(member.rejoinedAt)}`}
+          {resignedNonMember &&
+            member!.statusChangedAt &&
+            ` · membership resigned ${formatDateOnly(member!.statusChangedAt)}`}
           {applicationReference && (
             <>
               {' '}
@@ -387,23 +837,43 @@ const pageTitle = member ? member.memberNo : name;
                 data-subject={field.subject}
                 data-field-key={field.fieldKey}
               >
-                <dt class="min-w-32 text-neutral-500 capitalize dark:text-neutral-400">
+                <dt class="min-w-32 text-neutral-500 dark:text-neutral-400">
                   {field.label}
                 </dt>
                 <dd class="w-full text-neutral-800 dark:text-neutral-100">
                   <span data-view>{fieldDisplay(field)}</span>
-                  {canEditContact && field.editable && (
-                    <input
-                      type={field.dataType === 'phone' ? 'tel' : 'text'}
-                      data-edit
-                      value={field.value}
-                      placeholder={
-                        field.dataType === 'phone' ? '5789 1234' : undefined
-                      }
-                      hidden
-                      class="w-full rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-                    />
-                  )}
+                  {canEditContact &&
+                    field.editable &&
+                    (field.dataType === 'choice' && field.choices.length > 0 ? (
+                      <select
+                        data-edit
+                        data-original={field.value}
+                        hidden
+                        class={`${INPUT_SM} w-full`}
+                      >
+                        <option value="" />
+                        {choiceOptions(field).map(choice => (
+                          <option
+                            value={choice}
+                            selected={choice === field.value}
+                          >
+                            {choice}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        type={field.dataType === 'phone' ? 'tel' : 'text'}
+                        data-edit
+                        data-original={field.value}
+                        value={field.value}
+                        placeholder={
+                          field.dataType === 'phone' ? '5789 1234' : undefined
+                        }
+                        hidden
+                        class={`${INPUT_SM} w-full`}
+                      />
+                    ))}
                 </dd>
               </div>
             ))}
@@ -412,9 +882,7 @@ const pageTitle = member ? member.memberNo : name;
 
         {employmentContactFields.length > 0 && (
           <div class="mt-5 border-t border-neutral-200 pt-4 dark:border-neutral-800">
-            <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-200">
-              Employment Details
-            </h3>
+            <h3 class={SUBTITLE}>Employment Details</h3>
             <dl class="mt-2 grid gap-x-6 gap-y-2 sm:grid-cols-2">
               {employmentContactFields.map(field => (
                 <div
@@ -423,23 +891,44 @@ const pageTitle = member ? member.memberNo : name;
                   data-subject={field.subject}
                   data-field-key={field.fieldKey}
                 >
-                  <dt class="min-w-32 text-neutral-500 capitalize dark:text-neutral-400">
+                  <dt class="min-w-32 text-neutral-500 dark:text-neutral-400">
                     {field.label}
                   </dt>
                   <dd class="w-full text-neutral-800 dark:text-neutral-100">
                     <span data-view>{fieldDisplay(field)}</span>
-                    {canEditContact && field.editable && (
-                      <input
-                        type={field.dataType === 'phone' ? 'tel' : 'text'}
-                        data-edit
-                        value={field.value}
-                        placeholder={
-                          field.dataType === 'phone' ? '5789 1234' : undefined
-                        }
-                        hidden
-                        class="w-full rounded-lg border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100"
-                      />
-                    )}
+                    {canEditContact &&
+                      field.editable &&
+                      (field.dataType === 'choice' &&
+                      field.choices.length > 0 ? (
+                        <select
+                          data-edit
+                          data-original={field.value}
+                          hidden
+                          class={`${INPUT_SM} w-full`}
+                        >
+                          <option value="" />
+                          {choiceOptions(field).map(choice => (
+                            <option
+                              value={choice}
+                              selected={choice === field.value}
+                            >
+                              {choice}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          type={field.dataType === 'phone' ? 'tel' : 'text'}
+                          data-edit
+                          data-original={field.value}
+                          value={field.value}
+                          placeholder={
+                            field.dataType === 'phone' ? '5789 1234' : undefined
+                          }
+                          hidden
+                          class={`${INPUT_SM} w-full`}
+                        />
+                      ))}
                   </dd>
                 </div>
               ))}
@@ -455,17 +944,13 @@ const pageTitle = member ? member.memberNo : name;
               class="mb-2 text-sm text-red-700 dark:text-red-300"
             />
             <div data-edit-actions hidden class="flex items-center gap-3">
-              <button
-                type="button"
-                data-edit-save
-                class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
-              >
+              <button type="button" data-edit-save class={BUTTON_SM}>
                 Save
               </button>
               <button
                 type="button"
                 data-edit-cancel
-                class="text-sm text-neutral-500 underline dark:text-neutral-400"
+                class={`${HINT} underline`}
               >
                 Cancel
               </button>
@@ -478,32 +963,33 @@ const pageTitle = member ? member.memberNo : name;
         // "Apply to become a member" is a customer-only action; "Open other
         // account" is offered to a member and a non-member alike, whenever
         // there is still a type they can open (canOpenAnotherAccount).
-        ((customer && customer.status === 'active' && canConvertCustomer) ||
-          canOpenAnotherAccount) && (
+        ((customer &&
+          ['active', 'closed'].includes(customer.status) &&
+          canConvertCustomer) ||
+          (canOpenAnotherAccount && !resignedMember)) && (
           <div class="mt-5 flex flex-wrap gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800">
-            {customer && customer.status === 'active' && canConvertCustomer && (
-              <form method="post">
-                <input
-                  type="hidden"
-                  name="intent"
-                  value="apply-for-membership"
-                />
-                <button
-                  type="submit"
-                  class="bg-mint-300 hover:bg-mint-400 rounded-lg px-3 py-1.5 text-sm font-bold text-neutral-800 transition"
-                >
-                  Apply to become a member
-                </button>
-              </form>
-            )}
-            {canOpenAnotherAccount && (
+            {customer &&
+              ['active', 'closed'].includes(customer.status) &&
+              canConvertCustomer && (
+                <form method="post">
+                  <input
+                    type="hidden"
+                    name="intent"
+                    value="apply-for-membership"
+                  />
+                  <button type="submit" class={BUTTON_SM}>
+                    Apply to become a member
+                  </button>
+                </form>
+              )}
+            {canOpenAnotherAccount && !resignedMember && (
               <a
                 href={
                   member
                     ? `/applications/new-account?member=${member.id}`
                     : `/applications/new-account?customer=${customer!.id}`
                 }
-                class="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-200 dark:border-neutral-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                class={SECONDARY_SM}
               >
                 Open other account
               </a>
@@ -514,15 +1000,20 @@ const pageTitle = member ? member.memberNo : name;
     </section>
 
     {guardianContactFields.length > 0 && (
-      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-          Parent / Guardian
-        </h2>
+      <section class={CARD}>
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <h2 class={CARD_TITLE}>Parent / Guardian</h2>
+          {canChangeGuardian && (
+            <a href={`/members/${recordId}/guardian`} class={SECONDARY_SM}>
+              Change guardian
+            </a>
+          )}
+        </div>
         <dl class="mt-4 grid gap-x-6 gap-y-2 sm:grid-cols-2">
           {guardianContactFields.map(field => (
             <div class="flex gap-2 text-sm">
-              <dt class="min-w-32 text-neutral-500 capitalize dark:text-neutral-400">
-                {field.label}
+              <dt class="min-w-32 text-neutral-500 dark:text-neutral-400">
+                {guardianFieldLabel(field.fieldKey, field.label)}
               </dt>
               <dd class="text-neutral-800 dark:text-neutral-100">
                 {field.fieldKey === 'member_id' && guardianLinkId ? (
@@ -540,10 +1031,8 @@ const pageTitle = member ? member.memberNo : name;
     )}
 
     {guardedParties.length > 0 && (
-      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-          Guardian of
-        </h2>
+      <section class={CARD}>
+        <h2 class={CARD_TITLE}>Guardian of</h2>
         <ul class="mt-4 space-y-2">
           {guardedParties.map(party => (
             <li class="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
@@ -556,10 +1045,14 @@ const pageTitle = member ? member.memberNo : name;
               <span class="text-neutral-800 dark:text-neutral-100">
                 {party.name}
               </span>
-              <span class="text-neutral-500 capitalize dark:text-neutral-400">
+              <span
+                class={`text-neutral-500 dark:text-neutral-400 ${party.isMember || party.isNonMember ? '' : 'capitalize'}`}
+              >
                 {party.isMember
-                  ? party.status
-                  : `application · ${party.status}`}
+                  ? statusLabel(party.status)
+                  : party.isNonMember
+                    ? `Non-member · ${statusLabel(party.status)}`
+                    : `application · ${party.status}`}
               </span>
             </li>
           ))}
@@ -567,22 +1060,149 @@ const pageTitle = member ? member.memberNo : name;
       </section>
     )}
 
-    {partyGroups.length > 0 && (
-      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-          Nominee
-        </h2>
+    <WitnessesCard witnesses={witnesses} />
+
+    {(isMinor || beneficiaryGroup) && (
+      <section class={CARD}>
+        <h2 class={CARD_TITLE}>Takaful beneficiary</h2>
+        {beneficiaryGroup ? (
+          <dl class="mt-4 grid gap-x-6 gap-y-2 sm:grid-cols-2">
+            {beneficiaryDetails.map(d => (
+              <div class="flex gap-2 text-sm">
+                <dt class="min-w-32 text-neutral-500 capitalize dark:text-neutral-400">
+                  {partyDetailLabel(d.key, d.label)}
+                </dt>
+                <dd class="text-neutral-800 dark:text-neutral-100">
+                  {d.value}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        ) : (
+          <p class={`mt-1 ${HINT}`}>None on file.</p>
+        )}
+      </section>
+    )}
+
+    {nomineeContactGroups.length > 0 && (
+      <section class={CARD}>
+        <div data-edit-block data-record-id={recordId}>
+          <div class="flex flex-wrap items-start justify-between gap-2">
+            <h2 class={CARD_TITLE}>Nominee</h2>
+            <button
+              type="button"
+              data-edit-toggle
+              aria-label="Edit nominee"
+              class={ICON_BUTTON}
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+                class="h-4 w-4"
+              >
+                <path d="M13.586 3.586a2 2 0 1 1 2.828 2.828l-8.5 8.5a2 2 0 0 1-.878.507l-3 .857a.5.5 0 0 1-.618-.618l.857-3a2 2 0 0 1 .507-.878l8.5-8.5Z" />
+                <path d="M11.379 5.793 14.207 8.621 6.5 16.328a1 1 0 0 1-.439.254l-2.121.606.606-2.12a1 1 0 0 1 .254-.44l6.579-6.835Z" />
+              </svg>
+            </button>
+          </div>
+          <div class="mt-4 space-y-4">
+            {nomineeContactGroups.map(group => (
+              <div>
+                {nomineeContactGroups.length > 1 && (
+                  <h3 class={SUBTITLE}>Nominee {group.ordinal}</h3>
+                )}
+                <dl class="mt-2 grid gap-x-6 gap-y-2 sm:grid-cols-2">
+                  {group.fields.map(field => (
+                    <div
+                      class="flex gap-2 text-sm"
+                      data-field
+                      data-subject="nominee"
+                      data-ordinal={field.ordinal}
+                      data-field-key={field.fieldKey}
+                    >
+                      <dt class="min-w-32 text-neutral-500 dark:text-neutral-400">
+                        {partyDetailLabel(
+                          field.fieldKey,
+                          field.label.replace(/^Nominee\s+(\w)/i, (_, c) =>
+                            c.toUpperCase()
+                          )
+                        )}
+                      </dt>
+                      <dd class="w-full text-neutral-800 dark:text-neutral-100">
+                        <span data-view>{fieldDisplay(field)}</span>
+                        {field.dataType === 'choice' &&
+                        field.choices.length > 0 ? (
+                          <select
+                            data-edit
+                            data-original={field.value}
+                            hidden
+                            class={`${INPUT_SM} w-full`}
+                          >
+                            <option value="" />
+                            {choiceOptions(field).map(choice => (
+                              <option
+                                value={choice}
+                                selected={choice === field.value}
+                              >
+                                {choice}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <input
+                            type={field.dataType === 'phone' ? 'tel' : 'text'}
+                            data-edit
+                            data-original={field.value}
+                            value={field.value}
+                            hidden
+                            class={`${INPUT_SM} w-full`}
+                          />
+                        )}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
+            ))}
+          </div>
+          <div class="mt-4">
+            <p
+              data-edit-error
+              hidden
+              class="mb-2 text-sm text-red-700 dark:text-red-300"
+            />
+            <div data-edit-actions hidden class="flex items-center gap-3">
+              <button type="button" data-edit-save class={BUTTON_SM}>
+                Save
+              </button>
+              <button
+                type="button"
+                data-edit-cancel
+                class={`${HINT} underline`}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+    )}
+
+    {readOnlyPartyGroups.length > 0 && (
+      <section class={CARD}>
+        <h2 class={CARD_TITLE}>Nominee</h2>
         <div class="mt-4 space-y-4">
-          {partyGroups.map(group => (
+          {readOnlyPartyGroups.map(group => (
             <div>
-              <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-200">
-                {group.label}
-              </h3>
+              {readOnlyPartyGroups.length > 1 && (
+                <h3 class={SUBTITLE}>{group.label}</h3>
+              )}
               <dl class="mt-2 grid gap-x-6 gap-y-2 sm:grid-cols-2">
                 {group.details.map(d => (
                   <div class="flex gap-2 text-sm">
                     <dt class="min-w-32 text-neutral-500 capitalize dark:text-neutral-400">
-                      {d.label}
+                      {partyDetailLabel(d.key, d.label)}
                     </dt>
                     <dd class="text-neutral-800 dark:text-neutral-100">
                       {d.value}
@@ -596,10 +1216,26 @@ const pageTitle = member ? member.memberNo : name;
       </section>
     )}
 
-    <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-      <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-        Accounts
-      </h2>
+    <section class={CARD}>
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <h2 class={CARD_TITLE}>Accounts</h2>
+        {principal.permissions.has('transaction.view') && (
+          <a
+            href={`/members/${recordId}/transactions`}
+            class="text-sm font-medium text-neutral-700 underline hover:text-neutral-900 dark:text-neutral-200 dark:hover:text-neutral-100"
+          >
+            All transactions
+          </a>
+        )}
+        {canSeeAccounts && (
+          <a
+            href={`/members/${recordId}/statement`}
+            class="text-sm font-medium text-neutral-700 underline hover:text-neutral-900 dark:text-neutral-200 dark:hover:text-neutral-100"
+          >
+            Statement
+          </a>
+        )}
+      </div>
       {(member ?? customer)!.accounts.length === 0 ? (
         <p class="mt-1 text-sm text-red-700 dark:text-red-300">
           {member
@@ -611,27 +1247,86 @@ const pageTitle = member ? member.memberNo : name;
       ) : (
         <ul class="mt-4 space-y-3">
           {(member ?? customer)!.accounts.map(account => (
-            <li class="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+            <li class={PANEL}>
               <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
                 <code class="font-medium text-neutral-800 dark:text-neutral-100">
                   {account.accountNo}
                 </code>
-                <span class="text-sm text-neutral-600 dark:text-neutral-300">
-                  {account.accountTypeName}
-                </span>
-                {'isMembershipDefault' in account &&
-                  account.isMembershipDefault && (
-                    <span class="bg-mint-200 dark:bg-mint-900 rounded px-1.5 py-0.5 text-xs text-neutral-800 dark:text-neutral-100">
-                      {account.openedViaMigration
-                        ? 'migrated'
-                        : 'opened on approval'}
-                    </span>
-                  )}
+                <span class={MUTED}>{account.accountTypeName}</span>
                 <span class="text-xs text-neutral-500 dark:text-neutral-400">
-                  {account.category} · {account.status} ·{' '}
+                  {account.category} · {statusLabel(account.status)} ·{' '}
                   {account.openedViaMigration ? 'migrated' : 'opened'}{' '}
                   {dateFormat.format(account.openedAt)}
+                  {account.status === 'closed' &&
+                    account.closedAt &&
+                    ` · closed ${dateFormat.format(account.closedAt)}`}
                 </span>
+                {account.reopenedAt && account.status !== 'closed' && (
+                  <span class={PILL}>
+                    Reopened {dateFormat.format(account.reopenedAt)}
+                  </span>
+                )}
+                {canSeeAccounts && (
+                  <>
+                    <span class="ml-auto font-medium text-neutral-800 tabular-nums dark:text-neutral-100">
+                      {balances.get(account.id) === null
+                        ? '—'
+                        : formatMoney(balances.get(account.id)!)}
+                    </span>
+                    <a href={`/accounts/${account.id}`} class={SECONDARY_XS}>
+                      History
+                    </a>
+                  </>
+                )}
+                {account.status === 'closed' &&
+                  reopening.has(account.accountTypeId) && (
+                    <a
+                      href={`/applications/${reopening.get(account.accountTypeId)!.id}/account`}
+                      class="rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-900 underline dark:bg-amber-950 dark:text-amber-200"
+                    >
+                      Reopening ·{' '}
+                      {reopening.get(account.accountTypeId)!.reference}
+                    </a>
+                  )}
+                {canReopen(account) &&
+                  !(
+                    'isMembershipDefault' in account &&
+                    account.isMembershipDefault
+                  ) && (
+                    <form method="post">
+                      <input type="hidden" name="intent" value="reopen" />
+                      <input
+                        type="hidden"
+                        name="accountTypeId"
+                        value={account.accountTypeId}
+                      />
+                      <button type="submit" class={SECONDARY_XS}>
+                        Reopen
+                      </button>
+                    </form>
+                  )}
+                {closing.has(account.id) ? (
+                  <a
+                    href={`/transactions/${closing.get(account.id)!.id}`}
+                    class="rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-900 underline dark:bg-amber-950 dark:text-amber-200"
+                  >
+                    Closing · {closing.get(account.id)!.reference}
+                  </a>
+                ) : (
+                  canClose &&
+                  account.status === 'active' &&
+                  !(
+                    'isMembershipDefault' in account &&
+                    account.isMembershipDefault
+                  ) && (
+                    <a
+                      href={`/members/${recordId}/close?account=${account.id}`}
+                      class={DANGER_XS}
+                    >
+                      Close
+                    </a>
+                  )
+                )}
               </div>
             </li>
           ))}
@@ -639,46 +1334,78 @@ const pageTitle = member ? member.memberNo : name;
       )}
     </section>
 
-    {canSeeDocuments && (
-      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-          Documents
-        </h2>
-        {documentGroups.length === 0 ? (
-          <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
-            Nothing filed for {member ? 'this member' : 'them'} yet.
-          </p>
-        ) : (
-          <div class="mt-4 space-y-5">
-            {documentGroups.map(group => (
-              <div>
-                {documentGroups.length > 1 && (
-                  <h3 class="text-sm font-semibold text-neutral-700 dark:text-neutral-200">
-                    {group.applicationReference}
-                  </h3>
-                )}
-                <ul class="mt-2 space-y-2">
-                  {group.entries.map(entry => (
-                    <li class="flex items-center justify-between gap-3 rounded-xl border border-neutral-200 bg-white px-4 py-3 dark:border-neutral-800 dark:bg-neutral-900">
-                      <span class="font-medium text-neutral-800 dark:text-neutral-100">
-                        {entry.documentName}
-                      </span>
-                      <button
-                        type="button"
-                        data-view-document
-                        data-document-id={entry.documentId}
-                        class="shrink-0 font-medium text-neutral-700 underline hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-neutral-100"
-                      >
-                        View
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-          </div>
+    {/* Officer feedback: documents and payments grow with every year of a
+        membership, so they open in a dialog from two buttons rather than
+        lengthening the page. */}
+    {(canSeeDocuments || canSeePayments) && (
+      <div class="flex flex-wrap gap-2">
+        {canSeeDocuments && (
+          <button
+            type="button"
+            data-open-dialog="member-documents-dialog"
+            class={SECONDARY_SM}
+          >
+            Documents ({documentCount})
+          </button>
         )}
-      </section>
+        {canSeePayments && (
+          <button
+            type="button"
+            data-open-dialog="member-payments-dialog"
+            class={SECONDARY_SM}
+          >
+            Payments ({payments.length})
+          </button>
+        )}
+      </div>
+    )}
+
+    {canSeeDocuments && (
+      <dialog
+        id="member-documents-dialog"
+        class={`${DIALOG} w-[90vw] max-w-2xl p-0`}
+      >
+        <div class={DIALOG_HEADER}>
+          <p class="text-sm font-semibold">Documents</p>
+          <button type="button" data-close-dialog class={SECONDARY_XS}>
+            Close
+          </button>
+        </div>
+        <div class="max-h-[70vh] overflow-y-auto px-5 py-4">
+          {documentGroups.length === 0 ? (
+            <p class={HINT}>
+              Nothing filed for {member ? 'this member' : 'them'} yet.
+            </p>
+          ) : (
+            <div class="space-y-5">
+              {documentGroups.map(group => (
+                <div>
+                  {documentGroups.length > 1 && (
+                    <h3 class={SUBTITLE}>{group.applicationReference}</h3>
+                  )}
+                  <ul class="mt-2 space-y-2">
+                    {group.entries.map(entry => (
+                      <li class="flex items-center justify-between gap-3 rounded-xl border border-neutral-200 bg-white px-4 py-3 dark:border-neutral-800 dark:bg-neutral-900">
+                        <span class="font-medium text-neutral-800 dark:text-neutral-100">
+                          {entry.documentName}
+                        </span>
+                        <button
+                          type="button"
+                          data-view-document
+                          data-document-id={entry.documentId}
+                          class={VIEW_BUTTON}
+                        >
+                          View
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </dialog>
     )}
 
     {canSeeDocuments && <DocumentViewer />}
@@ -686,14 +1413,14 @@ const pageTitle = member ? member.memberNo : name;
     {approvalComments.length > 0 && (
       <dialog
         id="approval-comments-dialog"
-        class="fixed top-1/2 left-1/2 m-0 w-[90vw] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-neutral-200 bg-white p-0 text-neutral-800 backdrop:bg-neutral-900/50 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100"
+        class={`${DIALOG} w-[90vw] max-w-lg p-0`}
       >
-        <div class="flex items-center justify-between gap-3 border-b border-neutral-200 px-5 py-3 dark:border-neutral-800">
+        <div class={DIALOG_HEADER}>
           <p class="truncate text-sm font-semibold">{applicationReference}</p>
           <button
             type="button"
             data-close-approval-comments
-            class="shrink-0 rounded-lg border border-neutral-300 px-2.5 py-1 text-xs font-medium text-neutral-600 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-300 dark:hover:bg-neutral-800"
+            class={`${SECONDARY_XS} shrink-0`}
           >
             Close
           </button>
@@ -715,64 +1442,71 @@ const pageTitle = member ? member.memberNo : name;
     )}
 
     {canSeePayments && (
-      <section class="rounded-2xl border border-neutral-200 bg-neutral-100 p-6 dark:border-neutral-800 dark:bg-neutral-950">
-        <h2 class="text-lg font-semibold text-neutral-800 dark:text-neutral-100">
-          Payments
-        </h2>
-        {payments.length === 0 ? (
-          <p class="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
-            Nothing recorded against this member.
-          </p>
-        ) : (
-          <ul class="mt-4 space-y-3">
-            {payments.map(payment => (
-              <li class="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
-                <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
-                  <a
-                    href={`/receipts/${payment.id}`}
-                    class="font-medium text-neutral-800 underline dark:text-neutral-100"
-                  >
-                    {payment.receiptNo}
-                  </a>
-                  <span class="font-medium text-neutral-800 tabular-nums dark:text-neutral-100">
-                    {payment.kind === 'refund' && '−'}
-                    {formatMoney(payment.totalAmount, payment.currency)}
-                  </span>
-                  {payment.kind === 'refund' && (
-                    <span class="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200">
-                      refund of {payment.refundsReceiptNo}
+      <dialog
+        id="member-payments-dialog"
+        class={`${DIALOG} w-[90vw] max-w-2xl p-0`}
+      >
+        <div class={DIALOG_HEADER}>
+          <p class="text-sm font-semibold">Payments</p>
+          <button type="button" data-close-dialog class={SECONDARY_XS}>
+            Close
+          </button>
+        </div>
+        <div class="max-h-[70vh] overflow-y-auto px-5 py-4">
+          {payments.length === 0 ? (
+            <p class={HINT}>Nothing recorded against this member.</p>
+          ) : (
+            <ul class="space-y-3">
+              {payments.map(payment => (
+                <li class={PANEL}>
+                  <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <a
+                      href={`/receipts/${payment.id}`}
+                      class="font-medium text-neutral-800 underline dark:text-neutral-100"
+                    >
+                      {payment.receiptNo}
+                    </a>
+                    <span class="font-medium text-neutral-800 tabular-nums dark:text-neutral-100">
+                      {payment.kind === 'refund' && '−'}
+                      {formatMoney(payment.totalAmount, payment.currency)}
                     </span>
-                  )}
-                  {payment.voidedAt && (
-                    <span class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200">
-                      void
-                    </span>
-                  )}
-                  <span class="text-xs text-neutral-500 dark:text-neutral-400">
-                    {METHOD_LABELS[payment.method]} ·{' '}
-                    {dateFormat.format(payment.receivedAt)} · taken by{' '}
-                    {payment.recordedByName}
-                  </span>
-                  {payment.applicationId &&
-                    sourceOfFundByApplication.has(payment.applicationId) && (
-                      <button
-                        type="button"
-                        data-view-document
-                        data-document-id={
-                          sourceOfFundByApplication.get(payment.applicationId)!
-                            .documentId
-                        }
-                        class="rounded-lg border border-neutral-300 px-2.5 py-1 text-xs font-medium text-neutral-600 transition hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-300 dark:hover:bg-neutral-800"
-                      >
-                        Source of Fund
-                      </button>
+                    {payment.kind === 'refund' && (
+                      <span class="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+                        refund of {payment.refundsReceiptNo}
+                      </span>
                     )}
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+                    {payment.voidedAt && (
+                      <span class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200">
+                        void
+                      </span>
+                    )}
+                    <span class="text-xs text-neutral-500 dark:text-neutral-400">
+                      {payment.methodName} ·{' '}
+                      {dateFormat.format(payment.receivedAt)} · taken by{' '}
+                      {payment.recordedByName}
+                    </span>
+                    {payment.applicationId &&
+                      sourceOfFundByApplication.has(payment.applicationId) && (
+                        <button
+                          type="button"
+                          data-view-document
+                          data-document-id={
+                            sourceOfFundByApplication.get(
+                              payment.applicationId
+                            )!.documentId
+                          }
+                          class={VIEW_BUTTON}
+                        >
+                          Source of Fund
+                        </button>
+                      )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </dialog>
     )}
   </div>
 </DashboardLayout>
@@ -789,25 +1523,36 @@ const pageTitle = member ? member.memberNo : name;
   //
   // phone.ts's own forDisplay, duplicated here in the shape a client
   // script can run without importing server code: +230XXXXXXXX (12 chars)
-  // becomes "+230 XXXX XXXX", anything else is shown as stored.
+  // becomes "+230 XXXX XXXX", a 7-digit fixed line "+230 XXX XXXX",
+  // anything else is shown as stored.
   function forDisplayClient(e164: string): string {
     if (e164.startsWith('+230') && e164.length === 12) {
       const local = e164.slice(4);
       return `+230 ${local.slice(0, 4)} ${local.slice(4)}`;
+    }
+    if (e164.startsWith('+230') && e164.length === 11) {
+      const local = e164.slice(4);
+      return `+230 ${local.slice(0, 3)} ${local.slice(3)}`;
     }
     return e164;
   }
 
   interface SavedField {
     subject: string;
+    ordinal?: number;
     fieldKey: string;
     value: string;
     dataType: string;
   }
 
+  // A choice field edits as a <select>, every other field as an <input> —
+  // both carry [data-edit] and data-original, so the rest of this script
+  // treats them alike.
+  type EditElement = HTMLInputElement | HTMLSelectElement;
+
   function setEditing(block: HTMLElement, editing: boolean): void {
     for (const fieldEl of block.querySelectorAll<HTMLElement>('[data-field]')) {
-      const input = fieldEl.querySelector<HTMLInputElement>('[data-edit]');
+      const input = fieldEl.querySelector<EditElement>('[data-edit]');
       if (!input) continue; // Read-only field — mirrored from elsewhere, nothing to toggle.
       const view = fieldEl.querySelector<HTMLElement>('[data-view]');
       if (view) view.hidden = editing;
@@ -835,10 +1580,10 @@ const pageTitle = member ? member.memberNo : name;
     toggle?.addEventListener('click', () => setEditing(block, true));
 
     cancelButton?.addEventListener('click', () => {
-      for (const input of block.querySelectorAll<HTMLInputElement>(
-        '[data-edit]'
-      )) {
-        input.value = input.defaultValue;
+      for (const input of block.querySelectorAll<EditElement>('[data-edit]')) {
+        // defaultValue only exists on <input>; data-original covers both,
+        // set once when rendered and refreshed after each save.
+        input.value = input.dataset.original ?? '';
       }
       setEditing(block, false);
     });
@@ -848,10 +1593,14 @@ const pageTitle = member ? member.memberNo : name;
 
       const changes = [...block.querySelectorAll<HTMLElement>('[data-field]')]
         .map(fieldEl => {
-          const input = fieldEl.querySelector<HTMLInputElement>('[data-edit]');
+          const input = fieldEl.querySelector<EditElement>('[data-edit]');
           if (!input) return null;
           return {
             subject: fieldEl.dataset.subject,
+            // Which nominee; absent for every other subject.
+            ...(fieldEl.dataset.ordinal
+              ? { ordinal: Number(fieldEl.dataset.ordinal) }
+              : {}),
             fieldKey: fieldEl.dataset.fieldKey,
             value: input.value,
           };
@@ -883,11 +1632,12 @@ const pageTitle = member ? member.memberNo : name;
           const fresh = fields.find(
             f =>
               f.subject === fieldEl.dataset.subject &&
+              (f.ordinal ?? 1) === Number(fieldEl.dataset.ordinal ?? 1) &&
               f.fieldKey === fieldEl.dataset.fieldKey
           );
           if (!fresh) continue;
           const view = fieldEl.querySelector<HTMLElement>('[data-view]');
-          const input = fieldEl.querySelector<HTMLInputElement>('[data-edit]');
+          const input = fieldEl.querySelector<EditElement>('[data-edit]');
           const display =
             fresh.dataType === 'phone'
               ? forDisplayClient(fresh.value)
@@ -899,7 +1649,10 @@ const pageTitle = member ? member.memberNo : name;
           if (view) view.textContent = display;
           if (input) {
             input.value = fresh.value;
-            input.defaultValue = fresh.value;
+            input.dataset.original = fresh.value;
+            // Harmless for a <select> (no such property); kept for <input>
+            // so its own defaultValue still tracks the saved value too.
+            if ('defaultValue' in input) input.defaultValue = fresh.value;
           }
         }
         setEditing(block, false);
@@ -937,8 +1690,41 @@ const pageTitle = member ? member.memberNo : name;
     '[data-close-approval-comments]'
   );
 
+  // The Documents and Payments dialogs: a button names its dialog by id,
+  // and any Close inside a dialog closes it.
+  for (const opener of document.querySelectorAll<HTMLButtonElement>(
+    '[data-open-dialog]'
+  )) {
+    const dialog = document.getElementById(
+      opener.dataset.openDialog ?? ''
+    ) as HTMLDialogElement | null;
+    opener.addEventListener('click', () => dialog?.showModal());
+  }
+  for (const closer of document.querySelectorAll<HTMLButtonElement>(
+    '[data-close-dialog]'
+  )) {
+    closer.addEventListener('click', () => closer.closest('dialog')?.close());
+  }
+
   if (approvalDialog && openApproval && closeApproval) {
     openApproval.addEventListener('click', () => approvalDialog.showModal());
     closeApproval.addEventListener('click', () => approvalDialog.close());
+  }
+
+  // QA-15: a click on the backdrop closes the Documents, Payments and
+  // approval-comments dialogs too, not only Escape and Close. A click on a
+  // dialog's own content bubbles with a target inside it; one on the
+  // backdrop bubbles with the dialog element itself as the target, which is
+  // how the two are told apart here. The document viewer dialog manages its
+  // own close behaviour (DocumentViewer.astro) and is left alone.
+  for (const id of [
+    'member-documents-dialog',
+    'member-payments-dialog',
+    'approval-comments-dialog',
+  ]) {
+    const dialog = document.getElementById(id) as HTMLDialogElement | null;
+    dialog?.addEventListener('click', e => {
+      if (e.target === dialog) dialog.close();
+    });
   }
 </script>

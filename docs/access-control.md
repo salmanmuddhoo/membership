@@ -42,12 +42,74 @@ Prefixes ending in `/` cover everything beneath them, so a sub-page added later
 inherits protection. The longest matching prefix wins, so a specific rule can
 tighten a broader one.
 
+### Fee schedules
+
+`/admin/configuration/fees` has its own read permission, `fee.view`
+(migration 0091), rather than the section's `config.view`. Every role that
+held `config.view` or `fee.manage` was given it. The Treasurer, who owns the
+fee schedules (S-207), holds `fee.view` and `fee.manage` and no longer holds
+`config.view`, so the rest of Configuration is closed to them: the sidebar
+shows them **Fee schedules** in its place, and the page's section tabs are
+hidden from anyone without `config.view`.
+
+### The day's transactions
+
+Transactions → Today's transactions lists every transaction for a role
+holding `transaction.view_all` (migration 0092), and only the ones the
+officer recorded for anyone else — by default a Regional Officer or a
+Regional Manager; every other role that held `transaction.view` was given
+it. The staff API's `GET /api/v1/transactions`, called without a member,
+customer or account, is scoped the same way. Moving `transaction.view_all`
+between roles at Configuration → Roles changes who sees what.
+
+## The dashboard and the menu
+
+The dashboard's cards and the sidebar are one model, `navigationFor()` in
+`src/lib/navigation.ts` (officer feedback): each door is offered when the
+person holds the permission its route declares in `authorise.ts`, and not
+otherwise, so a role sees on the dashboard exactly what it may reach. A
+door added to one is added to both. **Documents** (`document.view`) opens
+the document directory (`/documents`): a folder per member and non-member
+customer, and inside it everything filed for them.
+
 ## Permissions are data
 
 Effective permissions are the union of every role the user holds, read from the
 database **on each request**. There is no cache and no copy in the session, so
 revoking a role takes effect on that person's very next click rather than when
 their session happens to expire.
+
+### Money (S-1311)
+
+Transactions carry permissions of their own, in the same `entity.action`
+form: `transaction.capture`, `transaction.post` (post directly, below the
+escalation threshold — FRD 6.3), `transaction.view`, `account.view` (an
+account's balance and history) and `receipt.void`. Migration 0069 maps them
+onto FRD Section 5's roles — Clerk captures, Account Officer posts,
+Treasurer voids, Auditor views — creating those three roles with no members,
+and gives `account.view` to every role that had `member.view` and
+`transaction.view` to every role that had `payment.view`, so nobody lost a
+figure they could see the day before. A deposit the matrix routes nowhere
+(S-1401) is captured and posted in one act and needs both permissions; one
+it sends to a chain needs capture alone, and posting is the chain's last
+act.
+
+The chain's own permissions arrived with migration 0071 (S-1403):
+`transaction.review` acts at every step but the last (forward, return) and
+`transaction.approve` at the last (approve, reject) — by position on the
+chain, not by step name. The Secretary holds the first and the President
+the second, with `transaction.view` and `account.view` so each can see what
+they act on. Posting an approved deposit stays `transaction.post`; paying
+out an approved withdrawal, transfer to a payee, closure, resignation or
+claim is `transaction.disburse`, the Treasurer's (migration 0095, officer
+direction: Secretary, President, then the Treasurer disburses).
+
+The segregation rules (`entity_type = 'transaction'`) say the officer who
+captured a transaction may not review it, approve it, post it through a
+chain, or void its receipt — and, from migration 0072, that the person who
+approved it may not be the one who pays it out (S-1503). They key on the `transaction.captured` audit row
+the capture path writes, and are consulted wherever that later act is
+someone else's; the one-act deposit consults none.
 
 ## Provisioning an account
 
@@ -96,6 +158,11 @@ never resolves a member's bearer token, so neither credential reaches the
 other's endpoints.
 
 ## What is recorded
+
+The audit log's Record ID takes the reference an officer sees on screen as
+well as the id the trail is keyed on: a transfer's TR- reference finds its
+two legs' entries, a member number finds the member and its membership
+accounts, and an account number finds that account (`listAuditEvents`).
 
 Every refusal is written to the append-only audit trail before the redirect:
 

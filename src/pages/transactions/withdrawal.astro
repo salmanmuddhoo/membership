@@ -1,0 +1,153 @@
+---
+// Withdrawal, from the Transactions page (S-1501; the same shape as the
+// deposit's): pick the account type, enter its number, and land on the
+// withdrawal form the person's page opens, with that account chosen.
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import { listAccountTypes } from '@lib/config/reference';
+import { PERMISSION_CAPTURE } from '@lib/ledger/withdrawals';
+import AccountMatches from '@components/AccountMatches.astro';
+import {
+  findAccountByNumber,
+  findAccountsByName,
+  type FoundAccount,
+} from '@lib/ledger/lookup';
+import {
+  PAGE,
+  FORM_CARD,
+  HINT,
+  LABEL,
+  INPUT,
+  BUTTON,
+  NOTICE_ERROR,
+} from '@lib/ui';
+
+const principal = Astro.locals.principal!;
+if (!principal.permissions.has(PERMISSION_CAPTURE)) {
+  return Astro.redirect('/denied');
+}
+
+const types = (await listAccountTypes()).filter(t => t.isActive);
+const withdrawable = types.filter(t => t.allowsWithdrawal);
+
+const typeId = Astro.url.searchParams.get('type') ?? '';
+const number = Astro.url.searchParams.get('number') ?? '';
+const chosen = withdrawable.find(t => t.id === typeId) ?? null;
+
+let error: string | null = null;
+// Officer feedback: a number, or the holder's name. A number that matches
+// goes straight to the form; otherwise the name is looked up, and one match
+// goes straight there too, several are listed to pick from.
+let matches: FoundAccount[] = [];
+if (chosen && number.trim()) {
+  const found = await findAccountByNumber(chosen.id, number);
+  if (found) {
+    return Astro.redirect(
+      `/members/${found.holderId}/withdraw?account=${found.accountId}&from=transactions`
+    );
+  }
+  matches = await findAccountsByName(chosen.id, number);
+  if (matches.length === 1) {
+    const only = matches[0];
+    return Astro.redirect(
+      `/members/${only.holderId}/withdraw?account=${only.accountId}&from=transactions`
+    );
+  }
+  if (matches.length === 0) {
+    error = `No ${chosen.name} account ${number.trim()}, and no holder by that name.`;
+  }
+} else if (typeId && !chosen) {
+  error = 'Choose an account type that allows withdrawals.';
+}
+---
+
+<DashboardLayout title="Withdrawal · Al Barakah MCSL" heading="Withdrawal">
+  <div class={PAGE.form}>
+    <a href="/transactions" class={`inline-block ${HINT} underline`}>
+      ← Transactions
+    </a>
+
+    {error && <div class={NOTICE_ERROR}>{error}</div>}
+
+    <form method="get" data-withdrawal-lookup class={FORM_CARD}>
+      <fieldset>
+        <legend class="text-sm text-neutral-600 dark:text-neutral-300">
+          Account
+        </legend>
+        <div class="mt-2 flex flex-wrap gap-2">
+          {withdrawable.map(type => (
+            <label class="cursor-pointer">
+              <input
+                type="radio"
+                name="type"
+                value={type.id}
+                data-membership-default={
+                  type.isMembershipDefault ? 'true' : 'false'
+                }
+                data-prefix={type.numberPrefix ?? ''}
+                checked={type.id === (chosen?.id ?? withdrawable[0]?.id)}
+                class="peer sr-only"
+              />
+              <span class="peer-checked:bg-mint-300 peer-checked:border-mint-400 peer-focus-visible:ring-mint-400 inline-block rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm font-medium text-neutral-800 transition peer-focus-visible:ring-2 dark:border-neutral-600 dark:bg-neutral-900 dark:text-neutral-100">
+                {type.name}
+              </span>
+            </label>
+          ))}
+        </div>
+      </fieldset>
+
+      <label class={LABEL}>
+        <span data-number-label>Member number or name</span>
+        <input
+          type="text"
+          name="number"
+          required
+          autofocus
+          autocomplete="off"
+          value={number}
+          data-number
+          placeholder="AB0001"
+          class={INPUT}
+        />
+      </label>
+
+      <button type="submit" class={BUTTON}>
+        Find account
+      </button>
+    </form>
+
+    {matches.length > 1 && (
+      <AccountMatches matches={matches} action="withdraw" />
+    )}
+  </div>
+</DashboardLayout>
+
+<script>
+  import { wireAccountSuggest } from '@lib/client/account-suggest';
+
+  // The label follows the type: a member's own number for Shares and the
+  // MSA, the account's own for anything else (migrations 0018, 0027).
+  const form = document.querySelector<HTMLFormElement>(
+    '[data-withdrawal-lookup]'
+  );
+  if (form) {
+    wireAccountSuggest(form, 'withdraw');
+    const label = form.querySelector<HTMLElement>('[data-number-label]');
+    const input = form.querySelector<HTMLInputElement>('[data-number]');
+    const update = () => {
+      const chosen = form.querySelector<HTMLInputElement>(
+        'input[name="type"]:checked'
+      );
+      const own = chosen?.dataset.membershipDefault === 'true';
+      const prefix = chosen?.dataset.prefix || 'HSA';
+      if (label)
+        label.textContent = own
+          ? 'Member number or name'
+          : 'Account number or name';
+      if (input) input.placeholder = own ? 'AB0001' : `${prefix}0001`;
+    };
+    for (const radio of form.querySelectorAll('input[name="type"]')) {
+      radio.addEventListener('change', update);
+    }
+    update();
+  }
+</script>

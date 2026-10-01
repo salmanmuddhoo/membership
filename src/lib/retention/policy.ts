@@ -14,7 +14,13 @@ import { query, withConfigurationActor } from '../db/pool';
 // this union is what the rest of the code may name, so a typo is a type error
 // rather than a policy that silently never matches a row.
 export type RetentionClass =
-  'notification_log' | 'rejected_application' | 'abandoned_draft';
+  | 'notification_log'
+  | 'rejected_application'
+  | 'abandoned_draft'
+  // S-1703: a former member's documents, anchored on the day the
+  // membership ended (member.status_changed_at) — the anchor the first
+  // release of this module said it did not have (docs/retention.md).
+  | 'former_member_documents';
 
 export interface RetentionPolicy {
   code: RetentionClass;

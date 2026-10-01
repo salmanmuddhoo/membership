@@ -1,0 +1,211 @@
+---
+// What waits on this person (S-1403, S-1404): transactions at a step their
+// role owns, approved ones they may post, and their own captures a reviewer
+// returned. One queue for every kind, oldest first, filterable by kind.
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import {
+  TRANSACTION_KINDS,
+  type TransactionKind,
+  type TransactionRowKind,
+} from '@lib/config/reference';
+import {
+  approvedTransactions,
+  pendingTransactions,
+  returnedTransactions,
+} from '@lib/ledger/review';
+import { formatMoney } from '@lib/payments/money';
+import {
+  PAGE,
+  HINT,
+  CARD_LABEL,
+  FILTER,
+  INPUT_SM,
+  PILL,
+  TABLE,
+  THEAD,
+  TBODY,
+  TH,
+  TD,
+  TD_NUM,
+} from '@lib/ui';
+
+const principal = Astro.locals.principal!;
+
+const KIND_LABELS: Record<TransactionRowKind, string> = {
+  deposit: 'Deposit',
+  withdrawal: 'Withdrawal',
+  transfer: 'Transfer',
+  transfer_leg: 'Transfer',
+  reversal: 'Reversal',
+  closure: 'Account closure',
+  resignation: 'Resignation',
+  demise: 'Demised claim',
+};
+const requested = Astro.url.searchParams.get('kind') ?? '';
+const kind = (TRANSACTION_KINDS as readonly string[]).includes(requested)
+  ? (requested as TransactionKind)
+  : undefined;
+
+const [pending, approved, returned] = await Promise.all([
+  pendingTransactions(principal, { kind }),
+  approvedTransactions(principal, { kind }),
+  returnedTransactions(principal).then(rows =>
+    kind ? rows.filter(r => r.kind === kind) : rows
+  ),
+]);
+
+const dateFormat = new Intl.DateTimeFormat('en-GB', {
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+});
+// How long it has waited, in the coarsest unit that is not zero.
+function waited(since: Date): string {
+  const minutes = Math.max(
+    0,
+    Math.round((Date.now() - since.getTime()) / 60000)
+  );
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours} h`;
+  return `${Math.round(hours / 24)} days`;
+}
+---
+
+<DashboardLayout
+  title="Waiting on you · Al Barakah MCSL"
+  heading="Waiting on you"
+>
+  <div class={PAGE.list}>
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <a href="/transactions" class={`${HINT} underline`}>
+        ← Transactions
+      </a>
+      <form method="get" class="flex items-center gap-2 text-sm">
+        <label class="text-neutral-600 dark:text-neutral-300">
+          Kind
+          <select
+            name="kind"
+            class={`${INPUT_SM} ml-1`}
+            onchange="this.form.submit()"
+          >
+            <option value="" selected={!kind}>
+              All
+            </option>
+            {TRANSACTION_KINDS.map(k => (
+              <option value={k} selected={k === kind}>
+                {KIND_LABELS[k]}
+              </option>
+            ))}
+          </select>
+        </label>
+      </form>
+    </div>
+
+    {[
+      {
+        title: 'For your review',
+        rows: pending.map(t => ({ ...t, note: `${t.stepName}` })),
+        empty: 'Nothing is waiting for you.',
+      },
+      {
+        title: 'Approved, to disburse',
+        rows: approved.map(t => ({
+          ...t,
+          note: 'To disburse',
+        })),
+        empty: null,
+      },
+      {
+        title: 'Returned to you',
+        rows: returned.map(t => ({ ...t, note: 'Returned' })),
+        empty: null,
+      },
+    ].map(
+      group =>
+        (group.rows.length > 0 || group.empty) && (
+          <section class="space-y-2">
+            <h2 class={CARD_LABEL}>
+              {group.title}
+              {group.rows.length > 0 && (
+                <span class={`${PILL} ml-2`}>{group.rows.length}</span>
+              )}
+            </h2>
+            <div class={`overflow-x-auto ${FILTER}`}>
+              {group.rows.length === 0 ? (
+                <p class={HINT}>{group.empty}</p>
+              ) : (
+                <table class={TABLE} data-sortable>
+                  <thead class={THEAD}>
+                    <tr>
+                      <th class={TH}>Reference</th>
+                      <th class={TH}>Kind</th>
+                      <th class={TH}>Who</th>
+                      <th class={TH}>Account</th>
+                      <th class={`${TH} text-right`}>Amount</th>
+                      <th class={TH}>Recorded by</th>
+                      <th class={TH}>Waiting</th>
+                      <th class={TH}>Step</th>
+                    </tr>
+                  </thead>
+                  <tbody class={TBODY}>
+                    {group.rows.map(t => (
+                      <tr class="text-neutral-800 dark:text-neutral-100">
+                        <td class={TD}>
+                          <a
+                            href={`/transactions/${t.id}`}
+                            class="font-medium underline"
+                          >
+                            <code class="text-xs">{t.displayReference}</code>
+                          </a>
+                        </td>
+                        <td class={TD}>{KIND_LABELS[t.kind]}</td>
+                        <td
+                          class={TD}
+                          data-sort-value={t.holderName || t.holderKind}
+                        >
+                          {t.holderName || t.holderKind}
+                          {t.memberNo && (
+                            <span class="block text-xs text-neutral-500 dark:text-neutral-400">
+                              {t.memberNo}
+                            </span>
+                          )}
+                        </td>
+                        <td class={TD}>
+                          {t.accountNo} · {t.accountTypeName}
+                        </td>
+                        <td
+                          class={`${TD_NUM} font-medium`}
+                          data-sort-value={t.amount}
+                        >
+                          {formatMoney(t.amount, t.currency)}
+                        </td>
+                        <td class={TD}>{t.capturedByName}</td>
+                        <td
+                          class={`${TD} whitespace-nowrap`}
+                          data-sort-value={t.waitingSince.toISOString()}
+                        >
+                          <span title={dateFormat.format(t.waitingSince)}>
+                            {waited(t.waitingSince)}
+                          </span>
+                        </td>
+                        <td class={TD}>{t.note}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </section>
+        )
+    )}
+  </div>
+</DashboardLayout>
+
+<script>
+  import { wireSortableTables } from '@lib/client/table-sort';
+
+  wireSortableTables();
+</script>

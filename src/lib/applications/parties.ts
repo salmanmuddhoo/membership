@@ -14,6 +14,7 @@
  */
 import { loadApplication } from './capture';
 import { forDisplay } from './phone';
+import { partyDetailLabel } from '../members/labels';
 
 const SUBJECT_LABELS: Record<string, string> = {
   nominee: 'Nominee',
@@ -68,7 +69,7 @@ export async function otherPartyGroups(
       .filter(([, value]) => value.trim() !== '')
       .map(([key, value]) => ({
         key,
-        label: key.replace(/_/g, ' '),
+        label: partyDetailLabel(key, key.replace(/_/g, ' ')),
         value: PHONE_KEYS.has(key) ? forDisplay(value) : value,
       })),
   }));

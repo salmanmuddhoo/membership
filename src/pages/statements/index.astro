@@ -1,0 +1,179 @@
+---
+// Sending every member and non-member their statement at once (officer
+// request): queues a run for the statement-send job
+// (processStatementRuns in member-statement.ts) and shows how the runs so
+// far went. Sending one holder's own statement is on their own page
+// (/members/[id]/statement).
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import {
+  countHolders,
+  listStatementRuns,
+  periodWords,
+  queueStatementRun,
+  StatementError,
+} from '@lib/ledger/member-statement';
+import { statementPeriod, type StatementPeriod } from '@lib/ledger/statement';
+import {
+  PAGE,
+  CARD,
+  CARD_TITLE,
+  LABEL,
+  INPUT,
+  BUTTON,
+  HINT,
+  NOTICE_OK,
+  NOTICE_ERROR,
+  PILL,
+  TABLE,
+  THEAD,
+  TBODY,
+  TH,
+  TD,
+  TD_NUM,
+} from '@lib/ui';
+
+const principal = Astro.locals.principal!;
+
+// The whole of the previous calendar month, so the box a Treasurer opens on
+// the first of the month already has last month's dates in it.
+function previousMonth(today = new Date()): StatementPeriod {
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  const from = new Date(
+    Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 1, 1)
+  );
+  const to = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 0));
+  return { from: iso(from), to: iso(to) };
+}
+
+let values: StatementPeriod = previousMonth();
+let notice: { kind: 'ok' | 'error'; message: string } | null = null;
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const text = (name: string) => {
+    const value = form.get(name);
+    return typeof value === 'string' && value !== '' ? value : null;
+  };
+  values = {
+    from: text('from') ?? values.from,
+    to: text('to') ?? values.to,
+  };
+  const period = statementPeriod({ from: text('from'), to: text('to') });
+  if (!period) {
+    notice = { kind: 'error', message: 'Choose a valid period.' };
+  } else {
+    values = period;
+    try {
+      await queueStatementRun(period, principal);
+      notice = {
+        kind: 'ok',
+        message:
+          'Statements are being sent. This page shows how far it has got.',
+      };
+    } catch (err) {
+      if (err instanceof StatementError) {
+        notice = { kind: 'error', message: err.message };
+      } else {
+        console.error('[statements] could not queue a run', err);
+        notice = {
+          kind: 'error',
+          message: 'Something went wrong. Please try again.',
+        };
+      }
+    }
+  }
+}
+
+const [holderCount, runs] = await Promise.all([
+  countHolders(),
+  listStatementRuns(),
+]);
+
+const dateTimeFormat = new Intl.DateTimeFormat('en-GB', {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+  timeZone: 'Indian/Mauritius',
+});
+
+const STATUS_LABEL = {
+  queued: 'Waiting',
+  sending: 'Sending',
+  done: 'Done',
+} as const;
+---
+
+<DashboardLayout title="Statements · Al Barakah MCSL" heading="Statements">
+  <div class={PAGE.list}>
+    {notice && (
+      <div class={notice.kind === 'ok' ? NOTICE_OK : NOTICE_ERROR}>
+        {notice.message}
+      </div>
+    )}
+
+    <section class={CARD}>
+      <h2 class={CARD_TITLE}>Send to everyone</h2>
+      <form method="post" class="mt-3 flex flex-wrap items-end gap-3">
+        <label class={LABEL}>
+          From
+          <input type="date" name="from" value={values.from} class={INPUT} />
+        </label>
+        <label class={LABEL}>
+          To
+          <input type="date" name="to" value={values.to} class={INPUT} />
+        </label>
+        <button type="submit" class={BUTTON}>
+          Send to everyone
+        </button>
+      </form>
+      <p class={`mt-3 ${HINT}`}>
+        {holderCount} members and non-members with an account.
+      </p>
+    </section>
+
+    <section class={CARD}>
+      <h2 class={CARD_TITLE}>Sent</h2>
+      <div class="mt-3 overflow-x-auto">
+        <table class={TABLE}>
+          <thead class={THEAD}>
+            <tr>
+              <th class={TH}>Period</th>
+              <th class={TH}>Asked by</th>
+              <th class={TH}>When</th>
+              <th class={TH}>Status</th>
+              <th class={`${TH} text-right`}>Sent</th>
+              <th class={`${TH} text-right`}>No contact</th>
+              <th class={`${TH} text-right`}>Failed</th>
+            </tr>
+          </thead>
+          <tbody class={TBODY}>
+            {runs.map(run => (
+              <tr>
+                <td class={TD}>
+                  {periodWords({ from: run.from, to: run.to })}
+                </td>
+                <td class={TD}>{run.requestedByName ?? '—'}</td>
+                <td class={TD}>{dateTimeFormat.format(run.requestedAt)}</td>
+                <td class={TD}>
+                  <span class={PILL}>{STATUS_LABEL[run.status]}</span>
+                </td>
+                <td class={TD_NUM}>{run.sent}</td>
+                <td class={TD_NUM}>{run.noContact}</td>
+                <td class={TD_NUM}>{run.failed}</td>
+              </tr>
+            ))}
+            {runs.length === 0 && (
+              <tr>
+                <td
+                  colspan="7"
+                  class="px-2 py-3 text-center text-neutral-500 dark:text-neutral-400"
+                >
+                  Nothing sent yet.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+</DashboardLayout>

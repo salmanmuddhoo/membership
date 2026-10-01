@@ -8,8 +8,8 @@ const endpoint = defineMemberEndpoint(
     path: '/api/v1/member/me/documents',
     summary: 'Documents on file for the caller',
     description:
-      'Name, state, filed date and expiry. No download: viewing stays a ' +
-      'branch matter until a member-facing viewer is decided.',
+      'Name, state, filed date and expiry of every document on file for the ' +
+      'caller. Each opens at /me/documents/{id}/content.',
     tag: 'Member app',
     caller: 'member',
     responseSchema: {

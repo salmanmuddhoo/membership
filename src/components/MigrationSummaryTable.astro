@@ -1,0 +1,58 @@
+---
+// A migration summary as a table (lib/migration/summary.ts): members by
+// membership type, non-members with their accounts under them, and the
+// total. Used for what one upload added and for everything to date.
+import type { MigrationSummary } from '@lib/migration/summary';
+import { formatMoney, fromCents } from '@lib/payments/money';
+import { ROW, TABLE, TD, TD_NUM, TH, THEAD } from '@lib/ui';
+
+interface Props {
+  summary: MigrationSummary;
+}
+
+const { summary } = Astro.props;
+const money = (cents: number) => formatMoney(fromCents(cents));
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+---
+
+<table class={TABLE}>
+  <thead class={THEAD}>
+    <tr>
+      <th class={TH}></th>
+      <th class={`${TH} text-right`}>Imported</th>
+      <th class={`${TH} text-right`}>Funds</th>
+    </tr>
+  </thead>
+  <tbody>
+    {summary.members.map(row => (
+      <tr class={ROW}>
+        <td class={TD}>{row.typeName} members</td>
+        <td class={TD_NUM}>{row.holders}</td>
+        <td class={TD_NUM}>{money(row.amountCents)}</td>
+      </tr>
+    ))}
+    <tr class={ROW}>
+      <td class={TD}>Non-members</td>
+      <td class={TD_NUM}>{summary.nonMembers.holders}</td>
+      <td class={TD_NUM}>{money(summary.nonMembers.amountCents)}</td>
+    </tr>
+    {summary.nonMembers.accounts.map(account => (
+      <tr class={ROW}>
+        <td class={`${TD} pl-4 text-neutral-600 dark:text-neutral-300`}>
+          {account.typeName}
+        </td>
+        <td class={`${TD_NUM} text-neutral-600 dark:text-neutral-300`}>
+          {plural(account.count, 'account')}
+        </td>
+        <td class={`${TD_NUM} text-neutral-600 dark:text-neutral-300`}>
+          {money(account.amountCents)}
+        </td>
+      </tr>
+    ))}
+    <tr class={`${ROW} font-semibold`}>
+      <td class={TD}>Total</td>
+      <td class={TD_NUM}>{summary.total.holders}</td>
+      <td class={TD_NUM}>{money(summary.total.amountCents)}</td>
+    </tr>
+  </tbody>
+</table>

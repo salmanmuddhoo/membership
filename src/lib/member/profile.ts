@@ -19,8 +19,7 @@ import {
   documentsForMember,
   type ChecklistState,
 } from '../documents/documents';
-import { fromCents, toCents } from '../payments/money';
-import { transactionsForAccount } from '../payments/payments';
+import { accountEntries } from '../ledger/ledger';
 import type { MemberPrincipal, RequestOrigin } from './identity';
 import { maskMobile } from './otp';
 
@@ -148,10 +147,9 @@ export interface AccountSummary {
   category: string;
   status: string;
   openedAt: string;
-  // Decimal string. Null when nothing has been recorded against the
-  // account: there is no ledger yet (docs/payments.md), only the payment
-  // that opened it and any refund, so an account with neither has no
-  // figure this can honestly state.
+  // Decimal string, from the ledger's balance cache (docs/ledger.md,
+  // S-1309). Null for an account nothing has ever posted to — which is not
+  // the same as a balance of zero, and the app may say so.
   balance: string | null;
 }
 
@@ -159,6 +157,21 @@ export async function memberAccounts(
   principal: MemberPrincipal
 ): Promise<AccountSummary[]> {
   if (!principal.memberId && !principal.customerId) return [];
+  return accountsForHolder(principal.memberId, principal.customerId);
+}
+
+/**
+ * The accounts a single holder — a member or a non-member customer — holds,
+ * with the ledger's balance for each. The one place the accounts query
+ * lives, so a member reading their own and a guardian reading a minor's
+ * (member/dependents) see them shaped identically. Callers are responsible
+ * for establishing that the holder is theirs to read before calling.
+ */
+export async function accountsForHolder(
+  memberId: string | null,
+  customerId: string | null
+): Promise<AccountSummary[]> {
+  if (!memberId && !customerId) return [];
 
   const rows = await query<{
     id: string;
@@ -169,39 +182,33 @@ export async function memberAccounts(
     category: string;
     status: string;
     opened_at: Date;
+    balance: string | null;
   }>(
     `select a.id, a.account_no, m.member_no, t.code as type_code,
-            t.name as type_name, t.category, a.status, a.opened_at
+            t.name as type_name, t.category, a.status, a.opened_at,
+            b.balance
        from account a
        join account_type t on t.id = a.account_type_id
        left join member m on m.id = a.member_id
+       left join account_balance b on b.account_id = a.id
       where ($1::uuid is not null and a.member_id = $1::uuid)
          or ($2::uuid is not null and a.customer_id = $2::uuid)
       order by t.sort_order, t.name`,
-    [principal.memberId, principal.customerId]
+    [memberId, customerId]
   );
 
-  return Promise.all(
-    rows.rows.map(async r => {
-      const transactions = await transactionsForAccount(r.id);
-      const cents = transactions.reduce(
-        (sum, t) => sum + (t.type === 'debit' ? -1 : 1) * toCents(t.amount),
-        0
-      );
-      return {
-        id: r.id,
-        // A Shares or MSA account carries the member's own number
-        // (migration 0018); one carried over from a customer keeps its own.
-        accountNo: r.account_no ?? r.member_no ?? '',
-        typeCode: r.type_code,
-        typeName: r.type_name,
-        category: r.category,
-        status: r.status,
-        openedAt: r.opened_at.toISOString(),
-        balance: transactions.length > 0 ? fromCents(cents) : null,
-      };
-    })
-  );
+  return rows.rows.map(r => ({
+    id: r.id,
+    // A Shares or MSA account carries the member's own number
+    // (migration 0018); one carried over from a customer keeps its own.
+    accountNo: r.account_no ?? r.member_no ?? '',
+    typeCode: r.type_code,
+    typeName: r.type_name,
+    category: r.category,
+    status: r.status,
+    openedAt: r.opened_at.toISOString(),
+    balance: r.balance,
+  }));
 }
 
 export interface AccountTransaction {
@@ -213,10 +220,16 @@ export interface AccountTransaction {
   receiptNo: string | null;
 }
 
-export async function accountTransactions(
+/**
+ * The account id, once it is established to be one of the caller's own.
+ * Anything else — another member's, a customer's, no such account, not
+ * even a uuid — is the same not_found: the app never learns that an id it
+ * should not have named exists (S-2101).
+ */
+export async function ownedAccountId(
   principal: MemberPrincipal,
   accountId: string
-): Promise<AccountTransaction[]> {
+): Promise<string> {
   const owned = await query<{ id: string }>(
     `select id from account
       where id = $1::uuid
@@ -228,15 +241,68 @@ export async function accountTransactions(
       principal.customerId,
     ]
   );
-  if (owned.rowCount === 0) throw new ApiError('not_found', 'No such account.');
+  if (!owned.rows[0]) throw new ApiError('not_found', 'No such account.');
+  return owned.rows[0].id;
+}
 
-  return (await transactionsForAccount(accountId)).map((t, i) => ({
-    id: `${accountId}:${i}`,
-    occurredAt: t.occurredAt.toISOString(),
-    direction: t.type,
-    amount: t.amount,
-    description: t.description,
-    receiptNo: null,
+/**
+ * The document's id if it is the caller's own, else not_found — the same
+ * answer for someone else's document, a draft's, and an id that is not
+ * even a uuid, as ownedAccountId gives for an account.
+ *
+ * Own means what memberDocuments lists: filed against the member's founding
+ * application, against an additional-account application of theirs that
+ * has left draft, or carried onto the member record itself. Nothing a
+ * customer or an applicant session holds is a document here.
+ */
+export async function ownedDocumentId(
+  principal: MemberPrincipal,
+  documentId: string
+): Promise<string> {
+  const owned = await query<{ id: string }>(
+    `select d.id
+       from document d
+       left join membership_application a on a.id = d.application_id
+       left join member m on m.id = $2::uuid
+      where d.id = $1::uuid
+        and $2::uuid is not null
+        and (d.member_id = $2::uuid
+          or a.id = m.application_id
+          or (a.existing_member_id = $2::uuid
+              and a.application_kind = 'additional_account'
+              and a.status <> 'draft'))`,
+    [isUuid(documentId) ? documentId : null, principal.memberId]
+  );
+  if (!owned.rows[0]) throw new ApiError('not_found', 'No such document.');
+  return owned.rows[0].id;
+}
+
+export async function accountTransactions(
+  principal: MemberPrincipal,
+  accountId: string
+): Promise<AccountTransaction[]> {
+  await ownedAccountId(principal, accountId);
+  return accountTransactionsFor(accountId);
+}
+
+/**
+ * An account's credits and debits, oldest first, in the app's shape. The
+ * caller must first establish the account is theirs to read (their own, or a
+ * minor's they guard — member/dependents); this only reads the ledger.
+ */
+export async function accountTransactionsFor(
+  accountId: string
+): Promise<AccountTransaction[]> {
+  // The ledger's own entries, oldest first (S-1309). Bounded: a statement
+  // in the app is the recent past; the full history is the officer's page.
+  const entries = await accountEntries(accountId, { limit: 500 });
+  return entries.reverse().map(e => ({
+    id: e.id,
+    occurredAt: e.occurredAt.toISOString(),
+    direction: e.direction,
+    amount: e.amount,
+    description: e.description,
+    receiptNo: e.receiptNo,
   }));
 }
 

@@ -190,6 +190,26 @@ describe('the gateway channel', () => {
     expect(body.subject).toBe('Welcome to Al Barakah');
   });
 
+  it('tells the gateway where to fetch a document from, when there is one', async () => {
+    process.env.NOTIFY_WHATSAPP_DELIVERY = 'http';
+    process.env.NOTIFY_WHATSAPP_WEBHOOK_URL = 'https://gateway.test/send';
+    const fetchMock = fetchReturning(200);
+    vi.stubGlobal('fetch', fetchMock);
+    const { configuredChannels } = await load();
+
+    const attachment = {
+      url: 'https://members.example.mu/receipts/shared/abc.pdf',
+      filename: 'Receipt RCT-000123.pdf',
+      contentType: 'application/pdf',
+    };
+    await configuredChannels()
+      .get('whatsapp')!
+      .send({ ...WHATSAPP, attachment });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1]!.body as string);
+    expect(body).toMatchObject({ to: WHATSAPP.recipient, attachment });
+  });
+
   it('authenticates when the gateway needs a token', async () => {
     process.env.NOTIFY_WHATSAPP_WEBHOOK_TOKEN = 'gateway-token';
     const fetchMock = fetchReturning(200);
@@ -273,6 +293,48 @@ describe('WhatsApp through the Cloud API', () => {
     ]);
     // The rendered sentence is the outbox's record, not what goes on the wire.
     expect(init!.body as string).not.toContain(WHATSAPP.body);
+  });
+
+  // S-1602's Should half: the receipt travels as the template's document
+  // header, fetched by Meta from the signed link — nothing is uploaded.
+  it('carries a document as the template header, before the body values', async () => {
+    const fetchMock = fetchReturning(200, '{"messages":[{"id":"wamid.x"}]}');
+    vi.stubGlobal('fetch', fetchMock);
+    const { configuredChannels } = await load();
+
+    await configuredChannels()
+      .get('whatsapp')!
+      .send({
+        ...APPROVED,
+        attachment: {
+          url: 'https://members.example.mu/receipts/shared/abc.pdf',
+          filename: 'Receipt RCT-000123.pdf',
+          contentType: 'application/pdf',
+        },
+      });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1]!.body as string);
+    expect(body.template.components).toEqual([
+      {
+        type: 'header',
+        parameters: [
+          {
+            type: 'document',
+            document: {
+              link: 'https://members.example.mu/receipts/shared/abc.pdf',
+              filename: 'Receipt RCT-000123.pdf',
+            },
+          },
+        ],
+      },
+      {
+        type: 'body',
+        parameters: [
+          { type: 'text', text: 'Fatimah Joomun' },
+          { type: 'text', text: 'AB1001' },
+        ],
+      },
+    ]);
   });
 
   // Meta wants international form without the plus; M3 stores it with one.
@@ -423,6 +485,74 @@ describe('the Microsoft 365 mailbox', () => {
       { emailAddress: { address: 'fatimah@example.mu' } },
     ]);
     expect(body.saveToSentItems).toBe(false);
+  });
+
+  // The attachment goes as bytes, fetched from its own link at send time
+  // and never stored on the row.
+  it('attaches a document as a file, fetched from its link', async () => {
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) =>
+      url.includes('/oauth2/')
+        ? Response.json({ access_token: 'token', expires_in: 3600 })
+        : url.endsWith('.pdf')
+          ? new Response(new Uint8Array([0x25, 0x50, 0x44, 0x46]), {
+              status: 200,
+            })
+          : new Response('', { status: 202 })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const { configuredChannels } = await load();
+
+    await configuredChannels()
+      .get('email')!
+      .send({
+        ...EMAIL,
+        attachment: {
+          url: 'https://members.example.mu/receipts/shared/abc.pdf',
+          filename: 'Receipt RCT-000123.pdf',
+          contentType: 'application/pdf',
+        },
+      });
+
+    const sendCall = fetchMock.mock.calls.find(call =>
+      call[0].includes('sendMail')
+    )!;
+    const body = JSON.parse(sendCall[1]!.body as string);
+    expect(body.message.attachments).toEqual([
+      {
+        '@odata.type': '#microsoft.graph.fileAttachment',
+        name: 'Receipt RCT-000123.pdf',
+        contentType: 'application/pdf',
+        contentBytes: Buffer.from('%PDF').toString('base64'),
+      },
+    ]);
+  });
+
+  it('fails the send, rather than sending without it, when the document cannot be fetched', async () => {
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) =>
+      url.includes('/oauth2/')
+        ? Response.json({ access_token: 'token', expires_in: 3600 })
+        : url.endsWith('.pdf')
+          ? new Response('', { status: 404 })
+          : new Response('', { status: 202 })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const { configuredChannels, NotificationSendError } = await load();
+
+    await expect(
+      configuredChannels()
+        .get('email')!
+        .send({
+          ...EMAIL,
+          attachment: {
+            url: 'https://members.example.mu/receipts/shared/abc.pdf',
+            filename: 'Receipt RCT-000123.pdf',
+            contentType: 'application/pdf',
+          },
+        })
+    ).rejects.toBeInstanceOf(NotificationSendError);
+    expect(
+      fetchMock.mock.calls.some(call => call[0].includes('sendMail'))
+    ).toBe(false);
   });
 
   it('treats a refusal from Graph as a failure', async () => {

@@ -98,9 +98,10 @@ export interface ReceiptException {
   receiptNo: string;
   serialNo: number;
   // The receipt behind the finding, where there is one. A void has a payment
-  // to open; an abandoned allocation never became one, and reads as a dead
-  // end because that is what it is.
+  // or a transaction to open; an abandoned allocation never became either,
+  // and reads as a dead end because that is what it is.
   paymentId: string | null;
+  transactionId: string | null;
   // Why, where the system knows. Empty is itself a finding: a number that went
   // nowhere for no recorded reason is the one an auditor asks about.
   reason: string;
@@ -128,10 +129,18 @@ interface ExceptionRow {
   at: Date | null;
   who: string | null;
   payment_id: string | null;
+  transaction_id: string | null;
 }
 
 // One statement, three findings, so the period is read once and the results
 // cannot disagree with each other.
+//
+// A new member's opening deposits are carried from their fee receipt under
+// that receipt's own number (post_opening_balances, 0066) — one receipt,
+// shown once. They are the receipt, not a second use of its number, so the
+// joins leave them out; before they did, every approved member's fee
+// receipt read as a duplicate and was counted once per account it opened
+// (QA-03).
 //
 // `missing` looks redundant — receipt_number has a unique serial and nothing
 // may delete a row, so a hole in the run is impossible. That is exactly why it
@@ -140,10 +149,15 @@ interface ExceptionRow {
 // something happened outside this application.
 const EXCEPTIONS = `
   with window_rows as (
-    select r.*, u.display_name as allocated_by_name, p.id as payment_id
+    select r.*, u.display_name as allocated_by_name, p.id as payment_id,
+           t.id as transaction_id
       from receipt_number r
       join app_user u on u.id = r.allocated_by
       left join payment p on p.receipt_number_id = r.id
+      left join transaction t
+        on t.receipt_number_id = r.id
+       and t.payment_line_id is null
+       and t.payment_account_line_id is null
      where r.allocated_at >= $1 and r.allocated_at < $2
   ),
   bounds as (
@@ -155,7 +169,7 @@ const EXCEPTIONS = `
            coalesce(reason, '') as reason,
            coalesce(settled_at, allocated_at) as at,
            allocated_by_name as who,
-           payment_id
+           payment_id, transaction_id
       from window_rows
      where state <> 'issued'
   ),
@@ -163,7 +177,8 @@ const EXCEPTIONS = `
     select 'duplicate' as kind, receipt_no, min(serial_no) as serial_no,
            count(*)::text || ' rows share this number' as reason,
            min(allocated_at) as at, null::text as who,
-           min(payment_id::text)::uuid as payment_id
+           min(payment_id::text)::uuid as payment_id,
+           min(transaction_id::text)::uuid as transaction_id
       from window_rows
      group by receipt_no
     having count(*) > 1
@@ -173,7 +188,7 @@ const EXCEPTIONS = `
            'RCT-' || lpad(s::text, 6, '0') as receipt_no,
            s as serial_no,
            '' as reason, null::timestamptz as at, null::text as who,
-           null::uuid as payment_id
+           null::uuid as payment_id, null::uuid as transaction_id
       from bounds, generate_series(bounds.lo, bounds.hi) as s
      where bounds.lo is not null
        and not exists (select 1 from receipt_number r where r.serial_no = s)
@@ -198,15 +213,36 @@ export async function reconcileReceipts(
       `select min(r.serial_no) as lo,
               max(r.serial_no) as hi,
               count(*) filter (where r.state = 'issued') as issued,
-              -- Net, not gross: a refund is money that went back out, and a
-              -- Treasurer reconciling a day's takings needs the figure the
-              -- cash box should hold.
-              sum(case when p.kind = 'refund' then -p.total_amount
-                       else p.total_amount end)
+              -- Net, not gross: a refund or a withdrawal is money that went
+              -- back out, and a Treasurer reconciling a day's takings needs
+              -- the figure the cash box should hold. A transaction's receipt
+              -- counts by the direction of its entry (S-1601); a leg between
+              -- two accounts here moved nothing outside the Society.
+              sum(case
+                    when p.id is not null then
+                      case when p.kind = 'refund' then -p.total_amount
+                           else p.total_amount end
+                    when t.method = 'internal_transfer' then 0
+                    when e.direction = 'credit' then t.amount
+                    else -t.amount
+                  end)
                 filter (where r.state = 'issued' and p.voided_at is null)
                 as total
          from receipt_number r
          left join payment p on p.receipt_number_id = r.id
+         left join transaction t
+           on t.receipt_number_id = r.id
+          and t.payment_line_id is null
+          and t.payment_account_line_id is null
+         -- One entry's direction, not a row per entry: a claim or a
+         -- closure touching several accounts has an entry on each, and
+         -- joining them all counted its receipt, and its amount, once per
+         -- account.
+         left join lateral (
+           select direction from account_entry
+            where transaction_id = t.id
+            limit 1
+         ) e on true
         where r.allocated_at >= $1 and r.allocated_at < $2`,
       [from, to]
     ),
@@ -227,9 +263,154 @@ export async function reconcileReceipts(
       receiptNo: e.receipt_no,
       serialNo: Number(e.serial_no),
       paymentId: e.payment_id,
+      transactionId: e.transaction_id,
       reason: e.reason ?? '',
       at: e.at,
       who: e.who,
+    })),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Every receipt in a period (officer request): the fee receipts and every
+// transaction's — deposit, withdrawal, transfer, closure, resignation,
+// demised claim — in one list, each opening its sheet by number
+// (/receipts/RCT-…, which finds the payment or the transaction behind it).
+// ---------------------------------------------------------------------------
+export type ReceiptKind =
+  | 'payment'
+  | 'refund'
+  | 'deposit'
+  | 'withdrawal'
+  | 'transfer_leg'
+  | 'closure'
+  | 'resignation'
+  | 'demise'
+  | 'reversal';
+
+export const RECEIPT_KIND_LABELS: Record<ReceiptKind, string> = {
+  payment: 'Application payment',
+  refund: 'Refund',
+  deposit: 'Deposit',
+  withdrawal: 'Withdrawal',
+  transfer_leg: 'Transfer',
+  closure: 'Account closure',
+  resignation: 'Resignation',
+  demise: 'Demised claim',
+  reversal: 'Reversal',
+};
+
+export interface ReceiptListRow {
+  receiptNo: string;
+  serialNo: number;
+  state: ReceiptState;
+  at: Date;
+  kind: ReceiptKind;
+  amount: string;
+  // How the money moved: Cash, Cheque, Bank transfer, …
+  methodName: string;
+  holderName: string;
+  memberNo: string | null;
+}
+
+export interface ReceiptListFilter {
+  from: Date;
+  to: Date;
+  kind?: ReceiptKind;
+  // A receipt number, a name or a member number, in part.
+  search?: string;
+  limit: number;
+  offset: number;
+}
+
+// One row per number that became a receipt. The joins are the ones
+// reconciliation uses: a new member's opening deposits carry their fee
+// receipt's number and are that receipt, not another (QA-03), so they are
+// left out; a transfer's receipt is on its debit leg. A number that never
+// became a receipt has nothing to open and is reported under Exceptions.
+const RECEIPT_ROWS = `
+  select distinct on (r.id)
+         r.receipt_no, r.serial_no, r.state,
+         coalesce(p.received_at, t.posted_at, r.settled_at, r.allocated_at)
+           as at,
+         case when p.id is not null
+              then case when p.kind = 'refund' then 'refund' else 'payment' end
+              else t.kind end as kind,
+         coalesce(p.total_amount, t.amount) as amount,
+         coalesce(pm.name, '') as method_name,
+         trim(coalesce(ap.values->>'name', '') || ' '
+              || coalesce(ap.values->>'surname', '')) as holder_name,
+         coalesce(m.member_no, am.member_no) as member_no
+    from receipt_number r
+    left join payment p on p.receipt_number_id = r.id
+    left join transaction t
+      on t.receipt_number_id = r.id
+     and t.payment_line_id is null
+     and t.payment_account_line_id is null
+    left join payment_method pm on pm.code = coalesce(p.method, t.method)
+    left join member m on m.id = coalesce(p.member_id, t.member_id)
+    left join member am on am.application_id = p.application_id
+    left join customer c on c.id = t.customer_id
+    left join application_party ap
+      on ap.application_id
+           = coalesce(p.application_id, m.application_id, c.application_id)
+     and ap.subject = 'applicant' and ap.ordinal = 1
+   where r.allocated_at >= $1 and r.allocated_at < $2
+     and (p.id is not null or t.id is not null)
+   order by r.id, t.created_at nulls first
+`;
+
+export async function listReceipts(
+  filter: ReceiptListFilter
+): Promise<{ rows: ReceiptListRow[]; total: number }> {
+  const params: unknown[] = [filter.from, filter.to];
+  const add = (value: unknown) => {
+    params.push(value);
+    return `$${params.length}`;
+  };
+  const where: string[] = [];
+  if (filter.kind) where.push(`kind = ${add(filter.kind)}`);
+  const search = filter.search?.trim();
+  if (search) {
+    const like = add(`%${search.replace(/[\\%_]/g, c => `\\${c}`)}%`);
+    where.push(
+      `(receipt_no ilike ${like} or holder_name ilike ${like}
+        or member_no ilike ${like})`
+    );
+  }
+  const clause = where.length ? `where ${where.join(' and ')}` : '';
+  const counted = await query<{ n: number }>(
+    `select count(*)::int as n from (${RECEIPT_ROWS}) rows ${clause}`,
+    params
+  );
+  const rows = await query<{
+    receipt_no: string;
+    serial_no: string;
+    state: ReceiptState;
+    at: Date;
+    kind: ReceiptKind;
+    amount: string;
+    method_name: string;
+    holder_name: string;
+    member_no: string | null;
+  }>(
+    `select * from (${RECEIPT_ROWS}) rows ${clause}
+      order by serial_no desc
+      limit ${add(filter.limit)} offset ${add(filter.offset)}`,
+    params
+  );
+  return {
+    total: counted.rows[0]?.n ?? 0,
+    rows: rows.rows.map(r => ({
+      receiptNo: r.receipt_no,
+      serialNo: Number(r.serial_no),
+      state: r.state,
+      at: r.at,
+      kind: r.kind,
+      amount: r.amount,
+      methodName: r.method_name,
+      holderName: r.holder_name,
+      memberNo: r.member_no,
     })),
   };
 }

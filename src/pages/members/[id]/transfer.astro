@@ -1,0 +1,723 @@
+---
+// Record a transfer out of one of a member's (or a customer's) accounts
+// (S-1504): to another of their own, to another person's account found by
+// type and number, or to a payee with no account here. The rules are
+// ledger/transfers.ts's; this page gathers the form and shows both legs.
+import IdempotencyKeyField from '@components/IdempotencyKeyField.astro';
+import { canTransact } from '@lib/members/status';
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import {
+  listAccountTypes,
+  offeredBankAccounts,
+  offeredPaymentMethods,
+} from '@lib/config/reference';
+import { availableBalance } from '@lib/ledger/ledger';
+import { findAccountByNumber } from '@lib/ledger/lookup';
+import {
+  PERMISSION_CAPTURE,
+  recordTransfer,
+  TransferError,
+  type Transfer,
+  type TransferDestination,
+} from '@lib/ledger/transfers';
+import { loadCustomer, loadMember } from '@lib/members/create';
+import { formatMoney, toCents } from '@lib/payments/money';
+import { routePreviewGroups } from '@lib/workflow/timeline';
+import RoutePreview from '@components/RoutePreview.astro';
+import {
+  PAGE,
+  MUTED,
+  CARD,
+  CARD_TITLE,
+  FORM_CARD,
+  LABEL,
+  INPUT,
+  SECONDARY_SM,
+  BUTTON,
+  CARD_OK,
+  CHECK_LABEL,
+  NOTICE_ERROR,
+} from '@lib/ui';
+
+const principal = Astro.locals.principal!;
+if (!principal.permissions.has(PERMISSION_CAPTURE)) {
+  return Astro.redirect('/denied');
+}
+
+const { id } = Astro.params;
+const member = id ? await loadMember(id) : null;
+const customer = !member && id ? await loadCustomer(id) : null;
+if (!member && !customer) return new Response('Not found', { status: 404 });
+const person = (member ?? customer)!;
+const personLabel = member
+  ? `${member.name} · ${member.memberNo}`
+  : person.name;
+
+const allTypes = await listAccountTypes();
+const types = new Map(allTypes.map(t => [t.id, t]));
+const accounts = await Promise.all(
+  person.accounts.map(async account => {
+    const figures = await availableBalance(account.id);
+    const type = types.get(account.accountTypeId);
+    return {
+      ...account,
+      balance: figures.balance,
+      available: figures.available,
+      pendingDebits: figures.pendingDebits,
+      floor: type?.minimumBalance ?? '0.00',
+      allowsTransfer: type?.allowsTransfer ?? false,
+      allowsDeposit: type?.allowsDeposit ?? false,
+    };
+  })
+);
+const sources = accounts.filter(a => a.status === 'active' && a.allowsTransfer);
+const ownTargets = accounts.filter(
+  a => a.status === 'active' && a.allowsDeposit
+);
+// Another person's account is found the way the Transactions page finds
+// one: by type and number.
+const lookupTypes = allTypes.filter(t => t.isActive && t.allowsDeposit);
+const paymentMethods = await offeredPaymentMethods();
+const bankAccounts = await offeredBankAccounts();
+const requestedAccount = Astro.url.searchParams.get('account') ?? '';
+const fromTransactions = Astro.url.searchParams.get('from') === 'transactions';
+
+let values: Record<
+  | 'sourceAccountId'
+  | 'amount'
+  | 'destinationKind'
+  | 'ownAccountId'
+  | 'otherTypeId'
+  | 'otherNumber'
+  | 'payeeName'
+  | 'method'
+  | 'methodReference'
+  | 'bankAccountId'
+  | 'reason'
+  | 'idempotencyKey',
+  string
+> = {
+  sourceAccountId:
+    sources.find(a => a.id === requestedAccount)?.id ?? sources[0]?.id ?? '',
+  amount: '',
+  destinationKind: 'own',
+  ownAccountId: '',
+  otherTypeId: lookupTypes[0]?.id ?? '',
+  otherNumber: '',
+  payeeName: '',
+  method: paymentMethods[0]?.code ?? '',
+  methodReference: '',
+  bankAccountId: '',
+  reason: '',
+  idempotencyKey: crypto.randomUUID(),
+};
+let error: string | null = null;
+let transfer: Transfer | null = null;
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const text = (name: string) => String(form.get(name) ?? '');
+  values = {
+    sourceAccountId: text('sourceAccountId'),
+    amount: text('amount'),
+    destinationKind: text('destinationKind'),
+    ownAccountId: text('ownAccountId'),
+    otherTypeId: text('otherTypeId'),
+    otherNumber: text('otherNumber'),
+    payeeName: text('payeeName'),
+    method: text('method'),
+    methodReference: text('methodReference'),
+    bankAccountId: text('bankAccountId'),
+    reason: text('reason'),
+    idempotencyKey: text('idempotencyKey') || crypto.randomUUID(),
+  };
+  let destination: TransferDestination | null = null;
+  if (!person.accounts.some(a => a.id === values.sourceAccountId)) {
+    error = 'Choose which account the transfer comes from.';
+  } else if (values.destinationKind === 'own') {
+    if (!person.accounts.some(a => a.id === values.ownAccountId)) {
+      error = 'Choose which of their accounts it goes to.';
+    } else {
+      destination = { kind: 'account', accountId: values.ownAccountId };
+    }
+  } else if (values.destinationKind === 'other') {
+    const type = lookupTypes.find(t => t.id === values.otherTypeId);
+    const found = type
+      ? await findAccountByNumber(type.id, values.otherNumber)
+      : null;
+    if (!type) {
+      error = 'Choose the account type it goes to.';
+    } else if (!found) {
+      error = `No ${type.name} account ${values.otherNumber.trim().toUpperCase()}.`;
+    } else {
+      destination = { kind: 'account', accountId: found.accountId };
+    }
+  } else if (values.destinationKind === 'payee') {
+    destination = {
+      kind: 'payee',
+      payeeName: values.payeeName,
+      method: values.method,
+      methodReference: values.methodReference,
+      bankAccountId: values.bankAccountId,
+    };
+  } else {
+    error = 'Choose where the money goes.';
+  }
+  if (!error && destination) {
+    try {
+      transfer = await recordTransfer(
+        {
+          sourceAccountId: values.sourceAccountId,
+          amount: values.amount,
+          destination,
+          reason: values.reason,
+          idempotencyKey: values.idempotencyKey,
+        },
+        principal
+      );
+    } catch (err) {
+      if (err instanceof TransferError) {
+        // A conflict here is this form posted a second time — Back, then
+        // a change and Post again — under the key it was first posted
+        // with (QA-01). The key is not something the officer knows about.
+        error =
+          err.reason === 'conflict'
+            ? 'This transfer was already recorded. Open a new transfer form to record another.'
+            : err.message;
+      } else {
+        console.error('[members/transfer]', err);
+        error = 'Something went wrong. Please try again.';
+      }
+    }
+  }
+}
+
+const RADIO =
+  'text-mint-500 focus:ring-mint-400 rounded-full border-neutral-300 dark:border-neutral-600';
+// The timeline experience: what will happen to this transaction, by
+// account and amount, drawn over the form before it is recorded.
+const routeGroups = await routePreviewGroups(
+  'transfer',
+  sources,
+  principal.roles
+);
+const initialCents = /^\d{1,12}(\.\d{1,2})?$/.test(values.amount ?? '')
+  ? toCents(values.amount)
+  : null;
+// The own-account destination can't be the source account chosen above —
+// the server refuses that combination, so this picks a different one to
+// start from (unless the posted value already is one).
+const initialOwnAccountId =
+  values.ownAccountId && values.ownAccountId !== values.sourceAccountId
+    ? values.ownAccountId
+    : (ownTargets.find(a => a.id !== values.sourceAccountId)?.id ?? '');
+---
+
+<DashboardLayout title="Transfer · Al Barakah MCSL" heading="Record a transfer">
+  <div class={PAGE.form}>
+    <p class={`flex flex-wrap items-center gap-x-3 ${MUTED}`}>
+      {fromTransactions && (
+        <a
+          href="/transactions"
+          class="text-neutral-500 underline dark:text-neutral-400"
+        >
+          ← Transactions
+        </a>
+      )}
+      <a
+        href={`/members/${person.id}`}
+        class="font-medium underline hover:text-neutral-900 dark:hover:text-neutral-100"
+      >
+        {personLabel}
+      </a>
+    </p>
+
+    {error && <div class={NOTICE_ERROR}>{error}</div>}
+
+    {transfer ? (
+      <section class={CARD_OK}>
+        <h2 class={CARD_TITLE}>
+          {transfer.status === 'posted'
+            ? `Transfer ${transfer.reference} recorded`
+            : `Transfer ${transfer.reference} submitted for approval`}
+        </h2>
+        {transfer.status !== 'posted' && transfer.debitLeg.currentStepName && (
+          <p class={`${MUTED} mt-1`}>
+            Waiting for {transfer.debitLeg.currentStepName}
+            {transfer.debitLeg.currentStepRole &&
+              ` (${transfer.debitLeg.currentStepRole})`}
+            .
+          </p>
+        )}
+        <dl class="mt-4 grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
+          <dt class="text-neutral-500 dark:text-neutral-400">Amount</dt>
+          <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+            {formatMoney(transfer.debitLeg.amount, transfer.debitLeg.currency)}
+          </dd>
+          <dt class="text-neutral-500 dark:text-neutral-400">From</dt>
+          <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+            {transfer.debitLeg.accountNo} · {transfer.debitLeg.accountTypeName}
+            {transfer.debitLeg.balanceAfter &&
+              ` · now ${formatMoney(transfer.debitLeg.balanceAfter)}`}
+          </dd>
+          <dt class="text-neutral-500 dark:text-neutral-400">To</dt>
+          <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+            {transfer.creditLeg
+              ? `${transfer.creditLeg.holderName || transfer.creditLeg.holderKind} · ${transfer.creditLeg.accountNo} · ${transfer.creditLeg.accountTypeName}`
+              : `${transfer.debitLeg.payeeName} by ${transfer.debitLeg.methodName}${transfer.debitLeg.methodReference ? ` · ${transfer.debitLeg.methodReference}` : ''}`}
+          </dd>
+          {transfer.debitLeg.receiptNo && (
+            <>
+              <dt class="text-neutral-500 dark:text-neutral-400">Receipt</dt>
+              <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+                <a href={`/receipts/${transfer.debitLeg.id}`} class="underline">
+                  {transfer.debitLeg.receiptNo}
+                </a>
+              </dd>
+            </>
+          )}
+        </dl>
+        <div class="mt-5 flex flex-wrap gap-2">
+          <a href={`/members/${person.id}`} class={BUTTON}>
+            Back to {member ? 'member' : 'customer'}
+          </a>
+          {transfer.status !== 'posted' && (
+            <a
+              href={`/transactions/${transfer.debitLeg.id}`}
+              class={SECONDARY_SM}
+            >
+              Follow it
+            </a>
+          )}
+          <a
+            href={
+              fromTransactions
+                ? '/transactions/transfer'
+                : `/members/${person.id}/transfer`
+            }
+            class={SECONDARY_SM}
+          >
+            Record another
+          </a>
+        </div>
+      </section>
+    ) : sources.length === 0 ? (
+      <section class={`${CARD} text-sm text-neutral-600 dark:text-neutral-300`}>
+        {!canTransact(person.status)
+          ? `This ${member ? 'member' : 'customer'} is ${person.status}, so nothing can be transferred.`
+          : 'None of these accounts allows a transfer out.'}
+      </section>
+    ) : (
+      <>
+        <RoutePreview
+          groups={routeGroups}
+          accountField="sourceAccountId"
+          initialAccountId={values.sourceAccountId}
+          initialAmountCents={initialCents}
+        />
+        <form method="post" data-transfer-form class={FORM_CARD}>
+          <IdempotencyKeyField value={values.idempotencyKey} />
+
+          <label class={LABEL}>
+            From
+            <select name="sourceAccountId" class={INPUT}>
+              {accounts.map(account => (
+                <option
+                  value={account.id}
+                  selected={account.id === values.sourceAccountId}
+                  disabled={
+                    !(account.status === 'active' && account.allowsTransfer)
+                  }
+                  data-available={account.available}
+                  data-floor={account.floor}
+                >
+                  {account.accountNo} · {account.accountTypeName} ·{' '}
+                  {formatMoney(account.balance)}
+                  {account.pendingDebits !== '0.00' &&
+                    ` · ${formatMoney(account.available)} available`}
+                  {account.status !== 'active'
+                    ? ` · ${account.status}`
+                    : account.allowsTransfer
+                      ? ''
+                      : ' · no transfers'}
+                </option>
+              ))}
+            </select>
+          </label>
+          <p
+            data-available-note
+            class="text-xs text-neutral-500 dark:text-neutral-400"
+          ></p>
+
+          <label class={LABEL}>
+            Amount (Rs)
+            <input
+              type="text"
+              inputmode="decimal"
+              name="amount"
+              required
+              value={values.amount}
+              aria-describedby="transfer-amount-error"
+              class={INPUT}
+            />
+            <p
+              data-amount-error
+              id="transfer-amount-error"
+              class="text-xs text-red-700 dark:text-red-300"
+              hidden
+            ></p>
+          </label>
+
+          <fieldset class="space-y-3">
+            <legend class="text-sm text-neutral-600 dark:text-neutral-300">
+              To
+            </legend>
+            <label class={CHECK_LABEL}>
+              <input
+                type="radio"
+                name="destinationKind"
+                value="own"
+                checked={values.destinationKind === 'own'}
+                class={RADIO}
+              />
+              Another of {member ? 'their' : 'the customer’s'} accounts
+            </label>
+            <div data-destination="own" class="pl-6">
+              <select name="ownAccountId" class={INPUT}>
+                {ownTargets.map(account => (
+                  <option
+                    value={account.id}
+                    selected={account.id === initialOwnAccountId}
+                    disabled={account.id === values.sourceAccountId}
+                    hidden={account.id === values.sourceAccountId}
+                  >
+                    {account.accountNo} · {account.accountTypeName} ·{' '}
+                    {formatMoney(account.balance)}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <label class={CHECK_LABEL}>
+              <input
+                type="radio"
+                name="destinationKind"
+                value="other"
+                checked={values.destinationKind === 'other'}
+                class={RADIO}
+              />
+              Another member’s or customer’s account
+            </label>
+            <div
+              data-destination="other"
+              class="grid gap-3 pl-6 sm:grid-cols-2"
+            >
+              <label class={LABEL}>
+                Account type
+                <select name="otherTypeId" class={INPUT}>
+                  {lookupTypes.map(type => (
+                    <option
+                      value={type.id}
+                      selected={type.id === values.otherTypeId}
+                      data-membership-default={
+                        type.isMembershipDefault ? 'true' : 'false'
+                      }
+                      data-prefix={type.numberPrefix ?? ''}
+                    >
+                      {type.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label class={LABEL}>
+                <span data-number-label>Member number</span>
+                <input
+                  type="text"
+                  name="otherNumber"
+                  autocomplete="off"
+                  value={values.otherNumber}
+                  data-number
+                  placeholder="AB0001"
+                  class={INPUT}
+                />
+              </label>
+            </div>
+            <label class={CHECK_LABEL}>
+              <input
+                type="radio"
+                name="destinationKind"
+                value="payee"
+                checked={values.destinationKind === 'payee'}
+                class={RADIO}
+              />
+              Someone without an account here
+            </label>
+            <div
+              data-destination="payee"
+              class="grid gap-3 pl-6 sm:grid-cols-2"
+            >
+              <label class={`${LABEL} sm:col-span-2`}>
+                Paid to
+                <input
+                  type="text"
+                  name="payeeName"
+                  value={values.payeeName}
+                  maxlength="200"
+                  class={INPUT}
+                />
+              </label>
+              <label class={LABEL}>
+                Paid by
+                <select name="method" class={INPUT}>
+                  {paymentMethods.map(method => (
+                    <option
+                      value={method.code}
+                      data-requires-reference={
+                        method.requiresReference || method.touchesBank
+                          ? 'true'
+                          : 'false'
+                      }
+                      data-touches-bank={method.touchesBank ? 'true' : 'false'}
+                      selected={method.code === values.method}
+                    >
+                      {method.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label data-method-reference-field class={LABEL}>
+                Reference (cheque number, transfer reference)
+                <input
+                  type="text"
+                  name="methodReference"
+                  value={values.methodReference}
+                  class={INPUT}
+                />
+              </label>
+              <label data-bank-account-field class={LABEL}>
+                Bank account
+                <select name="bankAccountId" class={INPUT}>
+                  <option value="">Choose…</option>
+                  {bankAccounts.map(account => (
+                    <option
+                      value={account.id}
+                      selected={account.id === values.bankAccountId}
+                    >
+                      {account.name} · {account.bankName}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          </fieldset>
+
+          <label class={LABEL}>
+            Note
+            <input
+              type="text"
+              name="reason"
+              value={values.reason}
+              maxlength="200"
+              class={INPUT}
+            />
+          </label>
+
+          <div class="flex flex-wrap gap-2 pt-2">
+            <button type="submit" class={BUTTON}>
+              Record transfer
+            </button>
+            <a href={`/members/${person.id}`} class={SECONDARY_SM}>
+              Cancel
+            </a>
+          </div>
+        </form>
+      </>
+    )}
+  </div>
+</DashboardLayout>
+
+<script>
+  // A visual nudge only — every rule is enforced server-side
+  // (ledger/transfers.ts) whether or not this script runs: which
+  // destination's fields show, what is available on the source, and
+  // whether the pay-out method carries a reference.
+  const form = document.querySelector<HTMLFormElement>('[data-transfer-form]');
+  if (form) {
+    const sourceSelect = form.querySelector<HTMLSelectElement>(
+      '[name="sourceAccountId"]'
+    );
+    const ownSelect = form.querySelector<HTMLSelectElement>(
+      '[name="ownAccountId"]'
+    );
+    const note = form.querySelector<HTMLElement>('[data-available-note]');
+    const methodSelect =
+      form.querySelector<HTMLSelectElement>('[name="method"]');
+    const referenceField = form.querySelector<HTMLElement>(
+      '[data-method-reference-field]'
+    );
+    const bankField = form.querySelector<HTMLElement>(
+      '[data-bank-account-field]'
+    );
+    const typeSelect = form.querySelector<HTMLSelectElement>(
+      '[name="otherTypeId"]'
+    );
+    const numberLabel = form.querySelector<HTMLElement>('[data-number-label]');
+    const numberInput = form.querySelector<HTMLInputElement>('[data-number]');
+    const amountInput = form.querySelector<HTMLInputElement>('[name="amount"]');
+    const amountError = form.querySelector<HTMLElement>('[data-amount-error]');
+    const submitButton = form.querySelector<HTMLButtonElement>(
+      'button[type="submit"]'
+    );
+    const money = (value: string) =>
+      `Rs ${Number(value).toLocaleString('en-GB', { minimumFractionDigits: 2 })}`;
+    // What the chosen source account can pay out without falling under its
+    // type's minimum balance — kept up to date by recompute() as the
+    // account changes, and checked against the typed amount below.
+    let room = 0;
+    // Parsed the way the server parses it (ledger/transfers.ts): strip
+    // commas and spaces, then Number(). Over room is a client-side nudge
+    // only — the server refuses it regardless.
+    const checkAmount = () => {
+      if (!amountInput) return;
+      amountInput.dataset.max = room.toFixed(2);
+      const typed = amountInput.value.replace(/[,\s]/g, '');
+      const amount = typed === '' ? 0 : Number(typed);
+      const overRoom = typed !== '' && Number.isFinite(amount) && amount > room;
+      if (overRoom) {
+        const message = `At most ${money(room.toFixed(2))} can be transferred from this account.`;
+        amountInput.setCustomValidity(message);
+        if (amountError) {
+          amountError.textContent = message;
+          amountError.hidden = false;
+        }
+      } else {
+        amountInput.setCustomValidity('');
+        if (amountError) {
+          amountError.textContent = '';
+          amountError.hidden = true;
+        }
+      }
+      if (submitButton) submitButton.disabled = overRoom;
+    };
+    // The own-account destination can't also be the source — the server
+    // refuses that combination — so whichever option matches the chosen
+    // source is taken off the list here, and picked back up if the source
+    // changes again.
+    const updateOwnOptions = () => {
+      if (!ownSelect) return;
+      const sourceId = sourceSelect?.value;
+      let selectedWasRemoved = false;
+      for (const option of ownSelect.options) {
+        const isSource = option.value === sourceId;
+        option.disabled = isSource;
+        option.hidden = isSource;
+        if (isSource && option.selected) selectedWasRemoved = true;
+      }
+      if (selectedWasRemoved) {
+        const firstEnabled = Array.from(ownSelect.options).find(
+          o => !o.disabled
+        );
+        if (firstEnabled) {
+          ownSelect.value = firstEnabled.value;
+        } else {
+          ownSelect.selectedIndex = -1;
+        }
+      }
+    };
+    const recompute = () => {
+      const chosen = form.querySelector<HTMLInputElement>(
+        'input[name="destinationKind"]:checked'
+      )?.value;
+      for (const block of form.querySelectorAll<HTMLElement>(
+        '[data-destination]'
+      )) {
+        block.hidden = block.dataset.destination !== chosen;
+      }
+      const account = sourceSelect?.selectedOptions[0];
+      if (account) {
+        const available = account.dataset.available ?? '0';
+        const floor = account.dataset.floor ?? '0';
+        room = Math.max(0, Number(available) - Number(floor));
+        if (note) {
+          note.textContent =
+            Number(floor) > 0
+              ? `${money(available)} available; the account keeps at least ${money(floor)}, so up to ${money(room.toFixed(2))} can be transferred.`
+              : `${money(available)} available.`;
+        }
+      }
+      const method = methodSelect?.selectedOptions[0];
+      if (referenceField) {
+        referenceField.hidden = method?.dataset.requiresReference !== 'true';
+      }
+      if (bankField) {
+        bankField.hidden = method?.dataset.touchesBank !== 'true';
+      }
+      const type = typeSelect?.selectedOptions[0];
+      const own = type?.dataset.membershipDefault === 'true';
+      const prefix = type?.dataset.prefix || 'HSA';
+      if (numberLabel) {
+        numberLabel.textContent = own ? 'Member number' : 'Account number';
+      }
+      if (numberInput)
+        numberInput.placeholder = own ? 'AB0001' : `${prefix}0001`;
+      updateOwnOptions();
+      checkAmount();
+    };
+    form.addEventListener('change', recompute);
+    amountInput?.addEventListener('input', checkAmount);
+    recompute();
+
+    // Officer feedback: a transfer asks once, naming the amount and both
+    // sides, before it goes — through the app's own dialog (ConfirmDialog,
+    // window.appConfirm), never window.confirm(), whose buttons come from
+    // the browser in the device's language. Intercepting the form's submit
+    // (not the button's click) covers Enter in a field too; native
+    // validation has already passed by the time this fires.
+    const payeeInput =
+      form.querySelector<HTMLInputElement>('[name="payeeName"]');
+    const confirmAmount = (value: string) =>
+      `MUR ${Number(value || '0').toLocaleString('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      })}`;
+    // An option's own text is "<no> · <type name> · <balance>…" — the first
+    // two segments are the account's identity.
+    const accountLabel = (option: HTMLOptionElement | undefined) =>
+      option ? option.text.split(' · ').slice(0, 2).join(' · ') : '';
+
+    let confirmed = false;
+    form.addEventListener('submit', e => {
+      if (confirmed) {
+        confirmed = false;
+        return;
+      }
+      e.preventDefault();
+      // Over the account's room: the amount field already carries the
+      // message, so no dialog — fixing the amount is the next step, not
+      // confirming a transfer that cannot go through.
+      if (amountInput && !amountInput.validity.valid) return;
+      const submitter =
+        e.submitter instanceof HTMLElement ? e.submitter : undefined;
+      const destinationKind = form.querySelector<HTMLInputElement>(
+        'input[name="destinationKind"]:checked'
+      )?.value;
+      const destination =
+        destinationKind === 'own'
+          ? accountLabel(ownSelect?.selectedOptions[0])
+          : destinationKind === 'other'
+            ? `${(numberInput?.value ?? '').trim().toUpperCase()} · ${typeSelect?.selectedOptions[0]?.text ?? ''}`
+            : (payeeInput?.value ?? '').trim();
+      window
+        .appConfirm(
+          `Transfer ${confirmAmount(amountInput?.value ?? '')} from ` +
+            `${accountLabel(sourceSelect?.selectedOptions[0])} to ` +
+            `${destination}?`,
+          { okLabel: 'OK', danger: false }
+        )
+        .then(ok => {
+          if (!ok) return;
+          confirmed = true;
+          form.requestSubmit(submitter);
+        });
+    });
+  }
+</script>

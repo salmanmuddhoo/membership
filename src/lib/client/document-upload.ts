@@ -11,6 +11,8 @@
 export interface UploadDocumentInput {
   applicationId?: string;
   memberId?: string;
+  // A request's own paper (S-1702): the signed closure form.
+  transactionId?: string;
   documentTypeId: string;
   subject: 'applicant' | 'nominee' | 'guardian' | 'beneficiary';
   fileName: string;
@@ -36,6 +38,7 @@ export async function uploadDocumentBlob(
     body: JSON.stringify({
       applicationId: input.applicationId,
       memberId: input.memberId,
+      transactionId: input.transactionId,
       documentTypeId: input.documentTypeId,
       subject: input.subject,
       fileName: input.fileName,
