@@ -360,7 +360,7 @@ describe('a transfer between accounts on the system', () => {
     ).rejects.toThrowError(/record a transfer but not post it/);
   });
 
-  it("reads another person's account as a withdrawal for the matrix, and posts both legs once approved", async () => {
+  it("routes a transfer to another person's account under the Transfer bands, and posts both legs once approved", async () => {
     const { transfers, review, ledger } = await load();
     const before = {
       amina: await balance(amina.msa),
@@ -376,7 +376,7 @@ describe('a transfer between accounts on the system', () => {
     );
     expect(transfer.status).toBe('submitted');
     expect(transfer.debitLeg.status).toBe('submitted');
-    expect(transfer.debitLeg.workflowName).toBe('Withdrawal approval');
+    expect(transfer.debitLeg.workflowName).toBe('Transfer approval');
     expect(transfer.creditLeg?.status).toBe('submitted');
     expect(transfer.creditLeg?.workflowDefinitionId).toBeNull();
     // On its way out of Amina's, and only the debit leg in a queue.

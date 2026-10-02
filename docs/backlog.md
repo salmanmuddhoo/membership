@@ -5607,3 +5607,38 @@ Every sheet of the template now carries:
   hold it.
 - The Transactions and Transactions by officer reports hold only the viewer's
   own rows without it.
+
+---
+
+### Every transfer under the Transfer bands
+
+Officer feedback: a Rs 7,000 transfer went for approval although Transfer
+was configured to post at once up to Rs 100,000. The matrix had read a
+transfer to another holder's account as a withdrawal (FRD 6.4), under the
+Withdrawal bands, while the form's preview showed the Transfer ones.
+
+- Every transfer between accounts on the system — the same holder's or
+  another's — now routes under the matrix's **Transfer** kind, the bands the
+  administrator sees under Transfer. The preview and the route agree.
+- A payee leg (no account here) is no longer recorded; a returned one from
+  before still corrects under the Withdrawal bands, as it was routed.
+
+---
+
+### A dropdown with one choice chooses it
+
+Officer request. On a form that records something, a select that opened on
+"Choose…" and offered exactly one option now opens on that option, and the
+fields that follow it (a reference, a bank account) follow. A filter's "All"
+over one choice stays as it is.
+
+---
+
+### The Transactions page for those who only review
+
+Officer feedback: with `transaction.view_all`, the President still saw only
+"For your review" — the Transactions page sent anyone without
+`transaction.capture` straight to the queue. It now stands for every holder
+of `transaction.view`: the Waiting-on-you card, the day's list and the link
+to every day; the Deposit, Withdrawal and Transfer cards only for someone who
+may record one.

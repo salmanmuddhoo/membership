@@ -30,11 +30,10 @@ const create = defineEndpoint(
       'allows_transfer, and a credit leg on the destination, checked as a ' +
       'deposit is. Both post or neither. Money for someone with no account ' +
       'here is not a transfer: record a withdrawal and name who is paid ' +
-      '(payeeName on POST /api/v1/withdrawals). The approval matrix reads a ' +
-      'transfer between the same holder’s accounts under its own kind and ' +
-      'any other under a withdrawal’s. Below the band it posts at once, ' +
-      'with a receipt; above it, it is submitted to its chain. Idempotent ' +
-      'by the Idempotency-Key header.',
+      '(payeeName on POST /api/v1/withdrawals). The approval matrix reads ' +
+      'every transfer under its own kind, whoever holds the destination. ' +
+      'Below the band it posts at once, with a receipt; above it, it is ' +
+      'submitted to its chain. Idempotent by the Idempotency-Key header.',
     tag: 'Transactions',
     permission: PERMISSION_CAPTURE,
     idempotent: true,
