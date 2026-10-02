@@ -1,22 +1,36 @@
 ---
-// Which transactions a member may start from the app (S-2102).
+// Which transactions a member may start from the app (S-2102), and the
+// cards on the app's home screen (migration 0111).
 //
 // Reaching this page needs config.view, like every page under
 // /admin/configuration/ (the prefix rule in authorise.ts). CHANGING needs
 // config.manage.
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import ConfigNav from '@components/ConfigNav.astro';
+import PromotionFields from '@components/PromotionFields.astro';
 import {
   ConfigError,
   enabledMemberOperations,
   setEnabledMemberOperations,
 } from '@lib/config/reference';
 import {
+  createPromotion,
+  deletePromotion,
+  listPromotions,
+  updatePromotion,
+  type PromotionInput,
+} from '@lib/config/promotions';
+import {
   PAGE,
   CARD,
   CARD_TITLE,
   HINT,
+  PANEL,
+  INPUT,
+  LABEL,
   BUTTON,
+  BUTTON_SM,
+  BUTTON_DESTRUCTIVE,
   NOTICE_ERROR,
   NOTICE_OK,
 } from '@lib/ui';
@@ -32,12 +46,29 @@ if (Astro.request.method === 'POST') {
     error = 'You do not have permission to change this.';
   } else {
     const form = await Astro.request.formData();
+    const intent = String(form.get('intent') ?? 'operations');
+    const actor = { userId: principal.userId, email: principal.email };
     try {
-      await setEnabledMemberOperations(form.getAll('operations').map(String), {
-        userId: principal.userId,
-        email: principal.email,
-      });
-      notice = 'Saved.';
+      if (intent === 'operations') {
+        await setEnabledMemberOperations(
+          form.getAll('operations').map(String),
+          actor
+        );
+        notice = 'Saved.';
+      } else if (intent === 'promotion.create') {
+        await createPromotion(promotionFrom(form), actor);
+        notice = 'Card added. The app shows it on its next refresh.';
+      } else if (intent === 'promotion.update') {
+        await updatePromotion(
+          String(form.get('promotionId')),
+          promotionFrom(form),
+          actor
+        );
+        notice = 'Card saved.';
+      } else if (intent === 'promotion.delete') {
+        await deletePromotion(String(form.get('promotionId')), actor);
+        notice = 'Card removed.';
+      }
     } catch (err) {
       if (err instanceof ConfigError) {
         error = err.message;
@@ -49,7 +80,27 @@ if (Astro.request.method === 'POST') {
   }
 }
 
+function promotionFrom(form: FormData): PromotionInput {
+  const text = (name: string) => String(form.get(name) ?? '');
+  return {
+    title: text('title'),
+    body: text('body'),
+    imageUrl: text('imageUrl'),
+    linkUrl: text('linkUrl'),
+    linkLabel: text('linkLabel'),
+    accent: text('accent'),
+    isActive: form.get('isActive') === 'on',
+    startsOn: text('startsOn'),
+    endsOn: text('endsOn'),
+    sortOrder: text('sortOrder'),
+  };
+}
+
 const enabled = await enabledMemberOperations();
+const promotions = await listPromotions();
+
+const CHECK =
+  'text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600';
 
 const OPERATIONS: ReadonlyArray<{ value: string; label: string }> = [
   { value: 'deposit', label: 'Deposits' },
@@ -72,6 +123,7 @@ const OPERATIONS: ReadonlyArray<{ value: string; label: string }> = [
       </p>
 
       <form method="post" class="space-y-3">
+        <input type="hidden" name="intent" value="operations" />
         <div class="space-y-2">
           {OPERATIONS.map(op => (
             <label class="flex items-center gap-x-2 text-sm text-neutral-600 dark:text-neutral-300">
@@ -95,5 +147,87 @@ const OPERATIONS: ReadonlyArray<{ value: string; label: string }> = [
         )}
       </form>
     </section>
+
+    <section class={CARD}>
+      <h2 class={CARD_TITLE}>Cards on the home screen</h2>
+      <p class={`${HINT} mt-1`}>
+        What the app promotes, as sliding cards, in this order. A card is shown
+        while it is active and inside its dates; leave the dates empty for a
+        card that stays. A picture is an https:// address of an image hosted
+        elsewhere, for example on the Society's website.
+      </p>
+
+      {promotions.length === 0 && (
+        <p class={`${HINT} mt-4`}>No cards yet. The app shows none.</p>
+      )}
+
+      <div class="mt-5 space-y-4">
+        {promotions.map(card => (
+          <details class={PANEL}>
+            <summary class="flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-1">
+              <span class="font-medium text-neutral-800 dark:text-neutral-100">
+                {card.title}
+              </span>
+              <span class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200">
+                order {card.sortOrder}
+              </span>
+              {card.isLive ? (
+                <span class="bg-mint-200 dark:bg-mint-900 rounded px-1.5 py-0.5 text-xs text-neutral-800 dark:text-neutral-100">
+                  live
+                </span>
+              ) : (
+                <span class="rounded bg-red-100 px-1.5 py-0.5 text-xs text-red-800 dark:bg-red-950 dark:text-red-200">
+                  {card.isActive ? 'outside its dates' : 'inactive'}
+                </span>
+              )}
+            </summary>
+            <form method="post" class="mt-4 grid gap-3 sm:grid-cols-2">
+              <input type="hidden" name="promotionId" value={card.id} />
+              <PromotionFields
+                card={card}
+                canManage={canManage}
+                check={CHECK}
+              />
+              {canManage && (
+                <div class="flex gap-2 pt-2 sm:col-span-2">
+                  <button
+                    type="submit"
+                    name="intent"
+                    value="promotion.update"
+                    class={BUTTON_SM}
+                  >
+                    Save
+                  </button>
+                  <button
+                    type="submit"
+                    name="intent"
+                    value="promotion.delete"
+                    formnovalidate
+                    class={BUTTON_DESTRUCTIVE}
+                  >
+                    Remove
+                  </button>
+                </div>
+              )}
+            </form>
+          </details>
+        ))}
+      </div>
+    </section>
+
+    {canManage && (
+      <section class={CARD}>
+        <h2 class={CARD_TITLE}>Add a card</h2>
+        <form method="post" class="mt-4 grid gap-3 sm:grid-cols-2">
+          <input type="hidden" name="intent" value="promotion.create" />
+          <PromotionFields card={null} canManage={true} check={CHECK} />
+          <div class="sm:col-span-2">
+            <button type="submit" class={BUTTON}>
+              Add
+            </button>
+          </div>
+        </form>
+      </section>
+    )}
   </div>
 </DashboardLayout>
