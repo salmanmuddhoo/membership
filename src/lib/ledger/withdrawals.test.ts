@@ -692,3 +692,59 @@ describe('disbursing an approved withdrawal (S-1503)', () => {
     expect(paid.status).toBe('posted');
   });
 });
+
+// Officer direction: money for someone with no account here is a withdrawal
+// that names them, where it used to be a transfer to a payee.
+describe('a withdrawal paid to someone else', () => {
+  it('names who is paid when it is not the holder, and keeps the name through a correction', async () => {
+    const { withdrawals, review, deposits } = await load();
+    await deposits.recordDeposit(
+      {
+        accountId: msa,
+        amount: '120000',
+        method: 'bank_transfer',
+        methodReference: 'PAYEE-1',
+        bankAccountId,
+      },
+      officer
+    );
+    const paid = await withdrawals.recordWithdrawal(
+      {
+        accountId: msa,
+        amount: '1500',
+        method: 'cash',
+        payeeName: '  Al Noor School ',
+      },
+      officer
+    );
+    expect(paid.kind).toBe('withdrawal');
+    expect(paid.status).toBe('posted');
+    expect(paid.payeeName).toBe('Al Noor School');
+    // Blank means the holder.
+    const own = await withdrawals.recordWithdrawal(
+      { accountId: msa, amount: '100', method: 'cash', payeeName: '  ' },
+      officer
+    );
+    expect(own.payeeName).toBeNull();
+
+    // Over the band it goes for approval, payee and all; returned and
+    // corrected, the payee stays unless the correction says otherwise.
+    const large = await withdrawals.recordWithdrawal(
+      { accountId: msa, amount: '105000', payeeName: 'Al Noor School' },
+      officer
+    );
+    expect(large.status).toBe('submitted');
+    expect(large.payeeName).toBe('Al Noor School');
+    await review.reviewTransaction(
+      large.id,
+      { outcome: 'return', comment: 'Amount?' },
+      secretary
+    );
+    const corrected = await withdrawals.resubmitWithdrawal(
+      large.id,
+      { accountId: msa, amount: '104000' },
+      officer
+    );
+    expect(corrected.payeeName).toBe('Al Noor School');
+  });
+});

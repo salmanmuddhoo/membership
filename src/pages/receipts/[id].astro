@@ -252,7 +252,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
 });
 
 // The methods a refund may go back by (S-1307).
-const paymentMethods = await offeredPaymentMethods();
+const paymentMethods = await offeredPaymentMethods('withdrawal');
 ---
 
 <BaseLayout

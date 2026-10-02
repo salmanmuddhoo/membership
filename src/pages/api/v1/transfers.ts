@@ -24,16 +24,17 @@ const create = defineEndpoint(
     path: '/api/v1/transfers',
     summary: 'Record a transfer out of an account',
     description:
-      'Two legs under one id: a debit leg on the source, which meets every ' +
-      'check a withdrawal does plus the type’s allows_transfer, and — when ' +
-      'the destination is an account on the system — a credit leg on it, ' +
-      'checked as a deposit is. Both post or neither. A destination with no ' +
-      'account here (a payee) has no credit leg: the debit leg names the ' +
-      'payee and how it is paid out, and is disbursed once approved. The ' +
-      'approval matrix reads a transfer between the same holder’s accounts ' +
-      'under its own kind and any other under a withdrawal’s. Below the ' +
-      'band it posts at once, with a receipt; above it, it is submitted to ' +
-      'its chain. Idempotent by the Idempotency-Key header.',
+      'A transfer is to an account on the system, the holder’s own or ' +
+      'another holder’s. Two legs under one id: a debit leg on the source, ' +
+      'which meets every check a withdrawal does plus the type’s ' +
+      'allows_transfer, and a credit leg on the destination, checked as a ' +
+      'deposit is. Both post or neither. Money for someone with no account ' +
+      'here is not a transfer: record a withdrawal and name who is paid ' +
+      '(payeeName on POST /api/v1/withdrawals). The approval matrix reads a ' +
+      'transfer between the same holder’s accounts under its own kind and ' +
+      'any other under a withdrawal’s. Below the band it posts at once, ' +
+      'with a receipt; above it, it is submitted to its chain. Idempotent ' +
+      'by the Idempotency-Key header.',
     tag: 'Transactions',
     permission: PERMISSION_CAPTURE,
     idempotent: true,
@@ -50,31 +51,11 @@ const create = defineEndpoint(
           type: 'object',
           required: ['kind'],
           properties: {
-            kind: { type: 'string', enum: ['account', 'payee'] },
+            kind: { type: 'string', enum: ['account'] },
             accountId: {
               type: 'string',
               format: 'uuid',
-              description: 'With kind "account".',
-            },
-            payeeName: { type: 'string', description: 'With kind "payee".' },
-            method: {
-              type: 'string',
-              description:
-                'With kind "payee": how it is paid out, a payment_method ' +
-                'code from /api/v1/config/reference.',
-            },
-            methodReference: {
-              type: 'string',
-              description:
-                'Required where the method says so, when it posts at once.',
-            },
-            bankAccountId: {
-              type: 'string',
-              format: 'uuid',
-              description:
-                'With kind "payee": one of the Society\'s bank accounts. ' +
-                'Required where the method touches a bank, when it posts at ' +
-                'once; otherwise given at disbursement.',
+              description: 'The destination account.',
             },
           },
         },
@@ -105,27 +86,16 @@ const create = defineEndpoint(
       sourceAccountId?: unknown;
       amount?: unknown;
       destination?: {
-        kind?: unknown;
         accountId?: unknown;
-        payeeName?: unknown;
-        method?: unknown;
-        methodReference?: unknown;
-        bankAccountId?: unknown;
       };
       reason?: unknown;
     }>();
     const text = (v: unknown) => (typeof v === 'string' ? v : '');
     const raw = input.destination ?? {};
-    const destination: TransferDestination =
-      raw.kind === 'payee'
-        ? {
-            kind: 'payee',
-            payeeName: text(raw.payeeName),
-            method: text(raw.method),
-            methodReference: text(raw.methodReference),
-            bankAccountId: text(raw.bankAccountId),
-          }
-        : { kind: 'account', accountId: text(raw.accountId) };
+    const destination: TransferDestination = {
+      kind: 'account',
+      accountId: text(raw.accountId),
+    };
     try {
       const transfer = await recordTransfer(
         {

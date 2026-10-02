@@ -66,7 +66,7 @@ const depositable = accounts.filter(
   a => a.status === 'active' && a.acceptsDeposits
 );
 
-const paymentMethods = await offeredPaymentMethods();
+const paymentMethods = await offeredPaymentMethods('deposit');
 const bankAccounts = await offeredBankAccounts();
 // From the Transactions page (officer feedback): the account is already
 // chosen, and the way back is there rather than to the person's page.

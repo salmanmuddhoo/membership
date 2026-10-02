@@ -69,6 +69,24 @@ export interface ReportResult {
   summary?: string;
 }
 
+// Who is reading. A report that shows who recorded what (the transaction
+// reports) is scoped the way the day's list is (migration 0092): without
+// transaction.view_all it holds only the viewer's own rows. No viewer means
+// no scoping — a test, or a caller that has already decided.
+export interface ReportViewer {
+  userId: string;
+  permissions: ReadonlySet<string>;
+}
+
+export const PERMISSION_VIEW_ALL = 'transaction.view_all';
+
+// The officer whose rows alone the viewer may see, or null for everyone's.
+function ownRowsOnly(viewer: ReportViewer | undefined): string | null {
+  return viewer && !viewer.permissions.has(PERMISSION_VIEW_ALL)
+    ? viewer.userId
+    : null;
+}
+
 export interface ReportDefinition {
   code: string;
   title: string;
@@ -77,7 +95,7 @@ export interface ReportDefinition {
   summary: string;
   permission: string;
   filters: ReportFilter[];
-  run(filters: FilterValues): Promise<ReportResult>;
+  run(filters: FilterValues, viewer?: ReportViewer): Promise<ReportResult>;
 }
 
 // A date filter left empty means "no bound", which is what every report here
@@ -86,6 +104,8 @@ function dateOrNull(value: string | undefined): string | null {
   const trimmed = (value ?? '').trim();
   return trimmed === '' ? null : trimmed;
 }
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function textOrNull(value: string | undefined): string | null {
   const trimmed = (value ?? '').trim();
@@ -1028,7 +1048,7 @@ const transactions: ReportDefinition = {
     },
     { name: 'officer', label: 'Officer', kind: 'text' },
   ],
-  async run(filters) {
+  async run(filters, viewer) {
     const kind = textOrNull(filters.kind);
     const result = await query<Record<string, string | number>>(
       `select coalesce(tr.reference, t.reference) as "Reference",
@@ -1112,6 +1132,7 @@ const transactions: ReportDefinition = {
                or (t.status = 'posted' and $6::text = 'done')
                or (t.status = 'rejected' and $6::text = 'rejected')
                or (t.status = 'cancelled' and $6::text = 'cancelled'))
+          and ($7::uuid is null or t.captured_by = $7::uuid)
         order by t.created_at desc, t.serial_no desc`,
       [
         dateOrNull(filters.from),
@@ -1120,6 +1141,7 @@ const transactions: ReportDefinition = {
         textOrNull(filters.method),
         textOrNull(filters.officer),
         textOrNull(filters.status),
+        ownRowsOnly(viewer),
       ]
     );
 
@@ -1155,6 +1177,172 @@ const transactions: ReportDefinition = {
       summary:
         `${result.rows.length} transaction(s)` +
         (disbursed ? ` — completed: ${disbursed}.` : '.'),
+    };
+  },
+};
+
+// The officers who have recorded a transaction, for the filter below.
+const officerChoices = async () => {
+  const result = await query<{ id: string; display_name: string }>(
+    `select distinct u.id, u.display_name
+       from app_user u
+       join transaction t on t.captured_by = u.id
+      order by u.display_name`
+  );
+  return result.rows.map(r => ({ value: r.id, label: r.display_name }));
+};
+
+// Officer request · Transactions by officer: what each officer recorded
+// each day — a Regional Officer's day, a Regional Manager's region — as
+// counts and amounts by kind, one row per officer per day. A transfer
+// counts once, as its debit leg; a draft is not a transaction yet. A row
+// opens the Transactions report on that officer's day.
+const transactionsByOfficer: ReportDefinition = {
+  code: 'transactions-by-officer',
+  title: 'Transactions by officer',
+  category: 'Finance',
+  summary:
+    'What each officer recorded each day: how many deposits, withdrawals, ' +
+    'transfers and exits, and for how much.',
+  permission: 'transaction.view',
+  filters: [
+    ...PERIOD,
+    {
+      name: 'officer',
+      label: 'Officer',
+      kind: 'choice',
+      choices: officerChoices,
+    },
+  ],
+  async run(filters, viewer) {
+    const result = await query<{
+      day: string;
+      officer_id: string;
+      officer: string;
+      deposits: number;
+      deposits_amount: string;
+      withdrawals: number;
+      withdrawals_amount: string;
+      transfers: number;
+      transfers_amount: string;
+      others: number;
+      others_amount: string;
+      total: number;
+      money_in: string;
+      money_out: string;
+    }>(
+      `select to_char(t.created_at, 'YYYY-MM-DD') as day,
+              u.id as officer_id,
+              u.display_name as officer,
+              count(*) filter (where t.kind = 'deposit')::int as deposits,
+              coalesce(sum(t.amount) filter (where t.kind = 'deposit'), 0)
+                ::numeric(14, 2)::text as deposits_amount,
+              count(*) filter (where t.kind = 'withdrawal')::int
+                as withdrawals,
+              coalesce(sum(t.amount) filter (where t.kind = 'withdrawal'), 0)
+                ::numeric(14, 2)::text as withdrawals_amount,
+              count(*) filter (where t.kind = 'transfer_leg')::int
+                as transfers,
+              coalesce(sum(t.amount) filter (where t.kind = 'transfer_leg'), 0)
+                ::numeric(14, 2)::text as transfers_amount,
+              count(*) filter (where t.kind not in
+                ('deposit', 'withdrawal', 'transfer_leg'))::int as others,
+              coalesce(sum(t.amount) filter (where t.kind not in
+                ('deposit', 'withdrawal', 'transfer_leg')), 0)
+                ::numeric(14, 2)::text as others_amount,
+              count(*)::int as total,
+              coalesce(sum(t.amount) filter (where t.kind = 'deposit'), 0)
+                ::numeric(14, 2)::text as money_in,
+              coalesce(sum(t.amount) filter (where t.kind <> 'deposit'
+                and t.kind <> 'reversal'
+                and not (t.kind = 'transfer_leg' and t.payee_name is null)), 0)
+                ::numeric(14, 2)::text as money_out
+         from transaction t
+         join app_user u on u.id = t.captured_by
+        where t.status <> 'draft'
+          and t.leg_direction is distinct from 'credit'
+          and ($1::date is null or t.created_at >= $1::date)
+          and ($2::date is null or t.created_at < $2::date + 1)
+          and ($3::uuid is null or u.id = $3::uuid)
+          and ($4::uuid is null or t.captured_by = $4::uuid)
+        group by day, u.id, u.display_name
+        order by day desc, u.display_name`,
+      [
+        dateOrNull(filters.from),
+        dateOrNull(filters.to),
+        UUID.test(filters.officer ?? '') ? filters.officer! : null,
+        ownRowsOnly(viewer),
+      ]
+    );
+    const rows = result.rows.map(r => ({
+      Date: periodStartLabel(r.day),
+      Officer: r.officer,
+      Transactions: r.total,
+      Deposits: r.deposits,
+      'Deposits (Rs)': r.deposits_amount,
+      Withdrawals: r.withdrawals,
+      'Withdrawals (Rs)': r.withdrawals_amount,
+      Transfers: r.transfers,
+      'Transfers (Rs)': r.transfers_amount,
+      Exits: r.others,
+      'Exits (Rs)': r.others_amount,
+      'Money in (Rs)': r.money_in,
+      'Money out (Rs)': r.money_out,
+    }));
+    const count = result.rows.reduce((n, r) => n + r.total, 0);
+    const officers = new Set(result.rows.map(r => r.officer_id)).size;
+    const moneyIn = result.rows.reduce((n, r) => n + Number(r.money_in), 0);
+    const moneyOut = result.rows.reduce((n, r) => n + Number(r.money_out), 0);
+    return {
+      columns: [
+        { key: 'Date', label: 'Date' },
+        { key: 'Officer', label: 'Officer' },
+        { key: 'Transactions', label: 'Transactions', numeric: true },
+        { key: 'Deposits', label: 'Deposits', numeric: true },
+        {
+          key: 'Deposits (Rs)',
+          label: 'Deposits (Rs)',
+          numeric: true,
+          money: true,
+        },
+        { key: 'Withdrawals', label: 'Withdrawals', numeric: true },
+        {
+          key: 'Withdrawals (Rs)',
+          label: 'Withdrawals (Rs)',
+          numeric: true,
+          money: true,
+        },
+        { key: 'Transfers', label: 'Transfers', numeric: true },
+        {
+          key: 'Transfers (Rs)',
+          label: 'Transfers (Rs)',
+          numeric: true,
+          money: true,
+        },
+        { key: 'Exits', label: 'Exits', numeric: true },
+        { key: 'Exits (Rs)', label: 'Exits (Rs)', numeric: true, money: true },
+        {
+          key: 'Money in (Rs)',
+          label: 'Money in (Rs)',
+          numeric: true,
+          money: true,
+        },
+        {
+          key: 'Money out (Rs)',
+          label: 'Money out (Rs)',
+          numeric: true,
+          money: true,
+        },
+      ],
+      rows,
+      rowHrefs: result.rows.map(
+        r =>
+          `/reports/transactions?from=${r.day}&to=${r.day}` +
+          `&officer=${encodeURIComponent(r.officer)}`
+      ),
+      summary:
+        `${count} transaction(s) by ${officers} officer(s)` +
+        (count ? ` — in ${rs(moneyIn)}, out ${rs(moneyOut)}.` : '.'),
     };
   },
 };
@@ -2203,6 +2391,7 @@ export const REPORTS: ReportDefinition[] = [
   payments,
   feeComponents,
   transactions,
+  transactionsByOfficer,
   exits,
   admissions,
   resignations,

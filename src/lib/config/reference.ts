@@ -2494,6 +2494,10 @@ export async function setCashSourceOfFundChecklist(
 // whether the money reaches a bank (touchesBank), and whether it is the
 // system's own — 'migration', the legacy import's mark — which is never
 // offered on a form and not an administrator's to change (isSystem).
+//
+// Where a method is offered is per kind of transaction (officer request,
+// migration 0113): a cheque is taken on a deposit and never paid out on a
+// withdrawal. One flag per use, every method starting with all five.
 export interface PaymentMethod {
   id: string;
   code: string;
@@ -2504,6 +2508,72 @@ export interface PaymentMethod {
   isSystem: boolean;
   isActive: boolean;
   sortOrder: number;
+  forDeposit: boolean;
+  forWithdrawal: boolean;
+  forClosure: boolean;
+  forResignation: boolean;
+  forDemise: boolean;
+}
+
+// The uses a method is offered for: money in (a deposit, an application
+// fee), a withdrawal (and a fee refund), and the three payouts the
+// Treasurer disburses. The matrix's kinds less 'transfer', which never asks
+// a method: a leg between two accounts here is internal_transfer.
+export const PAYMENT_METHOD_USES = [
+  'deposit',
+  'withdrawal',
+  'closure',
+  'resignation',
+  'demise',
+] as const;
+export type PaymentMethodUse = (typeof PAYMENT_METHOD_USES)[number];
+
+export const PAYMENT_METHOD_USE_FIELD: Record<
+  PaymentMethodUse,
+  'forDeposit' | 'forWithdrawal' | 'forClosure' | 'forResignation' | 'forDemise'
+> = {
+  deposit: 'forDeposit',
+  withdrawal: 'forWithdrawal',
+  closure: 'forClosure',
+  resignation: 'forResignation',
+  demise: 'forDemise',
+};
+
+// What each use is called on the configuration page.
+export const PAYMENT_METHOD_USE_LABELS: Record<PaymentMethodUse, string> = {
+  deposit: 'Deposits',
+  withdrawal: 'Withdrawals',
+  closure: 'Account closures',
+  resignation: 'Resignations',
+  demise: 'Demised claims',
+};
+
+/**
+ * The use a transaction row's method is offered under: its own kind for a
+ * deposit, a withdrawal and the three exits; a withdrawal's for a transfer
+ * leg paid to a payee (money leaving the Society, as a withdrawal is), and
+ * none for a leg between two accounts here or a reversal.
+ */
+export function paymentMethodUseFor(transaction: {
+  kind: string;
+  payeeName?: string | null;
+}): PaymentMethodUse | null {
+  switch (transaction.kind) {
+    case 'deposit':
+    case 'withdrawal':
+    case 'closure':
+    case 'resignation':
+    case 'demise':
+      return transaction.kind;
+    case 'transfer_leg':
+      return transaction.payeeName ? 'withdrawal' : null;
+    default:
+      return null;
+  }
+}
+
+export function offersFor(method: PaymentMethod, use: PaymentMethodUse) {
+  return method[PAYMENT_METHOD_USE_FIELD[use]];
 }
 
 async function readPaymentMethods(): Promise<PaymentMethod[]> {
@@ -2517,9 +2587,15 @@ async function readPaymentMethods(): Promise<PaymentMethod[]> {
     is_system: boolean;
     is_active: boolean;
     sort_order: number;
+    for_deposit: boolean;
+    for_withdrawal: boolean;
+    for_closure: boolean;
+    for_resignation: boolean;
+    for_demise: boolean;
   }>(
     `select id, code, name, is_cash, requires_reference, touches_bank,
-            is_system, is_active, sort_order
+            is_system, is_active, sort_order, for_deposit, for_withdrawal,
+            for_closure, for_resignation, for_demise
        from payment_method
       order by sort_order, name`
   );
@@ -2533,6 +2609,11 @@ async function readPaymentMethods(): Promise<PaymentMethod[]> {
     isSystem: r.is_system,
     isActive: r.is_active,
     sortOrder: r.sort_order,
+    forDeposit: r.for_deposit,
+    forWithdrawal: r.for_withdrawal,
+    forClosure: r.for_closure,
+    forResignation: r.for_resignation,
+    forDemise: r.for_demise,
   }));
 }
 
@@ -2540,9 +2621,14 @@ export function listPaymentMethods(): Promise<PaymentMethod[]> {
   return cached('payment-methods', readPaymentMethods);
 }
 
-// What an officer's form offers: active, and not the system's own.
-export async function offeredPaymentMethods(): Promise<PaymentMethod[]> {
-  return (await listPaymentMethods()).filter(m => m.isActive && !m.isSystem);
+// What an officer's form offers: active, not the system's own, and — given
+// the use the form is for — offered for it.
+export async function offeredPaymentMethods(
+  use?: PaymentMethodUse
+): Promise<PaymentMethod[]> {
+  return (await listPaymentMethods()).filter(
+    m => m.isActive && !m.isSystem && (!use || offersFor(m, use))
+  );
 }
 
 // The method a record names, offered or not — a receipt taken by a method
@@ -2559,6 +2645,11 @@ export interface PaymentMethodInput {
   requiresReference: boolean;
   touchesBank: boolean;
   isActive: boolean;
+  forDeposit: boolean;
+  forWithdrawal: boolean;
+  forClosure: boolean;
+  forResignation: boolean;
+  forDemise: boolean;
 }
 
 export async function createPaymentMethod(
@@ -2588,10 +2679,12 @@ export async function createPaymentMethod(
     const result = await client.query<{ id: string }>(
       `insert into payment_method
          (code, name, is_cash, requires_reference, touches_bank, is_active,
-          sort_order)
+          sort_order, for_deposit, for_withdrawal, for_closure,
+          for_resignation, for_demise)
        values ($1, $2, $3, $4, $5, $6,
                coalesce((select max(sort_order) + 10 from payment_method
-                          where not is_system), 10))
+                          where not is_system), 10),
+               $7, $8, $9, $10, $11)
        returning id`,
       [
         code,
@@ -2600,6 +2693,11 @@ export async function createPaymentMethod(
         input.requiresReference,
         input.touchesBank,
         input.isActive,
+        input.forDeposit,
+        input.forWithdrawal,
+        input.forClosure,
+        input.forResignation,
+        input.forDemise,
       ]
     );
     return result.rows[0].id;
@@ -2617,7 +2715,9 @@ export async function updatePaymentMethod(
     const result = await client.query(
       `update payment_method
           set name = $2, is_cash = $3, requires_reference = $4,
-              touches_bank = $5, is_active = $6
+              touches_bank = $5, is_active = $6, for_deposit = $7,
+              for_withdrawal = $8, for_closure = $9, for_resignation = $10,
+              for_demise = $11
         where id = $1 and not is_system`,
       [
         id,
@@ -2626,6 +2726,11 @@ export async function updatePaymentMethod(
         input.requiresReference,
         input.touchesBank,
         input.isActive,
+        input.forDeposit,
+        input.forWithdrawal,
+        input.forClosure,
+        input.forResignation,
+        input.forDemise,
       ]
     );
     if (result.rowCount === 0) {

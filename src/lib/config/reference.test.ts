@@ -950,6 +950,11 @@ describe('S-1307: payment methods', () => {
     requiresReference: true,
     touchesBank: true,
     isActive: true,
+    forDeposit: true,
+    forWithdrawal: true,
+    forClosure: true,
+    forResignation: true,
+    forDemise: true,
   };
 
   it("ships today's methods under their codes, the FRD's additions, and the import's own", async () => {
@@ -992,6 +997,70 @@ describe('S-1307: payment methods', () => {
     const offered = await config.offeredPaymentMethods();
     expect(offered.map(m => m.code)).not.toContain('migration');
     expect(offered.map(m => m.code)).toContain('cash');
+    // Every method starts offered everywhere (0113).
+    for (const use of config.PAYMENT_METHOD_USES) {
+      expect(
+        (await config.offeredPaymentMethods(use)).map(m => m.code)
+      ).toEqual(offered.map(m => m.code));
+    }
+  });
+
+  it('is offered per kind of transaction: a cheque taken on a deposit, not paid out', async () => {
+    const { config } = await load();
+    const cheque = (await config.listPaymentMethods()).find(
+      m => m.code === 'cheque'
+    )!;
+    await config.updatePaymentMethod(
+      cheque.id,
+      {
+        name: cheque.name,
+        isCash: cheque.isCash,
+        requiresReference: cheque.requiresReference,
+        touchesBank: cheque.touchesBank,
+        isActive: true,
+        forDeposit: true,
+        forWithdrawal: false,
+        forClosure: false,
+        forResignation: true,
+        forDemise: true,
+      },
+      actor
+    );
+    const codes = async (use: (typeof config.PAYMENT_METHOD_USES)[number]) =>
+      (await config.offeredPaymentMethods(use)).map(m => m.code);
+    expect(await codes('deposit')).toContain('cheque');
+    expect(await codes('withdrawal')).not.toContain('cheque');
+    expect(await codes('closure')).not.toContain('cheque');
+    expect(await codes('resignation')).toContain('cheque');
+    // Without a use, the list is every offered method, as the API reference
+    // and the configuration page want it.
+    expect((await config.offeredPaymentMethods()).map(m => m.code)).toContain(
+      'cheque'
+    );
+    expect(
+      config.paymentMethodUseFor({ kind: 'transfer_leg', payeeName: 'X' })
+    ).toBe('withdrawal');
+    expect(
+      config.paymentMethodUseFor({ kind: 'transfer_leg', payeeName: null })
+    ).toBeNull();
+    expect(config.paymentMethodUseFor({ kind: 'closure' })).toBe('closure');
+
+    await config.updatePaymentMethod(
+      cheque.id,
+      {
+        name: cheque.name,
+        isCash: cheque.isCash,
+        requiresReference: cheque.requiresReference,
+        touchesBank: cheque.touchesBank,
+        isActive: true,
+        forDeposit: true,
+        forWithdrawal: true,
+        forClosure: true,
+        forResignation: true,
+        forDemise: true,
+      },
+      actor
+    );
   });
 
   it('adds a method without a release, and retires one without losing it', async () => {

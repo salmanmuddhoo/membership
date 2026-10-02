@@ -6,6 +6,10 @@ import {
   createPaymentMethod,
   listPaymentMethods,
   updatePaymentMethod,
+  PAYMENT_METHOD_USES,
+  PAYMENT_METHOD_USE_FIELD,
+  PAYMENT_METHOD_USE_LABELS,
+  offersFor,
 } from '@lib/config/reference';
 import {
   PAGE,
@@ -34,6 +38,11 @@ function flagsFrom(form: FormData) {
     requiresReference: form.get('requiresReference') === 'on',
     touchesBank: form.get('touchesBank') === 'on',
     isActive: form.get('isActive') === 'on',
+    forDeposit: form.get('forDeposit') === 'on',
+    forWithdrawal: form.get('forWithdrawal') === 'on',
+    forClosure: form.get('forClosure') === 'on',
+    forResignation: form.get('forResignation') === 'on',
+    forDemise: form.get('forDemise') === 'on',
   };
 }
 
@@ -80,6 +89,15 @@ const FLAGS = [
   ['requiresReference', 'Needs a reference'],
   ['touchesBank', 'Reaches a bank account'],
 ] as const;
+
+// The pill on a method offered for fewer than all five uses.
+function offeredSummary(method: (typeof methods)[number]): string | null {
+  const ticked = PAYMENT_METHOD_USES.filter(use => offersFor(method, use));
+  if (ticked.length === PAYMENT_METHOD_USES.length) return null;
+  return ticked.length === 0
+    ? 'not offered'
+    : ticked.map(use => PAYMENT_METHOD_USE_LABELS[use]).join(' · ');
+}
 ---
 
 <DashboardLayout
@@ -117,6 +135,11 @@ const FLAGS = [
               {method.requiresReference && (
                 <span class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200">
                   reference
+                </span>
+              )}
+              {!method.isSystem && offeredSummary(method) && (
+                <span class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200">
+                  {offeredSummary(method)}
                 </span>
               )}
               {method.isSystem && (
@@ -161,6 +184,23 @@ const FLAGS = [
                     {label}
                   </label>
                 ))}
+                <fieldset class="sm:col-span-2">
+                  <legend class={LABEL}>Offered for</legend>
+                  <div class="mt-1 flex flex-wrap gap-x-5 gap-y-2">
+                    {PAYMENT_METHOD_USES.map(use => (
+                      <label class="flex items-center gap-x-2 text-sm text-neutral-600 dark:text-neutral-300">
+                        <input
+                          type="checkbox"
+                          name={PAYMENT_METHOD_USE_FIELD[use]}
+                          checked={offersFor(method, use)}
+                          disabled={!canManage}
+                          class={CHECK}
+                        />
+                        {PAYMENT_METHOD_USE_LABELS[use]}
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
                 <label class="flex items-center gap-x-2 text-sm text-neutral-600 dark:text-neutral-300">
                   <input
                     type="checkbox"
@@ -216,6 +256,22 @@ const FLAGS = [
               {label}
             </label>
           ))}
+          <fieldset class="sm:col-span-2">
+            <legend class={LABEL}>Offered for</legend>
+            <div class="mt-1 flex flex-wrap gap-x-5 gap-y-2">
+              {PAYMENT_METHOD_USES.map(use => (
+                <label class="flex items-center gap-x-2 text-sm text-neutral-600 dark:text-neutral-300">
+                  <input
+                    type="checkbox"
+                    name={PAYMENT_METHOD_USE_FIELD[use]}
+                    checked
+                    class={CHECK}
+                  />
+                  {PAYMENT_METHOD_USE_LABELS[use]}
+                </label>
+              ))}
+            </div>
+          </fieldset>
           <div class="sm:col-span-2">
             <button type="submit" class={BUTTON}>
               Add

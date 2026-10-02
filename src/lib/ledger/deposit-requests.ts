@@ -74,7 +74,7 @@ export interface SourceOfFundItem {
 
 async function method(code: string): Promise<PaymentMethodConfig> {
   try {
-    return await offeredMethod(code);
+    return await offeredMethod(code, 'deposit');
   } catch (err) {
     if (err instanceof PaymentError) throw new DepositError(err.message);
     throw err;

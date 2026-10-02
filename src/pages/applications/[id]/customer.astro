@@ -675,7 +675,7 @@ const cashMax = due ? await cashMaximum() : null;
 // What the method select offers (S-1307): each option carries whether the
 // cash controls apply and whether a reference is demanded, so the script
 // below reads configuration rather than a list of codes.
-const paymentMethods = await offeredPaymentMethods();
+const paymentMethods = await offeredPaymentMethods('deposit');
 const sourceOfFundDocumentType = (await listDocumentTypes()).find(
   t => t.code === 'source_of_fund_form'
 );

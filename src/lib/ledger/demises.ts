@@ -219,7 +219,7 @@ async function resolvedClaimant(
 
 async function checkedMethod(code: string) {
   try {
-    return await offeredMethod(code);
+    return await offeredMethod(code, 'demise');
   } catch (err) {
     if (err instanceof PaymentError) {
       throw new DemiseError('Choose how the claim is paid out.');
@@ -233,7 +233,7 @@ async function checkedMethod(code: string) {
 // does the same).
 async function methodOrDefault(code: string | undefined) {
   if (code && code.trim()) return checkedMethod(code);
-  const [first] = await offeredPaymentMethods();
+  const [first] = await offeredPaymentMethods('demise');
   if (!first) {
     throw new DemiseError(
       'No payment method is configured. Ask an administrator.'

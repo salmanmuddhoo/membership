@@ -7,10 +7,13 @@
 // account on the system, meets a deposit's (S-1305). The debit leg is what
 // the matrix routes and the chain reviews: as 'transfer' when the money
 // stays with the same holder, as 'withdrawal' when it leaves their control
-// (FRD 6.4). A destination with no account here — a non-member, "Other" —
-// gets no credit leg: the debit leg names the payee and is paid out through
-// the disbursement step (S-1503). post_transaction() posts both legs or
-// neither.
+// (FRD 6.4). post_transaction() posts both legs or neither.
+//
+// Money for someone with no account here is a withdrawal, not a transfer
+// (officer direction): recordTransfer refuses a payee destination and
+// recordWithdrawal takes the payee's name instead. The payee legs recorded
+// before that — a debit leg with payee_name and no credit leg — still read,
+// resubmit and disburse as they did.
 import { canTransact } from '../members/status';
 import { createHash } from 'node:crypto';
 import { recordAudit } from '../access/audit';
@@ -66,7 +69,9 @@ export type TransferDestination =
   // An account on the system: the same holder's, another member's, or a
   // customer's.
   | { kind: 'account'; accountId: string }
-  // Nobody's account here: who was paid, and how.
+  // Nobody's account here: who was paid, and how. Only a leg recorded
+  // before payees became withdrawals carries this (resubmitTransfer);
+  // recordTransfer refuses it.
   | {
       kind: 'payee';
       payeeName: string;
@@ -289,7 +294,7 @@ async function paidBy(destination: TransferDestination, postsNow: boolean) {
     message => new TransferError(message)
   );
   try {
-    const method = await offeredMethod(destination.method);
+    const method = await offeredMethod(destination.method, 'withdrawal');
     if (postsNow) {
       requireReference(method, destination.methodReference);
       requireBankAccount(
@@ -322,6 +327,12 @@ export async function recordTransfer(
     throw new TransferError(
       'You do not have permission to record transfers.',
       'forbidden'
+    );
+  }
+  if (input.destination.kind === 'payee') {
+    throw new TransferError(
+      'Money for someone with no account here is a withdrawal. Record a ' +
+        'withdrawal and name who is paid.'
     );
   }
   const amountCents = parseAmount(input.amount);
