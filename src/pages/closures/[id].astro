@@ -174,7 +174,7 @@ const [checklist, timeline, trail, paymentMethods, bankAccounts] =
     closureChecklist(closure.id),
     chainTimeline('transaction', closure.id),
     transitionsFor(closure.id),
-    offeredPaymentMethods(),
+    offeredPaymentMethods('closure'),
     offeredBankAccounts(),
   ]);
 const complete = checklistComplete(checklist);

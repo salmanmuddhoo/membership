@@ -26,8 +26,10 @@ import {
   listMembershipTypes,
   type FeeComponent,
   type FeeComponentCode,
+  offersFor,
   paymentMethodByCode,
   type PaymentMethod as PaymentMethodConfig,
+  type PaymentMethodUse,
 } from '../config/reference';
 import type { Principal } from '../access/principal';
 import { fromCents, toCents, MoneyError } from './money';
@@ -145,13 +147,20 @@ export async function applyCashPaymentRules(
 }
 
 // The method named on a form has to be one an officer may choose today
-// (S-1307): configured, active, and not the system's own. A retired method
-// is still readable on every receipt that used it; it is only not offered.
+// (S-1307): configured, active, not the system's own and, given the use
+// the form is for, offered for it (migration 0113). A retired method is
+// still readable on every receipt that used it; it is only not offered.
 export async function offeredMethod(
-  code: string
+  code: string,
+  use?: PaymentMethodUse
 ): Promise<PaymentMethodConfig> {
   const method = await paymentMethodByCode(code);
-  if (!method || !method.isActive || method.isSystem) {
+  if (
+    !method ||
+    !method.isActive ||
+    method.isSystem ||
+    (use && !offersFor(method, use))
+  ) {
     throw new PaymentError('Choose how the payment was made.');
   }
   return method;
@@ -751,7 +760,7 @@ export async function recordPayment(
     );
   }
 
-  const paymentMethod = await offeredMethod(input.method);
+  const paymentMethod = await offeredMethod(input.method, 'deposit');
   requireReference(paymentMethod, input.methodReference);
 
   // A decided application is not one to take money on: an approved applicant
@@ -1067,7 +1076,7 @@ export async function recordAccountOpeningPayment(
     );
   }
 
-  const paymentMethod = await offeredMethod(input.method);
+  const paymentMethod = await offeredMethod(input.method, 'deposit');
   requireReference(paymentMethod, input.methodReference);
 
   // Mirrors recordPayment's own status guard: a decided application is not
@@ -1600,7 +1609,7 @@ export async function refundPayment(
   // The money goes back by a method that is offered today, with its
   // reference where the method demands one — the rule a payment already
   // follows (S-1307).
-  const refundMethod = await offeredMethod(input.method);
+  const refundMethod = await offeredMethod(input.method, 'withdrawal');
   requireReference(refundMethod, input.methodReference);
 
   const original = await loadPayment(input.paymentId);

@@ -1985,6 +1985,20 @@
                               },
                               "touchesBank": {
                                 "type": "boolean"
+                              },
+                              "offeredFor": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "enum": [
+                                    "deposit",
+                                    "withdrawal",
+                                    "closure",
+                                    "resignation",
+                                    "demise"
+                                  ]
+                                },
+                                "description": "The kinds of transaction this method is offered on: deposit (and an application fee), withdrawal (and a refund), closure, resignation, demise."
                               }
                             }
                           }
@@ -10976,7 +10990,7 @@
     "/api/v1/transfers": {
       "post": {
         "summary": "Record a transfer out of an account",
-        "description": "Two legs under one id: a debit leg on the source, which meets every check a withdrawal does plus the type’s allows_transfer, and — when the destination is an account on the system — a credit leg on it, checked as a deposit is. Both post or neither. A destination with no account here (a payee) has no credit leg: the debit leg names the payee and how it is paid out, and is disbursed once approved. The approval matrix reads a transfer between the same holder’s accounts under its own kind and any other under a withdrawal’s. Below the band it posts at once, with a receipt; above it, it is submitted to its chain. Idempotent by the Idempotency-Key header.",
+        "description": "A transfer is to an account on the system, the holder’s own or another holder’s. Two legs under one id: a debit leg on the source, which meets every check a withdrawal does plus the type’s allows_transfer, and a credit leg on the destination, checked as a deposit is. Both post or neither. Money for someone with no account here is not a transfer: record a withdrawal and name who is paid (payeeName on POST /api/v1/withdrawals). The approval matrix reads every transfer under its own kind, whoever holds the destination. Below the band it posts at once, with a receipt; above it, it is submitted to its chain. Idempotent by the Idempotency-Key header.",
         "tags": [
           "Transactions"
         ],
@@ -11598,31 +11612,13 @@
                       "kind": {
                         "type": "string",
                         "enum": [
-                          "account",
-                          "payee"
+                          "account"
                         ]
                       },
                       "accountId": {
                         "type": "string",
                         "format": "uuid",
-                        "description": "With kind \"account\"."
-                      },
-                      "payeeName": {
-                        "type": "string",
-                        "description": "With kind \"payee\"."
-                      },
-                      "method": {
-                        "type": "string",
-                        "description": "With kind \"payee\": how it is paid out, a payment_method code from /api/v1/config/reference."
-                      },
-                      "methodReference": {
-                        "type": "string",
-                        "description": "Required where the method says so, when it posts at once."
-                      },
-                      "bankAccountId": {
-                        "type": "string",
-                        "format": "uuid",
-                        "description": "With kind \"payee\": one of the Society's bank accounts. Required where the method touches a bank, when it posts at once; otherwise given at disbursement."
+                        "description": "The destination account."
                       }
                     }
                   },
@@ -12011,6 +12007,10 @@
                   },
                   "reason": {
                     "type": "string"
+                  },
+                  "payeeName": {
+                    "type": "string",
+                    "description": "Who is paid, when it is not the account holder: someone with no account here."
                   }
                 }
               }

@@ -4,10 +4,13 @@
 // account's form. Typing a full number and pressing Enter still submits the
 // lookup as before; the list is a shortcut, not the only way in.
 //
-// The page's form carries the account type radios (name="type") and the box
-// ([data-number]); the suggestions come from /transactions/lookup.json.
+// The page's form carries the box ([data-number]) and the account type: the
+// radios (name="type") by default, or a select passed as options.typeSelect.
+// With options.onPick, picking a suggestion hands it to the page instead of
+// opening a form (the transfer form fills its box with it). The suggestions
+// come from /transactions/lookup.json.
 
-interface Suggestion {
+export interface Suggestion {
   accountId: string;
   accountNo: string;
   holderId: string;
@@ -17,7 +20,13 @@ interface Suggestion {
 export function wireAccountSuggest(
   form: HTMLFormElement,
   // The form under the person's page: deposit, withdraw or transfer.
-  action: string
+  action: string,
+  options: {
+    // The account type comes from this select instead of the type radios.
+    typeSelect?: HTMLSelectElement;
+    // Called with the chosen suggestion instead of opening its form.
+    onPick?: (suggestion: Suggestion) => void;
+  } = {}
 ): void {
   const input = form.querySelector<HTMLInputElement>('[data-number]');
   if (!input) return;
@@ -50,6 +59,15 @@ export function wireAccountSuggest(
     input.setAttribute('aria-expanded', 'false');
     input.removeAttribute('aria-activedescendant');
     active = -1;
+  };
+
+  const pick = (s: Suggestion) => {
+    if (options.onPick) {
+      close();
+      options.onPick(s);
+    } else {
+      window.location.href = destination(s);
+    }
   };
 
   const highlight = (index: number) => {
@@ -89,7 +107,7 @@ export function wireAccountSuggest(
       // mousedown, not click: it lands before the box's blur closes the list.
       li.addEventListener('mousedown', event => {
         event.preventDefault();
-        window.location.href = destination(s);
+        pick(s);
       });
       list.appendChild(li);
     });
@@ -100,9 +118,10 @@ export function wireAccountSuggest(
 
   const lookUp = async () => {
     const typed = input.value.trim();
-    const type = form.querySelector<HTMLInputElement>(
-      'input[name="type"]:checked'
-    )?.value;
+    const type = options.typeSelect
+      ? options.typeSelect.value
+      : form.querySelector<HTMLInputElement>('input[name="type"]:checked')
+          ?.value;
     if (typed.length < 2 || !type) {
       items = [];
       render();
@@ -129,10 +148,15 @@ export function wireAccountSuggest(
     window.clearTimeout(timer);
     timer = window.setTimeout(lookUp, 200);
   });
-  for (const radio of form.querySelectorAll('input[name="type"]')) {
-    radio.addEventListener('change', () => {
-      if (input.value.trim()) void lookUp();
-    });
+  const typeChanged = () => {
+    if (input.value.trim()) void lookUp();
+  };
+  if (options.typeSelect) {
+    options.typeSelect.addEventListener('change', typeChanged);
+  } else {
+    for (const radio of form.querySelectorAll('input[name="type"]')) {
+      radio.addEventListener('change', typeChanged);
+    }
   }
   input.addEventListener('keydown', event => {
     if (list.hidden) return;
@@ -144,7 +168,7 @@ export function wireAccountSuggest(
       highlight(Math.max(active - 1, 0));
     } else if (event.key === 'Enter' && active >= 0) {
       event.preventDefault();
-      window.location.href = destination(items[active]);
+      pick(items[active]);
     } else if (event.key === 'Escape') {
       close();
     }

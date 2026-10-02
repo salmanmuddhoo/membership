@@ -71,7 +71,10 @@ if (!showAll && hasPeriod && noFilterInUrl) {
 // payment ever taken is a cost nobody asked for, and the first thing an
 // officer does is choose a period.
 const asked = report.filters.some(f => (filters[f.name] ?? '') !== '');
-const result = asked || showAll ? await report.run(filters) : null;
+// Who is asking: the transaction reports hold only this officer's rows
+// without transaction.view_all, as the day's list does.
+const viewer = { userId: principal.userId, permissions: principal.permissions };
+const result = asked || showAll ? await report.run(filters, viewer) : null;
 
 // On screen, a report is paged (officer request: 10, 25 or 50 rows, the
 // officer's choice); the spreadsheet carries every one (performance QA:

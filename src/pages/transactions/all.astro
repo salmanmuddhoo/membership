@@ -5,7 +5,7 @@
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import TransactionTable from '@components/TransactionTable.astro';
 import Pagination from '@components/Pagination.astro';
-import { listTransactions } from '@lib/ledger/history';
+import { listRecordingOfficers, listTransactions } from '@lib/ledger/history';
 import type { TransactionRowKind } from '@lib/config/reference';
 import { STATUS_LABELS } from '@lib/ledger/labels';
 import { pagingFrom, pageCount } from '@lib/paging';
@@ -42,12 +42,17 @@ const status = params.get('status') ?? '';
 const from = params.has('from') ? (params.get('from') ?? '') : today;
 const to = params.has('to') ? (params.get('to') ?? '') : today;
 const paging = pagingFrom(Astro.url);
+// Only roles that see the whole day can narrow it to one officer.
+const officers = seesAll ? await listRecordingOfficers() : [];
+const officer = officers.some(o => o.id === params.get('officer'))
+  ? (params.get('officer') ?? '')
+  : '';
 const asDate = (value: string, endOfDay: boolean) => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
   return new Date(`${value}T${endOfDay ? '23:59:59.999' : '00:00:00'}`);
 };
 const result = await listTransactions({
-  capturedBy: seesAll ? undefined : principal.userId,
+  capturedBy: seesAll ? officer || undefined : principal.userId,
   kind: KINDS.some(([k]) => k === kind)
     ? (kind as TransactionRowKind)
     : undefined,
@@ -75,7 +80,10 @@ if (paging.page > 1 && paging.page > pageCount(result.total, paging.per)) {
       ← Transactions
     </a>
 
-    <form method="get" class={`grid gap-3 ${FILTER} text-sm sm:grid-cols-4`}>
+    <form
+      method="get"
+      class={`grid gap-3 ${FILTER} text-sm ${seesAll ? 'sm:grid-cols-5' : 'sm:grid-cols-4'}`}
+    >
       <label class="text-neutral-600 dark:text-neutral-300">
         Kind
         <select name="kind" class={INPUT}>
@@ -106,7 +114,22 @@ if (paging.page > 1 && paging.page > pageCount(result.total, paging.per)) {
         To
         <input type="date" name="to" value={to} class={INPUT} />
       </label>
-      <div class="flex items-end gap-2 sm:col-span-4">
+      {seesAll && (
+        <label class="text-neutral-600 dark:text-neutral-300">
+          Recorded by
+          <select name="officer" class={INPUT}>
+            <option value="">Everyone</option>
+            {officers.map(o => (
+              <option value={o.id} selected={o.id === officer}>
+                {o.displayName}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      <div
+        class={`flex items-end gap-2 ${seesAll ? 'sm:col-span-5' : 'sm:col-span-4'}`}
+      >
         <button type="submit" class={BUTTON_SM}>
           Filter
         </button>

@@ -236,10 +236,12 @@ credit leg follows — never in a queue, never posted on its own.
 leg and the transfer's status, so both post or neither (0073). A rejection
 of the debit leg ends the credit leg too.
 
-For the matrix, a transfer between the same holder's accounts is its own
-kind (`transfer`, seeded to post up to the threshold); one to another
-person's account, or to a payee, is a withdrawal — funds are leaving the
-source holder's control (FRD 6.4).
+For the matrix, every transfer between accounts on the system — the same
+holder's or another person's — is its own kind (`transfer`, seeded to post
+up to the threshold): the Transfer bands an administrator configures govern
+it, whoever holds the destination (officer direction; FRD 6.4 had routed one
+to another holder as a withdrawal). Only a payee leg with no account here
+read as a withdrawal, and nothing records one any more.
 
 A destination with no account here — a non-member, "Other" — has no credit
 leg (open point 5's default). The debit leg names the payee and how it is

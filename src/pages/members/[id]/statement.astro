@@ -35,6 +35,7 @@ import {
   THEAD,
   TBODY,
   TH,
+  TD,
   TD_NUM,
 } from '@lib/ui';
 
@@ -116,6 +117,15 @@ const contactHint = hasContact
   ? [contact!.email, contact!.mobile].filter(Boolean).join(' · ')
   : 'No email or mobile on file.';
 
+const dateFormat = new Intl.DateTimeFormat('en-GB', {
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+  timeZone: 'Indian/Mauritius',
+});
+const money = (value: string | null) =>
+  value === null ? '' : formatMoney(value);
+
 const NOTICE_CLASS = {
   ok: NOTICE_OK,
   warn: NOTICE_WARN,
@@ -194,6 +204,51 @@ const NOTICE_CLASS = {
               </tbody>
             </table>
           </div>
+          {account.lines.length === 0 ? (
+            <p class={`${MUTED} mt-4`}>No transaction in this period.</p>
+          ) : (
+            <div class="mt-4 overflow-x-auto">
+              <table class={TABLE}>
+                <thead class={THEAD}>
+                  <tr>
+                    <th class={TH}>Date</th>
+                    <th class={TH}>Reference</th>
+                    <th class={TH}>Description</th>
+                    <th class={TH}>Method</th>
+                    <th class={TH}>Out</th>
+                    <th class={TH}>In</th>
+                    <th class={TH}>Balance</th>
+                  </tr>
+                </thead>
+                <tbody class={TBODY}>
+                  {account.lines.map(line => (
+                    <tr>
+                      <td class={TD}>{dateFormat.format(line.postedAt)}</td>
+                      <td class={TD}>
+                        <a
+                          href={`/transactions/${line.transactionId}`}
+                          class="underline"
+                        >
+                          {line.reference}
+                        </a>
+                      </td>
+                      <td class={TD}>
+                        {line.description}
+                        {line.reason && ` · ${line.reason}`}
+                      </td>
+                      <td class={TD}>
+                        {line.methodName}
+                        {line.methodReference && ` · ${line.methodReference}`}
+                      </td>
+                      <td class={TD_NUM}>{money(line.debit)}</td>
+                      <td class={TD_NUM}>{money(line.credit)}</td>
+                      <td class={TD_NUM}>{money(line.balance)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </section>
       ))
     ) : (

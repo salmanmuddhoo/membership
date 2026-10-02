@@ -1,8 +1,9 @@
 ---
 // Record a withdrawal from one of a member's (or a customer's) accounts
-// (S-1501, S-1502). The rules are ledger/withdrawals.ts's; this page gathers
-// the form, shows the balance and what is available beside it, and shows
-// the receipt or the step it waits at.
+// (S-1501, S-1502). A withdrawal paid to someone with no account here names
+// them (Paid to); left blank, it is paid to the account holder. The rules are
+// ledger/withdrawals.ts's; this page gathers the form, shows the balance and
+// what is available beside it, and shows the receipt or the step it waits at.
 import IdempotencyKeyField from '@components/IdempotencyKeyField.astro';
 import { canTransact } from '@lib/members/status';
 import DashboardLayout from '@layouts/DashboardLayout.astro';
@@ -69,7 +70,7 @@ const withdrawable = accounts.filter(
   a => a.status === 'active' && a.allowsWithdrawal
 );
 
-const paymentMethods = await offeredPaymentMethods();
+const paymentMethods = await offeredPaymentMethods('withdrawal');
 const bankAccounts = await offeredBankAccounts();
 const requestedAccount = Astro.url.searchParams.get('account') ?? '';
 const fromTransactions = Astro.url.searchParams.get('from') === 'transactions';
@@ -81,6 +82,7 @@ let values: Record<
   | 'methodReference'
   | 'bankAccountId'
   | 'reason'
+  | 'payeeName'
   | 'idempotencyKey',
   string
 > = {
@@ -93,6 +95,7 @@ let values: Record<
   methodReference: '',
   bankAccountId: '',
   reason: '',
+  payeeName: '',
   idempotencyKey: crypto.randomUUID(),
 };
 let error: string | null = null;
@@ -108,6 +111,7 @@ if (Astro.request.method === 'POST') {
     methodReference: text('methodReference'),
     bankAccountId: text('bankAccountId'),
     reason: text('reason'),
+    payeeName: text('payeeName'),
     idempotencyKey: text('idempotencyKey') || crypto.randomUUID(),
   };
   if (!person.accounts.some(a => a.id === values.accountId)) {
@@ -216,6 +220,14 @@ const paidAtOnce =
           <dd class="font-medium text-neutral-800 dark:text-neutral-100">
             {withdrawal.accountNo} · {withdrawal.accountTypeName}
           </dd>
+          {withdrawal.payeeName && (
+            <>
+              <dt class="text-neutral-500 dark:text-neutral-400">Paid to</dt>
+              <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+                {withdrawal.payeeName}
+              </dd>
+            </>
+          )}
           {withdrawal.balanceAfter && (
             <>
               <dt class="text-neutral-500 dark:text-neutral-400">
@@ -368,6 +380,16 @@ const paidAtOnce =
                 type="text"
                 name="reason"
                 value={values.reason}
+                maxlength="200"
+                class={INPUT}
+              />
+            </label>
+            <label class={`${LABEL} sm:col-span-2`}>
+              Paid to (leave blank for the account holder)
+              <input
+                type="text"
+                name="payeeName"
+                value={values.payeeName}
                 maxlength="200"
                 class={INPUT}
               />

@@ -20,11 +20,12 @@ import {
 const principal = Astro.locals.principal!;
 const canCapture = principal.permissions.has('transaction.capture');
 // S-1403: what waits on this person, up front. Someone who only reviews —
-// the Secretary, the President — has nothing to start here, so the queue
-// is their page.
+// the Secretary, the President — has nothing to start here, but the day's
+// list below is theirs to read when they hold transaction.view_all
+// (officer feedback: the President could not see what the Regional
+// Officers recorded), so the page stands for them without the cards.
 const waiting = await (Astro.locals.pendingTransactions ??
   pendingTransactionCount(principal));
-if (!canCapture) return Astro.redirect('/transactions/pending');
 
 // The three an officer starts here. Resignations, closures and claims
 // start from the member's own page.
@@ -73,19 +74,21 @@ const today = await listTransactions({
       </a>
     )}
 
-    <ul class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      {KINDS.map(kind => (
-        <li>
-          <a
-            href={kind.href}
-            class={`block ${CARD} transition hover:border-mint-400 hover:bg-white dark:hover:border-mint-700 dark:hover:bg-neutral-900`}
-          >
-            <span class={`block ${CARD_TITLE}`}>{kind.label}</span>
-            <span class={`mt-1 block ${HINT}`}>{kind.blurb}</span>
-          </a>
-        </li>
-      ))}
-    </ul>
+    {canCapture && (
+      <ul class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {KINDS.map(kind => (
+          <li>
+            <a
+              href={kind.href}
+              class={`block ${CARD} transition hover:border-mint-400 hover:bg-white dark:hover:border-mint-700 dark:hover:bg-neutral-900`}
+            >
+              <span class={`block ${CARD_TITLE}`}>{kind.label}</span>
+              <span class={`mt-1 block ${HINT}`}>{kind.blurb}</span>
+            </a>
+          </li>
+        ))}
+      </ul>
+    )}
 
     <section class="space-y-2">
       <div class="flex flex-wrap items-center justify-between gap-2">

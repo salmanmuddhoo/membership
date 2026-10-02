@@ -5,12 +5,17 @@
 // debit leg on the source meets every check a withdrawal does (S-1501) and
 // the type's allows_transfer; the credit leg, when the destination is an
 // account on the system, meets a deposit's (S-1305). The debit leg is what
-// the matrix routes and the chain reviews: as 'transfer' when the money
-// stays with the same holder, as 'withdrawal' when it leaves their control
-// (FRD 6.4). A destination with no account here — a non-member, "Other" —
-// gets no credit leg: the debit leg names the payee and is paid out through
-// the disbursement step (S-1503). post_transaction() posts both legs or
-// neither.
+// the matrix routes and the chain reviews, under the matrix's own
+// 'transfer' kind whoever holds the destination (officer direction: the
+// Transfer bands an administrator configures govern every transfer between
+// accounts here; FRD 6.4 had routed one to another holder as a withdrawal).
+// post_transaction() posts both legs or neither.
+//
+// Money for someone with no account here is a withdrawal, not a transfer
+// (officer direction): recordTransfer refuses a payee destination and
+// recordWithdrawal takes the payee's name instead. The payee legs recorded
+// before that — a debit leg with payee_name and no credit leg — still read,
+// resubmit and disburse as they did.
 import { canTransact } from '../members/status';
 import { createHash } from 'node:crypto';
 import { recordAudit } from '../access/audit';
@@ -66,7 +71,9 @@ export type TransferDestination =
   // An account on the system: the same holder's, another member's, or a
   // customer's.
   | { kind: 'account'; accountId: string }
-  // Nobody's account here: who was paid, and how.
+  // Nobody's account here: who was paid, and how. Only a leg recorded
+  // before payees became withdrawals carries this (resubmitTransfer);
+  // recordTransfer refuses it.
   | {
       kind: 'payee';
       payeeName: string;
@@ -208,18 +215,15 @@ function refuseUnlessCreditable(to: Destination, amountCents: number): void {
   }
 }
 
-// Which rules of the matrix a transfer falls under (FRD 6.4): its own when
-// the money stays with the same holder; a withdrawal's when it leaves
-// their control — another person's account, or a payee with none.
+// Which rules of the matrix a transfer falls under: its own for any
+// account on the system, the same holder's or another's (officer
+// direction); a withdrawal's only for a payee leg with no account here,
+// which nothing records any more but a returned one can still be
+// corrected (resubmitTransfer).
 function matrixKind(
-  from: { memberId: string | null; customerId: string | null },
   to: { memberId: string | null; customerId: string | null } | null
 ): TransactionKind {
-  const own =
-    to !== null &&
-    to.memberId === from.memberId &&
-    to.customerId === from.customerId;
-  return own ? 'transfer' : 'withdrawal';
+  return to !== null ? 'transfer' : 'withdrawal';
 }
 
 export async function loadTransfer(id: string): Promise<Transfer | null> {
@@ -289,7 +293,7 @@ async function paidBy(destination: TransferDestination, postsNow: boolean) {
     message => new TransferError(message)
   );
   try {
-    const method = await offeredMethod(destination.method);
+    const method = await offeredMethod(destination.method, 'withdrawal');
     if (postsNow) {
       requireReference(method, destination.methodReference);
       requireBankAccount(
@@ -322,6 +326,12 @@ export async function recordTransfer(
     throw new TransferError(
       'You do not have permission to record transfers.',
       'forbidden'
+    );
+  }
+  if (input.destination.kind === 'payee') {
+    throw new TransferError(
+      'Money for someone with no account here is a withdrawal. Record a ' +
+        'withdrawal and name who is paid.'
     );
   }
   const amountCents = parseAmount(input.amount);
@@ -365,7 +375,7 @@ export async function recordTransfer(
   }
   if (to) refuseUnlessCreditable(to, amountCents);
 
-  const kind = matrixKind(from, to);
+  const kind = matrixKind(to);
   const route = await resolveRoute({
     kind,
     accountTypeId: from.accountTypeId,
@@ -575,7 +585,7 @@ export async function resubmitTransfer(
   }
   if (to) refuseUnlessCreditable(to, amountCents);
 
-  const kind = matrixKind(from, to);
+  const kind = matrixKind(to);
   const route = await resolveRoute({
     kind,
     accountTypeId: from.accountTypeId,

@@ -136,7 +136,7 @@ const [
   resignationChecklist(request.id),
   chainTimeline('transaction', request.id),
   transitionsFor(request.id),
-  offeredPaymentMethods(),
+  offeredPaymentMethods('resignation'),
   offeredBankAccounts(),
   coreAccounts(request.holderId),
   checksFor(request.holderId, request.id),

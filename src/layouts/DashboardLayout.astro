@@ -383,6 +383,11 @@ try {
     wireSearchSuggestions();
   </script>
   <script>
+    // A dropdown with one thing to choose chooses it (officer request).
+    import { chooseTheOnlyOption } from '@lib/client/single-choice';
+    chooseTheOnlyOption();
+  </script>
+  <script>
     // Signs the officer out once nobody has used the app for
     // session.idle_minutes: no key, click, touch or scroll in any of its tabs.
     // The last activity is shared through localStorage, so a busy tab keeps

@@ -10,6 +10,12 @@
 // band the withdrawal posts at once, paid out by the officer recording it;
 // above it, it waits on its chain, and the disbursement is a separate act
 // once approved (S-1503, postApprovedTransaction).
+//
+// Money paid to someone with no account here — a school, a supplier, a
+// relative — is a withdrawal too (officer direction): the holder's account
+// is drawn on and the record names who was paid (payee_name, 0073). It
+// used to be recorded as a transfer to a payee; recordTransfer refuses that
+// now and points here.
 import { canTransact } from '../members/status';
 import { createHash } from 'node:crypto';
 import { recordAudit } from '../access/audit';
@@ -67,6 +73,9 @@ export interface WithdrawalInput {
   idempotencyKey?: string;
   // Which of the Society's bank accounts it is paid from (S-1901).
   bankAccountId?: string;
+  // Who is paid, when it is not the account holder: someone with no
+  // account here. Blank means the holder.
+  payeeName?: string;
 }
 
 export type Withdrawal = TransactionSummary;
@@ -81,6 +90,7 @@ function fingerprint(input: WithdrawalInput, amountCents: number): string {
         method: input.method,
         methodReference: (input.methodReference ?? '').trim(),
         reason: (input.reason ?? '').trim(),
+        payeeName: (input.payeeName ?? '').trim(),
       })
     )
     .digest('hex');
@@ -252,13 +262,13 @@ export async function refuseUnlessWithdrawable(
 // first offered until Disburse replaces it; nothing shows it before.
 async function payoutMethod(chained: boolean, code: string | undefined) {
   return chained && !(code ?? '').trim()
-    ? checkedMethod((await offeredPaymentMethods())[0]?.code ?? '')
+    ? checkedMethod((await offeredPaymentMethods('withdrawal'))[0]?.code ?? '')
     : checkedMethod(code);
 }
 
 async function checkedMethod(code: string | undefined) {
   try {
-    return await offeredMethod(code ?? '');
+    return await offeredMethod(code ?? '', 'withdrawal');
   } catch (err) {
     if (err instanceof PaymentError) {
       throw new WithdrawalError('Choose how it is paid out.');
@@ -296,6 +306,7 @@ export async function recordWithdrawal(
 
   const from = await source(input.accountId);
   await refuseUnlessWithdrawable(from, amountCents);
+  const payeeName = (input.payeeName ?? '').trim() || null;
 
   const route = await resolveRoute({
     kind: 'withdrawal',
@@ -344,9 +355,9 @@ export async function recordWithdrawal(
              (kind, member_id, customer_id, account_id, amount, method,
               method_reference, reason, status, receipt_number_id,
               idempotency_key, idempotency_fingerprint, captured_by,
-              bank_account_id)
+              bank_account_id, payee_name)
            values ('withdrawal', $1, $2, $3, $4, $5, $6, $7, 'submitted', $8,
-                   $9, $10, $11, $12)
+                   $9, $10, $11, $12, $13)
            returning id, reference`,
           [
             from.memberId,
@@ -361,6 +372,7 @@ export async function recordWithdrawal(
             key ? print : null,
             principal.userId,
             bankAccountId,
+            payeeName,
           ]
         );
       } catch (err) {
@@ -389,6 +401,7 @@ export async function recordWithdrawal(
             account_id: from.id,
             amount: fromCents(amountCents),
             method: method.code,
+            payee_name: payeeName,
           },
         },
         client
@@ -472,6 +485,12 @@ export async function resubmitWithdrawal(
     throw new WithdrawalError('Choose one of this person’s accounts.');
   }
   await refuseUnlessWithdrawable(from, amountCents, withdrawal.id);
+  // The edit form carries the payee as it carries the note: absent, the
+  // one recorded stays.
+  const payeeName =
+    input.payeeName === undefined
+      ? withdrawal.payeeName
+      : input.payeeName.trim() || null;
 
   const route = await resolveRoute({
     kind: 'withdrawal',
@@ -516,7 +535,7 @@ export async function resubmitWithdrawal(
         `update transaction
             set account_id = $2, amount = $3, method = $4,
                 method_reference = $5, reason = $6, receipt_number_id = $7,
-                bank_account_id = $8
+                bank_account_id = $8, payee_name = $9
           where id = $1`,
         [
           withdrawal.id,
@@ -527,6 +546,7 @@ export async function resubmitWithdrawal(
           (input.reason ?? '').trim() || null,
           receipt?.id ?? null,
           bankAccountId,
+          payeeName,
         ]
       );
       await recordAudit(
@@ -542,6 +562,7 @@ export async function resubmitWithdrawal(
             method: withdrawal.method,
             method_reference: withdrawal.methodReference || null,
             reason: withdrawal.reason || null,
+            payee_name: withdrawal.payeeName,
           },
           newValue: {
             account_id: from.id,
@@ -549,6 +570,7 @@ export async function resubmitWithdrawal(
             method: method.code,
             method_reference: (input.methodReference ?? '').trim() || null,
             reason: (input.reason ?? '').trim() || null,
+            payee_name: payeeName,
           },
         },
         client

@@ -360,7 +360,7 @@ describe('a transfer between accounts on the system', () => {
     ).rejects.toThrowError(/record a transfer but not post it/);
   });
 
-  it("reads another person's account as a withdrawal for the matrix, and posts both legs once approved", async () => {
+  it("routes a transfer to another person's account under the Transfer bands, and posts both legs once approved", async () => {
     const { transfers, review, ledger } = await load();
     const before = {
       amina: await balance(amina.msa),
@@ -376,7 +376,7 @@ describe('a transfer between accounts on the system', () => {
     );
     expect(transfer.status).toBe('submitted');
     expect(transfer.debitLeg.status).toBe('submitted');
-    expect(transfer.debitLeg.workflowName).toBe('Withdrawal approval');
+    expect(transfer.debitLeg.workflowName).toBe('Transfer approval');
     expect(transfer.creditLeg?.status).toBe('submitted');
     expect(transfer.creditLeg?.workflowDefinitionId).toBeNull();
     // On its way out of Amina's, and only the debit leg in a queue.
@@ -450,99 +450,24 @@ describe('a transfer between accounts on the system', () => {
   });
 });
 
-describe('a transfer to a payee with no account here', () => {
-  it('has one leg, names the payee, and is paid out at disbursement', async () => {
-    const { transfers, review } = await load();
-    const before = await balance(amina.msa);
-    const transfer = await transfers.recordTransfer(
-      {
-        sourceAccountId: amina.msa,
-        amount: '100500',
-        destination: {
-          kind: 'payee',
-          payeeName: 'Al Noor School',
-          method: 'cheque',
-        },
-        reason: 'Fees',
-      },
-      officer
-    );
-    expect(transfer.status).toBe('submitted');
-    expect(transfer.creditLeg).toBeNull();
-    expect(transfer.debitLeg.payeeName).toBe('Al Noor School');
-    expect(transfer.debitLeg.workflowName).toBe('Withdrawal approval');
-    await review.reviewTransaction(
-      transfer.debitLeg.id,
-      { outcome: 'forward', comment: '' },
-      secretary
-    );
-    await review.reviewTransaction(
-      transfer.debitLeg.id,
-      { outcome: 'forward', comment: '' },
-      president
-    );
-    await expect(
-      review.postApprovedTransaction(transfer.debitLeg.id, treasurer)
-    ).rejects.toThrowError(/how it was paid out/);
-    await expect(
-      review.postApprovedTransaction(transfer.debitLeg.id, treasurer, {
-        method: 'cheque',
-        bankAccountId,
-      })
-    ).rejects.toThrowError(/Enter the cheque reference/);
-    const posted = await review.postApprovedTransaction(
-      transfer.debitLeg.id,
-      treasurer,
-      {
-        method: 'cheque',
-        methodReference: 'CHQ 4411',
-        bankAccountId,
-      }
-    );
-    expect(posted.status).toBe('posted');
-    expect(posted.methodReference).toBe('CHQ 4411');
-    expect(posted.receiptNo).toMatch(/^RCT-\d{6}$/);
-    expect(Number(before) - Number(await balance(amina.msa))).toBe(100500);
-    expect((await transfers.loadTransfer(transfer.id))?.status).toBe('posted');
-  });
-
-  it('demands the reference now when it posts at once, and the payee always', async () => {
+describe('a payee with no account here', () => {
+  it('is a withdrawal, not a transfer: refused here and pointed to the withdrawal', async () => {
     const { transfers } = await load();
+    const rows = async () =>
+      (await run(appUrl, 'select count(*)::int as n from transaction')).rows[0]
+        .n as number;
+    const before = await rows();
     await expect(
       transfers.recordTransfer(
         {
           sourceAccountId: amina.msa,
           amount: '300',
-          destination: { kind: 'payee', payeeName: '  ', method: 'cash' },
+          destination: { kind: 'payee', payeeName: 'Someone', method: 'cash' },
         },
         officer
       )
-    ).rejects.toThrowError(/who the money goes to/);
-    await expect(
-      transfers.recordTransfer(
-        {
-          sourceAccountId: amina.msa,
-          amount: '300',
-          destination: {
-            kind: 'payee',
-            payeeName: 'Someone',
-            method: 'cheque',
-            bankAccountId,
-          },
-        },
-        officer
-      )
-    ).rejects.toThrowError(/Enter the cheque reference/);
-    const small = await transfers.recordTransfer(
-      {
-        sourceAccountId: amina.msa,
-        amount: '300',
-        destination: { kind: 'payee', payeeName: 'Someone', method: 'cash' },
-      },
-      officer
-    );
-    expect(small.status).toBe('posted');
-    expect(small.creditLeg).toBeNull();
+    ).rejects.toThrowError(/is a withdrawal/);
+    expect(await rows()).toBe(before);
   });
 });
 

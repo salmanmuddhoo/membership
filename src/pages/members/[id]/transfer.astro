@@ -1,18 +1,16 @@
 ---
 // Record a transfer out of one of a member's (or a customer's) accounts
-// (S-1504): to another of their own, to another person's account found by
-// type and number, or to a payee with no account here. The rules are
-// ledger/transfers.ts's; this page gathers the form and shows both legs.
+// (S-1504): to another of their own, or to another person's account found by
+// type and number or name. Money for someone with no account here is a
+// withdrawal that names who is paid (withdraw.astro), not a transfer. The
+// rules are ledger/transfers.ts's; this page gathers the form and shows both
+// legs.
 import IdempotencyKeyField from '@components/IdempotencyKeyField.astro';
 import { canTransact } from '@lib/members/status';
 import DashboardLayout from '@layouts/DashboardLayout.astro';
-import {
-  listAccountTypes,
-  offeredBankAccounts,
-  offeredPaymentMethods,
-} from '@lib/config/reference';
+import { listAccountTypes } from '@lib/config/reference';
 import { availableBalance } from '@lib/ledger/ledger';
-import { findAccountByNumber } from '@lib/ledger/lookup';
+import { findAccountByNumber, findAccountsByName } from '@lib/ledger/lookup';
 import {
   PERMISSION_CAPTURE,
   recordTransfer,
@@ -75,10 +73,8 @@ const ownTargets = accounts.filter(
   a => a.status === 'active' && a.allowsDeposit
 );
 // Another person's account is found the way the Transactions page finds
-// one: by type and number.
+// one: by type, then number or name.
 const lookupTypes = allTypes.filter(t => t.isActive && t.allowsDeposit);
-const paymentMethods = await offeredPaymentMethods();
-const bankAccounts = await offeredBankAccounts();
 const requestedAccount = Astro.url.searchParams.get('account') ?? '';
 const fromTransactions = Astro.url.searchParams.get('from') === 'transactions';
 
@@ -89,10 +85,6 @@ let values: Record<
   | 'ownAccountId'
   | 'otherTypeId'
   | 'otherNumber'
-  | 'payeeName'
-  | 'method'
-  | 'methodReference'
-  | 'bankAccountId'
   | 'reason'
   | 'idempotencyKey',
   string
@@ -104,10 +96,6 @@ let values: Record<
   ownAccountId: '',
   otherTypeId: lookupTypes[0]?.id ?? '',
   otherNumber: '',
-  payeeName: '',
-  method: paymentMethods[0]?.code ?? '',
-  methodReference: '',
-  bankAccountId: '',
   reason: '',
   idempotencyKey: crypto.randomUUID(),
 };
@@ -124,10 +112,6 @@ if (Astro.request.method === 'POST') {
     ownAccountId: text('ownAccountId'),
     otherTypeId: text('otherTypeId'),
     otherNumber: text('otherNumber'),
-    payeeName: text('payeeName'),
-    method: text('method'),
-    methodReference: text('methodReference'),
-    bankAccountId: text('bankAccountId'),
     reason: text('reason'),
     idempotencyKey: text('idempotencyKey') || crypto.randomUUID(),
   };
@@ -142,24 +126,23 @@ if (Astro.request.method === 'POST') {
     }
   } else if (values.destinationKind === 'other') {
     const type = lookupTypes.find(t => t.id === values.otherTypeId);
-    const found = type
-      ? await findAccountByNumber(type.id, values.otherNumber)
-      : null;
+    const typed = values.otherNumber.trim();
     if (!type) {
       error = 'Choose the account type it goes to.';
-    } else if (!found) {
-      error = `No ${type.name} account ${values.otherNumber.trim().toUpperCase()}.`;
     } else {
-      destination = { kind: 'account', accountId: found.accountId };
+      // A number first; failing that, a holder's name.
+      const byNumber = await findAccountByNumber(type.id, typed);
+      const byName = byNumber ? [] : await findAccountsByName(type.id, typed);
+      if (byNumber) {
+        destination = { kind: 'account', accountId: byNumber.accountId };
+      } else if (byName.length === 1) {
+        destination = { kind: 'account', accountId: byName[0].accountId };
+      } else if (byName.length === 0) {
+        error = `No ${type.name} account or holder "${typed}".`;
+      } else {
+        error = `Several ${type.name} holders match "${typed}". Pick one from the list under the box, or type the number.`;
+      }
     }
-  } else if (values.destinationKind === 'payee') {
-    destination = {
-      kind: 'payee',
-      payeeName: values.payeeName,
-      method: values.method,
-      methodReference: values.methodReference,
-      bankAccountId: values.bankAccountId,
-    };
   } else {
     error = 'Choose where the money goes.';
   }
@@ -429,7 +412,7 @@ const initialOwnAccountId =
                 </select>
               </label>
               <label class={LABEL}>
-                <span data-number-label>Member number</span>
+                <span data-number-label>Member number or name</span>
                 <input
                   type="text"
                   name="otherNumber"
@@ -439,73 +422,11 @@ const initialOwnAccountId =
                   placeholder="AB0001"
                   class={INPUT}
                 />
-              </label>
-            </div>
-            <label class={CHECK_LABEL}>
-              <input
-                type="radio"
-                name="destinationKind"
-                value="payee"
-                checked={values.destinationKind === 'payee'}
-                class={RADIO}
-              />
-              Someone without an account here
-            </label>
-            <div
-              data-destination="payee"
-              class="grid gap-3 pl-6 sm:grid-cols-2"
-            >
-              <label class={`${LABEL} sm:col-span-2`}>
-                Paid to
-                <input
-                  type="text"
-                  name="payeeName"
-                  value={values.payeeName}
-                  maxlength="200"
-                  class={INPUT}
-                />
-              </label>
-              <label class={LABEL}>
-                Paid by
-                <select name="method" class={INPUT}>
-                  {paymentMethods.map(method => (
-                    <option
-                      value={method.code}
-                      data-requires-reference={
-                        method.requiresReference || method.touchesBank
-                          ? 'true'
-                          : 'false'
-                      }
-                      data-touches-bank={method.touchesBank ? 'true' : 'false'}
-                      selected={method.code === values.method}
-                    >
-                      {method.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label data-method-reference-field class={LABEL}>
-                Reference (cheque number, transfer reference)
-                <input
-                  type="text"
-                  name="methodReference"
-                  value={values.methodReference}
-                  class={INPUT}
-                />
-              </label>
-              <label data-bank-account-field class={LABEL}>
-                Bank account
-                <select name="bankAccountId" class={INPUT}>
-                  <option value="">Choose…</option>
-                  {bankAccounts.map(account => (
-                    <option
-                      value={account.id}
-                      selected={account.id === values.bankAccountId}
-                    >
-                      {account.name} · {account.bankName}
-                    </option>
-                  ))}
-                </select>
+                <p
+                  data-chosen
+                  class="text-xs text-neutral-500 dark:text-neutral-400"
+                  hidden
+                ></p>
               </label>
             </div>
           </fieldset>
@@ -536,10 +457,12 @@ const initialOwnAccountId =
 </DashboardLayout>
 
 <script>
+  import { wireAccountSuggest } from '@lib/client/account-suggest';
+
   // A visual nudge only — every rule is enforced server-side
   // (ledger/transfers.ts) whether or not this script runs: which
-  // destination's fields show, what is available on the source, and
-  // whether the pay-out method carries a reference.
+  // destination's fields show, what is available on the source, and the
+  // suggestions under the account box.
   const form = document.querySelector<HTMLFormElement>('[data-transfer-form]');
   if (form) {
     const sourceSelect = form.querySelector<HTMLSelectElement>(
@@ -549,19 +472,12 @@ const initialOwnAccountId =
       '[name="ownAccountId"]'
     );
     const note = form.querySelector<HTMLElement>('[data-available-note]');
-    const methodSelect =
-      form.querySelector<HTMLSelectElement>('[name="method"]');
-    const referenceField = form.querySelector<HTMLElement>(
-      '[data-method-reference-field]'
-    );
-    const bankField = form.querySelector<HTMLElement>(
-      '[data-bank-account-field]'
-    );
     const typeSelect = form.querySelector<HTMLSelectElement>(
       '[name="otherTypeId"]'
     );
     const numberLabel = form.querySelector<HTMLElement>('[data-number-label]');
     const numberInput = form.querySelector<HTMLInputElement>('[data-number]');
+    const chosen = form.querySelector<HTMLElement>('[data-chosen]');
     const amountInput = form.querySelector<HTMLInputElement>('[name="amount"]');
     const amountError = form.querySelector<HTMLElement>('[data-amount-error]');
     const submitButton = form.querySelector<HTMLButtonElement>(
@@ -644,18 +560,13 @@ const initialOwnAccountId =
               : `${money(available)} available.`;
         }
       }
-      const method = methodSelect?.selectedOptions[0];
-      if (referenceField) {
-        referenceField.hidden = method?.dataset.requiresReference !== 'true';
-      }
-      if (bankField) {
-        bankField.hidden = method?.dataset.touchesBank !== 'true';
-      }
       const type = typeSelect?.selectedOptions[0];
       const own = type?.dataset.membershipDefault === 'true';
       const prefix = type?.dataset.prefix || 'HSA';
       if (numberLabel) {
-        numberLabel.textContent = own ? 'Member number' : 'Account number';
+        numberLabel.textContent = own
+          ? 'Member number or name'
+          : 'Account number or name';
       }
       if (numberInput)
         numberInput.placeholder = own ? 'AB0001' : `${prefix}0001`;
@@ -666,14 +577,35 @@ const initialOwnAccountId =
     amountInput?.addEventListener('input', checkAmount);
     recompute();
 
+    // Suggestions under the account box: picking one fills the box with the
+    // account number and names the holder underneath. Typing again, or
+    // changing the type, drops the name.
+    const holderChosen = () =>
+      chosen && !chosen.hidden ? chosen.textContent : '';
+    const clearChosen = () => {
+      if (!chosen) return;
+      chosen.textContent = '';
+      chosen.hidden = true;
+    };
+    numberInput?.addEventListener('input', clearChosen);
+    typeSelect?.addEventListener('change', clearChosen);
+    wireAccountSuggest(form, 'transfer', {
+      typeSelect: typeSelect ?? undefined,
+      onPick: suggestion => {
+        if (numberInput) numberInput.value = suggestion.accountNo;
+        if (chosen) {
+          chosen.textContent = suggestion.holderName;
+          chosen.hidden = !suggestion.holderName;
+        }
+      },
+    });
+
     // Officer feedback: a transfer asks once, naming the amount and both
     // sides, before it goes — through the app's own dialog (ConfirmDialog,
     // window.appConfirm), never window.confirm(), whose buttons come from
     // the browser in the device's language. Intercepting the form's submit
     // (not the button's click) covers Enter in a field too; native
     // validation has already passed by the time this fires.
-    const payeeInput =
-      form.querySelector<HTMLInputElement>('[name="payeeName"]');
     const confirmAmount = (value: string) =>
       `MUR ${Number(value || '0').toLocaleString('en-US', {
         minimumFractionDigits: 2,
@@ -700,12 +632,13 @@ const initialOwnAccountId =
       const destinationKind = form.querySelector<HTMLInputElement>(
         'input[name="destinationKind"]:checked'
       )?.value;
+      const holder = holderChosen();
       const destination =
         destinationKind === 'own'
           ? accountLabel(ownSelect?.selectedOptions[0])
           : destinationKind === 'other'
-            ? `${(numberInput?.value ?? '').trim().toUpperCase()} · ${typeSelect?.selectedOptions[0]?.text ?? ''}`
-            : (payeeInput?.value ?? '').trim();
+            ? `${holder ? `${holder} · ` : ''}${(numberInput?.value ?? '').trim().toUpperCase()} · ${typeSelect?.selectedOptions[0]?.text ?? ''}`
+            : '';
       window
         .appConfirm(
           `Transfer ${confirmAmount(amountInput?.value ?? '')} from ` +

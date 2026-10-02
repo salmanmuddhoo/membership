@@ -163,6 +163,12 @@ const create = defineEndpoint(
             'paid out at once; otherwise given at disbursement.',
         },
         reason: { type: 'string' },
+        payeeName: {
+          type: 'string',
+          description:
+            'Who is paid, when it is not the account holder: someone with ' +
+            'no account here.',
+        },
       },
     },
     responseSchema: {
@@ -179,6 +185,7 @@ const create = defineEndpoint(
       methodReference?: unknown;
       bankAccountId?: unknown;
       reason?: unknown;
+      payeeName?: unknown;
     }>();
     const text = (v: unknown) => (typeof v === 'string' ? v : '');
     try {
@@ -190,6 +197,7 @@ const create = defineEndpoint(
           methodReference: text(input.methodReference),
           bankAccountId: text(input.bankAccountId),
           reason: text(input.reason),
+          payeeName: text(input.payeeName),
           idempotencyKey: idempotencyKey ?? undefined,
         },
         principal

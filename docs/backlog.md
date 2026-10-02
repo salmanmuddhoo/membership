@@ -5548,3 +5548,97 @@ Every sheet of the template now carries:
 - A minor's guardian must be an active member, whether they are already on
   file or on the same upload.
 - The balance upload refuses a closed account.
+
+---
+
+### Transfer to a payee is a withdrawal
+
+- A transfer to someone with no account here is no longer a transfer. It is
+  recorded from the Withdrawal form with a **Paid to** name.
+- The transfer form offers only accounts.
+- The API's transfer destination is account-only; `POST /api/v1/withdrawals`
+  takes `payeeName`.
+- Transfers already recorded to a payee still read.
+
+---
+
+### Transfer: find the receiving account by name
+
+- The receiving account is found by the holder's name, as well as by account
+  number.
+
+---
+
+### Statement: the transactions, dated
+
+- Under each account's totals, the statement lists its transactions for the
+  chosen From and To: date, reference (a link to the transaction),
+  description, method, money out, money in and balance.
+- An account with none in the period says so.
+
+---
+
+### Payment methods per kind of transaction
+
+- A payment method carries five flags: `for_deposit` (an application fee
+  too), `for_withdrawal` (a refund too), `for_closure`, `for_resignation`,
+  `for_demise`. All are on by default (migration 0113).
+- Configuration → Payment methods ticks them per method, and a method offered
+  for fewer than all five says so on its line.
+- Each form offers only the methods ticked for it.
+- The Payment methods sheet of the Excel exchange carries the five columns.
+- The API reference lists them as `offeredFor` on each payment method.
+
+---
+
+### Transactions by officer report
+
+- Finance → Transactions by officer (`transaction.view`): one row per officer
+  per day, with counts and amounts by kind.
+- A row opens the Transactions report on that officer's day.
+
+---
+
+### Who sees every officer's transactions
+
+- Migration 0114 grants `transaction.view_all` to the Regional Manager. A
+  Regional Officer still sees only their own. Configurable at Roles.
+- Transactions → All transactions has a "Recorded by" filter for those who
+  hold it.
+- The Transactions and Transactions by officer reports hold only the viewer's
+  own rows without it.
+
+---
+
+### Every transfer under the Transfer bands
+
+Officer feedback: a Rs 7,000 transfer went for approval although Transfer
+was configured to post at once up to Rs 100,000. The matrix had read a
+transfer to another holder's account as a withdrawal (FRD 6.4), under the
+Withdrawal bands, while the form's preview showed the Transfer ones.
+
+- Every transfer between accounts on the system — the same holder's or
+  another's — now routes under the matrix's **Transfer** kind, the bands the
+  administrator sees under Transfer. The preview and the route agree.
+- A payee leg (no account here) is no longer recorded; a returned one from
+  before still corrects under the Withdrawal bands, as it was routed.
+
+---
+
+### A dropdown with one choice chooses it
+
+Officer request. On a form that records something, a select that opened on
+"Choose…" and offered exactly one option now opens on that option, and the
+fields that follow it (a reference, a bank account) follow. A filter's "All"
+over one choice stays as it is.
+
+---
+
+### The Transactions page for those who only review
+
+Officer feedback: with `transaction.view_all`, the President still saw only
+"For your review" — the Transactions page sent anyone without
+`transaction.capture` straight to the queue. It now stands for every holder
+of `transaction.view`: the Waiting-on-you card, the day's list and the link
+to every day; the Deposit, Withdrawal and Transfer cards only for someone who
+may record one.
