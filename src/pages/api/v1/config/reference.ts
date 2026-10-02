@@ -16,6 +16,8 @@ import {
   listWorkflows,
   listWorkflowStatuses,
   offeredPaymentMethods,
+  offersFor,
+  PAYMENT_METHOD_USES,
 } from '@lib/config/reference';
 
 const stringArray = { type: 'array', items: { type: 'string' } };
@@ -152,6 +154,14 @@ const read = defineEndpoint(
                   'mandatory.',
               },
               touchesBank: { type: 'boolean' },
+              offeredFor: {
+                type: 'array',
+                items: { type: 'string', enum: [...PAYMENT_METHOD_USES] },
+                description:
+                  'The kinds of transaction this method is offered on: ' +
+                  'deposit (and an application fee), withdrawal (and a ' +
+                  'refund), closure, resignation, demise.',
+              },
             },
           },
         },
@@ -348,6 +358,7 @@ const read = defineEndpoint(
           isCash: m.isCash,
           requiresReference: m.requiresReference,
           touchesBank: m.touchesBank,
+          offeredFor: PAYMENT_METHOD_USES.filter(use => offersFor(m, use)),
         })),
       },
       correlationId

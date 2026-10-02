@@ -148,6 +148,11 @@ Each carries what the rest of the system asks of a method:
 | `requires_reference` | The reference field: shown and mandatory for this method, absent otherwise    |
 | `touches_bank`       | Bank reconciliation (M19) — the money reaches a bank account                  |
 | `is_system`          | Written only by the system, never offered, not editable: `migration` (0048)   |
+| `for_deposit`        | Offered on a deposit and an application fee (migration 0113)                  |
+| `for_withdrawal`     | Offered on a withdrawal and a refund (migration 0113)                         |
+| `for_closure`        | Offered on an account closure (migration 0113)                                |
+| `for_resignation`    | Offered on a resignation (migration 0113)                                     |
+| `for_demise`         | Offered on a demised claim (migration 0113)                                   |
 | `is_active`          | Offered on a form. Retiring a method keeps every receipt it was used on whole |
 
 Seeded with today's five under their existing codes, the FRD's six additions
@@ -155,7 +160,8 @@ Seeded with today's five under their existing codes, the FRD's six additions
 other) and the import's own. `payment.method` and `transaction.method` are
 foreign keys to `code`. A record carries the method's name beside its code
 (`Payment.methodName`) so a retired method still reads on the receipt that
-used it. Configuration → Payment methods.
+used it. Configuration → Payment methods ticks, per method, the kinds of
+transaction it is offered for; all five are on by default.
 
 ### Bank accounts (S-1901, FRD 15)
 

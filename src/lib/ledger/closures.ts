@@ -347,7 +347,7 @@ async function refuseUnlessAllClosable(
 
 async function checkedMethod(code: string) {
   try {
-    return await offeredMethod(code);
+    return await offeredMethod(code, 'closure');
   } catch (err) {
     if (err instanceof PaymentError) {
       throw new ClosureError('Choose how the balance is paid out.');
@@ -361,7 +361,7 @@ async function checkedMethod(code: string) {
 // does the same).
 async function methodOrDefault(code: string | undefined) {
   if (code && code.trim()) return checkedMethod(code);
-  const [first] = await offeredPaymentMethods();
+  const [first] = await offeredPaymentMethods('closure');
   if (!first) {
     throw new ClosureError(
       'No payment method is configured. Ask an administrator.'

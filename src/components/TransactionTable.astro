@@ -41,8 +41,9 @@ function direction(t: TransactionSummary): 'in' | 'out' | '' {
   return '';
 }
 function otherSide(t: TransactionSummary): string | null {
+  if (t.payeeName && (t.kind === 'transfer_leg' || t.kind === 'withdrawal'))
+    return `to ${t.payeeName}`;
   if (t.kind !== 'transfer_leg') return null;
-  if (t.payeeName) return `to ${t.payeeName}`;
   if (!t.counterpartAccountNo) return null;
   const who = t.counterpartHolderName ? `${t.counterpartHolderName} · ` : '';
   return `${t.legDirection === 'credit' ? 'from' : 'to'} ${who}${t.counterpartAccountNo} · ${t.counterpartAccountTypeName}`;

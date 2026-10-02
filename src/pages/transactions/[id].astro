@@ -17,6 +17,7 @@ import {
   listAccountTypes,
   offeredBankAccounts,
   offeredPaymentMethods,
+  paymentMethodUseFor,
 } from '@lib/config/reference';
 import {
   DepositError,
@@ -173,7 +174,11 @@ if (Astro.request.method === 'POST') {
         transaction.kind === 'transfer_leg'
           ? (await resubmitTransfer(transaction.id, edit, principal)).debitLeg
           : transaction.kind === 'withdrawal'
-            ? await resubmitWithdrawal(transaction.id, edit, principal)
+            ? await resubmitWithdrawal(
+                transaction.id,
+                { ...edit, payeeName: text('payeeName') },
+                principal
+              )
             : await resubmitDeposit(
                 transaction.id,
                 {
@@ -339,7 +344,9 @@ const accounts = (person?.accounts ?? []).map(a => ({
     : (types.get(a.accountTypeId)?.allowsWithdrawal ?? false),
 }));
 const paymentMethods =
-  canEdit || (canPost && disburses) ? await offeredPaymentMethods() : [];
+  canEdit || (canPost && disburses)
+    ? await offeredPaymentMethods(paymentMethodUseFor(transaction) ?? undefined)
+    : [];
 const bankAccounts =
   canEdit || (canPost && disburses) ? await offeredBankAccounts() : [];
 
@@ -510,6 +517,14 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               ) : (
                 transaction.payeeName
               )}
+            </dd>
+          </>
+        )}
+        {transaction.kind === 'withdrawal' && transaction.payeeName && (
+          <>
+            <dt class="text-neutral-500 dark:text-neutral-400">Paid to</dt>
+            <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+              {transaction.payeeName}
             </dd>
           </>
         )}
@@ -1055,6 +1070,18 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               class={INPUT}
             />
           </label>
+          {transaction.kind === 'withdrawal' && (
+            <label class={`${LABEL} sm:col-span-2`}>
+              Paid to (leave blank for the account holder)
+              <input
+                type="text"
+                name="payeeName"
+                value={transaction.payeeName ?? ''}
+                maxlength="200"
+                class={INPUT}
+              />
+            </label>
+          )}
         </div>
         {isDeposit && (
           <>

@@ -341,7 +341,7 @@ export function parseAmount(amount: string): number {
 // deposit's own words.
 async function checkedMethod(input: DepositInput, amountCents: number) {
   try {
-    const method = await offeredMethod(input.method);
+    const method = await offeredMethod(input.method, 'deposit');
     requireReference(method, input.methodReference);
     await applyCashPaymentRules(
       method,

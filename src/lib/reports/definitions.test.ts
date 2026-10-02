@@ -294,6 +294,53 @@ describe('transactions report', () => {
     expect(row.Status).toBe('With Secretary');
   });
 
+  it('holds only the viewer’s own rows without transaction.view_all, and every officer’s with it', async () => {
+    const { reports } = await loadTx();
+    const report = reports.reportByCode('transactions')!;
+    const stranger = {
+      userId: '00000000-0000-0000-0000-000000000001',
+      permissions: new Set(['transaction.view']),
+    };
+    expect((await report.run({}, stranger)).rows).toHaveLength(0);
+    const overseer = {
+      userId: stranger.userId,
+      permissions: new Set(['transaction.view', 'transaction.view_all']),
+    };
+    expect(
+      (await report.run({}, overseer)).rows.map(r => r.Reference)
+    ).toContain(atSecretaryReference);
+  });
+
+  it('counts each officer’s day in the Transactions by officer report, scoped the same way', async () => {
+    const { reports } = await loadTx();
+    const report = reports.reportByCode('transactions-by-officer')!;
+    const officerFilter = report.filters.find(f => f.name === 'officer')!;
+    const choices = await officerFilter.choices!();
+    expect(choices.map(c => c.label)).toContain('Officer');
+    const result = await report.run({});
+    const row = result.rows.find(r => r.Officer === 'Officer')!;
+    expect(row).toMatchObject({
+      Transactions: 1,
+      Withdrawals: 1,
+      'Withdrawals (Rs)': '500.00',
+      Deposits: 0,
+      'Money out (Rs)': '500.00',
+    });
+    expect(result.rowHrefs?.[result.rows.indexOf(row)]).toMatch(
+      /^\/reports\/transactions\?from=\d{4}-\d{2}-\d{2}&to=\d{4}-\d{2}-\d{2}&officer=Officer$/
+    );
+    expect(result.summary).toMatch(/^1 transaction\(s\) by 1 officer\(s\)/);
+    const stranger = {
+      userId: '00000000-0000-0000-0000-000000000001',
+      permissions: new Set(['transaction.view']),
+    };
+    expect((await report.run({}, stranger)).rows).toHaveLength(0);
+    // The officer filter narrows to one officer.
+    expect((await report.run({ officer: choices[0].value })).rows).toHaveLength(
+      1
+    );
+  });
+
   it('offers a Status choice per role on a transaction chain, and finds one by it', async () => {
     const { reports } = await loadTx();
     const report = reports.reportByCode('transactions')!;

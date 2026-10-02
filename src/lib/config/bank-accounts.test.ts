@@ -61,7 +61,6 @@ async function load() {
     bank: await import('../ledger/bank-accounts'),
     deposits: await import('../ledger/deposits'),
     withdrawals: await import('../ledger/withdrawals'),
-    transfers: await import('../ledger/transfers'),
     review: await import('../ledger/review'),
     reversals: await import('../ledger/reversals'),
   };
@@ -288,8 +287,7 @@ describe('the Society’s bank accounts are configuration (S-1901)', () => {
   });
 
   it('derives each balance from the posted transactions that name it', async () => {
-    const { config, bank, deposits, withdrawals, transfers, review } =
-      await load();
+    const { config, bank, deposits, withdrawals, review } = await load();
     const [account] = await config.listBankAccounts();
     const sbm = await config.createBankAccount(
       {
@@ -345,19 +343,17 @@ describe('the Society’s bank accounts are configuration (S-1901)', () => {
       { accountId: msa, amount: '1000', method: 'cash' },
       officer
     );
-    // A transfer paid out to a payee names it; one between two accounts
-    // here could not, and moves nothing at the bank.
-    await transfers.recordTransfer(
+    // Money paid out to someone with no account here is a withdrawal that
+    // names them, and names the bank account; a transfer between two
+    // accounts here could not, and moves nothing at the bank.
+    await withdrawals.recordWithdrawal(
       {
-        sourceAccountId: msa,
+        accountId: msa,
         amount: '5000',
-        destination: {
-          kind: 'payee',
-          payeeName: 'A supplier',
-          method: 'bank_transfer',
-          methodReference: 'OUT-1',
-          bankAccountId: account.id,
-        },
+        payeeName: 'A supplier',
+        method: 'bank_transfer',
+        methodReference: 'OUT-1',
+        bankAccountId: account.id,
       },
       officer
     );
@@ -417,7 +413,7 @@ describe('the Society’s bank accounts are configuration (S-1901)', () => {
 
 describe('money through a bank names its account and reference (S-1902)', () => {
   it('refuses a bank-touching deposit, payout, transfer or disbursement without both', async () => {
-    const { config, deposits, withdrawals, transfers, review } = await load();
+    const { config, deposits, withdrawals, review } = await load();
     const [account] = await config.listBankAccounts();
     await expect(
       deposits.recordDeposit(
@@ -460,16 +456,13 @@ describe('money through a bank names its account and reference (S-1902)', () => 
       )
     ).rejects.toThrowError(/Choose the Society's bank account/);
     await expect(
-      transfers.recordTransfer(
+      withdrawals.recordWithdrawal(
         {
-          sourceAccountId: msa,
+          accountId: msa,
           amount: '50',
-          destination: {
-            kind: 'payee',
-            payeeName: 'Someone',
-            method: 'bank_transfer',
-            methodReference: 'OUT-9',
-          },
+          payeeName: 'Someone',
+          method: 'bank_transfer',
+          methodReference: 'OUT-9',
         },
         officer
       )

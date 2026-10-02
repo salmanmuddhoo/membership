@@ -393,7 +393,7 @@ export function blockingMessage(blocking: ResignationCheck[]): string {
 // ---------------------------------------------------------------------------
 async function checkedMethod(code: string) {
   try {
-    return await offeredMethod(code);
+    return await offeredMethod(code, 'resignation');
   } catch (err) {
     if (err instanceof PaymentError) {
       throw new ResignationError('Choose how the balance is paid out.');
@@ -406,7 +406,7 @@ async function checkedMethod(code: string) {
 // stand-in the posting officer replaces with the real payout.
 async function methodOrDefault(code: string | undefined) {
   if (code && code.trim()) return checkedMethod(code);
-  const [first] = await offeredPaymentMethods();
+  const [first] = await offeredPaymentMethods('resignation');
   if (!first) {
     throw new ResignationError(
       'No payment method is configured. Ask an administrator.'

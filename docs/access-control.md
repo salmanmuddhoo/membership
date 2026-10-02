@@ -62,6 +62,12 @@ it. The staff API's `GET /api/v1/transactions`, called without a member,
 customer or account, is scoped the same way. Moving `transaction.view_all`
 between roles at Configuration → Roles changes who sees what.
 
+Since migration 0114 the Regional Manager holds `transaction.view_all` too; a
+Regional Officer still sees only their own. Transactions → All transactions
+offers a "Recorded by" filter to those who hold it. The Transactions and
+Transactions by officer reports are scoped the same way: without
+`transaction.view_all` they hold only the viewer's own rows.
+
 ## The dashboard and the menu
 
 The dashboard's cards and the sidebar are one model, `navigationFor()` in

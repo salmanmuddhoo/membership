@@ -14,6 +14,7 @@ import { checkSegregation } from '../admin/segregation';
 import {
   activeChain,
   listWorkflows,
+  paymentMethodUseFor,
   type WorkflowStep,
 } from '../config/reference';
 import { query, withTransaction } from '../db/pool';
@@ -857,7 +858,13 @@ export async function postApprovedTransaction(
       throw new ReviewError('Say how it was paid out.');
     }
     try {
-      const method = await offeredMethod(disbursement.method);
+      // Paid out under the use the transaction is: a withdrawal's methods
+      // for a withdrawal or a payee leg, a closure's for a closure, and so
+      // on (migration 0113).
+      const method = await offeredMethod(
+        disbursement.method,
+        paymentMethodUseFor(transaction) ?? undefined
+      );
       requireDisbursementReference(method, disbursement.methodReference);
       paidBy = {
         code: method.code,

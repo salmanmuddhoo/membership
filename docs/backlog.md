@@ -5548,3 +5548,62 @@ Every sheet of the template now carries:
 - A minor's guardian must be an active member, whether they are already on
   file or on the same upload.
 - The balance upload refuses a closed account.
+
+---
+
+### Transfer to a payee is a withdrawal
+
+- A transfer to someone with no account here is no longer a transfer. It is
+  recorded from the Withdrawal form with a **Paid to** name.
+- The transfer form offers only accounts.
+- The API's transfer destination is account-only; `POST /api/v1/withdrawals`
+  takes `payeeName`.
+- Transfers already recorded to a payee still read.
+
+---
+
+### Transfer: find the receiving account by name
+
+- The receiving account is found by the holder's name, as well as by account
+  number.
+
+---
+
+### Statement: the transactions, dated
+
+- Under each account's totals, the statement lists its transactions for the
+  chosen From and To: date, reference (a link to the transaction),
+  description, method, money out, money in and balance.
+- An account with none in the period says so.
+
+---
+
+### Payment methods per kind of transaction
+
+- A payment method carries five flags: `for_deposit` (an application fee
+  too), `for_withdrawal` (a refund too), `for_closure`, `for_resignation`,
+  `for_demise`. All are on by default (migration 0113).
+- Configuration → Payment methods ticks them per method, and a method offered
+  for fewer than all five says so on its line.
+- Each form offers only the methods ticked for it.
+- The Payment methods sheet of the Excel exchange carries the five columns.
+- The API reference lists them as `offeredFor` on each payment method.
+
+---
+
+### Transactions by officer report
+
+- Finance → Transactions by officer (`transaction.view`): one row per officer
+  per day, with counts and amounts by kind.
+- A row opens the Transactions report on that officer's day.
+
+---
+
+### Who sees every officer's transactions
+
+- Migration 0114 grants `transaction.view_all` to the Regional Manager. A
+  Regional Officer still sees only their own. Configurable at Roles.
+- Transactions → All transactions has a "Recorded by" filter for those who
+  hold it.
+- The Transactions and Transactions by officer reports hold only the viewer's
+  own rows without it.

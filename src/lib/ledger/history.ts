@@ -95,3 +95,17 @@ export async function listTransactions(
     pageSize,
   };
 }
+
+// The officers who have recorded a transaction: the choices of the
+// "Recorded by" filter on the Society's day.
+export async function listRecordingOfficers(): Promise<
+  { id: string; displayName: string }[]
+> {
+  const result = await query<{ id: string; display_name: string }>(
+    `select distinct u.id, u.display_name
+       from app_user u
+       join transaction t on t.captured_by = u.id
+      order by u.display_name`
+  );
+  return result.rows.map(r => ({ id: r.id, displayName: r.display_name }));
+}
