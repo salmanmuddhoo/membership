@@ -262,6 +262,7 @@ const KEPT_TABLES = [
   'account_type',
   'account_type_membership_type',
   'api_credential',
+  'app_promotion',
   'app_user',
   'approval_rule',
   'bank_account',
