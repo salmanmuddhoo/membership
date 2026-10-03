@@ -1,0 +1,127 @@
+---
+// The fields of one home-screen card, for the Member app configuration
+// page: the same form edits an existing card and adds a new one.
+import type { Promotion } from '@lib/config/promotions';
+import { INPUT, LABEL } from '@lib/ui';
+
+interface Props {
+  card: Promotion | null;
+  canManage: boolean;
+  check: string;
+}
+
+const { card, canManage, check } = Astro.props;
+---
+
+<label class={`${LABEL} sm:col-span-2`}>
+  Title (names the card in this list; not shown on the card)
+  <input
+    type="text"
+    name="title"
+    value={card?.title ?? ''}
+    required
+    maxlength="80"
+    disabled={!canManage}
+    class={INPUT}
+  />
+</label>
+<label class={`${LABEL} sm:col-span-2`}>
+  Text (read out by a screen reader; not shown on the card)
+  <textarea
+    name="body"
+    rows="2"
+    maxlength="300"
+    disabled={!canManage}
+    class={INPUT}
+  >{card?.body ?? ''}</textarea>
+</label>
+<label class={LABEL}>
+  Picture (https:// address; this is what the app shows)
+  <input
+    type="url"
+    name="imageUrl"
+    value={card?.imageUrl ?? ''}
+    placeholder="https://albarakah.mu/images/hajj.jpg"
+    required
+    disabled={!canManage}
+    class={INPUT}
+  />
+</label>
+<label class={LABEL}>
+  Colour (#rrggbb, optional)
+  <input
+    type="text"
+    name="accent"
+    value={card?.accent ?? ''}
+    placeholder="#0b443a"
+    pattern="#[0-9a-fA-F]{6}"
+    disabled={!canManage}
+    class={INPUT}
+  />
+</label>
+<label class={LABEL}>
+  Link (https://, mailto: or tel:, optional)
+  <input
+    type="text"
+    name="linkUrl"
+    value={card?.linkUrl ?? ''}
+    placeholder="https://albarakah.mu/agm"
+    disabled={!canManage}
+    class={INPUT}
+  />
+</label>
+<label class={LABEL}>
+  Link text
+  <input
+    type="text"
+    name="linkLabel"
+    value={card?.linkLabel ?? ''}
+    placeholder="Find out more"
+    maxlength="40"
+    disabled={!canManage}
+    class={INPUT}
+  />
+</label>
+<label class={LABEL}>
+  Show from
+  <input
+    type="date"
+    name="startsOn"
+    value={card?.startsOn ?? ''}
+    disabled={!canManage}
+    class={INPUT}
+  />
+</label>
+<label class={LABEL}>
+  Show until
+  <input
+    type="date"
+    name="endsOn"
+    value={card?.endsOn ?? ''}
+    disabled={!canManage}
+    class={INPUT}
+  />
+</label>
+<label class={LABEL}>
+  Order (lower first)
+  <input
+    type="number"
+    name="sortOrder"
+    value={card ? String(card.sortOrder) : ''}
+    min="0"
+    max="1000"
+    placeholder="after the last"
+    disabled={!canManage}
+    class={INPUT}
+  />
+</label>
+<label class="flex items-center gap-x-2 self-end pb-2 text-sm text-neutral-600 dark:text-neutral-300">
+  <input
+    type="checkbox"
+    name="isActive"
+    checked={card ? card.isActive : true}
+    disabled={!canManage}
+    class={check}
+  />
+  Active
+</label>

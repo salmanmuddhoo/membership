@@ -9003,6 +9003,129 @@
         }
       }
     },
+    "/api/v1/member/promotions": {
+      "get": {
+        "summary": "The cards on the home screen",
+        "description": "What the Society is promoting right now: the active cards inside their dates, in the order to show them. Written on the web application's Member app configuration page. Any session, applicant included; the same for everyone.",
+        "tags": [
+          "Member app"
+        ],
+        "operationId": "getMemberPromotions",
+        "x-required-permission": "(a member app session)",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "id",
+                          "title",
+                          "body",
+                          "imageUrl",
+                          "linkUrl",
+                          "linkLabel",
+                          "accent"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "body": {
+                            "type": "string"
+                          },
+                          "imageUrl": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "A picture across the top of the card, https."
+                          },
+                          "linkUrl": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "Where the card goes when tapped: https, mailto or tel."
+                          },
+                          "linkLabel": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "accent": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "The card's background as #rrggbb; null for the app's own."
+                          }
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/member/reference": {
       "get": {
         "summary": "Read the membership types a person can apply for",

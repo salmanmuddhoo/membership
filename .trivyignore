@@ -1,0 +1,8 @@
+# Advisories accepted for now. Each has its reason and its removal condition
+# in docs/security-gate.md ("Accepted advisories"); the same list is in
+# package.json under pnpm.auditConfig.ignoreGhsas for pnpm audit.
+
+# http-cache-semantics <= 4.2.0, via astro's build-time remote-image cache,
+# which this application does not use. No fixed release yet (2026-10-03).
+CVE-2026-93748
+GHSA-ch52-4w7c-c8xp
