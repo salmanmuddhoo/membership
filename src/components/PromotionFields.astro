@@ -14,7 +14,7 @@ const { card, canManage, check } = Astro.props;
 ---
 
 <label class={`${LABEL} sm:col-span-2`}>
-  Title
+  Title (names the card in this list; not shown on the card)
   <input
     type="text"
     name="title"
@@ -26,7 +26,7 @@ const { card, canManage, check } = Astro.props;
   />
 </label>
 <label class={`${LABEL} sm:col-span-2`}>
-  Text
+  Text (read out by a screen reader; not shown on the card)
   <textarea
     name="body"
     rows="2"
@@ -36,12 +36,13 @@ const { card, canManage, check } = Astro.props;
   >{card?.body ?? ''}</textarea>
 </label>
 <label class={LABEL}>
-  Picture (https:// address, optional)
+  Picture (https:// address; this is what the app shows)
   <input
     type="url"
     name="imageUrl"
     value={card?.imageUrl ?? ''}
     placeholder="https://albarakah.mu/images/hajj.jpg"
+    required
     disabled={!canManage}
     class={INPUT}
   />

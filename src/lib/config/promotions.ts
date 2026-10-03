@@ -124,8 +124,15 @@ function check(input: PromotionInput): Checked {
   if (body.length > 300) {
     throw new ConfigError('The text is at most 300 characters.');
   }
+  // The phone shows the picture and nothing else (officer direction), so a
+  // card without one would be a blank.
   const imageUrl = input.imageUrl.trim() || null;
-  if (imageUrl && (imageUrl.length > 500 || !IMAGE_URL.test(imageUrl))) {
+  if (!imageUrl) {
+    throw new ConfigError(
+      'A picture is required: the app shows the picture alone.'
+    );
+  }
+  if (imageUrl.length > 500 || !IMAGE_URL.test(imageUrl)) {
     throw new ConfigError('The picture must be an https:// address.');
   }
   const linkUrl = input.linkUrl.trim() || null;

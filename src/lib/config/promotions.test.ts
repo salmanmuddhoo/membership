@@ -71,7 +71,7 @@ afterAll(async () => {
 const blank = {
   title: '',
   body: '',
-  imageUrl: '',
+  imageUrl: 'https://albarakah.mu/images/card.jpg',
   linkUrl: '',
   linkLabel: '',
   accent: '',
@@ -139,6 +139,9 @@ describe('the home-screen cards', () => {
     await expect(
       promotions.createPromotion({ ...blank, title: '   ' }, actor)
     ).rejects.toThrow(/title is required/);
+    await expect(
+      promotions.createPromotion({ ...blank, title: 'x', imageUrl: '' }, actor)
+    ).rejects.toThrow(/picture is required/);
     await expect(
       promotions.createPromotion(
         { ...blank, title: 'x', imageUrl: 'http://insecure.example/a.png' },
