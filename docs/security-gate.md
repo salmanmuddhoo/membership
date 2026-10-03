@@ -31,14 +31,16 @@ SEMGREP_BLOCK_SEVERITY: ERROR
 
 An advisory with no patched release blocks every pull request, including
 ones that touch no dependency, until it is either fixed upstream or accepted
-here. An accepted one is listed in `package.json` under
-`pnpm.auditConfig.ignoreGhsas`, with its reasons recorded in this table.
+here. An accepted one is listed twice — in `package.json` under
+`pnpm.auditConfig.ignoreGhsas` (for `pnpm audit`, by GHSA id) and in
+`.trivyignore` (for Trivy, by CVE id) — with its reasons recorded in this
+table.
 Each entry is a debt: remove it the moment a fixed release exists, and look
 through this table at every dependency update.
 
-| Advisory                                                                 | Package                        | Accepted   | Why it does not apply here                                                                                                                                                                                                              | Remove when                                                           |
-| ------------------------------------------------------------------------ | ------------------------------ | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| [GHSA-ch52-4w7c-c8xp](https://github.com/advisories/GHSA-ch52-4w7c-c8xp) | `http-cache-semantics` ≤ 4.2.0 | 2026-10-03 | Reached only through `astro`, which uses it in `dist/assets/build/remote.js`: the build-time cache for remote images referenced from `astro:assets`. This application references none, and nothing in the deployed server exercises it. | `http-cache-semantics` ships a fixed release and `astro` picks it up. |
+| Advisory                                                                                  | Package                        | Accepted   | Why it does not apply here                                                                                                                                                                                                              | Remove when                                                           |
+| ----------------------------------------------------------------------------------------- | ------------------------------ | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| [GHSA-ch52-4w7c-c8xp](https://github.com/advisories/GHSA-ch52-4w7c-c8xp) / CVE-2026-93748 | `http-cache-semantics` ≤ 4.2.0 | 2026-10-03 | Reached only through `astro`, which uses it in `dist/assets/build/remote.js`: the build-time cache for remote images referenced from `astro:assets`. This application references none, and nothing in the deployed server exercises it. | `http-cache-semantics` ships a fixed release and `astro` picks it up. |
 
 ## Enforcement status
 
