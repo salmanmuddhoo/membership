@@ -27,6 +27,19 @@ TRIVY_BLOCK_SEVERITY: HIGH,CRITICAL
 SEMGREP_BLOCK_SEVERITY: ERROR
 ```
 
+### Accepted advisories
+
+An advisory with no patched release blocks every pull request, including
+ones that touch no dependency, until it is either fixed upstream or accepted
+here. An accepted one is listed in `package.json` under
+`pnpm.auditConfig.ignoreGhsas`, with its reasons recorded in this table.
+Each entry is a debt: remove it the moment a fixed release exists, and look
+through this table at every dependency update.
+
+| Advisory                                                                 | Package                        | Accepted   | Why it does not apply here                                                                                                                                                                                                              | Remove when                                                           |
+| ------------------------------------------------------------------------ | ------------------------------ | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| [GHSA-ch52-4w7c-c8xp](https://github.com/advisories/GHSA-ch52-4w7c-c8xp) | `http-cache-semantics` ≤ 4.2.0 | 2026-10-03 | Reached only through `astro`, which uses it in `dist/assets/build/remote.js`: the build-time cache for remote images referenced from `astro:assets`. This application references none, and nothing in the deployed server exercises it. | `http-cache-semantics` ships a fixed release and `astro` picks it up. |
+
 ## Enforcement status
 
 Branch protection is **not currently enabled**, by decision of the maintainer,
