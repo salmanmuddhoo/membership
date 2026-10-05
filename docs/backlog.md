@@ -5659,3 +5659,14 @@ whom), pick the file, and it is on file for that member or non-member.
   nothing filed twice. An application already in progress does not.
 - Filing the same document again replaces it as a new version; Remove
   takes it off.
+
+---
+
+### One list of a person's documents
+
+Officer feedback: a document filed from the Documents page did not show
+under the member page's Documents button, which read only what applications
+had filed. Both now read the one list (`documentsForHolder`): every
+application of the person — a rejoin and a converted member's earlier
+applications included — what was filed for them directly, and their
+transactions' papers. The member app lists the member's own documents too.

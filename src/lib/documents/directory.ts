@@ -28,22 +28,59 @@ export interface DirectoryDocument {
   sourceKind: 'application' | 'transaction' | 'member';
 }
 
-// The applications a holder's documents were filed under. A member's are
-// the one that made them and any additional-account one since; a customer
-// only ever has the one.
+// The applications a holder's documents were filed under: every one that is
+// theirs, as the member page reads them (applications-of.ts, LC-02) — the
+// one that made them, every further account, a rejoin, and for someone who
+// became a member from a non-member the applications they made as one, all
+// tied together by the folder they share. A draft is someone's work in
+// progress and not on file, unless it is the one the record itself points at.
 const HOLDER_APPLICATIONS_SQL = `
-  select m.id as holder_id, a.id as application_id
+  with anchor as (
+    select m.id as holder_id, a.id as application_id,
+           m.application_id as current_id
+      from member m
+      join membership_application a
+        on a.id = m.application_id
+        or a.rejoins_member_id = m.id
+        or a.existing_member_id = m.id
+     where m.id = any($1::uuid[])
+    union all
+    select c.id, a.id, c.application_id
+      from customer c
+      join membership_application a
+        on a.id = c.application_id
+        or a.existing_customer_id = c.id
+     where c.id = any($1::uuid[])
+  )
+  select distinct an.holder_id, p.id as application_id
+    from anchor an
+    join membership_application r on r.id = an.application_id
+    join membership_application p
+      on p.id = r.id
+      or coalesce(p.folder_application_id, p.id)
+         = coalesce(r.folder_application_id, r.id)
+   where p.status <> 'draft' or p.id = an.current_id`;
+
+// What a holder filed outside any application (their Documents page): the
+// member's or customer's own documents, and for a member those filed for
+// the customer they were before joining (S-614, migration 0115).
+const HOLDER_OWN_SQL = `
+  select d.member_id as holder_id, d.id as document_id
+    from document d
+   where d.member_id = any($1::uuid[])
+  union
+  select d.customer_id, d.id
+    from document d
+   where d.customer_id = any($1::uuid[])
+  union
+  select m.id, d.id
     from member m
     join membership_application a
       on a.id = m.application_id
-      or (a.existing_member_id = m.id
-          and a.application_kind = 'additional_account'
-          and a.status <> 'draft')
-   where m.id = any($1::uuid[])
-  union all
-  select c.id, c.application_id
-    from customer c
-   where c.id = any($1::uuid[]) and c.application_id is not null`;
+      or a.rejoins_member_id = m.id
+      or a.existing_member_id = m.id
+    join document d on d.customer_id = a.source_customer_id
+   where m.id = any($1::uuid[])`;
 
 // A document counts once it has a committed version on file.
 const FILED_SQL = `
@@ -64,10 +101,7 @@ export async function documentCountsForHolders(
          from holder_application h
          join document d on d.application_id = h.application_id
        union
-       select coalesce(d.member_id, d.customer_id), d.id
-         from document d
-        where d.member_id = any($1::uuid[])
-           or d.customer_id = any($1::uuid[])
+       select holder_id, document_id from (${HOLDER_OWN_SQL}) own
        union
        select coalesce(t.member_id, t.customer_id), d.id
          from document d
@@ -107,9 +141,8 @@ export async function documentsForHolder(
          join membership_application a on a.id = h.application_id
          join document d on d.application_id = a.id
        union
-       select d.id, null, 'member'
-         from document d
-        where d.member_id = $2::uuid or d.customer_id = $2::uuid
+       select own.document_id, null, 'member'
+         from (${HOLDER_OWN_SQL}) own
        union
        select d.id, t.reference, 'transaction'
          from document d
@@ -136,6 +169,37 @@ export async function documentsForHolder(
     state: r.state,
     source: r.source,
     sourceKind: r.source_kind,
+  }));
+}
+
+export interface DocumentGroup {
+  label: string;
+  documents: DirectoryDocument[];
+}
+
+/**
+ * A holder's documents grouped by where each was filed, in the order first
+ * seen, oldest first: the founding application's papers lead. The one way
+ * the Documents page and the member page both show them, so the two never
+ * disagree about what is on file.
+ */
+export function groupHolderDocuments(
+  documents: DirectoryDocument[],
+  holderKind: HolderKind
+): DocumentGroup[] {
+  const groups = new Map<string, DirectoryDocument[]>();
+  for (const document of [...documents].reverse()) {
+    const label =
+      document.sourceKind === 'member'
+        ? holderKind === 'member'
+          ? 'On file for the member'
+          : 'On file for the customer'
+        : `${document.sourceKind === 'application' ? 'Application' : 'Transaction'} ${document.source}`;
+    groups.set(label, [...(groups.get(label) ?? []), document]);
+  }
+  return [...groups.entries()].map(([label, entries]) => ({
+    label,
+    documents: entries,
   }));
 }
 

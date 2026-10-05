@@ -77,7 +77,7 @@ async function additionalApplication(memberId: string, status: string) {
 }
 
 async function filed(
-  owner: { applicationId?: string; memberId?: string },
+  owner: { applicationId?: string; memberId?: string; customerId?: string },
   fileName = 'ID card.jpg',
   committed = true,
   // One document per type and subject on an application, so a second one
@@ -87,13 +87,15 @@ async function filed(
   const doc = await run(
     appUrl,
     `insert into document
-       (document_type_id, subject, application_id, member_id, state)
-     values ($1, $4, $2, $3, 'verified') returning id`,
+       (document_type_id, subject, application_id, member_id, customer_id,
+        state)
+     values ($1, $4, $2, $3, $5, 'verified') returning id`,
     [
       documentTypeId,
       owner.applicationId ?? null,
       owner.memberId ?? null,
       subject,
+      owner.customerId ?? null,
     ]
   );
   await run(
@@ -194,5 +196,71 @@ describe('the document directory', () => {
     expect(
       (await directory.documentsForHolder(yusuf.memberId)).map(p => p.fileName)
     ).toEqual(['theirs.jpg']);
+  });
+
+  // Officer feedback: a document filed from the Documents page did not show
+  // on the member page. Both read this list now, and it holds every
+  // application of the person — a rejoin included — and what was filed for
+  // them outside any application, as a non-member too.
+  it("holds a rejoin's papers, a non-member's own, and a converted member's from before they joined", async () => {
+    const rejoined = await member('AB0003', 'Rejoined');
+    const rejoin = await run(
+      appUrl,
+      `insert into membership_application
+         (membership_type_id, captured_by, status, rejoins_member_id)
+       values ($1, $2, 'approved', $3) returning id`,
+      [typeId, officerId, rejoined.memberId]
+    );
+    await filed({ applicationId: rejoin.rows[0].id }, 'rejoin.jpg');
+    expect(
+      (await directory.documentsForHolder(rejoined.memberId))
+        .map(p => p.fileName)
+        .sort()
+    ).toEqual(['rejoin.jpg']);
+
+    // A non-member with their identity card filed from their folder.
+    const customerApp = await run(
+      appUrl,
+      `insert into membership_application (membership_type_id, captured_by, status)
+       values ($1, $2, 'approved') returning id`,
+      [typeId, officerId]
+    );
+    const customer = await run(
+      appUrl,
+      `insert into customer (application_id) values ($1) returning id`,
+      [customerApp.rows[0].id]
+    );
+    const customerId = customer.rows[0].id as string;
+    await filed({ customerId }, 'customer-nic.jpg');
+    const customerPapers = await directory.documentsForHolder(customerId);
+    expect(customerPapers.map(p => [p.fileName, p.sourceKind])).toEqual([
+      ['customer-nic.jpg', 'member'],
+    ]);
+    expect(
+      (await directory.documentCountsForHolders([customerId])).get(customerId)
+    ).toBe(1);
+
+    // The same person becomes a member: their card is still on file.
+    const joined = await run(
+      appUrl,
+      `insert into membership_application
+         (membership_type_id, captured_by, status, source_customer_id,
+          folder_application_id)
+       values ($1, $2, 'approved', $3, $4) returning id`,
+      [typeId, officerId, customerId, customerApp.rows[0].id]
+    );
+    const converted = await run(
+      appUrl,
+      `insert into member (member_no, application_id, membership_type_id)
+       values ('AB0004', $1, $2) returning id`,
+      [joined.rows[0].id, typeId]
+    );
+    const memberPapers = await directory.documentsForHolder(
+      converted.rows[0].id
+    );
+    expect(memberPapers.map(p => p.fileName)).toContain('customer-nic.jpg');
+
+    const grouped = directory.groupHolderDocuments(customerPapers, 'customer');
+    expect(grouped.map(g => g.label)).toEqual(['On file for the customer']);
   });
 });
