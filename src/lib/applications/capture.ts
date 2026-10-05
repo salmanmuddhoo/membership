@@ -519,6 +519,7 @@ export async function startAdditionalAccountApplication(
     await carryForwardMemberDocuments(client, {
       applicationId: id,
       memberId: existingMemberId,
+      customerIds: await memberSourceCustomerIds(client, existingMemberId),
       sourceApplicationIds: await holderSourceApplicationIds(client, id, {
         column: 'existing_member_id',
         ownerId: existingMemberId,
@@ -568,6 +569,26 @@ async function holderSourceApplicationIds(
       where (id = $1::uuid or ${holder.column} = $2::uuid)
         and id <> $3::uuid`,
     [holder.foundingApplicationId, holder.ownerId, newApplicationId]
+  );
+  return result.rows.map(r => r.id);
+}
+
+// The customers this member was before they joined (S-614): their own
+// documents, filed from the Documents page while they were a non-member
+// (migration 0115), are this member's too.
+async function memberSourceCustomerIds(
+  client: PoolClient,
+  memberId: string
+): Promise<string[]> {
+  const result = await client.query<{ id: string }>(
+    `select distinct a.source_customer_id as id
+       from membership_application a
+       join member m on m.id = $1::uuid
+      where a.source_customer_id is not null
+        and (a.id = m.application_id
+             or a.existing_member_id = m.id
+             or a.rejoins_member_id = m.id)`,
+    [memberId]
   );
   return result.rows.map(r => r.id);
 }
@@ -710,6 +731,7 @@ export async function startCustomerAdditionalAccountApplication(
     await carryForwardMemberDocuments(client, {
       applicationId: id,
       memberId: null,
+      customerIds: [existingCustomerId],
       sourceApplicationIds: await holderSourceApplicationIds(client, id, {
         column: 'existing_customer_id',
         ownerId: existingCustomerId,
@@ -977,6 +999,7 @@ export async function startMembershipApplicationFromCustomer(
     await carryForwardMemberDocuments(client, {
       applicationId: id,
       memberId: null,
+      customerIds: [customerId],
       sourceApplicationIds: await holderSourceApplicationIds(client, id, {
         column: 'existing_customer_id',
         ownerId: customerId,
@@ -1307,6 +1330,7 @@ export async function startRejoinApplication(
     await carryForwardMemberDocuments(client, {
       applicationId: id,
       memberId,
+      customerIds: await memberSourceCustomerIds(client, memberId),
       sourceApplicationIds: await memberSourceApplicationIds(
         client,
         memberId,

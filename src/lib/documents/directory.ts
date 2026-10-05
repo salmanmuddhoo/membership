@@ -2,12 +2,15 @@
 // member or a non-member customer, in one place, reached from the dashboard
 // and the menu rather than from inside each record.
 //
-// A document has one of three owners (documents.ts): the application it
-// was uploaded for, the member it was filed against directly, or the
-// transaction it was signed for (a closure or resignation request, a
-// deposit's Source of Fund form). A holder's directory is all three: the
-// applications that made them (the founding one and any additional-account
-// one since), the member row itself, and every transaction of theirs.
+// A document has one of four owners (documents.ts): the application it was
+// uploaded for, the member or the customer it was filed against directly
+// (from this directory, outside any application: officer request,
+// migration 0115), or the transaction it was signed for (a closure or
+// resignation request, a deposit's Source of Fund form). A holder's
+// directory is all of them: the applications that made them (the founding
+// one and any additional-account one since), the member or customer row
+// itself, and every transaction of theirs.
+import type { FieldSubject } from '../config/reference';
 import { query } from '../db/pool';
 
 export type HolderKind = 'member' | 'customer';
@@ -61,9 +64,10 @@ export async function documentCountsForHolders(
          from holder_application h
          join document d on d.application_id = h.application_id
        union
-       select d.member_id, d.id
+       select coalesce(d.member_id, d.customer_id), d.id
          from document d
         where d.member_id = any($1::uuid[])
+           or d.customer_id = any($1::uuid[])
        union
        select coalesce(t.member_id, t.customer_id), d.id
          from document d
@@ -105,7 +109,7 @@ export async function documentsForHolder(
        union
        select d.id, null, 'member'
          from document d
-        where d.member_id = $2::uuid
+        where d.member_id = $2::uuid or d.customer_id = $2::uuid
        union
        select d.id, t.reference, 'transaction'
          from document d
@@ -133,4 +137,61 @@ export async function documentsForHolder(
     source: r.source,
     sourceKind: r.source_kind,
   }));
+}
+
+export interface FilingChoice {
+  // documentTypeId:subject — what the form posts, and what an application's
+  // checklist matches a carried document on.
+  value: string;
+  documentTypeId: string;
+  subject: FieldSubject;
+  label: string;
+  tracksExpiry: boolean;
+}
+
+const SUBJECT_WORDS: Partial<Record<FieldSubject, string>> = {
+  nominee: 'Nominee',
+  guardian: 'Guardian',
+  beneficiary: 'Beneficiary',
+};
+
+/**
+ * What may be filed for a holder outside an application (officer request):
+ * every document an application checklist asks for, for whom — the
+ * holder's own identity card, a nominee's, a guardian's utility bill — so
+ * a document filed here is the one the next application's checklist picks
+ * up (carryForwardMemberDocuments matches on type and subject). The signed
+ * application form is left out: it belongs to the application it was
+ * signed for.
+ */
+export async function filingChoices(): Promise<FilingChoice[]> {
+  const result = await query<{
+    document_type_id: string;
+    subject: FieldSubject;
+    name: string;
+    tracks_expiry: boolean;
+  }>(
+    `select distinct ci.document_type_id, ci.subject, t.name, t.tracks_expiry
+       from document_checklist_item ci
+       join document_checklist c on c.id = ci.checklist_id
+       join document_type t on t.id = ci.document_type_id
+      where c.is_active and t.is_active and t.code <> 'signed_form'
+      order by t.name, ci.subject`
+  );
+  return result.rows
+    .sort(
+      (a, b) =>
+        a.name.localeCompare(b.name) ||
+        Number(a.subject !== 'applicant') - Number(b.subject !== 'applicant') ||
+        a.subject.localeCompare(b.subject)
+    )
+    .map(r => ({
+      value: `${r.document_type_id}:${r.subject}`,
+      documentTypeId: r.document_type_id,
+      subject: r.subject,
+      label: SUBJECT_WORDS[r.subject]
+        ? `${r.name} (${SUBJECT_WORDS[r.subject]})`
+        : r.name,
+      tracksExpiry: r.tracks_expiry,
+    }));
 }

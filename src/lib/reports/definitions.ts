@@ -605,7 +605,7 @@ const documentsOutstanding: ReportDefinition = {
                            when 'uploaded' then 'Uploaded'
                            else initcap(replace(d.state, '_', ' ')) end
                 as "State",
-              coalesce(a.reference, '') as "Application",
+              coalesce(a.reference, ca.reference, '') as "Application",
               -- A closure, resignation or claim files its papers against
               -- the transaction, not an application: named by it and by
               -- its member, so the row can be chased (QA-09).
@@ -617,6 +617,8 @@ const documentsOutstanding: ReportDefinition = {
          join document_type t on t.id = d.document_type_id
          left join membership_application a on a.id = d.application_id
          left join member m on m.id = d.member_id
+         left join customer dc on dc.id = d.customer_id
+         left join membership_application ca on ca.id = dc.application_id
          left join transaction tx on tx.id = d.transaction_id
          left join member tm on tm.id = tx.member_id
         where (
