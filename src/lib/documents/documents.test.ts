@@ -2858,3 +2858,166 @@ describe("S-1702: a request's own paper is filed against the transaction", () =>
     ).rejects.toThrowError(/This request has been submitted/);
   });
 });
+
+// Officer request: a person's identity card filed from their Documents page,
+// outside any application, is the one their next application picks up — for
+// a member (document.member_id) and for a non-member customer
+// (document.customer_id, migration 0115) alike.
+describe('a document filed for a person, outside any application', () => {
+  async function investmentType(code: string) {
+    const checklist = await run(
+      appUrl,
+      `select id from document_checklist where code = 'msa_opening'`
+    );
+    const created = await runAsConfigurator(
+      appUrl,
+      `insert into account_type
+         (code, name, category, minimum_opening_amount, checklist_id,
+          is_membership_default)
+       values ('${code}', 'Investment (${code})', 'investment',
+               1000, '${checklist.rows[0].id}', false)
+       returning id`
+    );
+    return created.rows[0].id as string;
+  }
+
+  async function carried(applicationId: string) {
+    const result = await run(
+      appUrl,
+      `select d.state, v.sharepoint_path, v.sharepoint_item_id
+         from document d
+         join document_version v
+           on v.document_id = d.id and v.state = 'committed'
+          and v.superseded_at is null
+        where d.application_id = $1 and d.document_type_id = $2
+          and d.subject = 'applicant'`,
+      [applicationId, idCardTypeId]
+    );
+    return result.rows[0];
+  }
+
+  it("files a customer's identity card in their folder and carries it onto their next application", async () => {
+    const { capture, documents } = await load();
+    const accountType = await investmentType('inv_store_customer');
+    const customerApp = await capture.startCustomerAccountApplication(
+      [accountType],
+      officer
+    );
+    const customer = await run(
+      appUrl,
+      `insert into customer (application_id, status)
+       values ($1, 'active') returning id`,
+      [customerApp.id]
+    );
+    const customerId = customer.rows[0].id as string;
+
+    const begun = await documents.beginUpload(
+      {
+        customerId,
+        documentTypeId: idCardTypeId,
+        subject: 'applicant',
+        fileName: 'nic.jpg',
+        contentType: 'image/jpeg',
+        sizeBytes: 2048,
+      },
+      officer
+    );
+    // In the folder of the application the customer came from.
+    expect(begun.ticket.itemPath).toContain(
+      documents.applicationFolderPath(customerApp.reference)
+    );
+    drive.files.set(begun.ticket.itemPath, { id: 'graph-cust', size: 2048 });
+    await documents.commitUpload(begun.versionId, officer);
+
+    const owner = await run(
+      appUrl,
+      `select customer_id, application_id, member_id from document where id = $1`,
+      [begun.documentId]
+    );
+    expect(owner.rows[0]).toEqual({
+      customer_id: customerId,
+      application_id: null,
+      member_id: null,
+    });
+
+    // A further account for the customer asks for an identity card: the
+    // one on file is there, the same file, for this application's reviewer.
+    const further = await capture.startCustomerAdditionalAccountApplication(
+      customerId,
+      [accountType],
+      officer
+    );
+    const onFurther = await carried(further.id);
+    expect(onFurther).toMatchObject({
+      state: 'under_review',
+      sharepoint_item_id: 'graph-cust',
+      sharepoint_path: begun.ticket.itemPath,
+    });
+
+    // And when the customer applies to become a member.
+    const { id: membershipId } =
+      await capture.startMembershipApplicationFromCustomer(customerId, officer);
+    expect((await carried(membershipId))?.sharepoint_item_id).toBe(
+      'graph-cust'
+    );
+  });
+
+  it("carries a member's identity card filed since they joined onto their further account", async () => {
+    const { capture, documents } = await load();
+    const accountType = await investmentType('inv_store_member');
+    const type = await run(
+      appUrl,
+      `select id from membership_type where code = 'individual'`
+    );
+    const founding = await run(
+      appUrl,
+      `insert into membership_application (membership_type_id, captured_by)
+       values ($1, $2) returning id`,
+      [type.rows[0].id, officer.userId]
+    );
+    const member = await run(
+      appUrl,
+      `insert into member (membership_type_id, application_id, status)
+       values ($1, $2, 'active') returning id`,
+      [type.rows[0].id, founding.rows[0].id]
+    );
+    const memberId = member.rows[0].id as string;
+
+    const begun = await documents.beginUpload(
+      {
+        memberId,
+        documentTypeId: idCardTypeId,
+        subject: 'applicant',
+        fileName: 'nic-renewed.jpg',
+        contentType: 'image/jpeg',
+        sizeBytes: 1024,
+      },
+      officer
+    );
+    drive.files.set(begun.ticket.itemPath, { id: 'graph-mem', size: 1024 });
+    await documents.commitUpload(begun.versionId, officer);
+
+    const { id: furtherId } = await capture.startAdditionalAccountApplication(
+      memberId,
+      [accountType],
+      officer
+    );
+    expect(await carried(furtherId)).toMatchObject({
+      state: 'under_review',
+      sharepoint_item_id: 'graph-mem',
+    });
+  });
+
+  it('refuses a document with two owners', async () => {
+    await expect(
+      run(
+        appUrl,
+        `insert into document
+           (document_type_id, subject, member_id, customer_id)
+         select $1, 'applicant', m.id, c.id
+           from member m cross join customer c limit 1`,
+        [idCardTypeId]
+      )
+    ).rejects.toThrowError(/document_belongs_to_exactly_one/);
+  });
+});

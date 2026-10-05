@@ -5642,3 +5642,31 @@ Officer feedback: with `transaction.view_all`, the President still saw only
 of `transaction.view`: the Waiting-on-you card, the day's list and the link
 to every day; the Deposit, Withdrawal and Transfer cards only for someone who
 may record one.
+
+---
+
+### Documents filed outside an application
+
+Officer request: an officer could only file a document for someone by
+starting an application. A person's folder on the Documents page now takes
+an upload: choose the document (the types the checklists ask for, for
+whom), pick the file, and it is on file for that member or non-member.
+
+- A non-member's own documents are new: `document.customer_id`
+  (migration 0115); a member's already existed (`document.member_id`).
+- Their next application — a further account, a rejoin, a non-member
+  becoming a member — finds it there, `under_review`, the same file, with
+  nothing filed twice. An application already in progress does not.
+- Filing the same document again replaces it as a new version; Remove
+  takes it off.
+
+---
+
+### One list of a person's documents
+
+Officer feedback: a document filed from the Documents page did not show
+under the member page's Documents button, which read only what applications
+had filed. Both now read the one list (`documentsForHolder`): every
+application of the person — a rejoin and a converted member's earlier
+applications included — what was filed for them directly, and their
+transactions' papers. The member app lists the member's own documents too.

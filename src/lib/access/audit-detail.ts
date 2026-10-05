@@ -592,7 +592,8 @@ async function loadDocuments(
     file_name: string | null;
   }>(
     `select d.id::text as id, dt.name as type_name,
-            coalesce(a.reference, ma.reference, ta.reference) as reference,
+            coalesce(a.reference, ma.reference, ca.reference, ta.reference)
+              as reference,
             t.reference as transaction_reference,
             trim(coalesce(p.values->>'name', '') || ' '
                  || coalesce(p.values->>'surname', '')) as applicant_name,
@@ -602,13 +603,15 @@ async function loadDocuments(
        left join membership_application a on a.id = d.application_id
        left join member m on m.id = d.member_id
        left join membership_application ma on ma.id = m.application_id
+       left join customer dc on dc.id = d.customer_id
+       left join membership_application ca on ca.id = dc.application_id
        left join transaction t on t.id = d.transaction_id
        left join member tm on tm.id = t.member_id
        left join customer tc on tc.id = t.customer_id
        left join membership_application ta
          on ta.id = coalesce(tm.application_id, tc.application_id)
        left join application_party p
-         on p.application_id = coalesce(a.id, ma.id, ta.id)
+         on p.application_id = coalesce(a.id, ma.id, ca.id, ta.id)
         and p.subject = 'applicant' and p.ordinal = 1
        left join lateral (
          select file_name from document_version

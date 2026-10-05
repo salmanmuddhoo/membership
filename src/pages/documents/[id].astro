@@ -1,15 +1,26 @@
 ---
 // One holder's folder (officer feedback): everything filed for a member or
 // a non-member customer — under the applications that made them, against
-// the member directly, and on their transactions — with View on each.
+// the person directly, and on their transactions — with View on each.
+// Someone holding document.upload can file a document here for the person,
+// outside any application (officer request); their next application picks
+// it up (carryForwardMemberDocuments).
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import DocumentViewer from '@components/DocumentViewer.astro';
-import { documentsForHolder } from '@lib/documents/directory';
+import {
+  documentsForHolder,
+  filingChoices,
+  groupHolderDocuments,
+} from '@lib/documents/directory';
 import { loadCustomer, loadMember } from '@lib/members/create';
 import {
+  BUTTON,
   CARD,
   CARD_TITLE,
+  DELETE_BUTTON,
   HINT,
+  INPUT,
+  LABEL,
   MUTED,
   PAGE,
   PANEL,
@@ -27,18 +38,14 @@ const holder = (member ?? customer)!;
 const name = holder.name;
 const number = member ? member.memberNo : null;
 
+const principal = Astro.locals.principal!;
+const canUpload = principal.permissions.has('document.upload');
+const choices = canUpload ? await filingChoices() : [];
+
 const documents = await documentsForHolder(holder.id);
 
-// Grouped by where each was filed, in the order first seen: the founding
-// application first, since its papers are the oldest.
-const groups = new Map<string, typeof documents>();
-for (const document of [...documents].reverse()) {
-  const key =
-    document.sourceKind === 'member'
-      ? 'Filed against the member'
-      : `${document.sourceKind === 'application' ? 'Application' : 'Transaction'} ${document.source}`;
-  groups.set(key, [...(groups.get(key) ?? []), document]);
-}
+// Grouped by where each was filed, the founding application first.
+const groups = groupHolderDocuments(documents, member ? 'member' : 'customer');
 
 const dateFormat = new Intl.DateTimeFormat('en-GB', {
   day: 'numeric',
@@ -61,15 +68,81 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
       </a>
     </div>
 
+    {canUpload && (
+      <section class={CARD}>
+        <h2 class={CARD_TITLE}>File a document</h2>
+        <p class={HINT}>Used again when an application needs it.</p>
+        {choices.length === 0 ? (
+          <p class={`${MUTED} mt-3`}>No document types are configured.</p>
+        ) : (
+          <form
+            data-file-document
+            data-member-id={member ? holder.id : ''}
+            data-customer-id={customer ? holder.id : ''}
+            class="mt-3 space-y-3"
+          >
+            <div>
+              <label for="file-document-type" class={LABEL}>
+                Document
+              </label>
+              <select
+                id="file-document-type"
+                data-document-select
+                class={INPUT}
+              >
+                <option value="">Choose…</option>
+                {choices.map(c => (
+                  <option
+                    value={c.value}
+                    data-tracks-expiry={c.tracksExpiry ? 'true' : 'false'}
+                  >
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div data-expiry-field hidden>
+              <label for="file-document-expiry" class={LABEL}>
+                Expires on
+              </label>
+              <input
+                id="file-document-expiry"
+                type="date"
+                data-expiry-input
+                class={INPUT}
+              />
+            </div>
+            <div class="flex flex-wrap items-center gap-3">
+              <input
+                type="file"
+                accept="image/*,application/pdf"
+                class="sr-only"
+                id="file-document-input"
+              />
+              <label
+                for="file-document-input"
+                data-file-label
+                aria-disabled="true"
+                class={`${BUTTON} pointer-events-none cursor-pointer opacity-50`}
+              >
+                Choose file
+              </label>
+            </div>
+          </form>
+        )}
+        <p data-file-status class={`${HINT} mt-2`} aria-live="polite" />
+      </section>
+    )}
+
     <section class={CARD}>
       <h2 class={CARD_TITLE}>
         {documents.length === 0
           ? 'Nothing on file'
           : `${documents.length} document${documents.length === 1 ? '' : 's'} on file`}
       </h2>
-      {groups.size > 0 && (
+      {groups.length > 0 && (
         <div class="mt-4 space-y-5">
-          {[...groups.entries()].map(([label, entries]) => (
+          {groups.map(({ label, documents: entries }) => (
             <div>
               <h3 class={SUBTITLE}>{label}</h3>
               <ul class="mt-2 space-y-2">
@@ -95,14 +168,28 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                         {document.filedByName}
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      data-view-document
-                      data-document-id={document.documentId}
-                      class={VIEW_BUTTON}
-                    >
-                      View
-                    </button>
+                    <div class="flex shrink-0 items-center gap-2">
+                      <button
+                        type="button"
+                        data-view-document
+                        data-document-id={document.documentId}
+                        class={VIEW_BUTTON}
+                      >
+                        View
+                      </button>
+                      {canUpload && document.sourceKind === 'member' && (
+                        <button
+                          type="button"
+                          data-remove-document
+                          data-document-id={document.documentId}
+                          title="Delete"
+                          aria-label="Remove this document"
+                          class={DELETE_BUTTON}
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -114,3 +201,119 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
   </div>
   <DocumentViewer />
 </DashboardLayout>
+
+<script>
+  import { uploadDocumentBlob } from '@lib/client/document-upload';
+  import {
+    compressImageForUpload,
+    formatBytes,
+  } from '@lib/client/image-compression';
+
+  const status = document.querySelector<HTMLElement>('[data-file-status]');
+  const say = (message: string) => {
+    if (status) status.textContent = message;
+  };
+
+  const form = document.querySelector<HTMLFormElement>('[data-file-document]');
+  if (form) {
+    const select = form.querySelector<HTMLSelectElement>(
+      '[data-document-select]'
+    )!;
+    const expiryField = form.querySelector<HTMLElement>('[data-expiry-field]')!;
+    const expiry = form.querySelector<HTMLInputElement>('[data-expiry-input]')!;
+    const file = form.querySelector<HTMLInputElement>('#file-document-input')!;
+    const label = form.querySelector<HTMLElement>('[data-file-label]')!;
+
+    const tracksExpiry = () =>
+      select.selectedOptions[0]?.dataset.tracksExpiry === 'true';
+    const setReady = (ready: boolean) => {
+      label.setAttribute('aria-disabled', ready ? 'false' : 'true');
+      label.classList.toggle('pointer-events-none', !ready);
+      label.classList.toggle('opacity-50', !ready);
+      file.disabled = !ready;
+    };
+    const refresh = () => {
+      const tracked = tracksExpiry();
+      expiryField.hidden = !tracked;
+      expiry.required = tracked;
+      setReady(select.value !== '' && (!tracked || expiry.value !== ''));
+    };
+    select.addEventListener('change', refresh);
+    expiry.addEventListener('input', refresh);
+    refresh();
+
+    file.addEventListener('change', async () => {
+      const picked = file.files?.[0];
+      if (!picked) return;
+      setReady(false);
+      select.disabled = true;
+      expiry.disabled = true;
+      say('Preparing…');
+      let chosen = picked;
+      try {
+        chosen = await compressImageForUpload(picked);
+        if (chosen.size < picked.size) {
+          say(
+            `Compressed ${formatBytes(picked.size)} to ${formatBytes(chosen.size)}…`
+          );
+        }
+      } catch {
+        // Nothing here is worth failing an upload over.
+      }
+      const [documentTypeId, subject] = select.value.split(':');
+      const memberId = form.dataset.memberId ?? '';
+      const customerId = form.dataset.customerId ?? '';
+      try {
+        await uploadDocumentBlob({
+          ...(memberId ? { memberId } : { customerId }),
+          documentTypeId,
+          subject: subject as
+            'applicant' | 'nominee' | 'guardian' | 'beneficiary',
+          fileName: chosen.name,
+          blob: chosen,
+          expiresAt: tracksExpiry() && expiry.value ? expiry.value : undefined,
+          onStatus: message => say(message),
+        });
+        window.location.reload();
+      } catch (error) {
+        say(
+          (error instanceof Error ? error.message : 'The upload failed.') +
+            ' Please try again.'
+        );
+        select.disabled = false;
+        expiry.disabled = false;
+        file.value = '';
+        refresh();
+      }
+    });
+  }
+
+  for (const button of document.querySelectorAll<HTMLButtonElement>(
+    '[data-remove-document]'
+  )) {
+    button.addEventListener('click', async () => {
+      const ok = await window.appConfirm('Remove this document?', {
+        okLabel: 'Remove',
+      });
+      if (!ok) return;
+      button.disabled = true;
+      try {
+        const response = await fetch('/api/v1/documents/remove', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ documentId: button.dataset.documentId }),
+        });
+        if (!response.ok) {
+          const body = await response.json().catch(() => null);
+          throw new Error(body?.error?.message ?? 'It could not be removed.');
+        }
+        window.location.reload();
+      } catch (error) {
+        button.disabled = false;
+        say(
+          error instanceof Error ? error.message : 'It could not be removed.'
+        );
+      }
+    });
+  }
+</script>

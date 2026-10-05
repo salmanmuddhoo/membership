@@ -2724,7 +2724,7 @@
     "/api/v1/documents/begin-upload": {
       "post": {
         "summary": "Start filing a document",
-        "description": "Records the intent to file a document and returns a short-lived, single-file upload URL. The caller never receives a credential, and never says where the file goes — the folder comes from the application, member or transaction it is filed against. Nothing appears on the checklist until commit-upload.",
+        "description": "Records the intent to file a document and returns a short-lived, single-file upload URL. The caller never receives a credential, and never says where the file goes — the folder comes from the application, member, customer or transaction it is filed against. A document filed against a member or a customer is carried onto their next application that asks for it. Nothing appears on the checklist until commit-upload.",
         "tags": [
           "Documents"
         ],
@@ -2842,6 +2842,11 @@
                   "memberId": {
                     "type": "string",
                     "format": "uuid"
+                  },
+                  "customerId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "A non-member’s own document, outside any application: filed in the folder of the application they came from."
                   },
                   "transactionId": {
                     "type": "string",

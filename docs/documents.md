@@ -392,11 +392,41 @@ one, so the thumbnail is a generic icon), and resuming a dropped transfer via
 the member page's own Documents) is a folder per member and non-member
 customer, searchable like the members list, with how much is on file for
 each; `/documents/{id}` is the folder. `src/lib/documents/directory.ts`
-gathers a holder's papers from all three owners a document can have:
-the applications that made them (the founding one and every approved
-additional-account one — a draft's upload is not on file), the member row
-itself (a document carried forward), and their transactions (a signed
-closure or resignation request, a deposit's Source of Fund form). Only a
-document with a committed version counts. Each opens in the viewer; the
-directory files nothing and deletes nothing — that stays with the
-application, wizard or member page the document belongs to.
+gathers a holder's papers from every owner a document can have: every
+application that is theirs (the founding one, each further account, a
+rejoin, and for a member who was a non-member first the applications they
+made as one — tied together by the folder they share; a draft's upload is
+not on file unless the record points at it), the member or customer row
+itself (for a member, the customer they were too), and their transactions
+(a signed closure or resignation request, a deposit's Source of Fund form).
+Only a document with a committed version counts. Each opens in the viewer.
+
+The member page's Documents button reads the same list, grouped the same
+way (`groupHolderDocuments`), so a document filed in either place is on
+file in both. The member app lists the applications' documents and the
+member's own.
+
+### Filing a document outside an application
+
+Officer request: an identity card, a utility bill or any other document an
+application checklist asks for can be filed for a person from their folder,
+`/documents/{id}`, by anyone holding `document.upload` — without starting an
+application. It is filed against the member (`document.member_id`, 0013) or
+the non-member customer (`document.customer_id`, migration 0115), in the
+person's own SharePoint folder (a customer's is the folder of the
+application they came from), through the same begin/commit upload as every
+other document. The choices are the document types the active checklists
+ask for, for whom (`filingChoices()`): "Identity Card", "Identity Card
+(Nominee)", and so on; the signed application form is not one of them.
+Filing the same choice again files a new version; removing one is the
+usual remove, which keeps a file another filing still shares.
+
+The next application for that person picks it up:
+`carryForwardMemberDocuments` draws from the member's own documents, the
+customer's own documents (for a member, those of the customer they were
+before joining), and every earlier application of theirs, the most recent
+filing of each type and subject winning. A carried document lands
+`under_review` on the new application, for its own reviewer to verify. It
+happens when the application is created (a further account, a rejoin, a
+customer becoming a member), so an application already in progress does not
+pick up a document filed after it started.

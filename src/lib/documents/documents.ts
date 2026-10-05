@@ -222,6 +222,9 @@ export async function ensureFolderPath(
 interface OwnerRow {
   application_id: string | null;
   member_id: string | null;
+  // A non-member's own document, filed outside any application (officer
+  // request, migration 0115) — the customer counterpart of member_id.
+  customer_id: string | null;
   // S-1702: a document about one transaction — the signed closure request
   // — filed in its holder's folder and named by the transaction reference.
   transaction_id: string | null;
@@ -258,8 +261,36 @@ function isEditableTransactionStatus(status: string): boolean {
 async function resolveOwner(
   applicationId: string | null,
   memberId: string | null,
-  transactionId: string | null = null
+  transactionId: string | null = null,
+  customerId: string | null = null
 ): Promise<OwnerRow> {
+  if (customerId) {
+    // Filed where the customer's other papers are: the folder of the
+    // application they came from, named by that application's reference
+    // (a customer has no number of their own).
+    const result = await query<{ application_id: string | null }>(
+      'select application_id from customer where id = $1',
+      [customerId]
+    );
+    const applicationOf = result.rows[0]?.application_id ?? null;
+    if (!applicationOf) {
+      throw new DocumentError('That customer no longer exists.', 'not_found');
+    }
+    const folder = await resolveOwner(applicationOf, null);
+    return {
+      application_id: null,
+      member_id: null,
+      customer_id: customerId,
+      transaction_id: null,
+      transaction_status: null,
+      application_status: null,
+      checklist_application_id: applicationOf,
+      membership_type_code: null,
+      folder_path: folder.folder_path,
+      reference: folder.reference,
+    };
+  }
+
   if (transactionId) {
     const result = await query<{
       reference: string;
@@ -289,6 +320,7 @@ async function resolveOwner(
     return {
       application_id: null,
       member_id: null,
+      customer_id: null,
       transaction_id: transactionId,
       transaction_status: row.status,
       application_status: null,
@@ -339,6 +371,7 @@ async function resolveOwner(
     return {
       application_id: applicationId,
       member_id: null,
+      customer_id: null,
       transaction_id: null,
       transaction_status: null,
       application_status: row.status,
@@ -383,6 +416,7 @@ async function resolveOwner(
   return {
     application_id: null,
     member_id: memberId,
+    customer_id: null,
     transaction_id: null,
     transaction_status: null,
     application_status: null,
@@ -596,8 +630,74 @@ export async function documentsForPerson(
       ),
     }))
   );
+  // And what was filed for them outside any application, from their
+  // Documents page (officer request): a member's or customer's own.
+  const own = await ownDocuments(holder);
+  if (own.length > 0) {
+    groups.push({ applicationId: '', applicationReference: '', entries: own });
+  }
 
   return groups.filter(g => g.entries.length > 0);
+}
+
+// A holder's own documents, filed outside any application (document.member_id
+// or document.customer_id), as checklist entries so they read like the rest.
+async function ownDocuments(holder: Holder): Promise<ChecklistEntry[]> {
+  const result = await query<{
+    id: string;
+    document_type_id: string;
+    code: string;
+    name: string;
+    tracks_expiry: boolean;
+    subject: FieldSubject;
+    state: ChecklistState;
+    rejection_reason: string | null;
+    expires_at: Date | null;
+    file_name: string;
+    sharepoint_path: string | null;
+    committed_at: Date;
+    uploaded_by_name: string | null;
+    verified_by_name: string | null;
+    version_count: number;
+  }>(
+    `select d.id, d.document_type_id, t.code, t.name, t.tracks_expiry,
+            d.subject, d.state, d.rejection_reason, d.expires_at,
+            v.file_name, v.sharepoint_path, v.committed_at,
+            up.display_name as uploaded_by_name,
+            vp.display_name as verified_by_name,
+            (select count(*)::int from document_version dv
+              where dv.document_id = d.id and dv.state = 'committed')
+              as version_count
+       from document d
+       join document_type t on t.id = d.document_type_id
+       join document_version v
+         on v.document_id = d.id
+        and v.state = 'committed' and v.superseded_at is null
+       left join app_user up on up.id = v.uploaded_by
+       left join app_user vp on vp.id = d.verified_by
+      where ${'memberId' in holder ? 'd.member_id' : 'd.customer_id'} = $1
+      order by v.committed_at`,
+    ['memberId' in holder ? holder.memberId : holder.customerId]
+  );
+  return result.rows.map(r => ({
+    documentTypeId: r.document_type_id,
+    documentCode: r.code,
+    documentName: r.name,
+    subject: r.subject,
+    requirement: 'optional',
+    tracksExpiry: r.tracks_expiry,
+    state: r.state,
+    documentId: r.id,
+    fileName: r.file_name,
+    webPath: r.sharepoint_path,
+    uploadedByName: r.uploaded_by_name,
+    uploadedAt: r.committed_at,
+    verifiedByName: r.verified_by_name,
+    rejectionReason: r.rejection_reason,
+    expiresAt: r.expires_at,
+    versionCount: r.version_count,
+    confirmedSignatures: [],
+  }));
 }
 
 /**
@@ -720,10 +820,12 @@ export function isDocumentComplete(entries: ChecklistEntry[]): boolean {
  * application — see removeFiledDocument's reference check.
  *
  * Runs inside the caller's capture transaction, so the application and its
- * documents are created as one unit. Sourced from the member's store and
- * every application already tied to them (founding and any earlier
- * additional account), taking the most recently filed file per item so a
- * card renewed on a later application is the one that carries.
+ * documents are created as one unit. Sourced from the member's store, the
+ * customer's store (a non-member's own documents, or a member's from before
+ * they joined, migration 0115) and every application already tied to them
+ * (founding and any earlier additional account), taking the most recently
+ * filed file per item so a card renewed on a later application, or filed
+ * from the Documents page since, is the one that carries.
  */
 export async function carryForwardMemberDocuments(
   client: PoolClient,
@@ -732,6 +834,10 @@ export async function carryForwardMemberDocuments(
     // The member's own document store, if the holder is a member; null for a
     // customer, who has no member-owned documents.
     memberId: string | null;
+    // The customers whose own documents (filed from their Documents page,
+    // migration 0115) this application may draw on: the customer applying,
+    // or for a member the customer they were before (S-614).
+    customerIds?: string[];
     // Every other application belonging to the holder — a member's founding
     // application plus any earlier additional account, or a customer's
     // originating application plus the same. The applications this new one
@@ -754,8 +860,9 @@ export async function carryForwardMemberDocuments(
     // One row per checklist item this application asks for that the holder
     // already has a live file for, newest filing winning (distinct on +
     // committed_at desc). signed_form is excluded here, not carried and
-    // filed fresh. The source is the member's own store (members only) plus
-    // every application already tied to the holder — never this new one.
+    // filed fresh. The source is the member's own store (members only), the
+    // customer's own store, and every application already tied to the
+    // holder — never this new one.
     `select distinct on (ci.document_type_id, ci.subject)
             ci.document_type_id, ci.subject, d.expires_at,
             v.file_name, v.content_type, v.size_bytes,
@@ -769,6 +876,7 @@ export async function carryForwardMemberDocuments(
         and (
               ($2::uuid is not null and d.member_id = $2::uuid)
               or d.application_id = any($3::uuid[])
+              or d.customer_id = any($4::uuid[])
             )
        join document_version v
          on v.document_id = d.id
@@ -784,7 +892,12 @@ export async function carryForwardMemberDocuments(
                  and t.document_type_id = ci.document_type_id
                  and t.subject = ci.subject)
       order by ci.document_type_id, ci.subject, v.committed_at desc`,
-    [input.applicationId, input.memberId, input.sourceApplicationIds]
+    [
+      input.applicationId,
+      input.memberId,
+      input.sourceApplicationIds,
+      input.customerIds ?? [],
+    ]
   );
 
   for (const source of sources.rows) {
@@ -872,6 +985,9 @@ export async function beginUpload(
   input: {
     applicationId?: string;
     memberId?: string;
+    // A non-member's own document, outside any application (migration
+    // 0115): their Documents page.
+    customerId?: string;
     transactionId?: string;
     documentTypeId: string;
     subject: FieldSubject;
@@ -886,7 +1002,8 @@ export async function beginUpload(
   const owner = await resolveOwner(
     input.applicationId ?? null,
     input.memberId ?? null,
-    input.transactionId ?? null
+    input.transactionId ?? null,
+    input.customerId ?? null
   );
 
   if (
@@ -959,13 +1076,15 @@ export async function beginUpload(
           where document_type_id = $1 and subject = $2
             and (($3::uuid is not null and application_id = $3::uuid)
               or ($4::uuid is not null and member_id = $4::uuid)
-              or ($5::uuid is not null and transaction_id = $5::uuid))`,
+              or ($5::uuid is not null and transaction_id = $5::uuid)
+              or ($6::uuid is not null and customer_id = $6::uuid))`,
         [
           input.documentTypeId,
           input.subject,
           owner.application_id,
           owner.member_id,
           owner.transaction_id,
+          owner.customer_id,
         ]
       );
 
@@ -981,14 +1100,15 @@ export async function beginUpload(
         const created = await client.query<{ id: string }>(
           `insert into document
              (document_type_id, subject, application_id, member_id,
-              transaction_id, expires_at)
-           values ($1, $2, $3, $4, $5, $6) returning id`,
+              transaction_id, customer_id, expires_at)
+           values ($1, $2, $3, $4, $5, $6, $7) returning id`,
           [
             input.documentTypeId,
             input.subject,
             owner.application_id,
             owner.member_id,
             owner.transaction_id,
+            owner.customer_id,
             input.expiresAt ?? null,
           ]
         );

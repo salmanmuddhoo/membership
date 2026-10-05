@@ -11,12 +11,16 @@
 export interface UploadDocumentInput {
   applicationId?: string;
   memberId?: string;
+  // A non-member's own document, from their Documents page.
+  customerId?: string;
   // A request's own paper (S-1702): the signed closure form.
   transactionId?: string;
   documentTypeId: string;
   subject: 'applicant' | 'nominee' | 'guardian' | 'beneficiary';
   fileName: string;
   blob: Blob;
+  // YYYY-MM-DD, for a document type that tracks expiry.
+  expiresAt?: string;
   // Reported as the transfer proceeds, in the same words the manual upload
   // widget already shows an officer, so a generated document is not a
   // different-feeling wait from a photographed one.
@@ -38,12 +42,14 @@ export async function uploadDocumentBlob(
     body: JSON.stringify({
       applicationId: input.applicationId,
       memberId: input.memberId,
+      customerId: input.customerId,
       transactionId: input.transactionId,
       documentTypeId: input.documentTypeId,
       subject: input.subject,
       fileName: input.fileName,
       contentType,
       sizeBytes: input.blob.size,
+      expiresAt: input.expiresAt || undefined,
     }),
   });
   const begunBody = await begun.json();

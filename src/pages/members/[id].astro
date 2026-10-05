@@ -29,11 +29,12 @@ import {
   type Payment,
 } from '@lib/payments/payments';
 import { formatMoney } from '@lib/payments/money';
+import { filedDocumentFor } from '@lib/documents/documents';
 import {
-  documentsForPerson,
-  filedDocumentFor,
-  type MemberDocumentGroup,
-} from '@lib/documents/documents';
+  documentsForHolder,
+  groupHolderDocuments,
+  type DocumentGroup,
+} from '@lib/documents/directory';
 import {
   editableContactFields,
   mayEditAllDetails,
@@ -382,14 +383,16 @@ if (sourceOfFundType) {
 }
 
 // Officer feedback: what has been filed for this person, everywhere it was
-// filed — every application that is theirs, each carrying its own
-// checklist (lifecycle test, LC-02: a rejoin, a reopen or a converted
-// member's first account was being left out). Only what has actually been
-// uploaded — the checklist's own Missing rows belong on the application
-// page, not this summary.
-const documentGroups: MemberDocumentGroup[] = canSeeDocuments
-  ? await documentsForPerson(
-      member ? { memberId: member.id } : { customerId: customer!.id }
+// filed — every application that is theirs (LC-02: a rejoin, a reopen or a
+// converted member's first account), what was filed for them from their
+// Documents page, and their transactions' papers. The same list the
+// Documents page shows (directory.ts), so a document is on file in one place
+// for both. Only what has actually been uploaded — the checklist's own
+// Missing rows belong on the application page, not this summary.
+const documentGroups: DocumentGroup[] = canSeeDocuments
+  ? groupHolderDocuments(
+      await documentsForHolder((member ?? customer)!.id),
+      member ? 'member' : 'customer'
     )
   : [];
 
@@ -594,7 +597,7 @@ const approvalComments = applicationId
   : [];
 const pageTitle = member ? member.memberNo : name;
 const documentCount = documentGroups.reduce(
-  (sum, group) => sum + group.entries.length,
+  (sum, group) => sum + group.documents.length,
   0
 );
 ---
@@ -1381,10 +1384,10 @@ const documentCount = documentGroups.reduce(
               {documentGroups.map(group => (
                 <div>
                   {documentGroups.length > 1 && (
-                    <h3 class={SUBTITLE}>{group.applicationReference}</h3>
+                    <h3 class={SUBTITLE}>{group.label}</h3>
                   )}
                   <ul class="mt-2 space-y-2">
-                    {group.entries.map(entry => (
+                    {group.documents.map(entry => (
                       <li class="flex items-center justify-between gap-3 rounded-xl border border-neutral-200 bg-white px-4 py-3 dark:border-neutral-800 dark:bg-neutral-900">
                         <span class="font-medium text-neutral-800 dark:text-neutral-100">
                           {entry.documentName}
