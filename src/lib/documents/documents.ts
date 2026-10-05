@@ -630,8 +630,74 @@ export async function documentsForPerson(
       ),
     }))
   );
+  // And what was filed for them outside any application, from their
+  // Documents page (officer request): a member's or customer's own.
+  const own = await ownDocuments(holder);
+  if (own.length > 0) {
+    groups.push({ applicationId: '', applicationReference: '', entries: own });
+  }
 
   return groups.filter(g => g.entries.length > 0);
+}
+
+// A holder's own documents, filed outside any application (document.member_id
+// or document.customer_id), as checklist entries so they read like the rest.
+async function ownDocuments(holder: Holder): Promise<ChecklistEntry[]> {
+  const result = await query<{
+    id: string;
+    document_type_id: string;
+    code: string;
+    name: string;
+    tracks_expiry: boolean;
+    subject: FieldSubject;
+    state: ChecklistState;
+    rejection_reason: string | null;
+    expires_at: Date | null;
+    file_name: string;
+    sharepoint_path: string | null;
+    committed_at: Date;
+    uploaded_by_name: string | null;
+    verified_by_name: string | null;
+    version_count: number;
+  }>(
+    `select d.id, d.document_type_id, t.code, t.name, t.tracks_expiry,
+            d.subject, d.state, d.rejection_reason, d.expires_at,
+            v.file_name, v.sharepoint_path, v.committed_at,
+            up.display_name as uploaded_by_name,
+            vp.display_name as verified_by_name,
+            (select count(*)::int from document_version dv
+              where dv.document_id = d.id and dv.state = 'committed')
+              as version_count
+       from document d
+       join document_type t on t.id = d.document_type_id
+       join document_version v
+         on v.document_id = d.id
+        and v.state = 'committed' and v.superseded_at is null
+       left join app_user up on up.id = v.uploaded_by
+       left join app_user vp on vp.id = d.verified_by
+      where ${'memberId' in holder ? 'd.member_id' : 'd.customer_id'} = $1
+      order by v.committed_at`,
+    ['memberId' in holder ? holder.memberId : holder.customerId]
+  );
+  return result.rows.map(r => ({
+    documentTypeId: r.document_type_id,
+    documentCode: r.code,
+    documentName: r.name,
+    subject: r.subject,
+    requirement: 'optional',
+    tracksExpiry: r.tracks_expiry,
+    state: r.state,
+    documentId: r.id,
+    fileName: r.file_name,
+    webPath: r.sharepoint_path,
+    uploadedByName: r.uploaded_by_name,
+    uploadedAt: r.committed_at,
+    verifiedByName: r.verified_by_name,
+    rejectionReason: r.rejection_reason,
+    expiresAt: r.expires_at,
+    versionCount: r.version_count,
+    confirmedSignatures: [],
+  }));
 }
 
 /**

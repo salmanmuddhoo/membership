@@ -392,12 +392,19 @@ one, so the thumbnail is a generic icon), and resuming a dropped transfer via
 the member page's own Documents) is a folder per member and non-member
 customer, searchable like the members list, with how much is on file for
 each; `/documents/{id}` is the folder. `src/lib/documents/directory.ts`
-gathers a holder's papers from every owner a document can have: the
-applications that made them (the founding one and every approved
-additional-account one — a draft's upload is not on file), the member or
-customer row itself, and their transactions (a signed closure or
-resignation request, a deposit's Source of Fund form). Only a document with
-a committed version counts. Each opens in the viewer.
+gathers a holder's papers from every owner a document can have: every
+application that is theirs (the founding one, each further account, a
+rejoin, and for a member who was a non-member first the applications they
+made as one — tied together by the folder they share; a draft's upload is
+not on file unless the record points at it), the member or customer row
+itself (for a member, the customer they were too), and their transactions
+(a signed closure or resignation request, a deposit's Source of Fund form).
+Only a document with a committed version counts. Each opens in the viewer.
+
+The member page's Documents button reads the same list, grouped the same
+way (`groupHolderDocuments`), so a document filed in either place is on
+file in both. The member app lists the applications' documents and the
+member's own.
 
 ### Filing a document outside an application
 

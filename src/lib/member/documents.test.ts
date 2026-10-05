@@ -218,7 +218,8 @@ describe('which documents a member may open', () => {
   it('opens exactly what the listing shows', async () => {
     const listed = await profile.memberDocuments(fatimah);
     const ids = listed.map(d => d.id).sort();
-    expect(ids).toEqual([docs.founding, docs.additional].sort());
+    // What was filed for them directly (their Documents page) is listed too.
+    expect(ids).toEqual([docs.founding, docs.carried, docs.additional].sort());
     for (const id of ids) {
       expect(await profile.ownedDocumentId(fatimah, id)).toBe(id);
     }

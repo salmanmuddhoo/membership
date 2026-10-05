@@ -7,7 +7,11 @@
 // it up (carryForwardMemberDocuments).
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import DocumentViewer from '@components/DocumentViewer.astro';
-import { documentsForHolder, filingChoices } from '@lib/documents/directory';
+import {
+  documentsForHolder,
+  filingChoices,
+  groupHolderDocuments,
+} from '@lib/documents/directory';
 import { loadCustomer, loadMember } from '@lib/members/create';
 import {
   BUTTON,
@@ -40,18 +44,8 @@ const choices = canUpload ? await filingChoices() : [];
 
 const documents = await documentsForHolder(holder.id);
 
-// Grouped by where each was filed, in the order first seen: the founding
-// application first, since its papers are the oldest.
-const groups = new Map<string, typeof documents>();
-for (const document of [...documents].reverse()) {
-  const key =
-    document.sourceKind === 'member'
-      ? member
-        ? 'On file for the member'
-        : 'On file for the customer'
-      : `${document.sourceKind === 'application' ? 'Application' : 'Transaction'} ${document.source}`;
-  groups.set(key, [...(groups.get(key) ?? []), document]);
-}
+// Grouped by where each was filed, the founding application first.
+const groups = groupHolderDocuments(documents, member ? 'member' : 'customer');
 
 const dateFormat = new Intl.DateTimeFormat('en-GB', {
   day: 'numeric',
@@ -146,9 +140,9 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
           ? 'Nothing on file'
           : `${documents.length} document${documents.length === 1 ? '' : 's'} on file`}
       </h2>
-      {groups.size > 0 && (
+      {groups.length > 0 && (
         <div class="mt-4 space-y-5">
-          {[...groups.entries()].map(([label, entries]) => (
+          {groups.map(({ label, documents: entries }) => (
             <div>
               <h3 class={SUBTITLE}>{label}</h3>
               <ul class="mt-2 space-y-2">
