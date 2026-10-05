@@ -27,8 +27,10 @@ const endpoint = defineEndpoint(
       'Records the intent to file a document and returns a short-lived, ' +
       'single-file upload URL. The caller never receives a credential, and ' +
       'never says where the file goes — the folder comes from the ' +
-      'application, member or transaction it is filed against. Nothing ' +
-      'appears on the checklist until commit-upload.',
+      'application, member, customer or transaction it is filed against. ' +
+      'A document filed against a member or a customer is carried onto ' +
+      'their next application that asks for it. Nothing appears on the ' +
+      'checklist until commit-upload.',
     tag: 'Documents',
     permission: 'document.upload',
     requestSchema: {
@@ -43,6 +45,13 @@ const endpoint = defineEndpoint(
       properties: {
         applicationId: { type: 'string', format: 'uuid' },
         memberId: { type: 'string', format: 'uuid' },
+        customerId: {
+          type: 'string',
+          format: 'uuid',
+          description:
+            'A non-member’s own document, outside any application: filed ' +
+            'in the folder of the application they came from.',
+        },
         transactionId: {
           type: 'string',
           format: 'uuid',
@@ -88,6 +97,7 @@ const endpoint = defineEndpoint(
     const payload = (await context.request.json().catch(() => null)) as {
       applicationId?: string;
       memberId?: string;
+      customerId?: string;
       transactionId?: string;
       documentTypeId?: string;
       subject?: string;
@@ -105,16 +115,17 @@ const endpoint = defineEndpoint(
     const owners = [
       payload.applicationId,
       payload.memberId,
+      payload.customerId,
       payload.transactionId,
     ].filter(Boolean).length;
     if (owners === 0) {
       problems.owner = [
-        'one of applicationId, memberId or transactionId is required',
+        'one of applicationId, memberId, customerId or transactionId is required',
       ];
     }
     if (owners > 1) {
       problems.owner = [
-        'a document belongs to an application, a member or a transaction, not more than one',
+        'a document belongs to an application, a member, a customer or a transaction, not more than one',
       ];
     }
     if (!payload.documentTypeId) {
@@ -149,6 +160,7 @@ const endpoint = defineEndpoint(
         {
           applicationId: payload.applicationId,
           memberId: payload.memberId,
+          customerId: payload.customerId,
           transactionId: payload.transactionId,
           documentTypeId: payload.documentTypeId!,
           subject: payload.subject as FieldSubject,
