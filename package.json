@@ -32,12 +32,12 @@
     "@astrojs/vercel": "^11.0.11",
     "@tailwindcss/forms": "^0.5.11",
     "@tailwindcss/vite": "^4.3.3",
-    "astro": "^7.3.3",
+    "astro": "^7.3.5",
     "exceljs": "^4.4.0",
-    "html2canvas-pro": "^2.4.5",
+    "html2canvas-pro": "^2.5.0",
     "jose": "^6.2.12",
     "jspdf": "^4.2.1",
-    "pg": "^8.23.0",
+    "pg": "^8.23.1",
     "preline": "^5.0.0",
     "tailwindcss": "^4.3.3"
   },
@@ -49,7 +49,7 @@
     "prettier-plugin-tailwindcss": "^0.8.1",
     "tsx": "^4.23.15",
     "typescript": "^6.0.3",
-    "vitest": "^5.0.2"
+    "vitest": "^5.0.3"
   },
   "pnpm": {
     "overrides": {
