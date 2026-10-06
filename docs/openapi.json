@@ -9008,6 +9008,132 @@
         }
       }
     },
+    "/api/v1/member/outlets": {
+      "get": {
+        "summary": "Where the membership card earns a discount",
+        "description": "The active partner outlets, in the order to show them: logo, category tag, discount percentage, a line of description, the address and a link. Written on the web application's Member app configuration page. Any session; the same for everyone.",
+        "tags": [
+          "Member app"
+        ],
+        "operationId": "getMemberOutlets",
+        "x-required-permission": "(a member app session)",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "id",
+                          "name",
+                          "logoUrl",
+                          "category",
+                          "discountPercent",
+                          "description",
+                          "address",
+                          "linkUrl"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "logoUrl": {
+                            "type": "string",
+                            "description": "The logo, https."
+                          },
+                          "category": {
+                            "type": "string",
+                            "description": "A lower-case tag such as \"education\", \"groceries\" or \"food\"."
+                          },
+                          "discountPercent": {
+                            "type": "string",
+                            "description": "Decimal string, e.g. \"10.00\"."
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "address": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "linkUrl": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "https, mailto or tel."
+                          }
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/member/promotions": {
       "get": {
         "summary": "The cards on the home screen",

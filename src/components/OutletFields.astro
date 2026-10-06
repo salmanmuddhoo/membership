@@ -1,0 +1,127 @@
+---
+// The fields of one partner outlet, for the Member app configuration page:
+// the same form edits an existing outlet and adds a new one.
+import type { Outlet } from '@lib/config/outlets';
+import { INPUT, LABEL } from '@lib/ui';
+
+interface Props {
+  outlet: Outlet | null;
+  categories: string[];
+  canManage: boolean;
+  check: string;
+}
+
+const { outlet, categories, canManage, check } = Astro.props;
+---
+
+<label class={LABEL}>
+  Name
+  <input
+    type="text"
+    name="name"
+    value={outlet?.name ?? ''}
+    required
+    maxlength="80"
+    disabled={!canManage}
+    class={INPUT}
+  />
+</label>
+<label class={LABEL}>
+  Category (a tag, e.g. education, groceries, food)
+  <input
+    type="text"
+    name="category"
+    value={outlet?.category ?? ''}
+    required
+    maxlength="30"
+    list="outlet-categories"
+    disabled={!canManage}
+    class={INPUT}
+  />
+  <datalist id="outlet-categories">
+    {categories.map(c => (
+      <option value={c} />
+    ))}
+  </datalist>
+</label>
+<label class={`${LABEL} sm:col-span-2`}>
+  Logo (https:// address; shown on a white tile)
+  <input
+    type="url"
+    name="logoUrl"
+    value={outlet?.logoUrl ?? ''}
+    placeholder="https://albarakah.mu/images/outlets/winners.png"
+    required
+    disabled={!canManage}
+    class={INPUT}
+  />
+</label>
+<label class={LABEL}>
+  Discount (%)
+  <input
+    type="number"
+    name="discountPercent"
+    value={outlet?.discountPercent ?? ''}
+    min="0.01"
+    max="100"
+    step="0.01"
+    required
+    disabled={!canManage}
+    class={INPUT}
+  />
+</label>
+<label class={LABEL}>
+  Order (lower first)
+  <input
+    type="number"
+    name="sortOrder"
+    value={outlet ? String(outlet.sortOrder) : ''}
+    min="0"
+    max="1000"
+    placeholder="after the last"
+    disabled={!canManage}
+    class={INPUT}
+  />
+</label>
+<label class={`${LABEL} sm:col-span-2`}>
+  Description (what the discount covers)
+  <input
+    type="text"
+    name="description"
+    value={outlet?.description ?? ''}
+    maxlength="200"
+    disabled={!canManage}
+    class={INPUT}
+  />
+</label>
+<label class={LABEL}>
+  Address (optional)
+  <input
+    type="text"
+    name="address"
+    value={outlet?.address ?? ''}
+    maxlength="120"
+    disabled={!canManage}
+    class={INPUT}
+  />
+</label>
+<label class={LABEL}>
+  Link (https://, mailto: or tel:, optional)
+  <input
+    type="text"
+    name="linkUrl"
+    value={outlet?.linkUrl ?? ''}
+    disabled={!canManage}
+    class={INPUT}
+  />
+</label>
+<label class="flex items-center gap-x-2 self-end pb-2 text-sm text-neutral-600 dark:text-neutral-300">
+  <input
+    type="checkbox"
+    name="isActive"
+    checked={outlet ? outlet.isActive : true}
+    disabled={!canManage}
+    class={check}
+  />
+  Active
+</label>
