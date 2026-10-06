@@ -266,6 +266,7 @@ const KEPT_TABLES = [
   'app_user',
   'approval_rule',
   'bank_account',
+  'card_outlet',
   'config_entry',
   'document_checklist',
   'document_checklist_item',

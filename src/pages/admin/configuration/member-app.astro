@@ -1,6 +1,7 @@
 ---
-// Which transactions a member may start from the app (S-2102), and the
-// cards on the app's home screen (migration 0111).
+// Which transactions a member may start from the app (S-2102), the cards
+// on the app's home screen (0111) and the partner outlets where the
+// membership card earns a discount (0116).
 //
 // Reaching this page needs config.view, like every page under
 // /admin/configuration/ (the prefix rule in authorise.ts). CHANGING needs
@@ -8,6 +9,7 @@
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import ConfigNav from '@components/ConfigNav.astro';
 import PromotionFields from '@components/PromotionFields.astro';
+import OutletFields from '@components/OutletFields.astro';
 import {
   ConfigError,
   enabledMemberOperations,
@@ -20,6 +22,14 @@ import {
   updatePromotion,
   type PromotionInput,
 } from '@lib/config/promotions';
+import {
+  createOutlet,
+  deleteOutlet,
+  listOutlets,
+  outletCategories,
+  updateOutlet,
+  type OutletInput,
+} from '@lib/config/outlets';
 import {
   PAGE,
   CARD,
@@ -68,6 +78,19 @@ if (Astro.request.method === 'POST') {
       } else if (intent === 'promotion.delete') {
         await deletePromotion(String(form.get('promotionId')), actor);
         notice = 'Card removed.';
+      } else if (intent === 'outlet.create') {
+        await createOutlet(outletFrom(form), actor);
+        notice = 'Outlet added. The app shows it on its next refresh.';
+      } else if (intent === 'outlet.update') {
+        await updateOutlet(
+          String(form.get('outletId')),
+          outletFrom(form),
+          actor
+        );
+        notice = 'Outlet saved.';
+      } else if (intent === 'outlet.delete') {
+        await deleteOutlet(String(form.get('outletId')), actor);
+        notice = 'Outlet removed.';
       }
     } catch (err) {
       if (err instanceof ConfigError) {
@@ -96,8 +119,25 @@ function promotionFrom(form: FormData): PromotionInput {
   };
 }
 
+function outletFrom(form: FormData): OutletInput {
+  const text = (name: string) => String(form.get(name) ?? '');
+  return {
+    name: text('name'),
+    logoUrl: text('logoUrl'),
+    category: text('category'),
+    discountPercent: text('discountPercent'),
+    description: text('description'),
+    address: text('address'),
+    linkUrl: text('linkUrl'),
+    isActive: form.get('isActive') === 'on',
+    sortOrder: text('sortOrder'),
+  };
+}
+
 const enabled = await enabledMemberOperations();
 const promotions = await listPromotions();
+const outlets = await listOutlets();
+const categories = await outletCategories();
 
 const CHECK =
   'text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600';
@@ -221,6 +261,95 @@ const OPERATIONS: ReadonlyArray<{ value: string; label: string }> = [
         <form method="post" class="mt-4 grid gap-3 sm:grid-cols-2">
           <input type="hidden" name="intent" value="promotion.create" />
           <PromotionFields card={null} canManage={true} check={CHECK} />
+          <div class="sm:col-span-2">
+            <button type="submit" class={BUTTON}>
+              Add
+            </button>
+          </div>
+        </form>
+      </section>
+    )}
+
+    <section class={CARD}>
+      <h2 class={CARD_TITLE}>Where the membership card earns a discount</h2>
+      <p class={`${HINT} mt-1`}>
+        The partner outlets the Cards screen lists, with the outlet's logo, a
+        category tag the phone filters by, and the percentage. Tags are free
+        text; the phone groups outlets by exact tag, so reuse the ones offered.
+        An inactive outlet is kept but not shown.
+      </p>
+
+      {outlets.length === 0 && (
+        <p class={`${HINT} mt-4`}>
+          No outlets yet. The app says they are coming.
+        </p>
+      )}
+
+      <div class="mt-5 space-y-4">
+        {outlets.map(outlet => (
+          <details class={PANEL}>
+            <summary class="flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-1">
+              <span class="font-medium text-neutral-800 dark:text-neutral-100">
+                {outlet.name}
+              </span>
+              <span class="rounded bg-neutral-200 px-1.5 py-0.5 text-xs text-neutral-700 dark:bg-neutral-700 dark:text-neutral-200">
+                {outlet.category}
+              </span>
+              <span class="bg-mint-200 dark:bg-mint-900 rounded px-1.5 py-0.5 text-xs text-neutral-800 dark:text-neutral-100">
+                {Number(outlet.discountPercent)}% off
+              </span>
+              {!outlet.isActive && (
+                <span class="rounded bg-red-100 px-1.5 py-0.5 text-xs text-red-800 dark:bg-red-950 dark:text-red-200">
+                  inactive
+                </span>
+              )}
+            </summary>
+            <form method="post" class="mt-4 grid gap-3 sm:grid-cols-2">
+              <input type="hidden" name="outletId" value={outlet.id} />
+              <OutletFields
+                outlet={outlet}
+                categories={categories}
+                canManage={canManage}
+                check={CHECK}
+              />
+              {canManage && (
+                <div class="flex gap-2 pt-2 sm:col-span-2">
+                  <button
+                    type="submit"
+                    name="intent"
+                    value="outlet.update"
+                    class={BUTTON_SM}
+                  >
+                    Save
+                  </button>
+                  <button
+                    type="submit"
+                    name="intent"
+                    value="outlet.delete"
+                    formnovalidate
+                    class={BUTTON_DESTRUCTIVE}
+                  >
+                    Remove
+                  </button>
+                </div>
+              )}
+            </form>
+          </details>
+        ))}
+      </div>
+    </section>
+
+    {canManage && (
+      <section class={CARD}>
+        <h2 class={CARD_TITLE}>Add an outlet</h2>
+        <form method="post" class="mt-4 grid gap-3 sm:grid-cols-2">
+          <input type="hidden" name="intent" value="outlet.create" />
+          <OutletFields
+            outlet={null}
+            categories={categories}
+            canManage={true}
+            check={CHECK}
+          />
           <div class="sm:col-span-2">
             <button type="submit" class={BUTTON}>
               Add
