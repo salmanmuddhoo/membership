@@ -13,10 +13,11 @@ const endpoint = defineMemberEndpoint(
     path: '/api/v1/member/outlets',
     summary: 'Where the membership card earns a discount',
     description:
-      'The active partner outlets, in the order to show them: logo, ' +
-      'category tag, discount percentage, a line of description, the ' +
-      "address and a link. Written on the web application's Member app " +
-      'configuration page. Any session; the same for everyone.',
+      'The active outlets, in the order to show them: logo, category tag, ' +
+      'discount percentage, a line of description, the address and a ' +
+      'link. A partner (pays the premium fee) is flagged, for the home ' +
+      "screen. Written on the web application's Member app configuration " +
+      'page. Any session; the same for everyone.',
     tag: 'Member app',
     caller: 'member',
     responseSchema: {
@@ -32,6 +33,7 @@ const endpoint = defineMemberEndpoint(
           'description',
           'address',
           'linkUrl',
+          'isPartner',
         ],
         properties: {
           id: { type: 'string', format: 'uuid' },
@@ -53,6 +55,11 @@ const endpoint = defineMemberEndpoint(
             nullable: true,
             description: 'https, mailto or tel.',
           },
+          isPartner: {
+            type: 'boolean',
+            description:
+              'Pays the premium fee: shown on the home screen as well.',
+          },
         },
       },
     },
@@ -68,6 +75,7 @@ const endpoint = defineMemberEndpoint(
         description: o.description,
         address: o.address,
         linkUrl: o.linkUrl,
+        isPartner: o.isPartner,
       })),
       correlationId
     )

@@ -26,6 +26,7 @@ const endpoint = defineMemberEndpoint(
           'status',
           'openedAt',
           'balance',
+          'transactionCount',
         ],
         properties: {
           id: { type: 'string', format: 'uuid' },
@@ -39,6 +40,11 @@ const endpoint = defineMemberEndpoint(
             type: 'string',
             nullable: true,
             description: 'Decimal string.',
+          },
+          transactionCount: {
+            type: 'integer',
+            description:
+              'Entries recorded against the account; the app hides one with none.',
           },
         },
       },

@@ -5281,7 +5281,7 @@
     "/api/v1/member/auth/link-member": {
       "post": {
         "summary": "Identify an existing member by NIC + AB Number and send a code to their registered mobile",
-        "description": "Exact pair, active members only. The answer is the same whether the pair named someone or not — a challenge id and no number — so it never says whether a NIC + AB Number combination exists; a miss gets a challenge nothing can verify against. Rate-limited per NIC, per AB Number and per address, and one code per AB Number per cooldown window.",
+        "description": "Exact pair, members entitled to the app only. A pair that names nobody, or a member with no mobile on record, is refused with 404 and a message telling the person to contact the Al Barakah office; the app goes no further. Rate-limited per NIC, per AB Number and per address, hit or miss, and one code per AB Number per cooldown window.",
         "tags": [
           "Member app"
         ],
@@ -6301,7 +6301,8 @@
                           "category",
                           "status",
                           "openedAt",
-                          "balance"
+                          "balance",
+                          "transactionCount"
                         ],
                         "properties": {
                           "id": {
@@ -6331,6 +6332,10 @@
                             "type": "string",
                             "nullable": true,
                             "description": "Decimal string."
+                          },
+                          "transactionCount": {
+                            "type": "integer",
+                            "description": "Entries recorded against the account; the app hides one with none."
                           }
                         }
                       }
@@ -7142,7 +7147,8 @@
                                 "category",
                                 "status",
                                 "openedAt",
-                                "balance"
+                                "balance",
+                                "transactionCount"
                               ],
                               "properties": {
                                 "id": {
@@ -7172,6 +7178,10 @@
                                   "type": "string",
                                   "nullable": true,
                                   "description": "Decimal string."
+                                },
+                                "transactionCount": {
+                                  "type": "integer",
+                                  "description": "Entries recorded against the account; the app hides one with none."
                                 }
                               }
                             }
@@ -9011,7 +9021,7 @@
     "/api/v1/member/outlets": {
       "get": {
         "summary": "Where the membership card earns a discount",
-        "description": "The active partner outlets, in the order to show them: logo, category tag, discount percentage, a line of description, the address and a link. Written on the web application's Member app configuration page. Any session; the same for everyone.",
+        "description": "The active outlets, in the order to show them: logo, category tag, discount percentage, a line of description, the address and a link. A partner (pays the premium fee) is flagged, for the home screen. Written on the web application's Member app configuration page. Any session; the same for everyone.",
         "tags": [
           "Member app"
         ],
@@ -9046,7 +9056,8 @@
                           "discountPercent",
                           "description",
                           "address",
-                          "linkUrl"
+                          "linkUrl",
+                          "isPartner"
                         ],
                         "properties": {
                           "id": {
@@ -9079,6 +9090,10 @@
                             "type": "string",
                             "nullable": true,
                             "description": "https, mailto or tel."
+                          },
+                          "isPartner": {
+                            "type": "boolean",
+                            "description": "Pays the premium fee: shown on the home screen as well."
                           }
                         }
                       }
