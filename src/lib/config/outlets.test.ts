@@ -77,6 +77,7 @@ const blank = {
   address: '',
   linkUrl: '',
   isActive: true,
+  isPartner: false,
   sortOrder: '',
 };
 
@@ -103,6 +104,7 @@ describe('partner outlets', () => {
         category: 'Education',
         discountPercent: '12.5',
         sortOrder: '5',
+        isPartner: true,
       },
       actor
     );
@@ -117,6 +119,9 @@ describe('partner outlets', () => {
       'education',
       'food',
       'groceries',
+    ]);
+    expect((await outlets.partnerOutlets()).map(o => o.name)).toEqual([
+      'Bright Minds',
     ]);
     expect(await outlets.listOutlets()).toHaveLength(3);
   });

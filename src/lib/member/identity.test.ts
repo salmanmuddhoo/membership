@@ -155,41 +155,21 @@ describe('identification: NIC + AB Number', () => {
     expect(sent.length).toBe(before + 1);
   });
 
-  it('answers a miss exactly as a hit, whichever half is wrong, and sends nothing', async () => {
+  it('refuses a miss with the office to call, whichever half is wrong, and sends nothing', async () => {
     const before = sent.length;
-    const wrongAb = await link(MEMBER.nic, 'AB0002');
-    const wrongNic = await link('X0000000000000', 'AB0003');
-    for (const miss of [wrongAb, wrongNic]) {
-      expect(miss).toMatchObject({
-        purpose: 'link_member',
-        sentTo: null,
-        expiresInSeconds: 300,
+    for (const [nic, ab] of [
+      [MEMBER.nic, 'AB0002'],
+      ['X0000000000000', 'AB0003'],
+    ]) {
+      await expect(link(nic, ab)).rejects.toMatchObject({
+        code: 'not_found',
+        message: expect.stringContaining('+230 5944 9797'),
       });
-      expect(miss.challengeId).toMatch(/^[0-9a-f-]{36}$/);
     }
     expect(sent.length).toBe(before);
 
-    // Nothing verifies against it: every guess is wrong, and five burn it,
-    // exactly as they would on a real challenge.
-    for (let i = 0; i < 4; i++) {
-      await expect(
-        identity.verifyOtp(
-          { challengeId: wrongAb.challengeId, code: '123456' },
-          origin
-        )
-      ).rejects.toMatchObject({
-        code: 'validation_failed',
-        details: { code: expect.any(Array) },
-      });
-    }
-    await expect(
-      identity.verifyOtp(
-        { challengeId: wrongAb.challengeId, code: '123456' },
-        origin
-      )
-    ).rejects.toMatchObject({ code: 'not_found' });
-
-    // The difference lives in the audit trail, not the response.
+    // The reason lives in the audit trail; the response says only that the
+    // pair did not match.
     const refused = await run(
       appUrl,
       `select count(*)::int as n from audit_event where action = 'member.link.refused'`
@@ -204,8 +184,10 @@ describe('identification: NIC + AB Number', () => {
         /Wait \d+ seconds? before requesting another code/
       ),
     });
+    // A miss is refused before any code, so it sets no cooldown: the rate
+    // limits are what count it.
     await expect(link(MEMBER.nic, 'AB0002')).rejects.toMatchObject({
-      code: 'rate_limited',
+      code: 'not_found',
     });
     await clearCooldowns();
     await expect(link()).resolves.toMatchObject({ purpose: 'link_member' });
@@ -225,7 +207,7 @@ describe('identification: NIC + AB Number', () => {
     ]);
     try {
       const before = sent.length;
-      await expect(link()).resolves.toMatchObject({ sentTo: null });
+      await expect(link()).rejects.toMatchObject({ code: 'not_found' });
       expect(sent.length).toBe(before);
     } finally {
       await run(appUrl, `update member set status = 'active' where id = $1`, [
@@ -251,7 +233,7 @@ describe('identification: NIC + AB Number', () => {
       [memberId, type.rows[0].id]
     );
     try {
-      // A hit sends the code; a miss sends nothing and looks the same.
+      // A hit sends the code; a miss is refused and sends nothing.
       let before = sent.length;
       await expect(link()).resolves.toMatchObject({ purpose: 'link_member' });
       expect(sent.length).toBe(before + 1);
@@ -263,7 +245,7 @@ describe('identification: NIC + AB Number', () => {
         [memberId]
       );
       before = sent.length;
-      await expect(link()).resolves.toMatchObject({ sentTo: null });
+      await expect(link()).rejects.toMatchObject({ code: 'not_found' });
       expect(sent.length).toBe(before);
     } finally {
       await run(appUrl, `delete from account where member_id = $1`, [memberId]);
@@ -274,12 +256,10 @@ describe('identification: NIC + AB Number', () => {
   });
 
   it('separates "no such pair" from "no mobile to send to", in the log as well as the trail', async () => {
-    // Both refusals look identical from the phone — that is the point — so
-    // the only way anyone finds out why a link failed is the audit trail or
-    // the server log. Reading the trail needs database access; whoever is
-    // setting an environment up often has the deployment log and nothing
-    // else, and a refusal is otherwise invisible there: 200, no code sent,
-    // and an OTP that will not verify five minutes later.
+    // The phone is told to contact the office either way, with a line more
+    // for the member who exists but has no mobile on record; the exact
+    // reason is in the audit trail and the server log, for whoever is
+    // setting an environment up with the deployment log and nothing else.
     const type = await run(
       appUrl,
       `select id from membership_type where code = 'individual'`
@@ -316,11 +296,14 @@ describe('identification: NIC + AB Number', () => {
       await clearCooldowns();
       await expect(
         link(NO_MOBILE.nic, NO_MOBILE.abNumber)
-      ).resolves.toMatchObject({ purpose: 'link_member', sentTo: null });
+      ).rejects.toMatchObject({
+        code: 'not_found',
+        message: expect.stringContaining('no mobile number on record'),
+      });
       await clearCooldowns();
-      await expect(link('Z9999999999999', 'AB9999')).resolves.toMatchObject({
-        purpose: 'link_member',
-        sentTo: null,
+      await expect(link('Z9999999999999', 'AB9999')).rejects.toMatchObject({
+        code: 'not_found',
+        message: expect.stringContaining('do not match our records'),
       });
 
       const refusals = logged.mock.calls

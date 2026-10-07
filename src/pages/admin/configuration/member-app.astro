@@ -130,6 +130,7 @@ function outletFrom(form: FormData): OutletInput {
     address: text('address'),
     linkUrl: text('linkUrl'),
     isActive: form.get('isActive') === 'on',
+    isPartner: form.get('isPartner') === 'on',
     sortOrder: text('sortOrder'),
   };
 }
@@ -273,9 +274,10 @@ const OPERATIONS: ReadonlyArray<{ value: string; label: string }> = [
     <section class={CARD}>
       <h2 class={CARD_TITLE}>Where the membership card earns a discount</h2>
       <p class={`${HINT} mt-1`}>
-        The partner outlets the Cards screen lists, with the outlet's logo, a
-        category tag the phone filters by, and the percentage. Tags are free
-        text; the phone groups outlets by exact tag, so reuse the ones offered.
+        The outlets the Cards screen lists, with the outlet's logo, a category
+        tag the phone filters by, and the percentage. Tags are free text; the
+        phone groups outlets by exact tag, so reuse the ones offered. A partner
+        — one that pays the premium fee — is shown on the home screen as well.
         An inactive outlet is kept but not shown.
       </p>
 
@@ -298,6 +300,11 @@ const OPERATIONS: ReadonlyArray<{ value: string; label: string }> = [
               <span class="bg-mint-200 dark:bg-mint-900 rounded px-1.5 py-0.5 text-xs text-neutral-800 dark:text-neutral-100">
                 {Number(outlet.discountPercent)}% off
               </span>
+              {outlet.isPartner && (
+                <span class="rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+                  partner
+                </span>
+              )}
               {!outlet.isActive && (
                 <span class="rounded bg-red-100 px-1.5 py-0.5 text-xs text-red-800 dark:bg-red-950 dark:text-red-200">
                   inactive

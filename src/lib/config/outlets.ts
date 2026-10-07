@@ -19,6 +19,8 @@ export interface Outlet {
   address: string | null;
   linkUrl: string | null;
   isActive: boolean;
+  // Pays the premium fee: on the home screen as well as under Cards.
+  isPartner: boolean;
   sortOrder: number;
 }
 
@@ -31,6 +33,7 @@ export interface OutletInput {
   address: string;
   linkUrl: string;
   isActive: boolean;
+  isPartner: boolean;
   sortOrder: string;
 }
 
@@ -44,11 +47,12 @@ interface Row {
   address: string | null;
   link_url: string | null;
   is_active: boolean;
+  is_partner: boolean;
   sort_order: number;
 }
 
 const SELECT = `select id, name, logo_url, category, discount_percent::text as discount_percent,
-       description, address, link_url, is_active, sort_order
+       description, address, link_url, is_active, is_partner, sort_order
   from card_outlet`;
 
 function toOutlet(row: Row): Outlet {
@@ -62,6 +66,7 @@ function toOutlet(row: Row): Outlet {
     address: row.address,
     linkUrl: row.link_url,
     isActive: row.is_active,
+    isPartner: row.is_partner,
     sortOrder: row.sort_order,
   };
 }
@@ -78,9 +83,14 @@ export function listOutlets(): Promise<Outlet[]> {
   return cached('card-outlets', readOutlets);
 }
 
-// What the app shows.
+// What the app shows under Cards.
 export async function activeOutlets(): Promise<Outlet[]> {
   return (await listOutlets()).filter(o => o.isActive);
+}
+
+// What the app shows on its home screen.
+export async function partnerOutlets(): Promise<Outlet[]> {
+  return (await activeOutlets()).filter(o => o.isPartner);
 }
 
 // The tags in use, for the administrator's form to offer.
@@ -101,6 +111,7 @@ interface Checked {
   address: string | null;
   linkUrl: string | null;
   isActive: boolean;
+  isPartner: boolean;
   sortOrder: number;
 }
 
@@ -165,6 +176,7 @@ function check(input: OutletInput): Checked {
     address,
     linkUrl,
     isActive: input.isActive,
+    isPartner: input.isPartner,
     sortOrder,
   };
 }
@@ -182,9 +194,9 @@ export async function createOutlet(
     const result = await client.query<{ id: string }>(
       `insert into card_outlet
          (name, logo_url, category, discount_percent, description, address,
-          link_url, is_active, sort_order)
-       values ($1, $2, $3, $4, $5, $6, $7, $8,
-               case when $9::integer > 0 then $9::integer
+          link_url, is_active, is_partner, sort_order)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9,
+               case when $10::integer > 0 then $10::integer
                     else coalesce((select max(sort_order) + 10 from card_outlet), 10)
                end)
        returning id`,
@@ -197,6 +209,7 @@ export async function createOutlet(
         o.address,
         o.linkUrl,
         o.isActive,
+        o.isPartner,
         o.sortOrder,
       ]
     );
@@ -215,7 +228,7 @@ export async function updateOutlet(
       `update card_outlet
           set name = $2, logo_url = $3, category = $4, discount_percent = $5,
               description = $6, address = $7, link_url = $8, is_active = $9,
-              sort_order = $10
+              is_partner = $10, sort_order = $11
         where id = $1`,
       [
         id,
@@ -227,6 +240,7 @@ export async function updateOutlet(
         o.address,
         o.linkUrl,
         o.isActive,
+        o.isPartner,
         o.sortOrder,
       ]
     );

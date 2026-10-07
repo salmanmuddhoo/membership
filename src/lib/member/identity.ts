@@ -219,14 +219,29 @@ async function issueChallenge(
  * Identify an existing member by NIC + AB Number and send a code to the
  * mobile on their record.
  *
- * The answer is the same whether the pair named someone or not: a
- * challenge id, no number. A miss gets a challenge nothing can verify
- * against; a hit gets a code on the registered mobile. "No such NIC", "no
- * such AB Number", "not together" and "not active" are indistinguishable
- * from outside — the difference is in the audit trail. Rate-limited per
- * NIC, per AB Number and per address before the lookup, and one code per
- * AB Number per cooldown window, so a miss costs exactly what a hit does.
+ * A pair that names nobody is refused outright (404) with the office to
+ * call, and the person goes no further (officer direction, October 2026:
+ * a member whose details do not match must be told to contact the office
+ * on OFFICE_PHONE). This replaces the earlier decoy challenge, which
+ * answered a miss exactly as a hit so the response never said whether a
+ * pair existed. The refusal does say that, so the controls against
+ * guessing pairs are the rate limits, which stay as they were: per NIC,
+ * per AB Number and per address before the lookup (a miss counts), and
+ * one code per AB Number per cooldown window. "No such NIC", "no such AB
+ * Number", "not together" and "not entitled" still get one message; only
+ * "no mobile on record" is worded apart, since the member is real and the
+ * remedy differs. The reason is in the audit trail either way.
  */
+export const OFFICE_PHONE = '+230 5944 9797';
+
+const LINK_REFUSALS = {
+  no_match:
+    'These details do not match our records. Please contact the Al Barakah ' +
+    `office on ${OFFICE_PHONE}.`,
+  no_mobile_on_record:
+    'We have no mobile number on record for you, so a code cannot be sent. ' +
+    `Please contact the Al Barakah office on ${OFFICE_PHONE}.`,
+} as const;
 // Who may use the app (officer direction): an active member, or a resigned
 // one who still holds an open account — a non-member with an HSA or an
 // Investment keeps their app; one with no account at all does not. One
@@ -271,7 +286,8 @@ export async function linkMember(
       LINK_IP_LIMIT
     );
   }
-  // One code per AB Number per window, hit or miss alike.
+  // One code per AB Number per window. A miss sets none: it is refused
+  // before any code, and the rate limits above have counted it.
   await assertCooldown(`link:${abNumber}`);
 
   // Exact pair, active only. NIC is not a column on member: it lives on the
@@ -305,15 +321,9 @@ export async function linkMember(
       requestId: origin.correlationId,
       ipAddress: origin.ip,
     });
-    // Also to the server log. The audit trail is the record, but reading it
-    // needs database access, and the person configuring an environment is
-    // often the one person who has the deployment log and not a psql
-    // prompt. Without this a refusal is silent there — the request logs 200
-    // like any other, no code is sent, and the only visible symptom is an
-    // OTP that will not verify five minutes later. Safe to log because a
-    // server log is not the caller: the response is byte-identical to a
-    // hit either way, which is the property that matters. The NIC is
-    // hashed here exactly as it is in the audit row.
+    // Also to the server log, for whoever has the deployment log and not a
+    // psql prompt. The NIC is hashed here exactly as it is in the audit
+    // row; the AB Number is as typed.
     console.info(
       JSON.stringify({
         kind: 'member-link-refused',
@@ -322,16 +332,7 @@ export async function linkMember(
         reason,
       })
     );
-    return issueChallenge(
-      {
-        purpose: 'link_member_miss',
-        requestKey: `link:${abNumber}`,
-        mobile: '',
-        memberId: null,
-      },
-      delivery,
-      config
-    );
+    throw new ApiError('not_found', LINK_REFUSALS[reason]);
   }
 
   const challenge = await issueChallenge(

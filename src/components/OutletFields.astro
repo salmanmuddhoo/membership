@@ -125,3 +125,13 @@ const { outlet, categories, canManage, check } = Astro.props;
   />
   Active
 </label>
+<label class="flex items-center gap-x-2 self-end pb-2 text-sm text-neutral-600 dark:text-neutral-300">
+  <input
+    type="checkbox"
+    name="isPartner"
+    checked={outlet ? outlet.isPartner : false}
+    disabled={!canManage}
+    class={check}
+  />
+  Partner (pays the premium fee; shown on the home screen)
+</label>
