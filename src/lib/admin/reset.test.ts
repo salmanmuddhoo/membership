@@ -236,6 +236,7 @@ const CLEARED_TABLES = [
   'job_run',
   'member',
   'member_details_request',
+  'member_device',
   'member_login_challenge',
   'member_session',
   'membership_application',

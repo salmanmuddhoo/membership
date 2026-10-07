@@ -5,6 +5,7 @@
 // withConfigurationActor like every other piece of configuration, so the
 // audit trail says who changed which card.
 import { query, withConfigurationActor } from '../db/pool';
+import { notifyPromotionPublished } from '../notifications/app-events';
 import { cached } from './cache';
 import { ConfigError, type Actor } from './reference';
 import type { ConfigurationActor } from '../db/pool';
@@ -187,7 +188,7 @@ export async function createPromotion(
   actor: Actor
 ): Promise<string> {
   const p = check(input);
-  return withConfigurationActor(actorFor(actor), async client => {
+  const id = await withConfigurationActor(actorFor(actor), async client => {
     const result = await client.query<{ id: string }>(
       `insert into app_promotion
          (title, body, image_url, link_url, link_label, accent, is_active,
@@ -212,6 +213,20 @@ export async function createPromotion(
     );
     return result.rows[0].id;
   });
+  // Live from the start — active and inside its dates — is news to every
+  // phone (migration 0118). One scheduled for later is not, yet: nothing
+  // watches the calendar, so the day it starts passes quietly.
+  await announceIfLive(id, false);
+  return id;
+}
+
+// The card as it now stands, straight from the table — not the cache,
+// which the write has only just cleared.
+async function announceIfLive(id: string, wasLive: boolean): Promise<void> {
+  if (wasLive) return;
+  const result = await query<Row>(`${SELECT} where id = $1`, [id]);
+  const now = result.rows[0] ? toPromotion(result.rows[0]) : null;
+  if (now?.isLive) await notifyPromotionPublished(now);
 }
 
 export async function updatePromotion(
@@ -220,31 +235,42 @@ export async function updatePromotion(
   actor: Actor
 ): Promise<void> {
   const p = check(input);
-  await withConfigurationActor(actorFor(actor), async client => {
-    const result = await client.query(
-      `update app_promotion
+  const wasLive = await withConfigurationActor(
+    actorFor(actor),
+    async client => {
+      const before = await client.query<{ is_live: boolean }>(
+        `select ${LIVE_SQL} as is_live from app_promotion where id = $1 for update`,
+        [id]
+      );
+      if (!before.rows[0]) {
+        throw new ConfigError('That card no longer exists.', 'not_found');
+      }
+      await client.query(
+        `update app_promotion
           set title = $2, body = $3, image_url = $4, link_url = $5,
               link_label = $6, accent = $7, is_active = $8,
               starts_on = $9, ends_on = $10, sort_order = $11
         where id = $1`,
-      [
-        id,
-        p.title,
-        p.body,
-        p.imageUrl,
-        p.linkUrl,
-        p.linkLabel,
-        p.accent,
-        p.isActive,
-        p.startsOn,
-        p.endsOn,
-        p.sortOrder,
-      ]
-    );
-    if (result.rowCount === 0) {
-      throw new ConfigError('That card no longer exists.', 'not_found');
+        [
+          id,
+          p.title,
+          p.body,
+          p.imageUrl,
+          p.linkUrl,
+          p.linkLabel,
+          p.accent,
+          p.isActive,
+          p.startsOn,
+          p.endsOn,
+          p.sortOrder,
+        ]
+      );
+      return before.rows[0].is_live;
     }
-  });
+  );
+  // Went live with this edit — switched on, or its dates brought forward.
+  // Not every edit to a live card: the phones hear once.
+  await announceIfLive(id, wasLive);
 }
 
 export async function deletePromotion(id: string, actor: Actor): Promise<void> {

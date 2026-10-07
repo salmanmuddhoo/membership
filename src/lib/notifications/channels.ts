@@ -19,6 +19,7 @@ import {
 } from '../config';
 import { getAccessToken, getGraphCredentials } from '../documents/graph';
 import type { Attachment, Channel, OutgoingMessage } from './notify';
+import { pushChannel } from './push';
 import type { NotificationChannel } from './templates';
 
 export class NotificationSendError extends Error {
@@ -298,6 +299,9 @@ export function channelFor(
   name: NotificationChannel,
   delivery: ChannelDelivery
 ): Channel {
+  // Push is addressed to phones, not to an address: its own module resolves
+  // the recipient to the devices and writes to each (push.ts).
+  if (name === 'push') return pushChannel(delivery);
   return {
     name,
     async send(message: OutgoingMessage): Promise<void> {
@@ -335,6 +339,7 @@ export function configuredChannels(
   return new Map<NotificationChannel, Channel>([
     ['email', channelFor('email', config.email)],
     ['whatsapp', channelFor('whatsapp', config.whatsapp)],
+    ['push', channelFor('push', config.push)],
   ]);
 }
 

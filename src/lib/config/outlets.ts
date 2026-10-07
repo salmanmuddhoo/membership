@@ -4,6 +4,7 @@
 // page; the app lists the active ones by category. Writes go through
 // withConfigurationActor like every other piece of configuration.
 import { query, withConfigurationActor } from '../db/pool';
+import { notifyPartnerAdded } from '../notifications/app-events';
 import { cached } from './cache';
 import { ConfigError, type Actor } from './reference';
 import type { ConfigurationActor } from '../db/pool';
@@ -190,7 +191,7 @@ export async function createOutlet(
   actor: Actor
 ): Promise<string> {
   const o = check(input);
-  return withConfigurationActor(actorFor(actor), async client => {
+  const id = await withConfigurationActor(actorFor(actor), async client => {
     const result = await client.query<{ id: string }>(
       `insert into card_outlet
          (name, logo_url, category, discount_percent, description, address,
@@ -215,6 +216,17 @@ export async function createOutlet(
     );
     return result.rows[0].id;
   });
+  // A partner from the start is news to every phone (migration 0118),
+  // once the row is there for the app to show.
+  if (o.isActive && o.isPartner) await announcePartner(id);
+  return id;
+}
+
+// The outlet as it now stands, straight from the table — not the cache,
+// which the write has only just cleared.
+async function announcePartner(id: string): Promise<void> {
+  const result = await query<Row>(`${SELECT} where id = $1`, [id]);
+  if (result.rows[0]) await notifyPartnerAdded(toOutlet(result.rows[0]));
 }
 
 export async function updateOutlet(
@@ -223,31 +235,45 @@ export async function updateOutlet(
   actor: Actor
 ): Promise<void> {
   const o = check(input);
-  await withConfigurationActor(actorFor(actor), async client => {
-    const result = await client.query(
-      `update card_outlet
+  const wasPartner = await withConfigurationActor(
+    actorFor(actor),
+    async client => {
+      const before = await client.query<{
+        is_active: boolean;
+        is_partner: boolean;
+      }>(
+        `select is_active, is_partner from card_outlet where id = $1 for update`,
+        [id]
+      );
+      if (!before.rows[0]) {
+        throw new ConfigError('That outlet no longer exists.', 'not_found');
+      }
+      await client.query(
+        `update card_outlet
           set name = $2, logo_url = $3, category = $4, discount_percent = $5,
               description = $6, address = $7, link_url = $8, is_active = $9,
               is_partner = $10, sort_order = $11
         where id = $1`,
-      [
-        id,
-        o.name,
-        o.logoUrl,
-        o.category,
-        o.discountPercent,
-        o.description,
-        o.address,
-        o.linkUrl,
-        o.isActive,
-        o.isPartner,
-        o.sortOrder,
-      ]
-    );
-    if (result.rowCount === 0) {
-      throw new ConfigError('That outlet no longer exists.', 'not_found');
+        [
+          id,
+          o.name,
+          o.logoUrl,
+          o.category,
+          o.discountPercent,
+          o.description,
+          o.address,
+          o.linkUrl,
+          o.isActive,
+          o.isPartner,
+          o.sortOrder,
+        ]
+      );
+      return before.rows[0].is_active && before.rows[0].is_partner;
     }
-  });
+  );
+  // Became a partner — or a partner switched back on. Not every edit to
+  // one: the phones hear once.
+  if (!wasPartner && o.isActive && o.isPartner) await announcePartner(id);
 }
 
 export async function deleteOutlet(id: string, actor: Actor): Promise<void> {

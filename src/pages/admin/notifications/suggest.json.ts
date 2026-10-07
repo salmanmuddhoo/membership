@@ -50,6 +50,8 @@ const EVENT_LABELS: Record<string, string> = {
   'transaction.awaiting': 'Staff: transaction awaiting a step',
   'transaction.returned': 'Staff: transaction returned to its captor',
   'receipt.voided': 'Staff: receipt voided',
+  'partner.added': 'New partner outlet',
+  'promotion.published': 'Promotion gone live',
 };
 
 function describeEventCode(eventCode: string): string {

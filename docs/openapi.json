@@ -7794,6 +7794,236 @@
         }
       }
     },
+    "/api/v1/member/me/devices": {
+      "post": {
+        "summary": "Register this phone for push notifications",
+        "description": "The phone's Firebase device token, tied to the caller's session. Idempotent: the same token again refreshes the registration, and a token that moves to another session moves with it. 422 without a token or a platform.",
+        "tags": [
+          "Member app"
+        ],
+        "operationId": "postMemberMeDevices",
+        "x-required-permission": "(a member app session)",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "ok"
+                      ],
+                      "properties": {
+                        "ok": {
+                          "type": "boolean",
+                          "enum": [
+                            true
+                          ]
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "token",
+                  "platform"
+                ],
+                "properties": {
+                  "token": {
+                    "type": "string",
+                    "description": "The Firebase Cloud Messaging device token."
+                  },
+                  "platform": {
+                    "type": "string",
+                    "enum": [
+                      "android",
+                      "ios"
+                    ]
+                  },
+                  "appBuild": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "The app version, for the record."
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Withdraw this phone from push notifications",
+        "description": "Disables the token for the caller's own session; the app calls it before signing out. Revoking the session disables every token of it regardless, so this is belt and braces. Always 200.",
+        "tags": [
+          "Member app"
+        ],
+        "operationId": "deleteMemberMeDevices",
+        "x-required-permission": "(a member app session)",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "ok"
+                      ],
+                      "properties": {
+                        "ok": {
+                          "type": "boolean",
+                          "enum": [
+                            true
+                          ]
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "token"
+                ],
+                "properties": {
+                  "token": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/member/me/documents": {
       "get": {
         "summary": "Documents on file for the caller",

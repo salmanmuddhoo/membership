@@ -35,6 +35,7 @@ import {
   maskMobile,
   type CodeDelivery,
 } from './otp';
+import { disableSessionDevices } from '../notifications/push';
 
 export type IdentityKind = 'member' | 'customer' | 'applicant';
 
@@ -787,12 +788,14 @@ export async function refreshSession(
     if (!found) return null;
 
     // A member who has since left is signed out at the next refresh, not
-    // whenever a 90-day token happens to lapse.
+    // whenever a 90-day token happens to lapse — and their phone hears
+    // nothing more.
     if (found.member_id && !found.member_may_use) {
       await client.query(
         `update member_session set revoked_at = now() where id = $1`,
         [found.id]
       );
+      await disableSessionDevices(found.id, 'session revoked', client);
       return null;
     }
 
@@ -822,6 +825,8 @@ export async function revokeSession(
       where id = $1 and revoked_at is null`,
     [principal.sessionId]
   );
+  // The phone goes quiet with the session (migration 0118).
+  await disableSessionDevices(principal.sessionId, 'signed out');
   await recordAuditQuietly({
     actorDescription: ACTOR,
     action: 'member.session.revoked',
