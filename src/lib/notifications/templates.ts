@@ -13,7 +13,9 @@ import { ConfigError } from '../config/reference';
 import { query, withConfigurationActor } from '../db/pool';
 import { placeholdersForEvent } from './event-codes';
 
-export type NotificationChannel = 'email' | 'whatsapp';
+// 'push' is the member app's phones (migration 0118): the subject is the
+// notification's title and the body its text, both short.
+export type NotificationChannel = 'email' | 'whatsapp' | 'push';
 
 export interface NotificationTemplate {
   id: string;

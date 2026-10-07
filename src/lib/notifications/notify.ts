@@ -18,6 +18,7 @@
 //   what lets S-904 retry it later rather than guess.
 import { query } from '../db/pool';
 import { activeChannels } from './channels';
+import { hasDevices } from './push';
 import { backoffMinutes } from './retry';
 import {
   placeholderSequence,
@@ -50,6 +51,10 @@ export interface OutgoingMessage {
   providerTemplateName?: string | null;
   providerTemplateLanguage?: string;
   parameters?: string[] | null;
+  // For push: what the app reads to decide which screen to open — the
+  // event code and what it was about. Small strings, nothing a member would
+  // mind another app on the phone seeing.
+  data?: Record<string, string>;
 }
 
 export interface Channel {
@@ -62,6 +67,10 @@ export interface Channel {
 export interface Recipients {
   email?: string | null;
   mobile?: string | null;
+  // For push: who it is for — pushRecipient('member', id),
+  // pushRecipient('customer', id) or PUSH_EVERYONE (push.ts). The phones
+  // behind that are looked up at send time. Absent means no push.
+  push?: string | null;
 }
 
 export interface NotifyRequest {
@@ -81,13 +90,35 @@ export interface NotifyRequest {
 // surface the rest of the system already sends through.
 export { registerChannel, resetChannels } from './channels';
 
-function recipientFor(
+async function recipientFor(
   channel: NotificationChannel,
   recipients: Recipients
-): string | null {
-  const value = channel === 'email' ? recipients.email : recipients.mobile;
+): Promise<string | null> {
+  const value =
+    channel === 'email'
+      ? recipients.email
+      : channel === 'whatsapp'
+        ? recipients.mobile
+        : recipients.push;
   const trimmed = (value ?? '').trim();
-  return trimmed === '' ? null : trimmed;
+  if (trimmed === '') return null;
+  // A push recipient with no live phone is nobody to tell — no row, rather
+  // than a 'sent' against a message no phone received.
+  if (channel === 'push' && !(await hasDevices(trimmed))) return null;
+  return trimmed;
+}
+
+// What travels in a push's data payload, rebuilt the same way for a retry
+// (retry.ts) so a tap on it opens the same screen.
+export function pushDataFor(
+  eventCode: string,
+  entityType: string | null | undefined,
+  entityId: string | null | undefined
+): Record<string, string> {
+  const data: Record<string, string> = { event: eventCode };
+  if (entityType) data.entityType = entityType;
+  if (entityId) data.entityId = entityId;
+  return data;
 }
 
 /**
@@ -183,12 +214,12 @@ export async function notify(request: NotifyRequest): Promise<string[]> {
   const written: string[] = [];
   const channels = activeChannels();
 
-  for (const channel of ['email', 'whatsapp'] as const) {
+  for (const channel of ['email', 'whatsapp', 'push'] as const) {
     try {
       const template = await templateFor(request.eventCode, channel);
       if (!template) continue;
 
-      const recipient = recipientFor(channel, request.recipients);
+      const recipient = await recipientFor(channel, request.recipients);
       if (!recipient) continue;
 
       const message: OutgoingMessage = {
@@ -207,6 +238,14 @@ export async function notify(request: NotifyRequest): Promise<string[]> {
           template.attachesDocument && request.attachment
             ? request.attachment
             : null,
+        data:
+          channel === 'push'
+            ? pushDataFor(
+                request.eventCode,
+                request.entityType,
+                request.entityId
+              )
+            : undefined,
       };
 
       const id = await record(template, message, request);
