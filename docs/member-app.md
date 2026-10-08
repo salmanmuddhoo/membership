@@ -119,6 +119,13 @@ a value no token can carry, so `claimPreProvisionedAccount` can never bind
 a real sign-in to it. Every audit row it writes carries the masked mobile
 that acted: `member-app:+2305xxx234`.
 
+It is read, and seeded again if missing, on every action from the phone
+(`systemUser()`, `src/lib/member/applications.ts`): "Reset test data"
+used to delete it with the staff (fixed in migration 0119, which keeps
+every `system:%` account), and until then every application started from
+the app failed with "Something went wrong" on a freshly reset test
+environment.
+
 ## Received online
 
 The officer's own submit (draft → new, the `capture` step) requires the

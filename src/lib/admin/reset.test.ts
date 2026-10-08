@@ -467,8 +467,20 @@ describe('resetAllTestData', () => {
 
     await resetAllTestData(actor);
 
-    const users = await run(ownerUrl, `select id from app_user`);
-    expect(users.rows).toEqual([{ id: userId }]);
+    // Staff go; the administrator running it stays, and so do the system
+    // users, which are not staff and which the member app cannot capture
+    // anything without (migration 0119).
+    const users = await run(
+      ownerUrl,
+      `select id, entra_subject from app_user order by entra_subject nulls first`
+    );
+    expect(users.rows).toEqual([
+      { id: userId, entra_subject: null },
+      { id: expect.any(String), entra_subject: 'system:member-app' },
+      { id: expect.any(String), entra_subject: 'system:migration' },
+      { id: expect.any(String), entra_subject: 'system:public-api' },
+      { id: expect.any(String), entra_subject: 'system:retention' },
+    ]);
     const roles = await run(
       ownerUrl,
       `select r.code from user_role ur join role r on r.id = ur.role_id
