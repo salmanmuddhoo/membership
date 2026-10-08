@@ -407,21 +407,45 @@ export async function submitApplication(
 
   // Officer feedback: Regional oversight (S-611, disabled by default) exists
   // so a Regional Manager looks over a subordinate's capture before it
-  // reaches the Secretary — but when the Regional Manager captured the
-  // application themselves, that oversight has nothing left to add, and
-  // the record should go straight to Secretary review. Read from the
-  // active chain (not hardcoded) so this only ever engages when an
-  // administrator has actually enabled Regional oversight, exactly the
-  // same "configuration, not code" gate every other step here already
-  // reads; resolved before withTransaction opens, the same read-first
-  // pattern the pool-level reads elsewhere in this module already follow.
+  // reaches the Secretary — but when a Regional Manager has already had
+  // the application in their own hands, that oversight has nothing left
+  // to add, and the record should go straight to the next step in the
+  // configured chain. Two ways they can have had it: they captured it
+  // themselves, or they are the one submitting it now (officer direction,
+  // October 2026) — an application received from the member app, which
+  // the system user captured and a Regional Manager completes and submits
+  // at the branch, or a subordinate's draft they submit on their behalf.
+  // Either way, sending it to a Regional Manager again is sending it back
+  // to the desk it just left. Read from the active chain (not hardcoded)
+  // so this only ever engages when an administrator has actually enabled
+  // Regional oversight, exactly the same "configuration, not code" gate
+  // every other step here already reads; resolved before withTransaction
+  // opens, the same read-first pattern the pool-level reads elsewhere in
+  // this module already follow.
   const chain = await activeChain(WORKFLOW_CODE);
   const regionalStep = chain.find(s => s.code === 'regional_review');
-  const capturerRoles = regionalStep
-    ? await roleCodesForUser(application.capturedBy)
-    : null;
-  const bypassRegionalReview =
-    !!regionalStep && !!capturerRoles?.has(regionalStep.roleCode);
+  // Who satisfies the oversight, and how the transition says so.
+  let oversight: { by: Actor; comment: string } | null = null;
+  if (regionalStep) {
+    if (principal.roles.includes(regionalStep.roleCode)) {
+      oversight = {
+        by: actor,
+        comment: `${regionalStep.name} not required — submitted by a ${regionalStep.roleName}.`,
+      };
+    } else if (
+      (await roleCodesForUser(application.capturedBy)).has(
+        regionalStep.roleCode
+      )
+    ) {
+      oversight = {
+        by: {
+          userId: application.capturedBy,
+          email: application.capturedByEmail,
+        },
+        comment: `${regionalStep.name} not required — captured by a ${regionalStep.roleName}.`,
+      };
+    }
+  }
 
   await withTransaction(async client => {
     await client.query(
@@ -441,27 +465,29 @@ export async function submitApplication(
       null
     );
 
-    if (bypassRegionalReview && regionalStep) {
+    if (oversight && regionalStep) {
       // The gate's own from/to status (S-209) is capture's toStatus, not
       // application's own pre-transition status above — recordTransition
       // reads `.status` off whatever it is handed, so a shallow copy
       // reflecting the record's status the instant after capture is what
       // makes this row read correctly against the same evidence
-      // unmetGates (Secretary review's own gate check) reads.
+      // unmetGates (Secretary review's own gate check) reads — and what
+      // reviewStageLabel reads for the "With the Secretary" the timeline
+      // then shows, so the chevron follows the chain as it actually ran.
       const afterCapture = { ...application, status: step.toStatus };
       await recordTransition(
         client,
         afterCapture,
         regionalStep,
         regionalStep.toStatus,
-        { userId: application.capturedBy, email: application.capturedByEmail },
+        oversight.by,
         regionalStep.roleName,
-        'Regional oversight not required — captured by a Regional Manager.'
+        oversight.comment
       );
       await recordAudit(
         {
-          actorUserId: application.capturedBy,
-          actorDescription: application.capturedByEmail,
+          actorUserId: oversight.by.userId,
+          actorDescription: oversight.by.email,
           action: ACTION_REGIONAL_REVIEWED,
           entityType: ENTITY_TYPE,
           entityId: application.id,

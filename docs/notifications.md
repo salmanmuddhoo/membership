@@ -167,14 +167,18 @@ visible.
 
 What the failures mean:
 
-| What you see                                    | What it is                                             |
-| ----------------------------------------------- | ------------------------------------------------------ |
-| `No email provider is configured`               | `NOTIFY_EMAIL_DELIVERY` unset, or missing its settings |
-| Graph `ErrorAccessDenied` / `Authorization_...` | `Mail.Send` not granted, or consent not given          |
-| Graph `ErrorInvalidUser`                        | `NOTIFY_EMAIL_FROM` is not a mailbox in that tenant    |
-| `template name does not exist`                  | The name here does not match an approved Meta template |
-| `(#132001)`                                     | Template exists but not in that language               |
-| Sent, but nothing arrives on WhatsApp           | Trial number: recipient not on Meta's allowed list     |
+| What you see                                    | What it is                                                                                                                  |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `No email provider is configured`               | `NOTIFY_EMAIL_DELIVERY` unset, or missing its settings                                                                      |
+| Graph `ErrorAccessDenied` / `Authorization_...` | `Mail.Send` not granted, or consent not given                                                                               |
+| Graph `ErrorInvalidUser`                        | `NOTIFY_EMAIL_FROM` is not a mailbox in that tenant                                                                         |
+| `template name does not exist`                  | The name here does not match an approved Meta template                                                                      |
+| `(#132001)`                                     | Template exists but not in that language                                                                                    |
+| Sent, but nothing arrives on WhatsApp           | Trial number: recipient not on Meta's allowed list                                                                          |
+| `No push provider is configured`                | `NOTIFY_PUSH_DELIVERY` unset, or its key file does not parse                                                                |
+| `Google refused the service account`            | The key file is not that Firebase project's, or was revoked                                                                 |
+| `That member has no phone signed in`            | Nobody has signed in to the app as that AB Number, or they signed out                                                       |
+| Sent, but nothing arrives on the phone          | The app was built without `google-services.json` (its summary says so), or notifications are off for it in Android settings |
 
 ## A receipt to its member
 
@@ -296,6 +300,78 @@ officer wrote. `src/lib/members/details-requests.ts` raises them after the
 decision has committed, through the same `tellMember` the dormancy job
 uses, so a member with no application on file is decided about and told
 nothing.
+
+## Push, to the member app
+
+A third channel (migration 0118): the member app's phones. The same
+templates, outbox and retry as the other two, edited at **Configuration →
+Notification wording** like any other — for push the subject is the
+notification's **title** and the body its text, and a phone shows a line
+or two, so both are short.
+
+**Who it reaches.** The recipient of a push row is not an address but who
+it is for: `member:<id>`, `customer:<id>` or `everyone`. The phones behind
+that are `member_device` rows — one per app install, registered by the app
+on every start (`POST /api/v1/member/me/devices`), tied to the session
+that registered it — and they are read **at send time**, so a phone
+registered after the row was written still hears a retry, and one whose
+session has since been revoked does not. Signing out, a branch revoking a
+lost phone, a member who has left: each silences the phone with the
+session. A member with no phone signed in gets no row at all, rather than a
+`sent` nobody received.
+
+**What is sent.** A member's own money, the moment it posts:
+`deposit.posted`, `withdrawal.disbursed`, `transfer.posted` (the ledger
+passes the phone alongside the address for every member event, so a push
+wording added to any other — `withdrawal.submitted`, `balance.near_floor`
+— works the same way). And the app's own news, to everyone signed in:
+`partner.added` when an outlet becomes a partner on **Configuration →
+Member app** (`outlet_name`, `category`, `discount`), `promotion.published`
+when a promotion card goes live there (`title`, `body`) — once each, when
+it happens, not on every edit; a card scheduled for a later date is not
+announced on that date, since nothing watches the calendar. Each
+notification carries the event code as data, which is how the app knows
+which screen to open on a tap.
+
+**Through Firebase (`fcm`).** The app is built against a Firebase project
+(its `google-services.json`, see the app's `docs/push-notifications.md`);
+the server sends to that project as a service account:
+
+1. Firebase console → the project → **Project settings → Service
+   accounts → Generate new private key**. The key file is a credential:
+   it lives in the environment, never in the repository.
+2. Set:
+
+   ```
+   NOTIFY_PUSH_DELIVERY=fcm
+   NOTIFY_PUSH_SERVICE_ACCOUNT=<the key file, as one line of JSON, or base64>
+   ```
+
+Two calls, no SDK: the service account's JWT is exchanged for an hour's
+access token (held in memory), then one request per phone, twenty at a
+time. A phone Firebase reports as gone (`UNREGISTERED`: the app was
+uninstalled, or its token rotated) is **disabled** rather than retried for
+thirty hours; a provider that cannot be reached fails the row for the retry
+job as any other channel's would. A broadcast is one row and many sends:
+it stands as `sent` once every reachable phone was written to, with any
+shortfall in the server log.
+
+**Through a gateway (`http`).** `NOTIFY_PUSH_DELIVERY=http` with
+`NOTIFY_PUSH_WEBHOOK_URL` (and `_TOKEN`) posts
+`{ channel: "push", to: <device token>, platform, subject, message, data }`
+per phone, for a relay of the Society's own.
+
+**Proving it works.** A test send to a push wording takes a member's **AB
+Number** rather than an address: the message goes to every phone that
+member has signed in on. It refuses, naming the reason, for a member with
+none.
+
+**What a phone can see.** A notification is shown on the lock screen by
+default, as a bank's is; the default wording names the account and the
+amount. The Society can edit the wording to say less. Nothing but the
+rendered title and text, the event code and the record id reaches the
+phone — never a NIC, a balance beyond what the wording carries, or an
+internal link.
 
 ## Retrying, and giving up
 

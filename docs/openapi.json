@@ -5281,7 +5281,7 @@
     "/api/v1/member/auth/link-member": {
       "post": {
         "summary": "Identify an existing member by NIC + AB Number and send a code to their registered mobile",
-        "description": "Exact pair, active members only. The answer is the same whether the pair named someone or not — a challenge id and no number — so it never says whether a NIC + AB Number combination exists; a miss gets a challenge nothing can verify against. Rate-limited per NIC, per AB Number and per address, and one code per AB Number per cooldown window.",
+        "description": "Exact pair, members entitled to the app only. A pair that names nobody, or a member with no mobile on record, is refused with 404 and a message telling the person to contact the Al Barakah office; the app goes no further. Rate-limited per NIC, per AB Number and per address, hit or miss, and one code per AB Number per cooldown window.",
         "tags": [
           "Member app"
         ],
@@ -6301,7 +6301,8 @@
                           "category",
                           "status",
                           "openedAt",
-                          "balance"
+                          "balance",
+                          "transactionCount"
                         ],
                         "properties": {
                           "id": {
@@ -6331,6 +6332,10 @@
                             "type": "string",
                             "nullable": true,
                             "description": "Decimal string."
+                          },
+                          "transactionCount": {
+                            "type": "integer",
+                            "description": "Entries recorded against the account; the app hides one with none."
                           }
                         }
                       }
@@ -7142,7 +7147,8 @@
                                 "category",
                                 "status",
                                 "openedAt",
-                                "balance"
+                                "balance",
+                                "transactionCount"
                               ],
                               "properties": {
                                 "id": {
@@ -7172,6 +7178,10 @@
                                   "type": "string",
                                   "nullable": true,
                                   "description": "Decimal string."
+                                },
+                                "transactionCount": {
+                                  "type": "integer",
+                                  "description": "Entries recorded against the account; the app hides one with none."
                                 }
                               }
                             }
@@ -7776,6 +7786,236 @@
                         }
                       }
                     }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/member/me/devices": {
+      "post": {
+        "summary": "Register this phone for push notifications",
+        "description": "The phone's Firebase device token, tied to the caller's session. Idempotent: the same token again refreshes the registration, and a token that moves to another session moves with it. 422 without a token or a platform.",
+        "tags": [
+          "Member app"
+        ],
+        "operationId": "postMemberMeDevices",
+        "x-required-permission": "(a member app session)",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "ok"
+                      ],
+                      "properties": {
+                        "ok": {
+                          "type": "boolean",
+                          "enum": [
+                            true
+                          ]
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "token",
+                  "platform"
+                ],
+                "properties": {
+                  "token": {
+                    "type": "string",
+                    "description": "The Firebase Cloud Messaging device token."
+                  },
+                  "platform": {
+                    "type": "string",
+                    "enum": [
+                      "android",
+                      "ios"
+                    ]
+                  },
+                  "appBuild": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "The app version, for the record."
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Withdraw this phone from push notifications",
+        "description": "Disables the token for the caller's own session; the app calls it before signing out. Revoking the session disables every token of it regardless, so this is belt and braces. Always 200.",
+        "tags": [
+          "Member app"
+        ],
+        "operationId": "deleteMemberMeDevices",
+        "x-required-permission": "(a member app session)",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "ok"
+                      ],
+                      "properties": {
+                        "ok": {
+                          "type": "boolean",
+                          "enum": [
+                            true
+                          ]
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "token"
+                ],
+                "properties": {
+                  "token": {
+                    "type": "string"
                   }
                 }
               }
@@ -9001,6 +9241,137 @@
                   "reason": {
                     "type": "string"
                   }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/member/outlets": {
+      "get": {
+        "summary": "Where the membership card earns a discount",
+        "description": "The active outlets, in the order to show them: logo, category tag, discount percentage, a line of description, the address and a link. A partner (pays the premium fee) is flagged, for the home screen. Written on the web application's Member app configuration page. Any session; the same for everyone.",
+        "tags": [
+          "Member app"
+        ],
+        "operationId": "getMemberOutlets",
+        "x-required-permission": "(a member app session)",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "id",
+                          "name",
+                          "logoUrl",
+                          "category",
+                          "discountPercent",
+                          "description",
+                          "address",
+                          "linkUrl",
+                          "isPartner"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "logoUrl": {
+                            "type": "string",
+                            "description": "The logo, https."
+                          },
+                          "category": {
+                            "type": "string",
+                            "description": "A lower-case tag such as \"education\", \"groceries\" or \"food\"."
+                          },
+                          "discountPercent": {
+                            "type": "string",
+                            "description": "Decimal string, e.g. \"10.00\"."
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "address": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "linkUrl": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "https, mailto or tel."
+                          },
+                          "isPartner": {
+                            "type": "boolean",
+                            "description": "Pays the premium fee: shown on the home screen as well."
+                          }
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }

@@ -64,23 +64,36 @@ const BRANCH_ONLY_DOCUMENTS = new Set(['signed_form']);
 // --- The system user the app captures as -----------------------------------
 
 const SYSTEM_SUBJECT = 'system:member-app';
-let systemUserId: Promise<string> | undefined;
+const SYSTEM_EMAIL = 'member-app@system.albarakah.mu';
 
+/**
+ * The system user's id — put back if it is missing. Migration 0039 seeds
+ * it and 0119 makes "Reset test data" keep it, but a row that can be
+ * deleted will be deleted one day, and a phone that cannot start an
+ * application because of it is a defect here, not on the phone. The
+ * insert is the migration's own, so what comes back has no role and no
+ * permission, exactly as seeded. Read every time rather than cached: a
+ * cached id outlives the row it names, and this is one indexed read.
+ */
 export async function systemUser(): Promise<string> {
-  systemUserId ??= query<{ id: string }>(
-    `select id from app_user where entra_subject = $1`,
-    [SYSTEM_SUBJECT]
-  ).then(result => {
-    const id = result.rows[0]?.id;
-    if (!id) {
-      systemUserId = undefined;
-      throw new Error(
-        'The member-app system user is missing; migration 0039 has not been applied.'
-      );
-    }
-    return id;
-  });
-  return systemUserId;
+  const result = await query<{ id: string }>(
+    `with seeded as (
+       insert into app_user (entra_subject, email, display_name)
+       values ($1, $2, 'Member app')
+       on conflict (email) do nothing
+       returning id
+     )
+     select id from seeded
+     union all
+     select id from app_user where entra_subject = $1
+     limit 1`,
+    [SYSTEM_SUBJECT, SYSTEM_EMAIL]
+  );
+  const id = result.rows[0]?.id;
+  if (!id) {
+    throw new Error('The member-app system user could not be read or seeded.');
+  }
+  return id;
 }
 
 // What the audit trail records for an action from the phone: the system

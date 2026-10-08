@@ -82,6 +82,43 @@ afterAll(async () => {
 });
 
 describe('an application from the phone', () => {
+  it('puts the system user back if it has gone, rather than failing the phone', async () => {
+    // What "Reset test data" did before migration 0119: the account the app
+    // captures as, deleted from under it. First in this file on purpose:
+    // nothing refers to the row yet, so the delete goes through.
+    await run(
+      ownerUrl,
+      `delete from app_user where entra_subject = 'system:member-app'`
+    );
+    const sam = await applicantSession('5999 0042');
+    const app = await applications.startMemberApplication(
+      sam,
+      'individual',
+      origin
+    );
+    const row = await run(
+      appUrl,
+      `select u.entra_subject, u.display_name,
+              (select count(*)::int from user_role where user_id = u.id) as roles
+         from membership_application a join app_user u on u.id = a.captured_by
+        where a.id = $1`,
+      [app.id]
+    );
+    expect(row.rows[0]).toEqual({
+      entra_subject: 'system:member-app',
+      display_name: 'Member app',
+      roles: 0,
+    });
+    expect(
+      (
+        await run(
+          appUrl,
+          `select count(*)::int as n from app_user where entra_subject = 'system:member-app'`
+        )
+      ).rows[0].n
+    ).toBe(1);
+  });
+
   it('is captured by the system user, tied to the verified mobile, with it pre-filled', async () => {
     const jane = await applicantSession('5999 0001');
     const app = await applications.startMemberApplication(

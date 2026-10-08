@@ -469,6 +469,23 @@ includes ones that have been. Submitting one raises the Regional Manager's
 count (or the Secretary's, disabled) by exactly one; forwarding moves it off
 one queue and onto the next, never incremented or cleared by hand.
 
+**A Regional Manager who has had it does not get it again.** With Regional
+oversight enabled, `submitApplication` records the `regional_review`
+transition itself — as satisfied, with a comment saying why — when a
+Regional Manager captured the application, or when a Regional Manager is
+the one submitting it (officer direction, October 2026). The second case is
+what an application **received online** needs: the member app's system user
+captured it, and the Regional Manager who completes it at the branch and
+submits it is the first person to have had it in their hands; routing it to
+a Regional Manager again would send it back to the desk it just left. The
+same holds for a subordinate's draft a Regional Manager submits on their
+behalf. Either way it goes to the next step in the configured chain — the
+Secretary, as shipped — and because the transition is recorded rather than
+skipped, everything that reads the chain's evidence agrees: `unmetGates`
+lets the Secretary act, `availableActions` offers the Regional Manager
+nothing, and the timeline's "Submit" step reads "With the Secretary". An
+ordinary officer's submission still waits on the Regional Manager.
+
 **"New" alone stopped being enough to say who actually holds it.** With
 Regional oversight enabled, an application at `new` is either still waiting
 on the Regional Manager or already past them and waiting on the Secretary —

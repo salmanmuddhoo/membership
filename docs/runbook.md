@@ -168,7 +168,12 @@ of hours, not as a first response to something unexplained.
 ### Resetting Test
 
 `/admin/reset-data`, refused outright unless `PUBLIC_APP_ENV` marks the
-deployment non-production. See `docs/environments.md`.
+deployment non-production. See `docs/environments.md`. It removes every
+staff account but the one running it; the system users (`system:%` —
+the member app's, the retention job's, the public API's, the migration
+import's) stay (migration 0119). A test environment reset before that
+migration needs it applied before the member app can start applications
+again, and the migration puts the four back.
 
 ## Clearing production back to empty
 

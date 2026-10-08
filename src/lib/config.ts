@@ -344,7 +344,10 @@ export interface ChannelDelivery {
   // { to, subject, message } to whichever gateway the Society has — the same
   // shape the member app's one-time codes already use, so one gateway can
   // carry both. 'log' writes to the server log and is non-production only.
-  kind: 'graph' | 'cloud_api' | 'http' | 'log' | 'unconfigured';
+  // 'fcm' sends push notifications to the member app through Firebase
+  // Cloud Messaging, as the service account in NOTIFY_PUSH_SERVICE_ACCOUNT
+  // (docs/notifications.md, "Push").
+  kind: 'graph' | 'cloud_api' | 'http' | 'fcm' | 'log' | 'unconfigured';
   // The mailbox mail is sent as, for 'graph'.
   from?: string;
   webhookUrl?: string;
@@ -358,11 +361,53 @@ export interface ChannelDelivery {
   // Graph API version can be moved without a release.
   baseUrl?: string;
   apiVersion?: string;
+  // For 'fcm': the Firebase project and the service account that may send
+  // to it, from the key file Firebase issues.
+  serviceAccount?: FcmServiceAccount;
+}
+
+export interface FcmServiceAccount {
+  projectId: string;
+  clientEmail: string;
+  privateKey: string;
 }
 
 export interface NotificationConfig {
   email: ChannelDelivery;
   whatsapp: ChannelDelivery;
+  push: ChannelDelivery;
+}
+
+// The service account key as Firebase hands it out — a JSON file — pasted
+// as is or base64-encoded, since a multi-line value is awkward in some
+// environments' settings. Anything that does not parse to the three fields
+// the sender needs reads as absent, and the channel as unconfigured.
+export function parseServiceAccount(
+  raw: string | undefined
+): FcmServiceAccount | undefined {
+  if (!raw) return undefined;
+  const text = raw.trim().startsWith('{')
+    ? raw
+    : Buffer.from(raw, 'base64').toString('utf8');
+  try {
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    const projectId = parsed.project_id;
+    const clientEmail = parsed.client_email;
+    const privateKey = parsed.private_key;
+    if (
+      typeof projectId !== 'string' ||
+      typeof clientEmail !== 'string' ||
+      typeof privateKey !== 'string' ||
+      !projectId ||
+      !clientEmail ||
+      !privateKey.includes('PRIVATE KEY')
+    ) {
+      return undefined;
+    }
+    return { projectId, clientEmail, privateKey };
+  } catch {
+    return undefined;
+  }
 }
 
 export class NotificationConfigError extends Error {
@@ -387,10 +432,15 @@ function channelDelivery(
   const webhookToken = readEnv(`${prefix}_WEBHOOK_TOKEN`);
   const phoneNumberId = readEnv(`${prefix}_PHONE_NUMBER_ID`);
   const token = readEnv(`${prefix}_TOKEN`);
+  const serviceAccount = parseServiceAccount(
+    readEnv(`${prefix}_SERVICE_ACCOUNT`)
+  );
 
   let kind: ChannelDelivery['kind'] = 'unconfigured';
   if (requested === 'graph' && allowed.has('graph') && from) kind = 'graph';
-  else if (
+  else if (requested === 'fcm' && allowed.has('fcm') && serviceAccount) {
+    kind = 'fcm';
+  } else if (
     requested === 'cloud_api' &&
     allowed.has('cloud_api') &&
     phoneNumberId &&
@@ -409,6 +459,7 @@ function channelDelivery(
     token,
     baseUrl: readEnv(`${prefix}_BASE_URL`),
     apiVersion: readEnv(`${prefix}_API_VERSION`),
+    serviceAccount,
   };
 }
 
@@ -438,6 +489,11 @@ export function getNotificationConfig(): NotificationConfig {
     // No 'graph': Microsoft 365 sends mail, not WhatsApp.
     whatsapp: demote(
       channelDelivery('NOTIFY_WHATSAPP', new Set(['cloud_api', 'http', 'log']))
+    ),
+    // The member app's phones: Firebase, or a gateway of the Society's own
+    // that takes { channel: 'push', to: <token>, subject, message, data }.
+    push: demote(
+      channelDelivery('NOTIFY_PUSH', new Set(['fcm', 'http', 'log']))
     ),
   };
 }
