@@ -49,11 +49,22 @@ export const PERMISSION_POST = 'transaction.post';
 // payee, a closure, a resignation, a claim — is transaction.disburse; an
 // approved deposit (money in) posts under transaction.post as before.
 export const PERMISSION_DISBURSE = 'transaction.disburse';
+// Recording a deposit a member made from the app is the accounts
+// department's alone (officer direction, migration 0121): its own
+// permission, which transaction.post — held for the counter by the
+// Regional Officer and others — does not reach.
+export const PERMISSION_RECORD_APP_DEPOSIT = 'transaction.record_app_deposit';
 
 /** The permission the act after approval needs, for this transaction. */
 export function permissionToPost(
-  transaction: Pick<TransactionSummary, 'kind' | 'payeeName'>
+  transaction: Pick<
+    TransactionSummary,
+    'kind' | 'payeeName' | 'capturedFromApp'
+  >
 ): string {
+  if (transaction.kind === 'deposit' && transaction.capturedFromApp) {
+    return PERMISSION_RECORD_APP_DEPOSIT;
+  }
   return needsDisbursement(transaction) ? PERMISSION_DISBURSE : PERMISSION_POST;
 }
 export const PERMISSION_VIEW = 'transaction.view';
@@ -101,6 +112,10 @@ export interface TransactionSummary {
   memberNo: string | null;
   capturedById: string;
   capturedByName: string;
+  // A member made it from the app: captured by the member-app system user
+  // (S-2102). Nobody at the Society can correct it, so it is never
+  // returned; a deposit of this kind is recorded under its own permission.
+  capturedFromApp: boolean;
   createdAt: Date;
   submittedAt: Date | null;
   postedAt: Date | null;
@@ -170,6 +185,8 @@ export const TRANSACTION_SELECT = `
               || coalesce(p.values->>'surname', '')) as holder_name,
          m.member_no,
          t.captured_by, u.display_name as captured_by_name,
+         coalesce(u.entra_subject = 'system:member-app', false)
+           as captured_from_app,
          t.created_at, t.submitted_at, t.posted_at, rn.receipt_no,
          fe.payload->>'balance_after' as balance_after,
          t.workflow_definition_id, wd.code as workflow_code,
@@ -235,6 +252,7 @@ export interface TransactionRow {
   member_no: string | null;
   captured_by: string;
   captured_by_name: string;
+  captured_from_app: boolean;
   created_at: Date;
   submitted_at: Date | null;
   posted_at: Date | null;
@@ -286,6 +304,7 @@ export function assembleTransaction(r: TransactionRow): TransactionSummary {
     memberNo: r.member_no,
     capturedById: r.captured_by,
     capturedByName: r.captured_by_name,
+    capturedFromApp: r.captured_from_app,
     createdAt: r.created_at,
     submittedAt: r.submitted_at,
     postedAt: r.posted_at,
@@ -380,23 +399,6 @@ export async function positionOf(
     next: chain[index + 1] ?? null,
     permission: isLast ? PERMISSION_APPROVE : PERMISSION_REVIEW,
   };
-}
-
-const MEMBER_APP_SUBJECT = 'system:member-app';
-
-/**
- * Whether a member made this request from the app: captured by the
- * member-app system user (S-2102). Such a transaction has no officer to
- * correct it, so it can be forwarded or rejected, never returned.
- */
-export async function capturedFromApp(
-  transaction: Pick<TransactionSummary, 'capturedById'>
-): Promise<boolean> {
-  const result = await query<{ from_app: boolean }>(
-    `select entra_subject = $2 as from_app from app_user where id = $1`,
-    [transaction.capturedById, MEMBER_APP_SUBJECT]
-  );
-  return result.rows[0]?.from_app ?? false;
 }
 
 export function mayActAt(position: Position, principal: Principal): boolean {
@@ -510,7 +512,8 @@ export async function approvedTransactions(
 ): Promise<(TransactionSummary & { waitingSince: Date })[]> {
   if (
     !principal.permissions.has(PERMISSION_POST) &&
-    !principal.permissions.has(PERMISSION_DISBURSE)
+    !principal.permissions.has(PERMISSION_DISBURSE) &&
+    !principal.permissions.has(PERMISSION_RECORD_APP_DEPOSIT)
   ) {
     return [];
   }
@@ -528,7 +531,8 @@ export async function approvedTransactions(
     params
   );
   // Only the ones this person may pay out or post: the Treasurer sees the
-  // withdrawals and the exits, an Account Officer the deposits.
+  // withdrawals and the exits, an Account Officer the deposits — those a
+  // member made from the app under transaction.record_app_deposit.
   const mine = result.rows.filter(row =>
     principal.permissions.has(permissionToPost(assembleTransaction(row)))
   );
@@ -661,7 +665,7 @@ export async function reviewTransaction(
   // which nobody can sign in as: returned, it would sit in no one's queue
   // and hold the member's money as pending for ever. Refused, so the
   // reviewer rejects it with the reason instead — which the member is told.
-  if (decision.outcome === 'return' && (await capturedFromApp(transaction))) {
+  if (decision.outcome === 'return' && transaction.capturedFromApp) {
     throw new ReviewError(
       'A request made from the member app cannot be returned: nobody can ' +
         'correct it. Reject it with the reason instead; the member is told.'
@@ -850,21 +854,19 @@ export function requireDisbursementReference(
  * withdrawal, a transfer, and any deposit an officer captured keep the
  * rule that whoever approved it does not post it.
  */
-async function postingExemptions(
-  transaction: TransactionSummary
-): Promise<string[]> {
-  if (transaction.kind === 'deposit' && (await capturedFromApp(transaction))) {
-    return [ACTION_APPROVED];
-  }
-  return [];
+function postingExemptions(transaction: TransactionSummary): string[] {
+  return transaction.kind === 'deposit' && transaction.capturedFromApp
+    ? [ACTION_APPROVED]
+    : [];
 }
 
 /**
  * S-1403, S-1503 · Post an approved transaction: the act that moves the
- * money, by whoever holds transaction.post and neither captured nor
- * approved it (save a deposit from the app: postingExemptions). A withdrawal is disbursed here — the method and reference
- * it was actually paid by are recorded first, and the entry is dated the
- * disbursement, not the decision. A receipt is issued when money posts,
+ * money, by whoever holds the permission for it (permissionToPost) and
+ * neither captured nor approved it (save a deposit from the app:
+ * postingExemptions). A withdrawal is disbursed here — the method and
+ * reference it was actually paid by are recorded first, and the entry is
+ * dated the disbursement, not the decision. A receipt is issued when money posts,
  * either way.
  */
 export async function postApprovedTransaction(
@@ -880,7 +882,9 @@ export async function postApprovedTransaction(
     throw new ReviewError(
       needsDisbursement(transaction)
         ? 'You do not have permission to disburse.'
-        : 'You do not have permission to post transactions.',
+        : transaction.capturedFromApp && transaction.kind === 'deposit'
+          ? 'A deposit made from the member app is recorded by the accounts department.'
+          : 'You do not have permission to post transactions.',
       'forbidden'
     );
   }
@@ -937,7 +941,7 @@ export async function postApprovedTransaction(
     principal,
     transaction.reference,
     ACTION_POSTED,
-    await postingExemptions(transaction)
+    postingExemptions(transaction)
   );
 
   const receipt = await allocateReceiptNumber(principal.userId);

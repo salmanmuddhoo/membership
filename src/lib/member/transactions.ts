@@ -23,7 +23,7 @@ import type { Principal } from '../access/principal';
 import { ApiError } from '../api/envelope';
 import {
   enabledMemberOperations,
-  offeredBankAccounts,
+  memberAppDepositAccount,
   offeredPaymentMethods,
   type MemberOperation,
   type PaymentMethod,
@@ -154,9 +154,10 @@ export interface DepositOptions {
     requiresReference: boolean;
     touchesBank: boolean;
   }[];
-  // The Society's accounts a member pays into, with the number to pay to:
-  // shown whole, and only to a signed-in member, never on the public
-  // reference.
+  // The one account a member pays into — the one marked at Configuration
+  // -> Bank accounts (migration 0121) — with the number to pay to: shown
+  // whole, and only to a signed-in member, never on the public reference.
+  // A list of at most one, empty until an account is marked.
   bankAccounts: {
     id: string;
     name: string;
@@ -176,10 +177,11 @@ export async function depositOptions(
   if (!member.memberId && !member.customerId) {
     throw new ApiError('forbidden', 'Only a member can pay in from the app.');
   }
-  const [methods, accounts] = await Promise.all([
+  const [methods, account] = await Promise.all([
     appDepositMethods(),
-    offeredBankAccounts(),
+    memberAppDepositAccount(),
   ]);
+  const accounts = account ? [account] : [];
   return {
     methods: methods.map(m => ({
       code: m.code,
@@ -243,36 +245,132 @@ export async function recordMemberDeposit(
       { method: [`Choose ${names}.`] }
     );
   }
+  // Paid into the one account members are shown, whatever else is named:
+  // there is no other for them to have paid into.
+  const payInto = await memberAppDepositAccount();
+  if (!payInto) {
+    throw new ApiError(
+      'forbidden',
+      'Deposits from the app are not available yet. Please visit the branch.'
+    );
+  }
+  if (input.bankAccountId && input.bankAccountId !== payInto.id) {
+    throw new ApiError(
+      'validation_failed',
+      'Pay into the account shown in the app.',
+      { bankAccountId: [`Pay into ${payInto.accountNumber}.`] }
+    );
+  }
   const reason = await noteFor(member, ward, input.reason);
   const principal = await actingPrincipal(member);
   return attempt('deposit', () =>
-    recordDeposit({ ...input, accountId, reason }, principal)
+    recordDeposit(
+      { ...input, accountId, reason, bankAccountId: payInto.id },
+      principal
+    )
   );
+}
+
+// How a member may ask to receive a withdrawal: by bank transfer to their
+// own account, or by cheque (officer direction), while the Society offers
+// that method for withdrawals.
+export const APP_PAYOUT_METHODS = ['bank_transfer', 'cheque'] as const;
+
+export async function appPayoutMethods(): Promise<PaymentMethod[]> {
+  const offered = await offeredPaymentMethods('withdrawal');
+  return APP_PAYOUT_METHODS.flatMap(code => {
+    const method = offered.find(m => m.code === code);
+    return method ? [method] : [];
+  });
 }
 
 export interface MemberWithdrawalInput {
   accountId: string;
   amount: string;
-  // How it is paid out. Optional: it goes for approval, and the Treasurer
-  // says how at Disburse (withdrawals.ts's payoutMethod).
+  // How the member asks to receive it: bank_transfer or cheque. The
+  // Treasurer sees it and pays that way at Disburse, recording the
+  // reference then. Absent (an app from before the choice): the Treasurer
+  // decides, as for any withdrawal that goes for approval.
   method?: string;
-  methodReference?: string;
-  bankAccountId?: string;
+  // For a bank transfer: the member's own bank and account number, which
+  // the Treasurer pays into. Written on the request's note.
+  payToBank?: string;
+  payToAccountNumber?: string;
   reason?: string;
   idempotencyKey?: string;
 }
 
-/** Ask for money out of one of the caller's accounts, or a minor's. */
+// The member's payout choice, checked, and the line the Treasurer reads.
+async function payoutChoice(
+  input: MemberWithdrawalInput
+): Promise<{ method: string | undefined; line: string | null }> {
+  const code = (input.method ?? '').trim();
+  if (!code) return { method: undefined, line: null };
+  const methods = await appPayoutMethods();
+  const method = methods.find(m => m.code === code);
+  if (!method) {
+    const names = methods.map(m => m.name).join(' or ') || 'a branch';
+    throw new ApiError(
+      'validation_failed',
+      'That way of being paid cannot be chosen from the app.',
+      { method: [`Choose ${names}.`] }
+    );
+  }
+  if (code !== 'bank_transfer') {
+    return {
+      method: code,
+      line: `To be paid by ${method.name.toLowerCase()}.`,
+    };
+  }
+  const bank = (input.payToBank ?? '').trim();
+  const number = (input.payToAccountNumber ?? '').trim();
+  const details: Record<string, string[]> = {};
+  if (!bank) details.payToBank = ['Enter the name of your bank.'];
+  if (!/^[A-Za-z0-9 -]{4,40}$/.test(number)) {
+    details.payToAccountNumber = [
+      'Enter your account number: letters, digits, spaces and dashes.',
+    ];
+  }
+  if (Object.keys(details).length > 0) {
+    throw new ApiError(
+      'validation_failed',
+      'Say where the money should be sent.',
+      details
+    );
+  }
+  return {
+    method: code,
+    line: `To be paid by bank transfer to ${bank}, account ${number}.`,
+  };
+}
+
+/**
+ * Ask for money out of one of the caller's accounts, or a minor's, paid by
+ * the bank transfer or cheque they choose.
+ */
 export async function recordMemberWithdrawal(
   member: MemberPrincipal,
   input: MemberWithdrawalInput
 ): Promise<Withdrawal> {
   await requireEnabled('withdrawal');
   const { accountId, ward } = await accountInReach(member, input.accountId);
-  const reason = await noteFor(member, ward, input.reason);
+  const payout = await payoutChoice(input);
+  const note = [payout.line, (input.reason ?? '').trim()]
+    .filter(Boolean)
+    .join(' ');
+  const reason = await noteFor(member, ward, note);
   const principal = await actingPrincipal(member);
   return attempt('withdrawal', () =>
-    recordWithdrawal({ ...input, accountId, reason }, principal)
+    recordWithdrawal(
+      {
+        accountId,
+        amount: input.amount,
+        method: payout.method,
+        reason,
+        idempotencyKey: input.idempotencyKey,
+      },
+      principal
+    )
   );
 }
 
