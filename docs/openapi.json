@@ -6394,7 +6394,7 @@
     "/api/v1/member/me/accounts/{id}/balance": {
       "get": {
         "summary": "One of the caller's accounts: its balance",
-        "description": "The balance the ledger holds for the account: the sum of every posted entry, maintained by the engine as each one posts (docs/ledger.md). An account nothing has ever posted to reads as \"0.00\" with no entries. \"available\" is the balance less every withdrawal already submitted, under review or approved but not yet paid out — what a further withdrawal can draw on. 404 unless the account is the caller's own.",
+        "description": "The balance the ledger holds for the account: the sum of every posted entry, maintained by the engine as each one posts (docs/ledger.md). An account nothing has ever posted to reads as \"0.00\" with no entries. \"available\" is the balance less every withdrawal already submitted, under review or approved but not yet paid out — what a further withdrawal can draw on. 404 unless the account is the caller's own or a minor's in their care.",
         "tags": [
           "Accounts"
         ],
@@ -7357,10 +7357,153 @@
         }
       }
     },
+    "/api/v1/member/me/deposit-options": {
+      "get": {
+        "summary": "How a deposit from the app may be paid, and where to",
+        "description": "The ways a deposit from the app may have been paid (bank transfer or Juice, while the Society offers them) and its active bank accounts with their account numbers. touchesBank: name one of bankAccounts; requiresReference: give the reference of the payment. 403 for an applicant, who holds no account.",
+        "tags": [
+          "Transactions"
+        ],
+        "operationId": "getMemberMeDepositOptions",
+        "x-required-permission": "(a member app session)",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "methods",
+                        "bankAccounts"
+                      ],
+                      "properties": {
+                        "methods": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "code",
+                              "name",
+                              "requiresReference",
+                              "touchesBank"
+                            ],
+                            "properties": {
+                              "code": {
+                                "type": "string",
+                                "enum": [
+                                  "bank_transfer",
+                                  "juice"
+                                ]
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "requiresReference": {
+                                "type": "boolean"
+                              },
+                              "touchesBank": {
+                                "type": "boolean"
+                              }
+                            }
+                          }
+                        },
+                        "bankAccounts": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "id",
+                              "name",
+                              "bankName",
+                              "accountNumber"
+                            ],
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "format": "uuid"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "bankName": {
+                                "type": "string"
+                              },
+                              "accountNumber": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/member/me/deposits": {
       "post": {
         "summary": "Pay into one of the caller's accounts",
-        "description": "Recorded as the staff deposit is and routed by the approval matrix with Member as the initiating role; it waits on a chain, never posts at once. Refused (403) until the Society switches deposits from the app on. Cash is refused: choose a bank or mobile money method, with its reference and the Society's bank account from /api/v1/member/reference. 404 unless the account is the caller's own.",
+        "description": "Recorded as the staff deposit is and routed by the approval matrix with Member as the initiating role; it waits on a chain, never posts at once. Refused (403) until the Society switches deposits from the app on. Paid by bank transfer or Juice only, with its reference and the Society's bank account from /api/v1/member/me/deposit-options. 404 unless the account is the caller's own or a minor's in their care.",
         "tags": [
           "Transactions"
         ],
@@ -8228,7 +8371,7 @@
     "/api/v1/member/me/transactions": {
       "get": {
         "summary": "The requests the caller made from the app",
-        "description": "Deposits, withdrawals and transfers the caller started from the app, newest first (fifty at most): a transfer once, from the caller's own account. state is pending until officers decide (statusLabel \"Pending approval\", stage naming who has it), then approved (waiting to be recorded or paid out), completed, declined (reason: the officer's words), returned or cancelled.",
+        "description": "Deposits, withdrawals and transfers the caller started from the app, newest first (fifty at most): a transfer once, from the caller's own account or a minor's in their care. state is pending until officers decide (statusLabel \"Pending approval\", stage naming who has it), then approved (waiting to be recorded or paid out), completed, declined (reason: the officer's words), returned or cancelled.",
         "tags": [
           "Transactions"
         ],
@@ -8270,6 +8413,7 @@
                           "counterpartAccountNo",
                           "counterpartAccountTypeName",
                           "methodName",
+                          "forMinor",
                           "note",
                           "reason",
                           "createdAt",
@@ -8336,6 +8480,11 @@
                           "methodName": {
                             "type": "string",
                             "nullable": true
+                          },
+                          "forMinor": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "The minor's name when it is on the account of a minor in the caller's care; null on the caller's own."
                           },
                           "note": {
                             "type": "string"
@@ -8410,7 +8559,7 @@
     "/api/v1/member/me/transfers": {
       "post": {
         "summary": "Move money from one of the caller's accounts to an account here",
-        "description": "Recorded as the staff transfer is and routed by the approval matrix with Member as the initiating role; it waits on a chain, never posts at once. Refused (403) until the Society switches transfers from the app on. The destination is an account on the system, the caller's own or another member's, by id. 404 unless the source is the caller's own.",
+        "description": "Recorded as the staff transfer is and routed by the approval matrix with Member as the initiating role; it waits on a chain, never posts at once. Refused (403) until the Society switches transfers from the app on. The destination is an account on the system, the caller's own or another member's, by id. 404 unless the source is the caller's own or a minor's in their care.",
         "tags": [
           "Transactions"
         ],
@@ -9045,7 +9194,7 @@
     "/api/v1/member/me/withdrawals": {
       "post": {
         "summary": "Ask for money out of one of the caller's accounts",
-        "description": "Recorded as the staff withdrawal is and routed by the approval matrix with Member as the initiating role; it waits on a chain, never posts at once. Refused (403) until the Society switches withdrawals from the app on. The method is how it will be paid out, with its reference where the method requires one. 404 unless the account is the caller's own.",
+        "description": "Recorded as the staff withdrawal is and routed by the approval matrix with Member as the initiating role; it waits on a chain, never posts at once. Refused (403) until the Society switches withdrawals from the app on. The method is how it will be paid out, with its reference where the method requires one. 404 unless the account is the caller's own or a minor's in their care.",
         "tags": [
           "Transactions"
         ],
@@ -9686,7 +9835,7 @@
     "/api/v1/member/reference": {
       "get": {
         "summary": "Read the membership types a person can apply for",
-        "description": "Active membership types with their field configuration, the documents an applicant files from the phone (the signed form is a branch step and is left out), and the fees in force. The Society's bank accounts a member may pay into, by name; which transactions the app may start (Configuration -> Member app) and how a deposit may be paid, never cash. Public.",
+        "description": "Active membership types with their field configuration, the documents an applicant files from the phone (the signed form is a branch step and is left out), and the fees in force. The Society's bank accounts a member may pay into, by name (their numbers are for a signed-in member, at /api/v1/member/me/deposit-options); which transactions the app may start (Configuration -> Member app) and how a deposit may be paid: bank transfer or Juice. Public.",
         "tags": [
           "Member app"
         ],
@@ -9728,7 +9877,7 @@
                         },
                         "depositMethods": {
                           "type": "array",
-                          "description": "How a deposit from the app may have been paid: the methods offered for money in, less cash. touchesBank: name one of bankAccounts; requiresReference: give its reference.",
+                          "description": "How a deposit from the app may have been paid: bank transfer or Juice, while the Society offers them for money in. touchesBank: name one of bankAccounts; requiresReference: give its reference.",
                           "items": {
                             "type": "object",
                             "required": [

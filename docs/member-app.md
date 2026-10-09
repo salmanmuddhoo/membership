@@ -179,15 +179,16 @@ header is the whole of what is needed; a body is not.
 | PUT    | `/me/details`                                                    | member | A `member_details_request`. 422 on a blank mandatory field or an unplaceable phone; 409 while one is pending; 403 for an applicant. Audit: `member.details.requested`.                                                                                                                                                                                                                                   |
 | GET    | `/me/accounts`                                                   | member | Balance from the ledger's cache (S-1309), or null for an account nothing has ever posted to. `transactionCount` is the number of entries recorded; the app hides an account with none.                                                                                                                                                                                                                   |
 | GET    | `/me/accounts/{id}/transactions`                                 | member | The ledger's entries, oldest first (`accountEntries`); 404 unless the caller's.                                                                                                                                                                                                                                                                                                                          |
-| GET    | `/me/accounts/{id}/balance`                                      | member | The staff `/accounts/{id}/balance` payload — balance, pending debits, available — for the caller's own account; 404 unless the caller's (S-2101).                                                                                                                                                                                                                                                        |
+| GET    | `/me/accounts/{id}/balance`                                      | member | The staff `/accounts/{id}/balance` payload — balance, pending debits, available — for the caller's own account or a guarded minor's; 404 unless the caller's (S-2101).                                                                                                                                                                                                                                   |
 | GET    | `/me/accounts/{id}/history`                                      | member | The staff `/accounts/{id}/history` payload, newest first, paged by `before`; 404 unless the caller's.                                                                                                                                                                                                                                                                                                    |
 | GET    | `/me/accounts/{id}/statement`                                    | member | The staff `/accounts/{id}/statement` payload for a period (`from`, `to`; the month to date by default), or the spreadsheet with `format=xlsx`; 404 unless the caller's.                                                                                                                                                                                                                                  |
-| POST   | `/me/deposits`                                                   | member | A deposit into the caller's own account, captured by the system user in the Member role and routed by the matrix; never cash; 403 until deposits from the app are switched on (S-2102).                                                                                                                                                                                                                  |
-| POST   | `/me/withdrawals`                                                | member | A withdrawal from the caller's own account, the same way; 403 until switched on.                                                                                                                                                                                                                                                                                                                         |
-| POST   | `/me/transfers`                                                  | member | A transfer from the caller's own account to an account here, the same way; 403 until switched on.                                                                                                                                                                                                                                                                                                        |
-| GET    | `/me/transactions`                                               | member | The requests the caller made from the app and where each stands: Pending approval with who has it, approved, completed, or not approved with the officer's reason (migration 0120).                                                                                                                                                                                                                      |
+| POST   | `/me/deposits`                                                   | member | A deposit into the caller's own account or a guarded minor's, captured by the system user in the Member role and routed by the matrix; bank transfer or Juice only; 403 until deposits from the app are switched on (S-2102).                                                                                                                                                                            |
+| POST   | `/me/withdrawals`                                                | member | A withdrawal from the caller's own account or a guarded minor's, the same way; 403 until switched on.                                                                                                                                                                                                                                                                                                    |
+| POST   | `/me/transfers`                                                  | member | A transfer from the caller's own account or a guarded minor's to an account here, the same way; 403 until switched on.                                                                                                                                                                                                                                                                                   |
+| GET    | `/me/transactions`                                               | member | The requests made from the app on the caller's accounts and their guarded minors' (`forMinor`), and where each stands: Pending approval with who has it, approved, completed, or not approved with the officer's reason (migration 0120).                                                                                                                                                                |
+| GET    | `/me/deposit-options`                                            | member | How a deposit from the app may be paid (bank transfer or Juice) and the Society's active bank accounts with their account numbers, whole: for a member or account holder only, 403 for an applicant.                                                                                                                                                                                                     |
 | GET    | `/me/documents`                                                  | member | `documentsForMember`; each entry's `id` opens at the row below.                                                                                                                                                                                                                                                                                                                                          |
-| GET    | `/me/dependents`                                                 | member | The active minors the caller is guardian of (member or non-member account holder), each with their accounts and balances. Matched on the guardian block by the caller's Member No. or NIC (`members/guardian.ts`); empty for a member who guards nobody. Read-only.                                                                                                                                      |
+| GET    | `/me/dependents`                                                 | member | The active minors the caller is guardian of (member or non-member account holder), each with their accounts and balances. Matched on the guardian block by the caller's Member No. or NIC (`members/guardian.ts`); empty for a member who guards nobody. Deposits, withdrawals and transfers on these accounts go through the endpoints above.                                                           |
 | GET    | `/me/dependents/{dependentId}/accounts/{accountId}/transactions` | member | The entries behind a guarded minor's balance, oldest first; 404 unless the caller guards the minor and the account is that minor's.                                                                                                                                                                                                                                                                      |
 | GET    | `/promotions`                                                    | member | The cards on the app's home screen: the active `app_promotion` rows inside their dates, in sort order (migration 0111). Written on **Configuration → Member app**. The phone shows each card's picture alone (so a picture is required); the title and text are the administrator's label and the screen reader's description. The same for every session, applicant included; nothing about the caller. |
 | GET    | `/outlets`                                                       | member | Where the membership card earns a discount: the active `card_outlet` rows in sort order (migration 0116) — logo, category tag, percentage, description, address, link, and `isPartner` (pays the premium fee: shown on the home screen as well, migration 0117). Written on **Configuration → Member app**. The same for every session; nothing about the caller.                                        |
@@ -288,11 +289,11 @@ request from the app is validated by officers before money moves, and the
 member sees **Pending approval** until then. Three rules "by Member" sit
 at the top of the matrix, any amount:
 
-| From the app | Chain                                                  | Then                                                               |
-| ------------ | ------------------------------------------------------ | ------------------------------------------------------------------ |
-| Deposit      | Deposit from the member app: **Accounts verification** | Another Account Officer records it (`transaction.post`; four eyes) |
-| Withdrawal   | Withdrawal approval: **Secretary → President**         | The **Treasurer** disburses it (`transaction.disburse`)            |
-| Transfer     | Transfer approval: **Secretary → President**           | It is recorded (`transaction.post`)                                |
+| From the app | Chain                                                  | Then                                                                  |
+| ------------ | ------------------------------------------------------ | --------------------------------------------------------------------- |
+| Deposit      | Deposit from the member app: **Accounts verification** | An Account Officer records it — the same one may (`transaction.post`) |
+| Withdrawal   | Withdrawal approval: **Secretary → President**         | The **Treasurer** disburses it (`transaction.disburse`)               |
+| Transfer     | Transfer approval: **Secretary → President**           | It is recorded (`transaction.post`)                                   |
 
 Accounts verification is a one-step chain for the Account Officer, which
 is therefore also given `transaction.approve`; acting on a step still needs
@@ -305,6 +306,14 @@ told (push wording for `deposit.rejected`, `transfer.rejected` and
 `withdrawal.rejected`). All of it is configuration, at Configuration →
 Approval matrix and → Workflows.
 
+**One Account Officer may verify and record a deposit** (officer
+direction, October 2026). The segregation rule that whoever approved a
+transaction may not post it does not hold for a deposit a member made from
+the app: nobody at the Society captured it, and money coming in is checked
+against the bank statement, not paid out on anyone's word
+(`postingExemptions` in `ledger/review.ts`). A withdrawal, a transfer, and
+any deposit an officer captured keep the rule.
+
 **What the member sees.** `GET /me/transactions` lists what the caller
 asked for from the app, newest first: `state` pending, approved,
 completed, declined, returned or cancelled, `statusLabel` in the member's
@@ -313,15 +322,31 @@ words ("Pending approval", "Approved", "Paid out", "Not approved"),
 "With the Secretary", "Awaiting disbursement by the Treasurer") and, when
 declined, the officer's `reason`. `/reference` says which operations are
 switched on (`enabledOperations`) and how a deposit may have been paid
-(`depositMethods`, never cash).
+(`depositMethods`: bank transfer or Juice). `GET /me/deposit-options`
+gives a signed-in member the same methods and the Society's bank accounts
+with their **account numbers**, whole, to pay to; the public `/reference`
+names the accounts only.
+
+**For a minor in their care.** A guardian may ask for a deposit, a
+withdrawal or a transfer on the account of a minor they guard (officer
+direction, October 2026), matched as `/me/dependents` matches them
+(`accountInReach` in `member/dependents.ts`). It is the minor's
+transaction, on the same chain; its note begins "Requested in the app by
+the guardian, AB…" so the officer deciding it knows who asked. The
+guardian's `/me/transactions` lists it with `forMinor`, the minor's name,
+and `/me/accounts/{id}/balance` answers for the minor's accounts too. A
+minor with no phone of their own is told through the guardian's: the push
+about their money goes to the guardian's phones
+(`transaction-notifications.ts`). A minor whose guardian is demised still
+has nothing paid out (`members/guardian.ts`).
 
 **Whether it may be started at all.** `member_api.enabled_operations`, set
 at Configuration → Member app (`config.manage`), lists which of the three
 are on. Empty is the default: the endpoints exist from day one and answer
-403 until switched on, and Readiness shows the setting. A cash deposit is
-refused whatever the switch says — nobody took cash from a phone — so a
-deposit names a bank or mobile money method, its reference and the
-Society's bank account from `/reference`. A transfer goes to an account on
+403 until switched on, and Readiness shows the setting. A deposit is paid
+by bank transfer or Juice and nothing else, whatever the switch says —
+nobody took cash from a phone — so it names one of those, its reference
+and the Society's bank account from `/me/deposit-options`. A transfer goes to an account on
 the system by id, never to a payee outside: that is a withdrawal in another
 name, and the branch's to record. Every write demands an `Idempotency-Key`
 header, as the staff API does.

@@ -17,7 +17,8 @@ const endpoint = defineMemberEndpoint(
     description:
       'Deposits, withdrawals and transfers the caller started from the ' +
       'app, newest first (fifty at most): a transfer once, from the ' +
-      "caller's own account. state is pending until officers decide " +
+      "caller's own account or a minor's in their care. state is " +
+      'pending until officers decide ' +
       '(statusLabel "Pending approval", stage naming who has it), then ' +
       'approved (waiting to be recorded or paid out), completed, ' +
       "declined (reason: the officer's words), returned or cancelled.",
@@ -42,6 +43,7 @@ const endpoint = defineMemberEndpoint(
           'counterpartAccountNo',
           'counterpartAccountTypeName',
           'methodName',
+          'forMinor',
           'note',
           'reason',
           'createdAt',
@@ -72,6 +74,13 @@ const endpoint = defineMemberEndpoint(
           counterpartAccountNo: { type: 'string', nullable: true },
           counterpartAccountTypeName: { type: 'string', nullable: true },
           methodName: { type: 'string', nullable: true },
+          forMinor: {
+            type: 'string',
+            nullable: true,
+            description:
+              "The minor's name when it is on the account of a minor in " +
+              "the caller's care; null on the caller's own.",
+          },
           note: { type: 'string' },
           reason: { type: 'string', nullable: true },
           createdAt: { type: 'string', format: 'date-time' },

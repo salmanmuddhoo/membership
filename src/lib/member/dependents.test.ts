@@ -273,3 +273,40 @@ describe('the minors a guardian may read', () => {
     }
   });
 });
+
+describe("the minor's accounts a guardian may move money on", () => {
+  it('reaches the accounts of the minors they guard, and nothing else', async () => {
+    const { dependents } = await load();
+    expect(
+      (await dependents.wardsOf(guardian)).map(w => w.memberNo).sort()
+    ).toEqual(['AB0101', 'AB0102']);
+    expect(await dependents.accountInReach(guardian, zainab.msa)).toEqual({
+      accountId: zainab.msa,
+      ward: {
+        id: zainab.memberId,
+        kind: 'member',
+        memberNo: 'AB0101',
+        name: 'Zainab Test',
+      },
+    });
+    // Named by NIC alone, still theirs to act for.
+    expect(
+      (await dependents.accountInReach(guardian, bilal.msa)).ward?.memberNo
+    ).toBe('AB0102');
+
+    // Somebody else's minor, an account that does not exist, a non-uuid,
+    // an applicant: the same not_found as for an account of nobody's.
+    for (const [who, acc] of [
+      [guardian, unrelated.msa],
+      [guardian, '00000000-0000-0000-0000-000000000000'],
+      [guardian, 'not-an-id'],
+      [stranger, zainab.msa],
+      [applicant, zainab.msa],
+    ] as const) {
+      await expect(dependents.accountInReach(who, acc)).rejects.toMatchObject({
+        code: 'not_found',
+      });
+    }
+    expect(await dependents.wardsOf(applicant)).toEqual([]);
+  });
+});

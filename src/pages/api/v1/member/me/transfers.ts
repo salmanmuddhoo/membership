@@ -1,6 +1,6 @@
-// Move money from one of the caller's own accounts to an account here
-// (S-2102) — the staff transfer endpoint's own transaction, captured by the
-// member app in the Member role.
+// Move money from one of the caller's accounts, or a minor's in their care,
+// to an account here (S-2102) — the staff transfer endpoint's own
+// transaction, captured by the member app in the Member role.
 import type { APIRoute } from 'astro';
 import { defineMemberEndpoint, apiSuccess } from '@lib/member/endpoint';
 import { recordMemberTransfer } from '@lib/member/transactions';
@@ -114,7 +114,7 @@ const endpoint = defineMemberEndpoint(
       'never posts at once. Refused (403) until the Society switches ' +
       'transfers from the app on. The destination is an account on the ' +
       "system, the caller's own or another member's, by id. 404 unless " +
-      "the source is the caller's own.",
+      "the source is the caller's own or a minor's in their care.",
     tag: 'Transactions',
     caller: 'member',
     idempotent: true,

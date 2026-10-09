@@ -77,7 +77,7 @@ let accountOfficer: Principal;
 let secretary: Principal;
 let president: Principal;
 let treasurer: Principal;
-let secondAccountOfficer: Principal;
+let zaid: { memberId: string; msa: string };
 
 async function staff(
   subject: string,
@@ -128,6 +128,48 @@ async function memberWithMsa(memberNo: string, name: string) {
     `insert into application_party (application_id, subject, ordinal, values)
      values ($1, 'applicant', 1, $2::jsonb)`,
     [application.rows[0].id, JSON.stringify({ name, surname: 'Test' })]
+  );
+  const member = await run(
+    appUrl,
+    `insert into member (member_no, application_id, membership_type_id)
+     values ($1, $2, $3) returning id`,
+    [memberNo, application.rows[0].id, type.rows[0].id]
+  );
+  const account = await run(
+    appUrl,
+    `insert into account (member_id, account_type_id, is_membership_default, status)
+     select $1, id, true, 'active' from account_type where code = 'msa'
+     returning id`,
+    [member.rows[0].id]
+  );
+  return { memberId: member.rows[0].id, msa: account.rows[0].id };
+}
+
+// A minor member with an MSA, whose guardian block names `guardianNo`.
+async function minorWithMsa(
+  memberNo: string,
+  name: string,
+  guardianNo: string
+) {
+  const type = await run(
+    appUrl,
+    `select id from membership_type where code = 'minor'`
+  );
+  const application = await run(
+    appUrl,
+    `insert into membership_application (membership_type_id, captured_by, status)
+     values ($1, $2, 'approved') returning id`,
+    [type.rows[0].id, officer.userId]
+  );
+  await run(
+    appUrl,
+    `insert into application_party (application_id, subject, ordinal, values)
+     values ($1, 'applicant', 1, $2::jsonb), ($1, 'guardian', 1, $3::jsonb)`,
+    [
+      application.rows[0].id,
+      JSON.stringify({ name, surname: 'Test' }),
+      JSON.stringify({ member_id: guardianNo, relationship: 'Mother' }),
+    ]
   );
   const member = await run(
     appUrl,
@@ -208,13 +250,6 @@ beforeAll(async () => {
     'transaction.post',
     'transaction.approve',
   ]);
-  // The segregation rules bar whoever verified a deposit from recording
-  // it too: two people in the accounts department, four eyes.
-  secondAccountOfficer = await staff('accounts-2', 'account_officer', [
-    'transaction.view',
-    'transaction.post',
-    'transaction.approve',
-  ]);
   secretary = await staff('secretary', 'secretary', [
     'transaction.view',
     'transaction.review',
@@ -234,11 +269,17 @@ beforeAll(async () => {
   strangerMsa = second.msa;
   fatimah = memberPrincipal(first.memberId, '+23057891234');
   stranger = memberPrincipal(second.memberId, '+23057895678');
+  // Fatimah's son, in her care.
+  zaid = await minorWithMsa('AB0003', 'Zaid', 'AB0001');
 
   // Something to draw on.
   const { deposits } = await load();
   await deposits.recordDeposit(
     { accountId: fatimahMsa, amount: '5000', method: 'cash' },
+    officer
+  );
+  await deposits.recordDeposit(
+    { accountId: zaid.msa, amount: '800', method: 'cash' },
     officer
   );
 }, 60_000);
@@ -330,13 +371,26 @@ describe('transactions from the member app (S-2102)', () => {
       methodReference: 'MB-2',
       bankAccountId,
     };
-    // Nobody took cash from a phone.
-    await expect(
-      member.recordMemberDeposit(fatimah, { ...deposit, method: 'cash' })
-    ).rejects.toMatchObject({
-      code: 'validation_failed',
-      message: 'Cash cannot be paid in from the app.',
-    });
+    // Bank transfer or Juice, nothing else: not cash, which nobody took
+    // from a phone, and not a cheque or the rest of the branch's list.
+    for (const method of ['cash', 'cheque', 'card', 'internet_banking']) {
+      await expect(
+        member.recordMemberDeposit(fatimah, { ...deposit, method })
+      ).rejects.toMatchObject({
+        code: 'validation_failed',
+        message: 'That way of paying cannot be used from the app.',
+        details: { method: ['Choose Bank transfer or Juice.'] },
+      });
+    }
+    expect(
+      (
+        await member.recordMemberDeposit(fatimah, {
+          ...deposit,
+          method: 'juice',
+          methodReference: 'JUICE-1',
+        })
+      ).method
+    ).toBe('juice');
     // The branch's rules apply underneath: the bank account is demanded.
     await expect(
       member.recordMemberDeposit(fatimah, {
@@ -525,12 +579,11 @@ describe('officers validate what a member asks for, and the member sees where it
       stage: 'Being recorded by the accounts department',
     });
 
-    await expect(
-      review.postApprovedTransaction(deposit.id, accountOfficer)
-    ).rejects.toThrowError(/approved/);
+    // The officer who verified it records it too (officer direction): no
+    // second person needed for money coming in from the app.
     const posted = await review.postApprovedTransaction(
       deposit.id,
-      secondAccountOfficer
+      accountOfficer
     );
     expect(posted.status).toBe('posted');
     expect(await mine()).toMatchObject({
@@ -571,6 +624,21 @@ describe('officers validate what a member asks for, and the member sees where it
       state: 'approved',
       stage: 'Awaiting disbursement by the Treasurer',
     });
+    // Money going out keeps its four eyes: whoever approved it may not pay
+    // it out, even holding the permission to.
+    await expect(
+      review.postApprovedTransaction(
+        withdrawal.id,
+        {
+          ...president,
+          permissions: new Set([
+            ...president.permissions,
+            'transaction.disburse',
+          ]),
+        },
+        { method: 'bank_transfer', methodReference: 'PAY-0', bankAccountId }
+      )
+    ).rejects.toThrowError(/approved a transaction may not/);
     await review.postApprovedTransaction(withdrawal.id, treasurer, {
       method: 'bank_transfer',
       methodReference: 'PAY-100',
@@ -628,6 +696,150 @@ describe('officers validate what a member asks for, and the member sees where it
     ]);
     expect(
       (await member.memberRequests(stranger)).some(r => r.kind === 'transfer')
+    ).toBe(false);
+  });
+});
+
+describe('how a deposit from the app may be paid', () => {
+  it('offers bank transfer and Juice, with the bank account numbers for a signed-in member only', async () => {
+    const { member } = await load();
+    expect((await member.appDepositMethods()).map(m => m.code)).toEqual([
+      'bank_transfer',
+      'juice',
+    ]);
+    const options = await member.depositOptions(fatimah);
+    expect(options.methods).toEqual([
+      expect.objectContaining({ code: 'bank_transfer', touchesBank: true }),
+      expect.objectContaining({ code: 'juice', touchesBank: true }),
+    ]);
+    // Whole, to pay to — not masked as the branch's lists show it.
+    expect(options.bankAccounts).toContainEqual({
+      id: bankAccountId,
+      name: 'MCB current',
+      bankName: 'MCB',
+      accountNumber: '000123456789',
+    });
+    // An applicant has proved a phone number, nothing more.
+    await expect(
+      member.depositOptions({
+        sessionId: 'session-applicant',
+        mobile: '+23057890000',
+        memberId: null,
+        customerId: null,
+        kind: 'applicant',
+      })
+    ).rejects.toMatchObject({ code: 'forbidden' });
+  });
+
+  it('drops a method the Society stops offering for deposits', async () => {
+    await run(
+      appUrl,
+      `begin; set local albarakah.actor_description = 'member.test';
+       update payment_method set is_active = false where code = 'juice';
+       commit;`
+    );
+    try {
+      const { member: fresh } = await load();
+      expect((await fresh.appDepositMethods()).map(m => m.code)).toEqual([
+        'bank_transfer',
+      ]);
+      await expect(
+        fresh.recordMemberDeposit(fatimah, {
+          accountId: fatimahMsa,
+          amount: '10',
+          method: 'juice',
+          methodReference: 'J-2',
+          bankAccountId,
+        })
+      ).rejects.toMatchObject({
+        details: { method: ['Choose Bank transfer.'] },
+      });
+    } finally {
+      await run(
+        appUrl,
+        `begin; set local albarakah.actor_description = 'member.test';
+         update payment_method set is_active = true where code = 'juice';
+         commit;`
+      );
+    }
+  });
+});
+
+describe("a guardian moves money on a minor's account", () => {
+  it('asks for a deposit, a withdrawal and a transfer for the minor, which officers see came from the guardian', async () => {
+    const { member } = await load();
+    const deposit = await member.recordMemberDeposit(fatimah, {
+      accountId: zaid.msa,
+      amount: '150',
+      method: 'bank_transfer',
+      methodReference: 'MB-ZAID',
+      bankAccountId,
+      reason: 'Eid money',
+    });
+    expect(deposit).toMatchObject({
+      status: 'submitted',
+      accountId: zaid.msa,
+      memberId: zaid.memberId,
+      reason: 'Requested in the app by the guardian, AB0001. Eid money',
+    });
+    const withdrawal = await member.recordMemberWithdrawal(fatimah, {
+      accountId: zaid.msa,
+      amount: '100',
+    });
+    expect(withdrawal).toMatchObject({
+      status: 'submitted',
+      currentStepCode: 'secretary_review',
+      reason: 'Requested in the app by the guardian, AB0001.',
+    });
+    const transfer = await member.recordMemberTransfer(fatimah, {
+      sourceAccountId: zaid.msa,
+      destinationAccountId: fatimahMsa,
+      amount: '50',
+    });
+    expect(transfer.debitLeg.accountId).toBe(zaid.msa);
+
+    // All three in the guardian's list, each saying whose it is.
+    const requests = await member.memberRequests(fatimah);
+    for (const id of [deposit.id, withdrawal.id, transfer.debitLeg.id]) {
+      expect(requests.find(r => r.id === id)).toMatchObject({
+        forMinor: 'Zaid Test',
+        state: 'pending',
+      });
+    }
+    // Her own carry no name.
+    expect(
+      requests.filter(r => r.accountId === fatimahMsa).map(r => r.forMinor)
+    ).not.toContain('Zaid Test');
+  });
+
+  it("refuses anyone who is not the minor's guardian, the same as an account that does not exist", async () => {
+    const { member } = await load();
+    await expect(
+      member.recordMemberDeposit(stranger, {
+        accountId: zaid.msa,
+        amount: '10',
+        method: 'bank_transfer',
+        methodReference: 'MB-X',
+        bankAccountId,
+      })
+    ).rejects.toMatchObject({ code: 'not_found' });
+    await expect(
+      member.recordMemberWithdrawal(stranger, {
+        accountId: zaid.msa,
+        amount: '10',
+      })
+    ).rejects.toMatchObject({ code: 'not_found' });
+    await expect(
+      member.recordMemberTransfer(stranger, {
+        sourceAccountId: zaid.msa,
+        destinationAccountId: strangerMsa,
+        amount: '10',
+      })
+    ).rejects.toMatchObject({ code: 'not_found' });
+    expect(
+      (await member.memberRequests(stranger)).some(
+        r => r.accountId === zaid.msa
+      )
     ).toBe(false);
   });
 });

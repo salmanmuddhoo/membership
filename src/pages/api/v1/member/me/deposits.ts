@@ -1,5 +1,6 @@
-// Pay into one of the caller's own accounts (S-2102) — the staff deposit
-// endpoint's own transaction, captured by the member app in the Member role.
+// Pay into one of the caller's accounts, or a minor's in their care (S-2102)
+// — the staff deposit endpoint's own transaction, captured by the member app
+// in the Member role.
 import type { APIRoute } from 'astro';
 import { defineMemberEndpoint, apiSuccess } from '@lib/member/endpoint';
 import { recordMemberDeposit } from '@lib/member/transactions';
@@ -68,10 +69,10 @@ const endpoint = defineMemberEndpoint(
       'Recorded as the staff deposit is and routed by the approval matrix ' +
       'with Member as the initiating role; it waits on a chain, never ' +
       'posts at once. Refused (403) until the Society switches deposits ' +
-      'from the app on. Cash is refused: choose a bank or mobile money ' +
-      "method, with its reference and the Society's bank account from " +
-      "/api/v1/member/reference. 404 unless the account is the caller's " +
-      'own.',
+      'from the app on. Paid by bank transfer or Juice only, with its ' +
+      "reference and the Society's bank account from " +
+      '/api/v1/member/me/deposit-options. 404 unless the account is the ' +
+      "caller's own or a minor's in their care.",
     tag: 'Transactions',
     caller: 'member',
     idempotent: true,

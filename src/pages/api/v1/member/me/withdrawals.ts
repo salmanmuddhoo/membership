@@ -1,6 +1,6 @@
-// Ask for money out of one of the caller's own accounts (S-2102) — the
-// staff withdrawal endpoint's own transaction, captured by the member app
-// in the Member role.
+// Ask for money out of one of the caller's accounts, or a minor's in their
+// care (S-2102) — the staff withdrawal endpoint's own transaction, captured
+// by the member app in the Member role.
 import type { APIRoute } from 'astro';
 import { defineMemberEndpoint, apiSuccess } from '@lib/member/endpoint';
 import { recordMemberWithdrawal } from '@lib/member/transactions';
@@ -114,7 +114,7 @@ const endpoint = defineMemberEndpoint(
       'never posts at once. Refused (403) until the Society switches ' +
       'withdrawals from the app on. The method is how it will be paid ' +
       'out, with its reference where the method requires one. 404 unless ' +
-      "the account is the caller's own.",
+      "the account is the caller's own or a minor's in their care.",
     tag: 'Transactions',
     caller: 'member',
     idempotent: true,
