@@ -77,6 +77,8 @@ let accountOfficer: Principal;
 let secretary: Principal;
 let president: Principal;
 let treasurer: Principal;
+let regionalOfficer: Principal;
+let otherBankAccountId: string;
 let zaid: { memberId: string; msa: string };
 
 async function staff(
@@ -239,16 +241,29 @@ beforeAll(async () => {
     await run(
       appUrl,
       `begin; set local albarakah.actor_description = 'member.test';
-       insert into bank_account (code, name, bank_name, account_number)
-       values ('mcb', 'MCB current', 'MCB', '000123456789'); commit;
+       insert into bank_account
+         (code, name, bank_name, account_number, is_member_app_default)
+       values ('mcb', 'MCB current', 'MCB', '000123456789', true),
+              ('sbm', 'SBM savings', 'SBM', '61030100012345', false);
+       commit;
        select id from bank_account where code = 'mcb'`
     ).then(r => (Array.isArray(r) ? r[r.length - 1] : r))
+  ).rows[0].id;
+
+  otherBankAccountId = (
+    await run(appUrl, `select id from bank_account where code = 'sbm'`)
   ).rows[0].id;
 
   accountOfficer = await staff('accounts', 'account_officer', [
     'transaction.view',
     'transaction.post',
     'transaction.approve',
+    'transaction.record_app_deposit',
+  ]);
+  // Posts at the counter, and nothing a member asked for from the app.
+  regionalOfficer = await staff('regional', 'regional_officer', [
+    'transaction.view',
+    'transaction.post',
   ]);
   secretary = await staff('secretary', 'secretary', [
     'transaction.view',
@@ -391,15 +406,25 @@ describe('transactions from the member app (S-2102)', () => {
         })
       ).method
     ).toBe('juice');
-    // The branch's rules apply underneath: the bank account is demanded.
+    // Paid into the one account members are shown: named or not, that is
+    // the account recorded, and another is refused.
+    expect(
+      (
+        await member.recordMemberDeposit(fatimah, {
+          ...deposit,
+          bankAccountId: undefined,
+          methodReference: 'MB-NONE',
+        })
+      ).bankAccountId
+    ).toBe(bankAccountId);
     await expect(
       member.recordMemberDeposit(fatimah, {
         ...deposit,
-        bankAccountId: undefined,
+        bankAccountId: otherBankAccountId,
       })
     ).rejects.toMatchObject({
       code: 'validation_failed',
-      message: expect.stringMatching(/bank account/),
+      details: { bankAccountId: ['Pay into 000123456789.'] },
     });
     // Migration 0120's rule "by Member": any amount goes to Accounts
     // verification, even one the matrix posts at once for an officer.
@@ -579,6 +604,23 @@ describe('officers validate what a member asks for, and the member sees where it
       stage: 'Being recorded by the accounts department',
     });
 
+    // Recording it is the accounts department's own permission: a
+    // Regional Officer, who posts at the counter, neither sees it waiting
+    // nor may record it.
+    expect(
+      (await review.approvedTransactions(regionalOfficer)).some(
+        t => t.id === deposit.id
+      )
+    ).toBe(false);
+    await expect(
+      review.postApprovedTransaction(deposit.id, regionalOfficer)
+    ).rejects.toThrowError(/recorded by the accounts department/);
+    expect(
+      (await review.approvedTransactions(accountOfficer)).some(
+        t => t.id === deposit.id
+      )
+    ).toBe(true);
+
     // The officer who verified it records it too (officer direction): no
     // second person needed for money coming in from the app.
     const posted = await review.postApprovedTransaction(
@@ -712,13 +754,16 @@ describe('how a deposit from the app may be paid', () => {
       expect.objectContaining({ code: 'bank_transfer', touchesBank: true }),
       expect.objectContaining({ code: 'juice', touchesBank: true }),
     ]);
-    // Whole, to pay to — not masked as the branch's lists show it.
-    expect(options.bankAccounts).toContainEqual({
-      id: bankAccountId,
-      name: 'MCB current',
-      bankName: 'MCB',
-      accountNumber: '000123456789',
-    });
+    // One account, whole, to pay to — not the list, and not masked as the
+    // branch's lists show it.
+    expect(options.bankAccounts).toEqual([
+      {
+        id: bankAccountId,
+        name: 'MCB current',
+        bankName: 'MCB',
+        accountNumber: '000123456789',
+      },
+    ]);
     // An applicant has proved a phone number, nothing more.
     await expect(
       member.depositOptions({
@@ -841,5 +886,124 @@ describe("a guardian moves money on a minor's account", () => {
         r => r.accountId === zaid.msa
       )
     ).toBe(false);
+  });
+});
+
+describe('the one account a member pays into', () => {
+  it('moves with the mark at Configuration -> Bank accounts, and is never inactive', async () => {
+    const { config } = await load();
+    const accounts = await config.listBankAccounts();
+    const sbm = accounts.find(a => a.id === otherBankAccountId)!;
+    const mcb = accounts.find(a => a.id === bankAccountId)!;
+    const input = (a: typeof sbm) => ({
+      name: a.name,
+      bankName: a.bankName,
+      accountNumber: a.accountNumber,
+      currency: a.currency,
+      openingBalance: a.openingBalance,
+      openingDate: a.openingDate,
+      isActive: true,
+    });
+    try {
+      // Marking another unmarks the first: one at a time.
+      await config.updateBankAccount(
+        sbm.id,
+        { ...input(sbm), isMemberAppDefault: true },
+        actor
+      );
+      const { member: after } = await load();
+      expect(
+        (await after.depositOptions(fatimah)).bankAccounts.map(a => a.id)
+      ).toEqual([sbm.id]);
+
+      // An inactive account is never it; with none marked, deposits from
+      // the app wait until one is.
+      await config.updateBankAccount(
+        sbm.id,
+        { ...input(sbm), isActive: false, isMemberAppDefault: true },
+        actor
+      );
+      const { member: none } = await load();
+      expect((await none.depositOptions(fatimah)).bankAccounts).toEqual([]);
+      await expect(
+        none.recordMemberDeposit(fatimah, {
+          accountId: fatimahMsa,
+          amount: '10',
+          method: 'bank_transfer',
+          methodReference: 'MB-NONE-2',
+        })
+      ).rejects.toMatchObject({
+        code: 'forbidden',
+        message:
+          'Deposits from the app are not available yet. Please visit the branch.',
+      });
+    } finally {
+      await config.updateBankAccount(sbm.id, input(sbm), actor);
+      await config.updateBankAccount(
+        mcb.id,
+        { ...input(mcb), isMemberAppDefault: true },
+        actor
+      );
+    }
+  });
+});
+
+describe('how a member asks to be paid a withdrawal', () => {
+  it('chooses bank transfer, with their own account, or cheque — and the Treasurer is told', async () => {
+    const { member } = await load();
+    expect((await member.appPayoutMethods()).map(m => m.code)).toEqual([
+      'bank_transfer',
+      'cheque',
+    ]);
+    const cheque = await member.recordMemberWithdrawal(fatimah, {
+      accountId: fatimahMsa,
+      amount: '20',
+      method: 'cheque',
+      reason: 'School fees',
+    });
+    expect(cheque).toMatchObject({
+      method: 'cheque',
+      reason: 'To be paid by cheque. School fees',
+    });
+
+    // A bank transfer names where it goes.
+    await expect(
+      member.recordMemberWithdrawal(fatimah, {
+        accountId: fatimahMsa,
+        amount: '20',
+        method: 'bank_transfer',
+      })
+    ).rejects.toMatchObject({
+      code: 'validation_failed',
+      details: {
+        payToBank: ['Enter the name of your bank.'],
+        payToAccountNumber: [
+          'Enter your account number: letters, digits, spaces and dashes.',
+        ],
+      },
+    });
+    const transfer = await member.recordMemberWithdrawal(fatimah, {
+      accountId: fatimahMsa,
+      amount: '20',
+      method: 'bank_transfer',
+      payToBank: 'MCB',
+      payToAccountNumber: '000999888777',
+    });
+    expect(transfer).toMatchObject({
+      method: 'bank_transfer',
+      reason: 'To be paid by bank transfer to MCB, account 000999888777.',
+    });
+
+    // Nothing else: not cash, not the rest of the branch's list.
+    await expect(
+      member.recordMemberWithdrawal(fatimah, {
+        accountId: fatimahMsa,
+        amount: '20',
+        method: 'cash',
+      })
+    ).rejects.toMatchObject({
+      code: 'validation_failed',
+      details: { method: ['Choose Bank transfer or Cheque.'] },
+    });
   });
 });

@@ -352,7 +352,8 @@ segregation rules refuse the officer who captured it (0069, 0071).
 `/transactions/pending` is one queue for every kind: what waits at a step the
 person's role owns, what is approved for them to pay out or post
 (`transaction.disburse` for money going out, `transaction.post` for money
-coming in), and their own captures a reviewer returned. The sidebar badge on
+coming in — `transaction.record_app_deposit` for a deposit a member made
+from the app, migration 0121), and their own captures a reviewer returned. The sidebar badge on
 Transactions counts the same three, so a badge counts what its own link
 opens — the President's number on Applications stays the applications.
 

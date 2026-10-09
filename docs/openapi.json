@@ -7360,7 +7360,7 @@
     "/api/v1/member/me/deposit-options": {
       "get": {
         "summary": "How a deposit from the app may be paid, and where to",
-        "description": "The ways a deposit from the app may have been paid (bank transfer or Juice, while the Society offers them) and its active bank accounts with their account numbers. touchesBank: name one of bankAccounts; requiresReference: give the reference of the payment. 403 for an applicant, who holds no account.",
+        "description": "The ways a deposit from the app may have been paid (bank transfer or Juice, while the Society offers them) and the one bank account members pay into, with its number: the one marked at Configuration -> Bank accounts; empty until one is. requiresReference: give the reference of the payment. 403 for an applicant, who holds no account.",
         "tags": [
           "Transactions"
         ],
@@ -9194,7 +9194,7 @@
     "/api/v1/member/me/withdrawals": {
       "post": {
         "summary": "Ask for money out of one of the caller's accounts",
-        "description": "Recorded as the staff withdrawal is and routed by the approval matrix with Member as the initiating role; it waits on a chain, never posts at once. Refused (403) until the Society switches withdrawals from the app on. The method is how it will be paid out, with its reference where the method requires one. 404 unless the account is the caller's own or a minor's in their care.",
+        "description": "Recorded as the staff withdrawal is and routed by the approval matrix with Member as the initiating role; it waits on a chain, never posts at once. Refused (403) until the Society switches withdrawals from the app on. The member chooses how to receive it — bank transfer to their own account, or cheque — and the Treasurer pays that way, recording the reference at Disburse. 404 unless the account is the caller's own or a minor's in their care.",
         "tags": [
           "Transactions"
         ],
@@ -9557,16 +9557,19 @@
                   },
                   "method": {
                     "type": "string",
-                    "description": "How it is paid out: a payment_method code. Optional: a withdrawal from the app goes for approval (migration 0120) and the Treasurer says how at Disburse."
+                    "enum": [
+                      "bank_transfer",
+                      "cheque"
+                    ],
+                    "description": "How the member asks to receive it (withdrawalMethods on /api/v1/member/reference). The Treasurer pays that way at Disburse. Omitted: the Treasurer decides."
                   },
-                  "methodReference": {
+                  "payToBank": {
                     "type": "string",
-                    "description": "Required where the method says so."
+                    "description": "With bank_transfer: the member's own bank."
                   },
-                  "bankAccountId": {
+                  "payToAccountNumber": {
                     "type": "string",
-                    "format": "uuid",
-                    "description": "One of the Society's bank accounts from /api/v1/member/reference. Required with the reference where the method touches a bank."
+                    "description": "With bank_transfer: the member's own account number there."
                   },
                   "reason": {
                     "type": "string"
@@ -9835,7 +9838,7 @@
     "/api/v1/member/reference": {
       "get": {
         "summary": "Read the membership types a person can apply for",
-        "description": "Active membership types with their field configuration, the documents an applicant files from the phone (the signed form is a branch step and is left out), and the fees in force. The Society's bank accounts a member may pay into, by name (their numbers are for a signed-in member, at /api/v1/member/me/deposit-options); which transactions the app may start (Configuration -> Member app) and how a deposit may be paid: bank transfer or Juice. Public.",
+        "description": "Active membership types with their field configuration, the documents an applicant files from the phone (the signed form is a branch step and is left out), and the fees in force. The Society's bank account a member pays into from the app (the one marked at Configuration -> Bank accounts), by name; its number is for a signed-in member, at /api/v1/member/me/deposit-options. Which transactions the app may start (Configuration -> Member app) and how a deposit may be paid: bank transfer or Juice. Public.",
         "tags": [
           "Member app"
         ],
@@ -9860,7 +9863,8 @@
                         "membershipTypes",
                         "bankAccounts",
                         "enabledOperations",
-                        "depositMethods"
+                        "depositMethods",
+                        "withdrawalMethods"
                       ],
                       "properties": {
                         "enabledOperations": {
@@ -9898,6 +9902,29 @@
                               },
                               "touchesBank": {
                                 "type": "boolean"
+                              }
+                            }
+                          }
+                        },
+                        "withdrawalMethods": {
+                          "type": "array",
+                          "description": "How a member may ask to receive a withdrawal: bank transfer (to their own account, which they give) or cheque, while the Society offers them for withdrawals.",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "code",
+                              "name"
+                            ],
+                            "properties": {
+                              "code": {
+                                "type": "string",
+                                "enum": [
+                                  "bank_transfer",
+                                  "cheque"
+                                ]
+                              },
+                              "name": {
+                                "type": "string"
                               }
                             }
                           }

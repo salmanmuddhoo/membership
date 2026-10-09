@@ -183,10 +183,10 @@ header is the whole of what is needed; a body is not.
 | GET    | `/me/accounts/{id}/history`                                      | member | The staff `/accounts/{id}/history` payload, newest first, paged by `before`; 404 unless the caller's.                                                                                                                                                                                                                                                                                                    |
 | GET    | `/me/accounts/{id}/statement`                                    | member | The staff `/accounts/{id}/statement` payload for a period (`from`, `to`; the month to date by default), or the spreadsheet with `format=xlsx`; 404 unless the caller's.                                                                                                                                                                                                                                  |
 | POST   | `/me/deposits`                                                   | member | A deposit into the caller's own account or a guarded minor's, captured by the system user in the Member role and routed by the matrix; bank transfer or Juice only; 403 until deposits from the app are switched on (S-2102).                                                                                                                                                                            |
-| POST   | `/me/withdrawals`                                                | member | A withdrawal from the caller's own account or a guarded minor's, the same way; 403 until switched on.                                                                                                                                                                                                                                                                                                    |
+| POST   | `/me/withdrawals`                                                | member | A withdrawal from the caller's own account or a guarded minor's, the same way, paid by the member's choice of bank transfer (to their own account, given) or cheque; 403 until switched on.                                                                                                                                                                                                              |
 | POST   | `/me/transfers`                                                  | member | A transfer from the caller's own account or a guarded minor's to an account here, the same way; 403 until switched on.                                                                                                                                                                                                                                                                                   |
 | GET    | `/me/transactions`                                               | member | The requests made from the app on the caller's accounts and their guarded minors' (`forMinor`), and where each stands: Pending approval with who has it, approved, completed, or not approved with the officer's reason (migration 0120).                                                                                                                                                                |
-| GET    | `/me/deposit-options`                                            | member | How a deposit from the app may be paid (bank transfer or Juice) and the Society's active bank accounts with their account numbers, whole: for a member or account holder only, 403 for an applicant.                                                                                                                                                                                                     |
+| GET    | `/me/deposit-options`                                            | member | How a deposit from the app may be paid (bank transfer or Juice) and the one Society bank account members pay into (marked at Configuration → Bank accounts) with its account number, whole: for a member or account holder only, 403 for an applicant.                                                                                                                                                   |
 | GET    | `/me/documents`                                                  | member | `documentsForMember`; each entry's `id` opens at the row below.                                                                                                                                                                                                                                                                                                                                          |
 | GET    | `/me/dependents`                                                 | member | The active minors the caller is guardian of (member or non-member account holder), each with their accounts and balances. Matched on the guardian block by the caller's Member No. or NIC (`members/guardian.ts`); empty for a member who guards nobody. Deposits, withdrawals and transfers on these accounts go through the endpoints above.                                                           |
 | GET    | `/me/dependents/{dependentId}/accounts/{accountId}/transactions` | member | The entries behind a guarded minor's balance, oldest first; 404 unless the caller guards the minor and the account is that minor's.                                                                                                                                                                                                                                                                      |
@@ -289,11 +289,11 @@ request from the app is validated by officers before money moves, and the
 member sees **Pending approval** until then. Three rules "by Member" sit
 at the top of the matrix, any amount:
 
-| From the app | Chain                                                  | Then                                                                  |
-| ------------ | ------------------------------------------------------ | --------------------------------------------------------------------- |
-| Deposit      | Deposit from the member app: **Accounts verification** | An Account Officer records it — the same one may (`transaction.post`) |
-| Withdrawal   | Withdrawal approval: **Secretary → President**         | The **Treasurer** disburses it (`transaction.disburse`)               |
-| Transfer     | Transfer approval: **Secretary → President**           | It is recorded (`transaction.post`)                                   |
+| From the app | Chain                                                  | Then                                                                                |
+| ------------ | ------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| Deposit      | Deposit from the member app: **Accounts verification** | An Account Officer records it — the same one may (`transaction.record_app_deposit`) |
+| Withdrawal   | Withdrawal approval: **Secretary → President**         | The **Treasurer** disburses it (`transaction.disburse`)                             |
+| Transfer     | Transfer approval: **Secretary → President**           | It is recorded (`transaction.post`)                                                 |
 
 Accounts verification is a one-step chain for the Account Officer, which
 is therefore also given `transaction.approve`; acting on a step still needs
@@ -314,6 +314,32 @@ against the bank statement, not paid out on anyone's word
 (`postingExemptions` in `ledger/review.ts`). A withdrawal, a transfer, and
 any deposit an officer captured keep the rule.
 
+**Recording one is its own permission** (officer direction, migration
+0121). `transaction.record_app_deposit`, given to the Account Officer,
+records an approved deposit a member made from the app; `transaction.post`,
+which the Regional Officer and others hold for the counter, does not reach
+it (`permissionToPost` in `ledger/review.ts`). Such a deposit is not on
+their queue and the staff page offers them no Record button. An
+administrator moves the permission at Configuration → Roles.
+
+**One account to pay into** (officer direction, migration 0121). A member
+is shown one of the Society's bank accounts, never the list: the one
+marked "Members pay into this account from the app" at Configuration →
+Bank accounts. At most one is marked, and only an active one; marking
+another unmarks the first, and deactivating it unmarks it. A deposit from
+the app is recorded against that account whatever the app names, and one
+naming another is refused. With none marked, deposits from the app answer
+403 "not available yet" and the app says so. The migration marked the
+account where there was only one active.
+
+**How a withdrawal is paid** (officer direction). The member chooses:
+`bank_transfer` to their own account, whose bank and number they give
+(`payToBank`, `payToAccountNumber`), or `cheque`. The choice is the
+withdrawal's method, the note says it in words ("To be paid by bank
+transfer to MCB, account …"), and the Treasurer's Disburse form starts at
+it, saying the member asked. `/reference` lists the two as
+`withdrawalMethods`, while the Society offers them for withdrawals.
+
 **What the member sees.** `GET /me/transactions` lists what the caller
 asked for from the app, newest first: `state` pending, approved,
 completed, declined, returned or cancelled, `statusLabel` in the member's
@@ -323,9 +349,9 @@ words ("Pending approval", "Approved", "Paid out", "Not approved"),
 declined, the officer's `reason`. `/reference` says which operations are
 switched on (`enabledOperations`) and how a deposit may have been paid
 (`depositMethods`: bank transfer or Juice). `GET /me/deposit-options`
-gives a signed-in member the same methods and the Society's bank accounts
-with their **account numbers**, whole, to pay to; the public `/reference`
-names the accounts only.
+gives a signed-in member the same methods and the one bank account to pay
+into with its **account number**, whole; the public `/reference` names it
+only.
 
 **For a minor in their care.** A guardian may ask for a deposit, a
 withdrawal or a transfer on the account of a minor they guard (officer
