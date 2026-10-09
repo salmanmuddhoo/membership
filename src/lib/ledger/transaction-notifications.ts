@@ -269,13 +269,22 @@ export async function notifyReviewed(
         }
         break;
       }
-      case 'reject':
-        if (t.kind === 'withdrawal') {
-          written.push(
-            ...(await toHolder(t, 'withdrawal.rejected', { comment }))
-          );
-        }
+      case 'reject': {
+        // A deposit or a transfer refused is news to the member too once
+        // they can start one from the app (migration 0120) — and to the
+        // holder of one an officer recorded, who would otherwise learn it
+        // only from a balance that never moved.
+        const event =
+          t.kind === 'withdrawal'
+            ? 'withdrawal.rejected'
+            : t.kind === 'deposit'
+              ? 'deposit.rejected'
+              : t.kind === 'transfer_leg' && t.legDirection === 'debit'
+                ? 'transfer.rejected'
+                : null;
+        if (event) written.push(...(await toHolder(t, event, { comment })));
         break;
+      }
     }
   } catch (error) {
     console.error('[transactions] could not send notification:', error);

@@ -185,6 +185,7 @@ header is the whole of what is needed; a body is not.
 | POST   | `/me/deposits`                                                   | member | A deposit into the caller's own account, captured by the system user in the Member role and routed by the matrix; never cash; 403 until deposits from the app are switched on (S-2102).                                                                                                                                                                                                                  |
 | POST   | `/me/withdrawals`                                                | member | A withdrawal from the caller's own account, the same way; 403 until switched on.                                                                                                                                                                                                                                                                                                                         |
 | POST   | `/me/transfers`                                                  | member | A transfer from the caller's own account to an account here, the same way; 403 until switched on.                                                                                                                                                                                                                                                                                                        |
+| GET    | `/me/transactions`                                               | member | The requests the caller made from the app and where each stands: Pending approval with who has it, approved, completed, or not approved with the officer's reason (migration 0120).                                                                                                                                                                                                                      |
 | GET    | `/me/documents`                                                  | member | `documentsForMember`; each entry's `id` opens at the row below.                                                                                                                                                                                                                                                                                                                                          |
 | GET    | `/me/dependents`                                                 | member | The active minors the caller is guardian of (member or non-member account holder), each with their accounts and balances. Matched on the guardian block by the caller's Member No. or NIC (`members/guardian.ts`); empty for a member who guards nobody. Read-only.                                                                                                                                      |
 | GET    | `/me/dependents/{dependentId}/accounts/{accountId}/transactions` | member | The entries behind a guarded minor's balance, oldest first; 404 unless the caller guards the minor and the account is that minor's.                                                                                                                                                                                                                                                                      |
@@ -281,6 +282,38 @@ chain of the Society's choosing. Because the app never holds
 and "please visit the branch": a member's transaction goes to a chain or it
 goes nowhere, and the officers on that chain decide. It can never be more
 lenient than a clerk's.
+
+**Where it goes** (officer direction, October 2026; migration 0120). Every
+request from the app is validated by officers before money moves, and the
+member sees **Pending approval** until then. Three rules "by Member" sit
+at the top of the matrix, any amount:
+
+| From the app | Chain                                                  | Then                                                               |
+| ------------ | ------------------------------------------------------ | ------------------------------------------------------------------ |
+| Deposit      | Deposit from the member app: **Accounts verification** | Another Account Officer records it (`transaction.post`; four eyes) |
+| Withdrawal   | Withdrawal approval: **Secretary → President**         | The **Treasurer** disburses it (`transaction.disburse`)            |
+| Transfer     | Transfer approval: **Secretary → President**           | It is recorded (`transaction.post`)                                |
+
+Accounts verification is a one-step chain for the Account Officer, which
+is therefore also given `transaction.approve`; acting on a step still needs
+that step's role, so it reaches no other chain's decision. A request from
+the app is **never returned** — its captor is the system user, so nobody
+could correct it and it would sit in no queue holding the member's money
+as pending: `reviewTransaction` refuses a return and the staff page hides
+the button, so a reviewer rejects it with the reason, which the member is
+told (push wording for `deposit.rejected`, `transfer.rejected` and
+`withdrawal.rejected`). All of it is configuration, at Configuration →
+Approval matrix and → Workflows.
+
+**What the member sees.** `GET /me/transactions` lists what the caller
+asked for from the app, newest first: `state` pending, approved,
+completed, declined, returned or cancelled, `statusLabel` in the member's
+words ("Pending approval", "Approved", "Paid out", "Not approved"),
+`stage` naming who has it ("Being verified by the accounts department",
+"With the Secretary", "Awaiting disbursement by the Treasurer") and, when
+declined, the officer's `reason`. `/reference` says which operations are
+switched on (`enabledOperations`) and how a deposit may have been paid
+(`depositMethods`, never cash).
 
 **Whether it may be started at all.** `member_api.enabled_operations`, set
 at Configuration → Member app (`config.manage`), lists which of the three

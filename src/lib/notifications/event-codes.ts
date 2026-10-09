@@ -58,6 +58,8 @@ export const TRANSACTION_PLACEHOLDERS: Record<string, readonly string[]> = {
     'balance',
   ],
   'withdrawal.rejected': [...TRANSACTION_COMMON, 'comment'],
+  'deposit.rejected': [...TRANSACTION_COMMON, 'comment'],
+  'transfer.rejected': [...TRANSACTION_COMMON, 'comment'],
   'transfer.posted': [
     ...TRANSACTION_COMMON,
     'from_account',

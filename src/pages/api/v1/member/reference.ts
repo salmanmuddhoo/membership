@@ -9,10 +9,12 @@ import type { APIRoute } from 'astro';
 import { defineMemberEndpoint, apiSuccess } from '@lib/member/endpoint';
 import { checklistItemId, isOnlineRegistrable } from '@lib/member/applications';
 import {
+  enabledMemberOperations,
   listChecklists,
   listFeeSchedules,
   listMembershipTypes,
   offeredBankAccounts,
+  offeredPaymentMethods,
 } from '@lib/config/reference';
 import { COMPONENT_LABELS } from '@lib/payments/payments';
 
@@ -27,13 +29,47 @@ const endpoint = defineMemberEndpoint(
       'Active membership types with their field configuration, the ' +
       'documents an applicant files from the phone (the signed form is a ' +
       'branch step and is left out), and the fees in force. The ' +
-      "Society's bank accounts a member may pay into, by name. Public.",
+      "Society's bank accounts a member may pay into, by name; which " +
+      'transactions the app may start (Configuration -> Member app) and ' +
+      'how a deposit may be paid, never cash. Public.',
     tag: 'Member app',
     caller: 'public',
     responseSchema: {
       type: 'object',
-      required: ['membershipTypes', 'bankAccounts'],
+      required: [
+        'membershipTypes',
+        'bankAccounts',
+        'enabledOperations',
+        'depositMethods',
+      ],
       properties: {
+        enabledOperations: {
+          type: 'array',
+          description:
+            'Which transactions a member may start from the app. Empty ' +
+            'until the Society switches them on.',
+          items: {
+            type: 'string',
+            enum: ['deposit', 'withdrawal', 'transfer'],
+          },
+        },
+        depositMethods: {
+          type: 'array',
+          description:
+            'How a deposit from the app may have been paid: the methods ' +
+            'offered for money in, less cash. touchesBank: name one of ' +
+            'bankAccounts; requiresReference: give its reference.',
+          items: {
+            type: 'object',
+            required: ['code', 'name', 'requiresReference', 'touchesBank'],
+            properties: {
+              code: { type: 'string' },
+              name: { type: 'string' },
+              requiresReference: { type: 'boolean' },
+              touchesBank: { type: 'boolean' },
+            },
+          },
+        },
         bankAccounts: {
           type: 'array',
           items: {
@@ -178,11 +214,20 @@ const endpoint = defineMemberEndpoint(
     },
   },
   async ({ correlationId }) => {
-    const [types, checklists, schedules, bankAccounts] = await Promise.all([
+    const [
+      types,
+      checklists,
+      schedules,
+      bankAccounts,
+      enabledOperations,
+      methods,
+    ] = await Promise.all([
       listMembershipTypes(),
       listChecklists(),
       listFeeSchedules(),
       offeredBankAccounts(),
+      enabledMemberOperations(),
+      offeredPaymentMethods('deposit'),
     ]);
 
     const membershipTypes = types
@@ -237,6 +282,16 @@ const endpoint = defineMemberEndpoint(
           name: a.name,
           bankName: a.bankName,
         })),
+        enabledOperations,
+        // Nobody took cash from a phone (recordMemberDeposit refuses it).
+        depositMethods: methods
+          .filter(m => !m.isCash)
+          .map(m => ({
+            code: m.code,
+            name: m.name,
+            requiresReference: m.requiresReference,
+            touchesBank: m.touchesBank,
+          })),
       },
       correlationId
     );

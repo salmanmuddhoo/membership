@@ -460,7 +460,10 @@ describe('S-1301, S-1302 the ledger', () => {
       'secretary',
       'system_administrator',
     ]);
+    // 0120: the Account Officer decides Accounts verification, the one
+    // step of a deposit made from the member app.
     expect(await holders('transaction.approve')).toEqual([
+      'account_officer',
       'president',
       'system_administrator',
     ]);
@@ -487,12 +490,19 @@ describe('S-1301, S-1302 the ledger', () => {
       'transaction_closure',
       'transaction_demise',
       'transaction_deposit',
+      'transaction_member_deposit',
       'transaction_resignation',
       'transaction_transfer',
       'transaction_withdrawal',
     ]);
     for (const row of chains.rows) {
-      expect(row.steps).toEqual(['secretary_review', 'president_decision']);
+      // 0120's deposit from the member app is the accounts department's
+      // alone; every kind's own chain is Secretary → President.
+      expect(row.steps).toEqual(
+        row.code === 'transaction_member_deposit'
+          ? ['accounts_verification']
+          : ['secretary_review', 'president_decision']
+      );
     }
     const statuses = await run(
       appUrl,
@@ -509,11 +519,47 @@ describe('S-1301, S-1302 the ledger', () => {
       'rejected',
       'cancelled',
     ]);
+    // 0120's rules "by Member" route what the member app starts, any
+    // amount, ahead of everything else; the bands below are FRD 6.5's.
+    const memberRules = await run(
+      appUrl,
+      `select a.kind, a.sort_order, a.amount_from, a.amount_to, d.code
+         from approval_rule a
+         join role r on r.id = a.initiating_role_id
+         join workflow_definition d on d.id = a.workflow_definition_id
+        where r.code = 'member'
+        order by a.kind`
+    );
+    expect(memberRules.rows).toEqual([
+      {
+        kind: 'deposit',
+        sort_order: 1,
+        amount_from: '0.00',
+        amount_to: null,
+        code: 'transaction_member_deposit',
+      },
+      {
+        kind: 'transfer',
+        sort_order: 1,
+        amount_from: '0.00',
+        amount_to: null,
+        code: 'transaction_transfer',
+      },
+      {
+        kind: 'withdrawal',
+        sort_order: 1,
+        amount_from: '0.00',
+        amount_to: null,
+        code: 'transaction_withdrawal',
+      },
+    ]);
     const rules = await run(
       appUrl,
       `select kind, amount_from, amount_to,
               (workflow_definition_id is not null) as reviewed
-         from approval_rule order by kind, sort_order`
+         from approval_rule
+        where initiating_role_id is null
+        order by kind, sort_order`
     );
     expect(rules.rows).toEqual([
       { kind: 'closure', amount_from: '0.00', amount_to: null, reviewed: true },
