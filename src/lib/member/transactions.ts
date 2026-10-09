@@ -15,12 +15,18 @@
 // Which may be started at all: member_api.enabled_operations, empty until
 // the Society says otherwise. The endpoints exist from day one; they refuse
 // until switched on.
+//
+// On whose account: the caller's own, or a minor's they are the guardian of
+// (dependents.ts, accountInReach). A request for a minor is the minor's
+// transaction, and its note says which guardian asked.
 import type { Principal } from '../access/principal';
 import { ApiError } from '../api/envelope';
 import {
   enabledMemberOperations,
-  paymentMethodByCode,
+  offeredBankAccounts,
+  offeredPaymentMethods,
   type MemberOperation,
+  type PaymentMethod,
 } from '../config/reference';
 import { query } from '../db/pool';
 import { DepositError, recordDeposit, type Deposit } from '../ledger/deposits';
@@ -43,9 +49,9 @@ import {
   type Withdrawal,
 } from '../ledger/withdrawals';
 import { systemUser } from './applications';
+import { accountInReach, wardsOf, type Ward } from './dependents';
 import type { MemberPrincipal } from './identity';
 import { maskMobile } from './otp';
-import { ownedAccountId } from './profile';
 
 export const MEMBER_ROLE = 'member';
 const SYSTEM_SUBJECT = 'system:member-app';
@@ -128,6 +134,86 @@ async function attempt<T>(
   }
 }
 
+// How a member may say they paid in from the app: by bank transfer or by
+// Juice, nothing else (officer direction) — and only while the Society
+// still offers that method for deposits.
+export const APP_DEPOSIT_METHODS = ['bank_transfer', 'juice'] as const;
+
+export async function appDepositMethods(): Promise<PaymentMethod[]> {
+  const offered = await offeredPaymentMethods('deposit');
+  return APP_DEPOSIT_METHODS.flatMap(code => {
+    const method = offered.find(m => m.code === code && !m.isCash);
+    return method ? [method] : [];
+  });
+}
+
+export interface DepositOptions {
+  methods: {
+    code: string;
+    name: string;
+    requiresReference: boolean;
+    touchesBank: boolean;
+  }[];
+  // The Society's accounts a member pays into, with the number to pay to:
+  // shown whole, and only to a signed-in member, never on the public
+  // reference.
+  bankAccounts: {
+    id: string;
+    name: string;
+    bankName: string;
+    accountNumber: string;
+  }[];
+}
+
+/**
+ * What the deposit form offers a member or account holder. An applicant —
+ * anyone who has proved a phone number — holds no account to pay into and
+ * is not given the Society's account numbers.
+ */
+export async function depositOptions(
+  member: MemberPrincipal
+): Promise<DepositOptions> {
+  if (!member.memberId && !member.customerId) {
+    throw new ApiError('forbidden', 'Only a member can pay in from the app.');
+  }
+  const [methods, accounts] = await Promise.all([
+    appDepositMethods(),
+    offeredBankAccounts(),
+  ]);
+  return {
+    methods: methods.map(m => ({
+      code: m.code,
+      name: m.name,
+      requiresReference: m.requiresReference,
+      touchesBank: m.touchesBank,
+    })),
+    bankAccounts: accounts.map(a => ({
+      id: a.id,
+      name: a.name,
+      bankName: a.bankName,
+      accountNumber: a.accountNumber,
+    })),
+  };
+}
+
+// The note a request for a minor carries, so the officer deciding it knows
+// the guardian asked, and which one.
+async function noteFor(
+  member: MemberPrincipal,
+  ward: Ward | null,
+  note: string | undefined
+): Promise<string | undefined> {
+  const own = (note ?? '').trim();
+  if (!ward) return own || undefined;
+  const guardian = await query<{ member_no: string | null }>(
+    `select member_no from member where id = $1`,
+    [member.memberId]
+  );
+  const who = guardian.rows[0]?.member_no ?? 'their guardian';
+  const asked = `Requested in the app by the guardian, ${who}.`;
+  return own ? `${asked} ${own}` : asked;
+}
+
 export interface MemberDepositInput {
   accountId: string;
   amount: string;
@@ -138,24 +224,29 @@ export interface MemberDepositInput {
   idempotencyKey?: string;
 }
 
-/** Pay into one of the caller's own accounts. Never cash: nobody took any. */
+/**
+ * Pay into one of the caller's accounts, or a minor's in their care. By
+ * bank transfer or Juice only: never cash, nobody took any.
+ */
 export async function recordMemberDeposit(
   member: MemberPrincipal,
   input: MemberDepositInput
 ): Promise<Deposit> {
   await requireEnabled('deposit');
-  const accountId = await ownedAccountId(member, input.accountId);
-  const method = await paymentMethodByCode(input.method);
-  if (method?.isCash) {
+  const { accountId, ward } = await accountInReach(member, input.accountId);
+  const methods = await appDepositMethods();
+  if (!methods.some(m => m.code === input.method)) {
+    const names = methods.map(m => m.name).join(' or ') || 'a branch';
     throw new ApiError(
       'validation_failed',
-      'Cash cannot be paid in from the app.',
-      { method: ['Choose a bank or mobile money method.'] }
+      'That way of paying cannot be used from the app.',
+      { method: [`Choose ${names}.`] }
     );
   }
+  const reason = await noteFor(member, ward, input.reason);
   const principal = await actingPrincipal(member);
   return attempt('deposit', () =>
-    recordDeposit({ ...input, accountId }, principal)
+    recordDeposit({ ...input, accountId, reason }, principal)
   );
 }
 
@@ -171,16 +262,17 @@ export interface MemberWithdrawalInput {
   idempotencyKey?: string;
 }
 
-/** Ask for money out of one of the caller's own accounts. */
+/** Ask for money out of one of the caller's accounts, or a minor's. */
 export async function recordMemberWithdrawal(
   member: MemberPrincipal,
   input: MemberWithdrawalInput
 ): Promise<Withdrawal> {
   await requireEnabled('withdrawal');
-  const accountId = await ownedAccountId(member, input.accountId);
+  const { accountId, ward } = await accountInReach(member, input.accountId);
+  const reason = await noteFor(member, ward, input.reason);
   const principal = await actingPrincipal(member);
   return attempt('withdrawal', () =>
-    recordWithdrawal({ ...input, accountId }, principal)
+    recordWithdrawal({ ...input, accountId, reason }, principal)
   );
 }
 
@@ -193,16 +285,21 @@ export interface MemberTransferInput {
 }
 
 /**
- * Move money from one of the caller's own accounts to an account here —
- * another of theirs, or somebody else's. Never to a payee outside: that is
- * a withdrawal in another name, and the branch's to record.
+ * Move money from one of the caller's accounts, or a minor's in their care,
+ * to an account here — another of theirs, or somebody else's. Never to a
+ * payee outside: that is a withdrawal in another name, and the branch's to
+ * record.
  */
 export async function recordMemberTransfer(
   member: MemberPrincipal,
   input: MemberTransferInput
 ): Promise<Transfer> {
   await requireEnabled('transfer');
-  const sourceAccountId = await ownedAccountId(member, input.sourceAccountId);
+  const { accountId: sourceAccountId, ward } = await accountInReach(
+    member,
+    input.sourceAccountId
+  );
+  const reason = await noteFor(member, ward, input.reason);
   const principal = await actingPrincipal(member);
   return attempt('transfer', () =>
     recordTransfer(
@@ -210,7 +307,7 @@ export async function recordMemberTransfer(
         sourceAccountId,
         amount: input.amount,
         destination: { kind: 'account', accountId: input.destinationAccountId },
-        reason: input.reason,
+        reason,
         idempotencyKey: input.idempotencyKey,
       },
       principal
@@ -247,6 +344,9 @@ export interface MemberRequest {
   counterpartAccountTypeName: string | null;
   // How a deposit was paid; null on the others.
   methodName: string | null;
+  // The minor it was asked for, by name, when it is on a minor's account
+  // in the caller's care; null on the caller's own.
+  forMinor: string | null;
   // The member's own note.
   note: string;
   // Why it was not approved, as the officer wrote it.
@@ -271,24 +371,26 @@ async function stageWhilePending(t: TransactionSummary): Promise<string> {
 }
 
 /**
- * Where each request the caller made from the app stands, newest first:
- * only what the app captured, only from their own accounts, and a
- * transfer once (its debit leg). Fifty is more than a phone shows.
+ * Where each request made from the app stands, newest first: only what the
+ * app captured, only on the caller's own accounts and those of the minors
+ * in their care, and a transfer once (its debit leg). Fifty is more than a
+ * phone shows.
  */
 export async function memberRequests(
   member: MemberPrincipal
 ): Promise<MemberRequest[]> {
   const holderId = member.memberId ?? member.customerId;
   if (!holderId) return [];
+  const wards = await wardsOf(member);
   const result = await query<TransactionRow>(
     `${TRANSACTION_SELECT}
       where t.captured_by = $1
-        and coalesce(t.member_id, t.customer_id) = $2
+        and coalesce(t.member_id, t.customer_id) = any($2::uuid[])
         and t.kind in ('deposit', 'withdrawal', 'transfer_leg')
         and (t.leg_direction is null or t.leg_direction = 'debit')
       order by t.created_at desc
       limit 50`,
-    [await systemUser(), holderId]
+    [await systemUser(), [holderId, ...wards.map(w => w.id)]]
   );
   const transactions = result.rows.map(assembleTransaction);
   const ids = transactions.map(t => t.id);
@@ -365,6 +467,7 @@ export async function memberRequests(
       counterpartAccountTypeName:
         kind === 'transfer' ? t.counterpartAccountTypeName : null,
       methodName: kind === 'deposit' ? t.methodName : null,
+      forMinor: wards.find(w => w.id === t.holderId)?.name ?? null,
       note: t.reason,
       reason:
         state === 'declined' || state === 'returned'

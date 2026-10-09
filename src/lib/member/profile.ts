@@ -309,9 +309,16 @@ export async function accountTransactionsFor(
     occurredAt: e.occurredAt.toISOString(),
     direction: e.direction,
     amount: e.amount,
-    description: e.description,
+    description: memberDescription(e.description),
     receiptNo: e.receiptNo,
   }));
+}
+
+// The ledger's words for an entry, less the office's own reference: a
+// member sees "Reversal", not "Reversal of TX-000123" (officer direction,
+// October 2026: the transaction id is not shown in the app).
+export function memberDescription(description: string): string {
+  return /^Reversal of /.test(description) ? 'Reversal' : description;
 }
 
 // --- Documents ---------------------------------------------------------------

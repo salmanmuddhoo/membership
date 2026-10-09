@@ -588,13 +588,15 @@ async function refuseWhileGuardianGone(
 async function refuseUnlessSegregated(
   principal: Principal,
   reference: string,
-  action: string
+  action: string,
+  exempt: readonly string[] = []
 ): Promise<void> {
   const verdict = await checkSegregation(
     principal.userId,
     'transaction',
     reference,
-    action
+    action,
+    exempt
   );
   if (!verdict.allowed) {
     throw new ReviewError(
@@ -840,9 +842,27 @@ export function requireDisbursementReference(
 }
 
 /**
+ * The segregation rules that do not hold when posting this transaction. A
+ * deposit a member made from the app is verified and recorded by the
+ * accounts department, and one Account Officer may do both (officer
+ * direction, October 2026): nobody at the Society captured it, and money
+ * coming in is checked against the bank, not paid out on anyone's word. A
+ * withdrawal, a transfer, and any deposit an officer captured keep the
+ * rule that whoever approved it does not post it.
+ */
+async function postingExemptions(
+  transaction: TransactionSummary
+): Promise<string[]> {
+  if (transaction.kind === 'deposit' && (await capturedFromApp(transaction))) {
+    return [ACTION_APPROVED];
+  }
+  return [];
+}
+
+/**
  * S-1403, S-1503 · Post an approved transaction: the act that moves the
  * money, by whoever holds transaction.post and neither captured nor
- * approved it. A withdrawal is disbursed here — the method and reference
+ * approved it (save a deposit from the app: postingExemptions). A withdrawal is disbursed here — the method and reference
  * it was actually paid by are recorded first, and the entry is dated the
  * disbursement, not the decision. A receipt is issued when money posts,
  * either way.
@@ -913,7 +933,12 @@ export async function postApprovedTransaction(
     }
   }
   await refuseWhileGuardianGone(transaction);
-  await refuseUnlessSegregated(principal, transaction.reference, ACTION_POSTED);
+  await refuseUnlessSegregated(
+    principal,
+    transaction.reference,
+    ACTION_POSTED,
+    await postingExemptions(transaction)
+  );
 
   const receipt = await allocateReceiptNumber(principal.userId);
   try {

@@ -313,7 +313,11 @@ may capture but never post, so a rule "by Member" decides its chain and a
 route with no chain is refused rather than posted. Migration 0120 seeds
 those rules: a deposit to Accounts verification (Account Officer), a
 withdrawal and a transfer to Secretary → President. Such a transaction is
-never returned (nobody could correct it); it is forwarded or rejected.
+never returned (nobody could correct it); it is forwarded or rejected. A
+deposit from the app may be verified and recorded by the same Account
+Officer: the approver-may-not-post rule is waived for it alone
+(`postingExemptions` in `review.ts`), and kept for every withdrawal,
+transfer and officer-captured deposit.
 
 **The officer sees the route before they record it.** The deposit,
 withdrawal and transfer forms — reached from a member's page or from the
