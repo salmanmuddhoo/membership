@@ -52,22 +52,27 @@ const CONFLICT_QUERY = `
    where r.is_enabled
      and r.entity_type = $2
      and r.later_action = $4
+     and not (r.earlier_action = any($5::text[]))
    order by a.occurred_at asc
    limit 1
 `;
 
-// May this user perform `action` on this record?
+// May this user perform `action` on this record? `exempt` names earlier
+// actions the caller has decided do not conflict for this one record — a
+// rule of the code's, never the person's to choose (review.ts: a deposit a
+// member made from the app, verified and recorded by one Account Officer).
 export async function checkSegregation(
   userId: string,
   entityType: string,
   entityId: string,
-  action: string
+  action: string,
+  exempt: readonly string[] = []
 ): Promise<SegregationVerdict> {
   const result = await query<{
     earlier_action: string;
     description: string;
     occurred_at: Date;
-  }>(CONFLICT_QUERY, [userId, entityType, entityId, action]);
+  }>(CONFLICT_QUERY, [userId, entityType, entityId, action, [...exempt]]);
 
   const row = result.rows[0];
   if (!row) return { allowed: true };

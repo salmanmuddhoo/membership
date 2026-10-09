@@ -303,3 +303,15 @@ describe("a member's own accounts (S-2101)", () => {
     expect((await download.arrayBuffer()).byteLength).toBeGreaterThan(1000);
   });
 });
+
+describe('what a member reads for an entry', () => {
+  it('drops the office reference from a reversal, and keeps the rest', async () => {
+    const { memberDescription } = await import('./profile');
+    expect(memberDescription('Reversal of TX-000123')).toBe('Reversal');
+    expect(memberDescription('Reversal of a transaction')).toBe('Reversal');
+    expect(memberDescription('Transfer to MSA-000001')).toBe(
+      'Transfer to MSA-000001'
+    );
+    expect(memberDescription('Deposit')).toBe('Deposit');
+  });
+});

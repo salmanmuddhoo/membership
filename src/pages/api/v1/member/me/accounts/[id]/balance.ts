@@ -1,4 +1,5 @@
-// One of the caller's own accounts: its balance (S-2101). The shape is the
+// One of the caller's accounts, or a minor's in their care: its balance
+// (S-2101), what a withdrawal or transfer form checks. The shape is the
 // staff endpoint's, from @lib/ledger/api-payloads.ts, so the app and the
 // branch read one ledger the same way.
 import type { APIRoute } from 'astro';
@@ -7,7 +8,7 @@ import {
   apiSuccess,
   ApiError,
 } from '@lib/member/endpoint';
-import { ownedAccountId } from '@lib/member/profile';
+import { accountInReach } from '@lib/member/dependents';
 import {
   BALANCE_DESCRIPTION,
   BALANCE_SCHEMA,
@@ -20,13 +21,18 @@ const endpoint = defineMemberEndpoint(
     path: '/api/v1/member/me/accounts/{id}/balance',
     summary: "One of the caller's accounts: its balance",
     description:
-      BALANCE_DESCRIPTION + " 404 unless the account is the caller's own.",
+      BALANCE_DESCRIPTION +
+      " 404 unless the account is the caller's own or a minor's in their " +
+      'care.',
     tag: 'Accounts',
     caller: 'member',
     responseSchema: BALANCE_SCHEMA,
   },
   async ({ member, context, correlationId }) => {
-    const id = await ownedAccountId(member, String(context.params.id ?? ''));
+    const { accountId: id } = await accountInReach(
+      member,
+      String(context.params.id ?? '')
+    );
     const payload = await balancePayload(id);
     if (!payload) throw new ApiError('not_found');
     return apiSuccess(payload, correlationId);

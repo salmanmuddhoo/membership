@@ -8,13 +8,13 @@
 import type { APIRoute } from 'astro';
 import { defineMemberEndpoint, apiSuccess } from '@lib/member/endpoint';
 import { checklistItemId, isOnlineRegistrable } from '@lib/member/applications';
+import { appDepositMethods } from '@lib/member/transactions';
 import {
   enabledMemberOperations,
   listChecklists,
   listFeeSchedules,
   listMembershipTypes,
   offeredBankAccounts,
-  offeredPaymentMethods,
 } from '@lib/config/reference';
 import { COMPONENT_LABELS } from '@lib/payments/payments';
 
@@ -29,9 +29,11 @@ const endpoint = defineMemberEndpoint(
       'Active membership types with their field configuration, the ' +
       'documents an applicant files from the phone (the signed form is a ' +
       'branch step and is left out), and the fees in force. The ' +
-      "Society's bank accounts a member may pay into, by name; which " +
-      'transactions the app may start (Configuration -> Member app) and ' +
-      'how a deposit may be paid, never cash. Public.',
+      "Society's bank accounts a member may pay into, by name (their " +
+      'numbers are for a signed-in member, at ' +
+      '/api/v1/member/me/deposit-options); which transactions the app may ' +
+      'start (Configuration -> Member app) and how a deposit may be paid: ' +
+      'bank transfer or Juice. Public.',
     tag: 'Member app',
     caller: 'public',
     responseSchema: {
@@ -56,9 +58,10 @@ const endpoint = defineMemberEndpoint(
         depositMethods: {
           type: 'array',
           description:
-            'How a deposit from the app may have been paid: the methods ' +
-            'offered for money in, less cash. touchesBank: name one of ' +
-            'bankAccounts; requiresReference: give its reference.',
+            'How a deposit from the app may have been paid: bank transfer ' +
+            'or Juice, while the Society offers them for money in. ' +
+            'touchesBank: name one of bankAccounts; requiresReference: ' +
+            'give its reference.',
           items: {
             type: 'object',
             required: ['code', 'name', 'requiresReference', 'touchesBank'],
@@ -227,7 +230,7 @@ const endpoint = defineMemberEndpoint(
       listFeeSchedules(),
       offeredBankAccounts(),
       enabledMemberOperations(),
-      offeredPaymentMethods('deposit'),
+      appDepositMethods(),
     ]);
 
     const membershipTypes = types
@@ -283,15 +286,13 @@ const endpoint = defineMemberEndpoint(
           bankName: a.bankName,
         })),
         enabledOperations,
-        // Nobody took cash from a phone (recordMemberDeposit refuses it).
-        depositMethods: methods
-          .filter(m => !m.isCash)
-          .map(m => ({
-            code: m.code,
-            name: m.name,
-            requiresReference: m.requiresReference,
-            touchesBank: m.touchesBank,
-          })),
+        // Bank transfer or Juice (recordMemberDeposit refuses the rest).
+        depositMethods: methods.map(m => ({
+          code: m.code,
+          name: m.name,
+          requiresReference: m.requiresReference,
+          touchesBank: m.touchesBank,
+        })),
       },
       correlationId
     );

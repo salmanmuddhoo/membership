@@ -20,8 +20,9 @@ import {
   listWorkflows,
   nearFloorMargin,
 } from '../config/reference';
+import { currentGuardian } from '../members/guardian';
 import { notify } from '../notifications/notify';
-import { pushRecipient } from '../notifications/push';
+import { hasDevices, pushRecipient } from '../notifications/push';
 import { staffMember, staffWithRole } from '../notifications/staff';
 import { toCents } from '../payments/money';
 import { contactForHolder } from './receipt-notifications';
@@ -45,6 +46,18 @@ function memberValues(t: TransactionSummary, name: string) {
   };
 }
 
+// Whose phones hear about a holder's transaction: the holder's own, or —
+// for a minor with no phone of their own — their guardian's, who may well
+// be the one who asked for it from the app (member/dependents.ts).
+async function pushFor(t: TransactionSummary): Promise<string> {
+  const own = pushRecipient(t.holderKind, t.holderId);
+  if (await hasDevices(own)) return own;
+  const guardian = await currentGuardian(t.holderId);
+  return guardian?.memberId && guardian.status === 'active'
+    ? pushRecipient('member', guardian.memberId)
+    : own;
+}
+
 async function toHolder(
   t: TransactionSummary,
   eventCode: string,
@@ -58,7 +71,7 @@ async function toHolder(
     recipients: {
       email: contact?.email,
       mobile: contact?.mobile,
-      push: pushRecipient(t.holderKind, t.holderId),
+      push: await pushFor(t),
     },
     values: { ...memberValues(t, contact?.name ?? ''), ...extras },
     entityType: 'transaction',

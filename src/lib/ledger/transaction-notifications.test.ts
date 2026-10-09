@@ -768,3 +768,92 @@ describe('the Section 13 reports (S-1806)', () => {
     expect((await report.run({ balanceFrom: 'lots' })).rows).toHaveLength(3);
   });
 });
+
+describe("a minor's guardian hears on the minor's behalf", () => {
+  it("sends the push about a minor's money to the guardian's phone when the minor has none", async () => {
+    const { deposits } = await load();
+    const notify = await import('../notifications/notify');
+    const push = await import('../notifications/push');
+    const pushed: string[] = [];
+    notify.registerChannel({
+      name: 'push',
+      async send(message) {
+        pushed.push(`${message.recipient} ${message.subject}`);
+      },
+    });
+
+    const types = Object.fromEntries(
+      (await run(appUrl, `select code, id from membership_type`)).rows.map(
+        r => [r.code, r.id]
+      )
+    );
+    const enrol = async (
+      memberNo: string,
+      type: string,
+      parties: [string, Record<string, string>][]
+    ) => {
+      const application = await run(
+        appUrl,
+        `insert into membership_application (membership_type_id, captured_by, status)
+         values ($1, $2, 'approved') returning id`,
+        [types[type], officer.userId]
+      );
+      for (const [subject, values] of parties) {
+        await run(
+          appUrl,
+          `insert into application_party (application_id, subject, ordinal, values)
+           values ($1, $2, 1, $3::jsonb)`,
+          [application.rows[0].id, subject, JSON.stringify(values)]
+        );
+      }
+      return (
+        await run(
+          appUrl,
+          `insert into member (member_no, application_id, membership_type_id)
+           values ($1, $2, $3) returning id`,
+          [memberNo, application.rows[0].id, types[type]]
+        )
+      ).rows[0].id as string;
+    };
+    const mother = await enrol('AB0901', 'individual', [
+      ['applicant', { name: 'Hawa', surname: 'Test' }],
+    ]);
+    const child = await enrol('AB0902', 'minor', [
+      ['applicant', { name: 'Idris', surname: 'Test' }],
+      ['guardian', { member_id: 'AB0901', relationship: 'Mother' }],
+    ]);
+    const childMsa = (
+      await run(
+        appUrl,
+        `insert into account (member_id, account_type_id, is_membership_default, status)
+         select $1, id, true, 'active' from account_type where code = 'msa'
+         returning id`,
+        [child]
+      )
+    ).rows[0].id;
+    const session = await run(
+      appUrl,
+      `insert into member_session (mobile, member_id, refresh_token_hash, expires_at)
+       values ('+23057890901', $1, md5(random()::text), now() + interval '30 days')
+       returning id`,
+      [mother]
+    );
+    await push.registerDevice(
+      {
+        sessionId: session.rows[0].id,
+        mobile: '+23057890901',
+        memberId: mother,
+        customerId: null,
+        kind: 'member',
+      },
+      { token: 'tok-hawa', platform: 'android' }
+    );
+
+    await deposits.recordDeposit(
+      { accountId: childMsa, amount: '200', method: 'cash' },
+      officer
+    );
+    expect(pushed).toContain(`member:${mother} Deposit received`);
+    expect(pushed.some(p => p.startsWith(`member:${child}`))).toBe(false);
+  });
+});
