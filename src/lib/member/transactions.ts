@@ -22,7 +22,16 @@ import {
   paymentMethodByCode,
   type MemberOperation,
 } from '../config/reference';
+import { query } from '../db/pool';
 import { DepositError, recordDeposit, type Deposit } from '../ledger/deposits';
+import {
+  assembleTransaction,
+  needsDisbursement,
+  positionOf,
+  TRANSACTION_SELECT,
+  type TransactionRow,
+  type TransactionSummary,
+} from '../ledger/review';
 import {
   recordTransfer,
   TransferError,
@@ -153,7 +162,9 @@ export async function recordMemberDeposit(
 export interface MemberWithdrawalInput {
   accountId: string;
   amount: string;
-  method: string;
+  // How it is paid out. Optional: it goes for approval, and the Treasurer
+  // says how at Disburse (withdrawals.ts's payoutMethod).
+  method?: string;
   methodReference?: string;
   bankAccountId?: string;
   reason?: string;
@@ -205,4 +216,163 @@ export async function recordMemberTransfer(
       principal
     )
   );
+}
+
+// --- What the member asked for, and where it stands -------------------------
+
+export type MemberRequestKind = 'deposit' | 'withdrawal' | 'transfer';
+
+// The member's words for a transaction's status. Every request from the app
+// is validated by officers first (migration 0120), so until a decision it
+// is simply "Pending approval"; the stage says who has it.
+export type MemberRequestState =
+  'pending' | 'approved' | 'completed' | 'declined' | 'returned' | 'cancelled';
+
+export interface MemberRequest {
+  id: string;
+  // What the office quotes: a transfer's TR reference, otherwise the TX.
+  reference: string;
+  kind: MemberRequestKind;
+  state: MemberRequestState;
+  statusLabel: string;
+  // Who has it, or what happens next; null once it is finished.
+  stage: string | null;
+  amount: string;
+  currency: string;
+  accountId: string;
+  accountNo: string;
+  accountTypeName: string;
+  // A transfer's other side.
+  counterpartAccountNo: string | null;
+  counterpartAccountTypeName: string | null;
+  // How a deposit was paid; null on the others.
+  methodName: string | null;
+  // The member's own note.
+  note: string;
+  // Why it was not approved, as the officer wrote it.
+  reason: string | null;
+  createdAt: string;
+  completedAt: string | null;
+}
+
+const KIND_OF: Record<string, MemberRequestKind> = {
+  deposit: 'deposit',
+  withdrawal: 'withdrawal',
+  transfer_leg: 'transfer',
+};
+
+async function stageWhilePending(t: TransactionSummary): Promise<string> {
+  const position = await positionOf(t);
+  if (!position) return 'Waiting for approval';
+  if (position.step.code === 'accounts_verification') {
+    return 'Being verified by the accounts department';
+  }
+  return `With the ${position.step.roleName}`;
+}
+
+/**
+ * Where each request the caller made from the app stands, newest first:
+ * only what the app captured, only from their own accounts, and a
+ * transfer once (its debit leg). Fifty is more than a phone shows.
+ */
+export async function memberRequests(
+  member: MemberPrincipal
+): Promise<MemberRequest[]> {
+  const holderId = member.memberId ?? member.customerId;
+  if (!holderId) return [];
+  const result = await query<TransactionRow>(
+    `${TRANSACTION_SELECT}
+      where t.captured_by = $1
+        and coalesce(t.member_id, t.customer_id) = $2
+        and t.kind in ('deposit', 'withdrawal', 'transfer_leg')
+        and (t.leg_direction is null or t.leg_direction = 'debit')
+      order by t.created_at desc
+      limit 50`,
+    [await systemUser(), holderId]
+  );
+  const transactions = result.rows.map(assembleTransaction);
+  const ids = transactions.map(t => t.id);
+  const reasons = new Map<string, string>();
+  if (ids.length > 0) {
+    const comments = await query<{ transaction_id: string; comment: string }>(
+      `select distinct on (transaction_id) transaction_id, comment
+         from transaction_transition
+        where transaction_id = any($1::uuid[])
+          and to_status in ('rejected', 'returned')
+          and comment is not null
+        order by transaction_id, id desc`,
+      [ids]
+    );
+    for (const row of comments.rows) {
+      reasons.set(row.transaction_id, row.comment);
+    }
+  }
+
+  const requests: MemberRequest[] = [];
+  for (const t of transactions) {
+    const kind = KIND_OF[t.kind];
+    if (!kind) continue;
+    let state: MemberRequestState;
+    let statusLabel: string;
+    let stage: string | null = null;
+    switch (t.status) {
+      case 'submitted':
+      case 'under_review':
+        state = 'pending';
+        statusLabel = 'Pending approval';
+        stage = await stageWhilePending(t);
+        break;
+      case 'approved':
+        state = 'approved';
+        statusLabel = 'Approved';
+        stage = needsDisbursement(t)
+          ? 'Awaiting disbursement by the Treasurer'
+          : 'Being recorded by the accounts department';
+        break;
+      case 'posted':
+        state = 'completed';
+        statusLabel = kind === 'withdrawal' ? 'Paid out' : 'Completed';
+        break;
+      case 'rejected':
+        state = 'declined';
+        statusLabel = 'Not approved';
+        break;
+      case 'returned':
+        state = 'returned';
+        statusLabel = 'Returned';
+        stage = 'Please contact the office';
+        break;
+      case 'cancelled':
+        state = 'cancelled';
+        statusLabel = 'Cancelled';
+        break;
+      default:
+        continue;
+    }
+    requests.push({
+      id: t.id,
+      reference: t.displayReference,
+      kind,
+      state,
+      statusLabel,
+      stage,
+      amount: t.amount,
+      currency: t.currency,
+      accountId: t.accountId,
+      accountNo: t.accountNo,
+      accountTypeName: t.accountTypeName,
+      counterpartAccountNo: kind === 'transfer' ? t.counterpartAccountNo : null,
+      counterpartAccountTypeName:
+        kind === 'transfer' ? t.counterpartAccountTypeName : null,
+      methodName: kind === 'deposit' ? t.methodName : null,
+      note: t.reason,
+      reason:
+        state === 'declined' || state === 'returned'
+          ? (reasons.get(t.id) ?? null)
+          : null,
+      createdAt: t.createdAt.toISOString(),
+      completedAt: t.postedAt?.toISOString() ?? null,
+    });
+  }
+  return requests;
 }

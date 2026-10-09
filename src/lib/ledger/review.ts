@@ -382,6 +382,23 @@ export async function positionOf(
   };
 }
 
+const MEMBER_APP_SUBJECT = 'system:member-app';
+
+/**
+ * Whether a member made this request from the app: captured by the
+ * member-app system user (S-2102). Such a transaction has no officer to
+ * correct it, so it can be forwarded or rejected, never returned.
+ */
+export async function capturedFromApp(
+  transaction: Pick<TransactionSummary, 'capturedById'>
+): Promise<boolean> {
+  const result = await query<{ from_app: boolean }>(
+    `select entra_subject = $2 as from_app from app_user where id = $1`,
+    [transaction.capturedById, MEMBER_APP_SUBJECT]
+  );
+  return result.rows[0]?.from_app ?? false;
+}
+
 export function mayActAt(position: Position, principal: Principal): boolean {
   return (
     principal.permissions.has(position.permission) &&
@@ -635,6 +652,17 @@ export async function reviewTransaction(
       decision.outcome === 'return'
         ? 'Say what needs correcting before returning it.'
         : 'Say why before rejecting it.'
+    );
+  }
+  // A return hands the transaction back to its captor to correct. A request
+  // a member made from the app was captured by the member-app system user,
+  // which nobody can sign in as: returned, it would sit in no one's queue
+  // and hold the member's money as pending for ever. Refused, so the
+  // reviewer rejects it with the reason instead — which the member is told.
+  if (decision.outcome === 'return' && (await capturedFromApp(transaction))) {
+    throw new ReviewError(
+      'A request made from the member app cannot be returned: nobody can ' +
+        'correct it. Reject it with the reason instead; the member is told.'
     );
   }
   if (decision.outcome === 'forward') {

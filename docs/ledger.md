@@ -310,7 +310,10 @@ the Secretary and President decide it.
 A transaction the member app starts (S-2102, `docs/member-app.md`) reaches
 the same `resolveRoute` with `roleCodes: ['member']` and a principal that
 may capture but never post, so a rule "by Member" decides its chain and a
-route with no chain is refused rather than posted.
+route with no chain is refused rather than posted. Migration 0120 seeds
+those rules: a deposit to Accounts verification (Account Officer), a
+withdrawal and a transfer to Secretary → President. Such a transaction is
+never returned (nobody could correct it); it is forwarded or rejected.
 
 **The officer sees the route before they record it.** The deposit,
 withdrawal and transfer forms — reached from a member's page or from the

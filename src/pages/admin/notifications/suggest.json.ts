@@ -45,6 +45,8 @@ const EVENT_LABELS: Record<string, string> = {
   'withdrawal.under_review': 'Withdrawal under review',
   'withdrawal.disbursed': 'Withdrawal paid out',
   'withdrawal.rejected': 'Withdrawal not approved',
+  'deposit.rejected': 'Deposit not accepted',
+  'transfer.rejected': 'Transfer not approved',
   'transfer.posted': 'Transfer completed',
   'balance.near_floor': 'Balance near its minimum',
   'transaction.awaiting': 'Staff: transaction awaiting a step',

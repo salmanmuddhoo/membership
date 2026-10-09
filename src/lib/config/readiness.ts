@@ -407,6 +407,14 @@ async function paymentMethods(): Promise<ReadinessItem[]> {
   ];
 }
 
+// How each channel is named in a wording group's summary. Push (the member
+// app's phones, migration 0118) used to be counted as email here.
+const CHANNEL_WORDS: Record<string, string> = {
+  email: 'email',
+  whatsapp: 'WhatsApp',
+  push: 'app',
+};
+
 // The Phase 2 events, by the thing they are about.
 const WORDING_GROUPS: { label: string; events: string[] }[] = [
   { label: 'Receipt', events: [RECEIPT_ISSUED] },
@@ -441,8 +449,9 @@ async function wording(): Promise<ReadinessItem[]> {
     const channels = new Set(
       templates
         .filter(t => group.events.includes(t.eventCode))
-        .map(t => (t.channel === 'whatsapp' ? 'WhatsApp' : 'email'))
+        .map(t => CHANNEL_WORDS[t.channel])
     );
+    const names = [...channels].sort();
     let change: Change | null = null;
     for (const event of group.events) {
       const own = await lastChange(['notification_template'], {
@@ -459,7 +468,7 @@ async function wording(): Promise<ReadinessItem[]> {
           value:
             silent.length === group.events.length
               ? '—'
-              : `${group.events.length - silent.length} of ${group.events.length} event${group.events.length === 1 ? '' : 's'} · ${[...channels].sort().join(' and ')}`,
+              : `${group.events.length - silent.length} of ${group.events.length} event${group.events.length === 1 ? '' : 's'} · ${names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` : names[0]}`,
           href: '/admin/configuration/notification-templates',
         },
         change,

@@ -120,7 +120,7 @@ const endpoint = defineMemberEndpoint(
     idempotent: true,
     requestSchema: {
       type: 'object',
-      required: ['accountId', 'amount', 'method'],
+      required: ['accountId', 'amount'],
       properties: {
         accountId: { type: 'string', format: 'uuid' },
         amount: {
@@ -129,7 +129,10 @@ const endpoint = defineMemberEndpoint(
         },
         method: {
           type: 'string',
-          description: 'How it is paid out: a payment_method code.',
+          description:
+            'How it is paid out: a payment_method code. Optional: a ' +
+            'withdrawal from the app goes for approval (migration 0120) ' +
+            'and the Treasurer says how at Disburse.',
         },
         methodReference: {
           type: 'string',
