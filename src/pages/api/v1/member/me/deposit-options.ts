@@ -1,8 +1,9 @@
 // What the deposit form offers a signed-in member (officer direction,
 // October 2026; docs/member-app.md): how they may have paid — bank transfer
-// or Juice, nothing else — and the Society's bank accounts with the number
-// to pay to. The numbers are shown whole here, to a member who has signed
-// in, and never on the public reference.
+// or Juice, nothing else — and the one Society bank account to pay into,
+// the one marked at Configuration -> Bank accounts (migration 0121), never
+// the list. Its number is shown whole here, to a member who has signed in,
+// and never on the public reference.
 import type { APIRoute } from 'astro';
 import { defineMemberEndpoint, apiSuccess } from '@lib/member/endpoint';
 import { depositOptions } from '@lib/member/transactions';
@@ -14,9 +15,10 @@ const endpoint = defineMemberEndpoint(
     summary: 'How a deposit from the app may be paid, and where to',
     description:
       'The ways a deposit from the app may have been paid (bank transfer ' +
-      'or Juice, while the Society offers them) and its active bank ' +
-      'accounts with their account numbers. touchesBank: name one of ' +
-      'bankAccounts; requiresReference: give the reference of the payment. ' +
+      'or Juice, while the Society offers them) and the one bank account ' +
+      'members pay into, with its number: the one marked at ' +
+      'Configuration -> Bank accounts; empty until one is. requiresReference: ' +
+      'give the reference of the payment. ' +
       '403 for an applicant, who holds no account.',
     tag: 'Transactions',
     caller: 'member',

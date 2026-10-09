@@ -47,6 +47,7 @@ function fieldsFrom(form: FormData) {
     openingBalance: String(form.get('openingBalance') ?? ''),
     openingDate: String(form.get('openingDate') ?? ''),
     isActive: form.get('isActive') === 'on',
+    isMemberAppDefault: form.get('isMemberAppDefault') === 'on',
   };
 }
 
@@ -112,7 +113,8 @@ const CHECK =
       <h2 class={CARD_TITLE}>The Society's accounts</h2>
       <p class={`${HINT} mt-1`}>
         An inactive account is no longer offered. Transactions already recorded
-        against it are not affected.
+        against it are not affected. The account marked for the member app is
+        the only one a member is shown to pay into for a deposit from the app.
       </p>
 
       {accounts.length === 0 ? (
@@ -135,6 +137,11 @@ const CHECK =
                 {!account.isActive && (
                   <span class="rounded bg-red-100 px-1.5 py-0.5 text-xs text-red-800 dark:bg-red-950 dark:text-red-200">
                     inactive
+                  </span>
+                )}
+                {account.isMemberAppDefault && (
+                  <span class="rounded bg-sky-100 px-1.5 py-0.5 text-xs text-sky-800 dark:bg-sky-950 dark:text-sky-200">
+                    member app deposits
                   </span>
                 )}
                 <span class="w-full text-xs text-neutral-400 dark:text-neutral-500">
@@ -211,6 +218,15 @@ const CHECK =
                       class={CHECK}
                     />
                     Active
+                  </label>
+                  <label class="flex items-center gap-x-2 text-sm text-neutral-600 dark:text-neutral-300">
+                    <input
+                      type="checkbox"
+                      name="isMemberAppDefault"
+                      checked={account.isMemberAppDefault}
+                      class={CHECK}
+                    />
+                    Members pay into this account from the app
                   </label>
                   <div class="pt-2 sm:col-span-2">
                     <button
@@ -307,6 +323,10 @@ const CHECK =
           <label class={LABEL}>
             Opening date
             <input type="date" name="openingDate" class={INPUT} />
+          </label>
+          <label class="flex items-center gap-x-2 text-sm text-neutral-600 dark:text-neutral-300">
+            <input type="checkbox" name="isMemberAppDefault" class={CHECK} />
+            Members pay into this account from the app
           </label>
           <div class="sm:col-span-2">
             <button type="submit" class={BUTTON}>

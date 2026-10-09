@@ -8,13 +8,13 @@
 import type { APIRoute } from 'astro';
 import { defineMemberEndpoint, apiSuccess } from '@lib/member/endpoint';
 import { checklistItemId, isOnlineRegistrable } from '@lib/member/applications';
-import { appDepositMethods } from '@lib/member/transactions';
+import { appDepositMethods, appPayoutMethods } from '@lib/member/transactions';
 import {
   enabledMemberOperations,
   listChecklists,
   listFeeSchedules,
   listMembershipTypes,
-  offeredBankAccounts,
+  memberAppDepositAccount,
 } from '@lib/config/reference';
 import { COMPONENT_LABELS } from '@lib/payments/payments';
 
@@ -29,9 +29,10 @@ const endpoint = defineMemberEndpoint(
       'Active membership types with their field configuration, the ' +
       'documents an applicant files from the phone (the signed form is a ' +
       'branch step and is left out), and the fees in force. The ' +
-      "Society's bank accounts a member may pay into, by name (their " +
-      'numbers are for a signed-in member, at ' +
-      '/api/v1/member/me/deposit-options); which transactions the app may ' +
+      "Society's bank account a member pays into from the app (the one " +
+      'marked at Configuration -> Bank accounts), by name; its number is ' +
+      'for a signed-in member, at /api/v1/member/me/deposit-options. ' +
+      'Which transactions the app may ' +
       'start (Configuration -> Member app) and how a deposit may be paid: ' +
       'bank transfer or Juice. Public.',
     tag: 'Member app',
@@ -43,6 +44,7 @@ const endpoint = defineMemberEndpoint(
         'bankAccounts',
         'enabledOperations',
         'depositMethods',
+        'withdrawalMethods',
       ],
       properties: {
         enabledOperations: {
@@ -70,6 +72,21 @@ const endpoint = defineMemberEndpoint(
               name: { type: 'string' },
               requiresReference: { type: 'boolean' },
               touchesBank: { type: 'boolean' },
+            },
+          },
+        },
+        withdrawalMethods: {
+          type: 'array',
+          description:
+            'How a member may ask to receive a withdrawal: bank transfer ' +
+            '(to their own account, which they give) or cheque, while the ' +
+            'Society offers them for withdrawals.',
+          items: {
+            type: 'object',
+            required: ['code', 'name'],
+            properties: {
+              code: { type: 'string', enum: ['bank_transfer', 'cheque'] },
+              name: { type: 'string' },
             },
           },
         },
@@ -221,16 +238,18 @@ const endpoint = defineMemberEndpoint(
       types,
       checklists,
       schedules,
-      bankAccounts,
+      depositAccount,
       enabledOperations,
       methods,
+      payouts,
     ] = await Promise.all([
       listMembershipTypes(),
       listChecklists(),
       listFeeSchedules(),
-      offeredBankAccounts(),
+      memberAppDepositAccount(),
       enabledMemberOperations(),
       appDepositMethods(),
+      appPayoutMethods(),
     ]);
 
     const membershipTypes = types
@@ -280,7 +299,8 @@ const endpoint = defineMemberEndpoint(
     return apiSuccess(
       {
         membershipTypes,
-        bankAccounts: bankAccounts.map(a => ({
+        // The one account members pay into, named; never the list.
+        bankAccounts: (depositAccount ? [depositAccount] : []).map(a => ({
           id: a.id,
           name: a.name,
           bankName: a.bankName,
@@ -293,6 +313,7 @@ const endpoint = defineMemberEndpoint(
           requiresReference: m.requiresReference,
           touchesBank: m.touchesBank,
         })),
+        withdrawalMethods: payouts.map(m => ({ code: m.code, name: m.name })),
       },
       correlationId
     );

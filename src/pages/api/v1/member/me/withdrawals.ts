@@ -112,8 +112,10 @@ const endpoint = defineMemberEndpoint(
       'Recorded as the staff withdrawal is and routed by the approval ' +
       'matrix with Member as the initiating role; it waits on a chain, ' +
       'never posts at once. Refused (403) until the Society switches ' +
-      'withdrawals from the app on. The method is how it will be paid ' +
-      'out, with its reference where the method requires one. 404 unless ' +
+      'withdrawals from the app on. The member chooses how to receive ' +
+      'it — bank transfer to their own account, or cheque — and the ' +
+      'Treasurer pays that way, recording the reference at Disburse. ' +
+      '404 unless ' +
       "the account is the caller's own or a minor's in their care.",
     tag: 'Transactions',
     caller: 'member',
@@ -129,22 +131,20 @@ const endpoint = defineMemberEndpoint(
         },
         method: {
           type: 'string',
+          enum: ['bank_transfer', 'cheque'],
           description:
-            'How it is paid out: a payment_method code. Optional: a ' +
-            'withdrawal from the app goes for approval (migration 0120) ' +
-            'and the Treasurer says how at Disburse.',
+            'How the member asks to receive it (withdrawalMethods on ' +
+            '/api/v1/member/reference). The Treasurer pays that way at ' +
+            'Disburse. Omitted: the Treasurer decides.',
         },
-        methodReference: {
+        payToBank: {
           type: 'string',
-          description: 'Required where the method says so.',
+          description: "With bank_transfer: the member's own bank.",
         },
-        bankAccountId: {
+        payToAccountNumber: {
           type: 'string',
-          format: 'uuid',
           description:
-            "One of the Society's bank accounts from " +
-            '/api/v1/member/reference. Required with the reference where ' +
-            'the method touches a bank.',
+            "With bank_transfer: the member's own account number there.",
         },
         reason: { type: 'string' },
       },
@@ -160,8 +160,8 @@ const endpoint = defineMemberEndpoint(
       accountId?: unknown;
       amount?: unknown;
       method?: unknown;
-      methodReference?: unknown;
-      bankAccountId?: unknown;
+      payToBank?: unknown;
+      payToAccountNumber?: unknown;
       reason?: unknown;
     }>();
     const text = (v: unknown) => (typeof v === 'string' ? v : '');
@@ -169,8 +169,8 @@ const endpoint = defineMemberEndpoint(
       accountId: text(input.accountId),
       amount: text(input.amount),
       method: text(input.method),
-      methodReference: text(input.methodReference),
-      bankAccountId: text(input.bankAccountId),
+      payToBank: text(input.payToBank),
+      payToAccountNumber: text(input.payToAccountNumber),
       reason: text(input.reason),
       idempotencyKey: idempotencyKey ?? undefined,
     });
