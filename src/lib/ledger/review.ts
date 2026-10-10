@@ -49,12 +49,18 @@ export const PERMISSION_POST = 'transaction.post';
 // payee, a closure, a resignation, a claim — is transaction.disburse; an
 // approved deposit (money in) posts under transaction.post as before.
 export const PERMISSION_DISBURSE = 'transaction.disburse';
+// Recording a transfer between two accounts here is its own permission
+// (officer direction, migration 0116), apart from posting anything else.
+export const PERMISSION_RECORD_TRANSFER = 'transaction.record_transfer';
 
 /** The permission the act after approval needs, for this transaction. */
 export function permissionToPost(
   transaction: Pick<TransactionSummary, 'kind' | 'payeeName'>
 ): string {
-  return needsDisbursement(transaction) ? PERMISSION_DISBURSE : PERMISSION_POST;
+  if (needsDisbursement(transaction)) return PERMISSION_DISBURSE;
+  return transaction.kind === 'transfer_leg'
+    ? PERMISSION_RECORD_TRANSFER
+    : PERMISSION_POST;
 }
 export const PERMISSION_VIEW = 'transaction.view';
 
@@ -484,8 +490,9 @@ export async function returnedTransactions(
 
 /**
  * S-1403 · Approved and waiting for the money to move: what someone with
- * transaction.post sees on the queue. Approval decides, posting moves
- * money, and the two are not the same click.
+ * transaction.post, transaction.record_transfer or transaction.disburse
+ * sees on the queue. Approval decides, posting moves money, and the two
+ * are not the same click.
  */
 export async function approvedTransactions(
   principal: Principal,
@@ -493,6 +500,7 @@ export async function approvedTransactions(
 ): Promise<(TransactionSummary & { waitingSince: Date })[]> {
   if (
     !principal.permissions.has(PERMISSION_POST) &&
+    !principal.permissions.has(PERMISSION_RECORD_TRANSFER) &&
     !principal.permissions.has(PERMISSION_DISBURSE)
   ) {
     return [];
@@ -511,7 +519,8 @@ export async function approvedTransactions(
     params
   );
   // Only the ones this person may pay out or post: the Treasurer sees the
-  // withdrawals and the exits, an Account Officer the deposits.
+  // withdrawals and the exits, an Account Officer the deposits, whoever
+  // records transfers the transfers.
   const mine = result.rows.filter(row =>
     principal.permissions.has(permissionToPost(assembleTransaction(row)))
   );

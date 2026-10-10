@@ -110,6 +110,13 @@ out an approved withdrawal, transfer to a payee, closure, resignation or
 claim is `transaction.disburse`, the Treasurer's (migration 0095, officer
 direction: Secretary, President, then the Treasurer disburses).
 
+Recording a transfer between two accounts here is its own permission,
+`transaction.record_transfer` (migration 0116, officer direction), not
+`transaction.post`: both recording one at once, below the escalation
+threshold, and the step after approval ("Transfer recorded"). Every role that
+held `transaction.post` was given it, so nothing changed on the day; an
+administrator moves either one at Configuration → Roles without the other.
+
 The segregation rules (`entity_type = 'transaction'`) say the officer who
 captured a transaction may not review it, approve it, post it through a
 chain, or void its receipt — and, from migration 0072, that the person who

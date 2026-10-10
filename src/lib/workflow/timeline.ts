@@ -29,6 +29,7 @@ import {
   loadTransaction,
   PERMISSION_DISBURSE,
   PERMISSION_POST,
+  PERMISSION_RECORD_TRANSFER,
   permissionToPost,
   positionOf,
   transitionsFor,
@@ -271,9 +272,9 @@ export async function routePreviewGroups(
 ): Promise<RoutePreviewGroup[]> {
   const byType = new Map<string, RoutePreviewBand[]>();
   // A withdrawal is disbursed by whoever holds transaction.disburse (the
-  // Treasurer); a transfer's payee is not known until the form is filled,
-  // so its preview names whoever posts and the chevron after submit says
-  // which. The last step reads as it will once done (labels.ts): Deposit
+  // Treasurer); a transfer is recorded by whoever holds
+  // transaction.record_transfer (migration 0116); anything else is posted
+  // under transaction.post. The last step reads as it will once done (labels.ts): Deposit
   // recorded, Transfer recorded, else Disbursement.
   const postedLabel =
     recordedLabel({ kind: kind === 'transfer' ? 'transfer_leg' : kind }) ??
@@ -281,7 +282,12 @@ export async function routePreviewGroups(
   const labels =
     kind === 'withdrawal'
       ? { postedDetail: await roleNamesHolding(PERMISSION_DISBURSE) }
-      : { postedLabel, postedDetail: await roleNamesHolding(PERMISSION_POST) };
+      : {
+          postedLabel,
+          postedDetail: await roleNamesHolding(
+            kind === 'transfer' ? PERMISSION_RECORD_TRANSFER : PERMISSION_POST
+          ),
+        };
   for (const typeId of new Set(accounts.map(a => a.accountTypeId))) {
     const bands = await routeBands({ kind, accountTypeId: typeId, roleCodes });
     byType.set(

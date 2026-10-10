@@ -344,8 +344,9 @@ segregation rules refuse the officer who captured it (0069, 0071).
 
 `/transactions/pending` is one queue for every kind: what waits at a step the
 person's role owns, what is approved for them to pay out or post
-(`transaction.disburse` for money going out, `transaction.post` for money
-coming in), and their own captures a reviewer returned. The sidebar badge on
+(`transaction.disburse` for money going out, `transaction.record_transfer`
+for a transfer between accounts, `transaction.post` for money coming in), and
+their own captures a reviewer returned. The sidebar badge on
 Transactions counts the same three, so a badge counts what its own link
 opens — the President's number on Applications stays the applications.
 
@@ -354,8 +355,8 @@ Approval decides; paying out or posting moves the money.
 it: **disbursement** (officer direction, migration 0095) for a withdrawal, a
 transfer to a payee, a closure, a resignation or a claim — `transaction.disburse`,
 the Treasurer's, so the Society's chain is Secretary, President, then the
-Treasurer pays out — and posting (`transaction.post`) for an approved
-deposit. Either way the money takes its receipt there, since a receipt is
+Treasurer pays out — recording (`transaction.record_transfer`, migration 0116) for an approved transfer between accounts, and posting
+(`transaction.post`) for an approved deposit. Either way the money takes its receipt there, since a receipt is
 issued when money moves. On screen money paid out is "disbursed", never
 "posted" (`transactionStatusLabel`, `src/lib/ledger/labels.ts`), and a
 transaction that pays out ends its chevron in **Disbursement**, naming the

@@ -132,6 +132,7 @@ beforeAll(async () => {
     [
       'transaction.capture',
       'transaction.post',
+      'transaction.record_transfer',
       'transaction.disburse',
       'transaction.view',
     ]
@@ -139,7 +140,12 @@ beforeAll(async () => {
   treasurer = make(
     'treasurer@albarakah.mu',
     ['treasurer'],
-    ['transaction.post', 'transaction.disburse', 'transaction.view']
+    [
+      'transaction.post',
+      'transaction.record_transfer',
+      'transaction.disburse',
+      'transaction.view',
+    ]
   );
   secretary = make(
     'secretary@albarakah.mu',
@@ -357,7 +363,58 @@ describe('a transfer between accounts on the system', () => {
         },
         clerk
       )
-    ).rejects.toThrowError(/record a transfer but not post it/);
+    ).rejects.toThrowError(/start a transfer but not record it/);
+  });
+
+  // Officer direction: recording a transfer is its own permission. Posting
+  // a deposit or a withdrawal at the counter does not carry it, and it does
+  // not carry them.
+  it('records a transfer at once only with transaction.record_transfer, not transaction.post', async () => {
+    const { transfers } = await load();
+    const poster = principalFor(
+      clerk.userId,
+      clerk.email,
+      ['account_officer'],
+      ['transaction.capture', 'transaction.post', 'transaction.view']
+    );
+    await expect(
+      transfers.recordTransfer(
+        {
+          sourceAccountId: amina.msa,
+          amount: '10',
+          destination: { kind: 'account', accountId: amina.shares },
+        },
+        poster
+      )
+    ).rejects.toThrowError(/start a transfer but not record it/);
+    const recorder = principalFor(
+      clerk.userId,
+      clerk.email,
+      ['account_officer'],
+      ['transaction.capture', 'transaction.record_transfer', 'transaction.view']
+    );
+    const made = await transfers.recordTransfer(
+      {
+        sourceAccountId: amina.msa,
+        amount: '10',
+        destination: { kind: 'account', accountId: amina.shares },
+      },
+      recorder
+    );
+    expect(made.status).toBe('posted');
+  });
+
+  it('asks transaction.record_transfer, not transaction.post, of the step after approval', async () => {
+    const { review } = await load();
+    expect(
+      review.permissionToPost({ kind: 'transfer_leg', payeeName: null })
+    ).toBe('transaction.record_transfer');
+    expect(review.permissionToPost({ kind: 'deposit', payeeName: null })).toBe(
+      'transaction.post'
+    );
+    expect(
+      review.permissionToPost({ kind: 'transfer_leg', payeeName: 'X' })
+    ).toBe('transaction.disburse');
   });
 
   it("routes a transfer to another person's account under the Transfer bands, and posts both legs once approved", async () => {
