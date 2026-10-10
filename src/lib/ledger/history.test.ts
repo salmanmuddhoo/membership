@@ -113,6 +113,7 @@ beforeAll(async () => {
     [
       'transaction.capture',
       'transaction.post',
+      'transaction.record_transfer',
       'transaction.disburse',
       'transaction.view',
     ]

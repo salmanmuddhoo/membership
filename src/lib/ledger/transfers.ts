@@ -61,7 +61,9 @@ export class TransferError extends Error {
 }
 
 export const PERMISSION_CAPTURE = 'transaction.capture';
-export const PERMISSION_POST = 'transaction.post';
+// Recording a transfer at once — below the escalation threshold — is its
+// own permission, not transaction.post (officer direction, migration 0122).
+export const PERMISSION_RECORD = 'transaction.record_transfer';
 
 // The method a leg between two accounts here carries (0073): nothing
 // changes hands outside the Society.
@@ -382,10 +384,10 @@ export async function recordTransfer(
     amountCents,
     roleCodes: principal.roles,
   });
-  if (!route.definition && !principal.permissions.has(PERMISSION_POST)) {
+  if (!route.definition && !principal.permissions.has(PERMISSION_RECORD)) {
     throw new TransferError(
-      'You may record a transfer but not post it. Ask an Account Officer to ' +
-        'record it.',
+      'You may start a transfer but not record it. Ask someone who records ' +
+        'transfers to record it.',
       'forbidden'
     );
   }
@@ -592,10 +594,10 @@ export async function resubmitTransfer(
     amountCents,
     roleCodes: principal.roles,
   });
-  if (!route.definition && !principal.permissions.has(PERMISSION_POST)) {
+  if (!route.definition && !principal.permissions.has(PERMISSION_RECORD)) {
     throw new TransferError(
-      'At this amount the transfer would post at once, which you may not ' +
-        'do. Ask an Account Officer to record it.',
+      'At this amount the transfer would be recorded at once, which you may ' +
+        'not do. Ask someone who records transfers to record it.',
       'forbidden'
     );
   }
