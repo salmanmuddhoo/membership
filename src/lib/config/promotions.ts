@@ -115,7 +115,9 @@ interface Checked {
   sortOrder: number;
 }
 
-function check(input: PromotionInput): Checked {
+// The page's rules for a card, and its tidying; the configuration import
+// holds a row of the workbook to the same.
+export function checkPromotion(input: PromotionInput): Checked {
   const title = input.title.trim();
   if (!title) throw new ConfigError('A title is required.');
   if (title.length > 80) {
@@ -187,7 +189,7 @@ export async function createPromotion(
   input: PromotionInput,
   actor: Actor
 ): Promise<string> {
-  const p = check(input);
+  const p = checkPromotion(input);
   const id = await withConfigurationActor(actorFor(actor), async client => {
     const result = await client.query<{ id: string }>(
       `insert into app_promotion
@@ -234,7 +236,7 @@ export async function updatePromotion(
   input: PromotionInput,
   actor: Actor
 ): Promise<void> {
-  const p = check(input);
+  const p = checkPromotion(input);
   const wasLive = await withConfigurationActor(
     actorFor(actor),
     async client => {

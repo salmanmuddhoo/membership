@@ -244,6 +244,8 @@ function describeEntry(entry: AuditEventRow): string {
       return `Role created${by}`;
     case 'role.permissions_changed':
       return `Role permissions updated${by}`;
+    case 'role.updated':
+      return `Role details updated${by}`;
     case 'role.deleted':
       return `Role deleted${by}`;
     case 'user.created':

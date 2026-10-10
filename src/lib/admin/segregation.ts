@@ -265,6 +265,25 @@ export async function setSegregationRuleEnabled(
   });
 }
 
+// The words of a rule the page offers, written from the pair; null for a
+// pair the catalogue does not hold. The configuration import adds a rule
+// only where this gives words, so a file cannot add what the page could not.
+export function segregationRuleDescription(input: {
+  entityType: string;
+  earlierAction: string;
+  laterAction: string;
+}): string | null {
+  const type = SEGREGATION_CATALOGUE.find(
+    t => t.entityType === input.entityType
+  );
+  const earlier = type?.earlier.find(a => a.action === input.earlierAction);
+  const later = type?.later.find(a => a.action === input.laterAction);
+  if (!type || !earlier || !later || earlier.action === later.action) {
+    return null;
+  }
+  return `Whoever ${earlier.past} ${type.noun} may not ${later.present} it.`;
+}
+
 // Add a pair from the catalogue. The description is written from the pair
 // rather than typed, so what a refused officer reads always says what the
 // rule actually does. A pair already on file (switched off, say) is
@@ -284,7 +303,7 @@ export async function addSegregationRule(
   if (earlier.action === later.action) {
     throw new SegregationError('Choose two different actions.');
   }
-  const description = `Whoever ${earlier.past} ${type.noun} may not ${later.present} it.`;
+  const description = segregationRuleDescription(input)!;
 
   await withTransaction(async client => {
     const existing = await client.query<{ id: string; is_enabled: boolean }>(

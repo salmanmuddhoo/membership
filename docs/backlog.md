@@ -5683,3 +5683,37 @@ approval; the queue and the chevron name its holders. Every role that held
 `transaction.post` was given it, so nothing changes until an administrator
 moves it at Configuration → Roles. A legacy transfer to a payee is still paid
 out under `transaction.disburse`.
+
+---
+
+### The configuration workbook covers everything set on screen
+
+Officer check: _Export and import_ left out what had been built since — the
+member app's partner outlets (0116) and promotions (0111), the bank account
+members pay into from the app (0121) — and the two access pages, Roles and
+Segregation. All five are now in the workbook.
+
+- **Partner outlets** and **Promotions** are sheets like the others. Neither
+  has a code, so a row is named by what its page shows: the outlet's name, the
+  card's title; two already on file under one name are refused until one is
+  renamed. Each row is held to the Member app page's own rules (`checkOutlet`,
+  `checkPromotion`) and tidied as that page tidies. An import announces
+  nothing to the phones: moving configuration between environments is not news
+  to members.
+- **Bank accounts** carry _Member app deposits_. One account at most holds it
+  (0121's index): marking one in the file takes it from the other, as the
+  Bank accounts page does, and two marked in one file are refused.
+- **Roles**: a role per row, its permissions one code to a line in one cell.
+  The cell is the role's whole set, as the page's checkboxes are — a code
+  left out is taken away — while a role left out of the sheet is left alone.
+  An unknown code is refused. Shown to holders of `role.view`; changed only
+  with `role.manage`. Audited as the Roles page audits (`role.created`,
+  `role.permissions_changed`), plus `role.updated` for a new name or
+  description.
+- **Segregation rules**: a rule per row, by record and its two actions,
+  switched on or off; never deleted, as on the page. A new row must be a pair
+  the page offers, and takes the page's wording. Shown to holders of
+  `segregation.view`; changed only with `segregation.manage`; audited as the
+  page audits.
+- Still not in it: staff and who holds which role (people, not
+  configuration) and API credentials (secrets).
