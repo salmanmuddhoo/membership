@@ -1038,7 +1038,7 @@ describe('importConfiguration: roles', () => {
         `select p.code from role r
            join role_permission rp on rp.role_id = r.id
            join permission p on p.id = rp.permission_id
-          where r.code = $1 order by p.code`,
+          where r.code = $1 order by p.code collate "C"`,
         [code]
       )
     ).rows.map((r: { code: string }) => r.code);
