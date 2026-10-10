@@ -10,7 +10,7 @@
 -- nobody's work changes until someone moves it. A legacy transfer to a
 -- payee is still paid out under transaction.disburse (0095).
 set local albarakah.actor_description =
-    'migration 0116_transaction_record_transfer';
+    'migration 0122_transaction_record_transfer';
 
 insert into permission (code, description) values
     ('transaction.record_transfer',

@@ -215,6 +215,9 @@ const position = (IN_FLIGHT as readonly string[]).includes(transaction.status)
   ? await positionOf(transaction)
   : null;
 const canAct = position ? mayActAt(position, principal) : false;
+// A member's own request from the app has no officer to correct it: it is
+// forwarded or rejected, never returned (reviewTransaction refuses).
+const fromApp = canAct && transaction.capturedFromApp;
 // A posted mistake is undone by a reversal, never an edit (S-1505). A
 // transfer is reversed from its debit leg, whole.
 // Once reversed, there is nothing left to reverse: the block gives way to
@@ -356,10 +359,19 @@ const bankAccounts =
 // offered. A bank account the transaction already names is kept; failing
 // that, the one account offered is preselected rather than left for the
 // Treasurer to pick from a list of one.
+//
+// A member who asked from the app chose how to be paid — bank transfer or
+// cheque (officer direction) — so the form starts there, and says so.
+const memberChosePayout =
+  transaction.capturedFromApp &&
+  transaction.kind === 'withdrawal' &&
+  ['bank_transfer', 'cheque'].includes(transaction.method);
 const disbursementMethod =
-  canPost && disburses && paymentMethods.some(m => m.code === 'cheque')
-    ? 'cheque'
-    : transaction.method;
+  canPost && disburses && memberChosePayout
+    ? transaction.method
+    : canPost && disburses && paymentMethods.some(m => m.code === 'cheque')
+      ? 'cheque'
+      : transaction.method;
 const disbursementBankAccountId =
   canPost && disburses
     ? (transaction.bankAccountId ??
@@ -787,7 +799,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
             rows="3"
             class={INPUT}
             placeholder={
-              position.isLast
+              position.isLast || fromApp
                 ? 'Required if you reject it.'
                 : 'Required if you return or reject it.'
             }
@@ -799,9 +811,11 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
               {position.isLast ? 'Approve' : 'Forward'}
             </button>
           )}
-          <button type="submit" name="outcome" value="return" class={DANGER}>
-            Return
-          </button>
+          {!fromApp && (
+            <button type="submit" name="outcome" value="return" class={DANGER}>
+              Return
+            </button>
+          )}
           <button type="submit" name="outcome" value="reject" class={DANGER}>
             Reject
           </button>
@@ -825,6 +839,15 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
                   ? 'Approved. Record how it is paid out; disbursing moves the money and issues the receipt.'
                   : 'Approved. Recording it moves the money and issues the receipt.'}
         </p>
+        {memberChosePayout && (
+          <p class={HINT}>
+            The member asked to be paid by{' '}
+            {transaction.methodName.toLowerCase()}
+            {transaction.method === 'bank_transfer'
+              ? '; their bank and account number are in the note.'
+              : '.'}
+          </p>
+        )}
         {disburses && (
           <div class="grid gap-3 sm:grid-cols-2">
             <label class={LABEL}>

@@ -13,16 +13,20 @@
 // guardian who has been replaced no longer sees the minor, and the new one
 // does — no separate bookkeeping to keep in step.
 //
-// This is read-only: a guardian sees the minor's accounts, balances and the
-// entries behind them, nothing more. Moving money is an officer's job, done
-// at a branch, and every money-out path already refuses a minor whose
-// guardian is demised (members/guardian.ts) — none of which this touches.
+// A guardian sees the minor's accounts, balances and the entries behind
+// them, and may ask for a deposit, a withdrawal or a transfer on them from
+// the app (officer direction), exactly as on their own: the request goes to
+// the same officers and nothing moves until they approve it
+// (member/transactions.ts, accountInReach). Every money-out path still
+// refuses a minor whose guardian is demised (members/guardian.ts) — none of
+// which this touches.
 import { ApiError } from '../api/envelope';
 import { query } from '../db/pool';
 import type { MemberPrincipal } from './identity';
 import {
   accountsForHolder,
   accountTransactionsFor,
+  ownedAccountId,
   type AccountSummary,
   type AccountTransaction,
 } from './profile';
@@ -174,6 +178,65 @@ export async function dependentAccountTransactions(
   if (!owned.rows[0]) throw new ApiError('not_found', 'No such account.');
 
   return accountTransactionsFor(accountId);
+}
+
+// --- Moving money for a minor ------------------------------------------------
+
+/** A minor in the caller's care, as a request made for them names them. */
+export interface Ward {
+  id: string;
+  kind: 'member' | 'customer';
+  memberNo: string | null;
+  name: string;
+}
+
+function wardOf(m: MinorRow): Ward {
+  return { id: m.id, kind: m.kind, memberNo: m.member_no, name: m.name };
+}
+
+/** The minors the caller guards today; empty for anyone else. */
+export async function wardsOf(principal: MemberPrincipal): Promise<Ward[]> {
+  if (!principal.memberId) return [];
+  return (await minorsGuardedBy(principal.memberId)).map(wardOf);
+}
+
+/**
+ * An account the caller may move money on, and whose it is: one of their
+ * own (ward null), or one held by a minor they guard today. Anything else
+ * is the same not_found ownedAccountId gives, so the app never learns that
+ * an id it should not have named exists.
+ */
+export async function accountInReach(
+  principal: MemberPrincipal,
+  accountId: string
+): Promise<{ accountId: string; ward: Ward | null }> {
+  try {
+    return {
+      accountId: await ownedAccountId(principal, accountId),
+      ward: null,
+    };
+  } catch (error) {
+    if (!(error instanceof ApiError) || error.code !== 'not_found') throw error;
+  }
+  const wards = await wardsOf(principal);
+  if (wards.length > 0 && isUuid(accountId)) {
+    const held = await query<{
+      member_id: string | null;
+      customer_id: string | null;
+    }>(`select member_id, customer_id from account where id = $1::uuid`, [
+      accountId,
+    ]);
+    const row = held.rows[0];
+    const ward = row
+      ? wards.find(w =>
+          w.kind === 'member'
+            ? w.id === row.member_id
+            : w.id === row.customer_id
+        )
+      : undefined;
+    if (ward) return { accountId, ward };
+  }
+  throw new ApiError('not_found', 'No such account.');
 }
 
 function isUuid(value: string): boolean {

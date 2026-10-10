@@ -2021,6 +2021,107 @@ describe('S-611: Regional oversight, enabled or not, gates the chain', () => {
     expect(forwarded.status).toBe('submitted_for_approval');
   });
 
+  // Officer direction (October 2026): an application received from the
+  // member app is captured by the system user, and whoever completes and
+  // submits it at the branch is the first person to have had it. When
+  // that is a Regional Manager, routing it to a Regional Manager again
+  // sends it back to the desk it just left — it should go to the next
+  // step in the configured chain, and the timeline should say so.
+  it('skips straight to the Secretary when a Regional Manager submits an application received from the app', async () => {
+    await setRegionalReviewEnabled(true);
+    const { capture, workflow } = await load();
+    const id = await captureComplete(officer);
+    // As the app leaves it: captured by the system user, status received.
+    await run(
+      appUrl,
+      `update membership_application
+          set status = 'received',
+              captured_by = (select id from app_user where entra_subject = 'system:member-app')
+        where id = $1`,
+      [id]
+    );
+    const manager = principalFor(
+      regionalManager.userId,
+      regionalManager.email,
+      [
+        'application.view',
+        'application.capture',
+        'application.submit',
+        'application.submit_online',
+        'application.review',
+      ],
+      ['regional_manager']
+    );
+
+    expect(await workflow.submitApplication(id, manager)).toEqual({
+      status: 'new',
+    });
+    const application = (await capture.loadApplication(id))!;
+
+    // Nothing waits on Regional oversight; the Secretary has it at once.
+    expect(
+      await workflow.availableActions(application, regionalManager)
+    ).toEqual([]);
+    expect(
+      (await workflow.availableActions(application, secretary)).map(
+        a => a.stepCode
+      )
+    ).toEqual(['secretary_review']);
+    // The chevron's "Submit" step reads this: it says the Secretary, not
+    // the Regional Manager.
+    expect(await workflow.reviewStageLabel(application)).toBe(
+      'With the Secretary'
+    );
+
+    // The record says who satisfied the oversight, and how.
+    const transition = await run(
+      appUrl,
+      `select actor_user_id, comment from application_transition
+        where application_id = $1 and step_code = 'regional_review'`,
+      [id]
+    );
+    expect(transition.rows).toEqual([
+      {
+        actor_user_id: regionalManager.userId,
+        comment:
+          'Regional oversight not required — submitted by a Regional Manager.',
+      },
+    ]);
+
+    const forwarded = await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Complete.' },
+      secretary
+    );
+    expect(forwarded.status).toBe('submitted_for_approval');
+  });
+
+  it("skips straight to the Secretary when a Regional Manager submits a subordinate's draft", async () => {
+    await setRegionalReviewEnabled(true);
+    const { capture, workflow } = await load();
+    const id = await captureComplete(officer);
+    const manager = principalFor(
+      regionalManager.userId,
+      regionalManager.email,
+      ['application.view', 'application.submit', 'application.review'],
+      ['regional_manager']
+    );
+
+    await workflow.submitApplication(id, manager);
+    const application = (await capture.loadApplication(id))!;
+    expect(
+      await workflow.availableActions(application, regionalManager)
+    ).toEqual([]);
+    expect(
+      (await workflow.availableActions(application, secretary)).map(
+        a => a.stepCode
+      )
+    ).toEqual(['secretary_review']);
+    expect(await workflow.reviewStageLabel(application)).toBe(
+      'With the Secretary'
+    );
+  });
+
   it('still routes through the Regional Manager when captured by an ordinary officer', async () => {
     await setRegionalReviewEnabled(true);
     const { capture, workflow } = await load();

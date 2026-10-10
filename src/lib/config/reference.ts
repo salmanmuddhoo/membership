@@ -10,6 +10,7 @@
 import { query, withConfigurationActor } from '../db/pool';
 import { cached } from './cache';
 import type { ConfigurationActor } from '../db/pool';
+import type { PoolClient } from 'pg';
 
 // A refusal the caller should show the person who asked, as opposed to a
 // defect. Mirrors AdminError in ../admin/roles.ts.
@@ -3026,6 +3027,9 @@ export interface BankAccount {
   openingDate: string;
   isActive: boolean;
   sortOrder: number;
+  // The one account a member is shown to pay into for a deposit from the
+  // member app (migration 0121). At most one, and only an active one.
+  isMemberAppDefault: boolean;
 }
 
 export const PERMISSION_BANK_ACCOUNT_VIEW = 'bank_account.view';
@@ -3051,10 +3055,12 @@ async function readBankAccounts(): Promise<BankAccount[]> {
     opening_date: string;
     is_active: boolean;
     sort_order: number;
+    is_member_app_default: boolean;
   }>(
     `select id, code, name, bank_name, account_number, currency,
             opening_balance::text as opening_balance,
-            opening_date::text as opening_date, is_active, sort_order
+            opening_date::text as opening_date, is_active, sort_order,
+            is_member_app_default
        from bank_account
       order by sort_order, name`
   );
@@ -3069,6 +3075,7 @@ async function readBankAccounts(): Promise<BankAccount[]> {
     openingDate: r.opening_date,
     isActive: r.is_active,
     sortOrder: r.sort_order,
+    isMemberAppDefault: r.is_member_app_default,
   }));
 }
 
@@ -3091,6 +3098,15 @@ export async function offeredBankAccounts(): Promise<BankAccount[]> {
   return (await listBankAccounts()).filter(a => a.isActive);
 }
 
+// The account a member pays into for a deposit from the app, or null until
+// one is marked at Configuration -> Bank accounts.
+export async function memberAppDepositAccount(): Promise<BankAccount | null> {
+  return (
+    (await listBankAccounts()).find(a => a.isActive && a.isMemberAppDefault) ??
+    null
+  );
+}
+
 export async function bankAccountById(id: string): Promise<BankAccount | null> {
   return (await listBankAccounts()).find(a => a.id === id) ?? null;
 }
@@ -3103,6 +3119,35 @@ export interface BankAccountInput {
   openingBalance: string;
   openingDate?: string;
   isActive: boolean;
+  // Make this the account members pay into from the app (the one marked
+  // before is unmarked), or stop it being so. Absent: unchanged. An
+  // inactive account is never it.
+  isMemberAppDefault?: boolean;
+}
+
+// Mark or unmark the member app's deposit account, inside the caller's
+// configuration transaction: at most one is marked (migration 0121's
+// index), so the old one is unmarked first.
+async function applyMemberAppDefault(
+  client: PoolClient,
+  id: string,
+  input: BankAccountInput
+): Promise<void> {
+  const marked = input.isActive && input.isMemberAppDefault === true;
+  if (marked) {
+    await client.query(
+      `update bank_account set is_member_app_default = false
+        where is_member_app_default and id <> $1`,
+      [id]
+    );
+  }
+  if (marked || input.isMemberAppDefault === false || !input.isActive) {
+    await client.query(
+      `update bank_account set is_member_app_default = $2
+        where id = $1 and is_member_app_default <> $2`,
+      [id, marked]
+    );
+  }
 }
 
 function validateBankAccount(input: BankAccountInput): {
@@ -3188,6 +3233,7 @@ export async function createBankAccount(
         input.isActive,
       ]
     );
+    await applyMemberAppDefault(client, result.rows[0].id, input);
     return result.rows[0].id;
   });
 }
@@ -3204,7 +3250,9 @@ export async function updateBankAccount(
           set name = $2, bank_name = $3, account_number = $4, currency = $5,
               opening_balance = $6,
               opening_date = coalesce($7::date, opening_date),
-              is_active = $8
+              is_active = $8,
+              -- An inactive account is never the member app's (0121).
+              is_member_app_default = is_member_app_default and $8
         where id = $1`,
       [
         id,
@@ -3220,5 +3268,6 @@ export async function updateBankAccount(
     if (result.rowCount === 0) {
       throw new ConfigError('That bank account no longer exists.', 'not_found');
     }
+    await applyMemberAppDefault(client, id, input);
   });
 }

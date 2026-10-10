@@ -65,13 +65,13 @@ import gives it one; that is the import's job, not this endpoint's.
 
 ### Linking an existing member
 
-| Step | Endpoint                                        | Rules                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| ---- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1    | `POST /auth/link-member` `{ nic, abNumber }`    | 422 if either is malformed (`details.nic`, `details.abNumber`). **404 if the pair does not name one member who may use the app** (active, or resigned with an account still open; `mayUseAppSql`) — one message for "no such NIC", "no such AB Number", "not together" and "not entitled". Returns the challenge with the registered mobile masked. Audit: `member.link.requested` on the member, `member.link.refused` on a miss. |
-| 2    | `POST /auth/verify-otp` `{ challengeId, code }` | Five wrong codes burn the challenge (404 from then on); a code lives five minutes and works once. On success a `member_session` with `member_id` set. Audit: `member.link.completed`.                                                                                                                                                                                                                                              |
-| 3    | `POST /auth/refresh` `{ refreshToken }`         | New pair; the old refresh token is dead the moment it is used. Ninety days from last use, so a phone that opens the app now and then never re-links. A member no longer entitled to the app is signed out here rather than when a token happens to lapse.                                                                                                                                                                          |
-| 4    | `POST /auth/logout`                             | Revokes the session. The device must link again to get back in. Audit: `member.session.revoked`.                                                                                                                                                                                                                                                                                                                                   |
-| —    | `POST /auth/resend-otp` `{ challengeId }`       | Fresh code, same purpose, same number; the previous code is dead.                                                                                                                                                                                                                                                                                                                                                                  |
+| Step | Endpoint                                        | Rules                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ---- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1    | `POST /auth/link-member` `{ nic, abNumber }`    | 422 if either is malformed (`details.nic`, `details.abNumber`). **404 if the pair does not name one member who may use the app** (active, or resigned with an account still open; `mayUseAppSql`) — one message for "no such NIC", "no such AB Number", "not together" and "not entitled", telling the person to contact the Al Barakah office on +230 5944 9797; a member with no mobile on record gets the same instruction worded for that. The app goes no further on a 404 (officer direction, October 2026; the earlier decoy challenge that answered a miss as a hit is gone, so the rate limits — which count a miss — are the control against guessing pairs). On a hit, returns the challenge with no number. Audit: `member.link.requested` on the member, `member.link.refused` on a miss. |
+| 2    | `POST /auth/verify-otp` `{ challengeId, code }` | Five wrong codes burn the challenge (404 from then on); a code lives five minutes and works once. On success a `member_session` with `member_id` set. Audit: `member.link.completed`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 3    | `POST /auth/refresh` `{ refreshToken }`         | New pair; the old refresh token is dead the moment it is used. Ninety days from last use, so a phone that opens the app now and then never re-links. A member no longer entitled to the app is signed out here rather than when a token happens to lapse.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 4    | `POST /auth/logout`                             | Revokes the session. The device must link again to get back in. Audit: `member.session.revoked`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| —    | `POST /auth/resend-otp` `{ challengeId }`       | Fresh code, same purpose, same number; the previous code is dead.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 
 This is **not** the staff `GET /api/v1/applications/existing-member-search`.
 That matches a fragment of a name, NIC or Member No. against every active
@@ -105,6 +105,11 @@ request. `refreshToken` — 32 random bytes, stored as a SHA-256, rotated on
 every use. Neither the NIC nor the AB Number is stored on the device; the
 internal member id is never sent to it.
 
+The phone's push token (`member_device`, migration 0118) travels the other
+way — from the phone to the server, on every start — and is tied to the
+session that sent it: revoking the session silences the phone. It can
+only receive; it identifies an app install, never the person.
+
 ## The system user
 
 Applications from the phone are captured by `Member app`
@@ -113,6 +118,13 @@ role and no permission, so it cannot reach a page; its `entra_subject` is
 a value no token can carry, so `claimPreProvisionedAccount` can never bind
 a real sign-in to it. Every audit row it writes carries the masked mobile
 that acted: `member-app:+2305xxx234`.
+
+It is read, and seeded again if missing, on every action from the phone
+(`systemUser()`, `src/lib/member/applications.ts`): "Reset test data"
+used to delete it with the staff (fixed in migration 0119, which keeps
+every `system:%` account), and until then every application started from
+the app failed with "Something went wrong" on a freshly reset test
+environment.
 
 ## Received online
 
@@ -165,18 +177,23 @@ header is the whole of what is needed; a body is not.
 | GET    | `/reference`                                                     | public | Active membership types with their fields, applicant-facing checklist (`signed_form` left out — a branch step), fees in force, and the Society's bank accounts by name (S-2102).                                                                                                                                                                                                                         |
 | GET    | `/me`                                                            | member | Membership, the founding application's parties, and any pending details request.                                                                                                                                                                                                                                                                                                                         |
 | PUT    | `/me/details`                                                    | member | A `member_details_request`. 422 on a blank mandatory field or an unplaceable phone; 409 while one is pending; 403 for an applicant. Audit: `member.details.requested`.                                                                                                                                                                                                                                   |
-| GET    | `/me/accounts`                                                   | member | Balance from the ledger's cache (S-1309), or null for an account nothing has ever posted to.                                                                                                                                                                                                                                                                                                             |
+| GET    | `/me/accounts`                                                   | member | Balance from the ledger's cache (S-1309), or null for an account nothing has ever posted to. `transactionCount` is the number of entries recorded; the app hides an account with none.                                                                                                                                                                                                                   |
 | GET    | `/me/accounts/{id}/transactions`                                 | member | The ledger's entries, oldest first (`accountEntries`); 404 unless the caller's.                                                                                                                                                                                                                                                                                                                          |
-| GET    | `/me/accounts/{id}/balance`                                      | member | The staff `/accounts/{id}/balance` payload — balance, pending debits, available — for the caller's own account; 404 unless the caller's (S-2101).                                                                                                                                                                                                                                                        |
+| GET    | `/me/accounts/{id}/balance`                                      | member | The staff `/accounts/{id}/balance` payload — balance, pending debits, available — for the caller's own account or a guarded minor's; 404 unless the caller's (S-2101).                                                                                                                                                                                                                                   |
 | GET    | `/me/accounts/{id}/history`                                      | member | The staff `/accounts/{id}/history` payload, newest first, paged by `before`; 404 unless the caller's.                                                                                                                                                                                                                                                                                                    |
 | GET    | `/me/accounts/{id}/statement`                                    | member | The staff `/accounts/{id}/statement` payload for a period (`from`, `to`; the month to date by default), or the spreadsheet with `format=xlsx`; 404 unless the caller's.                                                                                                                                                                                                                                  |
-| POST   | `/me/deposits`                                                   | member | A deposit into the caller's own account, captured by the system user in the Member role and routed by the matrix; never cash; 403 until deposits from the app are switched on (S-2102).                                                                                                                                                                                                                  |
-| POST   | `/me/withdrawals`                                                | member | A withdrawal from the caller's own account, the same way; 403 until switched on.                                                                                                                                                                                                                                                                                                                         |
-| POST   | `/me/transfers`                                                  | member | A transfer from the caller's own account to an account here, the same way; 403 until switched on.                                                                                                                                                                                                                                                                                                        |
+| POST   | `/me/deposits`                                                   | member | A deposit into the caller's own account or a guarded minor's, captured by the system user in the Member role and routed by the matrix; bank transfer or Juice only; 403 until deposits from the app are switched on (S-2102).                                                                                                                                                                            |
+| POST   | `/me/withdrawals`                                                | member | A withdrawal from the caller's own account or a guarded minor's, the same way, paid by the member's choice of bank transfer (to their own account, given) or cheque; 403 until switched on.                                                                                                                                                                                                              |
+| POST   | `/me/transfers`                                                  | member | A transfer from the caller's own account or a guarded minor's to an account here, the same way; 403 until switched on.                                                                                                                                                                                                                                                                                   |
+| GET    | `/me/transactions`                                               | member | The requests made from the app on the caller's accounts and their guarded minors' (`forMinor`), and where each stands: Pending approval with who has it, approved, completed, or not approved with the officer's reason (migration 0120).                                                                                                                                                                |
+| GET    | `/me/deposit-options`                                            | member | How a deposit from the app may be paid (bank transfer or Juice) and the one Society bank account members pay into (marked at Configuration → Bank accounts) with its account number, whole: for a member or account holder only, 403 for an applicant.                                                                                                                                                   |
 | GET    | `/me/documents`                                                  | member | `documentsForMember`; each entry's `id` opens at the row below.                                                                                                                                                                                                                                                                                                                                          |
-| GET    | `/me/dependents`                                                 | member | The active minors the caller is guardian of (member or non-member account holder), each with their accounts and balances. Matched on the guardian block by the caller's Member No. or NIC (`members/guardian.ts`); empty for a member who guards nobody. Read-only.                                                                                                                                      |
+| GET    | `/me/dependents`                                                 | member | The active minors the caller is guardian of (member or non-member account holder), each with their accounts and balances. Matched on the guardian block by the caller's Member No. or NIC (`members/guardian.ts`); empty for a member who guards nobody. Deposits, withdrawals and transfers on these accounts go through the endpoints above.                                                           |
 | GET    | `/me/dependents/{dependentId}/accounts/{accountId}/transactions` | member | The entries behind a guarded minor's balance, oldest first; 404 unless the caller guards the minor and the account is that minor's.                                                                                                                                                                                                                                                                      |
 | GET    | `/promotions`                                                    | member | The cards on the app's home screen: the active `app_promotion` rows inside their dates, in sort order (migration 0111). Written on **Configuration → Member app**. The phone shows each card's picture alone (so a picture is required); the title and text are the administrator's label and the screen reader's description. The same for every session, applicant included; nothing about the caller. |
+| GET    | `/outlets`                                                       | member | Where the membership card earns a discount: the active `card_outlet` rows in sort order (migration 0116) — logo, category tag, percentage, description, address, link, and `isPartner` (pays the premium fee: shown on the home screen as well, migration 0117). Written on **Configuration → Member app**. The same for every session; nothing about the caller.                                        |
+| POST   | `/me/devices`                                                    | member | This phone's Firebase push token, tied to the caller's session (migration 0118; `docs/notifications.md`, Push). The app registers on every start; the same token again refreshes the row, a token that moves to another session moves with it. 422 without a token or a platform.                                                                                                                        |
+| DELETE | `/me/devices`                                                    | member | Withdraws the token for the caller's own session — the app calls it before signing out. Revoking a session disables every token of it regardless.                                                                                                                                                                                                                                                        |
 | GET    | `/me/documents/{id}/content`                                     | member | The file itself, streamed from this origin for the app to render in place; 404 unless the document is the caller's own — one listed above (`ownedDocumentId`).                                                                                                                                                                                                                                           |
 | GET    | `/applications`                                                  | member | Those started from the caller's verified mobile, plus a member's founding one.                                                                                                                                                                                                                                                                                                                           |
 | POST   | `/applications`                                                  | member | `startApplication` as the system user; 409 while one is in progress.                                                                                                                                                                                                                                                                                                                                     |
@@ -267,26 +284,109 @@ and "please visit the branch": a member's transaction goes to a chain or it
 goes nowhere, and the officers on that chain decide. It can never be more
 lenient than a clerk's.
 
+**Where it goes** (officer direction, October 2026; migration 0120). Every
+request from the app is validated by officers before money moves, and the
+member sees **Pending approval** until then. Three rules "by Member" sit
+at the top of the matrix, any amount:
+
+| From the app | Chain                                                  | Then                                                                                |
+| ------------ | ------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| Deposit      | Deposit from the member app: **Accounts verification** | An Account Officer records it — the same one may (`transaction.record_app_deposit`) |
+| Withdrawal   | Withdrawal approval: **Secretary → President**         | The **Treasurer** disburses it (`transaction.disburse`)                             |
+| Transfer     | Transfer approval: **Secretary → President**           | It is recorded (`transaction.post`)                                                 |
+
+Accounts verification is a one-step chain for the Account Officer, which
+is therefore also given `transaction.approve`; acting on a step still needs
+that step's role, so it reaches no other chain's decision. A request from
+the app is **never returned** — its captor is the system user, so nobody
+could correct it and it would sit in no queue holding the member's money
+as pending: `reviewTransaction` refuses a return and the staff page hides
+the button, so a reviewer rejects it with the reason, which the member is
+told (push wording for `deposit.rejected`, `transfer.rejected` and
+`withdrawal.rejected`). All of it is configuration, at Configuration →
+Approval matrix and → Workflows.
+
+**One Account Officer may verify and record a deposit** (officer
+direction, October 2026). The segregation rule that whoever approved a
+transaction may not post it does not hold for a deposit a member made from
+the app: nobody at the Society captured it, and money coming in is checked
+against the bank statement, not paid out on anyone's word
+(`postingExemptions` in `ledger/review.ts`). A withdrawal, a transfer, and
+any deposit an officer captured keep the rule.
+
+**Recording one is its own permission** (officer direction, migration
+0121). `transaction.record_app_deposit`, given to the Account Officer,
+records an approved deposit a member made from the app; `transaction.post`,
+which the Regional Officer and others hold for the counter, does not reach
+it (`permissionToPost` in `ledger/review.ts`). Such a deposit is not on
+their queue and the staff page offers them no Record button. An
+administrator moves the permission at Configuration → Roles.
+
+**One account to pay into** (officer direction, migration 0121). A member
+is shown one of the Society's bank accounts, never the list: the one
+marked "Members pay into this account from the app" at Configuration →
+Bank accounts. At most one is marked, and only an active one; marking
+another unmarks the first, and deactivating it unmarks it. A deposit from
+the app is recorded against that account whatever the app names, and one
+naming another is refused. With none marked, deposits from the app answer
+403 "not available yet" and the app says so. The migration marked the
+account where there was only one active.
+
+**How a withdrawal is paid** (officer direction). The member chooses:
+`bank_transfer` to their own account, whose bank and number they give
+(`payToBank`, `payToAccountNumber`), or `cheque`. The choice is the
+withdrawal's method, the note says it in words ("To be paid by bank
+transfer to MCB, account …"), and the Treasurer's Disburse form starts at
+it, saying the member asked. `/reference` lists the two as
+`withdrawalMethods`, while the Society offers them for withdrawals.
+
+**What the member sees.** `GET /me/transactions` lists what the caller
+asked for from the app, newest first: `state` pending, approved,
+completed, declined, returned or cancelled, `statusLabel` in the member's
+words ("Pending approval", "Approved", "Paid out", "Not approved"),
+`stage` naming who has it ("Being verified by the accounts department",
+"With the Secretary", "Awaiting disbursement by the Treasurer") and, when
+declined, the officer's `reason`. `/reference` says which operations are
+switched on (`enabledOperations`) and how a deposit may have been paid
+(`depositMethods`: bank transfer or Juice). `GET /me/deposit-options`
+gives a signed-in member the same methods and the one bank account to pay
+into with its **account number**, whole; the public `/reference` names it
+only.
+
+**For a minor in their care.** A guardian may ask for a deposit, a
+withdrawal or a transfer on the account of a minor they guard (officer
+direction, October 2026), matched as `/me/dependents` matches them
+(`accountInReach` in `member/dependents.ts`). It is the minor's
+transaction, on the same chain; its note begins "Requested in the app by
+the guardian, AB…" so the officer deciding it knows who asked. The
+guardian's `/me/transactions` lists it with `forMinor`, the minor's name,
+and `/me/accounts/{id}/balance` answers for the minor's accounts too. A
+minor with no phone of their own is told through the guardian's: the push
+about their money goes to the guardian's phones
+(`transaction-notifications.ts`). A minor whose guardian is demised still
+has nothing paid out (`members/guardian.ts`).
+
 **Whether it may be started at all.** `member_api.enabled_operations`, set
 at Configuration → Member app (`config.manage`), lists which of the three
 are on. Empty is the default: the endpoints exist from day one and answer
-403 until switched on, and Readiness shows the setting. A cash deposit is
-refused whatever the switch says — nobody took cash from a phone — so a
-deposit names a bank or mobile money method, its reference and the
-Society's bank account from `/reference`. A transfer goes to an account on
+403 until switched on, and Readiness shows the setting. A deposit is paid
+by bank transfer or Juice and nothing else, whatever the switch says —
+nobody took cash from a phone — so it names one of those, its reference
+and the Society's bank account from `/me/deposit-options`. A transfer goes to an account on
 the system by id, never to a payee outside: that is a withdrawal in another
 name, and the branch's to record. Every write demands an `Idempotency-Key`
 header, as the staff API does.
 
 ## Configuration
 
-| Variable                      | Purpose                                                                                                                                                                                                                                                                                                                |
-| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `MEMBER_SESSION_SECRET`       | Signs access tokens. Its own key, never `AUTH_SESSION_SECRET`: a staff cookie and a member token must not be interchangeable. At least 32 characters.                                                                                                                                                                  |
-| `MEMBER_OTP_DELIVERY`         | `http` posts `{ to, message }` to `MEMBER_OTP_WEBHOOK_URL` (with `MEMBER_OTP_WEBHOOK_TOKEN` as a bearer, if set) — whatever SMS or WhatsApp gateway the Society uses. `log` writes the code to the server log; **non-production only**, refused elsewhere. Unset: codes cannot be sent and the endpoints say so (503). |
-| `MEMBER_OTP_FIXED_CODE`       | Six digits every challenge accepts, for exercising the app against the test environment. **Non-production only.**                                                                                                                                                                                                      |
-| `MEMBER_ACCESS_TOKEN_SECONDS` | Default 3600.                                                                                                                                                                                                                                                                                                          |
-| `MEMBER_REFRESH_TOKEN_DAYS`   | Default 90, from last use.                                                                                                                                                                                                                                                                                             |
+| Variable                      | Purpose                                                                                                                                                                                                                                                                                                                                                           |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MEMBER_SESSION_SECRET`       | Signs access tokens. Its own key, never `AUTH_SESSION_SECRET`: a staff cookie and a member token must not be interchangeable. At least 32 characters.                                                                                                                                                                                                             |
+| `MEMBER_OTP_DELIVERY`         | `http` posts `{ to, message }` to `MEMBER_OTP_WEBHOOK_URL` (with `MEMBER_OTP_WEBHOOK_TOKEN` as a bearer, if set) — whatever SMS or WhatsApp gateway the Society uses. `log` writes the code to the server log; **non-production only**, refused elsewhere. Unset: codes cannot be sent and the endpoints say so (503).                                            |
+| `MEMBER_OTP_FIXED_CODE`       | Six digits every challenge accepts, for exercising the app against the test environment. **Non-production only.**                                                                                                                                                                                                                                                 |
+| `MEMBER_ACCESS_TOKEN_SECONDS` | Default 3600.                                                                                                                                                                                                                                                                                                                                                     |
+| `MEMBER_REFRESH_TOKEN_DAYS`   | Default 90, from last use.                                                                                                                                                                                                                                                                                                                                        |
+| `NOTIFY_PUSH_DELIVERY`        | How push notifications reach the app's phones: `fcm` through Firebase Cloud Messaging with `NOTIFY_PUSH_SERVICE_ACCOUNT` (the project's service-account key file, as JSON or base64), `http` to a gateway, `log` on a non-production environment. `docs/notifications.md`, "Push". Unset: push rows fail with the reason, as any other unconfigured channel's do. |
 
 ## Codes: the controls, in one place
 

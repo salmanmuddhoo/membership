@@ -151,6 +151,10 @@ export interface AccountSummary {
   // S-1309). Null for an account nothing has ever posted to — which is not
   // the same as a balance of zero, and the app may say so.
   balance: string | null;
+  // Entries recorded against the account. The app hides an account with
+  // none (officer direction): a savings account opened on approval sits
+  // empty until the first deposit.
+  transactionCount: number;
 }
 
 export async function memberAccounts(
@@ -183,10 +187,13 @@ export async function accountsForHolder(
     status: string;
     opened_at: Date;
     balance: string | null;
+    transaction_count: number;
   }>(
     `select a.id, a.account_no, m.member_no, t.code as type_code,
             t.name as type_name, t.category, a.status, a.opened_at,
-            b.balance
+            b.balance,
+            (select count(*) from account_entry e where e.account_id = a.id)::int
+              as transaction_count
        from account a
        join account_type t on t.id = a.account_type_id
        left join member m on m.id = a.member_id
@@ -208,6 +215,7 @@ export async function accountsForHolder(
     status: r.status,
     openedAt: r.opened_at.toISOString(),
     balance: r.balance,
+    transactionCount: r.transaction_count,
   }));
 }
 
@@ -301,9 +309,16 @@ export async function accountTransactionsFor(
     occurredAt: e.occurredAt.toISOString(),
     direction: e.direction,
     amount: e.amount,
-    description: e.description,
+    description: memberDescription(e.description),
     receiptNo: e.receiptNo,
   }));
+}
+
+// The ledger's words for an entry, less the office's own reference: a
+// member sees "Reversal", not "Reversal of TX-000123" (officer direction,
+// October 2026: the transaction id is not shown in the app).
+export function memberDescription(description: string): string {
+  return /^Reversal of /.test(description) ? 'Reversal' : description;
 }
 
 // --- Documents ---------------------------------------------------------------

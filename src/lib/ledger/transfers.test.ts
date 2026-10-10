@@ -406,15 +406,14 @@ describe('a transfer between accounts on the system', () => {
 
   it('asks transaction.record_transfer, not transaction.post, of the step after approval', async () => {
     const { review } = await load();
-    expect(
-      review.permissionToPost({ kind: 'transfer_leg', payeeName: null })
-    ).toBe('transaction.record_transfer');
-    expect(review.permissionToPost({ kind: 'deposit', payeeName: null })).toBe(
-      'transaction.post'
-    );
-    expect(
-      review.permissionToPost({ kind: 'transfer_leg', payeeName: 'X' })
-    ).toBe('transaction.disburse');
+    type Kind = Parameters<typeof review.permissionToPost>[0]['kind'];
+    const asks = (kind: Kind, payeeName: string | null, fromApp = false) =>
+      review.permissionToPost({ kind, payeeName, capturedFromApp: fromApp });
+    expect(asks('transfer_leg', null)).toBe('transaction.record_transfer');
+    expect(asks('deposit', null)).toBe('transaction.post');
+    expect(asks('transfer_leg', 'X')).toBe('transaction.disburse');
+    // A deposit a member made from the app keeps its own (migration 0121).
+    expect(asks('deposit', null, true)).toBe('transaction.record_app_deposit');
   });
 
   it("routes a transfer to another person's account under the Transfer bands, and posts both legs once approved", async () => {

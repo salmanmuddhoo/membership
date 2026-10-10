@@ -5281,7 +5281,7 @@
     "/api/v1/member/auth/link-member": {
       "post": {
         "summary": "Identify an existing member by NIC + AB Number and send a code to their registered mobile",
-        "description": "Exact pair, active members only. The answer is the same whether the pair named someone or not — a challenge id and no number — so it never says whether a NIC + AB Number combination exists; a miss gets a challenge nothing can verify against. Rate-limited per NIC, per AB Number and per address, and one code per AB Number per cooldown window.",
+        "description": "Exact pair, members entitled to the app only. A pair that names nobody, or a member with no mobile on record, is refused with 404 and a message telling the person to contact the Al Barakah office; the app goes no further. Rate-limited per NIC, per AB Number and per address, hit or miss, and one code per AB Number per cooldown window.",
         "tags": [
           "Member app"
         ],
@@ -6301,7 +6301,8 @@
                           "category",
                           "status",
                           "openedAt",
-                          "balance"
+                          "balance",
+                          "transactionCount"
                         ],
                         "properties": {
                           "id": {
@@ -6331,6 +6332,10 @@
                             "type": "string",
                             "nullable": true,
                             "description": "Decimal string."
+                          },
+                          "transactionCount": {
+                            "type": "integer",
+                            "description": "Entries recorded against the account; the app hides one with none."
                           }
                         }
                       }
@@ -6389,7 +6394,7 @@
     "/api/v1/member/me/accounts/{id}/balance": {
       "get": {
         "summary": "One of the caller's accounts: its balance",
-        "description": "The balance the ledger holds for the account: the sum of every posted entry, maintained by the engine as each one posts (docs/ledger.md). An account nothing has ever posted to reads as \"0.00\" with no entries. \"available\" is the balance less every withdrawal already submitted, under review or approved but not yet paid out — what a further withdrawal can draw on. 404 unless the account is the caller's own.",
+        "description": "The balance the ledger holds for the account: the sum of every posted entry, maintained by the engine as each one posts (docs/ledger.md). An account nothing has ever posted to reads as \"0.00\" with no entries. \"available\" is the balance less every withdrawal already submitted, under review or approved but not yet paid out — what a further withdrawal can draw on. 404 unless the account is the caller's own or a minor's in their care.",
         "tags": [
           "Accounts"
         ],
@@ -7142,7 +7147,8 @@
                                 "category",
                                 "status",
                                 "openedAt",
-                                "balance"
+                                "balance",
+                                "transactionCount"
                               ],
                               "properties": {
                                 "id": {
@@ -7172,6 +7178,10 @@
                                   "type": "string",
                                   "nullable": true,
                                   "description": "Decimal string."
+                                },
+                                "transactionCount": {
+                                  "type": "integer",
+                                  "description": "Entries recorded against the account; the app hides one with none."
                                 }
                               }
                             }
@@ -7347,10 +7357,153 @@
         }
       }
     },
+    "/api/v1/member/me/deposit-options": {
+      "get": {
+        "summary": "How a deposit from the app may be paid, and where to",
+        "description": "The ways a deposit from the app may have been paid (bank transfer or Juice, while the Society offers them) and the one bank account members pay into, with its number: the one marked at Configuration -> Bank accounts; empty until one is. requiresReference: give the reference of the payment. 403 for an applicant, who holds no account.",
+        "tags": [
+          "Transactions"
+        ],
+        "operationId": "getMemberMeDepositOptions",
+        "x-required-permission": "(a member app session)",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "methods",
+                        "bankAccounts"
+                      ],
+                      "properties": {
+                        "methods": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "code",
+                              "name",
+                              "requiresReference",
+                              "touchesBank"
+                            ],
+                            "properties": {
+                              "code": {
+                                "type": "string",
+                                "enum": [
+                                  "bank_transfer",
+                                  "juice"
+                                ]
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "requiresReference": {
+                                "type": "boolean"
+                              },
+                              "touchesBank": {
+                                "type": "boolean"
+                              }
+                            }
+                          }
+                        },
+                        "bankAccounts": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "id",
+                              "name",
+                              "bankName",
+                              "accountNumber"
+                            ],
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "format": "uuid"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "bankName": {
+                                "type": "string"
+                              },
+                              "accountNumber": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/member/me/deposits": {
       "post": {
         "summary": "Pay into one of the caller's accounts",
-        "description": "Recorded as the staff deposit is and routed by the approval matrix with Member as the initiating role; it waits on a chain, never posts at once. Refused (403) until the Society switches deposits from the app on. Cash is refused: choose a bank or mobile money method, with its reference and the Society's bank account from /api/v1/member/reference. 404 unless the account is the caller's own.",
+        "description": "Recorded as the staff deposit is and routed by the approval matrix with Member as the initiating role; it waits on a chain, never posts at once. Refused (403) until the Society switches deposits from the app on. Paid by bank transfer or Juice only, with its reference and the Society's bank account from /api/v1/member/me/deposit-options. 404 unless the account is the caller's own or a minor's in their care.",
         "tags": [
           "Transactions"
         ],
@@ -7784,6 +7937,236 @@
         }
       }
     },
+    "/api/v1/member/me/devices": {
+      "post": {
+        "summary": "Register this phone for push notifications",
+        "description": "The phone's Firebase device token, tied to the caller's session. Idempotent: the same token again refreshes the registration, and a token that moves to another session moves with it. 422 without a token or a platform.",
+        "tags": [
+          "Member app"
+        ],
+        "operationId": "postMemberMeDevices",
+        "x-required-permission": "(a member app session)",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "ok"
+                      ],
+                      "properties": {
+                        "ok": {
+                          "type": "boolean",
+                          "enum": [
+                            true
+                          ]
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "token",
+                  "platform"
+                ],
+                "properties": {
+                  "token": {
+                    "type": "string",
+                    "description": "The Firebase Cloud Messaging device token."
+                  },
+                  "platform": {
+                    "type": "string",
+                    "enum": [
+                      "android",
+                      "ios"
+                    ]
+                  },
+                  "appBuild": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "The app version, for the record."
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Withdraw this phone from push notifications",
+        "description": "Disables the token for the caller's own session; the app calls it before signing out. Revoking the session disables every token of it regardless, so this is belt and braces. Always 200.",
+        "tags": [
+          "Member app"
+        ],
+        "operationId": "deleteMemberMeDevices",
+        "x-required-permission": "(a member app session)",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "ok"
+                      ],
+                      "properties": {
+                        "ok": {
+                          "type": "boolean",
+                          "enum": [
+                            true
+                          ]
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "token"
+                ],
+                "properties": {
+                  "token": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/member/me/documents": {
       "get": {
         "summary": "Documents on file for the caller",
@@ -7985,10 +8368,198 @@
         }
       }
     },
+    "/api/v1/member/me/transactions": {
+      "get": {
+        "summary": "The requests the caller made from the app",
+        "description": "Deposits, withdrawals and transfers the caller started from the app, newest first (fifty at most): a transfer once, from the caller's own account or a minor's in their care. state is pending until officers decide (statusLabel \"Pending approval\", stage naming who has it), then approved (waiting to be recorded or paid out), completed, declined (reason: the officer's words), returned or cancelled.",
+        "tags": [
+          "Transactions"
+        ],
+        "operationId": "getMemberMeTransactions",
+        "x-required-permission": "(a member app session)",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "id",
+                          "reference",
+                          "kind",
+                          "state",
+                          "statusLabel",
+                          "stage",
+                          "amount",
+                          "currency",
+                          "accountId",
+                          "accountNo",
+                          "accountTypeName",
+                          "counterpartAccountNo",
+                          "counterpartAccountTypeName",
+                          "methodName",
+                          "forMinor",
+                          "note",
+                          "reason",
+                          "createdAt",
+                          "completedAt"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "reference": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "deposit",
+                              "withdrawal",
+                              "transfer"
+                            ]
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "pending",
+                              "approved",
+                              "completed",
+                              "declined",
+                              "returned",
+                              "cancelled"
+                            ]
+                          },
+                          "statusLabel": {
+                            "type": "string"
+                          },
+                          "stage": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "amount": {
+                            "type": "string"
+                          },
+                          "currency": {
+                            "type": "string"
+                          },
+                          "accountId": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "accountNo": {
+                            "type": "string"
+                          },
+                          "accountTypeName": {
+                            "type": "string"
+                          },
+                          "counterpartAccountNo": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "counterpartAccountTypeName": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "methodName": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "forMinor": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "The minor's name when it is on the account of a minor in the caller's care; null on the caller's own."
+                          },
+                          "note": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "createdAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "completedAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "nullable": true
+                          }
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/member/me/transfers": {
       "post": {
         "summary": "Move money from one of the caller's accounts to an account here",
-        "description": "Recorded as the staff transfer is and routed by the approval matrix with Member as the initiating role; it waits on a chain, never posts at once. Refused (403) until the Society switches transfers from the app on. The destination is an account on the system, the caller's own or another member's, by id. 404 unless the source is the caller's own.",
+        "description": "Recorded as the staff transfer is and routed by the approval matrix with Member as the initiating role; it waits on a chain, never posts at once. Refused (403) until the Society switches transfers from the app on. The destination is an account on the system, the caller's own or another member's, by id. 404 unless the source is the caller's own or a minor's in their care.",
         "tags": [
           "Transactions"
         ],
@@ -8623,7 +9194,7 @@
     "/api/v1/member/me/withdrawals": {
       "post": {
         "summary": "Ask for money out of one of the caller's accounts",
-        "description": "Recorded as the staff withdrawal is and routed by the approval matrix with Member as the initiating role; it waits on a chain, never posts at once. Refused (403) until the Society switches withdrawals from the app on. The method is how it will be paid out, with its reference where the method requires one. 404 unless the account is the caller's own.",
+        "description": "Recorded as the staff withdrawal is and routed by the approval matrix with Member as the initiating role; it waits on a chain, never posts at once. Refused (403) until the Society switches withdrawals from the app on. The member chooses how to receive it — bank transfer to their own account, or cheque — and the Treasurer pays that way, recording the reference at Disburse. 404 unless the account is the caller's own or a minor's in their care.",
         "tags": [
           "Transactions"
         ],
@@ -8973,8 +9544,7 @@
                 "type": "object",
                 "required": [
                   "accountId",
-                  "amount",
-                  "method"
+                  "amount"
                 ],
                 "properties": {
                   "accountId": {
@@ -8987,20 +9557,154 @@
                   },
                   "method": {
                     "type": "string",
-                    "description": "How it is paid out: a payment_method code."
+                    "enum": [
+                      "bank_transfer",
+                      "cheque"
+                    ],
+                    "description": "How the member asks to receive it (withdrawalMethods on /api/v1/member/reference). The Treasurer pays that way at Disburse. Omitted: the Treasurer decides."
                   },
-                  "methodReference": {
+                  "payToBank": {
                     "type": "string",
-                    "description": "Required where the method says so."
+                    "description": "With bank_transfer: the member's own bank."
                   },
-                  "bankAccountId": {
+                  "payToAccountNumber": {
                     "type": "string",
-                    "format": "uuid",
-                    "description": "One of the Society's bank accounts from /api/v1/member/reference. Required with the reference where the method touches a bank."
+                    "description": "With bank_transfer: the member's own account number there."
                   },
                   "reason": {
                     "type": "string"
                   }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/member/outlets": {
+      "get": {
+        "summary": "Where the membership card earns a discount",
+        "description": "The active outlets, in the order to show them: logo, category tag, discount percentage, a line of description, the address and a link. A partner (pays the premium fee) is flagged, for the home screen. Written on the web application's Member app configuration page. Any session; the same for everyone.",
+        "tags": [
+          "Member app"
+        ],
+        "operationId": "getMemberOutlets",
+        "x-required-permission": "(a member app session)",
+        "security": [
+          {
+            "memberToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data",
+                    "correlationId"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "id",
+                          "name",
+                          "logoUrl",
+                          "category",
+                          "discountPercent",
+                          "description",
+                          "address",
+                          "linkUrl",
+                          "isPartner"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "logoUrl": {
+                            "type": "string",
+                            "description": "The logo, https."
+                          },
+                          "category": {
+                            "type": "string",
+                            "description": "A lower-case tag such as \"education\", \"groceries\" or \"food\"."
+                          },
+                          "discountPercent": {
+                            "type": "string",
+                            "description": "Decimal string, e.g. \"10.00\"."
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "address": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "linkUrl": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "https, mailto or tel."
+                          },
+                          "isPartner": {
+                            "type": "boolean",
+                            "description": "Pays the premium fee: shown on the home screen as well."
+                          }
+                        }
+                      }
+                    },
+                    "correlationId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, but not permitted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited. See the retry-after header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected failure. Quote the correlation id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -9134,7 +9838,7 @@
     "/api/v1/member/reference": {
       "get": {
         "summary": "Read the membership types a person can apply for",
-        "description": "Active membership types with their field configuration, the documents an applicant files from the phone (the signed form is a branch step and is left out), and the fees in force. The Society's bank accounts a member may pay into, by name. Public.",
+        "description": "Active membership types with their field configuration, the documents an applicant files from the phone (the signed form is a branch step and is left out), and the fees in force. The Society's bank account a member pays into from the app (the one marked at Configuration -> Bank accounts), by name; its number is for a signed-in member, at /api/v1/member/me/deposit-options. Which transactions the app may start (Configuration -> Member app) and how a deposit may be paid: bank transfer or Juice. Public.",
         "tags": [
           "Member app"
         ],
@@ -9157,9 +9861,74 @@
                       "type": "object",
                       "required": [
                         "membershipTypes",
-                        "bankAccounts"
+                        "bankAccounts",
+                        "enabledOperations",
+                        "depositMethods",
+                        "withdrawalMethods"
                       ],
                       "properties": {
+                        "enabledOperations": {
+                          "type": "array",
+                          "description": "Which transactions a member may start from the app. Empty until the Society switches them on.",
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "deposit",
+                              "withdrawal",
+                              "transfer"
+                            ]
+                          }
+                        },
+                        "depositMethods": {
+                          "type": "array",
+                          "description": "How a deposit from the app may have been paid: bank transfer or Juice, while the Society offers them for money in. touchesBank: name one of bankAccounts; requiresReference: give its reference.",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "code",
+                              "name",
+                              "requiresReference",
+                              "touchesBank"
+                            ],
+                            "properties": {
+                              "code": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "requiresReference": {
+                                "type": "boolean"
+                              },
+                              "touchesBank": {
+                                "type": "boolean"
+                              }
+                            }
+                          }
+                        },
+                        "withdrawalMethods": {
+                          "type": "array",
+                          "description": "How a member may ask to receive a withdrawal: bank transfer (to their own account, which they give) or cheque, while the Society offers them for withdrawals.",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "code",
+                              "name"
+                            ],
+                            "properties": {
+                              "code": {
+                                "type": "string",
+                                "enum": [
+                                  "bank_transfer",
+                                  "cheque"
+                                ]
+                              },
+                              "name": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        },
                         "bankAccounts": {
                           "type": "array",
                           "items": {

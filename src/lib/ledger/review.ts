@@ -50,13 +50,24 @@ export const PERMISSION_POST = 'transaction.post';
 // approved deposit (money in) posts under transaction.post as before.
 export const PERMISSION_DISBURSE = 'transaction.disburse';
 // Recording a transfer between two accounts here is its own permission
-// (officer direction, migration 0116), apart from posting anything else.
+// (officer direction, migration 0122), apart from posting anything else.
 export const PERMISSION_RECORD_TRANSFER = 'transaction.record_transfer';
+// Recording a deposit a member made from the app is the accounts
+// department's alone (officer direction, migration 0121): its own
+// permission, which transaction.post — held for the counter by the
+// Regional Officer and others — does not reach.
+export const PERMISSION_RECORD_APP_DEPOSIT = 'transaction.record_app_deposit';
 
 /** The permission the act after approval needs, for this transaction. */
 export function permissionToPost(
-  transaction: Pick<TransactionSummary, 'kind' | 'payeeName'>
+  transaction: Pick<
+    TransactionSummary,
+    'kind' | 'payeeName' | 'capturedFromApp'
+  >
 ): string {
+  if (transaction.kind === 'deposit' && transaction.capturedFromApp) {
+    return PERMISSION_RECORD_APP_DEPOSIT;
+  }
   if (needsDisbursement(transaction)) return PERMISSION_DISBURSE;
   return transaction.kind === 'transfer_leg'
     ? PERMISSION_RECORD_TRANSFER
@@ -107,6 +118,10 @@ export interface TransactionSummary {
   memberNo: string | null;
   capturedById: string;
   capturedByName: string;
+  // A member made it from the app: captured by the member-app system user
+  // (S-2102). Nobody at the Society can correct it, so it is never
+  // returned; a deposit of this kind is recorded under its own permission.
+  capturedFromApp: boolean;
   createdAt: Date;
   submittedAt: Date | null;
   postedAt: Date | null;
@@ -176,6 +191,8 @@ export const TRANSACTION_SELECT = `
               || coalesce(p.values->>'surname', '')) as holder_name,
          m.member_no,
          t.captured_by, u.display_name as captured_by_name,
+         coalesce(u.entra_subject = 'system:member-app', false)
+           as captured_from_app,
          t.created_at, t.submitted_at, t.posted_at, rn.receipt_no,
          fe.payload->>'balance_after' as balance_after,
          t.workflow_definition_id, wd.code as workflow_code,
@@ -241,6 +258,7 @@ export interface TransactionRow {
   member_no: string | null;
   captured_by: string;
   captured_by_name: string;
+  captured_from_app: boolean;
   created_at: Date;
   submitted_at: Date | null;
   posted_at: Date | null;
@@ -292,6 +310,7 @@ export function assembleTransaction(r: TransactionRow): TransactionSummary {
     memberNo: r.member_no,
     capturedById: r.captured_by,
     capturedByName: r.captured_by_name,
+    capturedFromApp: r.captured_from_app,
     createdAt: r.created_at,
     submittedAt: r.submitted_at,
     postedAt: r.posted_at,
@@ -501,7 +520,8 @@ export async function approvedTransactions(
   if (
     !principal.permissions.has(PERMISSION_POST) &&
     !principal.permissions.has(PERMISSION_RECORD_TRANSFER) &&
-    !principal.permissions.has(PERMISSION_DISBURSE)
+    !principal.permissions.has(PERMISSION_DISBURSE) &&
+    !principal.permissions.has(PERMISSION_RECORD_APP_DEPOSIT)
   ) {
     return [];
   }
@@ -519,8 +539,9 @@ export async function approvedTransactions(
     params
   );
   // Only the ones this person may pay out or post: the Treasurer sees the
-  // withdrawals and the exits, an Account Officer the deposits, whoever
-  // records transfers the transfers.
+  // withdrawals and the exits, an Account Officer the deposits — those a
+  // member made from the app under transaction.record_app_deposit — and
+  // whoever records transfers the transfers.
   const mine = result.rows.filter(row =>
     principal.permissions.has(permissionToPost(assembleTransaction(row)))
   );
@@ -580,13 +601,15 @@ async function refuseWhileGuardianGone(
 async function refuseUnlessSegregated(
   principal: Principal,
   reference: string,
-  action: string
+  action: string,
+  exempt: readonly string[] = []
 ): Promise<void> {
   const verdict = await checkSegregation(
     principal.userId,
     'transaction',
     reference,
-    action
+    action,
+    exempt
   );
   if (!verdict.allowed) {
     throw new ReviewError(
@@ -644,6 +667,17 @@ export async function reviewTransaction(
       decision.outcome === 'return'
         ? 'Say what needs correcting before returning it.'
         : 'Say why before rejecting it.'
+    );
+  }
+  // A return hands the transaction back to its captor to correct. A request
+  // a member made from the app was captured by the member-app system user,
+  // which nobody can sign in as: returned, it would sit in no one's queue
+  // and hold the member's money as pending for ever. Refused, so the
+  // reviewer rejects it with the reason instead — which the member is told.
+  if (decision.outcome === 'return' && transaction.capturedFromApp) {
+    throw new ReviewError(
+      'A request made from the member app cannot be returned: nobody can ' +
+        'correct it. Reject it with the reason instead; the member is told.'
     );
   }
   if (decision.outcome === 'forward') {
@@ -821,11 +855,27 @@ export function requireDisbursementReference(
 }
 
 /**
+ * The segregation rules that do not hold when posting this transaction. A
+ * deposit a member made from the app is verified and recorded by the
+ * accounts department, and one Account Officer may do both (officer
+ * direction, October 2026): nobody at the Society captured it, and money
+ * coming in is checked against the bank, not paid out on anyone's word. A
+ * withdrawal, a transfer, and any deposit an officer captured keep the
+ * rule that whoever approved it does not post it.
+ */
+function postingExemptions(transaction: TransactionSummary): string[] {
+  return transaction.kind === 'deposit' && transaction.capturedFromApp
+    ? [ACTION_APPROVED]
+    : [];
+}
+
+/**
  * S-1403, S-1503 · Post an approved transaction: the act that moves the
- * money, by whoever holds transaction.post and neither captured nor
- * approved it. A withdrawal is disbursed here — the method and reference
- * it was actually paid by are recorded first, and the entry is dated the
- * disbursement, not the decision. A receipt is issued when money posts,
+ * money, by whoever holds the permission for it (permissionToPost) and
+ * neither captured nor approved it (save a deposit from the app:
+ * postingExemptions). A withdrawal is disbursed here — the method and
+ * reference it was actually paid by are recorded first, and the entry is
+ * dated the disbursement, not the decision. A receipt is issued when money posts,
  * either way.
  */
 export async function postApprovedTransaction(
@@ -841,7 +891,9 @@ export async function postApprovedTransaction(
     throw new ReviewError(
       needsDisbursement(transaction)
         ? 'You do not have permission to disburse.'
-        : 'You do not have permission to post transactions.',
+        : transaction.capturedFromApp && transaction.kind === 'deposit'
+          ? 'A deposit made from the member app is recorded by the accounts department.'
+          : 'You do not have permission to post transactions.',
       'forbidden'
     );
   }
@@ -894,7 +946,12 @@ export async function postApprovedTransaction(
     }
   }
   await refuseWhileGuardianGone(transaction);
-  await refuseUnlessSegregated(principal, transaction.reference, ACTION_POSTED);
+  await refuseUnlessSegregated(
+    principal,
+    transaction.reference,
+    ACTION_POSTED,
+    postingExemptions(transaction)
+  );
 
   const receipt = await allocateReceiptNumber(principal.userId);
   try {

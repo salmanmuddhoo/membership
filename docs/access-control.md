@@ -111,7 +111,7 @@ claim is `transaction.disburse`, the Treasurer's (migration 0095, officer
 direction: Secretary, President, then the Treasurer disburses).
 
 Recording a transfer between two accounts here is its own permission,
-`transaction.record_transfer` (migration 0116, officer direction), not
+`transaction.record_transfer` (migration 0122, officer direction), not
 `transaction.post`: both recording one at once, below the escalation
 threshold, and the step after approval ("Transfer recorded"). Every role that
 held `transaction.post` was given it, so nothing changed on the day; an

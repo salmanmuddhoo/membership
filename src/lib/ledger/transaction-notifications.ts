@@ -20,7 +20,9 @@ import {
   listWorkflows,
   nearFloorMargin,
 } from '../config/reference';
+import { currentGuardian } from '../members/guardian';
 import { notify } from '../notifications/notify';
+import { hasDevices, pushRecipient } from '../notifications/push';
 import { staffMember, staffWithRole } from '../notifications/staff';
 import { toCents } from '../payments/money';
 import { contactForHolder } from './receipt-notifications';
@@ -44,17 +46,34 @@ function memberValues(t: TransactionSummary, name: string) {
   };
 }
 
+// Whose phones hear about a holder's transaction: the holder's own, or —
+// for a minor with no phone of their own — their guardian's, who may well
+// be the one who asked for it from the app (member/dependents.ts).
+async function pushFor(t: TransactionSummary): Promise<string> {
+  const own = pushRecipient(t.holderKind, t.holderId);
+  if (await hasDevices(own)) return own;
+  const guardian = await currentGuardian(t.holderId);
+  return guardian?.memberId && guardian.status === 'active'
+    ? pushRecipient('member', guardian.memberId)
+    : own;
+}
+
 async function toHolder(
   t: TransactionSummary,
   eventCode: string,
   extras: Record<string, string> = {}
 ): Promise<string[]> {
+  // The phone hears even when no address was ever captured (a legacy
+  // record): the app is itself a way to reach them.
   const contact = await contactForHolder(t.holderKind, t.holderId);
-  if (!contact || (!contact.email && !contact.mobile)) return [];
   return notify({
     eventCode,
-    recipients: { email: contact.email, mobile: contact.mobile },
-    values: { ...memberValues(t, contact.name), ...extras },
+    recipients: {
+      email: contact?.email,
+      mobile: contact?.mobile,
+      push: await pushFor(t),
+    },
+    values: { ...memberValues(t, contact?.name ?? ''), ...extras },
     entityType: 'transaction',
     entityId: t.id,
   });
@@ -263,13 +282,22 @@ export async function notifyReviewed(
         }
         break;
       }
-      case 'reject':
-        if (t.kind === 'withdrawal') {
-          written.push(
-            ...(await toHolder(t, 'withdrawal.rejected', { comment }))
-          );
-        }
+      case 'reject': {
+        // A deposit or a transfer refused is news to the member too once
+        // they can start one from the app (migration 0120) — and to the
+        // holder of one an officer recorded, who would otherwise learn it
+        // only from a balance that never moved.
+        const event =
+          t.kind === 'withdrawal'
+            ? 'withdrawal.rejected'
+            : t.kind === 'deposit'
+              ? 'deposit.rejected'
+              : t.kind === 'transfer_leg' && t.legDirection === 'debit'
+                ? 'transfer.rejected'
+                : null;
+        if (event) written.push(...(await toHolder(t, event, { comment })));
         break;
+      }
     }
   } catch (error) {
     console.error('[transactions] could not send notification:', error);

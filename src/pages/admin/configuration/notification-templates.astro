@@ -78,6 +78,7 @@ const templates = await listNotificationTemplates();
 const CHANNEL_LABELS: Record<NotificationChannel, string> = {
   email: 'Email',
   whatsapp: 'WhatsApp',
+  push: 'App notification',
 };
 
 // The officer's name for the event, not the system's.
@@ -108,11 +109,15 @@ const EVENT_LABELS: Record<string, string> = {
   'withdrawal.under_review': 'Withdrawal under review',
   'withdrawal.disbursed': 'Withdrawal paid out',
   'withdrawal.rejected': 'Withdrawal not approved',
+  'deposit.rejected': 'Deposit not accepted',
+  'transfer.rejected': 'Transfer not approved',
   'transfer.posted': 'Transfer completed',
   'balance.near_floor': 'Balance near its minimum',
   'transaction.awaiting': 'Staff: transaction awaiting a step',
   'transaction.returned': 'Staff: transaction returned to its captor',
   'receipt.voided': 'Staff: receipt voided',
+  'partner.added': 'New partner outlet',
+  'promotion.published': 'Promotion gone live',
 };
 
 const eventLabel = (code: string) =>
@@ -194,9 +199,9 @@ for (const template of templates) {
               </label>
             </div>
 
-            {template.channel === 'email' && (
+            {(template.channel === 'email' || template.channel === 'push') && (
               <label class={LABEL}>
-                Subject
+                {template.channel === 'push' ? 'Title' : 'Subject'}
                 <input
                   type="text"
                   name="subject"
@@ -252,7 +257,13 @@ for (const template of templates) {
               Message
               <textarea
                 name="body"
-                rows={template.channel === 'email' ? 8 : 4}
+                rows={
+                  template.channel === 'email'
+                    ? 8
+                    : template.channel === 'push'
+                      ? 2
+                      : 4
+                }
                 disabled={!canManage}
                 class={`${INPUT} font-mono`}
               >{template.body}</textarea>

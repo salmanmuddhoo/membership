@@ -273,7 +273,7 @@ export async function routePreviewGroups(
   const byType = new Map<string, RoutePreviewBand[]>();
   // A withdrawal is disbursed by whoever holds transaction.disburse (the
   // Treasurer); a transfer is recorded by whoever holds
-  // transaction.record_transfer (migration 0116); anything else is posted
+  // transaction.record_transfer (migration 0122); anything else is posted
   // under transaction.post. The last step reads as it will once done (labels.ts): Deposit
   // recorded, Transfer recorded, else Disbursement.
   const postedLabel =

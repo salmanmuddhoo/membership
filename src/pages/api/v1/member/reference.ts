@@ -8,11 +8,13 @@
 import type { APIRoute } from 'astro';
 import { defineMemberEndpoint, apiSuccess } from '@lib/member/endpoint';
 import { checklistItemId, isOnlineRegistrable } from '@lib/member/applications';
+import { appDepositMethods, appPayoutMethods } from '@lib/member/transactions';
 import {
+  enabledMemberOperations,
   listChecklists,
   listFeeSchedules,
   listMembershipTypes,
-  offeredBankAccounts,
+  memberAppDepositAccount,
 } from '@lib/config/reference';
 import { COMPONENT_LABELS } from '@lib/payments/payments';
 
@@ -27,13 +29,67 @@ const endpoint = defineMemberEndpoint(
       'Active membership types with their field configuration, the ' +
       'documents an applicant files from the phone (the signed form is a ' +
       'branch step and is left out), and the fees in force. The ' +
-      "Society's bank accounts a member may pay into, by name. Public.",
+      "Society's bank account a member pays into from the app (the one " +
+      'marked at Configuration -> Bank accounts), by name; its number is ' +
+      'for a signed-in member, at /api/v1/member/me/deposit-options. ' +
+      'Which transactions the app may ' +
+      'start (Configuration -> Member app) and how a deposit may be paid: ' +
+      'bank transfer or Juice. Public.',
     tag: 'Member app',
     caller: 'public',
     responseSchema: {
       type: 'object',
-      required: ['membershipTypes', 'bankAccounts'],
+      required: [
+        'membershipTypes',
+        'bankAccounts',
+        'enabledOperations',
+        'depositMethods',
+        'withdrawalMethods',
+      ],
       properties: {
+        enabledOperations: {
+          type: 'array',
+          description:
+            'Which transactions a member may start from the app. Empty ' +
+            'until the Society switches them on.',
+          items: {
+            type: 'string',
+            enum: ['deposit', 'withdrawal', 'transfer'],
+          },
+        },
+        depositMethods: {
+          type: 'array',
+          description:
+            'How a deposit from the app may have been paid: bank transfer ' +
+            'or Juice, while the Society offers them for money in. ' +
+            'touchesBank: name one of bankAccounts; requiresReference: ' +
+            'give its reference.',
+          items: {
+            type: 'object',
+            required: ['code', 'name', 'requiresReference', 'touchesBank'],
+            properties: {
+              code: { type: 'string' },
+              name: { type: 'string' },
+              requiresReference: { type: 'boolean' },
+              touchesBank: { type: 'boolean' },
+            },
+          },
+        },
+        withdrawalMethods: {
+          type: 'array',
+          description:
+            'How a member may ask to receive a withdrawal: bank transfer ' +
+            '(to their own account, which they give) or cheque, while the ' +
+            'Society offers them for withdrawals.',
+          items: {
+            type: 'object',
+            required: ['code', 'name'],
+            properties: {
+              code: { type: 'string', enum: ['bank_transfer', 'cheque'] },
+              name: { type: 'string' },
+            },
+          },
+        },
         bankAccounts: {
           type: 'array',
           items: {
@@ -178,11 +234,22 @@ const endpoint = defineMemberEndpoint(
     },
   },
   async ({ correlationId }) => {
-    const [types, checklists, schedules, bankAccounts] = await Promise.all([
+    const [
+      types,
+      checklists,
+      schedules,
+      depositAccount,
+      enabledOperations,
+      methods,
+      payouts,
+    ] = await Promise.all([
       listMembershipTypes(),
       listChecklists(),
       listFeeSchedules(),
-      offeredBankAccounts(),
+      memberAppDepositAccount(),
+      enabledMemberOperations(),
+      appDepositMethods(),
+      appPayoutMethods(),
     ]);
 
     const membershipTypes = types
@@ -232,11 +299,21 @@ const endpoint = defineMemberEndpoint(
     return apiSuccess(
       {
         membershipTypes,
-        bankAccounts: bankAccounts.map(a => ({
+        // The one account members pay into, named; never the list.
+        bankAccounts: (depositAccount ? [depositAccount] : []).map(a => ({
           id: a.id,
           name: a.name,
           bankName: a.bankName,
         })),
+        enabledOperations,
+        // Bank transfer or Juice (recordMemberDeposit refuses the rest).
+        depositMethods: methods.map(m => ({
+          code: m.code,
+          name: m.name,
+          requiresReference: m.requiresReference,
+          touchesBank: m.touchesBank,
+        })),
+        withdrawalMethods: payouts.map(m => ({ code: m.code, name: m.name })),
       },
       correlationId
     );

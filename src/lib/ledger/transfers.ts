@@ -62,7 +62,7 @@ export class TransferError extends Error {
 
 export const PERMISSION_CAPTURE = 'transaction.capture';
 // Recording a transfer at once — below the escalation threshold — is its
-// own permission, not transaction.post (officer direction, migration 0116).
+// own permission, not transaction.post (officer direction, migration 0122).
 export const PERMISSION_RECORD = 'transaction.record_transfer';
 
 // The method a leg between two accounts here carries (0073): nothing

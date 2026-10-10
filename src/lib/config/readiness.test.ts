@@ -146,7 +146,7 @@ describe('every Phase 2 setting has a working default (S-1801)', () => {
     expect(checklist.note).toBeNull();
 
     expect(find(items, 'Approval matrix', 'Deposit').value).toBe(
-      'Rs 0.00 to Rs 100,000.00: posts at once · Rs 100,000.01 and above: Deposit approval'
+      'Rs 0.00 and above (by Member): Deposit from the member app · Rs 0.00 to Rs 100,000.00: posts at once · Rs 100,000.01 and above: Deposit approval'
     );
     expect(find(items, 'Approval matrix', 'Resignation').value).toBe(
       'Rs 0.00 and above: Resignation approval'
@@ -165,7 +165,7 @@ describe('every Phase 2 setting has a working default (S-1801)', () => {
     );
     expect(
       find(items, 'Notification wording', "A member's transactions").value
-    ).toBe('7 of 7 events · WhatsApp and email');
+    ).toBe('9 of 9 events · WhatsApp, app and email');
     expect(find(items, 'Notification wording', 'Staff').value).toBe(
       '3 of 3 events · email'
     );
@@ -249,7 +249,7 @@ describe('the readiness list says who changed what (S-1802)', () => {
       "A member's transactions"
     );
     expect(member.state).toBe('missing');
-    expect(member.value).toBe('6 of 7 events · WhatsApp and email');
+    expect(member.value).toBe('8 of 9 events · WhatsApp, app and email');
     expect(member.note).toBe('No active wording for deposit.posted.');
     const transfer = find(items, 'Approval matrix', 'Transfer');
     expect(transfer).toMatchObject({ state: 'missing', value: '—' });

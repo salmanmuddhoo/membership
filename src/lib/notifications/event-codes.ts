@@ -58,6 +58,8 @@ export const TRANSACTION_PLACEHOLDERS: Record<string, readonly string[]> = {
     'balance',
   ],
   'withdrawal.rejected': [...TRANSACTION_COMMON, 'comment'],
+  'deposit.rejected': [...TRANSACTION_COMMON, 'comment'],
+  'transfer.rejected': [...TRANSACTION_COMMON, 'comment'],
   'transfer.posted': [
     ...TRANSACTION_COMMON,
     'from_account',
@@ -138,6 +140,16 @@ export const MEMBER_PLACEHOLDERS: Record<string, readonly string[]> = {
   'member.details.declined': ['member_name', 'member_no', 'reason'],
 };
 
+// The member app's own news (migration 0118): what
+// src/lib/notifications/app-events.ts passes when an outlet becomes a
+// partner and when a promotion card goes live. Push only, to everyone
+// signed in — an email to the whole membership about a discount would be
+// spam, a notification on the phone that shows it is not.
+export const MEMBER_APP_PLACEHOLDERS: Record<string, readonly string[]> = {
+  'partner.added': ['outlet_name', 'category', 'discount'],
+  'promotion.published': ['title', 'body'],
+};
+
 export function eventCodeForKind(
   applicationKind: string,
   happening: Happening
@@ -171,6 +183,9 @@ export function placeholdersForEvent(eventCode: string): string[] | null {
   }
   if (eventCode in JOB_PLACEHOLDERS) {
     return [...JOB_PLACEHOLDERS[eventCode]];
+  }
+  if (eventCode in MEMBER_APP_PLACEHOLDERS) {
+    return [...MEMBER_APP_PLACEHOLDERS[eventCode]];
   }
 
   const [subject, happening] = eventCode.split('.');

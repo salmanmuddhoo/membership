@@ -84,7 +84,7 @@ const STATUSES: NotificationStatus[] = [
   'failed',
   'abandoned',
 ];
-const CHANNELS: NotificationChannel[] = ['email', 'whatsapp'];
+const CHANNELS: NotificationChannel[] = ['email', 'whatsapp', 'push'];
 
 const statusParam = params.get('status') ?? '';
 const channelParam = params.get('channel') ?? '';
@@ -124,6 +124,7 @@ const statusHref = (target: NotificationStatus) =>
 const CHANNEL_LABELS: Record<NotificationChannel, string> = {
   email: 'Email',
   whatsapp: 'WhatsApp',
+  push: 'App notification',
 };
 
 const STATUS_LABELS: Record<NotificationStatus, string> = {
@@ -174,11 +175,15 @@ const EVENT_LABELS: Record<string, string> = {
   'withdrawal.under_review': 'Withdrawal under review',
   'withdrawal.disbursed': 'Withdrawal paid out',
   'withdrawal.rejected': 'Withdrawal not approved',
+  'deposit.rejected': 'Deposit not accepted',
+  'transfer.rejected': 'Transfer not approved',
   'transfer.posted': 'Transfer completed',
   'balance.near_floor': 'Balance near its minimum',
   'transaction.awaiting': 'Staff: transaction awaiting a step',
   'transaction.returned': 'Staff: transaction returned to its captor',
   'receipt.voided': 'Staff: receipt voided',
+  'partner.added': 'New partner outlet',
+  'promotion.published': 'Promotion gone live',
 };
 
 function sentenceCase(eventCode: string): string {
@@ -247,7 +252,7 @@ function whenLine(row: NotificationLogRow): string {
             <input
               type="text"
               name="recipient"
-              placeholder="you@albarakah.mu or +23057891234"
+              placeholder="you@albarakah.mu, +23057891234 or AB0001 for a phone"
               class={INPUT}
             />
           </label>

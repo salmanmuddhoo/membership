@@ -14,6 +14,7 @@
 // already guarantees one instance at a time.
 import { query } from '../db/pool';
 import { activeChannels } from './channels';
+import { pushDataFor } from './notify';
 import type { Attachment } from './notify';
 import type { NotificationChannel } from './templates';
 
@@ -57,6 +58,9 @@ const PENDING_GRACE_MINUTES = 10;
 export interface DueNotification {
   id: string;
   channel: NotificationChannel;
+  eventCode: string;
+  entityType: string | null;
+  entityId: string | null;
   recipient: string;
   subject: string | null;
   body: string;
@@ -84,6 +88,9 @@ export async function dueNotifications(
   const result = await query<{
     id: string;
     channel: NotificationChannel;
+    event_code: string;
+    entity_type: string | null;
+    entity_id: string | null;
     recipient: string;
     subject: string | null;
     body: string;
@@ -98,7 +105,8 @@ export async function dueNotifications(
     // The template is joined for its provider name and language only — a
     // template deleted since leaves those null, and the send then refuses
     // with a reason rather than guessing one.
-    `select n.id, n.channel, n.recipient, n.subject, n.body, n.attempts,
+    `select n.id, n.channel, n.event_code, n.entity_type, n.entity_id,
+            n.recipient, n.subject, n.body, n.attempts,
             n.provider_parameters,
             n.attachment_url, n.attachment_name, n.attachment_type,
             t.provider_template_name, t.provider_template_language
@@ -121,6 +129,9 @@ export async function dueNotifications(
   return result.rows.map(r => ({
     id: r.id,
     channel: r.channel,
+    eventCode: r.event_code,
+    entityType: r.entity_type,
+    entityId: r.entity_id,
     recipient: r.recipient,
     subject: r.subject,
     body: r.body,
@@ -220,6 +231,14 @@ export async function retryDueNotifications(
           notification.providerTemplateLanguage ?? undefined,
         parameters: notification.providerParameters,
         attachment: notification.attachment,
+        data:
+          notification.channel === 'push'
+            ? pushDataFor(
+                notification.eventCode,
+                notification.entityType,
+                notification.entityId
+              )
+            : undefined,
       });
       await markSent(notification.id);
       outcome.sent += 1;

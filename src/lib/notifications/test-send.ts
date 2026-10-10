@@ -16,9 +16,12 @@
 // It IS audited. A control that sends a message to an arbitrary number is one
 // the Society should be able to see the use of.
 import { recordAudit } from '../access/audit';
+import { query } from '../db/pool';
+import { normaliseAbNumber } from '../member/identity';
 import { placeholdersForEvent } from './event-codes';
 import { activeChannels } from './channels';
-import type { OutgoingMessage } from './notify';
+import { hasDevices, pushRecipient } from './push';
+import { pushDataFor, type OutgoingMessage } from './notify';
 import {
   listNotificationTemplates,
   placeholderSequence,
@@ -82,6 +85,11 @@ function messageFor(
     recipient,
     subject: template.subject ? render(template.subject, values) : null,
     body: render(template.body, values),
+    // A test tap on the phone opens the same screen a real one would.
+    data:
+      template.channel === 'push'
+        ? pushDataFor(template.eventCode, null, null)
+        : undefined,
     providerTemplateName: template.providerTemplateName,
     providerTemplateLanguage: template.providerTemplateLanguage,
     // The same positional values a real send would supply, so a template the
@@ -124,8 +132,32 @@ export async function sendTestNotification(
       'Enter a number in international form, such as +23057891234.'
     );
   }
+  // A push goes to a member's phones, named by their AB Number — the one
+  // thing an administrator knows about them that the phone does not show.
+  let target = recipient;
+  if (template.channel === 'push') {
+    const abNumber = normaliseAbNumber(recipient);
+    const member = abNumber
+      ? await query<{ id: string }>(
+          'select id from member where member_no = $1',
+          [abNumber]
+        )
+      : null;
+    if (!member?.rows[0]) {
+      throw new TestSendError(
+        'Enter the AB Number of a member who has signed in to the app, ' +
+          'such as AB0001.'
+      );
+    }
+    target = pushRecipient('member', member.rows[0].id);
+    if (!(await hasDevices(target))) {
+      throw new TestSendError(
+        'That member has no phone signed in to the app right now.'
+      );
+    }
+  }
 
-  const message = messageFor(template, recipient);
+  const message = messageFor(template, target);
 
   // Audited before the attempt, not after: the fact that someone sent a
   // message to this number is worth recording whether or not it arrived.
@@ -163,6 +195,7 @@ const PROVIDER_NAMES: Record<string, string> = {
   graph: 'Microsoft 365 mailbox',
   cloud_api: 'WhatsApp Cloud API',
   http: 'Gateway',
+  fcm: 'Firebase Cloud Messaging',
   log: 'Server log (test environments only)',
   unconfigured: 'Not configured',
 };
@@ -172,7 +205,7 @@ const PROVIDER_NAMES: Record<string, string> = {
 export function channelStatuses(
   config: import('../config').NotificationConfig
 ): ChannelStatus[] {
-  return (['email', 'whatsapp'] as const).map(channel => {
+  return (['email', 'whatsapp', 'push'] as const).map(channel => {
     const kind = config[channel].kind;
     return {
       channel,
