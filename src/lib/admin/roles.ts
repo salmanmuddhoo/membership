@@ -69,11 +69,14 @@ export interface CreateRoleInput {
   permissions: string[];
 }
 
+// What a role code may be; the configuration import holds a new role to it too.
+export const ROLE_CODE = /^[a-z][a-z0-9_]{2,49}$/;
+
 export async function createRole(
   input: CreateRoleInput,
   actor: { userId: string; email: string }
 ): Promise<string> {
-  if (!/^[a-z][a-z0-9_]{2,49}$/.test(input.code)) {
+  if (!ROLE_CODE.test(input.code)) {
     throw new AdminError(
       'A role code must be lower-case letters, digits and underscores.',
       'invalid'
@@ -120,7 +123,8 @@ export async function createRole(
   });
 }
 
-async function setRolePermissionsInTransaction(
+// Also the configuration import's, inside its own transaction.
+export async function setRolePermissionsInTransaction(
   client: PoolClient,
   roleId: string,
   permissionCodes: string[]

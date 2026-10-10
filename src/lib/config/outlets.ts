@@ -116,7 +116,9 @@ interface Checked {
   sortOrder: number;
 }
 
-function check(input: OutletInput): Checked {
+// The page's rules for an outlet, and its tidying; the configuration import
+// holds a row of the workbook to the same.
+export function checkOutlet(input: OutletInput): Checked {
   const name = input.name.trim();
   if (!name) throw new ConfigError('A name is required.');
   if (name.length > 80)
@@ -190,7 +192,7 @@ export async function createOutlet(
   input: OutletInput,
   actor: Actor
 ): Promise<string> {
-  const o = check(input);
+  const o = checkOutlet(input);
   const id = await withConfigurationActor(actorFor(actor), async client => {
     const result = await client.query<{ id: string }>(
       `insert into card_outlet
@@ -234,7 +236,7 @@ export async function updateOutlet(
   input: OutletInput,
   actor: Actor
 ): Promise<void> {
-  const o = check(input);
+  const o = checkOutlet(input);
   const wasPartner = await withConfigurationActor(
     actorFor(actor),
     async client => {
