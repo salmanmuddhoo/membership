@@ -5670,3 +5670,16 @@ had filed. Both now read the one list (`documentsForHolder`): every
 application of the person — a rejoin and a converted member's earlier
 applications included — what was filed for them directly, and their
 transactions' papers. The member app lists the member's own documents too.
+
+---
+
+### Recording a transfer is its own permission
+
+Officer direction: recording a transfer was `transaction.post`, the same
+permission as posting a deposit or a withdrawal at the counter. It is now
+`transaction.record_transfer` (migration 0122), for both a transfer recorded
+at once below the escalation threshold and the "Transfer recorded" step after
+approval; the queue and the chevron name its holders. Every role that held
+`transaction.post` was given it, so nothing changes until an administrator
+moves it at Configuration → Roles. A legacy transfer to a payee is still paid
+out under `transaction.disburse`.

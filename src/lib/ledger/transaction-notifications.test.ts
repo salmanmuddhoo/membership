@@ -187,6 +187,7 @@ beforeAll(async () => {
     [
       'transaction.capture',
       'transaction.post',
+      'transaction.record_transfer',
       'transaction.disburse',
       'transaction.view',
     ]
@@ -197,6 +198,7 @@ beforeAll(async () => {
     ['treasurer'],
     [
       'transaction.post',
+      'transaction.record_transfer',
       'transaction.disburse',
       'transaction.view',
       'receipt.void',

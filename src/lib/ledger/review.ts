@@ -49,6 +49,9 @@ export const PERMISSION_POST = 'transaction.post';
 // payee, a closure, a resignation, a claim — is transaction.disburse; an
 // approved deposit (money in) posts under transaction.post as before.
 export const PERMISSION_DISBURSE = 'transaction.disburse';
+// Recording a transfer between two accounts here is its own permission
+// (officer direction, migration 0122), apart from posting anything else.
+export const PERMISSION_RECORD_TRANSFER = 'transaction.record_transfer';
 // Recording a deposit a member made from the app is the accounts
 // department's alone (officer direction, migration 0121): its own
 // permission, which transaction.post — held for the counter by the
@@ -65,7 +68,10 @@ export function permissionToPost(
   if (transaction.kind === 'deposit' && transaction.capturedFromApp) {
     return PERMISSION_RECORD_APP_DEPOSIT;
   }
-  return needsDisbursement(transaction) ? PERMISSION_DISBURSE : PERMISSION_POST;
+  if (needsDisbursement(transaction)) return PERMISSION_DISBURSE;
+  return transaction.kind === 'transfer_leg'
+    ? PERMISSION_RECORD_TRANSFER
+    : PERMISSION_POST;
 }
 export const PERMISSION_VIEW = 'transaction.view';
 
@@ -503,8 +509,9 @@ export async function returnedTransactions(
 
 /**
  * S-1403 · Approved and waiting for the money to move: what someone with
- * transaction.post sees on the queue. Approval decides, posting moves
- * money, and the two are not the same click.
+ * transaction.post, transaction.record_transfer or transaction.disburse
+ * sees on the queue. Approval decides, posting moves money, and the two
+ * are not the same click.
  */
 export async function approvedTransactions(
   principal: Principal,
@@ -512,6 +519,7 @@ export async function approvedTransactions(
 ): Promise<(TransactionSummary & { waitingSince: Date })[]> {
   if (
     !principal.permissions.has(PERMISSION_POST) &&
+    !principal.permissions.has(PERMISSION_RECORD_TRANSFER) &&
     !principal.permissions.has(PERMISSION_DISBURSE) &&
     !principal.permissions.has(PERMISSION_RECORD_APP_DEPOSIT)
   ) {
@@ -532,7 +540,8 @@ export async function approvedTransactions(
   );
   // Only the ones this person may pay out or post: the Treasurer sees the
   // withdrawals and the exits, an Account Officer the deposits — those a
-  // member made from the app under transaction.record_app_deposit.
+  // member made from the app under transaction.record_app_deposit — and
+  // whoever records transfers the transfers.
   const mine = result.rows.filter(row =>
     principal.permissions.has(permissionToPost(assembleTransaction(row)))
   );
