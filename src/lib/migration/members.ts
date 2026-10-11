@@ -158,7 +158,26 @@ interface TemplateColumn {
   text?: boolean; // keep as typed: no number or date conversion by Excel
   field?: MembershipTypeField; // a choice field gets its dropdown
   choices?: string[]; // a dropdown for a column that is not a field
+  source: ColumnSource; // where an export reads the column's value from
 }
+
+// What a column holds, so the export (exportMembers) fills each one from
+// the same definition the import template is built from, and the two can
+// never drift apart.
+type ColumnSource =
+  | { kind: 'legacy' | 'ab' | 'joined' | 'status' | 'statusDate' }
+  | { kind: 'shares' | 'msa' }
+  | {
+      kind: 'party';
+      subject: 'applicant' | 'employment' | 'guardian' | 'beneficiary';
+      fieldKey: string;
+    }
+  | { kind: 'nominee'; ordinal: number; fieldKey: string }
+  | {
+      kind: 'extra';
+      part: 'number' | 'balance' | 'status' | 'closedDate';
+      accountTypeId: string;
+    };
 
 const FILLS: Record<ColumnKind, string> = {
   required: REQUIRED_FILL,
@@ -191,9 +210,11 @@ function fieldNote(field: MembershipTypeField): string | undefined {
 function fieldColumn(
   field: MembershipTypeField,
   header: string,
-  mandatory: boolean
+  mandatory: boolean,
+  source: ColumnSource
 ): TemplateColumn {
   return {
+    source,
     header: header + (mandatory ? ' *' : ''),
     kind: mandatory ? 'required' : 'optional',
     note: fieldNote(field),
@@ -450,10 +471,208 @@ function fillInstructions(sheet: ExcelJS.Worksheet, typeNames: string[]) {
 // capture form itself, so a field an administrator adds or relabels
 // appears here without a code change.
 export async function buildImportTemplate(): Promise<Buffer> {
+  const { workbook } = await templateWorkbook();
+  const buffer = await workbook.xlsx.writeBuffer();
+  return Buffer.from(buffer);
+}
+
+export interface ExportOutcome {
+  buffer: Buffer;
+  members: number;
+  nonMembers: number;
+  // People whose membership type is no longer active: the template has no
+  // sheet for them, so they are left out and counted.
+  skipped: number;
+}
+
+const EXPORT_STATUS: Record<string, string> = {
+  resigned: 'Resigned',
+  demised: 'Deceased',
+};
+
+/**
+ * Officer request: everyone on file, with their balances, in the import
+ * template's own format — the same sheets, the same columns, read from the
+ * same definitions (templateWorkbook) — so the file can be checked, edited
+ * and uploaded again. A member's row is keyed by their AB Number (and legacy
+ * code, where they came in through migration), a non-member's by their
+ * legacy code, so an upload updates the person instead of adding them twice.
+ *
+ * Details are the member page's: the founding application's parties
+ * (loadMember). Balances are the ledger's (account_balance), as at the
+ * moment of export. A member who joined in the app has no legacy code; one
+ * non-member who did has none either, and their row would need one before
+ * it could be uploaded again.
+ */
+export async function exportMembers(
+  actor: Actor,
+  permissions: ReadonlySet<string>
+): Promise<ExportOutcome> {
+  assertMayMigrate(permissions);
+  const { workbook, sheets } = await templateWorkbook();
+  const sheetByType = new Map(sheets.map(s => [s.type.id, s]));
+
+  const holders = await query<{
+    kind: 'member' | 'customer';
+    id: string;
+    member_no: string | null;
+    legacy_code: string | null;
+    joined_on: string | null;
+    status: string;
+    status_on: string | null;
+    application_id: string | null;
+    membership_type_id: string | null;
+  }>(
+    `select 'member' as kind, m.id, m.member_no, m.legacy_code,
+            to_char(m.joined_at at time zone 'Indian/Mauritius', 'YYYY-MM-DD') as joined_on,
+            m.status,
+            to_char(m.status_changed_at at time zone 'Indian/Mauritius', 'YYYY-MM-DD') as status_on,
+            m.application_id, m.membership_type_id
+       from member m
+     union all
+     select 'customer', c.id, null, c.legacy_code,
+            to_char(c.joined_at at time zone 'Indian/Mauritius', 'YYYY-MM-DD'),
+            c.status, null, c.application_id, a.membership_type_id
+       from customer c
+       left join membership_application a on a.id = c.application_id
+      where c.status <> 'converted'
+      order by 1 desc, 3, 4`
+  );
+  const applicationIds = holders.rows
+    .map(h => h.application_id)
+    .filter((id): id is string => id !== null);
+  const parties = await query<{
+    application_id: string;
+    subject: string;
+    ordinal: number;
+    values: Record<string, string>;
+  }>(
+    `select application_id, subject, ordinal, values
+       from application_party
+      where application_id = any($1::uuid[])
+        and subject in ('applicant', 'employment', 'guardian',
+                        'beneficiary', 'nominee')`,
+    [applicationIds]
+  );
+  const partyOf = new Map<string, Record<string, string>>();
+  for (const p of parties.rows) {
+    partyOf.set(
+      `${p.application_id}|${p.subject}|${p.ordinal}`,
+      p.values ?? {}
+    );
+  }
+  const accounts = await query<{
+    holder_id: string;
+    account_type_id: string;
+    code: string;
+    account_no: string | null;
+    status: string;
+    closed_on: string | null;
+    balance: string;
+  }>(
+    `select coalesce(a.member_id, a.customer_id) as holder_id,
+            a.account_type_id, t.code, a.account_no, a.status,
+            to_char(a.closed_at at time zone 'Indian/Mauritius', 'YYYY-MM-DD') as closed_on,
+            coalesce(b.balance, 0)::numeric(14,2)::text as balance
+       from account a
+       join account_type t on t.id = a.account_type_id
+       left join account_balance b on b.account_id = a.id
+      -- An open account before a closed one of the same type, then the
+      -- newest: the template has one set of columns per account type.
+      order by (a.status = 'closed'), a.opened_at desc`
+  );
+  const accountsOf = new Map<string, typeof accounts.rows>();
+  for (const a of accounts.rows) {
+    const list = accountsOf.get(a.holder_id) ?? [];
+    list.push(a);
+    accountsOf.set(a.holder_id, list);
+  }
+
+  const outcome = { members: 0, nonMembers: 0, skipped: 0 };
+  for (const holder of holders.rows) {
+    const target = holder.membership_type_id
+      ? sheetByType.get(holder.membership_type_id)
+      : undefined;
+    if (!target) {
+      outcome.skipped += 1;
+      continue;
+    }
+    const held = accountsOf.get(holder.id) ?? [];
+    const ofType = (pick: (a: (typeof held)[number]) => boolean) =>
+      held.find(pick);
+    const party = (subject: string, ordinal: number) =>
+      (holder.application_id &&
+        partyOf.get(`${holder.application_id}|${subject}|${ordinal}`)) ||
+      {};
+    const amount = (balance: string | undefined) =>
+      balance === undefined ? null : Number(balance);
+
+    const cells = target.columns.map((column): ExcelJS.CellValue => {
+      const source = column.source;
+      switch (source.kind) {
+        case 'legacy':
+          return holder.legacy_code;
+        case 'ab':
+          return holder.member_no;
+        case 'joined':
+          return holder.joined_on;
+        case 'status':
+          return EXPORT_STATUS[holder.status] ?? null;
+        case 'statusDate':
+          return EXPORT_STATUS[holder.status] ? holder.status_on : null;
+        case 'shares':
+        case 'msa':
+          if (holder.kind !== 'member') return null;
+          return amount(ofType(a => a.code === source.kind)?.balance) ?? 0;
+        case 'party':
+          return party(source.subject, 1)[source.fieldKey] || null;
+        case 'nominee':
+          return party('nominee', source.ordinal)[source.fieldKey] || null;
+        case 'extra': {
+          const account = ofType(
+            a => a.account_type_id === source.accountTypeId
+          );
+          if (!account) return null;
+          if (source.part === 'number') return account.account_no;
+          if (source.part === 'balance') return amount(account.balance);
+          if (source.part === 'status')
+            return account.status === 'closed' ? 'Closed' : 'Open';
+          return account.status === 'closed' ? account.closed_on : null;
+        }
+      }
+    });
+    target.sheet.addRow(cells);
+    if (holder.kind === 'member') outcome.members += 1;
+    else outcome.nonMembers += 1;
+  }
+
+  const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
+  await recordAudit({
+    actorUserId: actor.userId,
+    actorDescription: actor.email,
+    action: 'migration.exported',
+    entityType: 'migration',
+    entityId: 'members',
+    newValue: outcome,
+  });
+  return { buffer, ...outcome };
+}
+
+interface TemplateSheet {
+  type: MembershipType;
+  sheet: ExcelJS.Worksheet;
+  columns: TemplateColumn[];
+}
+
+async function templateWorkbook(): Promise<{
+  workbook: ExcelJS.Workbook;
+  sheets: TemplateSheet[];
+}> {
   const [types, accountTypes] = await Promise.all([
     eligibleMembershipTypesForMigration(),
     listAccountTypes(),
   ]);
+  const sheets: TemplateSheet[] = [];
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'Al Barakah MCSL';
   workbook.created = new Date();
@@ -480,6 +699,7 @@ export async function buildImportTemplate(): Promise<Buffer> {
           'Required for a non-member (AB Number left blank). ' +
           'Each code once only.',
         text: true,
+        source: { kind: 'legacy' },
       },
       {
         header: AB_NUMBER_COLUMN,
@@ -488,8 +708,14 @@ export async function buildImportTemplate(): Promise<Buffer> {
           'A member: AB followed by digits, e.g. AB2001. Leave blank for a ' +
           'non-member, who then needs an account number and balance below.',
         text: true,
+        source: { kind: 'ab' },
       },
-      { header: JOINED_COLUMN, kind: 'optional', note: DATE_NOTE },
+      {
+        header: JOINED_COLUMN,
+        kind: 'optional',
+        note: DATE_NOTE,
+        source: { kind: 'joined' },
+      },
       {
         header: STATUS_COLUMN,
         kind: 'optional',
@@ -497,22 +723,46 @@ export async function buildImportTemplate(): Promise<Buffer> {
           'Blank or Active for someone current. Resigned (a member only) or ' +
           'Deceased for someone who has left.',
         choices: STATUS_CHOICES,
+        source: { kind: 'status' },
       },
       {
         header: STATUS_DATE_COLUMN,
         kind: 'optional',
         note: `When they resigned or died, if known. ${DATE_NOTE}`,
+        source: { kind: 'statusDate' },
       },
-      ...fields.map(f => fieldColumn(f, f.label, f.isMandatory)),
-      ...employment.map(f => fieldColumn(f, f.label, f.isMandatory)),
+      ...fields.map(f =>
+        fieldColumn(f, f.label, f.isMandatory, {
+          kind: 'party',
+          subject: 'applicant',
+          fieldKey: f.fieldKey,
+        })
+      ),
+      ...employment.map(f =>
+        fieldColumn(f, f.label, f.isMandatory, {
+          kind: 'party',
+          subject: 'employment',
+          fieldKey: f.fieldKey,
+        })
+      ),
       ...guardian.map(f => ({
-        ...fieldColumn(f, f.label, f.isMandatory),
+        ...fieldColumn(f, f.label, f.isMandatory, {
+          kind: 'party',
+          subject: 'guardian',
+          fieldKey: f.fieldKey,
+        }),
         note:
           "The guardian's AB Number: a member already, or one on the " +
           'Individual sheet of this file.',
         text: true,
       })),
-      ...beneficiary.map(f => fieldColumn(f, f.label, f.isMandatory)),
+      ...beneficiary.map(f =>
+        fieldColumn(f, f.label, f.isMandatory, {
+          kind: 'party',
+          subject: 'beneficiary',
+          fieldKey: f.fieldKey,
+        })
+      ),
     ];
     for (let ordinal = 1; ordinal <= nomineeOrdinals; ordinal++) {
       for (const field of nominees) {
@@ -522,19 +772,27 @@ export async function buildImportTemplate(): Promise<Buffer> {
         // demanded.
         const mandatory = ordinal === 1 && field.isMandatory;
         columns.push({
-          ...fieldColumn(field, '', false),
+          ...fieldColumn(field, '', false, {
+            kind: 'nominee',
+            ordinal,
+            fieldKey: field.fieldKey,
+          }),
           header: nomineeColumnHeader(field, ordinal, mandatory),
           kind: mandatory ? 'required' : 'optional',
         });
       }
     }
-    for (const header of [SHARES_BALANCE_COLUMN, MSA_BALANCE_COLUMN]) {
+    for (const [header, kind] of [
+      [SHARES_BALANCE_COLUMN, 'shares'],
+      [MSA_BALANCE_COLUMN, 'msa'],
+    ] as const) {
       columns.push({
         header,
         kind: 'conditional',
         note:
           'Required when AB Number is filled; 0 if there is no balance. ' +
           AMOUNT_NOTE,
+        source: { kind },
       });
     }
     for (const extra of extras) {
@@ -547,22 +805,30 @@ export async function buildImportTemplate(): Promise<Buffer> {
           kind: 'conditional',
           note: `${pair} Each account number once only.`,
           text: true,
+          source: { kind: 'extra', part: 'number', accountTypeId: extra.id },
         },
         {
           header: extraBalanceColumn(extra),
           kind: 'conditional',
           note: `${pair} ${AMOUNT_NOTE}`,
+          source: { kind: 'extra', part: 'balance', accountTypeId: extra.id },
         },
         {
           header: extraStatusColumn(extra),
           kind: 'optional',
           note: 'Blank or Open for an open account. Closed: its balance is 0.',
           choices: ACCOUNT_STATUS_CHOICES,
+          source: { kind: 'extra', part: 'status', accountTypeId: extra.id },
         },
         {
           header: extraClosedDateColumn(extra),
           kind: 'optional',
           note: `When it was closed, if known. ${DATE_NOTE}`,
+          source: {
+            kind: 'extra',
+            part: 'closedDate',
+            accountTypeId: extra.id,
+          },
         }
       );
     }
@@ -600,6 +866,7 @@ export async function buildImportTemplate(): Promise<Buffer> {
       }
     });
     sheet.getRow(1).height = 32;
+    sheets.push({ type, sheet, columns });
   }
 
   fillInstructions(
@@ -607,8 +874,7 @@ export async function buildImportTemplate(): Promise<Buffer> {
     types.map(t => t.name)
   );
 
-  const buffer = await workbook.xlsx.writeBuffer();
-  return Buffer.from(buffer);
+  return { workbook, sheets };
 }
 
 export interface ParsedRow {

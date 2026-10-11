@@ -5717,3 +5717,26 @@ Segregation. All five are now in the workbook.
   page audits.
 - Still not in it: staff and who holds which role (people, not
   configuration) and API credentials (secrets).
+
+---
+
+### Members exported in the migration template
+
+Officer request: migration only went one way. _Export members with balances_
+on the Migration page now downloads everyone on file — members and
+non-members, current and former — in the import template's own workbook: the
+same sheets, the same columns, built from the same definitions
+(`templateWorkbook`, each column naming where its value comes from), so the
+two cannot drift apart.
+
+- Details are the member page's: the founding application's applicant,
+  employment, guardian, beneficiary and nominee parties. Balances are the
+  ledger's (`account_balance`) at the moment of export: Shares and MSA for a
+  member, and each further account's number, balance, Open/Closed and closed
+  date. Status is Resigned or Deceased (dated) for someone who has left.
+- A row carries its AB Number and legacy code, so the file can be edited and
+  uploaded again and each row updates its person rather than adding them
+  twice. A non-member who joined in the app has no legacy code; their row
+  needs one before it can go back in.
+- Needs `system.migrate_members`, like the import; each export is on the
+  audit trail (`migration.exported`, with the counts).

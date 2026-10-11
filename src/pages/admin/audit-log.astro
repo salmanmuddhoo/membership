@@ -214,6 +214,8 @@ function describeEntry(entry: AuditEventRow): string {
       return `Customer imported via migration${by}`;
     case 'customer.migration.updated':
       return `Migrated customer updated${by}`;
+    case 'migration.exported':
+      return `Members exported${by}`;
     case 'account.opened': {
       const acctType = String(v.accountType ?? '');
       const forMember = v.memberNo ? ` for ${v.memberNo}` : '';
