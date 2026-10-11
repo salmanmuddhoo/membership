@@ -169,6 +169,20 @@ export function defineMemberEndpoint<Caller extends 'member' | 'public'>(
         } catch (error) {
           const mapped = toApiError(error);
           if (mapped) {
+            // Logged with its cause, as in the handler's catch below: the
+            // phone is told only that the app is not configured, and this
+            // line is where the operator reads which setting is missing.
+            if (mapped.code === 'service_unavailable') {
+              console.error(
+                JSON.stringify({
+                  kind: 'api-error',
+                  correlationId,
+                  path,
+                  code: mapped.code,
+                }),
+                error
+              );
+            }
             return finish(
               apiError(mapped.code, correlationId, mapped.message),
               actor,
