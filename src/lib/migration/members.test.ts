@@ -2523,3 +2523,347 @@ describe('status: resigned, deceased and closed accounts', () => {
     );
   });
 });
+
+// Officer request: everyone on file, with their balances, in the import
+// template's own format — so the file can be checked, edited and uploaded
+// again.
+describe('exportMembers', () => {
+  const HAJJ = 'Hajj Savings (export test)';
+  const person = (n: number) => ({
+    Surname: 'Exported',
+    Name: `Person ${n}`,
+    NIC: `X90000000000${String(n).padStart(2, '0')}`,
+    Gender: 'Female',
+    Address: `${n} Export Road`,
+    Mobile: `578930${String(n).padStart(2, '0')}`,
+  });
+
+  beforeAll(async () => {
+    await runAsConfigurator(
+      appUrl,
+      `insert into account_type
+         (code, name, category, minimum_opening_amount, is_membership_default)
+       values ('hsa_export_test', $1, 'savings', 0, false)
+       on conflict (code) do nothing`,
+      [HAJJ]
+    );
+  });
+
+  // Imports one row through the real pipeline and fails loudly if it does not
+  // go in, so a test below never reasons from a half-imported fixture.
+  async function importRow(sheet: string, data: Record<string, string>) {
+    const {
+      buildImportTemplate,
+      parseImportFile,
+      validateRows,
+      importMembers,
+    } = await load();
+    const filled = await fillSheet(await buildImportTemplate(), sheet, data);
+    const { valid, errors } = await validateRows(await parseImportFile(filled));
+    expect(errors).toEqual([]);
+    const outcome = await importMembers(
+      valid,
+      actor,
+      MIGRATE_PERMISSIONS,
+      'test'
+    );
+    expect(outcome.failed).toEqual([]);
+  }
+
+  async function exportParsed() {
+    const { exportMembers, parseImportFile } = await load();
+    const exported = await exportMembers(actor, MIGRATE_PERMISSIONS);
+    const rows = await parseImportFile(exported.buffer);
+    const byCode = (code: string): ParsedRow => {
+      const row = rows.find(r => r.legacyCode === code);
+      expect(row, `export carries ${code}`).toBeDefined();
+      return row!;
+    };
+    return { exported, rows, byCode };
+  }
+
+  // The fixtures: a member with a nominee, balances and a Hajj account; a
+  // non-member with a Hajj account; a minor under a guardian; a resigned
+  // member. Imported once, read by every test below.
+  const CODES = {
+    member: 'EXP-M1',
+    nonMember: 'EXP-N1',
+    guardian: 'EXP-G1',
+    minor: 'EXP-C1',
+    resigned: 'EXP-R1',
+  };
+
+  beforeAll(async () => {
+    await importRow('Individual', {
+      'Legacy Member Code': CODES.member,
+      'AB Number': 'AB9101',
+      'Joined Date (optional)': '2018-04-02',
+      ...person(1),
+      ...NOMINEE_1,
+      'Shares Balance': '6000',
+      'MSA Deposit Balance': '2500',
+      [`${HAJJ} Number`]: 'HSA-X101',
+      [`${HAJJ} Balance`]: '1200',
+    });
+    await importRow('Individual', {
+      'Legacy Member Code': CODES.nonMember,
+      ...person(2),
+      ...NOMINEE_1,
+      [`${HAJJ} Number`]: 'HSA-X102',
+      [`${HAJJ} Balance`]: '3000',
+    });
+    await importRow('Individual', {
+      'Legacy Member Code': CODES.guardian,
+      'AB Number': 'AB9103',
+      ...person(3),
+      ...NOMINEE_1,
+      'MSA Deposit Balance': '10',
+    });
+    await importRow('Minor', {
+      'Legacy Member Code': CODES.minor,
+      'AB Number': 'AB9104',
+      Surname: 'Exported',
+      Name: 'Child',
+      'Date of birth': '2015-06-01',
+      Gender: 'Male',
+      Address: 'Addr',
+      'Guardian Member ID': 'AB9103',
+      'Beneficiary surname': 'Exported',
+      'Beneficiary name': 'Beneficiary',
+      'Beneficiary NIC': 'X9000000000090',
+      'Nominee 1 Successor guardian surname': 'Exported',
+      'Nominee 1 Successor guardian name': 'Successor',
+      'Nominee 1 Successor guardian NIC': 'X9000000000091',
+      'Shares Balance': '100',
+      'MSA Deposit Balance': '50',
+    });
+    await importRow('Individual', {
+      'Legacy Member Code': CODES.resigned,
+      'AB Number': 'AB9105',
+      Status: 'Resigned',
+      'Status Date': '2024-07-25',
+      ...person(5),
+      ...NOMINEE_1,
+    });
+  }, 60_000);
+
+  it('round-trips a member, a non-member and a minor through the template format', async () => {
+    const { exported, byCode } = await exportParsed();
+    expect(exported.members).toBeGreaterThanOrEqual(4);
+    expect(exported.nonMembers).toBeGreaterThanOrEqual(1);
+
+    const member = byCode(CODES.member);
+    expect(member.sheet).toBe('Individual');
+    expect(member.abNumber).toBe('AB9101');
+    expect(member.joinedAt).toBe('2018-04-02');
+    expect(member.values).toMatchObject({
+      surname: 'Exported',
+      name: 'Person 1',
+      nic: 'X9000000000001',
+      address: '1 Export Road',
+      // Stored normalised, so that is what comes back.
+      mobile: '+23057893001',
+    });
+    expect(member.nominees[0]).toMatchObject({
+      surname: NOMINEE_1['Nominee 1 Surname'],
+      name: NOMINEE_1['Nominee 1 Name'],
+      nic: NOMINEE_1['Nominee 1 NIC'],
+      address: NOMINEE_1['Nominee 1 Address'],
+    });
+    expect(Number(member.sharesBalance)).toBe(6000);
+    expect(Number(member.msaBalance)).toBe(2500);
+
+    const { accountTypeId } = await accountTypeIdOf('hsa_export_test');
+    expect(member.accountNumbers[accountTypeId]).toBe('HSA-X101');
+    expect(Number(member.accountBalances[accountTypeId])).toBe(1200);
+
+    const nonMember = byCode(CODES.nonMember);
+    expect(nonMember.abNumber).toBe('');
+    expect(nonMember.values.nic).toBe('X9000000000002');
+    expect(nonMember.accountNumbers[accountTypeId]).toBe('HSA-X102');
+    expect(Number(nonMember.accountBalances[accountTypeId])).toBe(3000);
+    // A non-member has no Shares or MSA to state.
+    expect(nonMember.sharesBalance).toBe('');
+    expect(nonMember.msaBalance).toBe('');
+
+    const minor = byCode(CODES.minor);
+    expect(minor.sheet).toBe('Minor');
+    expect(minor.abNumber).toBe('AB9104');
+    expect(minor.guardian.member_id).toBe('AB9103');
+    expect(minor.values).toMatchObject({ surname: 'Exported', name: 'Child' });
+    expect(minor.beneficiary).toMatchObject({
+      surname: 'Exported',
+      name: 'Beneficiary',
+      nic: 'X9000000000090',
+    });
+    expect(minor.nominees[0]).toMatchObject({
+      surname: 'Exported',
+      name: 'Successor',
+    });
+    expect(Number(minor.sharesBalance)).toBe(100);
+    expect(Number(minor.msaBalance)).toBe(50);
+  });
+
+  async function accountTypeIdOf(code: string) {
+    const result = await run(
+      appUrl,
+      `select id from account_type where code = $1`,
+      [code]
+    );
+    return { accountTypeId: result.rows[0].id as string };
+  }
+
+  it('uploads again cleanly: every row resolves to the record already on file', async () => {
+    const { validateRows } = await load();
+    const { rows } = await exportParsed();
+    const ours = rows.filter(r => Object.values(CODES).includes(r.legacyCode));
+    expect(ours).toHaveLength(Object.keys(CODES).length);
+
+    // Guardian before minor is validateRows' own business, not the file's.
+    const { valid, errors } = await validateRows(ours);
+    expect(errors).toEqual([]);
+    expect(valid).toHaveLength(ours.length);
+    for (const row of valid) {
+      expect(row.existingId, `${row.legacyCode} is an update`).not.toBeNull();
+      expect(row.existingApplicationId).not.toBeNull();
+    }
+    expect(valid.find(r => r.legacyCode === CODES.member)?.kind).toBe('member');
+    expect(valid.find(r => r.legacyCode === CODES.nonMember)?.kind).toBe(
+      'customer'
+    );
+  });
+
+  it('writes the ledger balance as it stands, including a deposit made after the import', async () => {
+    const msaOf = async (code: string) =>
+      Number((await exportParsed()).byCode(code).msaBalance);
+    expect(await msaOf(CODES.guardian)).toBe(10);
+
+    // A posted deposit, entered the way the ledger itself records one.
+    const account = await run(
+      appUrl,
+      `select a.id, a.member_id
+         from account a
+         join account_type t on t.id = a.account_type_id
+         join member m on m.id = a.member_id
+        where m.legacy_code = $1 and t.code = 'msa'`,
+      [CODES.guardian]
+    );
+    const tx = await run(
+      appUrl,
+      `insert into transaction
+         (kind, member_id, account_id, amount, method, status,
+          captured_by, posted_at, posted_by)
+       values ('deposit', $1, $2, 250, 'cash', 'posted', $3, now(), $3)
+       returning id`,
+      [account.rows[0].member_id, account.rows[0].id, adminUserId]
+    );
+    // Entries are written by the ledger's own routines, never by the
+    // application role directly; the fixture uses the owner.
+    await run(
+      ownerUrl,
+      `insert into account_entry (account_id, transaction_id, direction, amount)
+       values ($1, $2, 'credit', 250)`,
+      [account.rows[0].id, tx.rows[0].id]
+    );
+
+    // account_balance is the ledger's cache of those entries.
+    await run(appUrl, `select rebuild_account_balance($1)`, [
+      account.rows[0].id,
+    ]);
+
+    expect(await msaOf(CODES.guardian)).toBe(260);
+  });
+
+  it('exports a resigned member as Resigned with the date, and a current one blank', async () => {
+    const { byCode } = await exportParsed();
+    const resigned = byCode(CODES.resigned);
+    expect(resigned.status).toBe('Resigned');
+    expect(resigned.statusDate).toBe('2024-07-25');
+    // Their Shares and MSA were closed on the day.
+    expect(Number(resigned.sharesBalance)).toBe(0);
+    expect(Number(resigned.msaBalance)).toBe(0);
+
+    const current = byCode(CODES.member);
+    expect(current.status ?? '').toBe('');
+    expect(current.statusDate ?? '').toBe('');
+  });
+
+  it('refuses without system.migrate_members', async () => {
+    const { exportMembers, MigrationError } = await load();
+    const call = exportMembers(actor, new Set());
+    await expect(call).rejects.toBeInstanceOf(MigrationError);
+    await expect(call).rejects.toMatchObject({ reason: 'forbidden' });
+  });
+
+  it('records a migration.exported audit event with the counts', async () => {
+    const { exportMembers } = await load();
+    const before = await run(
+      appUrl,
+      `select count(*)::int as n from audit_event
+        where action = 'migration.exported'`
+    );
+    const exported = await exportMembers(actor, MIGRATE_PERMISSIONS);
+    const after = await run(
+      appUrl,
+      `select new_value from audit_event
+        where action = 'migration.exported'
+        order by occurred_at desc limit 1`
+    );
+    const count = await run(
+      appUrl,
+      `select count(*)::int as n from audit_event
+        where action = 'migration.exported'`
+    );
+    expect(count.rows[0].n).toBe(before.rows[0].n + 1);
+    expect(after.rows[0].new_value).toMatchObject({
+      members: exported.members,
+      nonMembers: exported.nonMembers,
+      skipped: exported.skipped,
+    });
+  });
+
+  it('has the template’s sheets and header rows, exactly', async () => {
+    const { buildImportTemplate, exportMembers } = await load();
+    const read = async (buffer: Buffer) => {
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(buffer as any);
+      return workbook.worksheets.map(sheet => ({
+        name: sheet.name,
+        header: (sheet.getRow(1).values as ExcelJS.CellValue[])
+          .slice(1)
+          .map(v => String(v ?? '')),
+      }));
+    };
+    const template = await read(await buildImportTemplate());
+    const exported = await read(
+      (await exportMembers(actor, MIGRATE_PERMISSIONS)).buffer
+    );
+    expect(exported.map(s => s.name)).toEqual(template.map(s => s.name));
+    for (const sheet of template) {
+      expect(exported.find(s => s.name === sheet.name)?.header).toEqual(
+        sheet.header
+      );
+    }
+  });
+
+  // Officer report: the export opened blank. The template's drop-downs reach
+  // row 500, and appending after them put the first person on row 501.
+  it('starts every sheet’s people on row 2, with no gap', async () => {
+    const { exportMembers } = await load();
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(
+      (await exportMembers(actor, MIGRATE_PERMISSIONS)).buffer as any
+    );
+    const individual = workbook.getWorksheet('Individual')!;
+    const filled: number[] = [];
+    individual.eachRow((row, rowNumber) => {
+      if (rowNumber === 1) return;
+      const values = (row.values as ExcelJS.CellValue[]).slice(1);
+      if (values.some(v => v !== null && v !== undefined && v !== ''))
+        filled.push(rowNumber);
+    });
+    expect(filled.length).toBeGreaterThan(0);
+    expect(filled[0]).toBe(2);
+    expect(filled).toEqual(filled.map((_, i) => i + 2));
+  });
+});
