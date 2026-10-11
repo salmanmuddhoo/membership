@@ -2845,4 +2845,25 @@ describe('exportMembers', () => {
       );
     }
   });
+
+  // Officer report: the export opened blank. The template's drop-downs reach
+  // row 500, and appending after them put the first person on row 501.
+  it('starts every sheet’s people on row 2, with no gap', async () => {
+    const { exportMembers } = await load();
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(
+      (await exportMembers(actor, MIGRATE_PERMISSIONS)).buffer as any
+    );
+    const individual = workbook.getWorksheet('Individual')!;
+    const filled: number[] = [];
+    individual.eachRow((row, rowNumber) => {
+      if (rowNumber === 1) return;
+      const values = (row.values as ExcelJS.CellValue[]).slice(1);
+      if (values.some(v => v !== null && v !== undefined && v !== ''))
+        filled.push(rowNumber);
+    });
+    expect(filled.length).toBeGreaterThan(0);
+    expect(filled[0]).toBe(2);
+    expect(filled).toEqual(filled.map((_, i) => i + 2));
+  });
 });
