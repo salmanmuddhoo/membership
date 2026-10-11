@@ -12,6 +12,7 @@ import {
   MigrationError,
   buildImportTemplate,
   checksumBuffer,
+  exportMembers,
   fileBalanceCents,
   parseImportFile,
   validateRows,
@@ -57,6 +58,22 @@ if (canMigrate && Astro.url.searchParams.has('template')) {
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       'content-disposition':
         'attachment; filename="member-migration-template.xlsx"',
+    },
+  });
+}
+
+// Everyone on file, with their balances, in the template's own format.
+if (canMigrate && Astro.url.searchParams.has('export')) {
+  const { buffer } = await exportMembers(
+    { userId: principal.userId, email: principal.email },
+    principal.permissions
+  );
+  const day = new Date().toISOString().slice(0, 10);
+  return new Response(buffer, {
+    headers: {
+      'content-type':
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'content-disposition': `attachment; filename="members-export-${day}.xlsx"`,
     },
   });
 }
@@ -242,12 +259,14 @@ const progressPct =
               one in some cases (its note says when), a grey one is optional.
               The Instructions sheet lists the rules.
             </p>
-            <a
-              href="/admin/migration?template=1"
-              class={`${BUTTON} mt-4 inline-block`}
-            >
-              Download the template
-            </a>
+            <div class="mt-4 flex flex-wrap gap-2">
+              <a href="/admin/migration?template=1" class={BUTTON}>
+                Download the template
+              </a>
+              <a href="/admin/migration?export=1" class={BUTTON}>
+                Export members with balances
+              </a>
+            </div>
           </section>
         )}
 
