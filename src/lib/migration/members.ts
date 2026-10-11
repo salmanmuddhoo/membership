@@ -589,6 +589,10 @@ export async function exportMembers(
   }
 
   const outcome = { members: 0, nonMembers: 0, skipped: 0 };
+  // Each sheet's next row, counted here: the template's drop-downs already
+  // reach row 500, so ExcelJS's addRow would put the first person on row
+  // 501 and leave the sheet looking empty.
+  const nextRow = new Map<ExcelJS.Worksheet, number>();
   for (const holder of holders.rows) {
     const target = holder.membership_type_id
       ? sheetByType.get(holder.membership_type_id)
@@ -641,7 +645,15 @@ export async function exportMembers(
         }
       }
     });
-    target.sheet.addRow(cells);
+    const rowNumber = nextRow.get(target.sheet) ?? 2;
+    nextRow.set(target.sheet, rowNumber + 1);
+    const row = target.sheet.getRow(rowNumber);
+    cells.forEach((value, index) => {
+      if (value !== null && value !== undefined) {
+        row.getCell(index + 1).value = value;
+      }
+    });
+    row.commit();
     if (holder.kind === 'member') outcome.members += 1;
     else outcome.nonMembers += 1;
   }
