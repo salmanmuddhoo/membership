@@ -140,7 +140,9 @@ accept it, the capture pages show Submit on it, and `assertMayAct` lets
 the `capture` step act on it. The officer checks the documents, prints
 the form for signing, takes the payment and submits — draft → new, as
 ever. `pendingApplicationIds` flags every `received` application for
-everyone who may submit, since it is nobody's draft.
+everyone who may submit online (`application.submit_online`: the Regional
+Officer and the Regional Manager, migrations 0097 and 0123), since it is
+nobody's draft.
 
 The applicant's own view (`GET /applications/{id}`) shows a timeline built
 from `application_transition` with member-safe labels — "Submitted",

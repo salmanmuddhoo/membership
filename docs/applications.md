@@ -394,6 +394,12 @@ indistinguishable from one an officer captured, except that `captured_by`
 is the `Member app` system user and `applicant_mobile` carries the number
 the applicant verified.
 
+Who works one: whoever holds `application.submit_online` (migration 0044)
+— the **Regional Officer** and the **Regional Manager** (migrations 0097
+and 0123, officer direction). Both see it on the list, the badge and
+"Waiting on you"; whichever picks it up completes and submits it, and it
+goes on to the next step of the configured chain.
+
 It reads as **Received online** on the Applications list, in the same
 amber as Returned for Correction — both are work sitting with the branch —
 and it counts in the Applications badge for everyone who may submit.
