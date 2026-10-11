@@ -475,6 +475,24 @@ describe('S-1301, S-1302 the ledger', () => {
     );
   });
 
+  // 0097, 0123: an application sent from the member app reaches the
+  // Regional Officer and the Regional Manager alike.
+  it('gives the received-from-the-app queue to both regional roles', async () => {
+    const result = await run(
+      appUrl,
+      `select r.code
+         from role r
+         join role_permission rp on rp.role_id = r.id
+         join permission p on p.id = rp.permission_id
+        where p.code = 'application.submit_online'
+        order by r.code`
+    );
+    expect(result.rows.map(r => r.code)).toEqual([
+      'regional_manager',
+      'regional_officer',
+    ]);
+  });
+
   // 0070: a chain per kind on the tables applications already use, a
   // status vocabulary for a step to name, and the matrix seeded to FRD 6.5.
   it('seeds a Secretary → President chain per transaction kind and the matrix', async () => {
