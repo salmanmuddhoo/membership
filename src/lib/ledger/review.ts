@@ -70,12 +70,17 @@ export function permissionToPost(
   transaction: Pick<
     TransactionSummary,
     'kind' | 'payeeName' | 'capturedFromApp'
-  >
+  > &
+    Partial<Pick<TransactionSummary, 'feeApplicationId'>>
 ): string {
   if (transaction.kind === 'deposit' && transaction.capturedFromApp) {
     return PERMISSION_RECORD_APP_DEPOSIT;
   }
   if (needsDisbursement(transaction)) return PERMISSION_DISBURSE;
+  // A transfer paying a new member's fees is the Treasurer's to disburse
+  // (officer direction), though nothing leaves the Society and no payout
+  // method is asked for.
+  if (transaction.feeApplicationId) return PERMISSION_DISBURSE;
   return transaction.kind === 'transfer_leg'
     ? PERMISSION_RECORD_TRANSFER
     : PERMISSION_POST;
@@ -922,7 +927,7 @@ export async function postApprovedTransaction(
   }
   if (!principal.permissions.has(permissionToPost(transaction))) {
     throw new ReviewError(
-      needsDisbursement(transaction)
+      needsDisbursement(transaction) || transaction.feeApplicationId
         ? 'You do not have permission to disburse.'
         : transaction.capturedFromApp && transaction.kind === 'deposit'
           ? 'A deposit made from the member app is recorded by the accounts department.'

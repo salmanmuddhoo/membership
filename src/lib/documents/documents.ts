@@ -36,6 +36,11 @@ import {
   type UploadTicket,
 } from './upload';
 
+// Verifying the papers filed against a transaction — a closure, a
+// resignation, a demised claim — apart from document.verify, which covers
+// an application's (migration 0127).
+export const PERMISSION_VERIFY_TRANSACTION_DOCUMENTS =
+  'transaction.document_verify';
 export class DocumentError extends Error {
   constructor(
     message: string,
@@ -1406,13 +1411,6 @@ export async function reviewDocument(
   },
   principal: { userId: string; email: string; permissions: ReadonlySet<string> }
 ): Promise<{ state: ChecklistState }> {
-  if (!principal.permissions.has('document.verify')) {
-    throw new DocumentError(
-      'You do not have permission to verify documents.',
-      'refused'
-    );
-  }
-
   const reason = (decision.reason ?? '').trim();
   if (decision.outcome === 'reject' && reason === '') {
     throw new DocumentError(
@@ -1440,6 +1438,23 @@ export async function reviewDocument(
   );
   if (document.rowCount === 0) {
     throw new DocumentError('That document no longer exists.', 'not_found');
+  }
+
+  // An application's documents are the Regional Manager's to check, the
+  // papers filed against a closure, a resignation or a claim the
+  // Secretary's (officer direction, migration 0127): two permissions, so
+  // each moves on its own in Configuration -> Roles.
+  if (
+    !principal.permissions.has(
+      document.rows[0].on_transaction
+        ? PERMISSION_VERIFY_TRANSACTION_DOCUMENTS
+        : 'document.verify'
+    )
+  ) {
+    throw new DocumentError(
+      'You do not have permission to verify documents.',
+      'refused'
+    );
   }
 
   const committed = await query(

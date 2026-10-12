@@ -1131,11 +1131,17 @@ export async function recordPayment(
 // A transfer from a member already on its way for these fees (fee-
 // transfers.ts): the fees are being paid that way, so they are not taken
 // twice. Cancelled, rejected or settled, it no longer stands in the way.
-export async function liveFeeTransferFor(
-  applicationId: string
-): Promise<{ transactionId: string; reference: string } | null> {
-  const result = await query<{ transaction_id: string; reference: string }>(
-    `select ft.transaction_id, tr.reference
+export async function liveFeeTransferFor(applicationId: string): Promise<{
+  transactionId: string;
+  reference: string;
+  status: string;
+} | null> {
+  const result = await query<{
+    transaction_id: string;
+    reference: string;
+    status: string;
+  }>(
+    `select ft.transaction_id, tr.reference, t.status
        from fee_transfer ft
        join transaction t on t.id = ft.transaction_id
        join transfer tr on tr.id = t.transfer_id
@@ -1148,7 +1154,11 @@ export async function liveFeeTransferFor(
   );
   const row = result.rows[0];
   return row
-    ? { transactionId: row.transaction_id, reference: row.reference }
+    ? {
+        transactionId: row.transaction_id,
+        reference: row.reference,
+        status: row.status,
+      }
     : null;
 }
 

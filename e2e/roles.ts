@@ -4,13 +4,14 @@
 // may not review it and the Secretary may not approve it. A suite running as
 // one account could therefore never walk an application to approved — it would
 // be stopped by the control it is meant to be testing. So each step of the
-// chain needs its own account, and the Society has to provision five of them.
+// chain needs its own account, and the Society has to provision six of them.
 //
 // That is not an inconvenience the tests invented. It is S-1004's own work:
 // provisioning real people with real roles, tested before go-live rather than
 // on it.
 export const ROLES = [
   'officer',
+  'manager',
   'secretary',
   'president',
   'treasurer',
@@ -32,6 +33,12 @@ export const ROLE_SPECS: Record<Role, RoleSpec> = {
     role: 'officer',
     roleCode: 'regional_officer',
     label: 'Regional Officer',
+  },
+  // Verifies an application's documents (migration 0127).
+  manager: {
+    role: 'manager',
+    roleCode: 'regional_manager',
+    label: 'Regional Manager',
   },
   secretary: {
     role: 'secretary',

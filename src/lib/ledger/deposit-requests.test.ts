@@ -131,14 +131,14 @@ beforeAll(async () => {
       'transaction.capture',
       'transaction.post',
       'transaction.disburse',
-      'document.verify',
+      'transaction.document_verify',
     ]
   );
   secretary = principalFor(
     byEmail.get('secretary@albarakah.mu'),
     'secretary@albarakah.mu',
     ['secretary'],
-    ['document.verify', 'transaction.view']
+    ['transaction.document_verify', 'transaction.view']
   );
 
   const type = await run(
@@ -264,6 +264,16 @@ describe('a large cash deposit as a request (S-1306)', () => {
       documentId,
       state: 'under_review',
     });
+
+    // Papers filed against a transaction are not checked under the
+    // application documents' permission (migration 0127).
+    await expect(
+      documents.reviewDocument(
+        documentId,
+        { outcome: 'reject', reason: 'Unsigned' },
+        { ...secretary, permissions: new Set(['document.verify']) }
+      )
+    ).rejects.toThrowError(/permission to verify/);
 
     // Nobody has to check it any more, but a form someone did reject is
     // still not one to submit on.
