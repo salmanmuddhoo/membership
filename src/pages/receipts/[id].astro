@@ -101,6 +101,8 @@ if (transactionReceipt && Astro.request.method === 'POST') {
       notice = `Receipt ${transactionReceipt.receiptNo} sent.`;
     } else if (!send.contact?.email && !send.contact?.mobile) {
       error = 'No email address or mobile number on file for this member.';
+    } else if (!send.attachable) {
+      error = 'Nothing was sent: the receipt PDF could not be attached.';
     } else {
       error = 'Nothing was sent: no wording is active for receipts.';
     }

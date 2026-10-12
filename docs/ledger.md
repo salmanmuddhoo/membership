@@ -442,19 +442,18 @@ failed is still a post, and the delivery log says what happened. The
 receipt page lists where it went and re-sends it with **Send**, to whatever
 address the member has now; a voided receipt is not sent.
 
-The message carries a link rather than a file: a JWT (`jose`, HS256) signed
+The message carries the receipt as a PDF, never a link (migration 0124).
+The PDF is fetched at send time from a signed address: a JWT (`jose`, HS256) signed
 with `MEMBER_SESSION_SECRET` — the member-facing secret, since it is the
 member's to open — naming one transaction, with purpose `receipt`, good for
 thirty days (`src/lib/ledger/receipt-links.ts`). `/receipts/shared/{token}`
 is public in the middleware; the token is the credential, and the page
 renders the sheet with nothing that leads into the officer's screens, or
 one line saying the link no longer works. The origin is `PUBLIC_APP_URL`,
-else `ENTRA_REDIRECT_URI`'s; with no origin or no secret the wording's
-`{{link}}` reads "Ask at your branch for a printed copy." instead. The
-receipt as a document is the story's Should half, built since migration
-0089: the same token with `.pdf` on the end serves the sheet as a PDF
-(`src/lib/ledger/receipt-pdf.ts`), attached on whichever channel's wording
-says so — `docs/notifications.md` has how each provider carries it.
+else `ENTRA_REDIRECT_URI`'s; with no origin or no secret there is no PDF
+to attach and nothing is sent. The same token with `.pdf` on the end serves
+the sheet as a PDF (`src/lib/ledger/receipt-pdf.ts`), attached on every
+channel — `docs/notifications.md` has how each provider carries it.
 
 ## The statement
 
