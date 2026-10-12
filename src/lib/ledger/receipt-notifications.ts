@@ -40,10 +40,12 @@ export async function contactForHolder(
 
 export interface ReceiptSend {
   // The notification rows written — none when the member has no address on
-  // file or the event has no active template.
+  // file, the event has no active template, or the PDF cannot be attached.
   notificationIds: string[];
   contact: Contact | null;
-  link: string | null;
+  // False when there is no PDF to send: without the app's address or the
+  // link secret there is nothing for the mail or Meta to fetch it from.
+  attachable: boolean;
 }
 
 /**
@@ -55,7 +57,11 @@ export interface ReceiptSend {
 export async function notifyReceiptIssued(
   transactionId: string
 ): Promise<ReceiptSend> {
-  const empty: ReceiptSend = { notificationIds: [], contact: null, link: null };
+  const empty: ReceiptSend = {
+    notificationIds: [],
+    contact: null,
+    attachable: true,
+  };
   try {
     const receipt = await loadTransactionReceipt(transactionId);
     if (!receipt || receipt.state !== 'issued') return empty;
@@ -76,25 +82,32 @@ export async function notifyReceiptIssued(
     if (!contact || (!contact.email && !contact.mobile)) {
       return { ...empty, contact };
     }
+    // The receipt goes as its PDF and never as an address (officer
+    // request): fetched at send time from its signed link — by the mail
+    // provider, or by Meta for a WhatsApp document header — and never shown
+    // to the member. No link, no PDF, and a message saying a receipt is
+    // attached is not sent without one.
     const links = await receiptLinks(transactionId);
-    const link = links?.page ?? null;
+    if (!links) {
+      console.error(
+        '[receipts] receipt not sent: no app origin or link secret to serve its PDF'
+      );
+      return { ...empty, contact, attachable: false };
+    }
     const notificationIds = await notify({
       eventCode: RECEIPT_ISSUED,
       recipients: { email: contact.email, mobile: contact.mobile },
-      values: valuesFor(receipt, contact, link),
+      values: valuesFor(receipt, contact),
       entityType: 'transaction',
       entityId: receipt.transaction.id,
-      // The receipt itself, for a wording that says to attach it: the same
-      // signed link with .pdf on the end (receipt-pdf.ts).
-      attachment: links
-        ? {
-            url: links.pdf,
-            filename: receiptPdfFileName(receipt),
-            contentType: 'application/pdf',
-          }
-        : null,
+      attachment: {
+        url: links.pdf,
+        filename: receiptPdfFileName(receipt),
+        contentType: 'application/pdf',
+      },
+      attachmentRequired: true,
     });
-    return { notificationIds, contact, link };
+    return { notificationIds, contact, attachable: true };
   } catch (error) {
     console.error('[receipts] could not send receipt:', error);
     return empty;
@@ -103,8 +116,7 @@ export async function notifyReceiptIssued(
 
 function valuesFor(
   receipt: TransactionReceipt,
-  contact: Contact,
-  link: string | null
+  contact: Contact
 ): Record<string, string> {
   const t = receipt.transaction;
   return {
@@ -120,8 +132,5 @@ function valuesFor(
             .map(a => `${a.accountNo} · ${a.typeName}`)
             .join(', ')
         : `${t.accountNo} · ${t.accountTypeName}`,
-    // Without an origin or a secret there is no link to give; the wording
-    // then says where to ask, rather than carrying a broken address.
-    link: link ?? 'Ask at your branch for a printed copy.',
   };
 }

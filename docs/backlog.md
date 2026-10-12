@@ -4883,7 +4883,7 @@ each should be confirmed before the milestone that consumes it.
 | 3   | Dormancy: detection and reactivation (M8's S-804 to S-806)  | M15 · S-1501 | **Closed by M22**: detection nightly after `dormancy.months` of no activity (12); reactivation by an officer with a reason              |
 | 4   | Payment method list and which need a reference              | M13 · S-1307 | FRD 6.6's list; cheque, transfers and bank methods require a reference                                                                  |
 | 5   | HSA / Investment as multi-instance per member               | M13          | One of each type per member (0018) stands; multi-instance is a later migration if wanted                                                |
-| 6   | Receipt by email: link or attachment                        | M16 · S-1602 | A link, and since 0089 the PDF as well where the wording says so (per channel; off by default)                                          |
+| 6   | Receipt by email: link or attachment                        | M16 · S-1602 | The PDF, on every channel, and no link (0124; officer request)                                                                          |
 | 7   | Whether a pending withdrawal reserves balance               | M15 · S-1502 | Yes: available = balance − pending debits, as a query                                                                                   |
 | 8   | Transfer to a non-member: where the credit goes             | M15 · S-1504 | Nowhere: debit leg plus disbursement out, no credit leg                                                                                 |
 | 9   | One API surface for staff and member (API-US-003)           | M21          | Two surfaces on one framework and one engine, as Phase 4 built; the rules are identical, the paths differ                               |
@@ -5788,3 +5788,25 @@ day bounds are Mauritius days. A day typed in a migration sheet is now stored
 as that day's Mauritius midnight. Mauritius keeps no daylight saving, so the
 offset is +04:00 all year. Formats that print a pure calendar date (a
 statement period, a retention cut-off) stay on UTC on purpose.
+
+---
+
+### Receipts go as their PDF, never a link
+
+Officer request: the receipt message carried `{{link}}`, an address that
+opened the receipt in a browser. It now carries the receipt itself — the PDF
+as an email attachment and as the WhatsApp template's document header — on
+every channel, every time, and no address.
+
+- Migration 0124 replaces any `receipt.issued` wording still using `{{link}}`
+  with the new default ("Your receipt is attached.") and sets the attach
+  switch on; the code attaches the receipt whatever the switch says
+  (`attachmentRequired`), and the switch is gone from the wording page.
+- `link` is no longer a receipt placeholder, so a wording cannot bring it
+  back.
+- Where the PDF cannot be served (no app address or link secret), nothing
+  is sent, and the receipt page's **Send** says the PDF could not be
+  attached.
+- WhatsApp: the template approved in the Meta console must be updated to
+  have a document header and no link variable before this reaches
+  production, or Meta refuses receipt messages.

@@ -81,8 +81,10 @@ export interface NotifyRequest {
   entityType?: string;
   entityId?: string;
   // The event's document, if it has one. Attached only on a channel whose
-  // wording says so (NotificationTemplate.attachesDocument).
+  // wording says so (NotificationTemplate.attachesDocument) — or on every
+  // channel where the event is the document (a receipt goes out as its PDF).
   attachment?: Attachment | null;
+  attachmentRequired?: boolean;
 }
 
 // Which provider carries a channel is channels.ts's question, for the first
@@ -235,7 +237,8 @@ export async function notify(request: NotifyRequest): Promise<string[]> {
         // slot an administrator writes is the provider template's {{N}}.
         parameters: parametersFor(template, request.values),
         attachment:
-          template.attachesDocument && request.attachment
+          (template.attachesDocument || request.attachmentRequired) &&
+          request.attachment
             ? request.attachment
             : null,
         data:

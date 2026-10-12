@@ -190,24 +190,23 @@ What the failures mean:
 receipt is issued, and again when an officer presses **Send** on the
 receipt. Its placeholders are `member_name`, `receipt_no`, `reference`,
 `kind` (Deposit, Withdrawal, Transfer, Reversal), `amount` (the bare
-figure, `7,000.00` — the wording carries "Rs"), `account` and `link`. The
-link opens the receipt without a sign-in for thirty days; where the link
-cannot be made — no `MEMBER_SESSION_SECRET`, or no `PUBLIC_APP_URL` and no
-`ENTRA_REDIRECT_URI` to take an origin from — `{{link}}` reads "Ask at your
-branch for a printed copy." rather than nothing. How the link is signed and
-what opens it is in `docs/ledger.md`.
+figure, `7,000.00` — the wording carries "Rs") and `account`.
 
-Since migration 0089 the receipt can travel as a document too: `{{link}}`
-with `.pdf` on the end serves the sheet as a one-page PDF
-(`src/lib/ledger/receipt-pdf.ts`, drawn with jsPDF on the server, the same
-token so message and file expire together). Whether a wording carries it is
-its own switch — **Attach the receipt as a PDF** at Configuration →
-Notification wording, per channel, off by default. On WhatsApp it goes as
-the template's document header, which Meta fetches from the link itself, so
-the template registered with Meta must have a document header or Meta
-refuses the message; on email it goes as an attachment, fetched at send
-time; a gateway receives its address under `attachment`. What was attached
-is stored on the notification row, so a retry sends the same document.
+The receipt goes as its PDF, never as a link (officer request, migration
+0124): a one-page PDF of the sheet (`src/lib/ledger/receipt-pdf.ts`, drawn
+with jsPDF on the server) on every channel, whatever the wording's attach
+switch says. On email it is an attachment, fetched at send time; on
+WhatsApp it is the template's document header, which Meta fetches itself,
+so **the template registered with Meta must have a document header and no
+variable for a link**, or Meta refuses the message — its body variables
+follow the wording's placeholders in order (`member_name`, `receipt_no`,
+`kind`, `amount`, `account` in the default). A gateway receives the
+document's address under `attachment`. The PDF is served from a signed
+address the member never sees; where it cannot be made — no
+`MEMBER_SESSION_SECRET`, or no `PUBLIC_APP_URL` and no `ENTRA_REDIRECT_URI`
+to take an origin from — nothing is sent, rather than a message saying a
+receipt is attached that is not. What was attached is stored on the
+notification row, so a retry sends the same document.
 
 ## An exit, at every stage
 

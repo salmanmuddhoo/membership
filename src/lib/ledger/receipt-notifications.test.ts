@@ -77,7 +77,7 @@ async function load() {
       async send(message) {
         // Only the receipt's own message is under test here; what a posting
         // says besides (S-1803) has its own test.
-        if (!/open (your receipt|it) here/i.test(message.body)) return;
+        if (!/your receipt is attached/i.test(message.body)) return;
         sent.push({
           channel: name,
           recipient: message.recipient,
@@ -193,7 +193,7 @@ afterAll(async () => {
 });
 
 describe('a receipt sent to its member (S-1602)', () => {
-  it('goes out on every channel the member has an address for, with a link that opens it', async () => {
+  it('goes out on every channel the member has an address for, as its PDF and never a link', async () => {
     const { sent, deposits, links, notify } = await load();
     const deposit = await deposits.recordDeposit(
       {
@@ -213,14 +213,25 @@ describe('a receipt sent to its member (S-1602)', () => {
     expect(email.body).toContain('Assalamoualaikoum Amina Test');
     expect(email.body).toContain('Deposit of Rs 7,000.00');
     expect(email.body).toContain(deposit.reference);
-    const link = email.body.match(
-      /https:\/\/members\.example\.mu\/receipts\/shared\/(\S+)/
-    );
-    expect(link).not.toBeNull();
-    expect(await links.verifyReceiptToken(link![1])).toBe(deposit.id);
+    expect(email.body).toContain('Your receipt is attached.');
     const whatsapp = sent.find(s => s.channel === 'whatsapp')!;
     expect(whatsapp.recipient).toBe('+230 5789 1234');
     expect(whatsapp.body).toContain(deposit.receiptNo);
+    // The receipt itself on both, fetched at send time from its signed
+    // link; the address is never in what the member reads.
+    for (const message of [email, whatsapp]) {
+      expect(message.body).not.toContain('/receipts/shared/');
+      expect(message.body).not.toContain('http');
+      expect(message.attachment).toMatchObject({
+        filename: `Receipt ${deposit.receiptNo}.pdf`,
+        contentType: 'application/pdf',
+      });
+      const pdf = message.attachment!.url.match(
+        /^https:\/\/members\.example\.mu\/receipts\/shared\/(\S+)\.pdf$/
+      );
+      expect(pdf).not.toBeNull();
+      expect(await links.verifyReceiptToken(pdf![1])).toBe(deposit.id);
+    }
 
     // On the record against the transaction, so the receipt page can say
     // where it went.
@@ -258,7 +269,7 @@ describe('a receipt sent to its member (S-1602)', () => {
       withdrawal.id
     );
     expect(resend.notificationIds).toHaveLength(2);
-    expect(resend.link).toMatch(/\/receipts\/shared\//);
+    expect(resend.attachable).toBe(true);
     expect(sent).toHaveLength(4);
     expect(
       (await notify.notificationsFor('transaction', withdrawal.id)).filter(
@@ -289,17 +300,17 @@ describe('a receipt sent to its member (S-1602)', () => {
     expect(sent).toHaveLength(4);
   });
 
-  it('is nothing without a link secret: the receipt still issues, the wording says where to ask', async () => {
+  it('is not sent without a link secret: the receipt still issues, but there is no PDF to attach', async () => {
     process.env.MEMBER_SESSION_SECRET = 'short';
-    const { sent, deposits } = await load();
+    const { sent, deposits, receiptNotifications } = await load();
     const deposit = await deposits.recordDeposit(
       { accountId: reachable.msa, amount: '250', method: 'cash' },
       officer
     );
     expect(deposit.receiptNo).toMatch(/^RCT-/);
-    expect(sent).toHaveLength(2);
-    expect(sent[0].body).toContain('Ask at your branch for a printed copy.');
-    expect(sent[0].body).not.toContain('/receipts/shared/');
+    expect(sent).toHaveLength(0);
+    const again = await receiptNotifications.notifyReceiptIssued(deposit.id);
+    expect(again).toMatchObject({ notificationIds: [], attachable: false });
   });
 });
 
@@ -380,46 +391,31 @@ describe('the account statement (S-1604)', () => {
 
 // Last, because its deposits would shift the statement's figures above.
 describe('the receipt as a document (S-1602)', () => {
-  // S-1602's Should half: the receipt as a document rides the same message
-  // once the wording says so — and only then, since a WhatsApp template
-  // without a document header refuses one.
-  it('attaches the receipt as a PDF only where the wording says to', async () => {
-    const before = await load();
-    const plain = await before.deposits.recordDeposit(
-      { accountId: reachable.msa, amount: '100', method: 'cash' },
-      officer
-    );
-    expect(before.sent.every(s => s.attachment === null)).toBe(true);
-    expect(plain.receiptNo).toMatch(/^RCT-/);
-
+  // A receipt goes out as its PDF on every channel, whatever the wording's
+  // switch says (officer request: the document, never a link).
+  it('attaches the receipt as a PDF on every channel, switch or no switch', async () => {
     await run(
       appUrl,
       `begin; set local albarakah.actor_description = 'test';
-       update notification_template set attaches_document = true
-        where event_code = 'receipt.issued' and channel = 'whatsapp';
+       update notification_template set attaches_document = false
+        where event_code = 'receipt.issued';
        commit;`
     );
-    const { sent, deposits, links, retry } = await load();
+    const { sent, deposits, retry } = await load();
     const deposit = await deposits.recordDeposit(
       { accountId: reachable.msa, amount: '7000', method: 'cash' },
       officer
     );
     const whatsapp = sent.find(s => s.channel === 'whatsapp')!;
-    expect(whatsapp.attachment).toMatchObject({
-      filename: `Receipt ${deposit.receiptNo}.pdf`,
-      contentType: 'application/pdf',
-    });
-    const pdf = whatsapp.attachment!.url.match(
-      /^https:\/\/members\.example\.mu\/receipts\/shared\/(\S+)\.pdf$/
-    );
-    expect(pdf).not.toBeNull();
-    expect(await links.verifyReceiptToken(pdf![1])).toBe(deposit.id);
-    // The same token as the page link in the body: one expiry for both.
-    expect(whatsapp.body).toContain(
-      whatsapp.attachment!.url.replace(/\.pdf$/, '')
-    );
-    // Email's wording did not say to, so it carries the link alone.
-    expect(sent.find(s => s.channel === 'email')!.attachment).toBeNull();
+    const email = sent.find(s => s.channel === 'email')!;
+    for (const message of [whatsapp, email]) {
+      expect(message.attachment).toMatchObject({
+        filename: `Receipt ${deposit.receiptNo}.pdf`,
+        contentType: 'application/pdf',
+      });
+    }
+    // One token for both: the document expires the same day on each.
+    expect(email.attachment!.url).toBe(whatsapp.attachment!.url);
 
     // On the row, so a retry days later fetches the same document.
     const rows = await run(
@@ -434,9 +430,9 @@ describe('the receipt as a document (S-1602)', () => {
     expect(rows.rows).toEqual([
       {
         channel: 'email',
-        attachment_url: null,
-        attachment_name: null,
-        attachment_type: null,
+        attachment_url: email.attachment!.url,
+        attachment_name: `Receipt ${deposit.receiptNo}.pdf`,
+        attachment_type: 'application/pdf',
       },
       {
         channel: 'whatsapp',
