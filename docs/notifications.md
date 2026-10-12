@@ -135,6 +135,10 @@ While the number is still in trial, Meta only delivers to recipients on its
 allowed list. A test to any other number is accepted by the API and never
 arrives.
 
+The same number and token can send the member app's sign-in codes, as an
+Authentication template of their own: `MEMBER_OTP_DELIVERY=whatsapp`
+(`docs/member-app.md`, "Codes by WhatsApp").
+
 ### Through a gateway (`http`)
 
 A reseller (Twilio, 360dialog, and others) that takes finished text:

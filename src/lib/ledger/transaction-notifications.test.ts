@@ -844,6 +844,7 @@ describe("a minor's guardian hears on the minor's behalf", () => {
       {
         sessionId: session.rows[0].id,
         mobile: '+23057890901',
+        email: null,
         memberId: mother,
         customerId: null,
         kind: 'member',

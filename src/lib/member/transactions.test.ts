@@ -108,6 +108,7 @@ function memberPrincipal(memberId: string, mobile: string): MemberPrincipal {
   return {
     sessionId: `session-${mobile}`,
     mobile,
+    email: null,
     memberId,
     customerId: null,
     kind: 'member',
@@ -769,6 +770,7 @@ describe('how a deposit from the app may be paid', () => {
       member.depositOptions({
         sessionId: 'session-applicant',
         mobile: '+23057890000',
+        email: null,
         memberId: null,
         customerId: null,
         kind: 'applicant',

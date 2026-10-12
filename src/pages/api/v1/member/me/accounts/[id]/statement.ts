@@ -38,7 +38,10 @@ const endpoint = defineMemberEndpoint(
     if (!statement) throw new ApiError('not_found');
 
     if (params.get('format') === 'xlsx') {
-      return statementDownload(statement, member.mobile);
+      return statementDownload(
+        statement,
+        member.mobile ?? member.email ?? 'Member app'
+      );
     }
 
     return apiSuccess(statementPayload(statement), correlationId);

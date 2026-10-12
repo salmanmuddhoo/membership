@@ -275,11 +275,25 @@ export interface MemberConfig {
   refreshTokenDays: number;
   // How one-time codes leave the system. 'http' posts { to, message } to
   // MEMBER_OTP_WEBHOOK_URL, which is whatever SMS or WhatsApp gateway the
-  // Society uses; 'log' writes the code to the server log and exists for a
-  // developer's machine and the test environment only.
-  otpDelivery: 'http' | 'log' | 'unconfigured';
+  // Society uses; 'whatsapp' sends them through Meta's WhatsApp Business
+  // Platform, from the number notifications already use; 'log' writes the
+  // code to the server log and exists for a developer's machine and the
+  // test environment only.
+  otpDelivery: 'http' | 'whatsapp' | 'log' | 'unconfigured';
   otpWebhookUrl?: string;
   otpWebhookToken?: string;
+  // For 'whatsapp'. WhatsApp sends a business a code only as an
+  // Authentication template Meta approved in advance, named here; the
+  // number and token are the notifications' own (NOTIFY_WHATSAPP_*), so the
+  // Society registers one WhatsApp number, not two.
+  otpWhatsapp?: {
+    template: string;
+    language: string;
+    phoneNumberId: string;
+    token: string;
+    baseUrl?: string;
+    apiVersion?: string;
+  };
   // A code every challenge accepts, for exercising the app against the test
   // environment without an SMS gateway. Refused outside non-production.
   otpFixedCode?: string;
@@ -317,8 +331,24 @@ export function getMemberConfig(): MemberConfig {
     throw new MemberConfigError('MEMBER_OTP_FIXED_CODE must be six digits.');
   }
 
+  const whatsappTemplate = readEnv('MEMBER_OTP_WHATSAPP_TEMPLATE');
+  const whatsappNumber = readEnv('NOTIFY_WHATSAPP_PHONE_NUMBER_ID');
+  const whatsappToken = readEnv('NOTIFY_WHATSAPP_TOKEN');
+  const otpWhatsapp =
+    whatsappTemplate && whatsappNumber && whatsappToken
+      ? {
+          template: whatsappTemplate,
+          language: readEnv('MEMBER_OTP_WHATSAPP_LANGUAGE') ?? 'en',
+          phoneNumberId: whatsappNumber,
+          token: whatsappToken,
+          baseUrl: readEnv('NOTIFY_WHATSAPP_BASE_URL'),
+          apiVersion: readEnv('NOTIFY_WHATSAPP_API_VERSION'),
+        }
+      : undefined;
+
   let otpDelivery: MemberConfig['otpDelivery'] = 'unconfigured';
   if (delivery === 'http' && otpWebhookUrl) otpDelivery = 'http';
+  else if (delivery === 'whatsapp' && otpWhatsapp) otpDelivery = 'whatsapp';
   else if (delivery === 'log') otpDelivery = 'log';
 
   return {
@@ -328,6 +358,7 @@ export function getMemberConfig(): MemberConfig {
     otpDelivery,
     otpWebhookUrl,
     otpWebhookToken: readEnv('MEMBER_OTP_WEBHOOK_TOKEN'),
+    otpWhatsapp,
     otpFixedCode,
   };
 }

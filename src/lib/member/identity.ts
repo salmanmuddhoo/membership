@@ -32,7 +32,10 @@ import {
   generateCode,
   hashCode,
   MAX_ATTEMPTS,
+  emailCodeDelivery,
+  maskEmail,
   maskMobile,
+  phoneChannel,
   type CodeDelivery,
 } from './otp';
 import { disableSessionDevices } from '../notifications/push';
@@ -44,8 +47,10 @@ export type IdentityKind = 'member' | 'customer' | 'applicant';
 // no roles — one identity, and the record it is linked to.
 export interface MemberPrincipal {
   sessionId: string;
-  // E.164, verified.
-  mobile: string;
+  // What the code proved: an E.164 mobile or an email address, exactly one
+  // of the two (migration 0124).
+  mobile: string | null;
+  email: string | null;
   memberId: string | null;
   customerId: string | null;
   kind: IdentityKind;
@@ -54,11 +59,14 @@ export interface MemberPrincipal {
 export interface OtpChallenge {
   challengeId: string;
   purpose: 'link_member' | 'sign_up';
-  // Masked, for a sign-up: the number the person just typed. Null for a
-  // link: saying even a masked number would confirm the NIC + AB Number
-  // pair named someone, and the person is told it went to the mobile on
-  // their record.
+  // Masked: +230 5*** *428, or s***o@gmail.com. For a link, the mobile or
+  // email on the member's record, so the person knows which of theirs to
+  // look at; a pair that names nobody is refused before this (officer
+  // direction), so saying it confirms nothing the refusal does not.
   sentTo: string | null;
+  // Where to look for it: an email, or WhatsApp or an SMS as this site
+  // sends codes to phones.
+  sentBy: 'sms' | 'whatsapp' | 'email';
   expiresInSeconds: number;
 }
 
@@ -70,7 +78,9 @@ export interface Session {
     kind: IdentityKind;
     memberNo: string | null;
     displayName: string;
-    mobile: string;
+    // What the person signed in with, exactly one of the two.
+    mobile: string | null;
+    email: string | null;
     linkedAt: string;
   };
 }
@@ -102,6 +112,27 @@ export function normaliseNic(raw: string): string | null {
 export function normaliseAbNumber(raw: string): string | null {
   const ab = raw.trim().toUpperCase().replace(/\s+/g, '');
   return /^[A-Z]{1,4}\d{1,10}$/.test(ab) ? ab : null;
+}
+
+// Where a code by email may go: one address, trimmed and lower-cased, and
+// nothing a mail server would read as two.
+export function normaliseEmail(raw: string): string | null {
+  const email = raw.trim().toLowerCase();
+  return email.length <= 254 &&
+    /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/.test(email)
+    ? email
+    : null;
+}
+
+export type CodeChannel = 'phone' | 'email';
+
+// Phone unless email is asked for, so an app that predates the choice is
+// answered as it always was.
+function channelOf(raw: unknown): CodeChannel | null {
+  if (raw === undefined || raw === null || raw === '' || raw === 'phone') {
+    return 'phone';
+  }
+  return raw === 'email' ? 'email' : null;
 }
 
 function sha256(value: string): string {
@@ -158,12 +189,15 @@ async function assertCooldown(requestKey: string): Promise<void> {
 interface ChallengeInput {
   purpose: 'link_member' | 'link_member_miss' | 'sign_up';
   requestKey: string;
-  // Empty for a miss: there is nobody to send to.
-  mobile: string;
+  channel: CodeChannel;
+  // Where the code goes, by the channel: the mobile (empty for a miss:
+  // there is nobody to send to) or the email address. The other is null.
+  mobile: string | null;
+  email: string | null;
   memberId: string | null;
 }
 
-// A row, a code, and — unless this is a miss — an SMS. A miss gets the
+// A row, a code, and — unless this is a miss — a message. A miss gets the
 // same row with a random hash nothing can match, no message, and the same
 // answer, so the caller cannot tell the two apart.
 async function issueChallenge(
@@ -175,13 +209,17 @@ async function issueChallenge(
   const code = miss ? randomBytes(8).toString('hex') : generateCode(config);
   const inserted = await query<{ id: string }>(
     `insert into member_login_challenge
-       (purpose, request_key, mobile, member_id, code_hash, expires_at)
-     values ($1, $2, $3, $4, 'pending', now() + make_interval(secs => $5))
+       (purpose, request_key, channel, mobile, email, member_id, code_hash,
+        expires_at)
+     values ($1, $2, $3, $4, $5, $6, 'pending',
+             now() + make_interval(secs => $7))
      returning id`,
     [
       input.purpose,
       input.requestKey,
+      input.channel,
       input.mobile,
+      input.email,
       input.memberId,
       CODE_TTL_SECONDS,
     ]
@@ -198,7 +236,7 @@ async function issueChallenge(
   // it, so a code that never arrived cannot be guessed at later.
   if (!miss) {
     try {
-      await delivery.send(input.mobile, codeMessage(code));
+      await delivery.send(destinationOf(input), codeMessage(code), code);
     } catch (error) {
       await query(
         `update member_login_challenge set consumed_at = now() where id = $1`,
@@ -211,10 +249,47 @@ async function issueChallenge(
   return {
     challengeId,
     purpose: input.purpose === 'sign_up' ? 'sign_up' : 'link_member',
-    sentTo: input.purpose === 'sign_up' ? maskMobile(input.mobile) : null,
+    sentTo: miss ? null : maskedDestination(input),
+    sentBy: input.channel === 'email' ? 'email' : phoneChannel(config),
     expiresInSeconds: CODE_TTL_SECONDS,
   };
 }
+
+function destinationOf(input: {
+  channel: CodeChannel;
+  mobile: string | null;
+  email: string | null;
+}): string {
+  return (input.channel === 'email' ? input.email : input.mobile) ?? '';
+}
+
+function maskedDestination(input: {
+  channel: CodeChannel;
+  mobile: string | null;
+  email: string | null;
+}): string {
+  return input.channel === 'email'
+    ? maskEmail(input.email ?? '')
+    : maskMobile(input.mobile ?? '');
+}
+
+// The delivery for the channel asked for, made only when it is needed: a
+// site that sends no email still sends codes to phones, and the reverse.
+function deliveryFor(
+  channel: CodeChannel,
+  options: { delivery?: CodeDelivery; emailDelivery?: CodeDelivery },
+  config: MemberConfig
+): CodeDelivery {
+  return channel === 'email'
+    ? (options.emailDelivery ?? emailCodeDelivery())
+    : (options.delivery ?? codeDelivery(config));
+}
+
+type DeliveryOptions = {
+  delivery?: CodeDelivery;
+  emailDelivery?: CodeDelivery;
+  config?: MemberConfig;
+};
 
 /**
  * Identify an existing member by NIC + AB Number and send a code to the
@@ -240,8 +315,13 @@ const LINK_REFUSALS = {
     'These details do not match our records. Please contact the Al Barakah ' +
     `office on ${OFFICE_PHONE}.`,
   no_mobile_on_record:
-    'We have no mobile number on record for you, so a code cannot be sent. ' +
-    `Please contact the Al Barakah office on ${OFFICE_PHONE}.`,
+    'We have no mobile number on record for you, so a code cannot be sent ' +
+    'to your phone. Choose email, or contact the Al Barakah office on ' +
+    `${OFFICE_PHONE}.`,
+  no_email_on_record:
+    'We have no email address on record for you, so a code cannot be sent ' +
+    'by email. Choose WhatsApp, or contact the Al Barakah office on ' +
+    `${OFFICE_PHONE}.`,
 } as const;
 // Who may use the app (officer direction): an active member, or a resigned
 // one who still holds an open account — a non-member with an HSA or an
@@ -256,21 +336,22 @@ export function mayUseAppSql(member: string): string {
 }
 
 export async function linkMember(
-  input: { nic: string; abNumber: string },
+  input: { nic: string; abNumber: string; channel?: string },
   origin: RequestOrigin,
-  options: { delivery?: CodeDelivery; config?: MemberConfig } = {}
+  options: DeliveryOptions = {}
 ): Promise<OtpChallenge> {
   const config = options.config ?? getMemberConfig();
-  const delivery = options.delivery ?? codeDelivery(config);
 
   const details: Record<string, string[]> = {};
   const nic = normaliseNic(input.nic ?? '');
   const abNumber = normaliseAbNumber(input.abNumber ?? '');
+  const channel = channelOf(input.channel);
   if (!nic) details.nic = ['Enter the NIC exactly as it appears on the card.'];
   if (!abNumber) {
     details.abNumber = ['Enter the AB Number as on your card, e.g. AB0001.'];
   }
-  if (!nic || !abNumber) {
+  if (!channel) details.channel = ['Choose WhatsApp or email.'];
+  if (!nic || !abNumber || !channel) {
     throw new ApiError('validation_failed', 'Check the details.', details);
   }
 
@@ -295,8 +376,12 @@ export async function linkMember(
   // applicant party of the application that created them, joined the same
   // way the officer's own member search does — but matched whole, never as
   // a fragment, and never returning a name.
-  const found = await query<{ id: string; mobile: string | null }>(
-    `select m.id, p.values->>'mobile' as mobile
+  const found = await query<{
+    id: string;
+    mobile: string | null;
+    email: string | null;
+  }>(
+    `select m.id, p.values->>'mobile' as mobile, p.values->>'email' as email
        from member m
        join membership_application a on a.id = m.application_id
        join application_party p
@@ -308,9 +393,18 @@ export async function linkMember(
     [abNumber, nic]
   );
 
+  // Only ever to the mobile or the email on the record, never to one the
+  // person types: whoever knows a member's NIC and AB Number must still hold
+  // their phone or their mailbox.
   const member = found.rows[0];
-  if (!member || !member.mobile) {
-    const reason = member ? 'no_mobile_on_record' : 'no_match';
+  const email = member?.email ? normaliseEmail(member.email) : null;
+  const reachable = channel === 'email' ? email : member?.mobile;
+  if (!member || !reachable) {
+    const reason = !member
+      ? 'no_match'
+      : channel === 'email'
+        ? 'no_email_on_record'
+        : 'no_mobile_on_record';
     // Recorded in full here — the NIC hashed, the AB Number as typed — and
     // nowhere the caller can see.
     await recordAuditQuietly({
@@ -340,10 +434,12 @@ export async function linkMember(
     {
       purpose: 'link_member',
       requestKey: `link:${abNumber}`,
-      mobile: member.mobile,
+      channel,
+      mobile: channel === 'phone' ? member.mobile : null,
+      email: channel === 'email' ? email : null,
       memberId: member.id,
     },
-    delivery,
+    deliveryFor(channel, options, config),
     config
   );
 
@@ -354,7 +450,8 @@ export async function linkMember(
     entityId: member.id,
     newValue: {
       challengeId: challenge.challengeId,
-      sentTo: maskMobile(member.mobile),
+      channel,
+      sentTo: challenge.sentTo,
     },
     requestId: origin.correlationId,
     ipAddress: origin.ip,
@@ -364,31 +461,50 @@ export async function linkMember(
 }
 
 /**
- * Verify a mobile number to start a membership application. No AB Number
- * needed, and always the same answer for a well-formed number — the session
- * this leads to is an applicant's whoever the number belongs to.
+ * Verify a WhatsApp number or an email address to start a membership
+ * application, whichever the person chose and typed. No AB Number needed,
+ * and always the same answer for a well-formed one — the session this leads
+ * to is an applicant's whoever the number or address belongs to.
  */
 export async function startSignUp(
-  input: { mobile: string },
+  input: { mobile?: string; email?: string; channel?: string },
   origin: RequestOrigin,
-  options: { delivery?: CodeDelivery; config?: MemberConfig } = {}
+  options: DeliveryOptions = {}
 ): Promise<OtpChallenge> {
   const config = options.config ?? getMemberConfig();
-  const delivery = options.delivery ?? codeDelivery(config);
-
-  let mobile: string;
-  try {
-    mobile = toInternational(input.mobile ?? '');
-  } catch (error) {
-    throw new ApiError('validation_failed', 'Check the mobile number.', {
-      mobile: [
-        error instanceof PhoneFormatError ? error.message : 'Check the number.',
-      ],
+  const channel = channelOf(input.channel);
+  if (!channel) {
+    throw new ApiError('validation_failed', 'Check the details.', {
+      channel: ['Choose WhatsApp or email.'],
     });
   }
 
+  let mobile: string | null = null;
+  let email: string | null = null;
+  if (channel === 'email') {
+    email = normaliseEmail(input.email ?? '');
+    if (!email) {
+      throw new ApiError('validation_failed', 'Check the email address.', {
+        email: ['Enter an email address, e.g. name@example.com.'],
+      });
+    }
+  } else {
+    try {
+      mobile = toInternational(input.mobile ?? '');
+    } catch (error) {
+      throw new ApiError('validation_failed', 'Check the mobile number.', {
+        mobile: [
+          error instanceof PhoneFormatError
+            ? error.message
+            : 'Check the number.',
+        ],
+      });
+    }
+  }
+  const destination = (mobile ?? email)!;
+
   await enforce(
-    `member-signup:mobile:${mobile}`,
+    `member-signup:${channel === 'email' ? 'email' : 'mobile'}:${destination}`,
     origin.correlationId,
     SIGN_UP_LIMIT
   );
@@ -399,16 +515,18 @@ export async function startSignUp(
       SIGN_UP_IP_LIMIT
     );
   }
-  await assertCooldown(`signup:${mobile}`);
+  await assertCooldown(`signup:${destination}`);
 
   const challenge = await issueChallenge(
     {
       purpose: 'sign_up',
-      requestKey: `signup:${mobile}`,
+      requestKey: `signup:${destination}`,
+      channel,
       mobile,
+      email,
       memberId: null,
     },
-    delivery,
+    deliveryFor(channel, options, config),
     config
   );
   await recordAuditQuietly({
@@ -416,7 +534,7 @@ export async function startSignUp(
     action: 'member.signup.requested',
     entityType: 'member_login_challenge',
     entityId: challenge.challengeId,
-    newValue: { mobile: maskMobile(mobile) },
+    newValue: { channel, sentTo: challenge.sentTo },
     requestId: origin.correlationId,
     ipAddress: origin.ip,
   });
@@ -427,19 +545,20 @@ export async function startSignUp(
 export async function resendOtp(
   challengeId: string,
   origin: RequestOrigin,
-  options: { delivery?: CodeDelivery; config?: MemberConfig } = {}
+  options: DeliveryOptions = {}
 ): Promise<OtpChallenge> {
   const config = options.config ?? getMemberConfig();
-  const delivery = options.delivery ?? codeDelivery(config);
 
   const previous = await query<{
     id: string;
     purpose: ChallengeInput['purpose'];
     request_key: string;
-    mobile: string;
+    channel: CodeChannel;
+    mobile: string | null;
+    email: string | null;
     member_id: string | null;
   }>(
-    `select id, purpose, request_key, mobile, member_id
+    `select id, purpose, request_key, channel, mobile, email, member_id
        from member_login_challenge
       where id = $1::uuid
         and created_at > now() - interval '30 minutes'`,
@@ -451,9 +570,18 @@ export async function resendOtp(
   // Before the old one is killed: a refused resend must leave the current
   // code usable.
   await assertCooldown(row.request_key);
+  // To the same place as before, by the same channel: a resend never moves
+  // a code somewhere new.
   if (row.mobile) {
     await enforce(
       `member-resend:mobile:${row.mobile}`,
+      origin.correlationId,
+      SIGN_UP_LIMIT
+    );
+  }
+  if (row.email) {
+    await enforce(
+      `member-resend:email:${row.email}`,
       origin.correlationId,
       SIGN_UP_LIMIT
     );
@@ -469,10 +597,12 @@ export async function resendOtp(
     {
       purpose: row.purpose,
       requestKey: row.request_key,
+      channel: row.channel,
       mobile: row.mobile,
+      email: row.email,
       memberId: row.member_id,
     },
-    delivery,
+    deliveryFor(row.channel, options, config),
     config
   );
   await recordAuditQuietly({
@@ -519,7 +649,8 @@ async function accessTokenFor(
 
 interface SessionRow {
   id: string;
-  mobile: string;
+  mobile: string | null;
+  email: string | null;
   member_id: string | null;
   customer_id: string | null;
   linked_at: Date;
@@ -551,6 +682,7 @@ async function identityFor(row: SessionRow): Promise<Session['identity']> {
       memberNo: m?.member_no ?? null,
       displayName: m?.name || 'Member',
       mobile: row.mobile,
+      email: row.email,
       linkedAt: row.linked_at.toISOString(),
     };
   }
@@ -559,6 +691,7 @@ async function identityFor(row: SessionRow): Promise<Session['identity']> {
     memberNo: null,
     displayName: row.customer_id ? 'Customer' : 'Applicant',
     mobile: row.mobile,
+    email: row.email,
     linkedAt: row.linked_at.toISOString(),
   };
 }
@@ -610,13 +743,15 @@ export async function verifyOtp(
     const locked = await client.query<{
       id: string;
       purpose: ChallengeInput['purpose'];
-      mobile: string;
+      channel: CodeChannel;
+      mobile: string | null;
+      email: string | null;
       member_id: string | null;
       code_hash: string;
       attempts: number;
       live: boolean;
     }>(
-      `select id, purpose, mobile, member_id, code_hash, attempts,
+      `select id, purpose, channel, mobile, email, member_id, code_hash, attempts,
               (consumed_at is null and expires_at > now()) as live
          from member_login_challenge
         where id = $1
@@ -657,11 +792,13 @@ export async function verifyOtp(
 
     const session = await client.query<SessionRow>(
       `insert into member_session
-         (mobile, member_id, refresh_token_hash, expires_at, device_label)
-       values ($1, $2, $3, now() + make_interval(days => $4), $5)
-       returning id, mobile, member_id, customer_id, linked_at`,
+         (mobile, email, member_id, refresh_token_hash, expires_at,
+          device_label)
+       values ($1, $2, $3, $4, now() + make_interval(days => $5), $6)
+       returning id, mobile, email, member_id, customer_id, linked_at`,
       [
-        challenge.mobile,
+        challenge.channel === 'phone' ? challenge.mobile : null,
+        challenge.channel === 'email' ? challenge.email : null,
         challenge.purpose === 'link_member' ? challenge.member_id : null,
         refresh.hash,
         config.refreshTokenDays,
@@ -685,7 +822,8 @@ export async function verifyOtp(
             : created.id,
         newValue: {
           sessionId: created.id,
-          mobile: maskMobile(challenge.mobile),
+          channel: challenge.channel,
+          sentTo: maskedDestination(challenge),
           deviceLabel: origin.deviceLabel ?? null,
         },
         requestId: origin.correlationId,
@@ -774,7 +912,7 @@ export async function refreshSession(
     const live = await client.query<
       SessionRow & { member_may_use: boolean | null }
     >(
-      `select s.id, s.mobile, s.member_id, s.customer_id, s.linked_at,
+      `select s.id, s.mobile, s.email, s.member_id, s.customer_id, s.linked_at,
               ${mayUseAppSql('m')} as member_may_use
          from member_session s
          left join member m on m.id = s.member_id
@@ -871,12 +1009,13 @@ export async function resolveMemberSession(
 
   const result = await query<{
     id: string;
-    mobile: string;
+    mobile: string | null;
+    email: string | null;
     member_id: string | null;
     customer_id: string | null;
     stale: boolean;
   }>(
-    `select id, mobile, member_id, customer_id,
+    `select id, mobile, email, member_id, customer_id,
             (last_used_at < now() - make_interval(secs => $2)) as stale
        from member_session
       where id = $1 and revoked_at is null and expires_at > now()`,
@@ -894,6 +1033,7 @@ export async function resolveMemberSession(
   return {
     sessionId: row.id,
     mobile: row.mobile,
+    email: row.email,
     memberId: row.member_id,
     customerId: row.customer_id,
     kind: kindOf(row),

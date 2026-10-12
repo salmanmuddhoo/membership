@@ -84,6 +84,7 @@ async function session(
   return {
     sessionId: row.rows[0].id,
     mobile,
+    email: null,
     memberId: member,
     customerId: null,
     kind: member ? 'member' : 'applicant',
