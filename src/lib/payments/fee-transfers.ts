@@ -6,43 +6,37 @@
 // It is a transfer, and goes where every transfer goes: a debit leg on the
 // paying account, routed by the matrix's Transfer bands and reviewed by its
 // chain (officer answer: "through the transfer approval chain"). There is no
-// credit leg — the applicant has no account yet — so nothing is disbursed;
-// whoever records transfers posts it once approved, and the fee receipt is
-// issued then (fee-transfer-settlement.ts). Until it posts the fees are not
-// paid and the application cannot be submitted. The whole payment goes one
-// way (officer answer): no part cash, part transfer.
+// credit leg — the applicant has no account yet. It never posts at once:
+// approved by its chain, or straight away below the band, it waits for the
+// Treasurer to disburse it (officer direction), and the fee receipt is
+// issued then (fee-transfer-settlement.ts). Until then the fees are pending:
+// the application may be submitted and its documents verified, but the
+// Secretary's step waits (applications/workflow.ts). The whole payment goes
+// one way (officer answer): no part cash, part transfer.
 //
 // The paying account meets every check a transfer's source does — active,
 // the holder able to transact, a guardian present, the available balance,
 // the type's floor and its transaction ceiling — save the type's
 // allows_transfer flag: Shares do not move between members' accounts, but
 // they may pay a new member's fees (officer answer), still above the floor.
-import type { PoolClient } from 'pg';
 import { recordAudit } from '../access/audit';
 import type { Principal } from '../access/principal';
 import { query, withTransaction } from '../db/pool';
 import { LedgerError } from '../ledger/ledger';
-import { notifyReceiptIssued } from '../ledger/receipt-notifications';
 import { loadTransaction } from '../ledger/review';
 import { resolveRoute, submitTransaction } from '../ledger/routing';
 import { notifySubmitted } from '../ledger/transaction-notifications';
-import {
-  INTERNAL_METHOD,
-  PERMISSION_CAPTURE,
-  PERMISSION_RECORD,
-} from '../ledger/transfers';
+import { INTERNAL_METHOD, PERMISSION_CAPTURE } from '../ledger/transfers';
 import {
   refuseUnlessWithdrawable,
   source,
   WithdrawalError,
 } from '../ledger/withdrawals';
 import {
-  announceFeeReceipt,
   FeeTransferError,
   feeTransferForTransaction,
-  settleFeeTransfer,
 } from './fee-transfer-settlement';
-import { fromCents } from './money';
+import { fromCents, toCents } from './money';
 import {
   checkFeeAmounts,
   liveFeeTransferFor,
@@ -51,11 +45,7 @@ import {
   refuseUnlessUndecided,
 } from './payments';
 import type { FeeComponentCode } from '../config/reference';
-import {
-  abandonReceiptNumber,
-  allocateReceiptNumber,
-  markReceiptIssued,
-} from './receipts';
+import { canTransact } from '../members/status';
 
 export { FeeTransferError } from './fee-transfer-settlement';
 
@@ -71,8 +61,6 @@ export interface FeeTransferInput {
 export interface FeeTransferOutcome {
   transactionId: string;
   reference: string;
-  // Posted at once (no chain for this amount): the fee receipt is issued.
-  receiptNo: string | null;
 }
 
 // What the Payments step shows while a transfer is paying the fees.
@@ -202,28 +190,10 @@ export async function requestFeeTransfer(
     amountCents: fees.totalCents,
     roleCodes: principal.roles,
   });
-  if (!route.definition && !principal.permissions.has(PERMISSION_RECORD)) {
-    throw new PaymentError(
-      'You may start a transfer but not record it. Ask someone who records ' +
-        'transfers to take these fees.',
-      'forbidden'
-    );
-  }
-
-  // Posted at once: both receipts — the paying member's for the transfer,
-  // the applicant's for the fees — are numbered before anything is written,
-  // as every receipt is (S-502).
-  const transferReceipt = route.definition
-    ? null
-    : await allocateReceiptNumber(principal.userId);
-  const feeReceipt = route.definition
-    ? null
-    : await allocateReceiptNumber(principal.userId);
   const reason = `Membership fees · ${app.reference}${
     app.applicant_name ? ` · ${app.applicant_name}` : ''
   }`;
 
-  let paymentId: string | null = null;
   try {
     const debitId = await withTransaction(async client => {
       // Locked, then asked again: two officers cannot each start a
@@ -258,8 +228,8 @@ export async function requestFeeTransfer(
       const debit = await client.query<{ id: string; reference: string }>(
         `insert into transaction
            (kind, member_id, account_id, amount, method, reason, status,
-            receipt_number_id, captured_by, transfer_id, leg_direction)
-         values ('transfer_leg', $1, $2, $3, $4, $5, 'submitted', $6, $7, $8,
+            captured_by, transfer_id, leg_direction)
+         values ('transfer_leg', $1, $2, $3, $4, $5, 'submitted', $6, $7,
                  'debit')
          returning id, reference`,
         [
@@ -268,7 +238,6 @@ export async function requestFeeTransfer(
           fromCents(fees.totalCents),
           INTERNAL_METHOD,
           reason,
-          transferReceipt?.id ?? null,
           principal.userId,
           transferId,
         ]
@@ -309,79 +278,58 @@ export async function requestFeeTransfer(
         },
         client
       );
-      const submission = await submitTransaction(
-        client,
-        { id: legId, reference: legReference, kind: 'transfer' },
-        route,
-        principal
-      );
-      if (!submission.posted) {
+      if (route.definition) {
+        // Above the band: the chain reviews it, then the Treasurer
+        // disburses it.
+        await submitTransaction(
+          client,
+          { id: legId, reference: legReference, kind: 'transfer' },
+          route,
+          principal
+        );
         await client.query(
           `update transfer set status = 'submitted' where id = $1`,
           [transferId]
         );
       } else {
-        await markReceiptIssued(transferReceipt!.id, client);
-        const record = await client.query<{ id: string }>(
-          `select id from fee_transfer where transaction_id = $1`,
-          [legId]
+        // Below it, nobody reviews it, but it never posts at once either:
+        // the fees stay pending until the Treasurer disburses (officer
+        // direction), so it waits, approved, in the Treasurer's queue.
+        await client.query(
+          `update transaction
+              set status = 'approved', approval_rule_id = $2,
+                  workflow_definition_id = null, current_step_code = null,
+                  submitted_at = now()
+            where id = $1`,
+          [legId, route.rule?.id ?? null]
         );
-        paymentId = await settleFeeTransfer(
-          client,
-          {
-            id: record.rows[0].id,
-            applicationId: input.applicationId,
-            transactionId: legId,
-            feeVersionId: fees.feeVersionId,
-            lines: fees.lines,
-            totalAmount: fromCents(fees.totalCents),
-            varianceReason: fees.varianceReason,
-            paymentId: null,
-            requestedBy: principal.userId,
-            requestedByRole: principal.roleNames.join(', '),
-            requestedByEmail: principal.email,
-          },
-          feeReceipt!,
-          await feeReceiptReference(client, transferReference, from.memberId!)
+        await client.query(
+          `insert into transaction_transition
+             (transaction_id, from_status, to_status, step_code,
+              actor_user_id, actor_role, comment, approval_rule_id,
+              workflow_definition_id)
+           values ($1, null, 'approved', null, $2, $3, null, $4, null)`,
+          [
+            legId,
+            principal.userId,
+            principal.roleNames.join(', ') || null,
+            route.rule?.id ?? null,
+          ]
+        );
+        await client.query(
+          `update transfer set status = 'approved' where id = $1`,
+          [transferId]
         );
       }
       return legId;
     });
 
     const leg = (await loadTransaction(debitId))!;
-    if (transferReceipt) await notifyReceiptIssued(debitId);
     await notifySubmitted([leg, null], { byUserId: principal.userId });
-    if (paymentId) await announceFeeReceipt(paymentId);
-    return {
-      transactionId: debitId,
-      reference: leg.displayReference,
-      receiptNo: paymentId ? feeReceipt!.receiptNo : null,
-    };
+    return { transactionId: debitId, reference: leg.displayReference };
   } catch (err) {
-    const why =
-      err instanceof PaymentError ||
-      err instanceof FeeTransferError ||
-      err instanceof LedgerError
-        ? err.message
-        : 'The transfer failed while being recorded.';
-    if (transferReceipt) await abandonReceiptNumber(transferReceipt.id, why);
-    if (feeReceipt) await abandonReceiptNumber(feeReceipt.id, why);
     return asPaymentError(err);
   }
-}
-
-// What the fee receipt says the payment was: the transfer, and whose.
-export async function feeReceiptReference(
-  client: PoolClient,
-  transferReference: string,
-  memberId: string
-): Promise<string> {
-  const member = await client.query<{ member_no: string }>(
-    `select member_no from member where id = $1`,
-    [memberId]
-  );
-  const memberNo = member.rows[0]?.member_no;
-  return memberNo ? `${transferReference} · ${memberNo}` : transferReference;
 }
 
 /**
@@ -468,4 +416,98 @@ export async function cancelFeeTransfer(
     );
   });
   return live.reference;
+}
+
+// The accounts a member could pay a new member's fees from, for the
+// Payments step (officer request): every open account, any type — Hajj and
+// Investment as much as Shares — with what it can pay now, which is the
+// available balance less what is already on its way out and the type's
+// floor. Found by the member's number or name.
+export interface PayerAccount {
+  accountId: string;
+  accountNo: string;
+  typeName: string;
+  payable: string;
+}
+
+export interface Payer {
+  memberId: string;
+  memberNo: string;
+  name: string;
+  accounts: PayerAccount[];
+}
+
+export async function payersMatching(
+  typed: string,
+  limit = 6
+): Promise<Payer[]> {
+  const prefix = typed.trim().toUpperCase().replace(/\s+/g, '');
+  const words = typed.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return [];
+  const members = await query<{
+    id: string;
+    member_no: string;
+    status: string;
+    name: string;
+  }>(
+    `select m.id, m.member_no, m.status,
+            trim(coalesce(p.values->>'name', '') || ' '
+                 || coalesce(p.values->>'surname', '')) as name
+       from member m
+       left join application_party p
+         on p.application_id = m.application_id
+        and p.subject = 'applicant' and p.ordinal = 1
+      where starts_with(upper(m.member_no), $1)
+         or not exists (
+              select 1 from unnest($2::text[]) w
+               where strpos(lower(coalesce(p.values->>'name', '') || ' '
+                                  || coalesce(p.values->>'surname', '')), w) = 0)
+      order by starts_with(upper(m.member_no), $1) desc, name, m.member_no
+      limit $3`,
+    [prefix, words, limit * 2]
+  );
+  const payers = members.rows
+    .filter(m => canTransact(m.status))
+    .slice(0, limit);
+  if (payers.length === 0) return [];
+  const accounts = await query<{
+    member_id: string;
+    account_id: string;
+    account_no: string;
+    type_name: string;
+    payable: string;
+  }>(
+    `select a.member_id, a.id as account_id,
+            coalesce(a.account_no, m.member_no) as account_no,
+            at.name as type_name,
+            greatest(coalesce(b.balance, 0) - coalesce(out.amount, 0)
+                     - at.minimum_balance, 0)::numeric(14, 2)::text as payable
+       from account a
+       join member m on m.id = a.member_id
+       join account_type at on at.id = a.account_type_id
+       left join account_balance b on b.account_id = a.id
+       left join lateral (
+              select sum(t.amount) as amount from transaction t
+               where t.account_id = a.id
+                 and (t.kind in ('withdrawal', 'closure', 'resignation', 'demise')
+                      or (t.kind = 'transfer_leg' and t.leg_direction = 'debit'))
+                 and t.status in ('submitted', 'under_review', 'approved')) out
+         on true
+      where a.member_id = any($1::uuid[]) and a.status = 'active'
+      order by at.is_membership_default desc, at.name, account_no`,
+    [payers.map(p => p.id)]
+  );
+  return payers.map(p => ({
+    memberId: p.id,
+    memberNo: p.member_no,
+    name: p.name,
+    accounts: accounts.rows
+      .filter(a => a.member_id === p.id)
+      .map(a => ({
+        accountId: a.account_id,
+        accountNo: a.account_no,
+        typeName: a.type_name,
+        payable: fromCents(toCents(a.payable)),
+      })),
+  }));
 }

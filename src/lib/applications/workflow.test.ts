@@ -848,6 +848,7 @@ describe('S-304: submission', () => {
       fieldProblems: [],
       documentsOutstanding: 0,
       paymentRecorded: true,
+      paymentPending: false,
       witnessesNamed: true,
     });
   });
@@ -3987,5 +3988,124 @@ describe('a customer opens a further account, end to end', () => {
         members.openAccountsForApplication
       )
     ).rejects.toThrowError(/already holds/);
+  });
+});
+
+describe('fees on their way by transfer from a member', () => {
+  it('may be submitted and verified, but the Secretary and the President wait until the Treasurer disburses', async () => {
+    const { capture, workflow, documents } = await load();
+    const feeTransfers = await import('../payments/fee-transfers');
+    const review = await import('../ledger/review');
+
+    // A member with MUR 20,000 on their MSA, posted the ledger's own way.
+    const type = await run(
+      appUrl,
+      `select id from membership_type where code = 'individual'`
+    );
+    const paid = await run(
+      appUrl,
+      `insert into membership_application (membership_type_id, captured_by, status)
+       values ($1, $2, 'approved') returning id`,
+      [type.rows[0].id, officer.userId]
+    );
+    await run(
+      appUrl,
+      `insert into application_party (application_id, subject, ordinal, values)
+       values ($1, 'applicant', 1, $2::jsonb)`,
+      [paid.rows[0].id, JSON.stringify({ name: 'Uncle', surname: 'Payer' })]
+    );
+    const member = await run(
+      appUrl,
+      `insert into member (application_id, membership_type_id)
+       values ($1, $2) returning id`,
+      [paid.rows[0].id, type.rows[0].id]
+    );
+    const msa = await run(
+      appUrl,
+      `insert into account (member_id, account_type_id, status)
+       select $1, id, 'active' from account_type where code = 'msa'
+       returning id`,
+      [member.rows[0].id]
+    );
+    const deposit = await run(
+      appUrl,
+      `insert into transaction
+         (kind, member_id, account_id, amount, method, status, captured_by)
+       values ('deposit', $1, $2, 20000, 'other', 'submitted', $3)
+       returning id`,
+      [member.rows[0].id, msa.rows[0].id, officer.userId]
+    );
+    await run(ownerUrl, `select post_transaction($1, $2, 'workflow.test')`, [
+      deposit.rows[0].id,
+      officer.userId,
+    ]);
+
+    const actor = { userId: officer.userId, email: officer.email };
+    const { id } = await capture.startApplication('individual', actor);
+    await capture.saveDraft(id, COMPLETE_INDIVIDUAL(), actor);
+    await nameWitnesses(id);
+    await fileRequiredDocuments(documents, id);
+
+    const taker = {
+      ...officer,
+      permissions: new Set([
+        ...officer.permissions,
+        'payment.record',
+        'transaction.capture',
+      ]),
+    };
+    const due = await (
+      await import('../payments/payments')
+    ).amountDueForApplication(id);
+    const amounts = Object.fromEntries(
+      due.components.map(c => [c.code, c.amount])
+    );
+    const transfer = await feeTransfers.requestFeeTransfer(
+      { applicationId: id, payerAccountId: msa.rows[0].id, amounts },
+      taker
+    );
+
+    // Pending is enough to submit, and to have the papers checked.
+    await workflow.submitApplication(id, officer);
+    expect((await capture.loadApplication(id))!.status).not.toBe('draft');
+    await verifyRequiredDocuments(documents, id);
+
+    const waiting = new RegExp(
+      `Waiting for ${transfer.reference} to be disbursed`
+    );
+    await expect(
+      workflow.reviewApplication(
+        id,
+        { outcome: 'forward', comment: 'Papers in order.' },
+        secretary
+      )
+    ).rejects.toThrowError(waiting);
+    await expect(
+      workflow.reviewApplication(
+        id,
+        { outcome: 'return', comment: 'Wrong payer.' },
+        secretary
+      )
+    ).rejects.toThrowError(waiting);
+
+    // The Treasurer disburses it; the fees are paid and the Secretary acts.
+    const treasurer = {
+      ...regionalManager,
+      permissions: new Set(['transaction.disburse', 'transaction.view']),
+    };
+    if (
+      (await review.loadTransaction(transfer.transactionId))!.status !==
+      'approved'
+    ) {
+      throw new Error('Expected the fee transfer to wait for the Treasurer.');
+    }
+    await review.postApprovedTransaction(transfer.transactionId, treasurer);
+    expect(await workflow.waitingOnFeeTransfer(id)).toBeNull();
+
+    await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Papers in order.' },
+      secretary
+    );
   });
 });

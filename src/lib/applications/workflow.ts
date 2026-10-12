@@ -32,7 +32,11 @@ import {
   notifyReturned,
   notifySubmitted,
 } from '../notifications/events';
-import { paymentsForApplication, type Payment } from '../payments/payments';
+import {
+  liveFeeTransferFor,
+  paymentsForApplication,
+  type Payment,
+} from '../payments/payments';
 import type { Principal } from '../access/principal';
 import {
   ApplicationError,
@@ -331,6 +335,10 @@ export interface SubmissionReadiness {
   fieldProblems: MissingField[];
   documentsOutstanding: number;
   paymentRecorded: boolean;
+  // The fees are on their way by transfer from a member and not yet
+  // disbursed (officer direction): enough to submit, not to reach the
+  // Secretary. A returned transfer does not count; it is cancelled first.
+  paymentPending: boolean;
   // Both witnesses named on the form step (officer request).
   witnessesNamed: boolean;
 }
@@ -347,10 +355,11 @@ export interface SubmissionReadiness {
 export async function submissionReadiness(
   application: Application
 ): Promise<SubmissionReadiness> {
-  const [fieldProblems, checklist, payments] = await Promise.all([
+  const [fieldProblems, checklist, payments, feeTransfer] = await Promise.all([
     problemsBlockingSubmission(application),
     checklistFor({ applicationId: application.id }),
     paymentsForApplication(application.id),
+    liveFeeTransferFor(application.id),
   ]);
 
   return {
@@ -361,6 +370,7 @@ export async function submissionReadiness(
       e => e.requirement === 'required' && e.state === 'missing'
     ).length,
     paymentRecorded: payments.some(p => p.kind === 'payment' && !p.voidedAt),
+    paymentPending: feeTransfer !== null && feeTransfer.status !== 'returned',
     witnessesNamed: application.witnesses.every(name => name.trim() !== ''),
   };
 }
@@ -400,7 +410,7 @@ export async function submitApplication(
         'to be filed before this can be submitted.'
     );
   }
-  if (!readiness.paymentRecorded) {
+  if (!readiness.paymentRecorded && !readiness.paymentPending) {
     throw new ApplicationError(
       'Payment must be recorded before this can be submitted.'
     );
@@ -613,6 +623,20 @@ export function boardReadinessReasons(readiness: BoardReadiness): string[] {
 }
 
 /**
+ * The fees are being paid by a transfer from a member that the Treasurer
+ * has not disbursed yet (officer direction): the application may be
+ * submitted and its documents verified meanwhile, but neither the Secretary
+ * nor a decision acts on it until the money has moved. Null once it has, or
+ * when there is no such transfer.
+ */
+export async function waitingOnFeeTransfer(
+  applicationId: string
+): Promise<string | null> {
+  const live = await liveFeeTransferFor(applicationId);
+  return live ? `Waiting for ${live.reference} to be disbursed.` : null;
+}
+
+/**
  * S-305, S-611 · A review step: forward, or return with a comment.
  *
  * `stepCode` defaults to Secretary review, S-305's original and still the
@@ -658,6 +682,11 @@ export async function reviewApplication(
     stepCode,
     action,
   });
+
+  if (stepCode === 'secretary_review') {
+    const waiting = await waitingOnFeeTransfer(application.id);
+    if (waiting) throw new ApplicationError(waiting, 'locked');
+  }
 
   // Officer feedback: a document a reviewer has rejected must not travel any
   // further forward than the reviewer who rejected it — Regional oversight
@@ -823,6 +852,14 @@ export async function decideApplication(
     stepCode: STEP_CODE_PRESIDENT_DECISION,
     action: ACTION_APPROVED,
   });
+
+  // Where Secretary review is switched off, the President is the first to
+  // meet fees still on their way by transfer: no member is made on money
+  // that has not moved.
+  if (decision.outcome === 'approve') {
+    const waiting = await waitingOnFeeTransfer(application.id);
+    if (waiting) throw new ApplicationError(waiting, 'locked');
+  }
 
   // Annotated rather than inferred: the callback returns three different
   // shapes (quorum not yet met, rejected, approved with the member created),

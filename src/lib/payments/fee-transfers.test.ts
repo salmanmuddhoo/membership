@@ -66,6 +66,7 @@ async function load() {
     review: await import('../ledger/review'),
     reversals: await import('../ledger/reversals'),
     transfers: await import('../ledger/transfers'),
+    workflow: await import('../applications/workflow'),
     ledger: await import('../ledger/ledger'),
   };
 }
@@ -152,6 +153,7 @@ beforeAll(async () => {
     [
       'transaction.post',
       'transaction.record_transfer',
+      'transaction.disburse',
       'transaction.view',
       'receipt.void',
     ]
@@ -264,9 +266,9 @@ async function newApplication() {
 }
 
 describe('fees paid by transfer from a member', () => {
-  it('pays from Shares, posted at once below the band, and issues the fee receipt', async () => {
+  it('pays from Shares: below the band it waits for the Treasurer, who disburses it and issues the fee receipt', async () => {
     const application = await newApplication();
-    const { feeTransfers, payments, review } = await load();
+    const { feeTransfers, payments, review, workflow } = await load();
 
     const outcome = await feeTransfers.requestFeeTransfer(
       {
@@ -277,30 +279,50 @@ describe('fees paid by transfer from a member', () => {
       officer
     );
     expect(outcome.reference).toMatch(/^TR-\d{6}$/);
-    expect(outcome.receiptNo).toMatch(/^RCT-\d{6}$/);
-    expect(await balance(payer.shares)).toBe('11500.00');
-
-    const leg = (await review.loadTransaction(outcome.transactionId))!;
-    expect(leg).toMatchObject({
+    // Nothing moves and nothing is receipted until the Treasurer disburses.
+    expect(await balance(payer.shares)).toBe('20000.00');
+    expect(await payments.paymentsForApplication(application.id)).toEqual([]);
+    const waiting = (await review.loadTransaction(outcome.transactionId))!;
+    expect(waiting).toMatchObject({
       kind: 'transfer_leg',
       legDirection: 'debit',
-      status: 'posted',
+      status: 'approved',
+      workflowDefinitionId: null,
       payeeName: null,
       counterpartAccountId: null,
       feeApplicationId: application.id,
       feeApplicationReference: application.reference,
     });
+    expect(review.permissionToPost(waiting)).toBe('transaction.disburse');
+    expect(await workflow.waitingOnFeeTransfer(application.id)).toBe(
+      `Waiting for ${outcome.reference} to be disbursed.`
+    );
+    expect(
+      (await review.approvedTransactions(treasurer)).map(t => t.id)
+    ).toContain(outcome.transactionId);
+    // Whoever records transfers does not disburse it.
+    await expect(
+      review.postApprovedTransaction(outcome.transactionId, officer)
+    ).rejects.toThrowError(/do not have permission to disburse/);
+
+    const leg = await review.postApprovedTransaction(
+      outcome.transactionId,
+      treasurer
+    );
+    expect(leg.status).toBe('posted');
     expect(leg.receiptNo).toMatch(/^RCT-\d{6}$/);
-    expect(leg.receiptNo).not.toBe(outcome.receiptNo);
+    expect(await balance(payer.shares)).toBe('11500.00');
+    expect(await workflow.waitingOnFeeTransfer(application.id)).toBeNull();
 
     const [paid] = await payments.paymentsForApplication(application.id);
     expect(paid).toMatchObject({
       kind: 'payment',
-      receiptNo: outcome.receiptNo,
       method: 'member_transfer',
       methodName: 'Transfer from a member',
       totalAmount: '8500.00',
     });
+    expect(paid.receiptNo).toMatch(/^RCT-\d{6}$/);
+    expect(paid.receiptNo).not.toBe(leg.receiptNo);
     expect(paid.methodReference).toMatch(/^TR-\d{6} · AB\d+$/);
     expect(paid.lines.map(l => [l.componentCode, l.amount])).toEqual([
       ['entrance', '1500.00'],
@@ -321,6 +343,20 @@ describe('fees paid by transfer from a member', () => {
         officer
       )
     ).rejects.toThrowError(/already receipted/);
+  });
+
+  it('finds a member by number or name, with every open account and what it can pay', async () => {
+    const { feeTransfers } = await load();
+    const [found] = await feeTransfers.payersMatching('Hassan');
+    expect(found.name).toBe('Hassan Test');
+    const byNumber = await feeTransfers.payersMatching(found.memberNo);
+    expect(byNumber[0].memberId).toBe(found.memberId);
+    // Shares keep their MUR 5,000 floor; the MSA has nothing on its way out.
+    const shares = found.accounts.find(a => a.accountId === payer.shares)!;
+    const msa = found.accounts.find(a => a.accountId === payer.msa)!;
+    expect(shares).toMatchObject({ typeName: 'Shares', payable: '6500.00' });
+    expect(Number(msa.payable)).toBeGreaterThan(300000);
+    expect(await feeTransfers.payersMatching('x')).toEqual([]);
   });
 
   it('lets Shares pay, but not below their floor', async () => {
@@ -352,7 +388,6 @@ describe('fees paid by transfer from a member', () => {
       },
       officer
     );
-    expect(outcome.receiptNo).toBeNull();
     const pending = (await feeTransfers.pendingFeeTransfer(application.id))!;
     expect(pending).toMatchObject({
       transactionId: outcome.transactionId,

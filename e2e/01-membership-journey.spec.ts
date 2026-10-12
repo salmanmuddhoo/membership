@@ -208,17 +208,17 @@ test.describe('an Individual application, capture to member', () => {
     submitted = true;
   });
 
-  test('the Secretary verifies the documents that were filed', async ({
+  test('the Regional Manager verifies the documents that were filed', async ({
     as,
   }) => {
-    test.skip(!submitted, 'The application never reached the Secretary.');
+    test.skip(!submitted, 'The application was never submitted.');
 
-    const page = await as('secretary');
+    const page = await as('manager');
     await page.goto(applicationUrl);
 
-    // Filing a document is not accepting it (S-407). Only the Secretary holds
-    // document.verify, so this step cannot be done by whoever uploaded —
-    // which is the control, not an inconvenience.
+    // Filing a document is not accepting it (S-407). The Regional Manager
+    // holds document.verify (migration 0127), so this step cannot be done by
+    // whoever uploaded — which is the control, not an inconvenience.
     const verify = page.getByRole('button', { name: 'Verify' });
 
     for (let round = 0; round < 12; round += 1) {
@@ -233,7 +233,8 @@ test.describe('an Individual application, capture to member', () => {
       // The signed application form carries a confirmation that all four
       // signatures are on the scan, and will not verify without it. Ticking
       // it here is the tester saying they looked — which is exactly what the
-      // Secretary is being asked to say, and the reason the control exists.
+      // Regional Manager is being asked to say, and the reason the control
+      // exists.
       const confirmation = form.locator('input[type="checkbox"]');
       if ((await confirmation.count()) > 0) await confirmation.first().check();
 

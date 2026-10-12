@@ -5890,3 +5890,30 @@ approval chain; the whole payment one way, never part cash.
   receipt is voided; a draft that carries a fee transfer is not deleted.
 - **Where it reads:** the transaction's "To" is the application, linked; the
   statement, the history and the transfers report name it the same way.
+
+---
+
+### Fees by transfer: the Treasurer disburses, the application moves meanwhile
+
+Officer direction after trying it on Test.
+
+- **Choosing the account:** the officer types the paying member's number or
+  name and is shown every open account of every type — Shares, MSA, Hajj,
+  Investment — each with what it can pay now (balance, less what is on its
+  way out, less the type's floor). An account that cannot cover the total
+  cannot be ticked (`payersMatching`, `/applications/payer-accounts.json`).
+- **Never at once:** a fee transfer waits for the Treasurer to disburse it
+  (`transaction.disburse`), above the Transfer band after its chain approves
+  it, below the band straight away. No payout method is asked for; it reads
+  "Disbursed". The fee receipt is issued when it is disbursed.
+- **The application moves meanwhile:** with the transfer pending (not
+  returned) the officer can submit for processing, and the documents can be
+  verified. The Secretary's step — forward and return alike — and the
+  President's approval wait, with "Waiting for TR-… to be disbursed."
+  (`waitingOnFeeTransfer`).
+- **Document verification:** an application's documents are the Regional
+  Manager's to verify by default, no longer the Secretary's
+  (`document.verify`, migration 0127). The papers filed against a closure, a
+  resignation or a demised claim stay with the Secretary under their own
+  permission, `transaction.document_verify`. The functional suite gains a
+  Regional Manager account.

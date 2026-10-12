@@ -90,6 +90,8 @@ const ROUTE_PERMISSIONS: ReadonlyArray<readonly [string, string]> = [
   // permissions the pages check themselves — being able to see an application
   // is not being able to act on it.
   ['/applications/', 'application.view'],
+  // Who can pay a new member's fees by transfer, and from which account.
+  ['/applications/payer-accounts.json', 'transaction.capture'],
   ['/members/', 'member.view'],
   // The document directory (officer feedback): every member's filed papers,
   // reached from the dashboard and the menu. document.view is what the
