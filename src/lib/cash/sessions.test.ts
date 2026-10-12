@@ -276,9 +276,12 @@ describe('the cash drawer (S-2001, S-2002)', () => {
         { accountId: msa, amount: '50', method: 'cash' },
         treasurer
       )
-    ).rejects.toThrowError(
-      'Open your cash drawer before taking or paying out cash.'
-    );
+    ).rejects.toMatchObject({
+      message: 'Open your cash drawer before taking or paying out cash.',
+      // Not a form posted twice: the page shows these words, not "already
+      // recorded".
+      repeat: false,
+    });
     await expect(
       withdrawals.recordWithdrawal(
         { accountId: msa, amount: '50', method: 'cash' },

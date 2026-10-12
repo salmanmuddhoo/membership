@@ -41,7 +41,10 @@ export class DepositError extends Error {
   constructor(
     message: string,
     readonly reason:
-      'not_found' | 'invalid' | 'forbidden' | 'conflict' = 'invalid'
+      'not_found' | 'invalid' | 'forbidden' | 'conflict' = 'invalid',
+    // This form posted again under the key it was first posted with — the
+    // one conflict a form answers with "already recorded" (QA-01).
+    readonly repeat = false
   ) {
     super(message);
     this.name = 'DepositError';
@@ -380,7 +383,8 @@ export async function recordDeposit(
       if (existing.fingerprint !== print) {
         throw new DepositError(
           'A different deposit was already submitted with this key.',
-          'conflict'
+          'conflict',
+          true
         );
       }
       return (await loadDeposit(existing.id))!;
@@ -471,7 +475,11 @@ export async function recordDeposit(
           (err as { constraint?: string }).constraint ===
             'transaction_idempotency_idx'
         ) {
-          throw new DepositError('This deposit is being recorded.', 'conflict');
+          throw new DepositError(
+            'This deposit is being recorded.',
+            'conflict',
+            true
+          );
         }
         throw err;
       }
