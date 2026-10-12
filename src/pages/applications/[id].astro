@@ -630,6 +630,14 @@ const boardReasons = forwardAction
 // runs for Regional oversight. Named up front the same way boardReasons is,
 // so Forward reads disabled instead of failing only once tried.
 const rejectedDocuments = checklist.filter(e => e.state === 'rejected');
+// The Regional Manager verifies the documents (migration 0127), and their
+// own forward waits until every required one is (officer direction).
+const unverifiedDocuments = checklist.filter(
+  e =>
+    e.requirement === 'required' &&
+    e.state !== 'verified' &&
+    e.state !== 'rejected'
+).length;
 
 // S-611: what a review-type step's own buttons say and post — the "forward"
 // verb, the "return"/"reject" verb, and the comment's placeholder — kept as
@@ -1833,6 +1841,17 @@ const dateFormat = localFormat({
                   </div>
                 )}
 
+              {action.stepCode === 'regional_review' &&
+                rejectedDocuments.length === 0 &&
+                unverifiedDocuments > 0 && (
+                  <div class={NOTICE_ERROR}>
+                    <p class="font-medium">
+                      {unverifiedDocuments} required document
+                      {unverifiedDocuments === 1 ? '' : 's'} still to verify.
+                    </p>
+                  </div>
+                )}
+
               {action.stepCode === 'president_decision' &&
                 signoffs.length > 0 && (
                   <div class="rounded-lg border border-neutral-300 bg-white px-4 py-3 text-sm dark:border-neutral-700 dark:bg-neutral-900">
@@ -1888,7 +1907,9 @@ const dateFormat = localFormat({
                           disabled={
                             (action.stepCode === 'secretary_review' &&
                               boardReasons.length > 0) ||
-                            rejectedDocuments.length > 0
+                            rejectedDocuments.length > 0 ||
+                            (action.stepCode === 'regional_review' &&
+                              unverifiedDocuments > 0)
                           }
                           class={BUTTON}
                         >

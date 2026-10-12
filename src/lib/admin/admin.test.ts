@@ -185,6 +185,36 @@ describe('S-201: roles and their permissions', () => {
     );
   });
 
+  it('keeps the Society’s own roles, and lets an added one go', async () => {
+    const { roles } = await load();
+    const core = [
+      'regional_officer',
+      'regional_manager',
+      'secretary',
+      'president',
+      'treasurer',
+      'system_administrator',
+      'member',
+      'clerk',
+      'auditor',
+    ];
+    const all = await roles.listRoles();
+    for (const code of core) {
+      const role = all.find(r => r.code === code);
+      expect(role, code).toBeDefined();
+      expect(role!.isSystem, code).toBe(true);
+      await expect(roles.deleteRole(role!.id, actor)).rejects.toThrowError(
+        /system role/
+      );
+    }
+    const added = await roles.createRole(
+      { code: 'added_role', name: 'Added', permissions: [] },
+      actor
+    );
+    expect(all.find(r => r.code === 'added_role')).toBeUndefined();
+    await expect(roles.deleteRole(added, actor)).resolves.toBeUndefined();
+  });
+
   it('records the before and after when permissions change', async () => {
     const { roles } = await load();
     const id = await roles.createRole(

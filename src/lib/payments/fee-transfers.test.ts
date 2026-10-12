@@ -324,6 +324,13 @@ describe('fees paid by transfer from a member', () => {
     expect(paid.receiptNo).toMatch(/^RCT-\d{6}$/);
     expect(paid.receiptNo).not.toBe(leg.receiptNo);
     expect(paid.methodReference).toMatch(/^TR-\d{6} · AB\d+$/);
+    // The receipt names who paid, and for whom.
+    expect(paid.paidByMember).toMatchObject({ name: 'Hassan Test' });
+    const parties = await (
+      await import('./fee-receipts')
+    ).feeReceiptParties(paid);
+    expect(parties.owner).toMatch(/^Hassan Test · AB\d+$/);
+    expect(parties.accountOf).toContain(application.reference);
     expect(paid.lines.map(l => [l.componentCode, l.amount])).toEqual([
       ['entrance', '1500.00'],
       ['takaful', '2000.00'],

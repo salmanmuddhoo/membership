@@ -5917,3 +5917,27 @@ Officer direction after trying it on Test.
   resignation or a demised claim stay with the Secretary under their own
   permission, `transaction.document_verify`. The functional suite gains a
   Regional Manager account.
+
+---
+
+### Regional Manager forward, protected roles, returned work, who paid
+
+Officer feedback round.
+
+- **Regional Manager forwards only verified papers:** "Forward for central
+  review" is greyed out, with the count still to verify, until every
+  required document is Verified; the workflow refuses it too
+  (`reviewApplication`, regional_review).
+- **The Society's own roles cannot be deleted:** Regional Officer,
+  Regional Manager, Secretary, President, Treasurer, System Administrator,
+  Member, Clerk and Auditor are system roles (migration 0128) — no Delete on
+  Configuration → Roles, and `deleteRole` refuses them. Their permissions
+  still change; roles an administrator adds stay deletable.
+- **Returned work waits on whoever had it:** a returned application is in
+  "Waiting on you" for the officer who captured it and for the one who
+  submitted it (a Regional Manager submitting for a subordinate, an officer
+  completing one from the member app); one captured by the member app is
+  there for whoever handles those (`application.submit_online`).
+- **Who paid, on the receipt:** a fee receipt paid by transfer from a member
+  reads "Received from" that member (name and number) and "Account of" the
+  applicant, on screen and in the PDF.
