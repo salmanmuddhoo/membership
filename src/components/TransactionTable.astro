@@ -2,7 +2,7 @@
 // A list of transactions, whatever kind, wherever it is shown (S-1506): a
 // person's across every account, or the Society's day. One row per
 // transaction; a transfer once, naming the other side.
-import { transactionStatusLabel } from '@lib/ledger/labels';
+import { feeDestination, transactionStatusLabel } from '@lib/ledger/labels';
 import type { TransactionSummary } from '@lib/ledger/review';
 import { formatMoney } from '@lib/payments/money';
 import { COL_OPTIONAL, FILTER, HINT, TABLE, TBODY, THEAD } from '@lib/ui';
@@ -45,6 +45,8 @@ function otherSide(t: TransactionSummary): string | null {
   if (t.payeeName && (t.kind === 'transfer_leg' || t.kind === 'withdrawal'))
     return `to ${t.payeeName}`;
   if (t.kind !== 'transfer_leg') return null;
+  const fee = feeDestination(t);
+  if (fee) return `to ${fee}`;
   if (!t.counterpartAccountNo) return null;
   const who = t.counterpartHolderName ? `${t.counterpartHolderName} · ` : '';
   return `${t.legDirection === 'credit' ? 'from' : 'to'} ${who}${t.counterpartAccountNo} · ${t.counterpartAccountTypeName}`;

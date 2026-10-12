@@ -60,7 +60,8 @@ export async function listTransactions(
   if (filter.status) where.push(`t.status = ${add(filter.status)}`);
   if (filter.direction) {
     const out = `(t.kind in ('withdrawal', 'closure', 'resignation', 'demise')
-        or (t.kind = 'transfer_leg' and t.payee_name is not null))`;
+        or (t.kind = 'transfer_leg' and t.payee_name is not null)
+        or exists (select 1 from fee_transfer ft where ft.transaction_id = t.id))`;
     where.push(filter.direction === 'out' ? out : `not ${out}`);
   }
   if (filter.from) where.push(`t.created_at >= ${add(filter.from)}`);

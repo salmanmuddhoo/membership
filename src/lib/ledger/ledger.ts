@@ -227,7 +227,11 @@ export async function accountEntries(
             coalesce(otr.reference, o.reference) as reverses_reference,
             u.display_name as captured_by_name,
             coalesce(t.payee_name,
-                     coalesce(la.account_no, lm.member_no) || ' · ' || lt.name)
+                     coalesce(la.account_no, lm.member_no) || ' · ' || lt.name,
+                     (select 'Membership fees · ' || fa.reference
+                        from fee_transfer ft
+                        join membership_application fa on fa.id = ft.application_id
+                       where ft.transaction_id = t.id))
               as counterpart
        from running r
        join transaction t on t.id = r.transaction_id
@@ -543,7 +547,11 @@ export async function accountStatement(
             coalesce(t.method_reference, '') as method_reference,
             coalesce(t.reason, '') as reason,
             coalesce(t.payee_name,
-                     coalesce(la.account_no, lm.member_no) || ' · ' || lt.name)
+                     coalesce(la.account_no, lm.member_no) || ' · ' || lt.name,
+                     (select 'Membership fees · ' || fa.reference
+                        from fee_transfer ft
+                        join membership_application fa on fa.id = ft.application_id
+                       where ft.transaction_id = t.id))
               as counterpart
        from running r
        join transaction t on t.id = r.transaction_id

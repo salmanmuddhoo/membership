@@ -751,27 +751,19 @@ export interface RecordPaymentInput {
   sourceOfFundFormConfirmed?: boolean;
 }
 
-export async function recordPayment(
-  input: RecordPaymentInput,
-  principal: Principal
-): Promise<Payment> {
-  if (!principal.permissions.has('payment.record')) {
-    throw new PaymentError(
-      'You do not have permission to record payments.',
-      'forbidden'
-    );
-  }
-
-  const paymentMethod = await offeredMethod(input.method, 'deposit');
-  requireReference(paymentMethod, input.methodReference);
-
+// What recordPayment and a payment by transfer from a member
+// (fee-transfers.ts) both check before anything is taken: the application
+// is still to be decided, and each amount meets its component's rule.
+export async function refuseUnlessUndecided(
+  applicationId: string
+): Promise<void> {
   // A decided application is not one to take money on: an approved applicant
   // is a member and pays through their account, and a rejected one is owed a
   // refund rather than a receipt. The page hides the form, but the rule
   // belongs here — a form that is merely hidden is still a form that posts.
   const status = await query<{ status: string }>(
     'select status from membership_application where id = $1',
-    [input.applicationId]
+    [applicationId]
   );
   if (status.rows.length === 0) {
     throw new PaymentError('That application no longer exists.', 'not_found');
@@ -789,14 +781,37 @@ export async function recordPayment(
       'conflict'
     );
   }
+}
 
-  const due = await amountDueForApplication(input.applicationId);
+export interface FeeLine {
+  code: FeeComponentCode;
+  scheduled: string;
+  amount: string;
+  sortOrder: number;
+}
+
+export interface CheckedFees {
+  feeVersionId: string;
+  lines: FeeLine[];
+  totalCents: number;
+  // The difference from the schedule over the payment as a whole, for the
+  // financial event and the audit trail; nothing gates on it.
+  varianceCents: number;
+  varianceReason: string;
+}
+
+export async function checkFeeAmounts(
+  applicationId: string,
+  amounts: Partial<Record<FeeComponentCode, string>>,
+  rawVarianceReason?: string
+): Promise<CheckedFees> {
+  const due = await amountDueForApplication(applicationId);
   const chargeable = new Map(due.components.map(c => [c.code, c]));
 
   // A component the schedule does not offer cannot be paid, and neither can
   // one configured not applicable — which is the same refusal, because
   // amountDue has already left those out.
-  for (const code of Object.keys(input.amounts) as FeeComponentCode[]) {
+  for (const code of Object.keys(amounts) as FeeComponentCode[]) {
     if (!chargeable.has(code)) {
       throw new PaymentError(
         `${COMPONENT_LABELS[code] ?? code} is not payable on this ` +
@@ -812,16 +827,11 @@ export async function recordPayment(
   // the MSA deposit are each governed by their own rule below instead, none
   // of which a reason can override.
   let otherVariance = 0;
-  const varianceReason = (input.varianceReason ?? '').trim();
-  const lines: Array<{
-    code: FeeComponentCode;
-    scheduled: string;
-    amount: string;
-    sortOrder: number;
-  }> = [];
+  const varianceReason = (rawVarianceReason ?? '').trim();
+  const lines: FeeLine[] = [];
 
   due.components.forEach((component, index) => {
-    const raw = (input.amounts[component.code] ?? '0').trim() || '0';
+    const raw = (amounts[component.code] ?? '0').trim() || '0';
     let cents: number;
     try {
       cents = toCents(raw);
@@ -886,144 +896,218 @@ export async function recordPayment(
     );
   }
 
-  // Informational only from here on (nothing above still gates on it): what
-  // the financial event and the audit trail record as the difference from
-  // the schedule, over the payment as a whole.
-  const variance = total - toCents(due.expectedTotal);
+  return {
+    feeVersionId: due.feeVersionId,
+    lines,
+    totalCents: total,
+    varianceCents: total - toCents(due.expectedTotal),
+    varianceReason,
+  };
+}
 
-  const sourceOfFund = (input.sourceOfFund ?? '').trim();
-  const sourceOfFundFormConfirmed = input.sourceOfFundFormConfirmed ?? false;
-  await applyCashPaymentRules(paymentMethod, total, sourceOfFundFormConfirmed);
-  await refuseCashWithoutDrawer(
-    paymentMethod,
-    principal.userId,
-    message => new PaymentError(message, 'conflict')
-  );
-
+// The receipt an application already carries, if any: one live payment is
+// all an application takes.
+export async function liveReceiptFor(
+  applicationId: string
+): Promise<string | null> {
   const existing = await query<{ receipt_no: string }>(
     `select r.receipt_no
        from payment p
        join receipt_number r on r.id = p.receipt_number_id
       where p.application_id = $1 and p.kind = 'payment'
         and p.voided_at is null`,
+    [applicationId]
+  );
+  return existing.rows[0]?.receipt_no ?? null;
+}
+
+export interface FeePaymentInsert {
+  applicationId: string;
+  allocation: ReceiptAllocation;
+  fees: CheckedFees;
+  method: string;
+  methodReference: string;
+  sourceOfFund: string;
+  sourceOfFundFormConfirmed: boolean;
+  receivedAt: Date | null;
+  recordedBy: { userId: string; roleNames: string; email: string };
+}
+
+/**
+ * The payment row, its lines, the receipt marked issued, the financial
+ * event and the audit entry — inside the caller's transaction, with the
+ * application locked so two officers cannot both receipt it. Shared by
+ * recordPayment and the settlement of a fee transfer once it posts.
+ */
+export async function insertFeePayment(
+  client: PoolClient,
+  input: FeePaymentInsert
+): Promise<string> {
+  const locked = await client.query<{ id: string; reference: string }>(
+    `select id, reference from membership_application
+      where id = $1 for no key update`,
     [input.applicationId]
   );
-  if (existing.rows.length > 0) {
+  if (locked.rows.length === 0) {
+    throw new PaymentError('That application no longer exists.', 'not_found');
+  }
+
+  const duplicate = await client.query(
+    `select 1 from payment
+      where application_id = $1 and kind = 'payment' and voided_at is null`,
+    [input.applicationId]
+  );
+  if ((duplicate.rowCount ?? 0) > 0) {
     throw new PaymentError(
-      `This application was already receipted as ${existing.rows[0].receipt_no}. ` +
-        'Void that receipt if it was wrong.',
+      'This application has just been receipted by someone else.',
       'conflict'
     );
   }
 
+  const { fees, allocation } = input;
+  const inserted = await client.query<{ id: string }>(
+    `insert into payment
+       (receipt_number_id, kind, application_id, fee_version_id, method,
+        method_reference, total_amount, variance_reason, source_of_fund,
+        source_of_fund_form_confirmed, received_at, recorded_by,
+        recorded_by_role)
+     values ($1, 'payment', $2, $3, $4, $5, $6, $7, $8, $9, coalesce($10, now()), $11, $12)
+     returning id`,
+    [
+      allocation.id,
+      input.applicationId,
+      fees.feeVersionId,
+      input.method,
+      input.methodReference.trim(),
+      fromCents(fees.totalCents),
+      fees.varianceReason,
+      input.sourceOfFund,
+      input.sourceOfFundFormConfirmed,
+      input.receivedAt,
+      input.recordedBy.userId,
+      input.recordedBy.roleNames,
+    ]
+  );
+  const paymentId = inserted.rows[0].id;
+
+  for (const line of fees.lines) {
+    await client.query(
+      `insert into payment_line
+         (payment_id, component_code, scheduled_amount, amount, sort_order)
+       values ($1, $2, $3, $4, $5)`,
+      [paymentId, line.code, line.scheduled, line.amount, line.sortOrder]
+    );
+  }
+
+  await markReceiptIssued(allocation.id, client);
+
+  await emitFinancialEvent(client, {
+    eventType: 'payment.recorded',
+    paymentId,
+    receiptNo: allocation.receiptNo,
+    payload: {
+      kind: 'payment',
+      applicationId: input.applicationId,
+      applicationReference: locked.rows[0].reference,
+      feeVersionId: fees.feeVersionId,
+      currency: 'MUR',
+      totalAmount: fromCents(fees.totalCents),
+      method: input.method,
+      components: fees.lines.map(l => ({
+        code: l.code,
+        scheduledAmount: l.scheduled,
+        amount: l.amount,
+      })),
+      variance: fees.varianceCents === 0 ? null : fromCents(fees.varianceCents),
+      varianceReason: fees.varianceReason || null,
+      recordedBy: input.recordedBy.email,
+    },
+  });
+
+  await recordAudit(
+    {
+      actorUserId: input.recordedBy.userId,
+      actorDescription: input.recordedBy.email,
+      action: ACTION_RECORDED,
+      entityType: ENTITY_TYPE,
+      entityId: paymentId,
+      newValue: {
+        receiptNo: allocation.receiptNo,
+        applicationReference: locked.rows[0].reference,
+        totalAmount: fromCents(fees.totalCents),
+        method: input.method,
+      },
+    },
+    client
+  );
+
+  return paymentId;
+}
+
+export async function recordPayment(
+  input: RecordPaymentInput,
+  principal: Principal
+): Promise<Payment> {
+  if (!principal.permissions.has('payment.record')) {
+    throw new PaymentError(
+      'You do not have permission to record payments.',
+      'forbidden'
+    );
+  }
+
+  const paymentMethod = await offeredMethod(input.method, 'deposit');
+  requireReference(paymentMethod, input.methodReference);
+
+  await refuseUnlessUndecided(input.applicationId);
+  const fees = await checkFeeAmounts(
+    input.applicationId,
+    input.amounts,
+    input.varianceReason
+  );
+
+  const sourceOfFund = (input.sourceOfFund ?? '').trim();
+  const sourceOfFundFormConfirmed = input.sourceOfFundFormConfirmed ?? false;
+  await applyCashPaymentRules(
+    paymentMethod,
+    fees.totalCents,
+    sourceOfFundFormConfirmed
+  );
+  await refuseCashWithoutDrawer(
+    paymentMethod,
+    principal.userId,
+    message => new PaymentError(message, 'conflict')
+  );
+
+  const existing = await liveReceiptFor(input.applicationId);
+  if (existing) {
+    throw new PaymentError(
+      `This application was already receipted as ${existing}. ` +
+        'Void that receipt if it was wrong.',
+      'conflict'
+    );
+  }
+  await refuseWhileFeeTransferLive(input.applicationId);
+
   const allocation = await allocateReceiptNumber(principal.userId);
 
   try {
-    const id = await withTransaction(async client => {
-      // The application is locked for the insert so that two officers cannot
-      // each pass the check above and both file a receipt.
-      const locked = await client.query<{ id: string; reference: string }>(
-        `select id, reference from membership_application
-          where id = $1 for no key update`,
-        [input.applicationId]
-      );
-      if (locked.rows.length === 0) {
-        throw new PaymentError(
-          'That application no longer exists.',
-          'not_found'
-        );
-      }
-
-      const duplicate = await client.query(
-        `select 1 from payment
-          where application_id = $1 and kind = 'payment' and voided_at is null`,
-        [input.applicationId]
-      );
-      if ((duplicate.rowCount ?? 0) > 0) {
-        throw new PaymentError(
-          'This application has just been receipted by someone else.',
-          'conflict'
-        );
-      }
-
-      const inserted = await client.query<{ id: string }>(
-        `insert into payment
-           (receipt_number_id, kind, application_id, fee_version_id, method,
-            method_reference, total_amount, variance_reason, source_of_fund,
-            source_of_fund_form_confirmed, received_at, recorded_by,
-            recorded_by_role)
-         values ($1, 'payment', $2, $3, $4, $5, $6, $7, $8, $9, coalesce($10, now()), $11, $12)
-         returning id`,
-        [
-          allocation.id,
-          input.applicationId,
-          due.feeVersionId,
-          input.method,
-          (input.methodReference ?? '').trim(),
-          fromCents(total),
-          varianceReason,
-          sourceOfFund,
-          sourceOfFundFormConfirmed,
-          input.receivedAt ?? null,
-          principal.userId,
-          principal.roleNames.join(', '),
-        ]
-      );
-      const paymentId = inserted.rows[0].id;
-
-      for (const line of lines) {
-        await client.query(
-          `insert into payment_line
-             (payment_id, component_code, scheduled_amount, amount, sort_order)
-           values ($1, $2, $3, $4, $5)`,
-          [paymentId, line.code, line.scheduled, line.amount, line.sortOrder]
-        );
-      }
-
-      await markReceiptIssued(allocation.id, client);
-
-      await emitFinancialEvent(client, {
-        eventType: 'payment.recorded',
-        paymentId,
-        receiptNo: allocation.receiptNo,
-        payload: {
-          kind: 'payment',
-          applicationId: input.applicationId,
-          applicationReference: locked.rows[0].reference,
-          feeVersionId: due.feeVersionId,
-          currency: 'MUR',
-          totalAmount: fromCents(total),
-          method: input.method,
-          components: lines.map(l => ({
-            code: l.code,
-            scheduledAmount: l.scheduled,
-            amount: l.amount,
-          })),
-          variance: variance === 0 ? null : fromCents(variance),
-          varianceReason: varianceReason || null,
-          recordedBy: principal.email,
+    const id = await withTransaction(client =>
+      insertFeePayment(client, {
+        applicationId: input.applicationId,
+        allocation,
+        fees,
+        method: input.method,
+        methodReference: input.methodReference ?? '',
+        sourceOfFund,
+        sourceOfFundFormConfirmed,
+        receivedAt: input.receivedAt ?? null,
+        recordedBy: {
+          userId: principal.userId,
+          roleNames: principal.roleNames.join(', '),
+          email: principal.email,
         },
-      });
-
-      await recordAudit(
-        {
-          actorUserId: principal.userId,
-          actorDescription: principal.email,
-          action: ACTION_RECORDED,
-          entityType: ENTITY_TYPE,
-          entityId: paymentId,
-          newValue: {
-            receiptNo: allocation.receiptNo,
-            applicationReference: locked.rows[0].reference,
-            totalAmount: fromCents(total),
-            method: input.method,
-          },
-        },
-        client
-      );
-
-      return paymentId;
-    });
+      })
+    );
 
     const recorded = (await loadPayment(id))!;
     // The receipt to the applicant, as its PDF (officer request). Never
@@ -1041,6 +1125,40 @@ export async function recordPayment(
         : 'The payment failed while being recorded.'
     );
     throw error;
+  }
+}
+
+// A transfer from a member already on its way for these fees (fee-
+// transfers.ts): the fees are being paid that way, so they are not taken
+// twice. Cancelled, rejected or settled, it no longer stands in the way.
+export async function liveFeeTransferFor(
+  applicationId: string
+): Promise<{ transactionId: string; reference: string } | null> {
+  const result = await query<{ transaction_id: string; reference: string }>(
+    `select ft.transaction_id, tr.reference
+       from fee_transfer ft
+       join transaction t on t.id = ft.transaction_id
+       join transfer tr on tr.id = t.transfer_id
+      where ft.application_id = $1
+        and ft.payment_id is null
+        and t.status in ('submitted', 'under_review', 'approved', 'returned')
+      order by ft.created_at desc
+      limit 1`,
+    [applicationId]
+  );
+  const row = result.rows[0];
+  return row
+    ? { transactionId: row.transaction_id, reference: row.reference }
+    : null;
+}
+
+async function refuseWhileFeeTransferLive(applicationId: string) {
+  const live = await liveFeeTransferFor(applicationId);
+  if (live) {
+    throw new PaymentError(
+      `Transfer ${live.reference} is paying these fees. Cancel it first.`,
+      'conflict'
+    );
   }
 }
 

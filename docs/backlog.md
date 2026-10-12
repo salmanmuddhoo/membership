@@ -5849,3 +5849,44 @@ already did.
   A deposit the matrix posts directly has no approval and no comment.
 - The comment box is marked required on those forms; the server refuses an
   empty one whatever the form does.
+
+---
+
+### A member pays a new member's fees by transfer
+
+Officer request: on the Payments step of a membership application, the
+entrance fee, Takaful and Shares can be paid by an existing member from one
+of their accounts, instead of at the counter. Answers taken with it: any of
+the paying member's accounts, Shares included; through the transfer
+approval chain; the whole payment one way, never part cash.
+
+- **Method** "Transfer from a member" (`member_transfer`, migration 0126) —
+  the system's own, offered only on this step and only to someone who may
+  start a transaction (`transaction.capture`) as well as take payments
+  (`payment.record`).
+- **The money** leaves by a transfer's debit leg on the paying account with
+  no credit leg (the applicant has no account yet), routed by the matrix's
+  Transfer bands. Below the band it posts at once — for someone who records
+  transfers — and both receipts are issued: the paying member's for the
+  transfer, the applicant's for the fees. Above it, the chain reviews it,
+  and whoever records transfers posts it once approved; nothing is
+  disbursed.
+- **The fees** count as paid only once the transfer posts: the fee receipt
+  is issued in the same database transaction (`settleFeeTransfer`), under
+  the amounts checked when it was started (`fee_transfer`), and sent to the
+  applicant as any fee receipt is. From there it is an ordinary payment;
+  its Shares line carries into the new member's Shares account on approval.
+- **The paying account** meets every check a transfer's source does — the
+  available balance, the type's floor and transaction ceiling, the holder
+  and guardian — save the type's "allows transfer" flag, so Shares can pay
+  but keep their minimum. It must be a member's.
+- **While it is on its way** the Payments step shows it, with whose account
+  and where it is, in place of the form; no cash payment and no second
+  transfer is taken. **Cancel transfer** stops it at any point before it
+  posts — returned included, since a fee transfer is never edited, only
+  cancelled and started again — and the step is open again.
+- **Guards:** posting is refused if the application was decided meanwhile
+  (cancel it instead); a posted fee transfer is reversed only after its fee
+  receipt is voided; a draft that carries a fee transfer is not deleted.
+- **Where it reads:** the transaction's "To" is the application, linked; the
+  statement, the history and the transfers report name it the same way.

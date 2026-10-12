@@ -107,6 +107,26 @@ export async function reverseTransaction(
       'conflict'
     );
   }
+  // A transfer that paid a new member's fees (migration 0126) is undone
+  // only once the fee receipt it became is voided: otherwise the money
+  // would be back with the payer and the fees still paid.
+  if (original.feeApplicationId) {
+    const standing = await query<{ receipt_no: string }>(
+      `select r.receipt_no
+         from fee_transfer ft
+         join payment p on p.id = ft.payment_id
+         join receipt_number r on r.id = p.receipt_number_id
+        where ft.transaction_id = $1 and p.voided_at is null`,
+      [original.id]
+    );
+    if (standing.rows[0]) {
+      throw new ReversalError(
+        `${original.displayReference} paid the fees on receipt ` +
+          `${standing.rows[0].receipt_no}. Void that receipt first.`,
+        'conflict'
+      );
+    }
+  }
   const reason = input.reason.trim();
   if (!reason) {
     throw new ReversalError('Say why it is being reversed.');

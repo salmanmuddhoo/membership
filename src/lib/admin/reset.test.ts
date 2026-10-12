@@ -258,6 +258,7 @@ const CLEARED_TABLES = [
   'transaction',
   'transaction_transition',
   'transfer',
+  'fee_transfer',
 ];
 
 // app_user and user_role keep one account: the System Administrator running
