@@ -37,6 +37,7 @@ import {
 import { ApplicationError } from '../applications/capture';
 import { DatabaseUnavailableError, isInvalidReference } from '../db/pool';
 import { checkRateLimit } from './rate-limit';
+import { clientAddress } from '../client-address';
 
 export interface IntegrationEndpointDescriptor extends Omit<
   EndpointDescriptor,
@@ -60,13 +61,6 @@ export interface IntegrationRequestContext {
 export type IntegrationHandler = (
   ctx: IntegrationRequestContext
 ) => Promise<Response>;
-
-function clientAddress(headers: Headers): string | null {
-  const forwarded = headers.get('x-forwarded-for');
-  if (!forwarded) return null;
-  const first = forwarded.split(',')[0]?.trim();
-  return first && first.length <= 45 ? first : null;
-}
 
 function bearerToken(headers: Headers): string | null {
   const header = headers.get('authorization') ?? '';

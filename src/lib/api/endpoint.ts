@@ -20,6 +20,7 @@ import {
   type ErrorCode,
 } from './envelope';
 import { checkRateLimit } from './rate-limit';
+import { clientAddress } from '../client-address';
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
@@ -86,13 +87,6 @@ export type EndpointHandler = (ctx: RequestContext) => Promise<Response>;
 export interface Endpoint {
   descriptor: EndpointDescriptor;
   handler: (context: APIContext) => Promise<Response>;
-}
-
-function clientAddress(headers: Headers): string | null {
-  const forwarded = headers.get('x-forwarded-for');
-  if (!forwarded) return null;
-  const first = forwarded.split(',')[0]?.trim();
-  return first && first.length <= 45 ? first : null;
 }
 
 // Structured, one line per request (S-111). JSON so a log search can filter by
