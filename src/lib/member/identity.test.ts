@@ -199,7 +199,7 @@ describe('identification: NIC + AB Number', () => {
     await expect(link()).rejects.toMatchObject({
       code: 'rate_limited',
       message: expect.stringMatching(
-        /Wait \d+ seconds? before requesting another code/
+        /^Please wait \d+ seconds? before requesting another code\.$/
       ),
     });
     // A miss is refused before any code, so it sets no cooldown: the rate
@@ -509,6 +509,51 @@ describe('sign-up: a verified mobile, never a member', () => {
       code: 'validation_failed',
       details: { mobile: expect.any(Array) },
     });
+  });
+});
+
+describe('asking for too many codes', () => {
+  it('says how long to wait, in seconds under a minute and minutes after', () => {
+    expect(identity.waitPhrase(1)).toBe('1 second');
+    expect(identity.waitPhrase(45)).toBe('45 seconds');
+    expect(identity.waitPhrase(60)).toBe('1 minute');
+    expect(identity.waitPhrase(61)).toBe('2 minutes');
+    expect(identity.waitPhrase(600)).toBe('10 minutes');
+  });
+
+  it('tells an applicant who asks too often how long to wait', async () => {
+    // The limiter's windows are aligned to the clock, so how much of one is
+    // left depends on when the test runs: anything up to ten minutes. The
+    // three codes already asked for in this window are put there directly,
+    // so the fourth is refused whatever the time is.
+    await run(
+      appUrl,
+      `insert into rate_limit_window (subject, window_start, request_count)
+       values ($1, to_timestamp(floor(extract(epoch from now()) / 600) * 600), 3)
+       on conflict (subject, window_start) do update set request_count = 3`,
+      ['member-signup:mobile:+23059994444']
+    );
+    delete process.env.RATE_LIMIT_DISABLED;
+    try {
+      const refused = await identity
+        .startSignUp({ mobile: '5999 4444' }, origin, { delivery })
+        .then(
+          () => null,
+          (error: unknown) => error as { code: string; message: string }
+        );
+      expect(refused?.code).toBe('rate_limited');
+      const wait =
+        /^Too many codes have been requested\. Please wait (\d+) (minutes?|seconds?) before requesting a new one\.$/.exec(
+          refused?.message ?? ''
+        );
+      expect(wait).not.toBeNull();
+      const seconds =
+        Number(wait![1]) * (wait![2].startsWith('minute') ? 60 : 1);
+      expect(seconds).toBeGreaterThan(0);
+      expect(seconds).toBeLessThanOrEqual(600);
+    } finally {
+      process.env.RATE_LIMIT_DISABLED = 'true';
+    }
   });
 });
 

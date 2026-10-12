@@ -25,7 +25,11 @@ import { DocumentError } from '../documents/documents';
 import { GraphError, graphFailureMessage } from '../documents/graph';
 import { UploadRejected } from '../documents/upload';
 import { CodeDeliveryError } from './otp';
-import { resolveMemberSession, type MemberPrincipal } from './identity';
+import {
+  resolveMemberSession,
+  waitPhrase,
+  type MemberPrincipal,
+} from './identity';
 
 export interface MemberEndpointDescriptor extends Omit<
   EndpointDescriptor,
@@ -220,9 +224,15 @@ export function defineMemberEndpoint<Caller extends 'member' | 'public'>(
       const rate = await checkRateLimit(limitSubject, correlationId, limit);
       if (!rate.allowed) {
         return finish(
-          apiError('rate_limited', correlationId, undefined, undefined, {
-            'retry-after': String(rate.retryAfterSeconds),
-          }),
+          apiError(
+            'rate_limited',
+            correlationId,
+            `Too many attempts. Please wait ${waitPhrase(
+              rate.retryAfterSeconds
+            )} and try again.`,
+            undefined,
+            { 'retry-after': String(rate.retryAfterSeconds) }
+          ),
           actor,
           'rate_limited'
         );
