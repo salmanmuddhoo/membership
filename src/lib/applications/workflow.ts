@@ -706,14 +706,26 @@ export async function reviewApplication(
           'application for correction instead of forwarding it.'
       );
     }
+    // The Regional Manager verifies the documents (migration 0127), so
+    // their own forward waits until every required one is (officer
+    // direction).
+    if (stepCode === 'regional_review') {
+      const unverified = checklist.filter(
+        e => e.requirement === 'required' && e.state !== 'verified'
+      ).length;
+      if (unverified > 0) {
+        throw new ApplicationError(
+          `${unverified} required document(s) still need to be Verified ` +
+            'before this can be forwarded.'
+        );
+      }
+    }
   }
 
   // S-608: nothing forwarded to the Board is incomplete — the reasons are
   // named so the Secretary knows exactly what to chase, not just that
-  // something is missing. Regional oversight sits before that gate, not at
-  // it: verifying a filed document is the Secretary's own review (S-608's
-  // own comment), which has not happened yet at this stage, so nothing here
-  // asks Regional oversight to re-check it.
+  // something is missing. Regional oversight checks its own part — every
+  // document verified — above; this is the fuller check before the Board.
   if (decision.outcome === 'forward' && stepCode === 'secretary_review') {
     const reasons = boardReadinessReasons(await boardReadiness(application));
     if (reasons.length > 0) {
@@ -1400,7 +1412,18 @@ export async function pendingApplicationIds(
   const ids = new Set<string>();
 
   if (principal.permissions.has('application.submit')) {
-    const conditions = ["(status = 'returned' and captured_by = $1)"];
+    // A returned application is back with whoever had it last at the
+    // branch (officer feedback): the officer who captured it, or the one
+    // who submitted it — a Regional Manager submitting a subordinate's
+    // draft, or an officer completing one received from the member app.
+    const conditions = [
+      `(a.status = 'returned'
+         and (a.captured_by = $1
+              or exists (select 1 from application_transition t
+                          where t.application_id = a.id
+                            and t.step_code = 'capture'
+                            and t.actor_user_id = $1)))`,
+    ];
     const params: unknown[] = [principal.userId];
     // Officer feedback: a 'received' application (submitted from the member
     // app) used to be nobody's draft and everybody's to take up — the
@@ -1409,10 +1432,19 @@ export async function pendingApplicationIds(
     // (migration 0044), not every officer who can submit.
     if (principal.permissions.has('application.submit_online')) {
       params.push(RECEIVED_STATUS);
-      conditions.push(`status = $${params.length}`);
+      conditions.push(`a.status = $${params.length}`);
+      // One from the member app that came back is theirs again too: the
+      // app captured it, so it is nobody's by captured_by.
+      conditions.push(
+        `(a.status = 'returned'
+           and exists (select 1 from app_user u
+                        where u.id = a.captured_by
+                          and u.entra_subject like 'system:%'))`
+      );
     }
     const returned = await query<{ id: string }>(
-      `select id from membership_application where ${conditions.join(' or ')}`,
+      `select a.id from membership_application a
+        where ${conditions.join(' or ')}`,
       params
     );
     for (const row of returned.rows) ids.add(row.id);

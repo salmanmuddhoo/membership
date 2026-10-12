@@ -2516,6 +2516,63 @@ describe('S-611: Regional oversight, enabled or not, gates the chain', () => {
     );
   });
 
+  it('keeps the Regional Manager from forwarding until every required document is verified', async () => {
+    await setRegionalReviewEnabled(true);
+    const { capture, workflow, documents, payments } = await load();
+    const actor = { userId: officer.userId, email: officer.email };
+    const { id } = await capture.startApplication('individual', actor);
+    await capture.saveDraft(id, COMPLETE_INDIVIDUAL(), actor);
+    await nameWitnesses(id);
+    await fileRequiredDocuments(documents, id);
+    await recordFullPayment(payments, id);
+    await workflow.submitApplication(id, officer);
+
+    await expect(
+      workflow.reviewApplication(
+        id,
+        { outcome: 'forward', comment: 'Checked.' },
+        regionalManager,
+        'regional_review'
+      )
+    ).rejects.toThrowError(
+      /still need to be Verified before this can be forwarded/
+    );
+
+    await verifyRequiredDocuments(documents, id);
+    await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Checked.' },
+      regionalManager,
+      'regional_review'
+    );
+  });
+
+  it('flags a returned application for whoever submitted it, as well as its captor', async () => {
+    await setRegionalReviewEnabled(true);
+    const { capture, workflow } = await load();
+    const id = await captureComplete();
+    // A Regional Manager submitting a subordinate's draft.
+    const submitter = {
+      ...regionalManager,
+      permissions: new Set([
+        ...regionalManager.permissions,
+        'application.submit',
+      ]),
+    };
+    await workflow.submitApplication(id, submitter);
+    // Their own oversight is skipped; the Secretary sends it back.
+    await workflow.reviewApplication(
+      id,
+      { outcome: 'return', comment: 'Wrong address.' },
+      secretary
+    );
+    expect((await capture.loadApplication(id))!.status).toBe('returned');
+    expect((await workflow.pendingApplicationIds(officer)).has(id)).toBe(true);
+    expect((await workflow.pendingApplicationIds(submitter)).has(id)).toBe(
+      true
+    );
+  });
+
   it('flags a returned application for the officer who captured it, not for anyone else holding the same permission', async () => {
     await setRegionalReviewEnabled(true);
     const { capture, workflow } = await load();

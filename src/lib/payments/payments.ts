@@ -238,6 +238,9 @@ export interface Payment {
   // comma-joined if more than one — snapshotted, so a later change to
   // their roles cannot rewrite what a printed receipt already said.
   recordedByRole: string;
+  // Paid by transfer from a member (migration 0126): who paid, for the
+  // receipt to say so. Null for every other payment.
+  paidByMember: { name: string; memberNo: string } | null;
   voidedAt: Date | null;
   voidedByName: string | null;
   voidReason: string | null;
@@ -277,7 +280,10 @@ const PAYMENT_SELECT = `
                         pp_via_member.values->>'name', '') || ' '
               || coalesce(pp_direct.values->>'surname',
                            pp_via_member.values->>'surname', '')
-             ) as applicant_name
+             ) as applicant_name,
+         fpm.member_no as paid_by_member_no,
+         trim(coalesce(fpp.values->>'name', '') || ' '
+              || coalesce(fpp.values->>'surname', '')) as paid_by_name
     from payment p
     join receipt_number r on r.id = p.receipt_number_id
     join app_user u       on u.id = p.recorded_by
@@ -295,6 +301,12 @@ const PAYMENT_SELECT = `
          = coalesce(existing_em.application_id, m.application_id)
      and pp_via_member.subject = 'applicant' and pp_via_member.ordinal = 1
     left join app_user v               on v.id = p.voided_by
+    left join fee_transfer ft          on ft.payment_id = p.id
+    left join transaction ftx          on ftx.id = ft.transaction_id
+    left join member fpm               on fpm.id = ftx.member_id
+    left join application_party fpp
+      on fpp.application_id = fpm.application_id
+     and fpp.subject = 'applicant' and fpp.ordinal = 1
 `;
 
 interface PaymentRow {
@@ -325,6 +337,8 @@ interface PaymentRow {
   recorded_by_email: string;
   recorded_by_role: string;
   voided_by_name: string | null;
+  paid_by_member_no: string | null;
+  paid_by_name: string | null;
 }
 
 interface LineRow {
@@ -398,6 +412,9 @@ function assemble(
     recordedByName: p.recorded_by_name,
     recordedByEmail: p.recorded_by_email,
     recordedByRole: p.recorded_by_role,
+    paidByMember: p.paid_by_member_no
+      ? { name: p.paid_by_name ?? '', memberNo: p.paid_by_member_no }
+      : null,
     voidedAt: p.voided_at,
     voidedByName: p.voided_by_name,
     voidReason: p.void_reason,
