@@ -105,7 +105,6 @@ export const RECEIPT_PLACEHOLDERS = [
   'kind',
   'amount',
   'account',
-  'link',
 ] as const;
 
 // A member's statement (officer request): what

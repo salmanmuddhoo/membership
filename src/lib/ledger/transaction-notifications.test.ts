@@ -71,6 +71,9 @@ async function load() {
   process.env.DATABASE_ALLOW_INSECURE = 'true';
   process.env.PUBLIC_APP_ENV = 'test';
   process.env.PUBLIC_APP_URL = 'https://members.example.mu';
+  // A receipt goes out as its PDF, fetched from a signed link: both needed.
+  process.env.MEMBER_SESSION_SECRET =
+    'receipt-link-test-secret-with-thirty-two-plus-characters';
   delete process.env.NOTIFY_EMAIL_DELIVERY;
   delete process.env.NOTIFY_WHATSAPP_DELIVERY;
   openPool = await import('../db/pool');
