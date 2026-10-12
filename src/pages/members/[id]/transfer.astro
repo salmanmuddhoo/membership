@@ -163,10 +163,9 @@ if (Astro.request.method === 'POST') {
         // A conflict here is this form posted a second time — Back, then
         // a change and Post again — under the key it was first posted
         // with (QA-01). The key is not something the officer knows about.
-        error =
-          err.reason === 'conflict'
-            ? 'This transfer was already recorded. Open a new transfer form to record another.'
-            : err.message;
+        error = err.repeat
+          ? 'This transfer was already recorded. Open a new transfer form to record another.'
+          : err.message;
       } else {
         console.error('[members/transfer]', err);
         error = 'Something went wrong. Please try again.';

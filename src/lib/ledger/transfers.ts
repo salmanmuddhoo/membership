@@ -54,7 +54,10 @@ export class TransferError extends Error {
   constructor(
     message: string,
     public readonly reason:
-      'invalid' | 'not_found' | 'forbidden' | 'conflict' = 'invalid'
+      'invalid' | 'not_found' | 'forbidden' | 'conflict' = 'invalid',
+    // This form posted again under the key it was first posted with — the
+    // one conflict a form answers with "already recorded" (QA-01).
+    readonly repeat = false
   ) {
     super(message);
     this.name = 'TransferError';
@@ -347,7 +350,8 @@ export async function recordTransfer(
       if (existing.fingerprint !== print || !existing.transferId) {
         throw new TransferError(
           'A different transfer was already submitted with this key.',
-          'conflict'
+          'conflict',
+          true
         );
       }
       return (await loadTransfer(existing.transferId))!;
@@ -453,7 +457,8 @@ export async function recordTransfer(
         ) {
           throw new TransferError(
             'This transfer is being recorded.',
-            'conflict'
+            'conflict',
+            true
           );
         }
         throw err;

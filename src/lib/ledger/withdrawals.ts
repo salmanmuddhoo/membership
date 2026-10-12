@@ -50,7 +50,10 @@ export class WithdrawalError extends Error {
   constructor(
     message: string,
     public readonly reason:
-      'invalid' | 'not_found' | 'forbidden' | 'conflict' = 'invalid'
+      'invalid' | 'not_found' | 'forbidden' | 'conflict' = 'invalid',
+    // This form posted again under the key it was first posted with — the
+    // one conflict a form answers with "already recorded" (QA-01).
+    readonly repeat = false
   ) {
     super(message);
     this.name = 'WithdrawalError';
@@ -298,7 +301,8 @@ export async function recordWithdrawal(
       if (existing.fingerprint !== print) {
         throw new WithdrawalError(
           'A different withdrawal was already submitted with this key.',
-          'conflict'
+          'conflict',
+          true
         );
       }
       return (await loadTransaction(existing.id))!;
@@ -391,7 +395,8 @@ export async function recordWithdrawal(
         ) {
           throw new WithdrawalError(
             'This withdrawal is being recorded.',
-            'conflict'
+            'conflict',
+            true
           );
         }
         throw err;

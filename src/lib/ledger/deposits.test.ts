@@ -260,7 +260,7 @@ describe('recording a deposit', () => {
         },
         officer
       )
-    ).rejects.toMatchObject({ reason: 'conflict' });
+    ).rejects.toMatchObject({ reason: 'conflict', repeat: true });
     expect(await count('select count(*)::int as n from transaction')).toBe(
       before + 1
     );
