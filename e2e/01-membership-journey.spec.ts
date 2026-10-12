@@ -123,6 +123,17 @@ test.describe('an Individual application, capture to member', () => {
     as,
   }) => {
     const page = await as('officer');
+
+    // Cash is taken only through an open drawer: open the officer's, with no
+    // float, unless it already is.
+    await page.goto('/cashier');
+    const openDrawer = page.getByRole('button', { name: 'Open drawer' });
+    if (await openDrawer.isVisible()) {
+      await page.fill('input[name="openingFloat"]', '0');
+      await openDrawer.click();
+      await page.waitForLoadState('domcontentloaded');
+    }
+
     await page.goto(`${applicationUrl}?step=4`);
 
     // The amounts are prefilled from the fee schedule (S-207) — not typed, and

@@ -29,6 +29,7 @@ import {
   SUBTITLE,
   VIEW_BUTTON,
 } from '@lib/ui';
+import { localFormat } from '@lib/time';
 
 const { id } = Astro.params;
 const member = id ? await loadMember(id) : null;
@@ -47,7 +48,7 @@ const documents = await documentsForHolder(holder.id);
 // Grouped by where each was filed, the founding application first.
 const groups = groupHolderDocuments(documents, member ? 'member' : 'customer');
 
-const dateFormat = new Intl.DateTimeFormat('en-GB', {
+const dateFormat = localFormat({
   day: 'numeric',
   month: 'short',
   year: 'numeric',

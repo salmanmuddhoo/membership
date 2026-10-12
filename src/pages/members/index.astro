@@ -30,6 +30,7 @@ import {
   TD,
   TD_NUM,
 } from '@lib/ui';
+import { localFormat } from '@lib/time';
 
 const principal = Astro.locals.principal!;
 const canSeePayments = principal.permissions.has('payment.view');
@@ -85,7 +86,7 @@ if (members.length === 0 && paging.page > 1)
   return Astro.redirect(pageHref(Astro.url, { page: 1 }));
 const activeAccountTypeColumns = accountTypeColumns.filter(t => t.isActive);
 
-const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium' });
+const dateFormat = localFormat({ dateStyle: 'medium' });
 
 // Officer feedback: the account's own number, styled by what kind of
 // account it is, is the identity a colleague reads off this list — not a
@@ -421,6 +422,7 @@ function accountButtonClasses(account: MemberListAccount): string {
         day: 'numeric',
         month: 'short',
         year: 'numeric',
+        timeZone: 'Indian/Mauritius',
       });
 
     for (const button of document.querySelectorAll<HTMLButtonElement>(

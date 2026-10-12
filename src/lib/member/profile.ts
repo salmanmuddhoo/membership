@@ -21,7 +21,7 @@ import {
 } from '../documents/documents';
 import { accountEntries } from '../ledger/ledger';
 import type { MemberPrincipal, RequestOrigin } from './identity';
-import { maskMobile } from './otp';
+import { principalLabel } from './otp';
 
 export interface MemberProfile {
   kind: MemberPrincipal['kind'];
@@ -475,11 +475,23 @@ export async function submitDetails(
   if (!type) throw new ApiError('not_found', 'Unknown membership type.');
 
   const checked = checkDetails(type, Array.isArray(parties) ? parties : []);
-  // The number the member signs in with changes at a branch, with ID: a
-  // request cannot move it.
+  // The mobile and the email a member signs in with change at a branch, with
+  // ID: a request cannot move either, so each stays what the record says.
+  const onRecord = await query<{ mobile: string | null; email: string | null }>(
+    `select values->>'mobile' as mobile, values->>'email' as email
+       from application_party
+      where application_id = $1 and subject = 'applicant' and ordinal = 1`,
+    [row.application_id]
+  );
+  const signIn = onRecord.rows[0] ?? { mobile: null, email: null };
   for (const party of checked.parties) {
-    if (party.subject === 'applicant' && 'mobile' in party.values) {
-      party.values.mobile = principal.mobile;
+    if (party.subject !== 'applicant') continue;
+    for (const key of ['mobile', 'email'] as const) {
+      if (!(key in party.values)) continue;
+      // None on record stays none: absent, not an empty value that would
+      // read as a change.
+      if (signIn[key]) party.values[key] = signIn[key];
+      else delete party.values[key];
     }
   }
   if (Object.keys(checked.details).length > 0) {
@@ -547,7 +559,7 @@ export async function submitDetails(
 
     await recordAudit(
       {
-        actorDescription: `member-app:${maskMobile(principal.mobile)}`,
+        actorDescription: principalLabel(principal),
         action: 'member.details.requested',
         entityType: 'member',
         entityId: principal.memberId!,

@@ -5280,8 +5280,8 @@
     },
     "/api/v1/member/auth/link-member": {
       "post": {
-        "summary": "Identify an existing member by NIC + AB Number and send a code to their registered mobile",
-        "description": "Exact pair, members entitled to the app only. A pair that names nobody, or a member with no mobile on record, is refused with 404 and a message telling the person to contact the Al Barakah office; the app goes no further. Rate-limited per NIC, per AB Number and per address, hit or miss, and one code per AB Number per cooldown window.",
+        "summary": "Identify an existing member by NIC + AB Number and send a code to their mobile or email on record",
+        "description": "Exact pair, members entitled to the app only. The code goes to the mobile (by WhatsApp or SMS, as the site sends them) or the email on the record, never to one the person types. A pair that names nobody, or a member with nothing on record for the channel chosen, is refused with 404 and a message telling the person to choose the other channel or contact the Al Barakah office. Rate-limited per NIC, per AB Number and per address, hit or miss, and one code per AB Number per cooldown window.",
         "tags": [
           "Member app"
         ],
@@ -5306,6 +5306,7 @@
                         "challengeId",
                         "purpose",
                         "sentTo",
+                        "sentBy",
                         "expiresInSeconds"
                       ],
                       "properties": {
@@ -5323,7 +5324,16 @@
                         "sentTo": {
                           "type": "string",
                           "nullable": true,
-                          "description": "Masked, e.g. +2305xxx234, for a sign-up. Always null for a link: the code went to the mobile on record, and saying which would confirm the pair named someone."
+                          "description": "Masked: +230 5*** *428, or s***o@gmail.com. For a link, the mobile or email on the record, which the person did not type."
+                        },
+                        "sentBy": {
+                          "type": "string",
+                          "enum": [
+                            "sms",
+                            "whatsapp",
+                            "email"
+                          ],
+                          "description": "Where the person should look for the code: an email, or a WhatsApp message or an SMS, as this site sends codes to phones."
                         },
                         "expiresInSeconds": {
                           "type": "integer"
@@ -5397,6 +5407,14 @@
                   "abNumber": {
                     "type": "string",
                     "description": "The Member No. on the card, e.g. AB0001."
+                  },
+                  "channel": {
+                    "type": "string",
+                    "enum": [
+                      "phone",
+                      "email"
+                    ],
+                    "description": "Where the code goes: the mobile on record (WhatsApp) or the email on record. Default phone."
                   }
                 }
               }
@@ -5544,6 +5562,7 @@
                             "memberNo",
                             "displayName",
                             "mobile",
+                            "email",
                             "linkedAt"
                           ],
                           "properties": {
@@ -5564,7 +5583,13 @@
                             },
                             "mobile": {
                               "type": "string",
-                              "description": "E.164"
+                              "nullable": true,
+                              "description": "E.164. Null for a session proven by email."
+                            },
+                            "email": {
+                              "type": "string",
+                              "nullable": true,
+                              "description": "Null for a session proven by phone."
                             },
                             "linkedAt": {
                               "type": "string",
@@ -5671,6 +5696,7 @@
                         "challengeId",
                         "purpose",
                         "sentTo",
+                        "sentBy",
                         "expiresInSeconds"
                       ],
                       "properties": {
@@ -5688,7 +5714,16 @@
                         "sentTo": {
                           "type": "string",
                           "nullable": true,
-                          "description": "Masked, e.g. +2305xxx234, for a sign-up. Always null for a link: the code went to the mobile on record, and saying which would confirm the pair named someone."
+                          "description": "Masked: +230 5*** *428, or s***o@gmail.com. For a link, the mobile or email on the record, which the person did not type."
+                        },
+                        "sentBy": {
+                          "type": "string",
+                          "enum": [
+                            "sms",
+                            "whatsapp",
+                            "email"
+                          ],
+                          "description": "Where the person should look for the code: an email, or a WhatsApp message or an SMS, as this site sends codes to phones."
                         },
                         "expiresInSeconds": {
                           "type": "integer"
@@ -5767,8 +5802,8 @@
     },
     "/api/v1/member/auth/sign-up": {
       "post": {
-        "summary": "Verify a mobile number to start a membership application",
-        "description": "No AB Number needed. Always succeeds for a well-formed number, known or not; the session it leads to never resolves to a member record.",
+        "summary": "Verify a WhatsApp number or an email address to start a membership application",
+        "description": "No AB Number needed. The person chooses the channel and types the number or address the code goes to. Always succeeds for a well-formed one, known or not; the session it leads to never resolves to a member record.",
         "tags": [
           "Member app"
         ],
@@ -5793,6 +5828,7 @@
                         "challengeId",
                         "purpose",
                         "sentTo",
+                        "sentBy",
                         "expiresInSeconds"
                       ],
                       "properties": {
@@ -5810,7 +5846,16 @@
                         "sentTo": {
                           "type": "string",
                           "nullable": true,
-                          "description": "Masked, e.g. +2305xxx234, for a sign-up. Always null for a link: the code went to the mobile on record, and saying which would confirm the pair named someone."
+                          "description": "Masked: +230 5*** *428, or s***o@gmail.com. For a link, the mobile or email on the record, which the person did not type."
+                        },
+                        "sentBy": {
+                          "type": "string",
+                          "enum": [
+                            "sms",
+                            "whatsapp",
+                            "email"
+                          ],
+                          "description": "Where the person should look for the code: an email, or a WhatsApp message or an SMS, as this site sends codes to phones."
                         },
                         "expiresInSeconds": {
                           "type": "integer"
@@ -5872,13 +5917,22 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": [
-                  "mobile"
-                ],
                 "properties": {
+                  "channel": {
+                    "type": "string",
+                    "enum": [
+                      "phone",
+                      "email"
+                    ],
+                    "description": "Where the code goes. Default phone."
+                  },
                   "mobile": {
                     "type": "string",
-                    "description": "Any form the capture form accepts; stored as E.164."
+                    "description": "For phone: any form the capture form accepts; stored as E.164."
+                  },
+                  "email": {
+                    "type": "string",
+                    "description": "For email: the address the code goes to."
                   }
                 }
               }
@@ -5936,6 +5990,7 @@
                             "memberNo",
                             "displayName",
                             "mobile",
+                            "email",
                             "linkedAt"
                           ],
                           "properties": {
@@ -5956,7 +6011,13 @@
                             },
                             "mobile": {
                               "type": "string",
-                              "description": "E.164"
+                              "nullable": true,
+                              "description": "E.164. Null for a session proven by email."
+                            },
+                            "email": {
+                              "type": "string",
+                              "nullable": true,
+                              "description": "Null for a session proven by phone."
                             },
                             "linkedAt": {
                               "type": "string",

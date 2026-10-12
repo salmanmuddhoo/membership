@@ -11,7 +11,9 @@ import {
   vi,
 } from 'vitest';
 import { migrate } from '../../../scripts/migrate';
+import { openEveryDrawer } from '../cash/drawers.testing';
 import type { Principal } from '../access/principal';
+import { localDay } from '../time';
 
 // A transaction's receipt on the one sequence (S-1601, S-1603): what the
 // sheet reads, a print on the record, a void that withdraws the number and
@@ -105,6 +107,7 @@ beforeAll(async () => {
      returning id, email`
   );
   const byEmail = new Map(users.rows.map(r => [r.email, r.id]));
+  await openEveryDrawer(appUrl);
   officer = principalFor(
     byEmail.get('officer@albarakah.mu'),
     'officer@albarakah.mu',
@@ -375,8 +378,8 @@ describe('voiding a transaction receipt (S-1603)', () => {
 
     const report = reports.REPORTS.find(r => r.code === 'receipts')!;
     const result = await report.run({
-      from: start.toISOString().slice(0, 10),
-      to: start.toISOString().slice(0, 10),
+      from: localDay(start),
+      to: localDay(start),
     });
     const kinds = result.rows.map(r => r.Kind);
     expect(kinds).toEqual(

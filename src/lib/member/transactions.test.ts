@@ -11,6 +11,7 @@ import {
   vi,
 } from 'vitest';
 import { migrate } from '../../../scripts/migrate';
+import { openEveryDrawer } from '../cash/drawers.testing';
 import type { Principal } from '../access/principal';
 import type { MemberPrincipal } from './identity';
 
@@ -108,6 +109,7 @@ function memberPrincipal(memberId: string, mobile: string): MemberPrincipal {
   return {
     sessionId: `session-${mobile}`,
     mobile,
+    email: null,
     memberId,
     customerId: null,
     kind: 'member',
@@ -213,6 +215,7 @@ beforeAll(async () => {
     `insert into app_user (entra_subject, email, display_name)
      values ('test-officer', 'officer@albarakah.mu', 'Officer') returning id`
   );
+  await openEveryDrawer(appUrl);
   officer = {
     userId: user.rows[0].id,
     entraSubject: 'test-officer',
@@ -277,6 +280,7 @@ beforeAll(async () => {
     'transaction.view',
     'transaction.disburse',
   ]);
+  await openEveryDrawer(appUrl);
 
   const first = await memberWithMsa('AB0001', 'Fatimah');
   const second = await memberWithMsa('AB0002', 'Yusuf');
@@ -769,6 +773,7 @@ describe('how a deposit from the app may be paid', () => {
       member.depositOptions({
         sessionId: 'session-applicant',
         mobile: '+23057890000',
+        email: null,
         memberId: null,
         customerId: null,
         kind: 'applicant',

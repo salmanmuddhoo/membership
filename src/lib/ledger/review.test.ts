@@ -11,6 +11,7 @@ import {
   vi,
 } from 'vitest';
 import { migrate } from '../../../scripts/migrate';
+import { openEveryDrawer } from '../cash/drawers.testing';
 import type { Principal } from '../access/principal';
 
 // Acting on what waits on a chain (S-1403, S-1404, S-1402's in-flight
@@ -121,6 +122,7 @@ beforeAll(async () => {
      returning id, email`
   );
   const byEmail = new Map(users.rows.map(r => [r.email, r.id]));
+  await openEveryDrawer(appUrl);
   clerk = principalFor(
     byEmail.get('clerk@albarakah.mu'),
     'clerk@albarakah.mu',

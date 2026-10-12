@@ -10,6 +10,7 @@
 import { recordAudit } from '../access/audit';
 import type { Principal } from '../access/principal';
 import { checkSegregation } from '../admin/segregation';
+import { refuseCashWithoutDrawer } from '../cash/sessions';
 import { query, withTransaction } from '../db/pool';
 import {
   abandonReceiptNumber,
@@ -157,6 +158,14 @@ export async function reverseTransaction(
     throw new ReversalError(
       `${original.reference} cannot be reversed: account ${closed.rows.map(r => r.account_no).join(', ')} is closed.`,
       'conflict'
+    );
+  }
+
+  for (const target of targets) {
+    await refuseCashWithoutDrawer(
+      target.method,
+      principal.userId,
+      message => new ReversalError(message, 'conflict')
     );
   }
 

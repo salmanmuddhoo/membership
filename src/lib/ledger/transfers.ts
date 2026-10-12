@@ -21,6 +21,7 @@ import { createHash } from 'node:crypto';
 import { recordAudit } from '../access/audit';
 import type { Principal } from '../access/principal';
 import type { TransactionKind } from '../config/reference';
+import { refuseCashWithoutDrawer } from '../cash/sessions';
 import { query, withTransaction } from '../db/pool';
 import {
   offeredMethod,
@@ -53,7 +54,10 @@ export class TransferError extends Error {
   constructor(
     message: string,
     public readonly reason:
-      'invalid' | 'not_found' | 'forbidden' | 'conflict' = 'invalid'
+      'invalid' | 'not_found' | 'forbidden' | 'conflict' = 'invalid',
+    // This form posted again under the key it was first posted with — the
+    // one conflict a form answers with "already recorded" (QA-01).
+    readonly repeat = false
   ) {
     super(message);
     this.name = 'TransferError';
@@ -346,7 +350,8 @@ export async function recordTransfer(
       if (existing.fingerprint !== print || !existing.transferId) {
         throw new TransferError(
           'A different transfer was already submitted with this key.',
-          'conflict'
+          'conflict',
+          true
         );
       }
       return (await loadTransfer(existing.transferId))!;
@@ -392,6 +397,13 @@ export async function recordTransfer(
     );
   }
   const paid = await paidBy(input.destination, !route.definition);
+  if (!route.definition) {
+    await refuseCashWithoutDrawer(
+      paid.code,
+      principal.userId,
+      message => new TransferError(message, 'conflict')
+    );
+  }
   const receipt = route.definition
     ? null
     : await allocateReceiptNumber(principal.userId);
@@ -445,7 +457,8 @@ export async function recordTransfer(
         ) {
           throw new TransferError(
             'This transfer is being recorded.',
-            'conflict'
+            'conflict',
+            true
           );
         }
         throw err;
@@ -613,6 +626,13 @@ export async function resubmitTransfer(
         },
     !route.definition
   );
+  if (!route.definition) {
+    await refuseCashWithoutDrawer(
+      paid.code,
+      principal.userId,
+      message => new TransferError(message, 'conflict')
+    );
+  }
   const receipt = route.definition
     ? null
     : await allocateReceiptNumber(principal.userId);

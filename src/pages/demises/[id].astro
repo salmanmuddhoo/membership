@@ -42,6 +42,7 @@ import {
   VIEW_BUTTON,
   DELETE_BUTTON,
 } from '@lib/ui';
+import { localFormat } from '@lib/time';
 
 const principal = Astro.locals.principal!;
 const { id } = Astro.params;
@@ -169,7 +170,7 @@ const returnComment =
   claim.status === 'returned'
     ? [...trail].reverse().find(t => t.toStatus === 'returned')?.comment
     : null;
-const dateFormat = new Intl.DateTimeFormat('en-GB', {
+const dateFormat = localFormat({
   day: 'numeric',
   month: 'short',
   year: 'numeric',

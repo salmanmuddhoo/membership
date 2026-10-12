@@ -29,6 +29,7 @@ import {
   TD_NUM,
   VIEW_BUTTON,
 } from '@lib/ui';
+import { localFormat } from '@lib/time';
 
 const { id } = Astro.params;
 const found = id
@@ -89,7 +90,7 @@ const sourceOfFund = canSeeDocuments
   ? await sourceOfFundFormsFor([...new Set(entries.map(e => e.transactionId))])
   : new Map<string, string>();
 
-const dateFormat = new Intl.DateTimeFormat('en-GB', {
+const dateFormat = localFormat({
   day: 'numeric',
   month: 'short',
   year: 'numeric',

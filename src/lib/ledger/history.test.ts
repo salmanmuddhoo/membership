@@ -11,6 +11,7 @@ import {
   vi,
 } from 'vitest';
 import { migrate } from '../../../scripts/migrate';
+import { openEveryDrawer } from '../cash/drawers.testing';
 import type { Principal } from '../access/principal';
 
 // A person's transactions across every account (S-1506) and the reversal
@@ -173,6 +174,7 @@ beforeAll(async () => {
   };
   amina = await newMember('Amina');
   bilal = await newMember('Bilal');
+  await openEveryDrawer(ownerUrl);
 }, 60_000);
 
 afterAll(async () => {

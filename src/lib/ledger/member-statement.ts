@@ -18,6 +18,7 @@ import type { JobContext } from '../jobs/runner';
 import { notify } from '../notifications/notify';
 import { STATEMENT_ISSUED } from '../notifications/event-codes';
 import { formatMoney } from '../payments/money';
+import { localFormat } from '../time';
 import { accountStatement, type Statement } from './ledger';
 import { contactForHolder } from './receipt-notifications';
 import type { StatementPeriod } from './statement';
@@ -90,11 +91,10 @@ const longDate = new Intl.DateTimeFormat('en-GB', {
   dateStyle: 'long',
   timeZone: 'UTC',
 });
-const shortDate = new Intl.DateTimeFormat('en-GB', {
+const shortDate = localFormat({
   day: 'numeric',
   month: 'short',
   year: 'numeric',
-  timeZone: 'Indian/Mauritius',
 });
 
 export function periodWords(period: StatementPeriod): string {

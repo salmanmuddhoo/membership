@@ -15,6 +15,7 @@
 import { recordAudit } from '../access/audit';
 import { guardianGoneMessage } from '../members/guardian';
 import type { Principal } from '../access/principal';
+import { refuseCashWithoutDrawer } from '../cash/sessions';
 import { query, withTransaction } from '../db/pool';
 import { offeredPaymentMethods, resignationChecks } from '../config/reference';
 import {
@@ -675,6 +676,13 @@ export async function submitResignation(
       method,
       request.bankAccountId,
       message => new ResignationError(message)
+    );
+  }
+  if (!route.definition) {
+    await refuseCashWithoutDrawer(
+      method,
+      principal.userId,
+      message => new ResignationError(message, 'conflict')
     );
   }
   const receipt = route.definition

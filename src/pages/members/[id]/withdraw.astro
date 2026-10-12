@@ -124,10 +124,9 @@ if (Astro.request.method === 'POST') {
         // A conflict here is this form posted a second time — Back, then
         // a change and Post again — under the key it was first posted
         // with (QA-01). The key is not something the officer knows about.
-        error =
-          err.reason === 'conflict'
-            ? 'This withdrawal was already recorded. Open a new withdrawal form to record another.'
-            : err.message;
+        error = err.repeat
+          ? 'This withdrawal was already recorded. Open a new withdrawal form to record another.'
+          : err.message;
       } else {
         console.error('[members/withdraw]', err);
         error = 'Something went wrong. Please try again.';

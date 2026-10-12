@@ -46,6 +46,7 @@ import {
   ROW,
   TD,
 } from '@lib/ui';
+import { localFormat } from '@lib/time';
 
 const principal = Astro.locals.principal!;
 const canManage =
@@ -205,7 +206,7 @@ function total(components: { amount: string; requirement: string }[]): string {
   return sum.toLocaleString('en-MU', { minimumFractionDigits: 2 });
 }
 
-const dateFormat = new Intl.DateTimeFormat('en-GB', {
+const dateFormat = localFormat({
   dateStyle: 'medium',
   timeStyle: 'short',
 });

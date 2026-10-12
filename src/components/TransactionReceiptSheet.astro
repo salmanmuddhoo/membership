@@ -6,6 +6,7 @@
 // Rendered inside /receipts/[id], whose styles it shares.
 import type { PrintHistory, TransactionReceipt } from '@lib/ledger/receipts';
 import { formatMoney, fromCents, toCents } from '@lib/payments/money';
+import { localFormat } from '@lib/time';
 
 export interface ReceiptSendRecord {
   channel: string;
@@ -49,7 +50,7 @@ const STATUS_WORDS: Record<string, string> = {
 };
 const t = receipt.transaction;
 const isReprint = prints.count > 0;
-const dateFormat = new Intl.DateTimeFormat('en-GB', {
+const dateFormat = localFormat({
   dateStyle: 'long',
   timeStyle: 'short',
 });

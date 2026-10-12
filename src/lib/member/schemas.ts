@@ -94,7 +94,7 @@ export const okSchema = {
 // --- auth ---------------------------------------------------------------
 export const challengeSchema = {
   type: 'object',
-  required: ['challengeId', 'purpose', 'sentTo', 'expiresInSeconds'],
+  required: ['challengeId', 'purpose', 'sentTo', 'sentBy', 'expiresInSeconds'],
   properties: {
     challengeId: { type: 'string', format: 'uuid' },
     purpose: { type: 'string', enum: ['link_member', 'sign_up'] },
@@ -102,7 +102,13 @@ export const challengeSchema = {
       type: 'string',
       nullable: true,
       description:
-        'Masked, e.g. +2305xxx234, for a sign-up. Always null for a link: the code went to the mobile on record, and saying which would confirm the pair named someone.',
+        'Masked: +230 5*** *428, or s***o@gmail.com. For a link, the mobile or email on the record, which the person did not type.',
+    },
+    sentBy: {
+      type: 'string',
+      enum: ['sms', 'whatsapp', 'email'],
+      description:
+        'Where the person should look for the code: an email, or a WhatsApp message or an SMS, as this site sends codes to phones.',
     },
     expiresInSeconds: { type: 'integer' },
   },
@@ -120,12 +126,28 @@ export const sessionSchema = {
     expiresInSeconds: { type: 'integer' },
     identity: {
       type: 'object',
-      required: ['kind', 'memberNo', 'displayName', 'mobile', 'linkedAt'],
+      required: [
+        'kind',
+        'memberNo',
+        'displayName',
+        'mobile',
+        'email',
+        'linkedAt',
+      ],
       properties: {
         kind: { type: 'string', enum: ['member', 'customer', 'applicant'] },
         memberNo: { type: 'string', nullable: true },
         displayName: { type: 'string' },
-        mobile: { type: 'string', description: 'E.164' },
+        mobile: {
+          type: 'string',
+          nullable: true,
+          description: 'E.164. Null for a session proven by email.',
+        },
+        email: {
+          type: 'string',
+          nullable: true,
+          description: 'Null for a session proven by phone.',
+        },
         linkedAt: { type: 'string', format: 'date-time' },
       },
     },

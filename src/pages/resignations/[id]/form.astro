@@ -14,6 +14,7 @@ import {
 import { loadTransaction } from '@lib/ledger/review';
 import { loadMember } from '@lib/members/create';
 import { formatMoney, fromCents } from '@lib/payments/money';
+import { localFormat } from '@lib/time';
 
 const principal = Astro.locals.principal!;
 const { id } = Astro.params;
@@ -37,7 +38,7 @@ const documentType = (await listDocumentTypes()).find(
 const alreadyFiled = (await resignationChecklist(request.id))[0]?.filed ?? null;
 const back = `/resignations/${request.id}?step=signature`;
 const next = `/resignations/${request.id}?step=documents`;
-const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
+const dateFormat = localFormat({ dateStyle: 'long' });
 ---
 
 <BaseLayout title={`${request.reference} · Resignation request`}>

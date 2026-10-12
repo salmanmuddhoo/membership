@@ -11,6 +11,7 @@ import {
   vi,
 } from 'vitest';
 import { migrate } from '../../../scripts/migrate';
+import { openEveryDrawer } from '../cash/drawers.testing';
 import type { Principal } from '../access/principal';
 
 // Resigning from the Society (S-1703), against real migrations: the
@@ -158,6 +159,7 @@ beforeAll(async () => {
      returning id, email`
   );
   const byEmail = new Map(users.rows.map(r => [r.email, r.id]));
+  await openEveryDrawer(appUrl);
   clerk = principalFor(
     byEmail.get('clerk@albarakah.mu'),
     'clerk@albarakah.mu',

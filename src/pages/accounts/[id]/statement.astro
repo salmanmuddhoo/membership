@@ -20,6 +20,7 @@ import {
   TD,
   TD_NUM,
 } from '@lib/ui';
+import { localFormat } from '@lib/time';
 
 const { id } = Astro.params;
 const params = Astro.url.searchParams;
@@ -39,12 +40,12 @@ const holder = [
 ]
   .filter(Boolean)
   .join(' · ');
-const dateFormat = new Intl.DateTimeFormat('en-GB', {
+const dateFormat = localFormat({
   day: 'numeric',
   month: 'short',
   year: 'numeric',
 });
-const longDate = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
+const longDate = localFormat({ dateStyle: 'long' });
 const day = (value: string) => longDate.format(new Date(`${value}T00:00:00`));
 const excelHref = `/api/v1/accounts/${id}/statement?from=${shown.from}&to=${shown.to}&format=xlsx`;
 ---

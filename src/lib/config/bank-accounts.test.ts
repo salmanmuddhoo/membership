@@ -12,6 +12,7 @@ import {
 } from 'vitest';
 import { migrate } from '../../../scripts/migrate';
 import type { Principal } from '../access/principal';
+import { openEveryDrawer } from '../cash/drawers.testing';
 
 // The Society's bank accounts (S-1901): configuration with its own two
 // permissions, the number masked for one and whole for the other, and a
@@ -150,6 +151,7 @@ beforeAll(async () => {
       'receipt.void',
     ]
   );
+  await openEveryDrawer(appUrl);
   await configure(
     `update account_type set maximum_transaction_amount = null where code = 'msa'`
   );

@@ -11,6 +11,7 @@ import {
   vi,
 } from 'vitest';
 import { migrate } from '../../../scripts/migrate';
+import { openEveryDrawer } from '../cash/drawers.testing';
 import type { Principal } from '../access/principal';
 
 // Closing an account (S-1702) and what a member's status permits (S-1701),
@@ -268,6 +269,7 @@ beforeAll(async () => {
   bankAccountId = (
     await run(appUrl, `select id from bank_account where code = 'mcb'`)
   ).rows[0].id;
+  await openEveryDrawer(ownerUrl);
 }, 60_000);
 
 afterAll(async () => {

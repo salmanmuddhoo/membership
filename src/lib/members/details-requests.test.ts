@@ -446,6 +446,7 @@ describe('a member’s own details update, verified by staff', () => {
     const principal = {
       sessionId: '00000000-0000-0000-0000-000000000000',
       mobile: '+23050000000',
+      email: null,
       memberId: legacy.rows[0].id as string,
       customerId: null,
       kind: 'member' as const,

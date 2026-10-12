@@ -12,6 +12,7 @@ import { canTransact } from '../members/status';
 import { createHash } from 'node:crypto';
 import { recordAudit } from '../access/audit';
 import type { Principal } from '../access/principal';
+import { refuseCashWithoutDrawer } from '../cash/sessions';
 import { query, withTransaction } from '../db/pool';
 import {
   applyCashPaymentRules,
@@ -40,7 +41,10 @@ export class DepositError extends Error {
   constructor(
     message: string,
     readonly reason:
-      'not_found' | 'invalid' | 'forbidden' | 'conflict' = 'invalid'
+      'not_found' | 'invalid' | 'forbidden' | 'conflict' = 'invalid',
+    // This form posted again under the key it was first posted with — the
+    // one conflict a form answers with "already recorded" (QA-01).
+    readonly repeat = false
   ) {
     super(message);
     this.name = 'DepositError';
@@ -379,7 +383,8 @@ export async function recordDeposit(
       if (existing.fingerprint !== print) {
         throw new DepositError(
           'A different deposit was already submitted with this key.',
-          'conflict'
+          'conflict',
+          true
         );
       }
       return (await loadDeposit(existing.id))!;
@@ -422,6 +427,13 @@ export async function recordDeposit(
     bankAccountId,
     message => new DepositError(message)
   );
+  // Cash in hand at the counter: through the captor's open drawer, chain
+  // or no chain.
+  await refuseCashWithoutDrawer(
+    method,
+    principal.userId,
+    message => new DepositError(message, 'conflict')
+  );
   const receipt = route.definition
     ? null
     : await allocateReceiptNumber(principal.userId);
@@ -463,7 +475,11 @@ export async function recordDeposit(
           (err as { constraint?: string }).constraint ===
             'transaction_idempotency_idx'
         ) {
-          throw new DepositError('This deposit is being recorded.', 'conflict');
+          throw new DepositError(
+            'This deposit is being recorded.',
+            'conflict',
+            true
+          );
         }
         throw err;
       }
@@ -597,6 +613,13 @@ export async function resubmitDeposit(
     bankAccountId,
     message => new DepositError(message)
   );
+  if (!route.definition) {
+    await refuseCashWithoutDrawer(
+      method,
+      principal.userId,
+      message => new DepositError(message, 'conflict')
+    );
+  }
   const receipt = route.definition
     ? null
     : await allocateReceiptNumber(principal.userId);

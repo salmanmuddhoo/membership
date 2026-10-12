@@ -11,6 +11,7 @@ import {
   vi,
 } from 'vitest';
 import { migrate } from '../../../scripts/migrate';
+import { openEveryDrawer } from '../cash/drawers.testing';
 import type { Principal } from '../access/principal';
 
 // A receipt sent to its member when it is issued (S-1602), and the account
@@ -183,6 +184,7 @@ beforeAll(async () => {
     mobile: '+230 5789 1234',
   });
   unreachable = await member({ name: 'Bilal', surname: 'Test' });
+  await openEveryDrawer(ownerUrl);
 }, 60_000);
 
 afterAll(async () => {
@@ -275,6 +277,7 @@ describe('a receipt sent to its member (S-1602)', () => {
       `insert into app_user (email, display_name)
        values ('treasurer@albarakah.mu', 'Treasurer') returning id`
     );
+    await openEveryDrawer(ownerUrl);
     await receipts.voidTransactionReceipt(withdrawal.id, 'Printed twice', {
       ...treasurer,
       userId: other.rows[0].id,

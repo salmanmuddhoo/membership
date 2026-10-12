@@ -42,6 +42,7 @@ import {
   PROGRESS,
   PROGRESS_BAR,
 } from '@lib/ui';
+import { localDay, localFormat } from '@lib/time';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -68,7 +69,7 @@ if (canMigrate && Astro.url.searchParams.has('export')) {
     { userId: principal.userId, email: principal.email },
     principal.permissions
   );
-  const day = new Date().toISOString().slice(0, 10);
+  const day = localDay();
   return new Response(buffer, {
     headers: {
       'content-type':
@@ -200,10 +201,9 @@ const viewed =
     : null;
 const reconciled = Astro.url.searchParams.get('reconciled') === '1';
 
-const dateTimeFormat = new Intl.DateTimeFormat('en-GB', {
+const dateTimeFormat = localFormat({
   dateStyle: 'medium',
   timeStyle: 'short',
-  timeZone: 'Indian/Mauritius',
 });
 
 const progressPct =

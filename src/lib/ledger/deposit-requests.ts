@@ -24,6 +24,7 @@ import {
   listDocumentTypes,
   type PaymentMethod as PaymentMethodConfig,
 } from '../config/reference';
+import { refuseCashWithoutDrawer } from '../cash/sessions';
 import { query, withTransaction } from '../db/pool';
 import {
   documentsForTransaction,
@@ -339,6 +340,13 @@ export async function submitDepositRequest(
       'You may record a deposit but not post it. Ask an Account Officer to ' +
         'submit it.',
       'forbidden'
+    );
+  }
+  if (!route.definition) {
+    await refuseCashWithoutDrawer(
+      paymentMethod,
+      principal.userId,
+      message => new DepositError(message, 'conflict')
     );
   }
   const receipt = route.definition

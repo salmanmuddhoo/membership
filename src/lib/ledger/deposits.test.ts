@@ -11,6 +11,7 @@ import {
   vi,
 } from 'vitest';
 import { migrate } from '../../../scripts/migrate';
+import { openEveryDrawer } from '../cash/drawers.testing';
 import type { Principal } from '../access/principal';
 
 // Recording a deposit (S-1305, S-1306, S-1308): the rules that refuse one,
@@ -179,6 +180,7 @@ beforeAll(async () => {
   bankAccountId = (
     await run(appUrl, `select id from bank_account where code = 'mcb'`)
   ).rows[0].id;
+  await openEveryDrawer(ownerUrl);
 }, 60_000);
 
 afterAll(async () => {
@@ -258,7 +260,7 @@ describe('recording a deposit', () => {
         },
         officer
       )
-    ).rejects.toMatchObject({ reason: 'conflict' });
+    ).rejects.toMatchObject({ reason: 'conflict', repeat: true });
     expect(await count('select count(*)::int as n from transaction')).toBe(
       before + 1
     );
@@ -269,6 +271,7 @@ describe('recording a deposit', () => {
       `insert into app_user (email, display_name)
        values ('second@albarakah.mu', 'Second') returning id`
     );
+    await openEveryDrawer(ownerUrl);
     const second = principalFor(other.rows[0].id, 'second@albarakah.mu', [
       'transaction.capture',
       'transaction.post',

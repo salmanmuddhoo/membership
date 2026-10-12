@@ -11,6 +11,7 @@ import {
   vi,
 } from 'vitest';
 import { migrate } from '../../../scripts/migrate';
+import { openEveryDrawer } from '../cash/drawers.testing';
 import type { Principal } from '../access/principal';
 
 // A transfer is two legs under one id (S-1504): the checks on each side,
@@ -119,6 +120,7 @@ beforeAll(async () => {
      returning id, email`
   );
   const byEmail = new Map(users.rows.map(r => [r.email, r.id]));
+  await openEveryDrawer(appUrl);
   const make = (email: string, roles: string[], permissions: string[]) =>
     principalFor(byEmail.get(email), email, roles, permissions);
   clerk = make(

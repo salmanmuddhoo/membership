@@ -92,6 +92,7 @@ import {
   VIEW_BUTTON,
   DELETE_BUTTON,
 } from '@lib/ui';
+import { localFormat } from '@lib/time';
 
 const principal = Astro.locals.principal!;
 const canCapture = principal.permissions.has('application.capture');
@@ -918,7 +919,7 @@ const SUBJECT_LABELS: Record<string, string> = {
   employment: 'Employment Details',
 };
 
-const dateFormat = new Intl.DateTimeFormat('en-GB', {
+const dateFormat = localFormat({
   dateStyle: 'medium',
   timeStyle: 'short',
 });
@@ -2256,7 +2257,7 @@ const dateFormat = new Intl.DateTimeFormat('en-GB', {
         });
         if (!response.ok) throw new Error(String(response.status));
         if (!leaving) {
-          status.textContent = `Saved at ${new Date().toLocaleTimeString('en-GB')}`;
+          status.textContent = `Saved at ${new Date().toLocaleTimeString('en-GB', { timeZone: 'Indian/Mauritius' })}`;
         }
         return true;
       } catch {

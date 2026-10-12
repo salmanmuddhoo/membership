@@ -2,6 +2,7 @@
 // QA-16, QA-31). Nothing here changes what is stored — only how a raw code
 // or a mis-cased configured label reads on screen.
 import { STATUS_LABELS, type MemberStatus } from './status';
+import { localFormat } from '../time';
 
 function capitalise(word: string): string {
   return word.length === 0
@@ -41,17 +42,24 @@ export function guardianFieldLabel(fieldKey: string, label: string): string {
 // A date-only value — a date-of-birth field, a membership's own "joined" —
 // shown the way the rest of the app writes a date: day, short month, year,
 // never a time a date column never actually carried.
-const dateOnlyFormat = new Intl.DateTimeFormat('en-GB', {
+// A moment (a membership's "joined") reads as its Mauritius day.
+const dateOnlyFormat = localFormat({
   dateStyle: 'medium',
+});
+// A calendar day typed as yyyy-mm-dd is that day wherever it is read: built
+// as UTC midnight and printed in UTC, so no clock can move it.
+const calendarDayFormat = new Intl.DateTimeFormat('en-GB', {
+  dateStyle: 'medium',
+  timeZone: 'UTC',
 });
 export function formatDateOnly(value: Date | string): string {
   if (typeof value === 'string') {
     // A yyyy-mm-dd value (an application_party field's own dataType:
-    // 'date') — built from its own parts rather than `new Date(value)`,
-    // which reads a date-only string as UTC midnight and can print a day
-    // early once the server's own timezone is behind UTC.
+    // 'date') — built from its own parts rather than `new Date(value)`.
     const [y, m, d] = value.split('-').map(Number);
-    if (y && m && d) return dateOnlyFormat.format(new Date(y, m - 1, d));
+    if (y && m && d) {
+      return calendarDayFormat.format(new Date(Date.UTC(y, m - 1, d)));
+    }
     return dateOnlyFormat.format(new Date(value));
   }
   return dateOnlyFormat.format(value);

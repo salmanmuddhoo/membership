@@ -51,7 +51,7 @@ import {
 import { systemUser } from './applications';
 import { accountInReach, wardsOf, type Ward } from './dependents';
 import type { MemberPrincipal } from './identity';
-import { maskMobile } from './otp';
+import { principalLabel } from './otp';
 
 export const MEMBER_ROLE = 'member';
 const SYSTEM_SUBJECT = 'system:member-app';
@@ -74,7 +74,7 @@ export async function actingPrincipal(
   return {
     userId: await systemUser(),
     entraSubject: SYSTEM_SUBJECT,
-    email: `member-app:${maskMobile(member.mobile)}`,
+    email: principalLabel(member),
     displayName: 'Member app',
     roles: [MEMBER_ROLE],
     roleNames: ['Member'],

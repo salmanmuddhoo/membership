@@ -98,6 +98,7 @@ import {
   VIEW_BUTTON,
   DELETE_BUTTON,
 } from '@lib/ui';
+import { localFormat } from '@lib/time';
 
 const principal = Astro.locals.principal!;
 const canSeeDocuments = principal.permissions.has('document.view');
@@ -683,7 +684,7 @@ const STATUS_LABELS: Record<string, string> = {
   abeyance: 'Abeyance',
 };
 
-const dateFormat = new Intl.DateTimeFormat('en-GB', {
+const dateFormat = localFormat({
   dateStyle: 'medium',
   timeStyle: 'short',
 });

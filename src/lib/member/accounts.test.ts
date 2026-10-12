@@ -11,8 +11,10 @@ import {
   vi,
 } from 'vitest';
 import { migrate } from '../../../scripts/migrate';
+import { openEveryDrawer } from '../cash/drawers.testing';
 import type { Principal } from '../access/principal';
 import type { MemberPrincipal } from './identity';
+import { localDay } from '../time';
 
 // A member's own balance, history and statement (S-2101): the member app
 // reads them through the same payloads the staff endpoints return, and the
@@ -127,6 +129,7 @@ beforeAll(async () => {
     `insert into app_user (entra_subject, email, display_name)
      values ('test-officer', 'officer@albarakah.mu', 'Officer') returning id`
   );
+  await openEveryDrawer(appUrl);
   officer = {
     userId: user.rows[0].id,
     entraSubject: 'test-officer',
@@ -253,7 +256,7 @@ describe("a member's own accounts (S-2101)", () => {
 
   it('gives the statement for a period, and refuses a period that is not one', async () => {
     const { ledger, payloads } = await load();
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localDay();
     const period = payloads.statementPeriodOrFail(
       new URLSearchParams(`from=${today}&to=${today}`)
     );
@@ -294,7 +297,7 @@ describe("a member's own accounts (S-2101)", () => {
     // period, and nothing cacheable.
     const download = await payloads.statementDownload(
       (await ledger.accountStatement(fatimahMsa, period.from, period.to))!,
-      fatimah.mobile
+      fatimah.mobile!
     );
     expect(download.headers.get('content-disposition')).toBe(
       `attachment; filename="statement-AB0001-${today}-${today}.xlsx"`

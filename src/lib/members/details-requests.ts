@@ -70,8 +70,9 @@ export interface FieldChange {
 
 export interface DetailsRequestDetail extends DetailsRequestSummary {
   changes: FieldChange[];
-  // The mobile the member verified to send this. Not a change — it cannot
-  // be moved from the app — but the reviewer wants to see whose phone it was.
+  // The mobile or email the member verified to send this (migration 0124).
+  // Not a change — it cannot be moved from the app — but the reviewer wants
+  // to see whose phone or mailbox it was.
   mobile: string;
 }
 
@@ -100,7 +101,7 @@ const SELECT = `
          m.membership_type_id, t.name as membership_type_name,
          r.status, r.submitted_at, r.decided_at, u.display_name as decided_by_name,
          r.comment, r.parties, r.previous_parties,
-         m.application_id, s.mobile
+         m.application_id, coalesce(s.mobile, s.email::text) as mobile
     from member_details_request r
     join member m           on m.id = r.member_id
     join membership_type t  on t.id = m.membership_type_id

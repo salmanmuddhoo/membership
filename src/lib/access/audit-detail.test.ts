@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { migrate } from '../../../scripts/migrate';
+import { openEveryDrawer } from '../cash/drawers.testing';
 import type { Principal } from './principal';
 
 const ADMIN_URL = 'postgresql://postgres@127.0.0.1:5433/postgres';
@@ -102,6 +103,7 @@ beforeAll(async () => {
       'transaction.view',
     ]
   );
+  await openEveryDrawer(appUrl);
 
   const membershipTypeId = (
     await run(
@@ -289,6 +291,94 @@ describe('describeAuditDetail: configuration changes', () => {
     expect(labels).not.toContain('Sort Order');
     const nameFact = described.facts.find(f => f.label === 'Name');
     expect(nameFact?.value).toBe('Test method → Renamed test method');
+  });
+});
+
+describe('describeAuditDetail: roles and cash drawers', () => {
+  it('names only the permissions a role gained or lost, by what they allow', async () => {
+    const { audit, detail } = await load();
+    const role = (
+      await run(
+        appUrl,
+        `select id::text as id, name from role where code = 'treasurer'`
+      )
+    ).rows[0];
+    const codes = (
+      await run(
+        appUrl,
+        `select code from permission
+          where code in ('cash.view', 'cash.session', 'account.view', 'api.explore')`
+      )
+    ).rows.map(r => r.code as string);
+    expect(codes).toHaveLength(4);
+
+    await audit.recordAudit({
+      actorUserId: officer.userId,
+      actorDescription: officer.email,
+      action: 'role.permissions_changed',
+      entityType: 'role',
+      entityId: role.id,
+      previousValue: {
+        permissions: ['account.view', 'cash.session', 'cash.view'],
+      },
+      newValue: {
+        permissions: ['account.view', 'api.explore', 'cash.session'],
+      },
+    });
+    const { events } = await audit.listAuditEvents({
+      action: 'role.permissions_changed',
+      entityId: role.id,
+    });
+    const described = (await detail.describeAuditDetail(events)).get(
+      events[0].id
+    )!;
+    expect(described.sentence).toBe(role.name);
+    expect(described.facts).toEqual([
+      {
+        label: 'Added',
+        value: 'Read the API reference and make requests with it',
+      },
+      {
+        label: 'Removed',
+        value: 'See every cash drawer session and its count',
+      },
+    ]);
+    expect(events[0].actorName).toBe('Officer');
+  });
+
+  it('says whose drawer opened and closed, with the float and the count', async () => {
+    const { audit, detail } = await load();
+    for (const [action, newValue] of [
+      ['cash.session.opened', { opening_float: '5000.00' }],
+      [
+        'cash.session.closed',
+        { closing_count: '4950.00', expected: '5000.00', over_short: '-50.00' },
+      ],
+    ] as const) {
+      await audit.recordAudit({
+        actorUserId: officer.userId,
+        actorDescription: officer.email,
+        action,
+        entityType: 'cash_session',
+        entityId: '00000000-0000-0000-0000-00000000c0de',
+        newValue,
+      });
+    }
+    const { events } = await audit.listAuditEvents({
+      entityType: 'cash_session',
+      entityId: '00000000-0000-0000-0000-00000000c0de',
+    });
+    const details = await detail.describeAuditDetail(events);
+    const byAction = new Map(events.map(e => [e.action, details.get(e.id)!]));
+    expect(byAction.get('cash.session.opened')).toEqual({
+      sentence: 'Cash drawer opened by Officer',
+      facts: [{ label: 'Float', value: 'MUR 5,000.00' }],
+    });
+    expect(byAction.get('cash.session.closed')?.facts).toEqual([
+      { label: 'Counted', value: 'MUR 4,950.00' },
+      { label: 'Expected', value: 'MUR 5,000.00' },
+      { label: 'Over/short', value: '-MUR 50.00' },
+    ]);
   });
 });
 
