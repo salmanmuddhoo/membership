@@ -5810,3 +5810,25 @@ every channel, every time, and no address.
 - WhatsApp: the template approved in the Meta console must be updated to
   have a document header and no link variable before this reaches
   production, or Meta refuses receipt messages.
+
+---
+
+### A membership fee receipt goes to the applicant
+
+Officer request: when an applicant pays at registration, the receipt the
+officer prints now also goes to them as a PDF, by email and WhatsApp — the
+same way a transaction's receipt goes since 0124, never as a link.
+
+- New event `fee_receipt.issued` with an email and a WhatsApp wording
+  (migration 0125), attached as a PDF; editable at Configuration →
+  Notification wording, listed under Receipt on the Readiness page.
+- Sent from `recordPayment` and `recordAccountOpeningPayment` once the
+  payment commits; never throws, so a receipt that could not be sent is
+  still a receipt. Not sent for a refund, a void, or a migrated opening
+  balance.
+- The PDF (`renderFeeReceiptPdf`) is the printed sheet: received from (the
+  guardian or contact person where they paid), account of, method, received
+  by, the lines and the total. It is served on the same signed address as a
+  transaction's receipt PDF, under a token signed for a fee receipt only.
+- The fee receipt page shows where it went and has **Send** / **Send again**.
+- WhatsApp needs a template registered with Meta with a document header.

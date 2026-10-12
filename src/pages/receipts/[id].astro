@@ -21,7 +21,6 @@ import {
   type RefundableComponent,
 } from '@lib/payments/payments';
 import { formatMoney } from '@lib/payments/money';
-import { depositorForApplication } from '@lib/applications/depositor';
 import { offeredPaymentMethods } from '@lib/config/reference';
 import type { FeeComponentCode } from '@lib/config/reference';
 import TransactionReceiptSheet from '@components/TransactionReceiptSheet.astro';
@@ -35,6 +34,10 @@ import {
   type TransactionReceipt,
 } from '@lib/ledger/receipts';
 import { notifyReceiptIssued } from '@lib/ledger/receipt-notifications';
+import {
+  feeReceiptParties,
+  notifyFeeReceiptIssued,
+} from '@lib/payments/fee-receipts';
 import { notificationsFor } from '@lib/notifications/notify';
 import { localFormat } from '@lib/time';
 
@@ -158,7 +161,20 @@ if (payment && Astro.request.method === 'POST') {
   }
 
   try {
-    if (intent === 'void') {
+    // Send it again: the same message that went when the fees were
+    // recorded, to whatever address the application has now.
+    if (intent === 'send') {
+      const send = await notifyFeeReceiptIssued(payment!);
+      if (send.notificationIds.length > 0) {
+        notice = `Receipt ${payment!.receiptNo} sent.`;
+      } else if (!send.contact?.email && !send.contact?.mobile) {
+        error = 'No email address or mobile number on file for this applicant.';
+      } else if (!send.attachable) {
+        error = 'Nothing was sent: the receipt PDF could not be attached.';
+      } else {
+        error = 'Nothing was sent: no wording is active for receipts.';
+      }
+    } else if (intent === 'void') {
       const voided = await voidPayment(
         payment!.id,
         String(form.get('reason') ?? ''),
@@ -218,6 +234,35 @@ const [prints, refundable, related] = payment
       [] as Payment[],
     ];
 const isReprint = prints.count > 0;
+// Where this receipt was sent, and whether it can be sent again: a live
+// payment over the counter, not a refund, a void or a migrated balance.
+const feeSends = payment
+  ? (await notificationsFor('payment', payment.id))
+      .filter(n => n.eventCode === 'fee_receipt.issued')
+      .map(n => ({
+        channel: n.channel,
+        recipient: n.recipient,
+        status: n.status,
+        at: n.createdAt,
+      }))
+  : [];
+const canSendFee =
+  !!payment &&
+  principal.permissions.has('payment.view') &&
+  payment.kind === 'payment' &&
+  !payment.voidedAt &&
+  payment.method !== 'migration' &&
+  !!payment.applicationId;
+const SEND_CHANNEL_WORDS: Record<string, string> = {
+  email: 'Email',
+  whatsapp: 'WhatsApp',
+};
+const SEND_STATUS_WORDS: Record<string, string> = {
+  pending: 'sending',
+  sent: 'sent',
+  failed: 'failed',
+  abandoned: 'not delivered',
+};
 const anythingRefundable = refundable.some(c => Number(c.refundable) > 0);
 const refunds = related.filter(p => p.refundsId === payment?.id && !p.voidedAt);
 
@@ -231,18 +276,9 @@ const refunds = related.filter(p => p.refundsId === payment?.id && !p.voidedAt);
 // counter (depositorFor). "Received from" names them, and the account they
 // paid into gets a line of its own so nothing is lost — the same two names
 // the Cash Deposit Form filed alongside this receipt carries.
-const depositor = payment
-  ? await depositorForApplication(payment.applicationId)
-  : { name: null };
-const reference = payment?.applicationReference ?? payment?.memberNo ?? null;
-const paidBy =
-  !!payment && !!depositor.name && depositor.name !== payment.applicantName;
-const owner = paidBy
-  ? depositor.name
-  : [payment?.applicantName, reference].filter(Boolean).join(' · ') || '—';
-const accountOf = paidBy
-  ? [payment?.applicantName, reference].filter(Boolean).join(' · ') || '—'
-  : null;
+const parties = payment ? await feeReceiptParties(payment) : null;
+const owner = parties?.owner ?? '—';
+const accountOf = parties?.accountOf ?? null;
 const ownerHref = payment?.applicationId
   ? `/applications/${payment.applicationId}`
   : payment?.memberId
@@ -382,6 +418,32 @@ const paymentMethods = await offeredPaymentMethods('withdrawal');
           {ownerHref && <a href={ownerHref}>Back</a>}
         </div>
       </div>
+
+      {(canSendFee || feeSends.length > 0) && (
+        <section class="screen-only panel">
+          <h2>Send to the applicant</h2>
+          {feeSends.length > 0 ? (
+            <ul>
+              {feeSends.map(s => (
+                <li>
+                  {SEND_CHANNEL_WORDS[s.channel] ?? s.channel} to {s.recipient}{' '}
+                  · {SEND_STATUS_WORDS[s.status] ?? s.status} ·{' '}
+                  {dateFormat.format(s.at)}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p class="hint">Not sent yet.</p>
+          )}
+          {canSendFee && (
+            <form method="post">
+              <button type="submit" name="intent" value="send">
+                {feeSends.length > 0 ? 'Send again' : 'Send'}
+              </button>
+            </form>
+          )}
+        </section>
+      )}
 
       {refunds.length > 0 && (
         <section class="screen-only panel">
