@@ -56,6 +56,7 @@ import {
   TD,
   TD_NUM,
 } from '@lib/ui';
+import { localFormat } from '@lib/time';
 
 // What the file picker offers, matching what the upload service accepts
 // (copied from the demise wizard's own Documents step — demises/[id].astro).
@@ -218,7 +219,7 @@ const returnComment =
   closure.status === 'returned'
     ? [...trail].reverse().find(t => t.toStatus === 'returned')?.comment
     : null;
-const dateFormat = new Intl.DateTimeFormat('en-GB', {
+const dateFormat = localFormat({
   day: 'numeric',
   month: 'short',
   year: 'numeric',

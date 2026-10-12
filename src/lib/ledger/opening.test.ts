@@ -13,6 +13,7 @@ import {
   vi,
 } from 'vitest';
 import { migrate } from '../../../scripts/migrate';
+import { openEveryDrawer } from '../cash/drawers.testing';
 import type { Principal } from '../access/principal';
 
 // Phase 1's money becomes Phase 2's opening balances (S-1303). The carry
@@ -264,6 +265,7 @@ beforeAll(async () => {
   await migrate(ownerUrl, MIGRATIONS_DIR);
   f = await fixture(appUrl);
   actor.userId = f.officerId;
+  await openEveryDrawer(ownerUrl);
 }, 60_000);
 
 afterAll(async () => {

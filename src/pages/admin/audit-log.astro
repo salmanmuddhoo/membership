@@ -16,6 +16,7 @@ import {
   describeAuditDetail,
   type AuditDetail,
 } from '@lib/access/audit-detail';
+import { endOfLocalDay, localFormat, startOfLocalDay } from '@lib/time';
 import { pagingFrom } from '@lib/paging';
 import {
   BUTTON,
@@ -47,8 +48,9 @@ const paging = pagingFrom(Astro.url);
 
 // A day picked in "To" means through the end of that day, not midnight at
 // its start — the one point a straight `<=` on the typed date would miss.
-const from = fromRaw ? new Date(`${fromRaw}T00:00:00`) : undefined;
-const to = toRaw ? new Date(`${toRaw}T23:59:59.999`) : undefined;
+// Both are Mauritius days, whatever the server's clock.
+const from = fromRaw ? startOfLocalDay(fromRaw) : undefined;
+const to = toRaw ? endOfLocalDay(toRaw) : undefined;
 
 let events: AuditEventRow[] = [];
 let actions: string[] = [];
@@ -90,7 +92,7 @@ if (view === 'activity') {
   total = sessionTotal;
 }
 
-const dateTimeFormat = new Intl.DateTimeFormat('en-GB', {
+const dateTimeFormat = localFormat({
   dateStyle: 'medium',
   timeStyle: 'medium',
 });
@@ -135,7 +137,14 @@ function durationLabel(row: SignInRow): string {
   return hours > 0 ? `${hours} h ${minutes} min` : `${minutes} min`;
 }
 
-function describeEntry(entry: AuditEventRow): string {
+// An action nothing below names, in words: "application.witnesses_set" reads
+// "Application witnesses set". Every line says who did it.
+function humaniseAction(action: string): string {
+  const words = action.replace(/[._]+/g, ' ').trim().toLowerCase();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+function describeEntry(entry: AuditEventRow, detail?: AuditDetail): string {
   const v = (entry.newValue as Record<string, unknown>) ?? {};
   const by = ` by ${entry.actorName}`;
   const ref = v.reference ? ` ${v.reference}` : '';
@@ -169,7 +178,7 @@ function describeEntry(entry: AuditEventRow): string {
     case 'membership.application.deleted':
       return `Application deleted${by}`;
     case 'membership.application.received':
-      return `Application received`;
+      return `Application received${by}`;
     case 'member.created':
       return `Member${memberNo} created${by}`;
     case 'member.contact.updated':
@@ -183,7 +192,7 @@ function describeEntry(entry: AuditEventRow): string {
     case 'segregation.rule.disabled':
       return `Segregation rule switched off${by}`;
     case 'member.majority_transition':
-      return `Member${memberNo} reached majority age`;
+      return `Member${memberNo} reached majority age${by}`;
     case 'member.migration.imported':
       return `Member${memberNo} imported via migration${by}`;
     case 'member.migration.updated':
@@ -193,17 +202,17 @@ function describeEntry(entry: AuditEventRow): string {
     case 'member.details.declined':
       return `Details change declined${by}`;
     case 'member.details.requested':
-      return `Details change requested`;
+      return `Details change requested${by}`;
     case 'member.link.refused':
       return `Member portal link refused for ${entry.actorName}`;
     case 'member.link.requested':
-      return `Member portal link requested`;
+      return `Member portal link requested${by}`;
     case 'member.signup.requested':
-      return `Member portal signup requested`;
+      return `Member portal signup requested${by}`;
     case 'member.otp.resent':
-      return `OTP resent`;
+      return `OTP resent${by}`;
     case 'member.otp.rejected':
-      return `OTP rejected`;
+      return `OTP rejected${by}`;
     case 'member.session.revoked':
       return `Member session revoked${by}`;
     case 'customer.created':
@@ -232,7 +241,7 @@ function describeEntry(entry: AuditEventRow): string {
     case 'document.removed':
       return `Document removed${by}`;
     case 'document.expired':
-      return `Document expired`;
+      return `Document expired${by}`;
     case 'membership.payment.recorded': {
       const receipt = v.receiptNo ? ` (receipt ${v.receiptNo})` : '';
       const amount = v.totalAmount ? ` — Rs ${v.totalAmount}` : '';
@@ -244,8 +253,14 @@ function describeEntry(entry: AuditEventRow): string {
       return `Payment voided${by}`;
     case 'role.created':
       return `Role created${by}`;
-    case 'role.permissions_changed':
-      return `Role permissions updated${by}`;
+    case 'role.permissions_changed': {
+      // Only what changed, never the role's whole list.
+      const role = detail?.sentence ?? 'role';
+      const change = (detail?.facts ?? [])
+        .map(f => `${f.label.toLowerCase()} ${f.value}`)
+        .join('; ');
+      return `Permissions of ${role} updated${by}${change ? `: ${change}` : ''}`;
+    }
     case 'role.updated':
       return `Role details updated${by}`;
     case 'role.deleted':
@@ -287,10 +302,30 @@ function describeEntry(entry: AuditEventRow): string {
       return `Signed out${by}`;
     case 'auth.timed_out':
       return `Signed out after inactivity${by}`;
+    case 'cash.session.opened':
+      return `Cash drawer opened${by}`;
+    case 'cash.session.closed':
+      return `Cash drawer closed${by}`;
+    case 'application.witnesses_set':
+      return `Application witnesses set${by}`;
+    case 'transaction.reversed':
+      return `Transaction reversed${by}`;
+    case 'transaction.voided':
+      return `Transaction receipt voided${by}`;
+    case 'transaction.cancelled':
+      return `Transaction cancelled${by}`;
+    case 'transaction.edited':
+      return `Transaction edited${by}`;
     default:
-      return entry.action.startsWith('config.')
-        ? `Configuration changed${by}`
-        : entry.action.replace(/\./g, ' · ');
+      if (entry.action.startsWith('config.')) {
+        // config.<table>.<insert|update|delete>: the table, in words.
+        const parts = entry.action.split('.');
+        const table = parts.length >= 3 ? parts.slice(1, -1).join(' ') : '';
+        return table
+          ? `${humaniseAction(table)} changed${by}`
+          : `Configuration changed${by}`;
+      }
+      return `${humaniseAction(entry.action)}${by}`;
   }
 }
 ---
@@ -339,7 +374,7 @@ function describeEntry(entry: AuditEventRow): string {
                 <option value="">All actions</option>
                 {actions.map(a => (
                   <option value={a} selected={a === action}>
-                    {a}
+                    {humaniseAction(a)}
                   </option>
                 ))}
               </select>
@@ -424,7 +459,7 @@ function describeEntry(entry: AuditEventRow): string {
                   >
                     <span class="min-w-0">
                       <span class="block text-sm font-medium text-neutral-800 dark:text-neutral-100">
-                        {describeEntry(entry)}
+                        {describeEntry(entry, detail)}
                       </span>
                       <span class="mt-1 block text-xs text-neutral-500 dark:text-neutral-400">
                         {dateTimeFormat.format(entry.occurredAt)}

@@ -28,6 +28,7 @@ import {
 
 export { claimableMembershipType } from './claimants';
 import { offeredPaymentMethods, takafulBenefit } from '../config/reference';
+import { refuseCashWithoutDrawer } from '../cash/sessions';
 import { query, withTransaction } from '../db/pool';
 import {
   offeredMethod,
@@ -578,6 +579,13 @@ export async function submitDemise(
       method,
       claim.bankAccountId,
       message => new DemiseError(message)
+    );
+  }
+  if (!route.definition) {
+    await refuseCashWithoutDrawer(
+      method,
+      principal.userId,
+      message => new DemiseError(message, 'conflict')
     );
   }
   const receipt = route.definition

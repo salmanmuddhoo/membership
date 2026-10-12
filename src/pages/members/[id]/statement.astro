@@ -38,6 +38,7 @@ import {
   TD,
   TD_NUM,
 } from '@lib/ui';
+import { localFormat } from '@lib/time';
 
 const principal = Astro.locals.principal!;
 // The route already needs member.view; the money itself needs account.view,
@@ -117,11 +118,10 @@ const contactHint = hasContact
   ? [contact!.email, contact!.mobile].filter(Boolean).join(' · ')
   : 'No email or mobile on file.';
 
-const dateFormat = new Intl.DateTimeFormat('en-GB', {
+const dateFormat = localFormat({
   day: 'numeric',
   month: 'short',
   year: 'numeric',
-  timeZone: 'Indian/Mauritius',
 });
 const money = (value: string | null) =>
   value === null ? '' : formatMoney(value);

@@ -25,6 +25,7 @@ import {
   type FieldSubject,
 } from '@lib/config/reference';
 import { filedDocumentFor, SIGNATURES } from '@lib/documents/documents';
+import { localFormat } from '@lib/time';
 
 const principal = Astro.locals.principal!;
 const { id } = Astro.params;
@@ -152,7 +153,7 @@ const SUBJECT_LABELS: Record<string, string> = {
   employment: 'Employment Details',
 };
 
-const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
+const dateFormat = localFormat({ dateStyle: 'long' });
 
 // Officer feedback: the ruled line under "Applicant" asked the signatory to
 // write in a name the system already captured on the page above. Only the

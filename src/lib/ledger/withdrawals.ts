@@ -21,6 +21,7 @@ import { createHash } from 'node:crypto';
 import { recordAudit } from '../access/audit';
 import { guardianGoneMessage } from '../members/guardian';
 import type { Principal } from '../access/principal';
+import { refuseCashWithoutDrawer } from '../cash/sessions';
 import { query, withTransaction } from '../db/pool';
 import {
   offeredMethod,
@@ -342,6 +343,13 @@ export async function recordWithdrawal(
       message => new WithdrawalError(message)
     );
   }
+  if (!route.definition) {
+    await refuseCashWithoutDrawer(
+      method,
+      principal.userId,
+      message => new WithdrawalError(message, 'conflict')
+    );
+  }
   const receipt = route.definition
     ? null
     : await allocateReceiptNumber(principal.userId);
@@ -523,6 +531,13 @@ export async function resubmitWithdrawal(
       method,
       bankAccountId,
       message => new WithdrawalError(message)
+    );
+  }
+  if (!route.definition) {
+    await refuseCashWithoutDrawer(
+      method,
+      principal.userId,
+      message => new WithdrawalError(message, 'conflict')
     );
   }
   const receipt = route.definition

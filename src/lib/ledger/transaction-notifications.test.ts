@@ -11,7 +11,9 @@ import {
   vi,
 } from 'vitest';
 import { migrate } from '../../../scripts/migrate';
+import { openEveryDrawer } from '../cash/drawers.testing';
 import type { Principal } from '../access/principal';
+import { localDay } from '../time';
 
 // What a member hears about their own transactions (S-1803), what the
 // staff hear about work waiting on them (S-1804), and who is told of a
@@ -164,6 +166,7 @@ beforeAll(async () => {
      returning id, email`
   );
   const byEmail = new Map(users.rows.map(r => [r.email, r.id]));
+  await openEveryDrawer(appUrl);
   // Roles on the record (S-1804 reads them), not only on the principal.
   await run(
     appUrl,
@@ -659,7 +662,7 @@ describe('a void is told to whoever else may void (S-1805)', () => {
 // withdrawal paid out through the chain, one refused, one voided, and an
 // Education account left within its margin of the floor.
 describe('the Section 13 reports (S-1806)', () => {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDay();
 
   it('lists every transaction in a period by kind, method and officer', async () => {
     const { reports } = await load();

@@ -26,6 +26,7 @@ import {
   ROW,
   TD,
 } from '@lib/ui';
+import { localFormat } from '@lib/time';
 
 const principal = Astro.locals.principal!;
 const canVerify = principal.permissions.has('member.details_verify');
@@ -66,7 +67,7 @@ const requests = await listDetailsRequests();
 const pending = requests.filter(r => r.status === 'pending');
 const decided = requests.filter(r => r.status !== 'pending').slice(0, 20);
 
-const dateTimeFormat = new Intl.DateTimeFormat('en-GB', {
+const dateTimeFormat = localFormat({
   dateStyle: 'medium',
   timeStyle: 'short',
 });

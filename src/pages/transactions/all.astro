@@ -10,6 +10,7 @@ import type { TransactionRowKind } from '@lib/config/reference';
 import { STATUS_LABELS } from '@lib/ledger/labels';
 import { pagingFrom, pageCount } from '@lib/paging';
 import { PAGE, FILTER, INPUT, HINT, BUTTON_SM, SECONDARY_SM } from '@lib/ui';
+import { localDay } from '@lib/time';
 
 const KINDS: [TransactionRowKind, string][] = [
   ['deposit', 'Deposit'],
@@ -36,7 +37,7 @@ const principal = Astro.locals.principal!;
 // recorded; roles holding transaction.view_all see the Society's whole day.
 const seesAll = principal.permissions.has('transaction.view_all');
 const params = Astro.url.searchParams;
-const today = new Date().toISOString().slice(0, 10);
+const today = localDay();
 const kind = params.get('kind') ?? '';
 const status = params.get('status') ?? '';
 const from = params.has('from') ? (params.get('from') ?? '') : today;

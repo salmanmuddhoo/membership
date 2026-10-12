@@ -12,6 +12,7 @@ import { query } from '../db/pool';
 import { appLink } from '../notifications/links';
 import { notify } from '../notifications/notify';
 import { staffWithRole } from '../notifications/staff';
+import { localFormat } from '../time';
 
 export const JOB_STALLED = 'job.stalled';
 export const JOB_FAILED = 'job.failed';
@@ -79,10 +80,9 @@ export async function findJobConcerns(
   }));
 }
 
-const when = new Intl.DateTimeFormat('en-GB', {
+const when = localFormat({
   dateStyle: 'medium',
   timeStyle: 'short',
-  timeZone: 'Indian/Mauritius',
 });
 
 /**

@@ -16,6 +16,7 @@ import {
   vi,
 } from 'vitest';
 import { migrate } from '../../../scripts/migrate';
+import { openEveryDrawer } from '../cash/drawers.testing';
 
 const ADMIN_URL = 'postgresql://postgres@127.0.0.1:5433/postgres';
 const MIGRATIONS_DIR = path.resolve(
@@ -109,6 +110,8 @@ afterAll(async () => {
 // afterwards means the whole chain was actually reached rather than one
 // table happening to already be empty.
 async function seedOneOfEverything() {
+  // The reset clears cash_session too, so each seed opens the drawer afresh.
+  await openEveryDrawer(appUrl);
   const application = await run(
     appUrl,
     `insert into membership_application

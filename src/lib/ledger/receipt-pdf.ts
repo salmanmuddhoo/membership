@@ -10,6 +10,7 @@
 import { jsPDF } from 'jspdf';
 import { formatMoney, fromCents, toCents } from '../payments/money';
 import type { TransactionReceipt } from './receipts';
+import { localFormat } from '../time';
 
 const TITLES: Record<string, string> = {
   deposit: 'Deposit receipt',
@@ -31,10 +32,9 @@ const LINES: Record<string, string> = {
   demise: 'Entitlements paid to the claimant',
 };
 
-const dateFormat = new Intl.DateTimeFormat('en-GB', {
+const dateFormat = localFormat({
   dateStyle: 'long',
   timeStyle: 'short',
-  timeZone: 'Indian/Mauritius',
 });
 
 // What the sheet says, row by row — the same reading of the transaction the

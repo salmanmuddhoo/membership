@@ -11,6 +11,7 @@ import {
   vi,
 } from 'vitest';
 import { migrate } from '../../../scripts/migrate';
+import { openEveryDrawer } from '../cash/drawers.testing';
 import type { Principal } from '../access/principal';
 
 // Dormancy (S-804, S-805, S-806): found by the nightly job from the
@@ -145,6 +146,7 @@ beforeAll(async () => {
      returning id, email`
   );
   const byEmail = new Map(user.rows.map(r => [r.email, r.id]));
+  await openEveryDrawer(appUrl);
   officer = {
     userId: byEmail.get('officer@albarakah.mu'),
     entraSubject: 'test-officer',

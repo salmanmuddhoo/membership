@@ -31,6 +31,7 @@ import {
   NOTICE_ERROR,
   NOTICE_OK,
 } from '@lib/ui';
+import { localFormat } from '@lib/time';
 
 const principal = Astro.locals.principal!;
 const canManage = principal.permissions.has(PERMISSION_BANK_ACCOUNT_MANAGE);
@@ -93,7 +94,7 @@ const accounts = canManage
       accountNumber: maskAccountNumber(a.accountNumber),
     }));
 
-const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium' });
+const dateFormat = localFormat({ dateStyle: 'medium' });
 
 const CHECK =
   'text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600';

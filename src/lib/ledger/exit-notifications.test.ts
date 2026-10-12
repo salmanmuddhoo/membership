@@ -11,7 +11,9 @@ import {
   vi,
 } from 'vitest';
 import { migrate } from '../../../scripts/migrate';
+import { openEveryDrawer } from '../cash/drawers.testing';
 import type { Principal } from '../access/principal';
+import { localDay } from '../time';
 
 // What a member or a claimant hears at every stage of an exit (S-1705),
 // and the exits report (S-1706), against real migrations. The channels
@@ -267,6 +269,8 @@ beforeAll(async () => {
     await run(appUrl, `select id from document_type where code = 'affidavit'`)
   ).rows[0].id;
 
+  await openEveryDrawer(ownerUrl);
+
   // Money on every account: Shares 8,000, MSA 12,000, HSA 1,000.
   const { deposits } = await load();
   for (const [accountId, amount] of [
@@ -442,7 +446,7 @@ describe('the exits report (S-1706)', () => {
     const { reports } = await load();
     const report = reports.reportByCode('exits')!;
     expect(report.permission).toBe('transaction.view');
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localDay();
     const result = await report.run({ from: today, to: today });
     expect(result.rows.length).toBeGreaterThanOrEqual(3);
     const closure = result.rows.find(r => r.Kind === 'Account closure')!;

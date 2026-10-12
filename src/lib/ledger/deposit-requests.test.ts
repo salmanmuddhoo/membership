@@ -11,6 +11,7 @@ import {
   vi,
 } from 'vitest';
 import { migrate } from '../../../scripts/migrate';
+import { openEveryDrawer } from '../cash/drawers.testing';
 import type { Principal } from '../access/principal';
 
 // A large cash deposit as a request (S-1306): started as a draft, the
@@ -189,6 +190,7 @@ beforeAll(async () => {
   thresholdCents = Math.round(
     Number(await config.cashSourceOfFundThreshold()) * 100
   );
+  await openEveryDrawer(ownerUrl);
 }, 60_000);
 
 afterAll(async () => {

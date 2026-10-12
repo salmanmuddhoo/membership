@@ -12,6 +12,7 @@ import { canTransact } from '../members/status';
 import { createHash } from 'node:crypto';
 import { recordAudit } from '../access/audit';
 import type { Principal } from '../access/principal';
+import { refuseCashWithoutDrawer } from '../cash/sessions';
 import { query, withTransaction } from '../db/pool';
 import {
   applyCashPaymentRules,
@@ -422,6 +423,13 @@ export async function recordDeposit(
     bankAccountId,
     message => new DepositError(message)
   );
+  // Cash in hand at the counter: through the captor's open drawer, chain
+  // or no chain.
+  await refuseCashWithoutDrawer(
+    method,
+    principal.userId,
+    message => new DepositError(message, 'conflict')
+  );
   const receipt = route.definition
     ? null
     : await allocateReceiptNumber(principal.userId);
@@ -597,6 +605,13 @@ export async function resubmitDeposit(
     bankAccountId,
     message => new DepositError(message)
   );
+  if (!route.definition) {
+    await refuseCashWithoutDrawer(
+      method,
+      principal.userId,
+      message => new DepositError(message, 'conflict')
+    );
+  }
   const receipt = route.definition
     ? null
     : await allocateReceiptNumber(principal.userId);

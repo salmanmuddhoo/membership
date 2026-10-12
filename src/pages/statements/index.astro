@@ -31,17 +31,18 @@ import {
   TD,
   TD_NUM,
 } from '@lib/ui';
+import { localDay, localFormat } from '@lib/time';
 
 const principal = Astro.locals.principal!;
 
 // The whole of the previous calendar month, so the box a Treasurer opens on
 // the first of the month already has last month's dates in it.
 function previousMonth(today = new Date()): StatementPeriod {
+  // The month as Mauritius has it; the arithmetic on calendar fields only.
+  const [year, month] = localDay(today).split('-').map(Number);
   const iso = (d: Date) => d.toISOString().slice(0, 10);
-  const from = new Date(
-    Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 1, 1)
-  );
-  const to = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 0));
+  const from = new Date(Date.UTC(year, month - 2, 1));
+  const to = new Date(Date.UTC(year, month - 1, 0));
   return { from: iso(from), to: iso(to) };
 }
 
@@ -89,10 +90,9 @@ const [holderCount, runs] = await Promise.all([
   listStatementRuns(),
 ]);
 
-const dateTimeFormat = new Intl.DateTimeFormat('en-GB', {
+const dateTimeFormat = localFormat({
   dateStyle: 'medium',
   timeStyle: 'short',
-  timeZone: 'Indian/Mauritius',
 });
 
 const STATUS_LABEL = {

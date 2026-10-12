@@ -17,6 +17,7 @@ import {
 } from 'vitest';
 import { migrate } from '../../../scripts/migrate';
 import type { Principal } from '../access/principal';
+import { openEveryDrawer } from '../cash/drawers.testing';
 
 const ADMIN_URL = 'postgresql://postgres@127.0.0.1:5433/postgres';
 const MIGRATIONS_DIR = path.resolve(
@@ -227,6 +228,8 @@ beforeAll(async () => {
      values ('treasurer@albarakah.mu', 'Treasurer') returning id`
   );
   treasurer = { userId: two.rows[0].id, email: 'treasurer@albarakah.mu' };
+
+  await openEveryDrawer(appUrl);
 }, 60_000);
 
 afterAll(async () => {

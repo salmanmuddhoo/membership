@@ -17,6 +17,7 @@ import {
   vi,
 } from 'vitest';
 import { migrate } from '../../../scripts/migrate';
+import { openEveryDrawer } from '../cash/drawers.testing';
 
 const ADMIN_URL = 'postgresql://postgres@127.0.0.1:5433/postgres';
 const MIGRATIONS_DIR = path.resolve(
@@ -130,6 +131,7 @@ beforeAll(async () => {
       [memberId, msa]
     )
   ).rows[0].id;
+  await openEveryDrawer(ownerUrl);
 }, 60_000);
 
 afterAll(async () => {

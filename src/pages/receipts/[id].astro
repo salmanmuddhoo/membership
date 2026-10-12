@@ -36,6 +36,7 @@ import {
 } from '@lib/ledger/receipts';
 import { notifyReceiptIssued } from '@lib/ledger/receipt-notifications';
 import { notificationsFor } from '@lib/notifications/notify';
+import { localFormat } from '@lib/time';
 
 const principal = Astro.locals.principal!;
 const canRefund = principal.permissions.has('payment.refund');
@@ -246,7 +247,7 @@ const ownerHref = payment?.applicationId
     ? `/members/${payment.memberId}`
     : null;
 
-const dateFormat = new Intl.DateTimeFormat('en-GB', {
+const dateFormat = localFormat({
   dateStyle: 'long',
   timeStyle: 'short',
 });

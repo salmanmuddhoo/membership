@@ -11,6 +11,7 @@ import {
   vi,
 } from 'vitest';
 import { migrate } from '../../../scripts/migrate';
+import { openEveryDrawer } from '../cash/drawers.testing';
 import type { Principal } from '../access/principal';
 
 // A deceased member's claim (S-1704), against real migrations: the
@@ -269,6 +270,8 @@ beforeAll(async () => {
   bankAccountId = (
     await run(appUrl, `select id from bank_account where code = 'mcb'`)
   ).rows[0].id;
+
+  await openEveryDrawer(ownerUrl);
 
   // Money on every account: Shares 8,000, MSA 12,000, HSA 1,000.
   const { deposits } = await load();

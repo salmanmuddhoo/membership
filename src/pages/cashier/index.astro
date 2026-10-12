@@ -27,6 +27,7 @@ import {
   TD_NUM,
   ROW,
 } from '@lib/ui';
+import { localFormat } from '@lib/time';
 
 const principal = Astro.locals.principal!;
 if (!principal.permissions.has(PERMISSION_SESSION)) {
@@ -80,7 +81,7 @@ if (Astro.request.method === 'POST') {
 const session = await openSessionFor(principal.userId);
 const figures = session ? await drawerFigures(session.id) : null;
 
-const dateFormat = new Intl.DateTimeFormat('en-GB', {
+const dateFormat = localFormat({
   dateStyle: 'medium',
   timeStyle: 'short',
 });

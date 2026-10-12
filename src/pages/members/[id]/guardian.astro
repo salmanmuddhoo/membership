@@ -43,6 +43,7 @@ import {
   ROW,
   TD,
 } from '@lib/ui';
+import { localFormat } from '@lib/time';
 
 const principal = Astro.locals.principal!;
 const canChange = principal.permissions.has(PERMISSION_CHANGE);
@@ -139,10 +140,9 @@ const chosen =
       ) ?? null)
     : null;
 
-const dateFormat = new Intl.DateTimeFormat('en-GB', {
+const dateFormat = localFormat({
   dateStyle: 'medium',
   timeStyle: 'short',
-  timeZone: 'Indian/Mauritius',
 });
 const STATUS_WORDS: Record<string, string> = {
   submitted: 'Waiting for approval',

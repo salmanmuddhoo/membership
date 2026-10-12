@@ -13,6 +13,7 @@ import {
 } from 'vitest';
 import { migrate } from '../../../scripts/migrate';
 import type { Principal } from '../access/principal';
+import { openEveryDrawer } from '../cash/drawers.testing';
 import type { PartyValues } from './capture';
 
 const ADMIN_URL = 'postgresql://postgres@127.0.0.1:5433/postgres';
@@ -279,6 +280,8 @@ beforeAll(async () => {
       [principal.userId, roleCode]
     );
   }
+
+  await openEveryDrawer(appUrl);
 }, 60_000);
 
 afterAll(async () => {
@@ -1352,6 +1355,7 @@ describe('S-609: a quorum above one needs that many distinct sign-offs', () => {
       ['application.view', 'application.approve'],
       ['president']
     );
+    await openEveryDrawer(appUrl);
   });
 
   it('does not transition until enough distinct approvals are in', async () => {

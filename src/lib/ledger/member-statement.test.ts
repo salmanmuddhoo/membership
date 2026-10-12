@@ -12,6 +12,7 @@ import {
   vi,
 } from 'vitest';
 import { migrate } from '../../../scripts/migrate';
+import { openEveryDrawer } from '../cash/drawers.testing';
 import type { Principal } from '../access/principal';
 
 // A member's statement sent to them as a PDF, one at a time or to everyone
@@ -182,6 +183,7 @@ beforeAll(async () => {
     mobile: '+230 5789 1234',
   });
   unreachable = await member({ name: 'Bilal', surname: 'Test' });
+  await openEveryDrawer(ownerUrl);
 }, 60_000);
 
 afterAll(async () => {

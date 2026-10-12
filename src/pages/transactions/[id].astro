@@ -79,6 +79,7 @@ import {
   TAG,
   VIEW_BUTTON,
 } from '@lib/ui';
+import { localFormat } from '@lib/time';
 
 const principal = Astro.locals.principal!;
 const { id } = Astro.params;
@@ -412,7 +413,7 @@ const cashThreshold =
   canEdit && isDeposit ? await cashSourceOfFundThreshold() : '';
 const cashMax = canEdit && isDeposit ? await cashMaximum() : '';
 
-const dateFormat = new Intl.DateTimeFormat('en-GB', {
+const dateFormat = localFormat({
   day: 'numeric',
   month: 'short',
   year: 'numeric',

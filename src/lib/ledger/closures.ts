@@ -18,6 +18,7 @@ import { canTransact } from '../members/status';
 import { recordAudit } from '../access/audit';
 import { guardianGoneMessage } from '../members/guardian';
 import type { Principal } from '../access/principal';
+import { refuseCashWithoutDrawer } from '../cash/sessions';
 import { query, withTransaction } from '../db/pool';
 import { listDocumentTypes, offeredPaymentMethods } from '../config/reference';
 import {
@@ -823,6 +824,13 @@ export async function submitClosure(
       method,
       closure.bankAccountId,
       message => new ClosureError(message)
+    );
+  }
+  if (!route.definition) {
+    await refuseCashWithoutDrawer(
+      method,
+      principal.userId,
+      message => new ClosureError(message, 'conflict')
     );
   }
   const receipt = route.definition

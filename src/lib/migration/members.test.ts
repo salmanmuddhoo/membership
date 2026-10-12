@@ -10,6 +10,7 @@ import type { ParsedRow } from './members';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { migrate } from '../../../scripts/migrate';
+import { openEveryDrawer } from '../cash/drawers.testing';
 
 const ADMIN_URL = 'postgresql://postgres@127.0.0.1:5433/postgres';
 const MIGRATIONS_DIR = path.resolve(
@@ -93,6 +94,7 @@ beforeAll(async () => {
   );
   adminUserId = user.rows[0].id;
   actor.userId = adminUserId;
+  await openEveryDrawer(appUrl);
 }, 60_000);
 
 afterAll(async () => {
@@ -2332,7 +2334,7 @@ describe('status: resigned, deceased and closed accounts', () => {
 
     const member = await run(
       appUrl,
-      `select id, status, status_changed_at::date::text as since
+      `select id, status, (status_changed_at at time zone 'Indian/Mauritius')::date::text as since
          from member where member_no = 'AB8001'`
     );
     expect(member.rows[0]).toMatchObject({
@@ -2341,7 +2343,7 @@ describe('status: resigned, deceased and closed accounts', () => {
     });
     const accounts = await run(
       appUrl,
-      `select t.code, a.status, a.closed_at::date::text as closed_on
+      `select t.code, a.status, (a.closed_at at time zone 'Indian/Mauritius')::date::text as closed_on
          from account a join account_type t on t.id = a.account_type_id
         where a.member_id = $1 order by a.is_membership_default desc, t.code`,
       [member.rows[0].id]
@@ -2417,7 +2419,7 @@ describe('status: resigned, deceased and closed accounts', () => {
     const customer = await run(
       appUrl,
       `select c.status, a.status as account_status,
-              a.closed_at::date::text as closed_on
+              (a.closed_at at time zone 'Indian/Mauritius')::date::text as closed_on
          from customer c join account a on a.customer_id = c.id
         where c.legacy_code = 'HSA-S03'`
     );

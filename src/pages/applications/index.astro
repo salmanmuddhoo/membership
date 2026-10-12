@@ -39,6 +39,7 @@ import {
   reviewStageLabelsFor,
 } from '@lib/applications/workflow';
 import { APPLICATION_STATUS_LABELS as STATUS_LABELS } from '@lib/applications/status-labels';
+import { localFormat } from '@lib/time';
 
 const principal = Astro.locals.principal!;
 const canCapture = principal.permissions.has('application.capture');
@@ -198,7 +199,7 @@ const STATUS_CLASSES: Record<string, string> = {
   returned: 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200',
 };
 
-const dateFormat = new Intl.DateTimeFormat('en-GB', {
+const dateFormat = localFormat({
   dateStyle: 'medium',
   timeStyle: 'short',
 });

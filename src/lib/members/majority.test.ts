@@ -12,6 +12,7 @@ import {
   vi,
 } from 'vitest';
 import { migrate } from '../../../scripts/migrate';
+import { localDay } from '../time';
 
 const ADMIN_URL = 'postgresql://postgres@127.0.0.1:5433/postgres';
 const MIGRATIONS_DIR = path.resolve(
@@ -167,7 +168,7 @@ async function discardMinorMember(seed: {
 function yearsBefore(now: Date, years: number): string {
   const d = new Date(now);
   d.setUTCFullYear(d.getUTCFullYear() - years);
-  return d.toISOString().slice(0, 10);
+  return localDay(d);
 }
 
 describe('S-610: a minor reaching the age of majority', () => {

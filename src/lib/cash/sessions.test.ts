@@ -12,6 +12,7 @@ import {
 } from 'vitest';
 import { migrate } from '../../../scripts/migrate';
 import type { Principal } from '../access/principal';
+import { localDay } from '../time';
 
 // The cash drawer (S-2001, S-2002): opened with a float, expected to hold
 // what the ledger and the fee receipts say, closed against a count —
@@ -264,10 +265,71 @@ describe('the cash drawer (S-2001, S-2002)', () => {
     );
     expect(await sessionOf('transaction', withdrawal.id)).toBe(session.id);
 
-    // Somebody with no drawer open: nobody's.
+    // Somebody with no drawer open takes no cash (migration 0123), and no
+    // receipt number is spent on the attempt.
+    const receiptsBefore = await run(
+      appUrl,
+      'select count(*)::int as n from receipt_number'
+    );
+    await expect(
+      deposits.recordDeposit(
+        { accountId: msa, amount: '50', method: 'cash' },
+        treasurer
+      )
+    ).rejects.toThrowError(
+      'Open your cash drawer before taking or paying out cash.'
+    );
+    await expect(
+      withdrawals.recordWithdrawal(
+        { accountId: msa, amount: '50', method: 'cash' },
+        treasurer
+      )
+    ).rejects.toThrowError(/Open your cash drawer/);
+    expect(
+      (await run(appUrl, 'select count(*)::int as n from receipt_number'))
+        .rows[0].n
+    ).toBe(receiptsBefore.rows[0].n);
+    // A path that skipped the check would still be refused by the database.
+    await expect(
+      run(
+        appUrl,
+        `insert into payment
+           (receipt_number_id, kind, application_id, fee_version_id, method,
+            method_reference, total_amount, variance_reason, source_of_fund,
+            source_of_fund_form_confirmed, received_at, recorded_by,
+            recorded_by_role)
+         select p.receipt_number_id, 'payment', p.application_id,
+                p.fee_version_id, 'cash', '', 1, '', '', false, now(), $2, ''
+           from payment p where p.id = $1`,
+        [fee.id, treasurer.userId]
+      )
+    ).rejects.toThrowError(/Open your cash drawer/);
+    // Not cash needs no drawer.
+    const byBank = await deposits.recordDeposit(
+      {
+        accountId: msa,
+        amount: '10',
+        method: 'bank_transfer',
+        methodReference: 'IN-2',
+        bankAccountId,
+      },
+      treasurer
+    );
+    expect(await sessionOf('transaction', byBank.id)).toBeNull();
+
+    // Cash moved before the rule went through nobody's drawer: made here
+    // the only way it now can be, through a drawer that is then taken out
+    // from under it, for the reconciliation below to report.
+    await cash.openSession({ openingFloat: '0' }, treasurer);
     const nobodys = await deposits.recordDeposit(
       { accountId: msa, amount: '50', method: 'cash' },
       treasurer
+    );
+    await run(
+      ownerUrl,
+      `set session_replication_role = replica;
+       update transaction set cash_session_id = null where id = '${nobodys.id}';
+       delete from cash_session where cashier_user_id = '${treasurer.userId}';`
     );
     expect(await sessionOf('transaction', nobodys.id)).toBeNull();
 
@@ -365,7 +427,7 @@ describe('the cash drawer (S-2001, S-2002)', () => {
     const { cash, payments, reports } = await load();
     const report = reports.reportByCode('cash-reconciliation')!;
     expect(report.permission).toBe('cash.view');
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localDay();
 
     const result = await report.run({ from: today, to: today });
     expect(result.rows.map(r => [r.Cashier, r.Status])).toEqual([
