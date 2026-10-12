@@ -521,23 +521,36 @@ describe('asking for too many codes', () => {
     expect(identity.waitPhrase(600)).toBe('10 minutes');
   });
 
-  it('tells an applicant who asks too often how many minutes to wait', async () => {
+  it('tells an applicant who asks too often how long to wait', async () => {
+    // The limiter's windows are aligned to the clock, so how much of one is
+    // left depends on when the test runs: anything up to ten minutes. The
+    // three codes already asked for in this window are put there directly,
+    // so the fourth is refused whatever the time is.
+    await run(
+      appUrl,
+      `insert into rate_limit_window (subject, window_start, request_count)
+       values ($1, to_timestamp(floor(extract(epoch from now()) / 600) * 600), 3)
+       on conflict (subject, window_start) do update set request_count = 3`,
+      ['member-signup:mobile:+23059994444']
+    );
     delete process.env.RATE_LIMIT_DISABLED;
     try {
-      const signUp = () =>
-        identity.startSignUp({ mobile: '5999 4444' }, origin, { delivery });
-      // Three in ten minutes are allowed (the cooldown between them aside).
-      for (let i = 0; i < 3; i++) {
-        await clearCooldowns();
-        await signUp();
-      }
-      await clearCooldowns();
-      await expect(signUp()).rejects.toMatchObject({
-        code: 'rate_limited',
-        message: expect.stringMatching(
-          /^Too many codes have been requested\. Please wait (9|10) minutes before requesting a new one\.$/
-        ),
-      });
+      const refused = await identity
+        .startSignUp({ mobile: '5999 4444' }, origin, { delivery })
+        .then(
+          () => null,
+          (error: unknown) => error as { code: string; message: string }
+        );
+      expect(refused?.code).toBe('rate_limited');
+      const wait =
+        /^Too many codes have been requested\. Please wait (\d+) (minutes?|seconds?) before requesting a new one\.$/.exec(
+          refused?.message ?? ''
+        );
+      expect(wait).not.toBeNull();
+      const seconds =
+        Number(wait![1]) * (wait![2].startsWith('minute') ? 60 : 1);
+      expect(seconds).toBeGreaterThan(0);
+      expect(seconds).toBeLessThanOrEqual(600);
     } finally {
       process.env.RATE_LIMIT_DISABLED = 'true';
     }
