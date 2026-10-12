@@ -107,6 +107,18 @@ export const RECEIPT_PLACEHOLDERS = [
   'account',
 ] as const;
 
+// A membership fee receipt (officer request): what
+// src/lib/payments/fee-receipts.ts passes when an application's fees are
+// recorded — sent as its PDF, like a transaction's receipt.
+export const FEE_RECEIPT_ISSUED = 'fee_receipt.issued';
+export const FEE_RECEIPT_PLACEHOLDERS = [
+  'member_name',
+  'receipt_no',
+  'reference',
+  'amount',
+  'items',
+] as const;
+
 // A member's statement (officer request): what
 // src/lib/ledger/member-statement.ts passes, one holder at a time or to
 // everyone at once.
@@ -173,6 +185,7 @@ export function placeholdersForEvent(eventCode: string): string[] | null {
   // A transaction's receipt (S-1602): what the ledger passes when one is
   // issued or re-sent (src/lib/ledger/receipt-notifications.ts).
   if (eventCode === RECEIPT_ISSUED) return [...RECEIPT_PLACEHOLDERS];
+  if (eventCode === FEE_RECEIPT_ISSUED) return [...FEE_RECEIPT_PLACEHOLDERS];
   if (eventCode === STATEMENT_ISSUED) return [...STATEMENT_PLACEHOLDERS];
   if (eventCode in TRANSACTION_PLACEHOLDERS) {
     return [...TRANSACTION_PLACEHOLDERS[eventCode]];
