@@ -51,12 +51,21 @@ const delivery: CodeDelivery = {
     sent.push({ to, code: message.slice(0, 6) });
   },
 };
+// The same, for codes by email.
+const emailed: { to: string; code: string }[] = [];
+const emailDelivery: CodeDelivery = {
+  async send(to, message) {
+    emailed.push({ to, code: message.slice(0, 6) });
+  },
+};
 
 const origin = { ip: '203.0.113.7', correlationId: 'test' };
 const MEMBER = {
   nic: 'B1234567890123',
   abNumber: 'AB0001',
   mobile: '+23057891234',
+  // As an officer typed it; a code by email goes to it lower-cased.
+  email: 'Fatimah.Peerally@Example.mu',
 };
 
 // A member who matches on both fields but has no mobile on the applicant
@@ -101,6 +110,7 @@ beforeAll(async () => {
         name: 'Fatimah',
         nic: MEMBER.nic,
         mobile: MEMBER.mobile,
+        email: MEMBER.email,
         address: '12 Royal Road',
         gender: 'Female',
       }),
@@ -129,8 +139,15 @@ async function clearCooldowns() {
   );
 }
 
-async function link(nic = MEMBER.nic, abNumber = MEMBER.abNumber) {
-  return identity.linkMember({ nic, abNumber }, origin, { delivery });
+async function link(
+  nic = MEMBER.nic,
+  abNumber = MEMBER.abNumber,
+  channel?: string
+) {
+  return identity.linkMember({ nic, abNumber, channel }, origin, {
+    delivery,
+    emailDelivery,
+  });
 }
 
 async function freshLink() {
@@ -139,10 +156,11 @@ async function freshLink() {
 }
 
 describe('identification: NIC + AB Number', () => {
-  it('names the member and sends the code to the mobile on record, saying nothing about it', async () => {
+  it('names the member and sends the code to the mobile on record, masked', async () => {
     const challenge = await link();
     expect(challenge.purpose).toBe('link_member');
-    expect(challenge.sentTo).toBeNull();
+    expect(challenge.sentTo).toBe('+230 5*** *234');
+    expect(challenge.sentBy).toBe('sms');
     expect(sent.at(-1)?.to).toBe(MEMBER.mobile);
     expect(sent.at(-1)?.code).toMatch(/^\d{6}$/);
   });
@@ -491,6 +509,113 @@ describe('sign-up: a verified mobile, never a member', () => {
       code: 'validation_failed',
       details: { mobile: expect.any(Array) },
     });
+  });
+});
+
+describe('where the code goes: the phone or email', () => {
+  it('sends a link by email to the address on record, and only there', async () => {
+    await clearCooldowns();
+    const before = sent.length;
+    const challenge = await link(MEMBER.nic, MEMBER.abNumber, 'email');
+    expect(challenge).toMatchObject({
+      purpose: 'link_member',
+      sentBy: 'email',
+      sentTo: 'f***y@example.mu',
+    });
+    expect(emailed.at(-1)?.to).toBe('fatimah.peerally@example.mu');
+    expect(sent.length).toBe(before);
+
+    // The session proves the email, and is the member's all the same.
+    const session = await identity.verifyOtp(
+      { challengeId: challenge.challengeId, code: emailed.at(-1)!.code },
+      origin
+    );
+    expect(session.identity).toMatchObject({
+      kind: 'member',
+      memberNo: MEMBER.abNumber,
+      mobile: null,
+      email: 'fatimah.peerally@example.mu',
+    });
+    const principal = await identity.resolveMemberSession(
+      `Bearer ${session.accessToken}`
+    );
+    expect(principal).toMatchObject({
+      memberId,
+      mobile: null,
+      email: 'fatimah.peerally@example.mu',
+    });
+  });
+
+  it('a resend goes to the same address, by the same channel', async () => {
+    await clearCooldowns();
+    const first = await link(MEMBER.nic, MEMBER.abNumber, 'email');
+    await clearCooldowns();
+    const before = sent.length;
+    const next = await identity.resendOtp(first.challengeId, origin, {
+      delivery,
+      emailDelivery,
+    });
+    expect(next.sentBy).toBe('email');
+    expect(emailed.at(-1)?.to).toBe('fatimah.peerally@example.mu');
+    expect(sent.length).toBe(before);
+  });
+
+  it('refuses email for a member with none on record, pointing at WhatsApp', async () => {
+    await clearCooldowns();
+    const before = emailed.length;
+    await expect(
+      link(NO_MOBILE.nic, NO_MOBILE.abNumber, 'email')
+    ).rejects.toMatchObject({
+      code: 'not_found',
+      message: expect.stringMatching(/no email address.*Choose WhatsApp/s),
+    });
+    expect(emailed.length).toBe(before);
+  });
+
+  it('refuses a channel it does not know, naming the field', async () => {
+    await expect(
+      link(MEMBER.nic, MEMBER.abNumber, 'carrier-pigeon')
+    ).rejects.toMatchObject({
+      code: 'validation_failed',
+      details: { channel: expect.any(Array) },
+    });
+  });
+
+  it('signs an applicant up by the email they typed', async () => {
+    const challenge = await identity.startSignUp(
+      { channel: 'email', email: ' New.Applicant@Example.MU ' },
+      origin,
+      { delivery, emailDelivery }
+    );
+    expect(challenge).toMatchObject({
+      purpose: 'sign_up',
+      sentBy: 'email',
+      sentTo: 'n***t@example.mu',
+    });
+    expect(emailed.at(-1)?.to).toBe('new.applicant@example.mu');
+    const session = await identity.verifyOtp(
+      { challengeId: challenge.challengeId, code: emailed.at(-1)!.code },
+      origin
+    );
+    expect(session.identity).toMatchObject({
+      kind: 'applicant',
+      mobile: null,
+      email: 'new.applicant@example.mu',
+    });
+  });
+
+  it('refuses an email address it cannot use, naming the field', async () => {
+    for (const email of ['', 'not-an-address', 'a@b', 'one@x.mu, two@x.mu']) {
+      await expect(
+        identity.startSignUp({ channel: 'email', email }, origin, {
+          delivery,
+          emailDelivery,
+        })
+      ).rejects.toMatchObject({
+        code: 'validation_failed',
+        details: { email: expect.any(Array) },
+      });
+    }
   });
 });
 

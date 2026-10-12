@@ -294,7 +294,7 @@ describe("a member's own accounts (S-2101)", () => {
     // period, and nothing cacheable.
     const download = await payloads.statementDownload(
       (await ledger.accountStatement(fatimahMsa, period.from, period.to))!,
-      fatimah.mobile
+      fatimah.mobile!
     );
     expect(download.headers.get('content-disposition')).toBe(
       `attachment; filename="statement-AB0001-${today}-${today}.xlsx"`

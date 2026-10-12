@@ -49,6 +49,12 @@ const delivery: CodeDelivery = {
   },
 };
 const origin = { ip: null, correlationId: 'test' };
+const emailed: string[] = [];
+const emailDelivery: CodeDelivery = {
+  async send(_to, message) {
+    emailed.push(message.slice(0, 6));
+  },
+};
 
 async function applicantSession(mobile: string) {
   // The sign-up cooldown is per number and this suite signs the same
@@ -62,6 +68,26 @@ async function applicantSession(mobile: string) {
   });
   const session = await identity.verifyOtp(
     { challengeId: challenge.challengeId, code: sent.at(-1)! },
+    origin
+  );
+  return (await identity.resolveMemberSession(
+    `Bearer ${session.accessToken}`
+  ))!;
+}
+
+// An applicant who chose email: the code went to the address they typed.
+async function emailApplicantSession(email: string) {
+  await run(
+    appUrl,
+    `update member_login_challenge set created_at = created_at - interval '1 minute'`
+  );
+  const challenge = await identity.startSignUp(
+    { channel: 'email', email },
+    origin,
+    { delivery, emailDelivery }
+  );
+  const session = await identity.verifyOtp(
+    { challengeId: challenge.challengeId, code: emailed.at(-1)! },
     origin
   );
   return (await identity.resolveMemberSession(
@@ -321,7 +347,9 @@ describe('an application from the phone', () => {
     expect(audit.rows.map(r => r.action)).toContain(
       'membership.application.received'
     );
-    expect(audit.rows.at(-1)?.actor_description).toBe('member-app:+2305xxx001');
+    expect(audit.rows.at(-1)?.actor_description).toBe(
+      'member-app:+230 5*** *001'
+    );
   });
 
   it('a draft can be deleted by its owner', async () => {
@@ -333,6 +361,57 @@ describe('an application from the phone', () => {
     );
     await applications.deleteMemberDraft(sam, app.id);
     expect(await applications.listMemberApplications(sam)).toEqual([]);
+  });
+});
+
+describe('an application from an applicant who signed up by email', () => {
+  it("is tied to the verified email, which the form keeps, and is nobody else's", async () => {
+    const sam = await emailApplicantSession('Sam.Joomun@example.mu');
+    const app = await applications.startMemberApplication(
+      sam,
+      'individual',
+      origin
+    );
+    const row = await run(
+      appUrl,
+      `select applicant_mobile, applicant_email
+         from membership_application where id = $1`,
+      [app.id]
+    );
+    expect(row.rows[0]).toEqual({
+      applicant_mobile: null,
+      applicant_email: 'sam.joomun@example.mu',
+    });
+    expect(app.parties.find(p => p.subject === 'applicant')?.values.email).toBe(
+      'sam.joomun@example.mu'
+    );
+
+    // The email is the one the code proved; the mobile is theirs to type.
+    const saved = await applications.saveMemberApplication(sam, app.id, [
+      {
+        subject: 'applicant',
+        ordinal: 1,
+        values: {
+          surname: 'Joomun',
+          email: 'someone.else@example.mu',
+          mobile: '5222 2222',
+        },
+      },
+    ]);
+    const applicant = saved.parties.find(p => p.subject === 'applicant')!;
+    expect(applicant.values.email).toBe('sam.joomun@example.mu');
+    expect(applicant.values.mobile).not.toBeUndefined();
+
+    // One in progress per email, as per mobile.
+    await expect(
+      applications.startMemberApplication(sam, 'individual', origin)
+    ).rejects.toMatchObject({ code: 'conflict' });
+
+    const stranger = await emailApplicantSession('stranger@example.mu');
+    expect(await applications.listMemberApplications(stranger)).toEqual([]);
+    await expect(
+      applications.getMemberApplication(stranger, app.id)
+    ).rejects.toMatchObject({ code: 'not_found' });
   });
 });
 

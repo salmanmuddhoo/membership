@@ -20,31 +20,28 @@ app ends up letting a card number open an account:
 | Concern                      | What it is                                                                                                            | Where                                         |
 | ---------------------------- | --------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
 | **Identification / linking** | NIC + AB Number name exactly one member who may use the app                                                           | `POST /auth/link-member`                      |
-| **Verification**             | A one-time code proves the person holds the mobile on that member's record                                            | `POST /auth/verify-otp`                       |
+| **Verification**             | A one-time code proves the person holds the mobile or the email on that member's record                               | `POST /auth/verify-otp`                       |
 | **Authentication**           | The session that results — access token + refresh token in the device keychain — is what every later request presents | `Authorization: Bearer`; `POST /auth/refresh` |
 | **The link**                 | `member_session.member_id`, from that session to the `member` row                                                     | Server-side only; never sent to the phone     |
 
-**NIC + AB Number alone open nothing.** They select whose registered
-mobile the code goes to. The person typing them does not choose that
-number, is never shown it (not even masked), and cannot change it from
-the app — a member whose number has changed goes to a branch with their
-ID. A lost card, a NIC read off a form, or both together get an attacker
-exactly as far as the SMS they will not receive.
+**NIC + AB Number alone open nothing.** They select whose mobile or email
+on record the code goes to. The person chooses only the channel, WhatsApp
+or email, never the number or address: the code goes to what the record
+holds, shown masked (`+230 5*** *428`, `s***o@gmail.com`) so they know
+which of theirs to look at, and neither can be changed from the app. A
+member whose number or email has changed goes to a branch with their ID.
+A lost card, a NIC read off a form, or both together get an attacker
+exactly as far as the WhatsApp message or email they will not receive.
 
-**The answer never says whether the pair exists.** A NIC + AB Number that
-names nobody — wrong NIC, wrong AB Number, right pair but not entitled —
-gets the same response as one that does: a challenge id, purpose
-`link_member`, `sentTo: null`, five minutes. Behind it is a
-`link_member_miss` challenge row with a random hash nothing can match and
-no SMS; verifying against it fails and burns exactly as a wrong code does.
-The difference is recorded in the audit trail (`member.link.refused`, with
-the AB Number as typed and a prefix of the NIC's hash), never in the
-response. The app tells the person a code has been sent _if_ the details
-matched, and what to do if nothing arrives.
+**A pair that names nobody is refused** (officer direction, October
+2026), with the Al Barakah office's number, as is a member with nothing on
+record for the channel chosen, whose message points at the other channel.
+The reason is recorded in the audit trail (`member.link.refused`, with the
+AB Number as typed and a prefix of the NIC's hash).
 
 It is also written to the server log, as
 `{"kind":"member-link-refused","correlationId":…,"abNumber":…,"reason":…}`
-where `reason` is `no_match` or `no_mobile_on_record`. A server log is not
+where `reason` is `no_match`, `no_mobile_on_record` or `no_email_on_record`. A server log is not
 the caller, so this costs nothing the response protects — and without it a
 refusal is invisible to whoever is setting an environment up: the request
 logs 200 like any other, no `member-otp` line appears because nothing was
@@ -65,13 +62,13 @@ import gives it one; that is the import's job, not this endpoint's.
 
 ### Linking an existing member
 
-| Step | Endpoint                                        | Rules                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| ---- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1    | `POST /auth/link-member` `{ nic, abNumber }`    | 422 if either is malformed (`details.nic`, `details.abNumber`). **404 if the pair does not name one member who may use the app** (active, or resigned with an account still open; `mayUseAppSql`) — one message for "no such NIC", "no such AB Number", "not together" and "not entitled", telling the person to contact the Al Barakah office on +230 5944 9797; a member with no mobile on record gets the same instruction worded for that. The app goes no further on a 404 (officer direction, October 2026; the earlier decoy challenge that answered a miss as a hit is gone, so the rate limits — which count a miss — are the control against guessing pairs). On a hit, returns the challenge with no number. Audit: `member.link.requested` on the member, `member.link.refused` on a miss. |
-| 2    | `POST /auth/verify-otp` `{ challengeId, code }` | Five wrong codes burn the challenge (404 from then on); a code lives five minutes and works once. On success a `member_session` with `member_id` set. Audit: `member.link.completed`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| 3    | `POST /auth/refresh` `{ refreshToken }`         | New pair; the old refresh token is dead the moment it is used. Ninety days from last use, so a phone that opens the app now and then never re-links. A member no longer entitled to the app is signed out here rather than when a token happens to lapse.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| 4    | `POST /auth/logout`                             | Revokes the session. The device must link again to get back in. Audit: `member.session.revoked`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| —    | `POST /auth/resend-otp` `{ challengeId }`       | Fresh code, same purpose, same number; the previous code is dead.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| Step | Endpoint                                              | Rules                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ---- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1    | `POST /auth/link-member` `{ nic, abNumber, channel }` | `channel` is `phone` (the default) or `email`. 422 if anything is malformed (`details.nic`, `details.abNumber`, `details.channel`). **404 if the pair does not name one member who may use the app** (active, or resigned with an account still open; `mayUseAppSql`) — one message for "no such NIC", "no such AB Number", "not together" and "not entitled", telling the person to contact the Al Barakah office on +230 5944 9797; a member with no mobile, or no email, on record for the channel chosen gets the same instruction worded for that, pointing at the other channel. The app goes no further on a 404 (officer direction, October 2026; the earlier decoy challenge that answered a miss as a hit is gone, so the rate limits — which count a miss — are the control against guessing pairs). On a hit, sends the code to the mobile or email on record and returns the challenge with it masked in `sentTo` and the channel in `sentBy`. Audit: `member.link.requested` on the member, `member.link.refused` on a miss. |
+| 2    | `POST /auth/verify-otp` `{ challengeId, code }`       | Five wrong codes burn the challenge (404 from then on); a code lives five minutes and works once. On success a `member_session` with `member_id` set. Audit: `member.link.completed`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| 3    | `POST /auth/refresh` `{ refreshToken }`               | New pair; the old refresh token is dead the moment it is used. Ninety days from last use, so a phone that opens the app now and then never re-links. A member no longer entitled to the app is signed out here rather than when a token happens to lapse.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 4    | `POST /auth/logout`                                   | Revokes the session. The device must link again to get back in. Audit: `member.session.revoked`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| —    | `POST /auth/resend-otp` `{ challengeId }`             | Fresh code, same purpose, same number or address, same channel; the previous code is dead.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 
 This is **not** the staff `GET /api/v1/applications/existing-member-search`.
 That matches a fragment of a name, NIC or Member No. against every active
@@ -86,15 +83,38 @@ stays behind its staff permission where a member token cannot reach it
 
 Someone applying has no AB Number, and must not need one.
 
-| Step | Endpoint                          | Rules                                                                                                                                                                                                                                                                                                        |
-| ---- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1    | `POST /auth/sign-up` `{ mobile }` | Any form `toInternational` accepts. **Always succeeds for a well-formed number**, on some record or not — the response must not reveal who is a member.                                                                                                                                                      |
-| 2    | `POST /auth/verify-otp`           | A `member_session` with `member_id` **null** and `identity.kind: 'applicant'`. It can start, save and submit an application and read its own; nothing else. **It never resolves to a member record, even when the verified mobile is the one on a member's file**: member access comes only through linking. |
+| Step | Endpoint                                                                    | Rules                                                                                                                                                                                                                                                                                                        |
+| ---- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1    | `POST /auth/sign-up` `{ channel, mobile }` or `{ channel: 'email', email }` | The person chooses WhatsApp (a number in any form `toInternational` accepts) or email (one address), and types it. **Always succeeds for a well-formed one**, on some record or not — the response must not reveal who is a member.                                                                          |
+| 2    | `POST /auth/verify-otp`                                                     | A `member_session` with `member_id` **null** and `identity.kind: 'applicant'`. It can start, save and submit an application and read its own; nothing else. **It never resolves to a member record, even when the verified mobile is the one on a member's file**: member access comes only through linking. |
 
-The verified mobile becomes the applicant's `mobile` on the application,
-pre-filled and kept whatever the phone sends. The NIC is captured on the
+The verified mobile or email becomes the applicant's `mobile` or `email`
+on the application (`applicant_mobile` or `applicant_email`, migration
+0124), pre-filled and kept whatever the phone sends; the other is theirs
+to type. The NIC is captured on the
 form like every other field, and checked by the officer against the ID
 card they file.
+
+### Where the code goes
+
+The person chooses each time they ask for a code (migration 0124):
+
+| Who             | WhatsApp                                    | Email                                        |
+| --------------- | ------------------------------------------- | -------------------------------------------- |
+| A member        | The mobile on their record                  | The email on their record                    |
+| A new applicant | The number they type, which the code proves | The address they type, which the code proves |
+
+A code to a phone goes the way `MEMBER_OTP_DELIVERY` says: WhatsApp
+through Meta (`whatsapp`, "Codes by WhatsApp" below), an SMS gateway
+(`http`), or the log on a non-production site. A code by email goes the way
+the Society's other email does (`NOTIFY_EMAIL_*`, `docs/notifications.md`),
+with the subject "Your Al Barakah code"; a site that sends no email says
+the code could not be sent by email and to choose WhatsApp. The challenge
+says where it went: `sentBy` is `whatsapp`, `sms` or `email`, and `sentTo`
+is the masked number or address.
+
+The session holds what the code proved, the mobile or the email
+(`member_session`), never both; a member is the same member either way.
 
 ### What the phone holds
 
@@ -229,7 +249,8 @@ What KYC verified must not change from a phone with nobody checking; a
 member who moved house must still be able to say so. `PUT /me/details`
 records a `member_details_request` — the values as the officer's form
 would have them, phones normalised, every mandatory field present, the
-sign-in mobile kept — and the member sees "pending" until staff act.
+mobile and email on record kept as they are, since a code goes to either —
+and the member sees "pending" until staff act.
 
 **Staff act on it at Members → Details updates**
 (`/members/details-updates`, `member.details_verify`, migration 0042).
@@ -381,14 +402,58 @@ header, as the staff API does.
 
 ## Configuration
 
-| Variable                      | Purpose                                                                                                                                                                                                                                                                                                                                                           |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `MEMBER_SESSION_SECRET`       | Signs access tokens. Its own key, never `AUTH_SESSION_SECRET`: a staff cookie and a member token must not be interchangeable. At least 32 characters.                                                                                                                                                                                                             |
-| `MEMBER_OTP_DELIVERY`         | `http` posts `{ to, message }` to `MEMBER_OTP_WEBHOOK_URL` (with `MEMBER_OTP_WEBHOOK_TOKEN` as a bearer, if set) — whatever SMS or WhatsApp gateway the Society uses. `log` writes the code to the server log; **non-production only**, refused elsewhere. Unset: codes cannot be sent and the endpoints say so (503).                                            |
-| `MEMBER_OTP_FIXED_CODE`       | Six digits every challenge accepts, for exercising the app against the test environment. **Non-production only.**                                                                                                                                                                                                                                                 |
-| `MEMBER_ACCESS_TOKEN_SECONDS` | Default 3600.                                                                                                                                                                                                                                                                                                                                                     |
-| `MEMBER_REFRESH_TOKEN_DAYS`   | Default 90, from last use.                                                                                                                                                                                                                                                                                                                                        |
-| `NOTIFY_PUSH_DELIVERY`        | How push notifications reach the app's phones: `fcm` through Firebase Cloud Messaging with `NOTIFY_PUSH_SERVICE_ACCOUNT` (the project's service-account key file, as JSON or base64), `http` to a gateway, `log` on a non-production environment. `docs/notifications.md`, "Push". Unset: push rows fail with the reason, as any other unconfigured channel's do. |
+| Variable                       | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MEMBER_SESSION_SECRET`        | Signs access tokens. Its own key, never `AUTH_SESSION_SECRET`: a staff cookie and a member token must not be interchangeable. At least 32 characters.                                                                                                                                                                                                                                                                                           |
+| `MEMBER_OTP_DELIVERY`          | `http` posts `{ to, message }` to `MEMBER_OTP_WEBHOOK_URL` (with `MEMBER_OTP_WEBHOOK_TOKEN` as a bearer, if set) — whatever SMS gateway the Society uses. `whatsapp` sends the code through Meta's WhatsApp Business Platform, from the number notifications use ("Codes by WhatsApp", below). `log` writes the code to the server log; **non-production only**, refused elsewhere. Unset: codes cannot be sent and the endpoints say so (503). |
+| `MEMBER_OTP_WHATSAPP_TEMPLATE` | For `whatsapp`: the name of the Authentication template Meta approved, e.g. `albarakah_code`. With `NOTIFY_WHATSAPP_PHONE_NUMBER_ID` and `NOTIFY_WHATSAPP_TOKEN` (`docs/notifications.md`), all three or none.                                                                                                                                                                                                                                  |
+| `MEMBER_OTP_WHATSAPP_LANGUAGE` | The language that template was approved in. Default `en`.                                                                                                                                                                                                                                                                                                                                                                                       |
+| `MEMBER_OTP_FIXED_CODE`        | Six digits every challenge accepts, for exercising the app against the test environment. **Non-production only.**                                                                                                                                                                                                                                                                                                                               |
+| `MEMBER_ACCESS_TOKEN_SECONDS`  | Default 3600.                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `MEMBER_REFRESH_TOKEN_DAYS`    | Default 90, from last use.                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `NOTIFY_PUSH_DELIVERY`         | How push notifications reach the app's phones: `fcm` through Firebase Cloud Messaging with `NOTIFY_PUSH_SERVICE_ACCOUNT` (the project's service-account key file, as JSON or base64), `http` to a gateway, `log` on a non-production environment. `docs/notifications.md`, "Push". Unset: push rows fail with the reason, as any other unconfigured channel's do.                                                                               |
+
+### Codes by WhatsApp
+
+WhatsApp sends a business's code only as an **Authentication** template
+Meta approved in advance. The wording is Meta's own ("482913 is your
+verification code."), the code is its one variable, and it has a **Copy
+code** button that carries the code too. The app's own sentence
+(`codeMessage`) is what an SMS gateway sends; it is not what WhatsApp shows.
+The codes go from the WhatsApp number notifications already use, so the
+Society registers one number, not two.
+
+1. Set up the number and its permanent token as for notifications
+   (`docs/notifications.md`, "Through Meta directly"): that gives
+   `NOTIFY_WHATSAPP_PHONE_NUMBER_ID` and `NOTIFY_WHATSAPP_TOKEN`. Codes need
+   only those two; `NOTIFY_WHATSAPP_DELIVERY` decides notifications alone.
+2. In WhatsApp Manager, **Message templates → Create template**, category
+   **Authentication**. Name it (say `albarakah_code`) and pick its
+   language. Under code delivery choose **Copy code**; tick **Add security
+   recommendation** and **Add expiry time for the code**, set to 5 minutes,
+   which is how long a code lasts here. Submit it; approval usually takes
+   minutes.
+3. Set:
+
+   ```
+   MEMBER_OTP_DELIVERY=whatsapp
+   MEMBER_OTP_WHATSAPP_TEMPLATE=albarakah_code
+   MEMBER_OTP_WHATSAPP_LANGUAGE=en
+   ```
+
+   The template name and language must be exactly what Meta approved, or
+   every code is refused, and the person is told the code could not be sent.
+   The server log line `[member-otp] WhatsApp refused` carries Meta's
+   reason.
+
+The app says where to look: a code to a phone carries `sentBy`
+`whatsapp` here (`sms` with a gateway). A member whose number on record has no WhatsApp receives nothing:
+Meta accepts the message and only later reports it undeliverable. Such a
+member cannot sign in until the office records a number of theirs that has
+WhatsApp, or the codes go by SMS instead.
+
+While the number is still in trial, Meta delivers only to the numbers on
+its allowed list.
 
 ## Codes: the controls, in one place
 

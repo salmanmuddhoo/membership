@@ -32,7 +32,7 @@ import {
   type ChecklistEntry,
 } from '../documents/documents';
 import type { MemberPrincipal, RequestOrigin } from './identity';
-import { maskMobile } from './otp';
+import { principalLabel } from './otp';
 import { memberDocumentState } from './profile';
 
 // Submitted from the phone; the branch takes it from here. Seeded by
@@ -96,12 +96,20 @@ export async function systemUser(): Promise<string> {
   return id;
 }
 
+// The applicant's details the session proved: the mobile or the email the
+// code went to. What the applicant typed for them is replaced by these.
+function verifiedValues(principal: MemberPrincipal): Record<string, string> {
+  return principal.mobile
+    ? { mobile: principal.mobile }
+    : { email: principal.email ?? '' };
+}
+
 // What the audit trail records for an action from the phone: the system
-// user, described by the (masked) mobile that did it.
+// user, described by the (masked) mobile or email that did it.
 async function actorFor(principal: MemberPrincipal): Promise<Actor> {
   return {
     userId: await systemUser(),
-    email: `member-app:${maskMobile(principal.mobile)}`,
+    email: principalLabel(principal),
   };
 }
 
@@ -304,10 +312,11 @@ async function ownedIds(principal: MemberPrincipal): Promise<string[]> {
     `select a.id
        from membership_application a
       where a.applicant_mobile = $1
+         or a.applicant_email = $3
          or ($2::uuid is not null
              and a.id = (select application_id from member where id = $2::uuid))
       order by a.updated_at desc`,
-    [principal.mobile, principal.memberId]
+    [principal.mobile, principal.memberId, principal.email]
   );
   return result.rows.map(r => r.id);
 }
@@ -324,9 +333,10 @@ async function loadOwned(
        from membership_application a
       where a.id = $1
         and (a.applicant_mobile = $2
+             or a.applicant_email = $4
              or ($3::uuid is not null
                  and a.id = (select application_id from member where id = $3::uuid)))`,
-    [applicationId, principal.mobile, principal.memberId]
+    [applicationId, principal.mobile, principal.memberId, principal.email]
   );
   if (owned.rows[0].n === 0) {
     throw new ApiError('not_found', 'That application no longer exists.');
@@ -390,11 +400,11 @@ export async function startMemberApplication(
 
   const open = await query<{ reference: string }>(
     `select reference from membership_application
-      where applicant_mobile = $1
+      where (applicant_mobile = $1 or applicant_email = $2)
         and status not in ('approved', 'rejected')
       order by created_at
       limit 1`,
-    [principal.mobile]
+    [principal.mobile, principal.email]
   );
   if (open.rows[0]) {
     throw new ApiError(
@@ -409,18 +419,20 @@ export async function startMemberApplication(
     actor
   );
 
-  // Tie the row to the verified mobile, and put that number on the form:
+  // Tie the row to the verified mobile or email, and put it on the form:
   // it is the one detail the backend already knows to be true.
   await withTransaction(async client => {
     await client.query(
-      `update membership_application set applicant_mobile = $2 where id = $1`,
-      [id, principal.mobile]
+      `update membership_application
+          set applicant_mobile = $2, applicant_email = $3
+        where id = $1`,
+      [id, principal.mobile, principal.email]
     );
     await client.query(
       `update application_party
-          set values = values || jsonb_build_object('mobile', $2::text)
+          set values = values || $2::jsonb
         where application_id = $1 and subject = 'applicant' and ordinal = 1`,
-      [id, principal.mobile]
+      [id, JSON.stringify(verifiedValues(principal))]
     );
     await recordAudit(
       {
@@ -455,7 +467,8 @@ export async function saveMemberApplication(
   const configured = visibleFields(type);
 
   // Only parties the application has, only fields the type configures, and
-  // the applicant's mobile is the session's whatever was sent.
+  // the applicant's verified mobile or email is the session's whatever was
+  // sent.
   const accepted: PartyValues[] = [];
   for (const incoming of Array.isArray(parties) ? parties : []) {
     const existing = application.parties.find(
@@ -469,11 +482,10 @@ export async function saveMemberApplication(
       if (raw !== undefined && raw !== null)
         values[field.fieldKey] = String(raw);
     }
-    if (
-      existing.subject === 'applicant' &&
-      fields.some(f => f.fieldKey === 'mobile')
-    ) {
-      values.mobile = principal.mobile;
+    if (existing.subject === 'applicant') {
+      for (const [key, value] of Object.entries(verifiedValues(principal))) {
+        if (fields.some(f => f.fieldKey === key)) values[key] = value;
+      }
     }
     accepted.push({
       subject: existing.subject,
