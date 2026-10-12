@@ -18,6 +18,7 @@ import {
 } from '../api/envelope';
 import type { EndpointDescriptor, Endpoint } from '../api/endpoint';
 import { checkRateLimit } from '../api/rate-limit';
+import { clientAddress } from '../api/client-address';
 import { ApplicationError } from '../applications/capture';
 import { MemberConfigError } from '../config';
 import { DatabaseUnavailableError, isInvalidReference } from '../db/pool';
@@ -57,13 +58,6 @@ export interface MemberRequestContext<
 export type MemberEndpointHandler<Caller extends 'member' | 'public'> = (
   ctx: MemberRequestContext<Caller>
 ) => Promise<Response>;
-
-function clientAddress(headers: Headers): string | null {
-  const forwarded = headers.get('x-forwarded-for');
-  if (!forwarded) return null;
-  const first = forwarded.split(',')[0]?.trim();
-  return first && first.length <= 45 ? first : null;
-}
 
 // A public endpoint is limited per address, tightly: nothing legitimate
 // calls one often. A member endpoint is limited per session at the staff

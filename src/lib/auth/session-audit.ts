@@ -58,9 +58,5 @@ export async function recordSessionEvent(
   });
 }
 
-export function clientAddress(headers: Headers): string | null {
-  const forwarded = headers.get('x-forwarded-for');
-  if (!forwarded) return null;
-  const first = forwarded.split(',')[0]?.trim();
-  return first && first.length <= 45 ? first : null;
-}
+// Kept here for the sign-in pages that import it from this module.
+export { clientAddress } from '../api/client-address';
