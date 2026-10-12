@@ -10,6 +10,7 @@ import { pendingTransactionCount } from '@lib/ledger/review';
 import { createSessionCookie, SESSION_COOKIE } from '@lib/auth/session';
 import { ACTION_TIMED_OUT, recordSessionEvent } from '@lib/auth/session-audit';
 import { sessionIdleMinutes } from '@lib/config/reference';
+import { clientAddress } from './lib/client-address';
 
 const LOGIN_PATH = '/login';
 const HOME_PATH = '/dashboard';
@@ -58,17 +59,6 @@ function isPublic(pathname: string): boolean {
     // A member's statement, the same way: the signed link it was sent with.
     pathname.startsWith(SHARED_STATEMENT_PREFIX)
   );
-}
-
-// The client's address, for the audit trail. Vercel sits behind a proxy, so
-// the socket address is the proxy's; x-forwarded-for's first entry is the
-// original client. It is attacker-supplied, so it is recorded as a claim about
-// the request and never used to make a decision.
-function clientAddress(headers: Headers): string | null {
-  const forwarded = headers.get('x-forwarded-for');
-  if (!forwarded) return null;
-  const first = forwarded.split(',')[0]?.trim();
-  return first && first.length <= 45 ? first : null;
 }
 
 // A page that looked a record up and did not find it returns a bare

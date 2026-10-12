@@ -13,6 +13,7 @@
 //     recording an incidental action may use recordAuditQuietly.
 import type { PoolClient } from 'pg';
 import { query } from '../db/pool';
+import { normaliseAddress } from '../client-address';
 
 export interface AuditEntry {
   // Null only for the system acting on its own behalf, which actorDescription
@@ -47,7 +48,9 @@ function params(entry: AuditEntry): unknown[] {
       : JSON.stringify(entry.previousValue),
     entry.newValue === undefined ? null : JSON.stringify(entry.newValue),
     entry.requestId ?? null,
-    entry.ipAddress ?? null,
+    // Never lose the row over its address: anything inet would refuse (a
+    // port on the end, a header that is not an address) is left out.
+    normaliseAddress(entry.ipAddress),
   ];
 }
 
