@@ -5832,3 +5832,20 @@ same way a transaction's receipt goes since 0124, never as a link.
   transaction's receipt PDF, under a token signed for a fee receipt only.
 - The fee receipt page shows where it went and has **Send** / **Send again**.
 - WhatsApp needs a template registered with Meta with a document header.
+
+---
+
+### An approval says why
+
+Officer direction: an approval carries a comment, as a return or a rejection
+already did.
+
+- **Membership:** the President's decision on an application — membership,
+  non-member or additional account — needs a comment to approve as well as
+  to reject (`decideApplication`). Each sign-off on a quorum needs its own.
+- **Transactions:** the step that approves a withdrawal, a transfer, a
+  closure or a chained deposit — the last step of its chain — needs a
+  comment (`reviewTransaction`). Forwarding from an earlier step needs none.
+  A deposit the matrix posts directly has no approval and no comment.
+- The comment box is marked required on those forms; the server refuses an
+  empty one whatever the form does.

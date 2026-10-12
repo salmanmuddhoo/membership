@@ -459,7 +459,7 @@ describe('disbursing an approved withdrawal (S-1503)', () => {
     );
     await mods.review.reviewTransaction(
       large.id,
-      { outcome: 'forward', comment: '' },
+      { outcome: 'forward', comment: 'Approved.' },
       president
     );
     expect((await mods.review.loadTransaction(large.id))?.status).toBe(
@@ -546,7 +546,7 @@ describe('disbursing an approved withdrawal (S-1503)', () => {
     );
     await mods.review.reviewTransaction(
       large.id,
-      { outcome: 'forward', comment: '' },
+      { outcome: 'forward', comment: 'Approved.' },
       president
     );
     // Between the decision and the pay-out the MSA's floor is raised past
@@ -663,7 +663,7 @@ describe('disbursing an approved withdrawal (S-1503)', () => {
     );
     await mods.review.reviewTransaction(
       large.id,
-      { outcome: 'forward', comment: '' },
+      { outcome: 'forward', comment: 'Approved.' },
       president
     );
     const posterOnly = {

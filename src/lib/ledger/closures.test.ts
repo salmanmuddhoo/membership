@@ -662,7 +662,7 @@ describe('a closure request (S-1702)', () => {
     );
     await review.reviewTransaction(
       request.id,
-      { outcome: 'forward', comment: '' },
+      { outcome: 'forward', comment: 'Approved.' },
       president
     );
 
@@ -749,7 +749,7 @@ describe('a closure request (S-1702)', () => {
       for (const reviewer of [secretary, president]) {
         await review.reviewTransaction(
           request.id,
-          { outcome: 'forward', comment: '' },
+          { outcome: 'forward', comment: 'Approved.' },
           reviewer
         );
       }
@@ -909,7 +909,7 @@ describe('a closure on a death (business decision)', () => {
       );
       await review.reviewTransaction(
         id,
-        { outcome: 'forward', comment: '' },
+        { outcome: 'forward', comment: 'Approved.' },
         president
       );
       return review.postApprovedTransaction(id, treasurer, { method: 'cash' });

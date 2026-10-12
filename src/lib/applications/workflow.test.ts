@@ -573,7 +573,7 @@ describe('S-604/S-605: a Minor application with a valid guardian, end to end', (
     );
     const decided = await workflow.decideApplication(
       id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.createMemberFromApplication
     );
@@ -620,7 +620,7 @@ describe('S-601: a Corporate application, end to end', () => {
     );
     const decided = await workflow.decideApplication(
       id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.createMemberFromApplication
     );
@@ -654,7 +654,7 @@ describe('M3: the walking skeleton, end to end', () => {
 
     const decided = await workflow.decideApplication(
       id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.createMemberFromApplication
     );
@@ -897,7 +897,7 @@ describe('S-203: segregation of duties, on this record', () => {
     await expect(
       workflow.decideApplication(
         id,
-        { outcome: 'approve', comment: '' },
+        { outcome: 'approve', comment: 'Approved.' },
         secretaryWhoCanAlsoApprove,
         (await load()).members.createMemberFromApplication
       )
@@ -1035,7 +1035,27 @@ describe('S-305 and S-306: a return or a rejection must say why', () => {
         president,
         members.createMemberFromApplication
       )
-    ).rejects.toThrowError(/requires a comment/);
+    ).rejects.toThrowError('Add a comment before rejecting the application.');
+  });
+
+  it('refuses an approval with no comment', async () => {
+    const { workflow, members } = await load();
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+    await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Complete.' },
+      secretary
+    );
+
+    await expect(
+      workflow.decideApplication(
+        id,
+        { outcome: 'approve', comment: '  ' },
+        president,
+        members.createMemberFromApplication
+      )
+    ).rejects.toThrowError('Add a comment before approving the application.');
   });
 
   it('creates no member when the decision is a rejection', async () => {
@@ -1371,7 +1391,7 @@ describe('S-609: a quorum above one needs that many distinct sign-offs', () => {
 
     const first = await workflow.decideApplication(
       id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.createMemberFromApplication
     );
@@ -1385,7 +1405,7 @@ describe('S-609: a quorum above one needs that many distinct sign-offs', () => {
 
     const second = await workflow.decideApplication(
       id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       boardMember2,
       members.createMemberFromApplication
     );
@@ -1407,7 +1427,7 @@ describe('S-609: a quorum above one needs that many distinct sign-offs', () => {
 
     const partial = await workflow.decideApplication(
       id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.createMemberFromApplication
     );
@@ -1440,7 +1460,7 @@ describe('S-609: a quorum above one needs that many distinct sign-offs', () => {
 
     await workflow.decideApplication(
       id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.createMemberFromApplication
     );
@@ -1448,7 +1468,7 @@ describe('S-609: a quorum above one needs that many distinct sign-offs', () => {
     await expect(
       workflow.decideApplication(
         id,
-        { outcome: 'approve', comment: '' },
+        { outcome: 'approve', comment: 'Approved.' },
         president,
         members.createMemberFromApplication
       )
@@ -1467,13 +1487,13 @@ describe('S-609: a quorum above one needs that many distinct sign-offs', () => {
     );
     await workflow.decideApplication(
       id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.createMemberFromApplication
     );
     await workflow.decideApplication(
       id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       boardMember2,
       members.createMemberFromApplication
     );
@@ -1497,7 +1517,7 @@ describe('S-609: a quorum above one needs that many distinct sign-offs', () => {
     );
     await workflow.decideApplication(
       id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.createMemberFromApplication
     );
@@ -1526,7 +1546,7 @@ describe('S-609: a quorum above one needs that many distinct sign-offs', () => {
 
     const decided = await workflow.decideApplication(
       id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.createMemberFromApplication
     );
@@ -1565,7 +1585,7 @@ describe('S-308 and S-309: what approval creates', () => {
       await expect(
         workflow.decideApplication(
           id,
-          { outcome: 'approve', comment: '' },
+          { outcome: 'approve', comment: 'Approved.' },
           president,
           members.createMemberFromApplication
         )
@@ -1597,7 +1617,7 @@ describe('S-308 and S-309: what approval creates', () => {
     // And it can be approved once the configuration is put back.
     const decided = await workflow.decideApplication(
       id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.createMemberFromApplication
     );
@@ -1632,7 +1652,7 @@ describe('S-308 and S-309: what approval creates', () => {
     );
     const decided = await workflow.decideApplication(
       id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.createMemberFromApplication
     );
@@ -1676,7 +1696,7 @@ describe('S-308 and S-309: what approval creates', () => {
     );
     const decided = await workflow.decideApplication(
       id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.createMemberFromApplication
     );
@@ -1712,7 +1732,7 @@ describe('S-308 and S-309: what approval creates', () => {
     );
     const decided = await workflow.decideApplication(
       id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.createMemberFromApplication
     );
@@ -1743,7 +1763,7 @@ describe('S-308 and S-309: what approval creates', () => {
     );
     const decided = await workflow.decideApplication(
       id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.createMemberFromApplication
     );
@@ -1782,7 +1802,7 @@ describe('S-308 and S-309: what approval creates', () => {
     );
     const decided = await workflow.decideApplication(
       id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.createMemberFromApplication
     );
@@ -2706,7 +2726,7 @@ describe('Disabling Secretary review bridges straight to the President', () => {
     const { members } = await load();
     const result = await workflow.decideApplication(
       id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.createMemberFromApplication
     );
@@ -2906,7 +2926,7 @@ describe('S-613: an additional-account application, end to end', () => {
 
     const decided = await workflow.decideApplication(
       application.id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.openAccountsForApplication
     );
@@ -2986,7 +3006,7 @@ describe('S-613: an additional-account application, end to end', () => {
     );
     await workflow.decideApplication(
       application.id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.openAccountsForApplication
     );
@@ -3028,7 +3048,7 @@ describe('S-613: an additional-account application, end to end', () => {
     );
     await workflow.decideApplication(
       first.id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.openAccountsForApplication
     );
@@ -3065,7 +3085,7 @@ describe('S-613: an additional-account application, end to end', () => {
     await expect(
       workflow.decideApplication(
         second.id,
-        { outcome: 'approve', comment: '' },
+        { outcome: 'approve', comment: 'Approved.' },
         president,
         members.openAccountsForApplication
       )
@@ -3154,7 +3174,7 @@ describe('S-614: a customer_account application, end to end', () => {
 
     const decided = await workflow.decideApplication(
       application.id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.openAccountsForCustomerApplication
     );
@@ -3231,7 +3251,7 @@ describe('S-614: a customer_account application, end to end', () => {
     await expect(
       workflow.decideApplication(
         application.id,
-        { outcome: 'approve', comment: '' },
+        { outcome: 'approve', comment: 'Approved.' },
         president,
         members.openAccountsForCustomerApplication
       )
@@ -3294,7 +3314,7 @@ describe('S-614: a customer_account application, end to end', () => {
     );
     const decided = await workflow.decideApplication(
       application.id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.openAccountsForCustomerApplication
     );
@@ -3389,7 +3409,7 @@ describe('S-614: the account a non-member already held transfers when they becom
     );
     const custDecided = await workflow.decideApplication(
       custApp.id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.openAccountsForCustomerApplication
     );
@@ -3418,7 +3438,7 @@ describe('S-614: the account a non-member already held transfers when they becom
     );
     const memDecided = await workflow.decideApplication(
       memApp.id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.createMemberFromApplication
     );
@@ -3502,7 +3522,7 @@ describe('S-614: the account a non-member already held transfers when they becom
     );
     const custDecided = await workflow.decideApplication(
       custApp.id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.openAccountsForCustomerApplication
     );
@@ -3530,7 +3550,7 @@ describe('S-614: the account a non-member already held transfers when they becom
     );
     const memDecided = await workflow.decideApplication(
       memApp.id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.createMemberFromApplication
     );
@@ -3612,7 +3632,7 @@ describe('S-614: the account a non-member already held transfers when they becom
     );
     const custDecided = await workflow.decideApplication(
       custApp.id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.openAccountsForCustomerApplication
     );
@@ -3634,7 +3654,7 @@ describe('S-614: the account a non-member already held transfers when they becom
     );
     await workflow.decideApplication(
       memApp.id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.createMemberFromApplication
     );
@@ -3800,7 +3820,7 @@ describe('a customer opens a further account, end to end', () => {
     );
     const firstDecided = await workflow.decideApplication(
       first.id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.openAccountsForCustomerApplication
     );
@@ -3846,7 +3866,7 @@ describe('a customer opens a further account, end to end', () => {
     );
     const decided = await workflow.decideApplication(
       second.id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.openAccountsForApplication
     );
@@ -3929,7 +3949,7 @@ describe('a customer opens a further account, end to end', () => {
     );
     const firstDecided = await workflow.decideApplication(
       first.id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.openAccountsForCustomerApplication
     );
@@ -3962,7 +3982,7 @@ describe('a customer opens a further account, end to end', () => {
     await expect(
       workflow.decideApplication(
         second.id,
-        { outcome: 'approve', comment: '' },
+        { outcome: 'approve', comment: 'Approved.' },
         president,
         members.openAccountsForApplication
       )

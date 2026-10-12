@@ -372,7 +372,7 @@ describe('the Society’s bank accounts are configuration (S-1901)', () => {
     );
     await review.reviewTransaction(
       large.id,
-      { outcome: 'forward', comment: '' },
+      { outcome: 'forward', comment: 'Approved.' },
       president
     );
     const posted = await review.postApprovedTransaction(large.id, treasurer, {
@@ -495,7 +495,7 @@ describe('money through a bank names its account and reference (S-1902)', () => 
     );
     await review.reviewTransaction(
       large.id,
-      { outcome: 'forward', comment: '' },
+      { outcome: 'forward', comment: 'Approved.' },
       president
     );
     await expect(

@@ -531,7 +531,7 @@ describe('the office hears what waits on it (S-1804)', () => {
     // Approval on its own says nothing; the payout does.
     await review.reviewTransaction(
       large.id,
-      { outcome: 'forward', comment: '' },
+      { outcome: 'forward', comment: 'Approved.' },
       president
     );
     expect(await eventsFor(large.id)).toHaveLength(9);
