@@ -199,7 +199,7 @@ describe('identification: NIC + AB Number', () => {
     await expect(link()).rejects.toMatchObject({
       code: 'rate_limited',
       message: expect.stringMatching(
-        /Wait \d+ seconds? before requesting another code/
+        /^Please wait \d+ seconds? before requesting another code\.$/
       ),
     });
     // A miss is refused before any code, so it sets no cooldown: the rate
@@ -509,6 +509,38 @@ describe('sign-up: a verified mobile, never a member', () => {
       code: 'validation_failed',
       details: { mobile: expect.any(Array) },
     });
+  });
+});
+
+describe('asking for too many codes', () => {
+  it('says how long to wait, in seconds under a minute and minutes after', () => {
+    expect(identity.waitPhrase(1)).toBe('1 second');
+    expect(identity.waitPhrase(45)).toBe('45 seconds');
+    expect(identity.waitPhrase(60)).toBe('1 minute');
+    expect(identity.waitPhrase(61)).toBe('2 minutes');
+    expect(identity.waitPhrase(600)).toBe('10 minutes');
+  });
+
+  it('tells an applicant who asks too often how many minutes to wait', async () => {
+    delete process.env.RATE_LIMIT_DISABLED;
+    try {
+      const signUp = () =>
+        identity.startSignUp({ mobile: '5999 4444' }, origin, { delivery });
+      // Three in ten minutes are allowed (the cooldown between them aside).
+      for (let i = 0; i < 3; i++) {
+        await clearCooldowns();
+        await signUp();
+      }
+      await clearCooldowns();
+      await expect(signUp()).rejects.toMatchObject({
+        code: 'rate_limited',
+        message: expect.stringMatching(
+          /^Too many codes have been requested\. Please wait (9|10) minutes before requesting a new one\.$/
+        ),
+      });
+    } finally {
+      process.env.RATE_LIMIT_DISABLED = 'true';
+    }
   });
 });
 

@@ -147,6 +147,15 @@ const LINK_IP_LIMIT = { max: 20, windowSeconds: 60 * 60 };
 const SIGN_UP_LIMIT = { max: 3, windowSeconds: 10 * 60 };
 const SIGN_UP_IP_LIMIT = { max: 20, windowSeconds: 60 * 60 };
 
+// How long to wait, as a person reads it: seconds under a minute, whole
+// minutes (rounded up) from there, so "wait 9 minutes" is never too short.
+export function waitPhrase(seconds: number): string {
+  const s = Math.max(1, Math.ceil(seconds));
+  if (s < 60) return `${s} second${s === 1 ? '' : 's'}`;
+  const m = Math.ceil(s / 60);
+  return `${m} minute${m === 1 ? '' : 's'}`;
+}
+
 async function enforce(
   subject: string,
   correlationId: string,
@@ -156,7 +165,8 @@ async function enforce(
   if (!result.allowed) {
     throw new ApiError(
       'rate_limited',
-      'Too many attempts. Please wait before trying again.'
+      'Too many codes have been requested. Please wait ' +
+        `${waitPhrase(result.retryAfterSeconds)} before requesting a new one.`
     );
   }
 }
@@ -181,7 +191,7 @@ async function assertCooldown(requestKey: string): Promise<void> {
   if (wait > 0) {
     throw new ApiError(
       'rate_limited',
-      `Wait ${wait} second${wait === 1 ? '' : 's'} before requesting another code.`
+      `Please wait ${waitPhrase(wait)} before requesting another code.`
     );
   }
 }
