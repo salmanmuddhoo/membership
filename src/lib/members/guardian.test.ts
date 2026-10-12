@@ -11,6 +11,7 @@ import {
   vi,
 } from 'vitest';
 import { migrate } from '../../../scripts/migrate';
+import { openEveryDrawer } from '../cash/drawers.testing';
 import type { Principal } from '../access/principal';
 
 // A Minor member's guardian (migration 0107), against real migrations:
@@ -150,6 +151,7 @@ beforeAll(async () => {
      returning id, email`
   );
   const byEmail = new Map(users.rows.map(r => [r.email, r.id]));
+  await openEveryDrawer(appUrl);
   const money = ['transaction.capture', 'transaction.post', 'transaction.view'];
   officer = principalFor(
     byEmail.get('officer@albarakah.mu'),

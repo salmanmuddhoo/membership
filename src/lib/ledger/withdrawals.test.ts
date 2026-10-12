@@ -11,6 +11,7 @@ import {
   vi,
 } from 'vitest';
 import { migrate } from '../../../scripts/migrate';
+import { openEveryDrawer } from '../cash/drawers.testing';
 import type { Principal } from '../access/principal';
 
 // Recording a withdrawal (S-1501), the available balance it reads (S-1502)
@@ -121,6 +122,7 @@ beforeAll(async () => {
      returning id, email`
   );
   const byEmail = new Map(users.rows.map(r => [r.email, r.id]));
+  await openEveryDrawer(appUrl);
   const make = (email: string, roles: string[], permissions: string[]) =>
     principalFor(byEmail.get(email), email, roles, permissions);
   clerk = make(

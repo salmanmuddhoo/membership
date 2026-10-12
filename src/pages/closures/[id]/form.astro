@@ -13,6 +13,7 @@ import {
 import { loadTransaction } from '@lib/ledger/review';
 import { loadCustomer, loadMember } from '@lib/members/create';
 import { formatMoney } from '@lib/payments/money';
+import { localFormat } from '@lib/time';
 
 const principal = Astro.locals.principal!;
 const { id } = Astro.params;
@@ -42,7 +43,7 @@ const documentType = (await listDocumentTypes()).find(
 const alreadyFiled = (await closureChecklist(closure.id))[0]?.filed ?? null;
 const back = `/closures/${closure.id}?step=signature`;
 const next = `/closures/${closure.id}?step=documents`;
-const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
+const dateFormat = localFormat({ dateStyle: 'long' });
 ---
 
 <BaseLayout title={`${closure.reference} · Account closure request`}>

@@ -18,6 +18,7 @@ import {
 } from '@lib/config/reference';
 import { filedDocumentFor } from '@lib/documents/documents';
 import { formatMoney } from '@lib/payments/money';
+import { localFormat } from '@lib/time';
 
 const principal = Astro.locals.principal!;
 const { id } = Astro.params;
@@ -99,7 +100,7 @@ const PURPOSES = [
   'Deposit',
 ] as const;
 
-const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
+const dateFormat = localFormat({ dateStyle: 'long' });
 ---
 
 <BaseLayout title={`${application.reference} · Cash Deposit Form`}>

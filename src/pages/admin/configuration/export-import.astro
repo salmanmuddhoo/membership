@@ -33,13 +33,14 @@ import {
   TD_NUM,
   TD,
 } from '@lib/ui';
+import { localDay } from '@lib/time';
 
 const principal = Astro.locals.principal!;
 const canImport = principal.permissions.has('config.manage');
 
 if (Astro.url.searchParams.has('download')) {
   const file = await exportConfiguration(principal);
-  const day = new Date().toISOString().slice(0, 10);
+  const day = localDay();
   return new Response(file, {
     headers: {
       'content-type':

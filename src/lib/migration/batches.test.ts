@@ -7,6 +7,7 @@ import ExcelJS from 'exceljs';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { migrate } from '../../../scripts/migrate';
+import { openEveryDrawer } from '../cash/drawers.testing';
 import type { Principal } from '../access/principal';
 
 const ADMIN_URL = 'postgresql://postgres@127.0.0.1:5433/postgres';
@@ -121,6 +122,7 @@ beforeAll(async () => {
        values ('officer@albarakah.mu', 'Officer') returning id`
     )
   ).rows[0].id;
+  await openEveryDrawer(appUrl);
   officer = {
     userId: officerId,
     entraSubject: 'sub-officer',

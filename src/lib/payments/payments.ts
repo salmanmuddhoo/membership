@@ -16,6 +16,7 @@ import type { PoolClient } from 'pg';
 import { recordAudit } from '../access/audit';
 import { checkSegregation } from '../admin/segregation';
 import { query, withTransaction } from '../db/pool';
+import { refuseCashWithoutDrawer } from '../cash/sessions';
 import { accountEntries, postOpeningBalances } from '../ledger/ledger';
 import { notifyReceiptVoided } from '../ledger/void-notifications';
 import {
@@ -892,6 +893,11 @@ export async function recordPayment(
   const sourceOfFund = (input.sourceOfFund ?? '').trim();
   const sourceOfFundFormConfirmed = input.sourceOfFundFormConfirmed ?? false;
   await applyCashPaymentRules(paymentMethod, total, sourceOfFundFormConfirmed);
+  await refuseCashWithoutDrawer(
+    paymentMethod,
+    principal.userId,
+    message => new PaymentError(message, 'conflict')
+  );
 
   const existing = await query<{ receipt_no: string }>(
     `select r.receipt_no
@@ -1177,6 +1183,11 @@ export async function recordAccountOpeningPayment(
   const sourceOfFund = (input.sourceOfFund ?? '').trim();
   const sourceOfFundFormConfirmed = input.sourceOfFundFormConfirmed ?? false;
   await applyCashPaymentRules(paymentMethod, total, sourceOfFundFormConfirmed);
+  await refuseCashWithoutDrawer(
+    paymentMethod,
+    principal.userId,
+    message => new PaymentError(message, 'conflict')
+  );
 
   const existing = await query<{ receipt_no: string }>(
     `select r.receipt_no
@@ -1611,6 +1622,11 @@ export async function refundPayment(
   // follows (S-1307).
   const refundMethod = await offeredMethod(input.method, 'withdrawal');
   requireReference(refundMethod, input.methodReference);
+  await refuseCashWithoutDrawer(
+    refundMethod,
+    principal.userId,
+    message => new PaymentError(message, 'conflict')
+  );
 
   const original = await loadPayment(input.paymentId);
   if (!original) {

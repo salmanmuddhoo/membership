@@ -44,6 +44,7 @@ import {
   type MissingField,
   RECEIVED_STATUS,
 } from './capture';
+import { localDay } from '../time';
 
 export const WORKFLOW_CODE = 'membership_application_approval';
 export const ENTITY_TYPE = 'membership_application';
@@ -283,7 +284,7 @@ async function assertMayAct(
     options.action
   );
   if (!verdict.allowed) {
-    const when = verdict.conflict!.performedAt.toISOString().slice(0, 10);
+    const when = localDay(verdict.conflict!.performedAt);
     throw new ApplicationError(
       `${verdict.conflict!.description} You acted on this application on ` +
         `${when}, so someone else must take this step.`,

@@ -11,6 +11,7 @@
 import pg from 'pg';
 import { getDatabaseConfig } from '../config';
 import { clearReferenceCache } from '../config/cache';
+import { TIME_ZONE } from '../time';
 
 const { Pool } = pg;
 
@@ -43,6 +44,13 @@ export function getPool(): pg.Pool {
     // the second one: without keepalives a NAT or load balancer in between
     // can silently drop it, and the first query after that fails.
     keepAlive: true,
+    // The database's own date arithmetic — current_date, a timestamp cast to
+    // a date, a "today" in a report — runs in Mauritius time like the
+    // screens (src/lib/time.ts), not the server's UTC. Set as a startup
+    // parameter of each connection rather than on the database, which only
+    // its owner may alter. (Azure's PgBouncer, if it is ever put in front,
+    // must be told to pass `options` through.)
+    options: `-c TimeZone=${TIME_ZONE}`,
     // Azure terminates TLS with a publicly-chaining certificate, so the default
     // trust store is enough; we only need to insist that it is actually checked.
     // 'disable' means no TLS handshake at all, which is what a local plaintext

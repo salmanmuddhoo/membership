@@ -18,6 +18,7 @@ import { recordAudit } from '../access/audit';
 import type { Principal } from '../access/principal';
 import { dormancyMonths, dormancyReactivation } from '../config/reference';
 import { query, withTransaction } from '../db/pool';
+import { localFormat } from '../time';
 import { tellMember } from './tell-member';
 
 export const PERMISSION_REACTIVATE = 'member.reactivate';
@@ -71,7 +72,7 @@ export interface DormancyMark {
   lastActivity: Date;
 }
 
-const dateWords = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
+const dateWords = localFormat({ dateStyle: 'long' });
 
 /**
  * Mark dormant every active member with no activity for the configured

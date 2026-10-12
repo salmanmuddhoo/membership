@@ -28,6 +28,7 @@ import {
   TD,
   TD_NUM,
 } from '@lib/ui';
+import { localFormat } from '@lib/time';
 
 const principal = Astro.locals.principal!;
 
@@ -54,7 +55,7 @@ const [pending, approved, returned] = await Promise.all([
   ),
 ]);
 
-const dateFormat = new Intl.DateTimeFormat('en-GB', {
+const dateFormat = localFormat({
   day: 'numeric',
   month: 'short',
   year: 'numeric',

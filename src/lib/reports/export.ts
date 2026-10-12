@@ -8,6 +8,7 @@
 // The same ExcelJS the migration template already uses, so no new dependency.
 import ExcelJS from 'exceljs';
 import type { ReportColumn, ReportResult } from './definitions';
+import { localDay } from '../time';
 
 export const XLSX_CONTENT_TYPE =
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
@@ -85,5 +86,5 @@ export async function reportToWorkbook(
 
 // A file name somebody can find again in a downloads folder six months later.
 export function reportFileName(code: string, at: Date): string {
-  return `${code}-${at.toISOString().slice(0, 10)}.xlsx`;
+  return `${code}-${localDay(at)}.xlsx`;
 }

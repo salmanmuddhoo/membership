@@ -16,6 +16,7 @@ import {
   LINK_CARD,
   MUTED,
 } from '@lib/ui';
+import { localDay, startOfLocalDay } from '@lib/time';
 
 const principal = Astro.locals.principal!;
 const canCapture = principal.permissions.has('transaction.capture');
@@ -51,8 +52,7 @@ const KINDS: { label: string; href: string; blurb: string }[] = [
 // scoped as /transactions/all is — what this officer recorded, unless they
 // hold transaction.view_all.
 const seesAll = principal.permissions.has('transaction.view_all');
-const todayStart = new Date();
-todayStart.setHours(0, 0, 0, 0);
+const todayStart = startOfLocalDay(localDay());
 const today = await listTransactions({
   capturedBy: seesAll ? undefined : principal.userId,
   from: todayStart,

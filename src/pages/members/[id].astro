@@ -98,6 +98,7 @@ import {
   SUBTITLE,
   VIEW_BUTTON,
 } from '@lib/ui';
+import { localFormat } from '@lib/time';
 
 const principal = Astro.locals.principal!;
 const canSeePayments = principal.permissions.has('payment.view');
@@ -396,7 +397,7 @@ const documentGroups: DocumentGroup[] = canSeeDocuments
     )
   : [];
 
-const dateFormat = new Intl.DateTimeFormat('en-GB', {
+const dateFormat = localFormat({
   dateStyle: 'medium',
   timeStyle: 'short',
 });

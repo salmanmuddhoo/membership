@@ -17,6 +17,7 @@ import {
   paymentMethodUseFor,
   type WorkflowStep,
 } from '../config/reference';
+import { refuseCashWithoutDrawer } from '../cash/sessions';
 import { query, withTransaction } from '../db/pool';
 import {
   abandonReceiptNumber,
@@ -951,6 +952,11 @@ export async function postApprovedTransaction(
     transaction.reference,
     ACTION_POSTED,
     postingExemptions(transaction)
+  );
+  await refuseCashWithoutDrawer(
+    paidBy?.code ?? transaction.method,
+    principal.userId,
+    message => new ReviewError(message, 'conflict')
   );
 
   const receipt = await allocateReceiptNumber(principal.userId);

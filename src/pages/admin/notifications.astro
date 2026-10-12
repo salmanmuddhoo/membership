@@ -37,6 +37,7 @@ import {
   NOTICE_OK,
   PILL_WARN,
 } from '@lib/ui';
+import { localFormat } from '@lib/time';
 
 const principal = Astro.locals.principal!;
 // Reading the log is notification.view (this page's own rule). Sending a real
@@ -112,7 +113,7 @@ const [{ rows, total }, counts, templates] = await Promise.all([
 const statuses = channelStatuses(getNotificationConfig());
 const sendable = templates.filter(t => t.isActive);
 
-const dateTimeFormat = new Intl.DateTimeFormat('en-GB', {
+const dateTimeFormat = localFormat({
   dateStyle: 'medium',
   timeStyle: 'short',
 });

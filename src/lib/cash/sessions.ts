@@ -13,6 +13,7 @@
 // like any act on money.
 import { recordAudit } from '../access/audit';
 import type { Principal } from '../access/principal';
+import { paymentMethodByCode } from '../config/reference';
 import { query, withTransaction } from '../db/pool';
 import { fromCents, MoneyError, toCents } from '../payments/money';
 
@@ -124,6 +125,27 @@ export async function openSessionFor(
     [userId]
   );
   return result.rows[0] ? assemble(result.rows[0]) : null;
+}
+
+export const DRAWER_CLOSED =
+  'Open your cash drawer before taking or paying out cash.';
+
+/**
+ * Cash moves only through an open drawer (migration 0123): refused here,
+ * before anything is written or a receipt number drawn, in the caller's own
+ * error. The database refuses the same movement whatever path reaches it.
+ */
+export async function refuseCashWithoutDrawer(
+  method: { isCash: boolean } | string,
+  userId: string,
+  refuse: (message: string) => Error
+): Promise<void> {
+  const isCash =
+    typeof method === 'string'
+      ? ((await paymentMethodByCode(method))?.isCash ?? false)
+      : method.isCash;
+  if (!isCash) return;
+  if (!(await openSessionFor(userId))) throw refuse(DRAWER_CLOSED);
 }
 
 export async function sessionById(id: string): Promise<CashSession | null> {

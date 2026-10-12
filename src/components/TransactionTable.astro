@@ -6,6 +6,7 @@ import { transactionStatusLabel } from '@lib/ledger/labels';
 import type { TransactionSummary } from '@lib/ledger/review';
 import { formatMoney } from '@lib/payments/money';
 import { COL_OPTIONAL, FILTER, HINT, TABLE, TBODY, THEAD } from '@lib/ui';
+import { localFormat } from '@lib/time';
 
 interface Props {
   transactions: TransactionSummary[];
@@ -25,7 +26,7 @@ const KIND_LABELS: Record<string, string> = {
   resignation: 'Resignation',
   demise: 'Demised claim',
 };
-const dateFormat = new Intl.DateTimeFormat('en-GB', {
+const dateFormat = localFormat({
   day: 'numeric',
   month: 'short',
   year: 'numeric',

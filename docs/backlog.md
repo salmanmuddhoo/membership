@@ -5740,3 +5740,51 @@ two cannot drift apart.
   needs one before it can go back in.
 - Needs `system.migrate_members`, like the import; each export is on the
   audit trail (`migration.exported`, with the counts).
+
+---
+
+### Accountability: who did it, cash through a drawer, Mauritius time
+
+Officer request, three parts.
+
+**Every audit line names the officer.** The audit log's one-line text said
+who for the actions it had a sentence for; the rest fell back to the raw
+action code (`application · witnesses_set`) with no name. Now every line
+ends "by <officer>" — a named sentence where there is one (_Cash drawer
+opened by …_, _Application witnesses set by …_, _Transaction reversed by
+…_), the action in words otherwise, and a configuration change names the
+table it changed. The action filter lists actions in words too.
+
+- **Role permissions**: `role.permissions_changed` keeps both lists whole
+  on the row (evidence), but the page shows only the difference: _Permissions
+  of Treasurer updated by … : added Record a transfer; removed …_, by what
+  each permission allows rather than its code. The detail panel lists the
+  same under Added and Removed (`permissionChange`, `roleDetail` in
+  `audit-detail.ts`).
+- **Cash drawer**: opened (with the float) and closed (counted, expected,
+  over/short) each read as a sentence with the officer's name.
+
+**Cash only through an open drawer.** 0084 attributed cash to the open
+drawer of whoever posted it, and let a movement with no drawer through as
+"nobody's", for the reconciliation to list. Migration 0123 makes the two
+attribution triggers refuse instead: a cash deposit, disbursement, reversal,
+fee receipt or refund by an officer with no open drawer fails with _Open your
+cash drawer before taking or paying out cash._ The refusal is
+`restrict_violation`, which every ledger caller already shows in its own
+words. The application also checks first (`refuseCashWithoutDrawer`), so no
+receipt number is spent on a refused attempt: at a deposit's capture whether
+or not it goes to a chain (the cash is in the officer's hand), and wherever
+anything posts at once or is disbursed. Non-cash methods and the lines carried
+from a fee receipt (0096) are untouched. The reconciliation still reports
+cash moved with no drawer — the movements from before this rule.
+
+**Mauritius time throughout.** The server runs on UTC; the Society does not.
+`src/lib/time.ts` holds the clock: `localFormat` for every date and time on a
+screen, a PDF or a message, and `localDay` / `startOfLocalDay` /
+`endOfLocalDay` for "today" and for a day typed into a filter. The database
+works in the same zone: each connection starts with `TimeZone=Indian/Mauritius`
+(`pool.ts`), so `current_date`, a timestamp cast to a date and every report's
+day bounds are Mauritius days. A day typed in a migration sheet is now stored
+as that day's Mauritius midnight. Mauritius keeps no daylight saving, so the
+offset is +04:00 all year. Formats that print a pure calendar date (a
+statement period, a retention cut-off) stay on UTC on purpose.

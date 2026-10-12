@@ -19,6 +19,7 @@ import { APPLICATION_STATUS_LABELS } from '../applications/status-labels';
 import { statusLabel } from '../members/labels';
 import { formatMoney } from '../payments/money';
 import { query } from '../db/pool';
+import { localFormat } from '../time';
 import type { AuditEventRow } from './audit';
 
 export interface AuditDetailFact {
@@ -31,7 +32,7 @@ export interface AuditDetail {
   facts: AuditDetailFact[];
 }
 
-const dateTimeFormat = new Intl.DateTimeFormat('en-GB', {
+const dateTimeFormat = localFormat({
   dateStyle: 'medium',
   timeStyle: 'medium',
 });
@@ -679,6 +680,105 @@ function signInDetail(row: AuditEventRow): AuditDetail {
 }
 
 // ---------------------------------------------------------------------------
+// Roles and cash drawers
+
+interface RoleInfo {
+  names: Map<string, string>;
+  permissions: Map<string, string>;
+}
+
+async function loadRoleInfo(
+  roleIds: string[],
+  codes: string[]
+): Promise<RoleInfo> {
+  const names = new Map<string, string>();
+  const permissions = new Map<string, string>();
+  if (roleIds.length > 0) {
+    const result = await query<{ id: string; name: string }>(
+      `select id::text, name from role where id::text = any($1::text[])`,
+      [roleIds]
+    );
+    for (const r of result.rows) names.set(r.id, r.name);
+  }
+  if (codes.length > 0) {
+    const result = await query<{ code: string; description: string }>(
+      `select code, description from permission where code = any($1::text[])`,
+      [codes]
+    );
+    for (const r of result.rows) permissions.set(r.code, r.description);
+  }
+  return { names, permissions };
+}
+
+function permissionCodes(value: unknown): string[] {
+  const list = asRecord(value).permissions;
+  return Array.isArray(list)
+    ? list.filter((c): c is string => typeof c === 'string')
+    : [];
+}
+
+/**
+ * What a change to a role's permissions added and took away — never the
+ * whole list, which is the same forty-odd lines either side of one change.
+ * The row keeps both lists in full (evidence); this reads the difference.
+ */
+export function permissionChange(row: {
+  previousValue: unknown;
+  newValue: unknown;
+}): { added: string[]; removed: string[] } {
+  const before = new Set(permissionCodes(row.previousValue));
+  const after = new Set(permissionCodes(row.newValue));
+  return {
+    added: [...after].filter(c => !before.has(c)).sort(),
+    removed: [...before].filter(c => !after.has(c)).sort(),
+  };
+}
+
+function roleDetail(row: AuditEventRow, info: RoleInfo): AuditDetail {
+  const roleName = info.names.get(row.entityId) ?? 'A role';
+  if (row.action !== 'role.permissions_changed') {
+    return {
+      sentence: roleName,
+      facts: diffFacts(row.previousValue, row.newValue),
+    };
+  }
+  const { added, removed } = permissionChange(row);
+  const words = (codes: string[]) =>
+    codes.map(c => info.permissions.get(c) ?? c).join('; ');
+  const facts: AuditDetailFact[] = [];
+  if (added.length > 0) facts.push({ label: 'Added', value: words(added) });
+  if (removed.length > 0) {
+    facts.push({ label: 'Removed', value: words(removed) });
+  }
+  // The role alone: the page's own line says "Permissions of <role>
+  // updated by <officer>" and reads the change from the facts.
+  return { sentence: roleName, facts };
+}
+
+function cashSessionDetail(row: AuditEventRow): AuditDetail {
+  const v = asRecord(row.newValue);
+  const money = (value: unknown) =>
+    asString(value) ? formatMoney(String(value)) : '—';
+  if (row.action === 'cash.session.closed') {
+    const facts: AuditDetailFact[] = [];
+    if (v.closing_count !== undefined)
+      facts.push({ label: 'Counted', value: money(v.closing_count) });
+    if (v.expected !== undefined)
+      facts.push({ label: 'Expected', value: money(v.expected) });
+    if (v.over_short !== undefined)
+      facts.push({ label: 'Over/short', value: money(v.over_short) });
+    return { sentence: `Cash drawer closed by ${row.actorName}`, facts };
+  }
+  return {
+    sentence: `Cash drawer opened by ${row.actorName}`,
+    facts:
+      v.opening_float !== undefined
+        ? [{ label: 'Float', value: money(v.opening_float) }]
+        : [],
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
@@ -693,8 +793,17 @@ export async function describeAuditDetail(
   const memberIds = new Set<string>();
   const customerIds = new Set<string>();
   const documentIds = new Set<string>();
+  const roleIds = new Set<string>();
+  const permissionCodesSeen = new Set<string>();
 
   for (const row of rows) {
+    if (row.entityType === 'role') {
+      roleIds.add(row.entityId);
+      if (row.action === 'role.permissions_changed') {
+        const { added, removed } = permissionChange(row);
+        for (const c of [...added, ...removed]) permissionCodesSeen.add(c);
+      }
+    }
     switch (row.entityType) {
       case 'transaction':
         txRefs.add(row.entityId);
@@ -716,13 +825,14 @@ export async function describeAuditDetail(
     }
   }
 
-  const [transactions, applications, members, customers, documents] =
+  const [transactions, applications, members, customers, documents, roles] =
     await Promise.all([
       loadTransactionsByReference([...txRefs]),
       loadApplications([...appIds]),
       loadMembers([...memberIds]),
       loadCustomers([...customerIds]),
       loadDocuments([...documentIds]),
+      loadRoleInfo([...roleIds], [...permissionCodesSeen]),
     ]);
 
   for (const row of rows) {
@@ -752,6 +862,10 @@ export async function describeAuditDetail(
         if (doc) detail = documentDetail(row, doc);
       } else if (row.entityType === 'auth_session') {
         detail = signInDetail(row);
+      } else if (row.entityType === 'role') {
+        detail = roleDetail(row, roles);
+      } else if (row.entityType === 'cash_session') {
+        detail = cashSessionDetail(row);
       } else if (row.action.startsWith('config.')) {
         detail = configDetail(row);
       }

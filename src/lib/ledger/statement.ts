@@ -8,6 +8,7 @@
 // print, the same way a receipt is.
 import { reportToWorkbook } from '../reports/export';
 import type { Statement } from './ledger';
+import { localDay } from '../time';
 
 export interface StatementPeriod {
   from: string;
@@ -30,7 +31,7 @@ export function statementPeriod(
   params: { from: string | null; to: string | null },
   today = new Date()
 ): StatementPeriod | null {
-  const day = today.toISOString().slice(0, 10);
+  const day = localDay(today);
   const from = params.from ?? '';
   const to = params.to ?? '';
   if ((from !== '' && !isDay(from)) || (to !== '' && !isDay(to))) return null;
@@ -63,7 +64,7 @@ export const STATEMENT_COLUMNS = [
 export function statementRows(
   statement: Statement
 ): Record<string, string | number | null>[] {
-  const day = (at: Date) => at.toISOString().slice(0, 10);
+  const day = (at: Date) => localDay(at);
   return [
     {
       date: statement.from,

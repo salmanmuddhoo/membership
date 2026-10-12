@@ -10,6 +10,7 @@ import { sourceOfFundItem } from '@lib/ledger/deposit-requests';
 import { loadDeposit } from '@lib/ledger/deposits';
 import { loadCustomer, loadMember } from '@lib/members/create';
 import { formatMoney } from '@lib/payments/money';
+import { localFormat } from '@lib/time';
 
 const principal = Astro.locals.principal!;
 const { id } = Astro.params;
@@ -42,7 +43,7 @@ const checklistItems = await cashSourceOfFundChecklist();
 // Back to the first step of the request, not the one this page left from.
 const back = `/deposits/${deposit.id}?step=details`;
 const next = `/deposits/${deposit.id}?step=signature`;
-const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' });
+const dateFormat = localFormat({ dateStyle: 'long' });
 
 const PURPOSES = [
   'Shares',

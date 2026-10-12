@@ -3,6 +3,8 @@
 // value (migration 0077); this is the same list for the code, with the
 // words the screen uses and the one rule every capture path asks: may
 // money move for this person?
+import { localFormat } from '../time';
+
 export const MEMBER_STATUSES = [
   'pending',
   'active',
@@ -71,7 +73,7 @@ export function canOpenAccount(status: string): boolean {
 export function statusNotice(
   status: string,
   changedAt: Date | null,
-  format = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long' })
+  format = localFormat({ dateStyle: 'long' })
 ): string | null {
   if (status === 'active') return null;
   if (status === 'closed') return 'Every account is closed.';

@@ -242,7 +242,7 @@ if (Astro.request.method === 'POST') {
 
         const result = await response.json();
         if (applicationId) {
-          status.textContent = `Saved at ${new Date().toLocaleTimeString('en-GB')}`;
+          status.textContent = `Saved at ${new Date().toLocaleTimeString('en-GB', { timeZone: 'Indian/Mauritius' })}`;
           return true;
         }
         if (!result.created) return true;

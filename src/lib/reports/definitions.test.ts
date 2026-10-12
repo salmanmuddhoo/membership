@@ -7,6 +7,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { migrate } from '../../../scripts/migrate';
 import type { Principal } from '../access/principal';
+import { localDay } from '../time';
 
 const ADMIN_URL = 'postgresql://postgres@127.0.0.1:5433/postgres';
 const MIGRATIONS_DIR = path.resolve(
@@ -615,7 +616,7 @@ describe('bank accounts report', () => {
     const { reports } = await loadBank();
     const report = reports.reportByCode('bank-accounts')!;
 
-    const isoDate = (d: Date) => d.toISOString().slice(0, 10);
+    const isoDate = (d: Date) => localDay(d);
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
     const tomorrow = new Date();
