@@ -9,6 +9,7 @@
 // to the paper an officer hands over, and this is the copy the member keeps.
 import { jsPDF } from 'jspdf';
 import { formatMoney, fromCents, toCents } from '../payments/money';
+import { feeDestination } from './labels';
 import type { TransactionReceipt } from './receipts';
 import { localFormat } from '../time';
 
@@ -55,7 +56,8 @@ export function receiptFacts(
             `${t.counterpartAccountNo} · ${t.counterpartAccountTypeName}`,
         ]
           .filter(Boolean)
-          .join(' · ')
+          .join(' · ') ||
+        feeDestination(t)
       : null;
   const moneyIn = t.kind === 'deposit' || t.legDirection === 'credit';
 

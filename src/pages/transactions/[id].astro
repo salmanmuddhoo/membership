@@ -4,7 +4,11 @@
 // post, or correct and resubmit — and the trail of who did what.
 import ChainTimeline from '@components/ChainTimeline.astro';
 import DocumentViewer from '@components/DocumentViewer.astro';
-import { recordedLabel, transactionStatusLabel } from '@lib/ledger/labels';
+import {
+  feeDestination,
+  recordedLabel,
+  transactionStatusLabel,
+} from '@lib/ledger/labels';
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import {
   documentsForTransaction,
@@ -527,6 +531,13 @@ const dateFormat = localFormat({
                   {transaction.counterpartAccountNo} ·{' '}
                   {transaction.counterpartAccountTypeName}
                 </>
+              ) : transaction.feeApplicationId ? (
+                <a
+                  href={`/applications/${transaction.feeApplicationId}`}
+                  class="underline"
+                >
+                  {feeDestination(transaction)}
+                </a>
               ) : (
                 transaction.payeeName
               )}

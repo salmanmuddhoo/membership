@@ -569,6 +569,16 @@ export async function resubmitTransfer(
   if (!leg || leg.kind !== 'transfer_leg' || leg.legDirection !== 'debit') {
     throw new TransferError('That transfer no longer exists.', 'not_found');
   }
+  // A transfer paying a new member's fees carries the amounts the fee
+  // schedule asked for (migration 0126): it is cancelled on the
+  // application and started again, never edited here.
+  if (leg.feeApplicationId) {
+    throw new TransferError(
+      `${leg.displayReference} pays the fees of ${leg.feeApplicationReference}. ` +
+        'Cancel it on the application and start again.',
+      'conflict'
+    );
+  }
   if (leg.status !== 'returned') {
     throw new TransferError(
       `${leg.transferReference} is ${leg.status === 'posted' ? 'disbursed' : leg.status}, so it cannot be changed.`,

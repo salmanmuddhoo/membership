@@ -57,3 +57,14 @@ export function finalStepLabel(transaction: {
 }): string {
   return recordedLabel(transaction) ?? 'Disbursement';
 }
+
+/** Where a transfer paying a new member's fees went: the application. */
+export function feeDestination(t: {
+  feeApplicationReference?: string | null;
+  feeApplicantName?: string | null;
+}): string | null {
+  if (!t.feeApplicationReference) return null;
+  return ['Membership fees', t.feeApplicationReference, t.feeApplicantName]
+    .filter(Boolean)
+    .join(' · ');
+}

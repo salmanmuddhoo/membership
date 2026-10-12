@@ -4,6 +4,7 @@
 // reversal, read entirely from the transaction — nothing typed twice. The
 // Treasurer's void is on screen only; the paper carries the receipt.
 // Rendered inside /receipts/[id], whose styles it shares.
+import { feeDestination } from '@lib/ledger/labels';
 import type { PrintHistory, TransactionReceipt } from '@lib/ledger/receipts';
 import { formatMoney, fromCents, toCents } from '@lib/payments/money';
 import { localFormat } from '@lib/time';
@@ -95,7 +96,7 @@ const otherSide =
             `${t.counterpartAccountNo} · ${t.counterpartAccountTypeName}`,
         ]
           .filter(Boolean)
-          .join(' · ')
+          .join(' · ') || feeDestination(t)
     : null;
 const moneyIn = t.kind === 'deposit' || t.legDirection === 'credit';
 const backHref = `/transactions/${t.id}`;
