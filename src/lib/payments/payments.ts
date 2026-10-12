@@ -17,6 +17,7 @@ import { recordAudit } from '../access/audit';
 import { checkSegregation } from '../admin/segregation';
 import { query, withTransaction } from '../db/pool';
 import { refuseCashWithoutDrawer } from '../cash/sessions';
+import { notifyFeeReceiptIssued } from './fee-receipts';
 import { accountEntries, postOpeningBalances } from '../ledger/ledger';
 import { notifyReceiptVoided } from '../ledger/void-notifications';
 import {
@@ -1024,7 +1025,11 @@ export async function recordPayment(
       return paymentId;
     });
 
-    return (await loadPayment(id))!;
+    const recorded = (await loadPayment(id))!;
+    // The receipt to the applicant, as its PDF (officer request). Never
+    // throws: a receipt that could not be sent is still a receipt.
+    await notifyFeeReceiptIssued(recorded);
+    return recorded;
   } catch (error) {
     // The number is spent either way — it can never be reused — but why it was
     // spent is recorded, so reconciliation reports a gap with a reason rather
@@ -1318,7 +1323,11 @@ export async function recordAccountOpeningPayment(
       return paymentId;
     });
 
-    return (await loadPayment(id))!;
+    const recorded = (await loadPayment(id))!;
+    // The receipt to the applicant, as its PDF (officer request). Never
+    // throws: a receipt that could not be sent is still a receipt.
+    await notifyFeeReceiptIssued(recorded);
+    return recorded;
   } catch (error) {
     await abandonReceiptNumber(
       allocation.id,

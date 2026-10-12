@@ -161,7 +161,7 @@ describe('every Phase 2 setting has a working default (S-1801)', () => {
       'Cash'
     );
     expect(find(items, 'Notification wording', 'Receipt').value).toBe(
-      '1 of 1 event · WhatsApp and email'
+      '2 of 2 events · WhatsApp and email'
     );
     expect(
       find(items, 'Notification wording', "A member's transactions").value

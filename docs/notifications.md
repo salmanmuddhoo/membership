@@ -208,6 +208,22 @@ to take an origin from — nothing is sent, rather than a message saying a
 receipt is attached that is not. What was attached is stored on the
 notification row, so a retry sends the same document.
 
+## A membership fee receipt to its applicant
+
+`fee_receipt.issued` (migration 0125) is raised when an application's fees
+are recorded — a membership application's or an additional account's — and
+again when an officer presses **Send** on the fee receipt. It goes to the
+applicant's email and mobile (the guardian's for a minor with none of their
+own, the member's for an additional account), with the receipt as its PDF,
+exactly as a transaction's receipt goes: an email attachment and the
+WhatsApp template's document header, never a link
+(`src/lib/payments/fee-receipts.ts`). Its placeholders are `member_name`,
+`receipt_no`, `reference` (the application's), `amount` (the bare figure)
+and `items` (what was paid for, e.g. "Entrance fee, Takaful, Shares"). A
+refund, a void and a migrated opening balance are not sent. The WhatsApp
+template registered with Meta needs a document header; its body variables
+follow the wording's placeholders in order.
+
 ## An exit, at every stage
 
 A closure, a resignation and a demised claim (S-1705, M17) each raise four

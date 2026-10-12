@@ -16,12 +16,17 @@ function key(): Uint8Array | null {
   return secret ? new TextEncoder().encode(secret) : null;
 }
 
+// A membership fee receipt (a payment row, not a transaction) is signed for
+// its own purpose, so neither kind of token can be read as the other.
+const FEE_PURPOSE = 'fee-receipt';
+
 export async function signReceiptToken(
-  transactionId: string
+  transactionId: string,
+  purpose: string = PURPOSE
 ): Promise<string | null> {
   const k = key();
   if (!k) return null;
-  return new SignJWT({ purpose: PURPOSE })
+  return new SignJWT({ purpose })
     .setProtectedHeader({ alg: 'HS256' })
     .setSubject(transactionId)
     .setIssuedAt()
@@ -32,19 +37,27 @@ export async function signReceiptToken(
 // The transaction the token names, or null for anything else: expired,
 // tampered, signed for another purpose, or signed with another secret.
 export async function verifyReceiptToken(
-  token: string
+  token: string,
+  purpose: string = PURPOSE
 ): Promise<string | null> {
   const k = key();
   if (!k || !token) return null;
   try {
     const { payload } = await jwtVerify(token, k, { algorithms: ['HS256'] });
-    if (payload.purpose !== PURPOSE || typeof payload.sub !== 'string') {
+    if (payload.purpose !== purpose || typeof payload.sub !== 'string') {
       return null;
     }
     return payload.sub;
   } catch {
     return null;
   }
+}
+
+// The payment a fee receipt's token names, or null.
+export async function verifyFeeReceiptToken(
+  token: string
+): Promise<string | null> {
+  return verifyReceiptToken(token, FEE_PURPOSE);
 }
 
 // The full addresses, or null when the origin or the secret is not known:
@@ -66,4 +79,15 @@ export async function receiptLink(
   transactionId: string
 ): Promise<string | null> {
   return (await receiptLinks(transactionId))?.page ?? null;
+}
+
+// Where a membership fee receipt's PDF is fetched from at send time: the same
+// route as a transaction's, under a token signed for the fee receipt.
+export async function feeReceiptPdfLink(
+  paymentId: string
+): Promise<string | null> {
+  const origin = getAppOrigin();
+  const token = await signReceiptToken(paymentId, FEE_PURPOSE);
+  if (!origin || !token) return null;
+  return `${origin}/receipts/shared/${token}.pdf`;
 }
