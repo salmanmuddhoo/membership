@@ -663,7 +663,7 @@ describe('officers validate what a member asks for, and the member sees where it
     expect((await mine()).stage).toBe('With the President / Chairperson');
     await review.reviewTransaction(
       withdrawal.id,
-      { outcome: 'forward', comment: '' },
+      { outcome: 'forward', comment: 'Approved.' },
       president
     );
     expect(await mine()).toMatchObject({

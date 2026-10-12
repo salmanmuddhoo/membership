@@ -626,7 +626,7 @@ const REVIEW_STEP_META: Record<
     forwardLabel: 'Approve',
     returnOutcome: 'reject',
     returnLabel: 'Reject',
-    commentPlaceholder: 'Required if you reject this application.',
+    commentPlaceholder: 'Required.',
   },
 };
 
@@ -1720,6 +1720,7 @@ const dateFormat = localFormat({
                         name="comment"
                         rows="3"
                         class={INPUT}
+                        required={action.stepCode === 'president_decision'}
                         placeholder={reviewMeta.commentPlaceholder}
                       ></textarea>
                     </label>

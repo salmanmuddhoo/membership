@@ -799,10 +799,13 @@ const dateFormat = localFormat({
             name="comment"
             rows="3"
             class={INPUT}
+            required={position.isLast}
             placeholder={
-              position.isLast || fromApp
-                ? 'Required if you reject it.'
-                : 'Required if you return or reject it.'
+              position.isLast
+                ? 'Required.'
+                : fromApp
+                  ? 'Required if you reject it.'
+                  : 'Required if you return or reject it.'
             }
           ></textarea>
         </label>

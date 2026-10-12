@@ -805,11 +805,15 @@ export async function decideApplication(
     );
   }
 
+  // Every decision carries its reason (officer direction): a rejection,
+  // which goes back to the originating staff, and an approval too, so the
+  // record says why the President approved, not only that they did.
   const comment = decision.comment.trim();
-  if (decision.outcome === 'reject' && comment === '') {
+  if (comment === '') {
     throw new ApplicationError(
-      'Rejecting an application requires a comment. It is returned to the ' +
-        'originating staff, who need to know why.'
+      decision.outcome === 'reject'
+        ? 'Add a comment before rejecting the application.'
+        : 'Add a comment before approving the application.'
     );
   }
 

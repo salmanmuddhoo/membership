@@ -293,6 +293,11 @@ test.describe('an Individual application, capture to member', () => {
 
     const approve = page.getByRole('button', { name: 'Approve', exact: true });
     await expect(approve).toBeVisible();
+    // Every decision carries its reason, approval included.
+    await page.fill(
+      'textarea[name="comment"]',
+      'Approved: documents in order.'
+    );
     await approve.click();
 
     await expect(

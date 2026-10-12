@@ -662,12 +662,18 @@ export async function reviewTransaction(
       'forbidden'
     );
   }
+  // A return or a rejection says why, and so does the approval itself
+  // (officer direction): the step that approves a withdrawal, a transfer or
+  // a chained deposit records its reason. Forwarding to a further step
+  // does not need one.
   const comment = decision.comment.trim();
-  if (decision.outcome !== 'forward' && comment === '') {
+  if (comment === '' && (decision.outcome !== 'forward' || position.isLast)) {
     throw new ReviewError(
       decision.outcome === 'return'
         ? 'Say what needs correcting before returning it.'
-        : 'Say why before rejecting it.'
+        : decision.outcome === 'reject'
+          ? 'Say why before rejecting it.'
+          : 'Add a comment before approving it.'
     );
   }
   // A return hands the transaction back to its captor to correct. A request

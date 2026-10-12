@@ -401,7 +401,7 @@ describe('the queue', () => {
     );
     await review.reviewTransaction(
       deposit.id,
-      { outcome: 'forward', comment: '' },
+      { outcome: 'forward', comment: 'Approved.' },
       president
     );
     // Approved — and the officer who captured it may not be the one who posts.
@@ -417,6 +417,39 @@ describe('the queue', () => {
         president
       )
     ).rejects.toThrowError(/approved; nothing is waiting/);
+  });
+
+  it('needs no comment to forward, but one to approve on the last step', async () => {
+    const { deposits, review } = await load();
+    const deposit = await deposits.recordDeposit(
+      {
+        accountId: shares,
+        amount: '120000',
+        method: 'bank_transfer',
+        methodReference: 'BT-APPROVE',
+        bankAccountId,
+      },
+      clerk
+    );
+    const forwarded = await review.reviewTransaction(
+      deposit.id,
+      { outcome: 'forward', comment: '' },
+      secretary
+    );
+    expect(forwarded.status).toBe('under_review');
+    await expect(
+      review.reviewTransaction(
+        deposit.id,
+        { outcome: 'forward', comment: '  ' },
+        president
+      )
+    ).rejects.toThrowError('Add a comment before approving it.');
+    const approved = await review.reviewTransaction(
+      deposit.id,
+      { outcome: 'forward', comment: 'Source of funds seen.' },
+      president
+    );
+    expect(approved.status).toBe('approved');
   });
 
   it('requires a comment to return or reject, and a rejection ends it', async () => {
@@ -589,7 +622,7 @@ describe('return, edit, resubmit (S-1404)', () => {
 
     const approved = await review.reviewTransaction(
       deposit.id,
-      { outcome: 'forward', comment: '' },
+      { outcome: 'forward', comment: 'Approved.' },
       president
     );
     expect(approved.status).toBe('approved');
@@ -748,7 +781,7 @@ describe('the chain is read live (S-1402)', () => {
       expect(entry.isLastStep).toBe(true);
       const decided = await review.reviewTransaction(
         deposit.id,
-        { outcome: 'forward', comment: '' },
+        { outcome: 'forward', comment: 'Approved.' },
         president
       );
       expect(decided.status).toBe('approved');
@@ -757,7 +790,7 @@ describe('the chain is read live (S-1402)', () => {
         to_status: 'approved',
         step_code: 'president_decision',
         actor_role: 'President / Chairperson',
-        comment: null,
+        comment: 'Approved.',
       });
     } finally {
       await config.setStepEnabled(step.id, true, admin);

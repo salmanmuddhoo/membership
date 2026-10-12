@@ -344,7 +344,7 @@ describe('an exit is told at every stage (S-1705)', () => {
     // Approval on its own says nothing; the payout does.
     await review.reviewTransaction(
       closure.id,
-      { outcome: 'forward', comment: '' },
+      { outcome: 'forward', comment: 'Approved.' },
       president
     );
     expect(await eventsFor(closure.id)).toHaveLength(4);
