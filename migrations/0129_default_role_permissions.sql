@@ -3,6 +3,8 @@
 -- 2026). Each of these ten roles holds exactly the permissions listed
 -- below — what is missing is taken away, what is new is granted — so a
 -- fresh database and a reset one start from the same roles as Test.
+-- Closure and claim papers (transaction.document_verify) are the
+-- Secretary's alone, not the Regional Manager's as the export had them.
 -- A role not named here is left as it is. Administrators still change any
 -- of it in Configuration -> Roles afterwards.
 set local albarakah.actor_description =
@@ -73,7 +75,6 @@ values
     ('regional_manager', 'payment.record'),
     ('regional_manager', 'payment.view'),
     ('regional_manager', 'transaction.capture'),
-    ('regional_manager', 'transaction.document_verify'),
     ('regional_manager', 'transaction.post'),
     ('regional_manager', 'transaction.view'),
     ('regional_manager', 'transaction.view_all'),
@@ -107,6 +108,7 @@ values
     ('secretary', 'member.reactivate'),
     ('secretary', 'member.view'),
     ('secretary', 'payment.view'),
+    ('secretary', 'transaction.document_verify'),
     ('secretary', 'transaction.review'),
     ('secretary', 'transaction.view'),
     ('secretary', 'transaction.view_all'),

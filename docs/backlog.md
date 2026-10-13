@@ -5959,6 +5959,6 @@ Officer feedback, 13 October 2026.
   Clerk, Member, President, Regional Manager, Regional Officer, Secretary,
   System Administrator and Treasurer hold exactly the permissions the
   Society exported from Test on 13 October 2026. A reset keeps roles as
-  they are, so these stay until an administrator changes them. In it,
-  closure and claim papers (`transaction.document_verify`) are the
-  Regional Manager's, not the Secretary's.
+  they are, so these stay until an administrator changes them. One
+  correction to the export: closure and claim papers
+  (`transaction.document_verify`) are the Secretary's alone.
