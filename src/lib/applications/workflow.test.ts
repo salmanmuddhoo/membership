@@ -573,7 +573,7 @@ describe('S-604/S-605: a Minor application with a valid guardian, end to end', (
     );
     const decided = await workflow.decideApplication(
       id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.createMemberFromApplication
     );
@@ -620,7 +620,7 @@ describe('S-601: a Corporate application, end to end', () => {
     );
     const decided = await workflow.decideApplication(
       id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.createMemberFromApplication
     );
@@ -654,7 +654,7 @@ describe('M3: the walking skeleton, end to end', () => {
 
     const decided = await workflow.decideApplication(
       id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.createMemberFromApplication
     );
@@ -848,6 +848,7 @@ describe('S-304: submission', () => {
       fieldProblems: [],
       documentsOutstanding: 0,
       paymentRecorded: true,
+      paymentPending: false,
       witnessesNamed: true,
     });
   });
@@ -897,7 +898,7 @@ describe('S-203: segregation of duties, on this record', () => {
     await expect(
       workflow.decideApplication(
         id,
-        { outcome: 'approve', comment: '' },
+        { outcome: 'approve', comment: 'Approved.' },
         secretaryWhoCanAlsoApprove,
         (await load()).members.createMemberFromApplication
       )
@@ -1035,7 +1036,27 @@ describe('S-305 and S-306: a return or a rejection must say why', () => {
         president,
         members.createMemberFromApplication
       )
-    ).rejects.toThrowError(/requires a comment/);
+    ).rejects.toThrowError('Add a comment before rejecting the application.');
+  });
+
+  it('refuses an approval with no comment', async () => {
+    const { workflow, members } = await load();
+    const id = await captureComplete();
+    await workflow.submitApplication(id, officer);
+    await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Complete.' },
+      secretary
+    );
+
+    await expect(
+      workflow.decideApplication(
+        id,
+        { outcome: 'approve', comment: '  ' },
+        president,
+        members.createMemberFromApplication
+      )
+    ).rejects.toThrowError('Add a comment before approving the application.');
   });
 
   it('creates no member when the decision is a rejection', async () => {
@@ -1371,7 +1392,7 @@ describe('S-609: a quorum above one needs that many distinct sign-offs', () => {
 
     const first = await workflow.decideApplication(
       id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.createMemberFromApplication
     );
@@ -1385,7 +1406,7 @@ describe('S-609: a quorum above one needs that many distinct sign-offs', () => {
 
     const second = await workflow.decideApplication(
       id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       boardMember2,
       members.createMemberFromApplication
     );
@@ -1407,7 +1428,7 @@ describe('S-609: a quorum above one needs that many distinct sign-offs', () => {
 
     const partial = await workflow.decideApplication(
       id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.createMemberFromApplication
     );
@@ -1440,7 +1461,7 @@ describe('S-609: a quorum above one needs that many distinct sign-offs', () => {
 
     await workflow.decideApplication(
       id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.createMemberFromApplication
     );
@@ -1448,7 +1469,7 @@ describe('S-609: a quorum above one needs that many distinct sign-offs', () => {
     await expect(
       workflow.decideApplication(
         id,
-        { outcome: 'approve', comment: '' },
+        { outcome: 'approve', comment: 'Approved.' },
         president,
         members.createMemberFromApplication
       )
@@ -1467,13 +1488,13 @@ describe('S-609: a quorum above one needs that many distinct sign-offs', () => {
     );
     await workflow.decideApplication(
       id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.createMemberFromApplication
     );
     await workflow.decideApplication(
       id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       boardMember2,
       members.createMemberFromApplication
     );
@@ -1497,7 +1518,7 @@ describe('S-609: a quorum above one needs that many distinct sign-offs', () => {
     );
     await workflow.decideApplication(
       id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.createMemberFromApplication
     );
@@ -1526,7 +1547,7 @@ describe('S-609: a quorum above one needs that many distinct sign-offs', () => {
 
     const decided = await workflow.decideApplication(
       id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.createMemberFromApplication
     );
@@ -1565,7 +1586,7 @@ describe('S-308 and S-309: what approval creates', () => {
       await expect(
         workflow.decideApplication(
           id,
-          { outcome: 'approve', comment: '' },
+          { outcome: 'approve', comment: 'Approved.' },
           president,
           members.createMemberFromApplication
         )
@@ -1597,7 +1618,7 @@ describe('S-308 and S-309: what approval creates', () => {
     // And it can be approved once the configuration is put back.
     const decided = await workflow.decideApplication(
       id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.createMemberFromApplication
     );
@@ -1632,7 +1653,7 @@ describe('S-308 and S-309: what approval creates', () => {
     );
     const decided = await workflow.decideApplication(
       id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.createMemberFromApplication
     );
@@ -1676,7 +1697,7 @@ describe('S-308 and S-309: what approval creates', () => {
     );
     const decided = await workflow.decideApplication(
       id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.createMemberFromApplication
     );
@@ -1712,7 +1733,7 @@ describe('S-308 and S-309: what approval creates', () => {
     );
     const decided = await workflow.decideApplication(
       id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.createMemberFromApplication
     );
@@ -1743,7 +1764,7 @@ describe('S-308 and S-309: what approval creates', () => {
     );
     const decided = await workflow.decideApplication(
       id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.createMemberFromApplication
     );
@@ -1782,7 +1803,7 @@ describe('S-308 and S-309: what approval creates', () => {
     );
     const decided = await workflow.decideApplication(
       id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.createMemberFromApplication
     );
@@ -2495,6 +2516,63 @@ describe('S-611: Regional oversight, enabled or not, gates the chain', () => {
     );
   });
 
+  it('keeps the Regional Manager from forwarding until every required document is verified', async () => {
+    await setRegionalReviewEnabled(true);
+    const { capture, workflow, documents, payments } = await load();
+    const actor = { userId: officer.userId, email: officer.email };
+    const { id } = await capture.startApplication('individual', actor);
+    await capture.saveDraft(id, COMPLETE_INDIVIDUAL(), actor);
+    await nameWitnesses(id);
+    await fileRequiredDocuments(documents, id);
+    await recordFullPayment(payments, id);
+    await workflow.submitApplication(id, officer);
+
+    await expect(
+      workflow.reviewApplication(
+        id,
+        { outcome: 'forward', comment: 'Checked.' },
+        regionalManager,
+        'regional_review'
+      )
+    ).rejects.toThrowError(
+      /still need to be Verified before this can be forwarded/
+    );
+
+    await verifyRequiredDocuments(documents, id);
+    await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Checked.' },
+      regionalManager,
+      'regional_review'
+    );
+  });
+
+  it('flags a returned application for whoever submitted it, as well as its captor', async () => {
+    await setRegionalReviewEnabled(true);
+    const { capture, workflow } = await load();
+    const id = await captureComplete();
+    // A Regional Manager submitting a subordinate's draft.
+    const submitter = {
+      ...regionalManager,
+      permissions: new Set([
+        ...regionalManager.permissions,
+        'application.submit',
+      ]),
+    };
+    await workflow.submitApplication(id, submitter);
+    // Their own oversight is skipped; the Secretary sends it back.
+    await workflow.reviewApplication(
+      id,
+      { outcome: 'return', comment: 'Wrong address.' },
+      secretary
+    );
+    expect((await capture.loadApplication(id))!.status).toBe('returned');
+    expect((await workflow.pendingApplicationIds(officer)).has(id)).toBe(true);
+    expect((await workflow.pendingApplicationIds(submitter)).has(id)).toBe(
+      true
+    );
+  });
+
   it('flags a returned application for the officer who captured it, not for anyone else holding the same permission', async () => {
     await setRegionalReviewEnabled(true);
     const { capture, workflow } = await load();
@@ -2706,7 +2784,7 @@ describe('Disabling Secretary review bridges straight to the President', () => {
     const { members } = await load();
     const result = await workflow.decideApplication(
       id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.createMemberFromApplication
     );
@@ -2906,7 +2984,7 @@ describe('S-613: an additional-account application, end to end', () => {
 
     const decided = await workflow.decideApplication(
       application.id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.openAccountsForApplication
     );
@@ -2986,7 +3064,7 @@ describe('S-613: an additional-account application, end to end', () => {
     );
     await workflow.decideApplication(
       application.id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.openAccountsForApplication
     );
@@ -3028,7 +3106,7 @@ describe('S-613: an additional-account application, end to end', () => {
     );
     await workflow.decideApplication(
       first.id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.openAccountsForApplication
     );
@@ -3065,7 +3143,7 @@ describe('S-613: an additional-account application, end to end', () => {
     await expect(
       workflow.decideApplication(
         second.id,
-        { outcome: 'approve', comment: '' },
+        { outcome: 'approve', comment: 'Approved.' },
         president,
         members.openAccountsForApplication
       )
@@ -3154,7 +3232,7 @@ describe('S-614: a customer_account application, end to end', () => {
 
     const decided = await workflow.decideApplication(
       application.id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.openAccountsForCustomerApplication
     );
@@ -3231,7 +3309,7 @@ describe('S-614: a customer_account application, end to end', () => {
     await expect(
       workflow.decideApplication(
         application.id,
-        { outcome: 'approve', comment: '' },
+        { outcome: 'approve', comment: 'Approved.' },
         president,
         members.openAccountsForCustomerApplication
       )
@@ -3294,7 +3372,7 @@ describe('S-614: a customer_account application, end to end', () => {
     );
     const decided = await workflow.decideApplication(
       application.id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.openAccountsForCustomerApplication
     );
@@ -3389,7 +3467,7 @@ describe('S-614: the account a non-member already held transfers when they becom
     );
     const custDecided = await workflow.decideApplication(
       custApp.id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.openAccountsForCustomerApplication
     );
@@ -3418,7 +3496,7 @@ describe('S-614: the account a non-member already held transfers when they becom
     );
     const memDecided = await workflow.decideApplication(
       memApp.id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.createMemberFromApplication
     );
@@ -3502,7 +3580,7 @@ describe('S-614: the account a non-member already held transfers when they becom
     );
     const custDecided = await workflow.decideApplication(
       custApp.id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.openAccountsForCustomerApplication
     );
@@ -3530,7 +3608,7 @@ describe('S-614: the account a non-member already held transfers when they becom
     );
     const memDecided = await workflow.decideApplication(
       memApp.id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.createMemberFromApplication
     );
@@ -3612,7 +3690,7 @@ describe('S-614: the account a non-member already held transfers when they becom
     );
     const custDecided = await workflow.decideApplication(
       custApp.id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.openAccountsForCustomerApplication
     );
@@ -3634,7 +3712,7 @@ describe('S-614: the account a non-member already held transfers when they becom
     );
     await workflow.decideApplication(
       memApp.id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.createMemberFromApplication
     );
@@ -3800,7 +3878,7 @@ describe('a customer opens a further account, end to end', () => {
     );
     const firstDecided = await workflow.decideApplication(
       first.id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.openAccountsForCustomerApplication
     );
@@ -3846,7 +3924,7 @@ describe('a customer opens a further account, end to end', () => {
     );
     const decided = await workflow.decideApplication(
       second.id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.openAccountsForApplication
     );
@@ -3929,7 +4007,7 @@ describe('a customer opens a further account, end to end', () => {
     );
     const firstDecided = await workflow.decideApplication(
       first.id,
-      { outcome: 'approve', comment: '' },
+      { outcome: 'approve', comment: 'Approved.' },
       president,
       members.openAccountsForCustomerApplication
     );
@@ -3962,10 +4040,129 @@ describe('a customer opens a further account, end to end', () => {
     await expect(
       workflow.decideApplication(
         second.id,
-        { outcome: 'approve', comment: '' },
+        { outcome: 'approve', comment: 'Approved.' },
         president,
         members.openAccountsForApplication
       )
     ).rejects.toThrowError(/already holds/);
+  });
+});
+
+describe('fees on their way by transfer from a member', () => {
+  it('may be submitted and verified, but the Secretary and the President wait until the Treasurer disburses', async () => {
+    const { capture, workflow, documents } = await load();
+    const feeTransfers = await import('../payments/fee-transfers');
+    const review = await import('../ledger/review');
+
+    // A member with MUR 20,000 on their MSA, posted the ledger's own way.
+    const type = await run(
+      appUrl,
+      `select id from membership_type where code = 'individual'`
+    );
+    const paid = await run(
+      appUrl,
+      `insert into membership_application (membership_type_id, captured_by, status)
+       values ($1, $2, 'approved') returning id`,
+      [type.rows[0].id, officer.userId]
+    );
+    await run(
+      appUrl,
+      `insert into application_party (application_id, subject, ordinal, values)
+       values ($1, 'applicant', 1, $2::jsonb)`,
+      [paid.rows[0].id, JSON.stringify({ name: 'Uncle', surname: 'Payer' })]
+    );
+    const member = await run(
+      appUrl,
+      `insert into member (application_id, membership_type_id)
+       values ($1, $2) returning id`,
+      [paid.rows[0].id, type.rows[0].id]
+    );
+    const msa = await run(
+      appUrl,
+      `insert into account (member_id, account_type_id, status)
+       select $1, id, 'active' from account_type where code = 'msa'
+       returning id`,
+      [member.rows[0].id]
+    );
+    const deposit = await run(
+      appUrl,
+      `insert into transaction
+         (kind, member_id, account_id, amount, method, status, captured_by)
+       values ('deposit', $1, $2, 20000, 'other', 'submitted', $3)
+       returning id`,
+      [member.rows[0].id, msa.rows[0].id, officer.userId]
+    );
+    await run(ownerUrl, `select post_transaction($1, $2, 'workflow.test')`, [
+      deposit.rows[0].id,
+      officer.userId,
+    ]);
+
+    const actor = { userId: officer.userId, email: officer.email };
+    const { id } = await capture.startApplication('individual', actor);
+    await capture.saveDraft(id, COMPLETE_INDIVIDUAL(), actor);
+    await nameWitnesses(id);
+    await fileRequiredDocuments(documents, id);
+
+    const taker = {
+      ...officer,
+      permissions: new Set([
+        ...officer.permissions,
+        'payment.record',
+        'transaction.capture',
+      ]),
+    };
+    const due = await (
+      await import('../payments/payments')
+    ).amountDueForApplication(id);
+    const amounts = Object.fromEntries(
+      due.components.map(c => [c.code, c.amount])
+    );
+    const transfer = await feeTransfers.requestFeeTransfer(
+      { applicationId: id, payerAccountId: msa.rows[0].id, amounts },
+      taker
+    );
+
+    // Pending is enough to submit, and to have the papers checked.
+    await workflow.submitApplication(id, officer);
+    expect((await capture.loadApplication(id))!.status).not.toBe('draft');
+    await verifyRequiredDocuments(documents, id);
+
+    const waiting = new RegExp(
+      `Waiting for ${transfer.reference} to be disbursed`
+    );
+    await expect(
+      workflow.reviewApplication(
+        id,
+        { outcome: 'forward', comment: 'Papers in order.' },
+        secretary
+      )
+    ).rejects.toThrowError(waiting);
+    await expect(
+      workflow.reviewApplication(
+        id,
+        { outcome: 'return', comment: 'Wrong payer.' },
+        secretary
+      )
+    ).rejects.toThrowError(waiting);
+
+    // The Treasurer disburses it; the fees are paid and the Secretary acts.
+    const treasurer = {
+      ...regionalManager,
+      permissions: new Set(['transaction.disburse', 'transaction.view']),
+    };
+    if (
+      (await review.loadTransaction(transfer.transactionId))!.status !==
+      'approved'
+    ) {
+      throw new Error('Expected the fee transfer to wait for the Treasurer.');
+    }
+    await review.postApprovedTransaction(transfer.transactionId, treasurer);
+    expect(await workflow.waitingOnFeeTransfer(id)).toBeNull();
+
+    await workflow.reviewApplication(
+      id,
+      { outcome: 'forward', comment: 'Papers in order.' },
+      secretary
+    );
   });
 });

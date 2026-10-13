@@ -40,6 +40,13 @@ import {
 } from '@lib/payments/fee-receipts';
 import { notificationsFor } from '@lib/notifications/notify';
 import { localFormat } from '@lib/time';
+import {
+  BUTTON_SM,
+  DANGER_SM,
+  HINT,
+  RECEIPT_TOOLBAR,
+  SECONDARY_SM,
+} from '@lib/ui';
 
 const principal = Astro.locals.principal!;
 const canRefund = principal.permissions.has('payment.refund');
@@ -80,10 +87,14 @@ if (!payment && !transactionReceipt) {
 
 let error: string | null = null;
 let notice: string | null = null;
+// The intent of the POST that set `error`, so the panel it came from is
+// open when the page comes back and the error sits next to the form.
+let postedIntent = '';
 
 if (transactionReceipt && Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
   const intent = String(form.get('intent') ?? '');
+  postedIntent = intent;
   if (intent === 'record-print') {
     try {
       await recordTransactionReceiptPrint(
@@ -147,6 +158,7 @@ const transactionSends = transactionReceipt
 if (payment && Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
   const intent = String(form.get('intent') ?? '');
+  postedIntent = intent;
 
   // The print is recorded, not rendered, so it answers with nothing and the
   // browser's own print dialog carries on.
@@ -263,6 +275,11 @@ const SEND_STATUS_WORDS: Record<string, string> = {
   failed: 'failed',
   abandoned: 'not delivered',
 };
+// Refund and Void open from the toolbar; a failed attempt comes back open.
+const openPanel =
+  error && (postedIntent === 'refund' || postedIntent === 'void')
+    ? postedIntent
+    : null;
 const anythingRefundable = refundable.some(c => Number(c.refundable) > 0);
 const refunds = related.filter(p => p.refundsId === payment?.id && !p.voidedAt);
 
@@ -309,11 +326,62 @@ const paymentMethods = await offeredPaymentMethods('withdrawal');
       canVoid={principal.permissions.has(PERMISSION_VOID)}
       sent={transactionSends}
       canSend={principal.permissions.has('transaction.view')}
+      voidOpen={openPanel === 'void'}
     />
   )}
 
   {payment && (
     <>
+      <div class={RECEIPT_TOOLBAR}>
+        {ownerHref ? (
+          <a href={ownerHref} class={`${HINT} inline-block underline`}>
+            ← Back
+          </a>
+        ) : (
+          <span />
+        )}
+        <div class="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            id="print"
+            data-payment-id={payment.id}
+            class={SECONDARY_SM}
+          >
+            Print
+          </button>
+          {canSendFee && (
+            <form method="post">
+              <button
+                type="submit"
+                name="intent"
+                value="send"
+                class={SECONDARY_SM}
+              >
+                {feeSends.length > 0 ? 'Send again' : 'Send'}
+              </button>
+            </form>
+          )}
+          {canRefund && refundable.length > 0 && anythingRefundable && (
+            <button
+              type="button"
+              data-open-panel="refund-panel"
+              class={BUTTON_SM}
+            >
+              Refund
+            </button>
+          )}
+          {canVoid && !payment.voidedAt && (
+            <button
+              type="button"
+              data-open-panel="void-panel"
+              class={DANGER_SM}
+            >
+              Void
+            </button>
+          )}
+        </div>
+      </div>
+
       <div class="print-page">
         {payment.voidedAt && <div class="watermark">VOID</div>}
 
@@ -410,13 +478,6 @@ const paymentMethods = await offeredPaymentMethods('withdrawal');
           <div class="sig-line"></div>
           <p>For Al Barakah Multipurpose Co-operative Society Limited</p>
         </div>
-
-        <div class="actions screen-only">
-          <button type="button" id="print" data-payment-id={payment.id}>
-            Print
-          </button>
-          {ownerHref && <a href={ownerHref}>Back</a>}
-        </div>
       </div>
 
       {(canSendFee || feeSends.length > 0) && (
@@ -434,13 +495,6 @@ const paymentMethods = await offeredPaymentMethods('withdrawal');
             </ul>
           ) : (
             <p class="hint">Not sent yet.</p>
-          )}
-          {canSendFee && (
-            <form method="post">
-              <button type="submit" name="intent" value="send">
-                {feeSends.length > 0 ? 'Send again' : 'Send'}
-              </button>
-            </form>
           )}
         </section>
       )}
@@ -461,7 +515,12 @@ const paymentMethods = await offeredPaymentMethods('withdrawal');
       )}
 
       {canRefund && refundable.length > 0 && (
-        <section class="screen-only panel">
+        <section
+          class="screen-only panel"
+          id="refund-panel"
+          data-action-panel
+          hidden={openPanel !== 'refund'}
+        >
           <h2>Refund</h2>
           {!anythingRefundable && (
             <p>Nothing on this receipt is still refundable.</p>
@@ -528,7 +587,12 @@ const paymentMethods = await offeredPaymentMethods('withdrawal');
       )}
 
       {canVoid && !payment.voidedAt && (
-        <section class="screen-only panel danger">
+        <section
+          class="screen-only panel danger"
+          id="void-panel"
+          data-action-panel
+          hidden={openPanel !== 'void'}
+        >
           <h2>Void this receipt</h2>
           <form method="post" id="void-form">
             <label>
@@ -562,6 +626,31 @@ const paymentMethods = await offeredPaymentMethods('withdrawal');
     }
     window.print();
   });
+
+  // The toolbar's Refund and Void (and the transaction sheet's Void) show
+  // their panel, hide the other, and put the cursor in its first field.
+  document
+    .querySelectorAll<HTMLElement>('[data-open-panel]')
+    .forEach(opener => {
+      opener.addEventListener('click', () => {
+        const target = opener.dataset.openPanel;
+        let opened: HTMLElement | null = null;
+        document
+          .querySelectorAll<HTMLElement>('[data-action-panel]')
+          .forEach(panel => {
+            panel.hidden = panel.id !== target;
+            if (!panel.hidden) opened = panel;
+          });
+        const panel = opened as HTMLElement | null;
+        if (!panel) return;
+        panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        panel
+          .querySelector<HTMLElement>(
+            'input:not([disabled]), select:not([disabled])'
+          )
+          ?.focus({ preventScroll: true });
+      });
+    });
 
   const voidForm = document.getElementById(
     'void-form'

@@ -60,6 +60,11 @@ const MUST_BE_ALLOWED: Array<{ role: Role; path: string; why: string }> = [
     path: '/applications',
     why: 'Capture is their whole job.',
   },
+  {
+    role: 'manager',
+    path: '/applications',
+    why: 'They verify the documents.',
+  },
   { role: 'secretary', path: '/applications', why: 'They review them.' },
   { role: 'president', path: '/applications', why: 'They decide them.' },
   {

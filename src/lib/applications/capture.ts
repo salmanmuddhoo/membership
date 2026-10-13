@@ -2514,6 +2514,26 @@ export async function deleteDraftApplication(
       );
     }
 
+    // Nor one another member has started paying the fees of by transfer
+    // (migration 0126): the transfer names it, cancelled or not.
+    const transferred = await client.query<{ reference: string }>(
+      `select tr.reference
+         from fee_transfer ft
+         join transaction t on t.id = ft.transaction_id
+         join transfer tr on tr.id = t.transfer_id
+        where ft.application_id = $1
+        order by ft.created_at
+        limit 1`,
+      [applicationId]
+    );
+    if (transferred.rowCount && transferred.rowCount > 0) {
+      throw new ApplicationError(
+        `Transfer ${transferred.rows[0].reference} was started for this ` +
+          "application's fees, so it cannot be deleted.",
+        'locked'
+      );
+    }
+
     const filed = await client.query<{ n: number }>(
       `select count(*)::int as n
          from document_version v

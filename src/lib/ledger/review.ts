@@ -40,6 +40,12 @@ import type {
   TransactionRowKind,
 } from '../config/reference';
 import { offeredMethod, PaymentError } from '../payments/payments';
+import {
+  announceFeeReceipt,
+  FeeTransferError,
+  feeTransferForTransaction,
+  settleFeeTransfer,
+} from '../payments/fee-transfer-settlement';
 import { guardianGoneMessage } from '../members/guardian';
 
 export const PERMISSION_REVIEW = 'transaction.review';
@@ -64,12 +70,17 @@ export function permissionToPost(
   transaction: Pick<
     TransactionSummary,
     'kind' | 'payeeName' | 'capturedFromApp'
-  >
+  > &
+    Partial<Pick<TransactionSummary, 'feeApplicationId'>>
 ): string {
   if (transaction.kind === 'deposit' && transaction.capturedFromApp) {
     return PERMISSION_RECORD_APP_DEPOSIT;
   }
   if (needsDisbursement(transaction)) return PERMISSION_DISBURSE;
+  // A transfer paying a new member's fees is the Treasurer's to disburse
+  // (officer direction), though nothing leaves the Society and no payout
+  // method is asked for.
+  if (transaction.feeApplicationId) return PERMISSION_DISBURSE;
   return transaction.kind === 'transfer_leg'
     ? PERMISSION_RECORD_TRANSFER
     : PERMISSION_POST;
@@ -163,6 +174,11 @@ export interface TransactionSummary {
   // (S-1901); null where none was named, or the method never touches one.
   bankAccountId: string | null;
   bankAccountName: string | null;
+  // A transfer paying a new member's fees (migration 0126): the
+  // application, and who it is for. Null on every other transaction.
+  feeApplicationId: string | null;
+  feeApplicationReference: string | null;
+  feeApplicantName: string | null;
 }
 
 export interface Claimant {
@@ -208,7 +224,11 @@ export const TRANSACTION_SELECT = `
          lt.name as counterpart_account_type_name,
          coalesce(l.member_id, l.customer_id) as counterpart_holder_id,
          trim(coalesce(lp.values->>'name', '') || ' '
-              || coalesce(lp.values->>'surname', '')) as counterpart_holder_name
+              || coalesce(lp.values->>'surname', '')) as counterpart_holder_name,
+         ft.application_id as fee_application_id,
+         fa.reference as fee_application_reference,
+         trim(coalesce(fp.values->>'name', '') || ' '
+              || coalesce(fp.values->>'surname', '')) as fee_applicant_name
     from transaction t
     join account a on a.id = t.account_id
     join account_type at on at.id = a.account_type_id
@@ -236,6 +256,11 @@ export const TRANSACTION_SELECT = `
     left join application_party lp
       on lp.application_id = coalesce(lm.application_id, lc.application_id)
      and lp.subject = 'applicant' and lp.ordinal = 1
+    left join fee_transfer ft on ft.transaction_id = t.id
+    left join membership_application fa on fa.id = ft.application_id
+    left join application_party fp
+      on fp.application_id = fa.id
+     and fp.subject = 'applicant' and fp.ordinal = 1
 `;
 
 export interface TransactionRow {
@@ -287,6 +312,9 @@ export interface TransactionRow {
   counterpart_account_type_name: string | null;
   counterpart_holder_id: string | null;
   counterpart_holder_name: string | null;
+  fee_application_id: string | null;
+  fee_application_reference: string | null;
+  fee_applicant_name: string | null;
 }
 
 export function assembleTransaction(r: TransactionRow): TransactionSummary {
@@ -340,6 +368,9 @@ export function assembleTransaction(r: TransactionRow): TransactionSummary {
     takafulBenefit: r.takaful_benefit,
     bankAccountId: r.bank_account_id,
     bankAccountName: r.bank_account_name,
+    feeApplicationId: r.fee_application_id,
+    feeApplicationReference: r.fee_application_reference,
+    feeApplicantName: r.fee_applicant_name || null,
   };
 }
 
@@ -662,12 +693,18 @@ export async function reviewTransaction(
       'forbidden'
     );
   }
+  // A return or a rejection says why, and so does the approval itself
+  // (officer direction): the step that approves a withdrawal, a transfer or
+  // a chained deposit records its reason. Forwarding to a further step
+  // does not need one.
   const comment = decision.comment.trim();
-  if (decision.outcome !== 'forward' && comment === '') {
+  if (comment === '' && (decision.outcome !== 'forward' || position.isLast)) {
     throw new ReviewError(
       decision.outcome === 'return'
         ? 'Say what needs correcting before returning it.'
-        : 'Say why before rejecting it.'
+        : decision.outcome === 'reject'
+          ? 'Say why before rejecting it.'
+          : 'Add a comment before approving it.'
     );
   }
   // A return hands the transaction back to its captor to correct. A request
@@ -890,7 +927,7 @@ export async function postApprovedTransaction(
   }
   if (!principal.permissions.has(permissionToPost(transaction))) {
     throw new ReviewError(
-      needsDisbursement(transaction)
+      needsDisbursement(transaction) || transaction.feeApplicationId
         ? 'You do not have permission to disburse.'
         : transaction.capturedFromApp && transaction.kind === 'deposit'
           ? 'A deposit made from the member app is recorded by the accounts department.'
@@ -959,7 +996,17 @@ export async function postApprovedTransaction(
     message => new ReviewError(message, 'conflict')
   );
 
+  // A transfer paying a new member's fees (migration 0126): the fee
+  // receipt is issued as it posts, so it is numbered now, with the
+  // transaction's own.
+  const feeTransfer = transaction.feeApplicationId
+    ? await feeTransferForTransaction(transaction.id)
+    : null;
   const receipt = await allocateReceiptNumber(principal.userId);
+  const feeReceipt = feeTransfer
+    ? await allocateReceiptNumber(principal.userId)
+    : null;
+  let feePaymentId: string | null = null;
   try {
     await withTransaction(async client => {
       await client.query(
@@ -1043,6 +1090,16 @@ export async function postApprovedTransaction(
         { userId: principal.userId, description: principal.email },
         client
       );
+      if (feeTransfer) {
+        feePaymentId = await settleFeeTransfer(
+          client,
+          feeTransfer,
+          feeReceipt!,
+          transaction.memberNo
+            ? `${transaction.displayReference} · ${transaction.memberNo}`
+            : transaction.displayReference
+        );
+      }
       // A deceased non-member's last account closed: the record says so.
       await markDeceasedOnceAllClosed(client, transaction.id, principal);
       // An ordinary closure that leaves a non-member nothing open.
@@ -1065,18 +1122,25 @@ export async function postApprovedTransaction(
       );
     });
   } catch (err) {
-    await abandonReceiptNumber(
-      receipt.id,
-      err instanceof LedgerError
+    const why =
+      err instanceof LedgerError ||
+      err instanceof FeeTransferError ||
+      err instanceof PaymentError
         ? err.message
-        : 'The transaction failed while posting.'
-    );
-    if (err instanceof LedgerError) {
+        : 'The transaction failed while posting.';
+    await abandonReceiptNumber(receipt.id, why);
+    if (feeReceipt) await abandonReceiptNumber(feeReceipt.id, why);
+    if (
+      err instanceof LedgerError ||
+      err instanceof FeeTransferError ||
+      err instanceof PaymentError
+    ) {
       throw new ReviewError(err.message, 'conflict');
     }
     throw err;
   }
   await notifyReceiptIssued(id);
+  if (feePaymentId) await announceFeeReceipt(feePaymentId);
   const posted = (await loadTransaction(id))!;
   await notifyExit(posted, 'approved');
   await notifyPosted([posted, await transferCreditLeg(posted)]);

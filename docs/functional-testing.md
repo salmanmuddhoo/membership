@@ -14,26 +14,27 @@ not identify itself as non-production.
 | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | `00-environment`        | The badge says this is not Production; the database and integrations answer                                                       |
 | `01-membership-journey` | An Individual application: capture → documents → payment and receipt → submit → verify → forward → approve → member with accounts |
-| `02-access`             | What each of the five roles can and cannot open, and that signing out ends the session                                            |
+| `02-access`             | What each of the six roles can and cannot open, and that signing out ends the session                                             |
 | `03-operations`         | Receipt reconciliation, every report, notification wording, retention periods, the API reference, the audit trail                 |
 
-The journey is walked as **five different people**, because segregation of
+The journey is walked as **six different people**, because segregation of
 duties means it has to be: the officer who captures may not review, and the
 Secretary may not approve. A suite running as one account could never reach
 approved — it would be stopped by the control it is meant to be testing.
 
 ## What you need first
 
-**Five accounts in the Test Entra tenant**, each with an `app_user` row and one
+**Six accounts in the Test Entra tenant**, each with an `app_user` row and one
 role:
 
-| Role                   | Needs to                                   |
-| ---------------------- | ------------------------------------------ |
-| `regional_officer`     | Capture, file documents, take the payment  |
-| `secretary`            | Verify documents, forward to the President |
-| `president`            | Approve                                    |
-| `treasurer`            | Reconcile the receipt sequence             |
-| `system_administrator` | Configuration, audit log, API, retention   |
+| Role                   | Needs to                                  |
+| ---------------------- | ----------------------------------------- |
+| `regional_officer`     | Capture, file documents, take the payment |
+| `regional_manager`     | Verify documents                          |
+| `secretary`            | Forward to the President                  |
+| `president`            | Approve                                   |
+| `treasurer`            | Reconcile the receipt sequence            |
+| `system_administrator` | Configuration, audit log, API, retention  |
 
 That is not an inconvenience the tests invented — it is S-1004's own work,
 provisioning real people with real roles, done before go-live rather than on
@@ -64,7 +65,7 @@ To capture one role only: `pnpm e2e:login secretary`.
 ```bash
 export E2E_AUTH_MODE=password
 export E2E_OFFICER_EMAIL=... E2E_OFFICER_PASSWORD=...
-# ... and the same for SECRETARY, PRESIDENT, TREASURER, ADMIN
+# ... and the same for MANAGER, SECRETARY, PRESIDENT, TREASURER, ADMIN
 ```
 
 The script types the credentials itself. It reaches Microsoft's own pages,

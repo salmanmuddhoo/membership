@@ -32,7 +32,11 @@ import {
   notifyReturned,
   notifySubmitted,
 } from '../notifications/events';
-import { paymentsForApplication, type Payment } from '../payments/payments';
+import {
+  liveFeeTransferFor,
+  paymentsForApplication,
+  type Payment,
+} from '../payments/payments';
 import type { Principal } from '../access/principal';
 import {
   ApplicationError,
@@ -331,6 +335,10 @@ export interface SubmissionReadiness {
   fieldProblems: MissingField[];
   documentsOutstanding: number;
   paymentRecorded: boolean;
+  // The fees are on their way by transfer from a member and not yet
+  // disbursed (officer direction): enough to submit, not to reach the
+  // Secretary. A returned transfer does not count; it is cancelled first.
+  paymentPending: boolean;
   // Both witnesses named on the form step (officer request).
   witnessesNamed: boolean;
 }
@@ -347,10 +355,11 @@ export interface SubmissionReadiness {
 export async function submissionReadiness(
   application: Application
 ): Promise<SubmissionReadiness> {
-  const [fieldProblems, checklist, payments] = await Promise.all([
+  const [fieldProblems, checklist, payments, feeTransfer] = await Promise.all([
     problemsBlockingSubmission(application),
     checklistFor({ applicationId: application.id }),
     paymentsForApplication(application.id),
+    liveFeeTransferFor(application.id),
   ]);
 
   return {
@@ -361,6 +370,7 @@ export async function submissionReadiness(
       e => e.requirement === 'required' && e.state === 'missing'
     ).length,
     paymentRecorded: payments.some(p => p.kind === 'payment' && !p.voidedAt),
+    paymentPending: feeTransfer !== null && feeTransfer.status !== 'returned',
     witnessesNamed: application.witnesses.every(name => name.trim() !== ''),
   };
 }
@@ -400,7 +410,7 @@ export async function submitApplication(
         'to be filed before this can be submitted.'
     );
   }
-  if (!readiness.paymentRecorded) {
+  if (!readiness.paymentRecorded && !readiness.paymentPending) {
     throw new ApplicationError(
       'Payment must be recorded before this can be submitted.'
     );
@@ -613,6 +623,28 @@ export function boardReadinessReasons(readiness: BoardReadiness): string[] {
 }
 
 /**
+ * The fees are being paid by a transfer from a member that the Treasurer
+ * has not disbursed yet (officer direction): the application may be
+ * submitted and its documents verified meanwhile, but neither the Secretary
+ * nor a decision acts on it until the money has moved. Null once it has, or
+ * when there is no such transfer.
+ */
+export async function waitingOnFeeTransfer(
+  applicationId: string
+): Promise<string | null> {
+  const live = await liveFeeTransferFor(applicationId);
+  if (!live) return null;
+  // Officer request: the Secretary is told who is paying, and from what.
+  const payer = live.payerName
+    ? `member ${live.payerName}’s ${live.accountTypeName} account`
+    : `a member’s ${live.accountTypeName} account`;
+  return (
+    `Waiting for ${live.reference} to be disbursed. This payment was made ` +
+    `by a transfer from ${payer}.`
+  );
+}
+
+/**
  * S-305, S-611 · A review step: forward, or return with a comment.
  *
  * `stepCode` defaults to Secretary review, S-305's original and still the
@@ -659,6 +691,11 @@ export async function reviewApplication(
     action,
   });
 
+  if (stepCode === 'secretary_review') {
+    const waiting = await waitingOnFeeTransfer(application.id);
+    if (waiting) throw new ApplicationError(waiting, 'locked');
+  }
+
   // Officer feedback: a document a reviewer has rejected must not travel any
   // further forward than the reviewer who rejected it — Regional oversight
   // and Secretary review alike. Return is the only way on from here; forward
@@ -677,14 +714,26 @@ export async function reviewApplication(
           'application for correction instead of forwarding it.'
       );
     }
+    // The Regional Manager verifies the documents (migration 0127), so
+    // their own forward waits until every required one is (officer
+    // direction).
+    if (stepCode === 'regional_review') {
+      const unverified = checklist.filter(
+        e => e.requirement === 'required' && e.state !== 'verified'
+      ).length;
+      if (unverified > 0) {
+        throw new ApplicationError(
+          `${unverified} required document(s) still need to be Verified ` +
+            'before this can be forwarded.'
+        );
+      }
+    }
   }
 
   // S-608: nothing forwarded to the Board is incomplete — the reasons are
   // named so the Secretary knows exactly what to chase, not just that
-  // something is missing. Regional oversight sits before that gate, not at
-  // it: verifying a filed document is the Secretary's own review (S-608's
-  // own comment), which has not happened yet at this stage, so nothing here
-  // asks Regional oversight to re-check it.
+  // something is missing. Regional oversight checks its own part — every
+  // document verified — above; this is the fuller check before the Board.
   if (decision.outcome === 'forward' && stepCode === 'secretary_review') {
     const reasons = boardReadinessReasons(await boardReadiness(application));
     if (reasons.length > 0) {
@@ -805,11 +854,15 @@ export async function decideApplication(
     );
   }
 
+  // Every decision carries its reason (officer direction): a rejection,
+  // which goes back to the originating staff, and an approval too, so the
+  // record says why the President approved, not only that they did.
   const comment = decision.comment.trim();
-  if (decision.outcome === 'reject' && comment === '') {
+  if (comment === '') {
     throw new ApplicationError(
-      'Rejecting an application requires a comment. It is returned to the ' +
-        'originating staff, who need to know why.'
+      decision.outcome === 'reject'
+        ? 'Add a comment before rejecting the application.'
+        : 'Add a comment before approving the application.'
     );
   }
 
@@ -819,6 +872,14 @@ export async function decideApplication(
     stepCode: STEP_CODE_PRESIDENT_DECISION,
     action: ACTION_APPROVED,
   });
+
+  // Where Secretary review is switched off, the President is the first to
+  // meet fees still on their way by transfer: no member is made on money
+  // that has not moved.
+  if (decision.outcome === 'approve') {
+    const waiting = await waitingOnFeeTransfer(application.id);
+    if (waiting) throw new ApplicationError(waiting, 'locked');
+  }
 
   // Annotated rather than inferred: the callback returns three different
   // shapes (quorum not yet met, rejected, approved with the member created),
@@ -1359,7 +1420,18 @@ export async function pendingApplicationIds(
   const ids = new Set<string>();
 
   if (principal.permissions.has('application.submit')) {
-    const conditions = ["(status = 'returned' and captured_by = $1)"];
+    // A returned application is back with whoever had it last at the
+    // branch (officer feedback): the officer who captured it, or the one
+    // who submitted it — a Regional Manager submitting a subordinate's
+    // draft, or an officer completing one received from the member app.
+    const conditions = [
+      `(a.status = 'returned'
+         and (a.captured_by = $1
+              or exists (select 1 from application_transition t
+                          where t.application_id = a.id
+                            and t.step_code = 'capture'
+                            and t.actor_user_id = $1)))`,
+    ];
     const params: unknown[] = [principal.userId];
     // Officer feedback: a 'received' application (submitted from the member
     // app) used to be nobody's draft and everybody's to take up — the
@@ -1368,10 +1440,19 @@ export async function pendingApplicationIds(
     // (migration 0044), not every officer who can submit.
     if (principal.permissions.has('application.submit_online')) {
       params.push(RECEIVED_STATUS);
-      conditions.push(`status = $${params.length}`);
+      conditions.push(`a.status = $${params.length}`);
+      // One from the member app that came back is theirs again too: the
+      // app captured it, so it is nobody's by captured_by.
+      conditions.push(
+        `(a.status = 'returned'
+           and exists (select 1 from app_user u
+                        where u.id = a.captured_by
+                          and u.entra_subject like 'system:%'))`
+      );
     }
     const returned = await query<{ id: string }>(
-      `select id from membership_application where ${conditions.join(' or ')}`,
+      `select a.id from membership_application a
+        where ${conditions.join(' or ')}`,
       params
     );
     for (const row of returned.rows) ids.add(row.id);

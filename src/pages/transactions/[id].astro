@@ -4,11 +4,16 @@
 // post, or correct and resubmit — and the trail of who did what.
 import ChainTimeline from '@components/ChainTimeline.astro';
 import DocumentViewer from '@components/DocumentViewer.astro';
-import { recordedLabel, transactionStatusLabel } from '@lib/ledger/labels';
+import {
+  feeDestination,
+  recordedLabel,
+  transactionStatusLabel,
+} from '@lib/ledger/labels';
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import {
   documentsForTransaction,
   DocumentError,
+  PERMISSION_VERIFY_TRANSACTION_DOCUMENTS,
   reviewDocument,
 } from '@lib/documents/documents';
 import {
@@ -306,7 +311,7 @@ const closureDocuments =
 // A deposit's Source of Fund form is not checked by anyone else (officer
 // direction): its captor submits on the signed form alone.
 const canVerifyDocuments =
-  principal.permissions.has('document.verify') &&
+  principal.permissions.has(PERMISSION_VERIFY_TRANSACTION_DOCUMENTS) &&
   transaction.capturedById !== principal.userId &&
   transaction.kind !== 'deposit';
 // A deposit request still its captor's to finish (S-1306): the wizard has
@@ -527,6 +532,13 @@ const dateFormat = localFormat({
                   {transaction.counterpartAccountNo} ·{' '}
                   {transaction.counterpartAccountTypeName}
                 </>
+              ) : transaction.feeApplicationId ? (
+                <a
+                  href={`/applications/${transaction.feeApplicationId}`}
+                  class="underline"
+                >
+                  {feeDestination(transaction)}
+                </a>
               ) : (
                 transaction.payeeName
               )}
@@ -799,10 +811,13 @@ const dateFormat = localFormat({
             name="comment"
             rows="3"
             class={INPUT}
+            required={position.isLast}
             placeholder={
-              position.isLast || fromApp
-                ? 'Required if you reject it.'
-                : 'Required if you return or reject it.'
+              position.isLast
+                ? 'Required.'
+                : fromApp
+                  ? 'Required if you reject it.'
+                  : 'Required if you return or reject it.'
             }
           ></textarea>
         </label>
@@ -838,7 +853,9 @@ const dateFormat = localFormat({
                   : 'Approved. Record how the balance was paid out; the account closes and the receipt is issued now.'
                 : disburses
                   ? 'Approved. Record how it is paid out; disbursing moves the money and issues the receipt.'
-                  : 'Approved. Recording it moves the money and issues the receipt.'}
+                  : transaction.feeApplicationId
+                    ? 'Approved. Disbursing moves the money and issues the fee receipt.'
+                    : 'Approved. Recording it moves the money and issues the receipt.'}
         </p>
         {memberChosePayout && (
           <p class={HINT}>
@@ -899,7 +916,7 @@ const dateFormat = localFormat({
         <button type="submit" class={BUTTON}>
           {isDeposit
             ? 'Record deposit'
-            : isTransfer && !disburses
+            : isTransfer && !disburses && !transaction.feeApplicationId
               ? 'Record transfer'
               : 'Disburse'}
         </button>

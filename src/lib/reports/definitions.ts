@@ -2011,7 +2011,13 @@ const transfers: ReportDefinition = {
                              coalesce(cp.values->>'surname', '')) || ' · ' ||
                         coalesce(ca.account_no, cm.member_no, '') || ' · ' ||
                         cat.name
-                   else coalesce(d.payee_name, '') end as "To",
+                   else coalesce(d.payee_name,
+                                 (select 'Membership fees · ' || fa.reference
+                                    from fee_transfer ft
+                                    join membership_application fa
+                                      on fa.id = ft.application_id
+                                   where ft.transaction_id = d.id),
+                                 '') end as "To",
               d.amount::text as "Amount",
               case when d.status in ('submitted', 'under_review')
                         then coalesce('With ' || r.name,

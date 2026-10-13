@@ -533,6 +533,14 @@ const boardReasons = forwardAction
 // Board-readiness check above, which is secretary_review's own and never
 // runs for Regional oversight.
 const rejectedDocuments = checklist.filter(e => e.state === 'rejected');
+// The Regional Manager verifies the documents (migration 0127), and their
+// own forward waits until every required one is (officer direction).
+const unverifiedDocuments = checklist.filter(
+  e =>
+    e.requirement === 'required' &&
+    e.state !== 'verified' &&
+    e.state !== 'rejected'
+).length;
 
 const REVIEW_STEP_META: Record<
   string,
@@ -567,7 +575,7 @@ const REVIEW_STEP_META: Record<
     forwardLabel: 'Approve',
     returnOutcome: 'reject',
     returnLabel: 'Reject',
-    commentPlaceholder: 'Required if you reject this application.',
+    commentPlaceholder: 'Required.',
   },
 };
 
@@ -1469,6 +1477,17 @@ const dateFormat = localFormat({
                   </div>
                 )}
 
+              {action.stepCode === 'regional_review' &&
+                rejectedDocuments.length === 0 &&
+                unverifiedDocuments > 0 && (
+                  <div class={NOTICE_ERROR}>
+                    <p class="font-medium">
+                      {unverifiedDocuments} required document
+                      {unverifiedDocuments === 1 ? '' : 's'} still to verify.
+                    </p>
+                  </div>
+                )}
+
               {action.stepCode === 'president_decision' &&
                 signoffs.length > 0 && (
                   <div class="rounded-lg border border-neutral-300 bg-white px-4 py-3 text-sm dark:border-neutral-700 dark:bg-neutral-900">
@@ -1496,6 +1515,7 @@ const dateFormat = localFormat({
                       name="comment"
                       rows="3"
                       class={INPUT}
+                      required={action.stepCode === 'president_decision'}
                       placeholder={reviewMeta.commentPlaceholder}
                     ></textarea>
                   </label>
@@ -1507,7 +1527,9 @@ const dateFormat = localFormat({
                       disabled={
                         (action.stepCode === 'secretary_review' &&
                           boardReasons.length > 0) ||
-                        rejectedDocuments.length > 0
+                        rejectedDocuments.length > 0 ||
+                        (action.stepCode === 'regional_review' &&
+                          unverifiedDocuments > 0)
                       }
                       class={BUTTON}
                     >

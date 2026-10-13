@@ -29,6 +29,7 @@ export function transactionStatusLabel(transaction: {
   kind: string;
   status: string;
   payeeName?: string | null;
+  feeApplicationId?: string | null;
 }): string {
   if (transaction.status !== 'posted') {
     return STATUS_LABELS[transaction.status] ?? transaction.status;
@@ -41,8 +42,14 @@ export function transactionStatusLabel(transaction: {
  * that arrived or moved is recorded, not disbursed. Null for everything
  * else, which reads Disbursed.
  */
-export function recordedLabel(transaction: { kind: string }): string | null {
+export function recordedLabel(transaction: {
+  kind: string;
+  feeApplicationId?: string | null;
+}): string | null {
   if (transaction.kind === 'deposit') return 'Deposit recorded';
+  // A transfer paying a new member's fees is disbursed by the Treasurer
+  // (officer direction), and reads so.
+  if (transaction.feeApplicationId) return null;
   if (transaction.kind === 'transfer_leg') return 'Transfer recorded';
   return null;
 }
@@ -54,6 +61,18 @@ export function recordedLabel(transaction: { kind: string }): string | null {
 export function finalStepLabel(transaction: {
   kind: string;
   payeeName?: string | null;
+  feeApplicationId?: string | null;
 }): string {
   return recordedLabel(transaction) ?? 'Disbursement';
+}
+
+/** Where a transfer paying a new member's fees went: the application. */
+export function feeDestination(t: {
+  feeApplicationReference?: string | null;
+  feeApplicantName?: string | null;
+}): string | null {
+  if (!t.feeApplicationReference) return null;
+  return ['Membership fees', t.feeApplicationReference, t.feeApplicantName]
+    .filter(Boolean)
+    .join(' · ');
 }

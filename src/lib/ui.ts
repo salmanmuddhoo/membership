@@ -33,6 +33,10 @@ export const CARD =
 // the title on the left, the count and an arrow on the right.
 export const LINK_CARD =
   'flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-neutral-200 bg-neutral-100 px-4 py-4 transition sm:px-6 hover:border-mint-400 hover:bg-white dark:border-neutral-800 dark:bg-neutral-950 dark:hover:border-mint-700 dark:hover:bg-neutral-900';
+// The row of actions above a receipt sheet (Back on the left, Print, Send,
+// Refund, Void on the right), as wide as the sheet; never printed.
+export const RECEIPT_TOOLBAR =
+  'screen-only mx-auto mb-4 flex max-w-[150mm] flex-wrap items-center justify-between gap-2';
 // A form that is a card: the same card, with its fields spaced.
 export const FORM_CARD = `space-y-4 ${CARD}`;
 export const FILTER =

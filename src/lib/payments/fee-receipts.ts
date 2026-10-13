@@ -36,10 +36,19 @@ export interface FeeReceiptParties {
 export async function feeReceiptParties(
   payment: Payment
 ): Promise<FeeReceiptParties> {
-  const depositor = await depositorForApplication(payment.applicationId);
   const reference = payment.applicationReference ?? payment.memberNo ?? null;
   const applicant =
     [payment.applicantName, reference].filter(Boolean).join(' · ') || '—';
+  // Paid by another member's transfer (officer request): the receipt says
+  // who paid, and for whom.
+  if (payment.paidByMember) {
+    const { name, memberNo } = payment.paidByMember;
+    return {
+      owner: [name, memberNo].filter(Boolean).join(' · '),
+      accountOf: applicant,
+    };
+  }
+  const depositor = await depositorForApplication(payment.applicationId);
   const paidBy = !!depositor.name && depositor.name !== payment.applicantName;
   return paidBy
     ? { owner: depositor.name!, accountOf: applicant }

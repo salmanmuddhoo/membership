@@ -377,11 +377,12 @@ describe('S-1301, S-1302 the ledger', () => {
         where p.code = 'transaction.capture'
         order by r.code`
     );
+    // As the Society's own defaults set them since (migration 0129).
     expect(result.rows.map(r => r.code)).toEqual([
       'account_officer',
       'clerk',
+      'regional_manager',
       'regional_officer',
-      'system_administrator',
     ]);
   });
 
@@ -400,15 +401,13 @@ describe('S-1301, S-1302 the ledger', () => {
           [code]
         )
       ).rows.map(r => r.code);
+    // As the Society's own defaults set them since (migration 0129).
     expect(await holders('transaction.post')).toEqual([
-      'account_officer',
+      'regional_manager',
       'regional_officer',
-      'system_administrator',
-    ]);
-    expect(await holders('receipt.void')).toEqual([
-      'system_administrator',
       'treasurer',
     ]);
+    expect(await holders('receipt.void')).toEqual(['treasurer']);
     expect(await holders('account.view')).toEqual(
       expect.arrayContaining([
         'auditor',
@@ -456,16 +455,17 @@ describe('S-1301, S-1302 the ledger', () => {
 
     // 0071: the chain's own permissions — the Secretary reviews, the
     // President decides, and both can see what they act on.
+    // Since 0129, as the Society set it: the President reviews too, and the
+    // System Administrator holds none of the chain's permissions.
     expect(await holders('transaction.review')).toEqual([
+      'president',
       'secretary',
-      'system_administrator',
     ]);
     // 0120: the Account Officer decides Accounts verification, the one
     // step of a deposit made from the member app.
     expect(await holders('transaction.approve')).toEqual([
       'account_officer',
       'president',
-      'system_administrator',
     ]);
     expect(await holders('transaction.view')).toEqual(
       expect.arrayContaining(['president', 'secretary'])

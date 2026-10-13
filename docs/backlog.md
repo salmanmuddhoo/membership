@@ -5832,3 +5832,133 @@ same way a transaction's receipt goes since 0124, never as a link.
   transaction's receipt PDF, under a token signed for a fee receipt only.
 - The fee receipt page shows where it went and has **Send** / **Send again**.
 - WhatsApp needs a template registered with Meta with a document header.
+
+---
+
+### An approval says why
+
+Officer direction: an approval carries a comment, as a return or a rejection
+already did.
+
+- **Membership:** the President's decision on an application — membership,
+  non-member or additional account — needs a comment to approve as well as
+  to reject (`decideApplication`). Each sign-off on a quorum needs its own.
+- **Transactions:** the step that approves a withdrawal, a transfer, a
+  closure or a chained deposit — the last step of its chain — needs a
+  comment (`reviewTransaction`). Forwarding from an earlier step needs none.
+  A deposit the matrix posts directly has no approval and no comment.
+- The comment box is marked required on those forms; the server refuses an
+  empty one whatever the form does.
+
+---
+
+### A member pays a new member's fees by transfer
+
+Officer request: on the Payments step of a membership application, the
+entrance fee, Takaful and Shares can be paid by an existing member from one
+of their accounts, instead of at the counter. Answers taken with it: any of
+the paying member's accounts, Shares included; through the transfer
+approval chain; the whole payment one way, never part cash.
+
+- **Method** "Transfer from a member" (`member_transfer`, migration 0126) —
+  the system's own, offered only on this step and only to someone who may
+  start a transaction (`transaction.capture`) as well as take payments
+  (`payment.record`).
+- **The money** leaves by a transfer's debit leg on the paying account with
+  no credit leg (the applicant has no account yet), routed by the matrix's
+  Transfer bands. Below the band it posts at once — for someone who records
+  transfers — and both receipts are issued: the paying member's for the
+  transfer, the applicant's for the fees. Above it, the chain reviews it,
+  and whoever records transfers posts it once approved; nothing is
+  disbursed.
+- **The fees** count as paid only once the transfer posts: the fee receipt
+  is issued in the same database transaction (`settleFeeTransfer`), under
+  the amounts checked when it was started (`fee_transfer`), and sent to the
+  applicant as any fee receipt is. From there it is an ordinary payment;
+  its Shares line carries into the new member's Shares account on approval.
+- **The paying account** meets every check a transfer's source does — the
+  available balance, the type's floor and transaction ceiling, the holder
+  and guardian — save the type's "allows transfer" flag, so Shares can pay
+  but keep their minimum. It must be a member's.
+- **While it is on its way** the Payments step shows it, with whose account
+  and where it is, in place of the form; no cash payment and no second
+  transfer is taken. **Cancel transfer** stops it at any point before it
+  posts — returned included, since a fee transfer is never edited, only
+  cancelled and started again — and the step is open again.
+- **Guards:** posting is refused if the application was decided meanwhile
+  (cancel it instead); a posted fee transfer is reversed only after its fee
+  receipt is voided; a draft that carries a fee transfer is not deleted.
+- **Where it reads:** the transaction's "To" is the application, linked; the
+  statement, the history and the transfers report name it the same way.
+
+---
+
+### Fees by transfer: the Treasurer disburses, the application moves meanwhile
+
+Officer direction after trying it on Test.
+
+- **Choosing the account:** the officer types the paying member's number or
+  name and is shown every open account of every type — Shares, MSA, Hajj,
+  Investment — each with what it can pay now (balance, less what is on its
+  way out, less the type's floor). An account that cannot cover the total
+  cannot be ticked (`payersMatching`, `/applications/payer-accounts.json`).
+- **Never at once:** a fee transfer waits for the Treasurer to disburse it
+  (`transaction.disburse`), above the Transfer band after its chain approves
+  it, below the band straight away. No payout method is asked for; it reads
+  "Disbursed". The fee receipt is issued when it is disbursed.
+- **The application moves meanwhile:** with the transfer pending (not
+  returned) the officer can submit for processing, and the documents can be
+  verified. The Secretary's step — forward and return alike — and the
+  President's approval wait, with "Waiting for TR-… to be disbursed."
+  (`waitingOnFeeTransfer`).
+- **Document verification:** an application's documents are the Regional
+  Manager's to verify by default, no longer the Secretary's
+  (`document.verify`, migration 0127). The papers filed against a closure, a
+  resignation or a demised claim stay with the Secretary under their own
+  permission, `transaction.document_verify`. The functional suite gains a
+  Regional Manager account.
+
+---
+
+### Regional Manager forward, protected roles, returned work, who paid
+
+Officer feedback round.
+
+- **Regional Manager forwards only verified papers:** "Forward for central
+  review" is greyed out, with the count still to verify, until every
+  required document is Verified; the workflow refuses it too
+  (`reviewApplication`, regional_review).
+- **The Society's own roles cannot be deleted:** Regional Officer,
+  Regional Manager, Secretary, President, Treasurer, System Administrator,
+  Member, Clerk and Auditor are system roles (migration 0128) — no Delete on
+  Configuration → Roles, and `deleteRole` refuses them. Their permissions
+  still change; roles an administrator adds stay deletable.
+- **Returned work waits on whoever had it:** a returned application is in
+  "Waiting on you" for the officer who captured it and for the one who
+  submitted it (a Regional Manager submitting for a subordinate, an officer
+  completing one from the member app); one captured by the member app is
+  there for whoever handles those (`application.submit_online`).
+- **Who paid, on the receipt:** a fee receipt paid by transfer from a member
+  reads "Received from" that member (name and number) and "Account of" the
+  applicant, on screen and in the PDF.
+
+---
+
+### Receipt actions on top, who is paying, default role permissions
+
+Officer feedback, 13 October 2026.
+
+- **Receipt actions on top:** on a receipt, Print, Send, Refund and Void
+  sit in a row at the top right, as Deposit and Withdraw do on a member's
+  page; Refund and Void open their form below the sheet. The same on a
+  transaction's receipt.
+- **Who is paying, for the Secretary:** "Waiting for TR-… to be disbursed.
+  This payment was made by a transfer from member <name>’s <account type>
+  account." (`waitingOnFeeTransfer`).
+- **Default role permissions** (migration 0129): Account Officer, Auditor,
+  Clerk, Member, President, Regional Manager, Regional Officer, Secretary,
+  System Administrator and Treasurer hold exactly the permissions the
+  Society exported from Test on 13 October 2026. A reset keeps roles as
+  they are, so these stay until an administrator changes them. One
+  correction to the export: closure and claim papers
+  (`transaction.document_verify`) are the Secretary's alone.

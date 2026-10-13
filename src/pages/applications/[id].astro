@@ -37,6 +37,7 @@ import {
   signoffsFor,
   submitApplication,
   transitionsFor,
+  waitingOnFeeTransfer,
 } from '@lib/applications/workflow';
 import {
   checklistFor,
@@ -60,6 +61,12 @@ import {
   type Payment,
   type PaymentMethod,
 } from '@lib/payments/payments';
+import {
+  cancelFeeTransfer,
+  pendingFeeTransfer,
+  requestFeeTransfer,
+} from '@lib/payments/fee-transfers';
+import { FEE_TRANSFER_METHOD } from '@lib/payments/fee-transfer-settlement';
 import { formatMoney, fromCents, sumCents } from '@lib/payments/money';
 import type { FeeComponentCode } from '@lib/config/reference';
 import DocumentViewer from '@components/DocumentViewer.astro';
@@ -210,6 +217,8 @@ let paymentFormValues: {
   varianceReason: string;
   sourceOfFund: string;
   sourceOfFundFormConfirmed: boolean;
+  payerSearch: string;
+  payerAccountId: string;
 } | null = null;
 
 let isEditable = isEditableStatus(application.status);
@@ -273,24 +282,46 @@ if (Astro.request.method === 'POST') {
     // present with some falsy value.
     const sourceOfFundFormConfirmed =
       form.get('sourceOfFundFormConfirmed') === 'true';
+    const payerSearch = String(form.get('payerSearch') ?? '');
+    const payerAccountId = String(form.get('payerAccountId') ?? '');
+    const isTransfer = method === FEE_TRANSFER_METHOD;
 
     try {
-      const payment = await recordPayment(
-        {
-          applicationId: application.id,
-          method,
-          methodReference,
-          varianceReason,
-          sourceOfFund,
-          sourceOfFundFormConfirmed,
-          amounts,
-        },
-        principal
-      );
-      notice = `Receipt ${payment.receiptNo} recorded.`;
+      if (isTransfer) {
+        // The radio ticked under the search box; empty when none was.
+        const transfer = await requestFeeTransfer(
+          {
+            applicationId: application.id,
+            payerAccountId,
+            amounts,
+            varianceReason,
+          },
+          principal
+        );
+        notice = `Transfer ${transfer.reference} sent for approval.`;
+      } else {
+        const payment = await recordPayment(
+          {
+            applicationId: application.id,
+            method,
+            methodReference,
+            varianceReason,
+            sourceOfFund,
+            sourceOfFundFormConfirmed,
+            amounts,
+          },
+          principal
+        );
+        notice = `Receipt ${payment.receiptNo} recorded.`;
+      }
     } catch (err) {
       if (err instanceof PaymentError) {
         error = err.message;
+      } else if (isTransfer) {
+        console.error('[payments/fee-transfer]', err);
+        error =
+          'The transfer could not be recorded. Nothing has been taken — ' +
+          'please try again.';
       } else {
         console.error('[payments/record]', err);
         error =
@@ -307,7 +338,21 @@ if (Astro.request.method === 'POST') {
         varianceReason,
         sourceOfFund,
         sourceOfFundFormConfirmed,
+        payerSearch,
+        payerAccountId,
       };
+    }
+  } else if (intent === 'cancel-fee-transfer') {
+    try {
+      const reference = await cancelFeeTransfer(application.id, principal);
+      notice = `Transfer ${reference} cancelled.`;
+    } catch (err) {
+      if (err instanceof PaymentError) {
+        error = err.message;
+      } else {
+        console.error('[payments/cancel-fee-transfer]', err);
+        error = 'The transfer could not be cancelled. Please try again.';
+      }
     }
   } else if (intent === 'delete-document') {
     try {
@@ -585,6 +630,14 @@ const boardReasons = forwardAction
 // runs for Regional oversight. Named up front the same way boardReasons is,
 // so Forward reads disabled instead of failing only once tried.
 const rejectedDocuments = checklist.filter(e => e.state === 'rejected');
+// The Regional Manager verifies the documents (migration 0127), and their
+// own forward waits until every required one is (officer direction).
+const unverifiedDocuments = checklist.filter(
+  e =>
+    e.requirement === 'required' &&
+    e.state !== 'verified' &&
+    e.state !== 'rejected'
+).length;
 
 // S-611: what a review-type step's own buttons say and post — the "forward"
 // verb, the "return"/"reject" verb, and the comment's placeholder — kept as
@@ -626,7 +679,7 @@ const REVIEW_STEP_META: Record<
     forwardLabel: 'Approve',
     returnOutcome: 'reject',
     returnLabel: 'Reject',
-    commentPlaceholder: 'Required if you reject this application.',
+    commentPlaceholder: 'Required.',
   },
 };
 
@@ -742,6 +795,21 @@ const requiredDocumentsMissing = checklist.filter(
 const livePayment: Payment | null =
   payments.find(p => p.kind === 'payment' && !p.voidedAt) ?? null;
 const refunds = payments.filter(p => p.kind === 'refund' && !p.voidedAt);
+// A transfer paying the fees that has not posted yet. Read here, after the
+// POST handling, so a transfer just started or cancelled shows as it now is.
+const pendingTransfer = livePayment
+  ? null
+  : await pendingFeeTransfer(application!.id);
+// Fees in hand for moving on: a receipt, or a transfer on its way. Only a
+// returned transfer leaves the step undone.
+const paymentInHand =
+  livePayment !== null ||
+  (pendingTransfer !== null && pendingTransfer.status !== 'returned');
+// Set while the fees wait on a transfer; the Secretary and the President
+// are told so up front rather than refused on submit.
+const feeTransferWait = livePayment
+  ? null
+  : await waitingOnFeeTransfer(application!.id);
 
 // A returned application is editable in exactly the same way as a draft but
 // has been through the Secretary, and that history is not anyone's to
@@ -756,16 +824,20 @@ const isDeletableDraft =
 
 // Read above alongside everything else; only shown while nothing has been
 // taken yet — once a payment stands, the figure has been settled.
-const due: AmountDue | null = livePayment ? null : (dueRead?.due ?? null);
-const dueProblem: string | null = livePayment
-  ? null
-  : (dueRead?.problem ?? null);
+// While a transfer is pending the form is not offered: cancel it first.
+const due: AmountDue | null =
+  livePayment || pendingTransfer ? null : (dueRead?.due ?? null);
+const dueProblem: string | null =
+  livePayment || pendingTransfer ? null : (dueRead?.problem ?? null);
 const cashThreshold = due ? await cashSourceOfFundThreshold() : null;
 const cashMax = due ? await cashMaximum() : null;
 // What the method select offers (S-1307): each option carries whether the
 // cash controls apply and whether a reference is demanded, so the script
 // below reads configuration rather than a list of codes.
 const paymentMethods = await offeredPaymentMethods('deposit');
+// Starting a transfer is a transaction.capture act, so the option is withheld
+// from someone who could only be refused after filling the form in.
+const canPayByTransfer = principal.permissions.has('transaction.capture');
 
 // The Source of Fund form's own state, read only when there is a payment
 // still to take — an approved or rejected application has nothing left to
@@ -810,8 +882,9 @@ const timeline = applicationTimeline({
   valuesToCorrect: explainedProblems.length,
   signedFormFiled,
   requiredDocumentsOutstanding: requiredDocumentsMissing,
-  paymentRecorded: livePayment !== null,
-  paymentReceiptNo: livePayment?.receiptNo ?? null,
+  paymentRecorded: paymentInHand,
+  paymentReceiptNo:
+    livePayment?.receiptNo ?? pendingTransfer?.reference ?? null,
   reviewStageLabel: stageLabel,
   returnedByLabel: returnedLabel,
 });
@@ -849,7 +922,7 @@ const furthestStep = !isEditable
     ? CAPTURE_STEP
     : requiredDocumentsMissing > 0
       ? DOCUMENTS_STEP
-      : livePayment === null
+      : !paymentInHand
         ? PAYMENT_STEP
         : SUBMIT_STEP;
 
@@ -1341,7 +1414,7 @@ const dateFormat = localFormat({
       )}
 
     {(!isEditable || currentStep === PAYMENT_STEP) &&
-      (livePayment || due || dueProblem) && (
+      (livePayment || pendingTransfer || due || dueProblem) && (
         <section class={CARD} id="payment">
           <div class="flex flex-wrap items-baseline justify-between gap-2">
             <h2 class={CARD_TITLE}>Payment</h2>
@@ -1435,6 +1508,52 @@ const dateFormat = localFormat({
                     </li>
                   ))}
                 </ul>
+              )}
+            </div>
+          )}
+
+          {pendingTransfer && (
+            <div class={`${PANEL} mt-4`}>
+              <div class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                <a
+                  href={`/transactions/${pendingTransfer.transactionId}`}
+                  class="font-medium text-neutral-800 underline dark:text-neutral-100"
+                >
+                  {pendingTransfer.reference}
+                </a>
+                <span class="font-medium text-neutral-800 dark:text-neutral-100">
+                  {formatMoney(pendingTransfer.amount)}
+                </span>
+              </div>
+              <p class={`${MUTED} mt-1`}>
+                from {pendingTransfer.payerName} ·{' '}
+                {pendingTransfer.payerAccountNo} ·{' '}
+                {pendingTransfer.payerAccountTypeName}
+              </p>
+              <p class={MUTED}>
+                {pendingTransfer.status === 'approved'
+                  ? 'Waiting for the Treasurer'
+                  : pendingTransfer.status === 'returned'
+                    ? 'Returned'
+                    : pendingTransfer.currentStepRole
+                      ? `With ${pendingTransfer.currentStepRole}`
+                      : 'Awaiting approval'}
+              </p>
+              {canRecordPayment && (
+                <form
+                  method="post"
+                  class="mt-3"
+                  data-confirm-cancel-transfer={pendingTransfer.reference}
+                >
+                  <button
+                    type="submit"
+                    name="intent"
+                    value="cancel-fee-transfer"
+                    class={SECONDARY_SM}
+                  >
+                    Cancel transfer
+                  </button>
+                </form>
               )}
             </div>
           )}
@@ -1537,6 +1656,19 @@ const dateFormat = localFormat({
                         {method.name}
                       </option>
                     ))}
+                    {canPayByTransfer && (
+                      <option
+                        value={FEE_TRANSFER_METHOD}
+                        data-cash="false"
+                        data-requires-reference="false"
+                        data-member-transfer="true"
+                        selected={
+                          paymentFormValues?.method === FEE_TRANSFER_METHOD
+                        }
+                      >
+                        Transfer from a member
+                      </option>
+                    )}
                   </select>
                 </label>
                 <label data-method-reference-field class={`${LABEL} flex-1`}>
@@ -1549,6 +1681,26 @@ const dateFormat = localFormat({
                   />
                 </label>
               </div>
+
+              {canPayByTransfer && (
+                <div data-payer-fields hidden class="space-y-2">
+                  <label class={LABEL}>
+                    Member number or name
+                    <input
+                      type="text"
+                      name="payerSearch"
+                      autocomplete="off"
+                      placeholder="AB0001"
+                      value={paymentFormValues?.payerSearch ?? ''}
+                      data-chosen-account={
+                        paymentFormValues?.payerAccountId ?? ''
+                      }
+                      class={INPUT}
+                    />
+                  </label>
+                  <div data-payer-results class="space-y-3"></div>
+                </div>
+              )}
 
               <CashSourceOfFundForm
                 applicationId={application!.id}
@@ -1609,19 +1761,19 @@ const dateFormat = localFormat({
               </a>
               <a
                 href={
-                  livePayment
+                  paymentInHand
                     ? `/applications/${application!.id}?step=${SUBMIT_STEP}`
                     : undefined
                 }
-                aria-disabled={livePayment === null}
+                aria-disabled={!paymentInHand}
                 class:list={[
                   'rounded-lg px-4 py-2 text-sm font-bold transition',
-                  livePayment === null
+                  !paymentInHand
                     ? 'cursor-not-allowed bg-neutral-300 text-neutral-500 dark:bg-neutral-700 dark:text-neutral-400'
                     : 'bg-mint-300 hover:bg-mint-400 text-neutral-800',
                 ]}
               >
-                {livePayment === null ? 'Next' : `Next: ${nextStepLabel}`}
+                {!paymentInHand ? 'Next' : `Next: ${nextStepLabel}`}
               </a>
             </div>
           )}
@@ -1634,8 +1786,16 @@ const dateFormat = localFormat({
 
         {actions.map(action => {
           const reviewMeta = REVIEW_STEP_META[action.stepCode];
+          // The Secretary has nothing to act on until the transfer is paid.
+          if (action.stepCode === 'secretary_review' && feeTransferWait) {
+            return <p class={`${NOTICE_WARN} mt-4`}>{feeTransferWait}</p>;
+          }
           return (
             <form method="post" class="mt-4 space-y-3">
+              {action.stepCode === 'president_decision' && feeTransferWait && (
+                <p class={NOTICE_WARN}>{feeTransferWait}</p>
+              )}
+
               {action.stepCode === 'capture' && (
                 <button
                   type="submit"
@@ -1681,6 +1841,17 @@ const dateFormat = localFormat({
                   </div>
                 )}
 
+              {action.stepCode === 'regional_review' &&
+                rejectedDocuments.length === 0 &&
+                unverifiedDocuments > 0 && (
+                  <div class={NOTICE_ERROR}>
+                    <p class="font-medium">
+                      {unverifiedDocuments} required document
+                      {unverifiedDocuments === 1 ? '' : 's'} still to verify.
+                    </p>
+                  </div>
+                )}
+
               {action.stepCode === 'president_decision' &&
                 signoffs.length > 0 && (
                   <div class="rounded-lg border border-neutral-300 bg-white px-4 py-3 text-sm dark:border-neutral-700 dark:bg-neutral-900">
@@ -1720,23 +1891,31 @@ const dateFormat = localFormat({
                         name="comment"
                         rows="3"
                         class={INPUT}
+                        required={action.stepCode === 'president_decision'}
                         placeholder={reviewMeta.commentPlaceholder}
                       ></textarea>
                     </label>
                     <div class="flex flex-wrap gap-2">
-                      <button
-                        type="submit"
-                        name="outcome"
-                        value={reviewMeta.forwardOutcome}
-                        disabled={
-                          (action.stepCode === 'secretary_review' &&
-                            boardReasons.length > 0) ||
-                          rejectedDocuments.length > 0
-                        }
-                        class={BUTTON}
-                      >
-                        {reviewMeta.forwardLabel}
-                      </button>
+                      {!(
+                        action.stepCode === 'president_decision' &&
+                        feeTransferWait
+                      ) && (
+                        <button
+                          type="submit"
+                          name="outcome"
+                          value={reviewMeta.forwardOutcome}
+                          disabled={
+                            (action.stepCode === 'secretary_review' &&
+                              boardReasons.length > 0) ||
+                            rejectedDocuments.length > 0 ||
+                            (action.stepCode === 'regional_review' &&
+                              unverifiedDocuments > 0)
+                          }
+                          class={BUTTON}
+                        >
+                          {reviewMeta.forwardLabel}
+                        </button>
+                      )}
                       <button
                         type="submit"
                         name="outcome"
@@ -1838,6 +2017,7 @@ const dateFormat = localFormat({
     formatBytes,
   } from '@lib/client/image-compression';
   import { keepPaymentDraft } from '@lib/client/payment-draft';
+  import { formatMoney } from '@lib/payments/money';
   // "Back", after Next brought the officer here from capture. A plain link to
   // the list is the safe default (it works whichever page sent them here, or
   // if they arrived on a fresh tab with no history at all) — but where the
@@ -2105,6 +2285,18 @@ const dateFormat = localFormat({
     );
   }
 
+  // Cancelling a pending transfer asks first; nothing has moved, but the
+  // approval it has been through is lost.
+  const cancelTransferForm = document.querySelector<HTMLFormElement>(
+    'form[data-confirm-cancel-transfer]'
+  );
+  if (cancelTransferForm) {
+    window.confirmedSubmit(
+      cancelTransferForm,
+      `Cancel transfer ${cancelTransferForm.dataset.confirmCancelTransfer ?? ''}?`
+    );
+  }
+
   // Removing a filed document is reversible in the sense that it can always
   // be filed again — but the officer does not know that mid-click, so this
   // asks first exactly as deleting the draft does.
@@ -2183,16 +2375,46 @@ const dateFormat = localFormat({
     );
     // Whether a method is cash, and whether it carries a reference, is
     // configuration (S-1307), read off the selected option.
+    const payerFields = paymentForm.querySelector<HTMLElement>(
+      '[data-payer-fields]'
+    );
+    const payerSearch = paymentForm.querySelector<HTMLInputElement>(
+      '[name="payerSearch"]'
+    );
+    const payerResults = paymentForm.querySelector<HTMLElement>(
+      '[data-payer-results]'
+    );
+    const recordLabel = submitButton?.textContent?.trim() ?? '';
 
     // Restored before the first recalculation below, so the total and the
     // cash rules are computed against what the officer actually typed
     // rather than against the defaults it replaces.
     keepPaymentDraft(paymentForm, paymentForm.dataset.applicationId ?? '');
 
+    // Each account the search listed, kept so its radio can be re-checked
+    // against the total whenever that changes.
+    const payerChoices: {
+      radio: HTMLInputElement;
+      note: HTMLElement;
+      payable: string;
+    }[] = [];
+
     const recomputeTotal = () => {
       let total = 0;
       for (const input of amountInputs) total += parseCents(input.value);
       if (totalCell) totalCell.textContent = formatCents(total);
+
+      // An account that cannot cover the total cannot be picked.
+      for (const choice of payerChoices) {
+        const short = parseCents(choice.payable) < total;
+        choice.radio.disabled = short;
+        if (short) choice.radio.checked = false;
+        choice.note.textContent =
+          `Available ${formatMoney(choice.payable)}` +
+          (short ? ' · Not enough' : '');
+        choice.note.classList.toggle('text-red-700', short);
+        choice.note.classList.toggle('dark:text-red-300', short);
+      }
 
       const selectedMethod = methodSelect?.selectedOptions[0];
       const isCash = selectedMethod?.dataset.cash === 'true';
@@ -2227,6 +2449,12 @@ const dateFormat = localFormat({
       if (methodReferenceField)
         methodReferenceField.hidden =
           selectedMethod?.dataset.requiresReference !== 'true';
+
+      const isTransfer = selectedMethod?.dataset.memberTransfer === 'true';
+      if (payerFields) payerFields.hidden = !isTransfer;
+      if (submitButton) {
+        submitButton.textContent = isTransfer ? 'Pay by transfer' : recordLabel;
+      }
     };
 
     for (const input of amountInputs) {
@@ -2234,6 +2462,104 @@ const dateFormat = localFormat({
     }
     methodSelect?.addEventListener('change', recomputeTotal);
     recomputeTotal();
+
+    // The paying account: found by number or name, then one of that member's
+    // accounts is ticked. A reply that arrives after a newer search is dropped.
+    interface Payer {
+      memberId: string;
+      memberNo: string;
+      name: string;
+      accounts: {
+        accountId: string;
+        accountNo: string;
+        typeName: string;
+        payable: string;
+      }[];
+    }
+    let searchTimer: number | undefined;
+    let searchCounter = 0;
+
+    const showPayers = (payers: Payer[], chosen: string) => {
+      if (!payerResults) return;
+      payerResults.replaceChildren();
+      payerChoices.length = 0;
+      if (payers.length === 0) {
+        const none = document.createElement('p');
+        none.className = 'text-sm text-neutral-600 dark:text-neutral-300';
+        none.textContent = 'No member found.';
+        payerResults.append(none);
+        return;
+      }
+      for (const payer of payers) {
+        const group = document.createElement('div');
+        const heading = document.createElement('p');
+        heading.className =
+          'text-sm font-medium text-neutral-800 dark:text-neutral-100';
+        heading.textContent = `${payer.name} · ${payer.memberNo}`;
+        group.append(heading);
+        for (const account of payer.accounts) {
+          const label = document.createElement('label');
+          label.className = 'mt-1 flex items-start gap-2';
+          const radio = document.createElement('input');
+          radio.type = 'radio';
+          radio.name = 'payerAccountId';
+          radio.value = account.accountId;
+          radio.className = 'mt-1';
+          radio.checked = account.accountId === chosen;
+          const text = document.createElement('span');
+          text.className = 'text-sm text-neutral-800 dark:text-neutral-100';
+          text.append(`${account.accountNo} · ${account.typeName}`);
+          const note = document.createElement('span');
+          note.className =
+            'block text-xs text-neutral-500 dark:text-neutral-400';
+          text.append(note);
+          label.append(radio, text);
+          group.append(label);
+          payerChoices.push({ radio, note, payable: account.payable });
+        }
+        payerResults.append(group);
+      }
+      recomputeTotal();
+    };
+
+    const searchPayers = async (chosen: string) => {
+      if (!payerSearch || !payerResults) return;
+      const value = payerSearch.value.trim();
+      const request = ++searchCounter;
+      if (value.length < 2) {
+        payerResults.replaceChildren();
+        payerChoices.length = 0;
+        return;
+      }
+      try {
+        const response = await fetch(
+          '/applications/payer-accounts.json?q=' + encodeURIComponent(value)
+        );
+        if (!response.ok) throw new Error(String(response.status));
+        const payers = (await response.json()) as Payer[];
+        if (request === searchCounter) showPayers(payers, chosen);
+      } catch {
+        if (request !== searchCounter) return;
+        payerResults.replaceChildren();
+        payerChoices.length = 0;
+        const failed = document.createElement('p');
+        failed.className = 'text-sm text-red-700 dark:text-red-300';
+        failed.textContent = 'Search failed. Try again.';
+        payerResults.append(failed);
+      }
+    };
+
+    if (payerSearch && payerResults) {
+      payerSearch.addEventListener('input', () => {
+        window.clearTimeout(searchTimer);
+        searchTimer = window.setTimeout(() => void searchPayers(''), 250);
+      });
+      // A refused submit comes back with the search and the pick: run it once
+      // and tick the account that was chosen.
+      if (payerSearch.value.trim()) {
+        void searchPayers(payerSearch.dataset.chosenAccount ?? '');
+      }
+    }
   }
 
   const form = document.getElementById(
