@@ -5941,3 +5941,24 @@ Officer feedback round.
 - **Who paid, on the receipt:** a fee receipt paid by transfer from a member
   reads "Received from" that member (name and number) and "Account of" the
   applicant, on screen and in the PDF.
+
+---
+
+### Receipt actions on top, who is paying, default role permissions
+
+Officer feedback, 13 October 2026.
+
+- **Receipt actions on top:** on a receipt, Print, Send, Refund and Void
+  sit in a row at the top right, as Deposit and Withdraw do on a member's
+  page; Refund and Void open their form below the sheet. The same on a
+  transaction's receipt.
+- **Who is paying, for the Secretary:** "Waiting for TR-… to be disbursed.
+  This payment was made by a transfer from member <name>’s <account type>
+  account." (`waitingOnFeeTransfer`).
+- **Default role permissions** (migration 0129): Account Officer, Auditor,
+  Clerk, Member, President, Regional Manager, Regional Officer, Secretary,
+  System Administrator and Treasurer hold exactly the permissions the
+  Society exported from Test on 13 October 2026. A reset keeps roles as
+  they are, so these stay until an administrator changes them. One
+  correction to the export: closure and claim papers
+  (`transaction.document_verify`) are the Secretary's alone.

@@ -1152,16 +1152,30 @@ export async function liveFeeTransferFor(applicationId: string): Promise<{
   transactionId: string;
   reference: string;
   status: string;
+  // Who is paying, and from which of their accounts.
+  payerName: string;
+  accountTypeName: string;
 } | null> {
   const result = await query<{
     transaction_id: string;
     reference: string;
     status: string;
+    payer_name: string;
+    account_type_name: string;
   }>(
-    `select ft.transaction_id, tr.reference, t.status
+    `select ft.transaction_id, tr.reference, t.status,
+            trim(coalesce(pp.values->>'name', '') || ' '
+                 || coalesce(pp.values->>'surname', '')) as payer_name,
+            at.name as account_type_name
        from fee_transfer ft
        join transaction t on t.id = ft.transaction_id
        join transfer tr on tr.id = t.transfer_id
+       join account a on a.id = t.account_id
+       join account_type at on at.id = a.account_type_id
+       left join member m on m.id = t.member_id
+       left join application_party pp
+         on pp.application_id = m.application_id
+        and pp.subject = 'applicant' and pp.ordinal = 1
       where ft.application_id = $1
         and ft.payment_id is null
         and t.status in ('submitted', 'under_review', 'approved', 'returned')
@@ -1175,6 +1189,8 @@ export async function liveFeeTransferFor(applicationId: string): Promise<{
         transactionId: row.transaction_id,
         reference: row.reference,
         status: row.status,
+        payerName: row.payer_name,
+        accountTypeName: row.account_type_name,
       }
     : null;
 }

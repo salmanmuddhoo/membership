@@ -633,7 +633,15 @@ export async function waitingOnFeeTransfer(
   applicationId: string
 ): Promise<string | null> {
   const live = await liveFeeTransferFor(applicationId);
-  return live ? `Waiting for ${live.reference} to be disbursed.` : null;
+  if (!live) return null;
+  // Officer request: the Secretary is told who is paying, and from what.
+  const payer = live.payerName
+    ? `member ${live.payerName}’s ${live.accountTypeName} account`
+    : `a member’s ${live.accountTypeName} account`;
+  return (
+    `Waiting for ${live.reference} to be disbursed. This payment was made ` +
+    `by a transfer from ${payer}.`
+  );
 }
 
 /**
