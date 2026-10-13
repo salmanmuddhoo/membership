@@ -295,7 +295,8 @@ describe('fees paid by transfer from a member', () => {
     });
     expect(review.permissionToPost(waiting)).toBe('transaction.disburse');
     expect(await workflow.waitingOnFeeTransfer(application.id)).toBe(
-      `Waiting for ${outcome.reference} to be disbursed.`
+      `Waiting for ${outcome.reference} to be disbursed. This payment was ` +
+        'made by a transfer from member Hassan Test’s Shares account.'
     );
     expect(
       (await review.approvedTransactions(treasurer)).map(t => t.id)
