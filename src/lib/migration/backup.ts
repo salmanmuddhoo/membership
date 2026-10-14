@@ -67,30 +67,18 @@ export interface BackupOutcome {
 /**
  * Export everyone with their balances and save it to SharePoint, then trim
  * the folder to the last five days. The old files are only removed once the
- * new one is in: a failed upload leaves yesterday's and the day before's
- * where they were.
+ * new one is in: a failed upload leaves the earlier days where they were.
  */
 export async function backupMembers(
   options: { at?: Date; config?: GraphConfig } = {}
 ): Promise<BackupOutcome> {
   const config = options.config ?? getGraphConfig();
   const fileName = backupFileName(localDay(options.at));
-
-  // Recorded in the audit log as the export it is, under the service
-  // account a migration already runs as (migration 0066) — nobody signed in.
-  const system = await query<{ id: string; email: string }>(
-    `select id, email from app_user where entra_subject = 'system:migration'`
+  const { members, nonMembers } = await saveExport(
+    fileName,
+    'members-backup job',
+    config
   );
-  if (!system.rows[0]) {
-    throw new Error('The system:migration service account is missing.');
-  }
-  const { buffer, members, nonMembers } = await exportMembers(
-    { userId: system.rows[0].id, email: 'members-backup job' },
-    new Set([PERMISSION_MIGRATE])
-  );
-
-  await ensureFolderPath(BACKUP_FOLDER, config);
-  await uploadReplacing(`${BACKUP_FOLDER}/${fileName}`, buffer, config);
 
   const removed = backupsToRemove(
     await listFolderNames(BACKUP_FOLDER, config),
@@ -101,6 +89,55 @@ export async function backupMembers(
   }
 
   return { folder: BACKUP_FOLDER, fileName, members, nonMembers, removed };
+}
+
+const clock = new Intl.DateTimeFormat('en-GB', {
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+  timeZone: 'Indian/Mauritius',
+});
+
+/**
+ * The export, saved just before "Reset data" wipes a production database
+ * (admin/reset.ts): members-before-reset-2026-10-14-1530.xlsx, beside the
+ * nightly files. Its name is not a nightly backup's, so the nightly trim
+ * never removes it — the reset empties the audit log too, and this file is
+ * what is left of what was there.
+ */
+export async function backupBeforeReset(
+  options: { at?: Date; config?: GraphConfig } = {}
+): Promise<{ folder: string; fileName: string }> {
+  const config = options.config ?? getGraphConfig();
+  const at = options.at ?? new Date();
+  const fileName =
+    `members-before-reset-${localDay(at)}-` +
+    `${clock.format(at).replace(':', '')}.xlsx`;
+  await saveExport(fileName, 'before reset', config);
+  return { folder: BACKUP_FOLDER, fileName };
+}
+
+// The export, saved to the backup folder under this name. Recorded in the
+// audit log as the export it is, under the service account a migration
+// already runs as (migration 0066) — nobody signed in.
+async function saveExport(
+  fileName: string,
+  description: string,
+  config: GraphConfig
+): Promise<{ members: number; nonMembers: number }> {
+  const system = await query<{ id: string }>(
+    `select id from app_user where entra_subject = 'system:migration'`
+  );
+  if (!system.rows[0]) {
+    throw new Error('The system:migration service account is missing.');
+  }
+  const { buffer, members, nonMembers } = await exportMembers(
+    { userId: system.rows[0].id, email: description },
+    new Set([PERMISSION_MIGRATE])
+  );
+  await ensureFolderPath(BACKUP_FOLDER, config);
+  await uploadReplacing(`${BACKUP_FOLDER}/${fileName}`, buffer, config);
+  return { members, nonMembers };
 }
 
 // An upload session that replaces a file of the same name. Filed documents

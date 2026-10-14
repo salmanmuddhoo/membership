@@ -1,4 +1,4 @@
-// Wiping a test environment back to empty (migration 0019).
+// Wiping an environment back to empty (migration 0019).
 //
 // Needs a real database: what is under test is whether the append-only
 // guards actually relax for reset_all_test_data() and nowhere else, which a
@@ -305,23 +305,79 @@ async function countsOf(tables: string[]): Promise<Record<string, number>> {
 }
 
 describe('resetAllTestData', () => {
-  it('refuses outside a non-production PUBLIC_APP_ENV, before touching the database', async () => {
+  // Officer direction, 14 October 2026: production can be reset too, but
+  // only once the members export is safely saved.
+  it('in production, removes nothing when the backup cannot be saved', async () => {
     const { resetAllTestData, ResetError } = await load();
+    await seedOneOfEverything();
     process.env.PUBLIC_APP_ENV = 'production';
+    const before = await countsOf(BUSINESS_TABLES);
 
-    await expect(resetAllTestData(actor)).rejects.toThrow(ResetError);
-    await expect(resetAllTestData(actor)).rejects.toThrow(
-      /not marked as a test environment/
-    );
+    const attempt = resetAllTestData(actor, {
+      backup: async () => {
+        throw new Error('SharePoint said no');
+      },
+    });
+    await expect(attempt).rejects.toThrow(ResetError);
+    await expect(attempt).rejects.toThrow(/Nothing was removed/);
+    expect(await countsOf(BUSINESS_TABLES)).toEqual(before);
+
+    // Left as found for the tests after this one.
+    process.env.PUBLIC_APP_ENV = 'test';
+    await resetAllTestData(actor);
   });
 
-  it('refuses when PUBLIC_APP_ENV is unset, same as production', async () => {
+  it('in production, saves the backup first and then resets', async () => {
     const { resetAllTestData } = await load();
+    await seedOneOfEverything();
+    process.env.PUBLIC_APP_ENV = 'production';
+    let backups = 0;
+    let membersWhenBackedUp = 0;
+
+    const outcome = await resetAllTestData(actor, {
+      backup: async () => {
+        backups += 1;
+        membersWhenBackedUp = (await countsOf(['member'])).member;
+        // The decision is taken; the local database is reached without TLS,
+        // which the pool rightly refuses under PUBLIC_APP_ENV=production.
+        process.env.PUBLIC_APP_ENV = 'test';
+        return { folder: 'F', fileName: 'members-before-reset.xlsx' };
+      },
+    });
+
+    expect(backups).toBe(1);
+    expect(membersWhenBackedUp).toBeGreaterThan(0);
+    expect(outcome.backup).toEqual({
+      folder: 'F',
+      fileName: 'members-before-reset.xlsx',
+    });
+    expect((await countsOf(['member'])).member).toBe(0);
+  });
+
+  it('treats an unset PUBLIC_APP_ENV as production: backup first', async () => {
+    const { resetAllTestData, ResetError } = await load();
     delete process.env.PUBLIC_APP_ENV;
 
-    await expect(resetAllTestData(actor)).rejects.toThrow(
-      /not marked as a test environment/
-    );
+    await expect(
+      resetAllTestData(actor, {
+        backup: async () => {
+          throw new Error('no SharePoint');
+        },
+      })
+    ).rejects.toThrow(ResetError);
+  });
+
+  it('on Test, resets without a backup', async () => {
+    const { resetAllTestData } = await load();
+    let backups = 0;
+    const outcome = await resetAllTestData(actor, {
+      backup: async () => {
+        backups += 1;
+        return { folder: 'F', fileName: 'x.xlsx' };
+      },
+    });
+    expect(backups).toBe(0);
+    expect(outcome.backup).toBeNull();
   });
 
   it('empties every table a member or an application touches', async () => {
@@ -344,7 +400,7 @@ describe('resetAllTestData', () => {
   // Officer feedback: numbering used to survive a reset untouched, so a
   // fresh test member still came out AB0047, not AB0001. Test-only — the
   // production caution (a number is on a member's card) does not apply to
-  // a database this refuses to run against outside PUBLIC_APP_ENV != production.
+  // a database being emptied on purpose, production included.
   it('restarts every reference-number sequence and counter', async () => {
     const { resetAllTestData } = await load();
     await seedOneOfEverything();
