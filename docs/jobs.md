@@ -301,6 +301,30 @@ The job needs the same `PUBLIC_APP_URL` and `MEMBER_SESSION_SECRET` as the
 web app: the link in each message, and the PDF attached to it, are signed
 with the member-facing secret and fetched from the app's own address.
 
+## `members-backup`
+
+"Export members with balances" (Data migration), saved to SharePoint every
+night at midnight Mauritius time, the last two days kept
+(`src/lib/migration/backup.ts`). Each night's file is named for its day,
+`members-backup-2026-10-14.xlsx`, in `Production/Al Barakah MCSL – Backups`
+(`Test/…` on Test), in the same document library as the member documents
+(`GRAPH_DRIVE_ID`). Once the new file is in, every older backup but the
+newest is deleted — on the third night the first is gone. A failed upload
+deletes nothing. A second run the same day replaces that day's file.
+
+The export is audited as `migration.exported`, by `members-backup job`.
+
+Container Apps reads cron in UTC, so midnight in Mauritius is 20:00:
+
+```
+az containerapp job create --name albarakah-members-backup \
+  --trigger-type Schedule --cron-expression "0 20 * * *" \
+  --replica-timeout 1800 --replica-retry-limit 1 ... --args "members-backup"
+```
+
+It needs the `GRAPH_*` settings the web app files documents with, as well as
+`DATABASE_URL` and `PUBLIC_APP_ENV` (which decides Production or Test folder).
+
 ## Recommendation for M7 and M8
 
 - **M7 migration import** — a Manual job. Read the cleansed extract in batches,

@@ -5962,3 +5962,16 @@ Officer feedback, 13 October 2026.
   they are, so these stay until an administrator changes them. One
   correction to the export: closure and claim papers
   (`transaction.document_verify`) are the Secretary's alone.
+
+---
+
+### Nightly members backup to SharePoint
+
+Officer request, 14 October 2026.
+
+- **`members-backup` job:** "Export members with balances", saved every
+  night at midnight Mauritius time to `<Production|Test>/Al Barakah MCSL –
+Backups/members-backup-<day>.xlsx`. The last two days are kept: on the
+  third night the oldest is deleted, only after the new file is in. Runs on
+  Azure Container Apps Jobs at `0 20 * * *` UTC (`docs/jobs.md`); the
+  manual export on the migration page is unchanged.
