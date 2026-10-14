@@ -1,0 +1,99 @@
+name: Members backup
+
+# The nightly members backup (docs/jobs.md, `members-backup`): "Export
+# members with balances" saved to SharePoint at midnight Mauritius time, the
+# last five days kept. Run here rather than on Azure, the same way
+# migrate.yml already reaches the production database from GitHub —
+# production has no Container Apps environment to schedule jobs in.
+#
+# Scheduled runs back up production, from the code on `production` (what
+# production is running), so this does nothing useful until the backup has
+# been promoted there. A manual run (Actions -> Members backup -> Run
+# workflow) can back up either environment.
+#
+# Needs, on the GitHub Environment it runs in ("production", or "test" for a
+# manual Test run):
+#
+#   DATABASE_URL         secret   — the app's own connection string, the one
+#                                   the web app uses (albarakah_app), not
+#                                   DATABASE_MIGRATION_URL
+#   GRAPH_CLIENT_SECRET  secret   — as on the web app
+#   GRAPH_TENANT_ID, GRAPH_CLIENT_ID, GRAPH_DRIVE_ID
+#                        variable (or secret) — as on the web app
+#
+# The repository is public, so this run's log is too: the job logs only the
+# file name, the folder and counts, never a member's details.
+on:
+  schedule:
+    # 20:00 UTC is midnight in Mauritius (UTC+4, no daylight saving).
+    - cron: '0 20 * * *'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to back up
+        required: true
+        type: choice
+        options: [production, test]
+
+concurrency:
+  group: members-backup-${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'production' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    name: Back up members to SharePoint
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'production' }}
+    env:
+      TARGET: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'production' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Production's backup runs production's code; Test's runs main,
+          # which is what Test deploys.
+          ref: ${{ (github.event_name == 'workflow_dispatch' && inputs.environment || 'production') == 'production' && 'production' || 'main' }}
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check the settings are there
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GRAPH_TENANT_ID: ${{ vars.GRAPH_TENANT_ID || secrets.GRAPH_TENANT_ID }}
+          GRAPH_CLIENT_ID: ${{ vars.GRAPH_CLIENT_ID || secrets.GRAPH_CLIENT_ID }}
+          GRAPH_CLIENT_SECRET: ${{ secrets.GRAPH_CLIENT_SECRET }}
+          GRAPH_DRIVE_ID: ${{ vars.GRAPH_DRIVE_ID || secrets.GRAPH_DRIVE_ID }}
+        run: |
+          missing=""
+          for name in DATABASE_URL GRAPH_TENANT_ID GRAPH_CLIENT_ID GRAPH_CLIENT_SECRET GRAPH_DRIVE_ID; do
+            if [ -z "${!name}" ]; then missing="$missing $name"; fi
+          done
+          if [ -n "$missing" ]; then
+            echo "Not set on the '$TARGET' GitHub Environment:$missing" >&2
+            echo "Settings -> Environments -> $TARGET: add them (see the top of this file)." >&2
+            exit 1
+          fi
+
+      - name: Back up
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GRAPH_TENANT_ID: ${{ vars.GRAPH_TENANT_ID || secrets.GRAPH_TENANT_ID }}
+          GRAPH_CLIENT_ID: ${{ vars.GRAPH_CLIENT_ID || secrets.GRAPH_CLIENT_ID }}
+          GRAPH_CLIENT_SECRET: ${{ secrets.GRAPH_CLIENT_SECRET }}
+          GRAPH_DRIVE_ID: ${{ vars.GRAPH_DRIVE_ID || secrets.GRAPH_DRIVE_ID }}
+          # Decides the folder: Production/… or Test/… (backup.ts).
+          PUBLIC_APP_ENV: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'production' }}
+        run: pnpm job members-backup

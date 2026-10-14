@@ -109,7 +109,8 @@ error.
   not what was due.
 - `notification-retry` should run every fifteen minutes; `document-expiry`,
   `minor-majority-transition`, `retention-disposal`, `ledger-verify` and
-  `dormancy-detection` daily; `job-watch` every few hours.
+  `dormancy-detection` daily; `members-backup` at midnight Mauritius time
+  (20:00 UTC, from GitHub Actions — `.github/workflows/members-backup.yml`); `job-watch` every few hours.
 
 ### The application is up but every page is slow
 

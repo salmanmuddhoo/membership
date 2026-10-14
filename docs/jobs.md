@@ -301,6 +301,40 @@ The job needs the same `PUBLIC_APP_URL` and `MEMBER_SESSION_SECRET` as the
 web app: the link in each message, and the PDF attached to it, are signed
 with the member-facing secret and fetched from the app's own address.
 
+## `members-backup`
+
+"Export members with balances" (Data migration), saved to SharePoint every
+night at midnight Mauritius time, the last five days kept
+(`src/lib/migration/backup.ts`). Each night's file is named for its day,
+`members-backup-2026-10-14.xlsx`, in `Production/Al Barakah MCSL – Backups`
+(`Test/…` on Test), in the same document library as the member documents
+(`GRAPH_DRIVE_ID`). Once the new file is in, every backup but the five
+newest is deleted — on the sixth night the first is gone. A failed upload
+deletes nothing. A second run the same day replaces that day's file.
+
+The export is audited as `migration.exported`, by `members-backup job`.
+
+**Where it runs: GitHub Actions**, not Container Apps
+(`.github/workflows/members-backup.yml`) — production has no Container Apps
+environment, and the database is already reached from GitHub by
+`migrate.yml`. The workflow fires at 20:00 UTC (midnight in Mauritius) and
+backs up production from the code on the `production` branch, so it only
+works once the job has been promoted there. GitHub can start a scheduled run
+a few minutes late, and disables schedules on a public repository after 60
+days with no activity in it. Actions → Members backup → Run workflow starts
+one by hand, for production or Test.
+
+It needs, on the `production` GitHub Environment (and on `test`, for a
+manual Test run): `DATABASE_URL` (secret — the app's own `albarakah_app`
+connection string, as on the web app, not `DATABASE_MIGRATION_URL`),
+`GRAPH_CLIENT_SECRET` (secret), and `GRAPH_TENANT_ID`, `GRAPH_CLIENT_ID`,
+`GRAPH_DRIVE_ID` (variables or secrets) — the same values the web app files
+documents with. A run with any of them missing fails at once and names it.
+
+The run is recorded in **Reports → Scheduled work** like any job, and the
+repository being public, its log is too: the job logs the file name, the
+folder and counts only.
+
 ## Recommendation for M7 and M8
 
 - **M7 migration import** — a Manual job. Read the cleansed extract in batches,
