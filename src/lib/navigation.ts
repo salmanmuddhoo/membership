@@ -42,7 +42,7 @@ export const NAV_DESCRIPTIONS: Record<string, string> = {
   '/admin/configuration':
     'Fees, forms, chains, wording and every other setting.',
   '/admin/configuration/fees': 'Entrance, share and account fees.',
-  '/admin/reset-data': 'Wipe this test environment back to empty.',
+  '/admin/reset-data': 'Wipe this environment back to empty.',
   '/admin/migration': 'Bring members in from the old register.',
   '/admin/audit-log': 'Who did what, when.',
   '/reports':
@@ -176,10 +176,10 @@ export function navigationFor(input: {
                 },
               ]
             : []),
-        ...(can('system.reset_data') && !input.production
+        ...(can('system.reset_data')
           ? [
               {
-                label: 'Reset test data',
+                label: input.production ? 'Reset data' : 'Reset test data',
                 href: '/admin/reset-data',
                 icon: 'reset',
               },

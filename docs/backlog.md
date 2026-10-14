@@ -5977,3 +5977,18 @@ Backups/members-backup-<day>.xlsx`. The last five days are kept (two at
   GitHub Actions at `0 20 * * *` UTC (`.github/workflows/members-backup.yml`,
   `docs/jobs.md`) against production, with the code on `production`; the
   manual export on the migration page is unchanged.
+
+---
+
+### Reset data in production
+
+Officer direction, 14 October 2026.
+
+- **"Reset data" in production:** `/admin/reset-data` is offered in
+  production to whoever holds `system.reset_data` (the System Administrator
+  by default, migration 0129); it was refused outright there before. The
+  phrase to type is `DELETE ALL PRODUCTION DATA`.
+- **Backup first:** in production, "Export members with balances" is saved
+  to SharePoint as `members-before-reset-<day>-<hhmm>.xlsx` before anything
+  is removed; if it cannot be saved, nothing is removed. The nightly trim
+  never deletes it (`backupBeforeReset`, `src/lib/migration/backup.ts`).

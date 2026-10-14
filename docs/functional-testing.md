@@ -98,8 +98,8 @@ The receipt number is the one that does not come back. Receipt serials are
 allocated in sequence and a consumed one is gone (S-502) — which is exactly why
 the guard at the top refuses to run against Production.
 
-To clear it all down: `/admin/reset-data`, which is refused outright unless
-`PUBLIC_APP_ENV` marks the deployment non-production.
+To clear it all down: `/admin/reset-data`. On Production it asks for a
+longer phrase and saves the members export to SharePoint first.
 
 ## Reading a failure
 
