@@ -166,10 +166,15 @@ if it is lost. Revoking takes effect on the integration's very next request.
 The two session secrets are the disruptive ones. Rotate them deliberately, out
 of hours, not as a first response to something unexplained.
 
-### Resetting Test
+### Resetting Test (or Production)
 
-`/admin/reset-data`, refused outright unless `PUBLIC_APP_ENV` marks the
-deployment non-production. See `docs/environments.md`. It removes every
+`/admin/reset-data` ("Reset data" in production's sidebar, for whoever holds
+`system.reset_data` — the System Administrator by default). See
+`docs/environments.md`. In production the phrase to type is
+`DELETE ALL PRODUCTION DATA`, and "Export members with balances" is saved to
+SharePoint first as `members-before-reset-<day>-<hhmm>.xlsx` in
+`Production/Al Barakah MCSL – Backups` — if that save fails, nothing is
+removed. The nightly backup's trim never deletes that file. It removes every
 staff account but the one running it; the system users (`system:%` —
 the member app's, the retention job's, the public API's, the migration
 import's) stay (migration 0119). A test environment reset before that
@@ -178,11 +183,11 @@ again, and the migration puts the four back.
 
 ## Clearing production back to empty
 
-Wipes every member, application, payment and document from production. Not a
-button in the app — the in-app reset screen (`/admin/reset-data`) is
-test-only and does not appear in production's sidebar. This is a deliberate,
-hands-on database operation, for before real members are loaded or to clear
-a pilot round. Nobody runs this without being asked to.
+Wipes every member, application, payment and document from production. Since
+14 October 2026 the in-app screen does this too (above), backup first; what
+follows is the same operation by hand, for when the app cannot be used. It
+is a deliberate database operation, for before real members are loaded or to
+clear a pilot round. Nobody runs this without being asked to.
 
 1. **Connect as the schema owner** (the Azure admin account —
    `DATABASE_MIGRATION_URL`, see `docs/database.md`), to the `albarakah`

@@ -55,7 +55,10 @@ same split as the Entra apps above. Never point Test at the production database.
 
 A System Administrator can wipe every member, application, document, payment
 and receipt on **Test** — `/admin/reset-data`, gated by the `system.reset_data`
-permission — for a clean slate between rounds of testing. Staff accounts,
+permission — for a clean slate between rounds of testing. The same screen is
+offered in **Production** (officer direction, 14 October 2026), with a longer
+phrase to type and the members export saved to SharePoint before anything is
+removed (`docs/runbook.md`). Staff accounts,
 roles and reference configuration (membership types, fees, the document
 checklist) are left alone; only what a member or an application actually
 touches is removed. See `docs/database.md` for what makes that possible at

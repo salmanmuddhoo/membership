@@ -1,10 +1,9 @@
 ---
-// Wiping a test environment back to empty (System Administrator only).
+// Wiping an environment back to empty (System Administrator only).
 //
-// Reachable only on a deployment PUBLIC_APP_ENV marks as non-production —
-// resetAllTestData() refuses outright otherwise, and this page does not even
-// offer the button when that is the case, so there is nothing to click
-// through by mistake.
+// Offered in production too (officer direction, 14 October 2026), behind a
+// longer phrase to type; resetAllTestData() saves the members export to
+// SharePoint there before it removes anything (admin/reset.ts).
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import { isProductionEnvironment } from '@lib/config';
 import {
@@ -17,20 +16,22 @@ import {
   BUTTON_DESTRUCTIVE,
   CARD_DANGER,
   CARD_DANGER_TITLE,
-  NOTICE,
   NOTICE_ERROR,
   NOTICE_OK,
 } from '@lib/ui';
 
 const principal = Astro.locals.principal!;
-const isTestEnvironment = !isProductionEnvironment();
+const production = isProductionEnvironment();
 
-const CONFIRMATION_PHRASE = 'DELETE ALL DATA';
+const CONFIRMATION_PHRASE = production
+  ? 'DELETE ALL PRODUCTION DATA'
+  : 'DELETE ALL DATA';
 
 let error: string | null = null;
 let done = false;
+let backupFile: string | null = null;
 
-if (Astro.request.method === 'POST' && isTestEnvironment) {
+if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
   const typed = String(form.get('confirmation') ?? '');
 
@@ -38,10 +39,13 @@ if (Astro.request.method === 'POST' && isTestEnvironment) {
     error = `Type "${CONFIRMATION_PHRASE}" exactly to confirm. Nothing was removed.`;
   } else {
     try {
-      await resetAllTestData({
+      const outcome = await resetAllTestData({
         userId: principal.userId,
         email: principal.email,
       });
+      backupFile = outcome.backup
+        ? `${outcome.backup.folder}/${outcome.backup.fileName}`
+        : null;
       done = true;
     } catch (err) {
       error =
@@ -55,29 +59,20 @@ if (Astro.request.method === 'POST' && isTestEnvironment) {
   }
 }
 
-const counts =
-  isTestEnvironment && !done ? await countsBeforeReset(principal.userId) : null;
+const counts = done ? null : await countsBeforeReset(principal.userId);
+const heading = production ? 'Reset data' : 'Reset test data';
 ---
 
-<DashboardLayout
-  title="Reset test data · Al Barakah MCSL"
-  heading="Reset test data"
->
+<DashboardLayout title={`${heading} · Al Barakah MCSL`} heading={heading}>
   <div class={PAGE.form}>
-    {!isTestEnvironment && (
-      <div class={NOTICE}>
-        This deployment is not marked as a test environment, so this is not
-        available here.
-      </div>
-    )}
-
     {error && <div class={NOTICE_ERROR}>{error}</div>}
 
     {done && (
       <div class={NOTICE_OK}>
         Done. Every member, application, document, payment and receipt has been
-        removed, and numbering starts over from AB0001. Staff accounts and
-        configuration are unchanged.
+        removed, and numbering starts over from AB0001. Your staff account,
+        roles and configuration are kept.
+        {backupFile && <> Saved first: {backupFile}.</>}
       </div>
     )}
 
@@ -93,6 +88,8 @@ const counts =
           {counts.payments === 1 ? '' : 's'} and {counts.documents} document
           {counts.documents === 1 ? '' : 's'}, the audit log and the history of
           setting changes. This cannot be undone.
+          {production &&
+            ' Every member and their balances are saved to SharePoint first.'}
         </p>
         <p class="mt-2 text-sm text-red-800 dark:text-red-200">
           {counts.otherStaff === 0
@@ -109,6 +106,7 @@ const counts =
               name="confirmation"
               autocomplete="off"
               data-reset-confirmation
+              data-phrase={CONFIRMATION_PHRASE}
               class="mt-1 block w-full rounded-lg border border-red-300 bg-white px-3 py-1.5 text-sm dark:border-red-800 dark:bg-neutral-900 dark:text-neutral-100"
             />
           </label>
@@ -139,7 +137,7 @@ const counts =
   if (input && submit) {
     submit.disabled = true;
     input.addEventListener('input', () => {
-      submit.disabled = input.value !== 'DELETE ALL DATA';
+      submit.disabled = input.value !== input.dataset.phrase;
     });
   }
 
