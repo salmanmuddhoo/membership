@@ -321,6 +321,42 @@ export async function ensureFolder(
 }
 
 /**
+ * The names of everything directly inside a folder, following Graph's
+ * paging. A folder that is not there yet holds nothing.
+ */
+export async function listFolderNames(
+  folderPath: string,
+  config: GraphConfig = getGraphConfig()
+): Promise<string[]> {
+  const token = await getAccessToken(config);
+  const names: string[] = [];
+  let next: string | undefined =
+    `${config.graphBaseUrl}/drives/${config.driveId}/root:/${encodeURI(folderPath)}:/children?$select=name`;
+  while (next) {
+    const response = await reachGraph(next, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    if (response.status === 404) return names;
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '');
+      throw new GraphError(
+        `Graph folder listing failed for ${folderPath} ` +
+          `(${response.status}): ${detail}`,
+        'request_failed',
+        response.status
+      );
+    }
+    const page = (await response.json()) as {
+      value?: { name?: string }[];
+      '@odata.nextLink'?: string;
+    };
+    for (const item of page.value ?? []) if (item.name) names.push(item.name);
+    next = page['@odata.nextLink'];
+  }
+  return names;
+}
+
+/**
  * Remove a file from the drive.
  *
  * Used when a draft application is abandoned: the rows cascade away, and

@@ -22,6 +22,7 @@ import {
   disposedAnything,
 } from '../src/lib/retention/disposal';
 import { watchJobs } from '../src/lib/jobs/watch';
+import { backupMembers } from '../src/lib/migration/backup';
 import {
   processStatementRuns,
   type StatementRunCheckpoint,
@@ -234,6 +235,24 @@ const JOBS: Record<string, () => Promise<unknown>> = {
     runJob<StatementRunCheckpoint>({
       name: 'statement-send',
       run: context => processStatementRuns(context),
+    }),
+
+  // Officer request: "Export members with balances", saved to SharePoint
+  // every night, the last two days kept (src/lib/migration/backup.ts).
+  // Schedule at midnight Mauritius time — 20:00 UTC, which is what a
+  // Container Apps cron reads. A second run the same day replaces that
+  // day's file.
+  'members-backup': () =>
+    runJob<{ fileName: string }>({
+      name: 'members-backup',
+      run: async context => {
+        const outcome = await backupMembers();
+        await context.save(
+          { fileName: outcome.fileName },
+          outcome.members + outcome.nonMembers
+        );
+        context.log('members backed up', { ...outcome });
+      },
     }),
 
   'job-watch': () =>
