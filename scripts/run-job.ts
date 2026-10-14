@@ -238,10 +238,10 @@ const JOBS: Record<string, () => Promise<unknown>> = {
     }),
 
   // Officer request: "Export members with balances", saved to SharePoint
-  // every night, the last two days kept (src/lib/migration/backup.ts).
-  // Schedule at midnight Mauritius time — 20:00 UTC, which is what a
-  // Container Apps cron reads. A second run the same day replaces that
-  // day's file.
+  // every night, the last five days kept (src/lib/migration/backup.ts).
+  // Scheduled at midnight Mauritius time, 20:00 UTC, by
+  // .github/workflows/members-backup.yml. A second run the same day
+  // replaces that day's file.
   'members-backup': () =>
     runJob<{ fileName: string }>({
       name: 'members-backup',

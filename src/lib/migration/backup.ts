@@ -1,14 +1,14 @@
 // The nightly backup of "Export members with balances" (officer request,
 // October 2026): the same workbook the migration page downloads, saved to
 // SharePoint at midnight Mauritius time by the members-backup job
-// (scripts/run-job.ts), two days kept.
+// (scripts/run-job.ts), the last five days kept (officer direction,
+// 14 October 2026; it was two).
 //
 // Each night's file is named for its day — members-backup-2026-10-14.xlsx —
-// and once it is safely in the library every older one but the newest is
-// removed, so the folder always holds tonight's and last night's. On the
-// third night the first is gone, which is the rotation the Society asked
-// for, without two fixed "slot" names that would hide which day a file is
-// from. A second run on the same day replaces that day's file rather than
+// and once it is safely in the library every backup but the five newest is
+// removed, so the folder always holds tonight's and the four nights before.
+// On the sixth night the first is gone — a rotation without fixed "slot"
+// names that would hide which day a file is from. A second run on the same day replaces that day's file rather than
 // adding a copy beside it.
 //
 // The folder sits beside the member documents and is split by environment
@@ -34,8 +34,8 @@ export const BACKUP_FOLDER = isProductionEnvironment()
   ? 'Production/Al Barakah MCSL – Backups'
   : 'Test/Al Barakah MCSL – Backups';
 
-// Tonight's file and the night before's.
-export const BACKUPS_KEPT = 2;
+// Tonight's file and the four nights before.
+export const BACKUPS_KEPT = 5;
 
 const BACKUP_NAME = /^members-backup-(\d{4}-\d{2}-\d{2})\.xlsx$/;
 
@@ -45,7 +45,7 @@ export function backupFileName(day: string): string {
 
 /**
  * Which of the files in the folder go once `current` is written: every
- * backup but `current` and the newest before it. Anything not named as a
+ * backup but `current` and the BACKUPS_KEPT - 1 newest before it. Anything not named as a
  * backup is someone else's and is never touched.
  */
 export function backupsToRemove(names: string[], current: string): string[] {
@@ -66,7 +66,7 @@ export interface BackupOutcome {
 
 /**
  * Export everyone with their balances and save it to SharePoint, then trim
- * the folder to the last two days. The old files are only removed once the
+ * the folder to the last five days. The old files are only removed once the
  * new one is in: a failed upload leaves yesterday's and the day before's
  * where they were.
  */
