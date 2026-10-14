@@ -1,4 +1,4 @@
-// The nightly members backup: the export saved to SharePoint, two days
+// The nightly members backup: the export saved to SharePoint, five days
 // kept. Against a real database (the export reads it) and a stand-in for
 // Graph that keeps the files it is given, so what is asserted is what the
 // library would hold afterwards, not what was asked of it.
@@ -135,28 +135,38 @@ afterAll(async () => {
 });
 
 describe('which backups are kept', () => {
-  it('keeps the new file and the newest before it, and nothing else of ours goes', async () => {
-    const { backupsToRemove } = await load();
+  it('keeps the new file and the four newest before it, and nothing else of ours goes', async () => {
+    const { backupsToRemove, BACKUPS_KEPT } = await load();
+    expect(BACKUPS_KEPT).toBe(5);
     const names = [
+      'members-backup-2026-10-08.xlsx',
+      'members-backup-2026-10-09.xlsx',
+      'members-backup-2026-10-10.xlsx',
+      'members-backup-2026-10-11.xlsx',
       'members-backup-2026-10-12.xlsx',
       'members-backup-2026-10-13.xlsx',
       'members-backup-2026-10-14.xlsx',
-      'members-backup-2026-10-10.xlsx',
       'notes.docx',
     ];
     expect(
       backupsToRemove(names, 'members-backup-2026-10-14.xlsx').sort()
     ).toEqual([
-      'members-backup-2026-10-10.xlsx',
-      'members-backup-2026-10-12.xlsx',
+      'members-backup-2026-10-08.xlsx',
+      'members-backup-2026-10-09.xlsx',
     ]);
   });
 
-  it('removes nothing while there is only one earlier day', async () => {
+  it('removes nothing while there are four earlier days or fewer', async () => {
     const { backupsToRemove } = await load();
     expect(
       backupsToRemove(
-        ['members-backup-2026-10-14.xlsx', 'members-backup-2026-10-15.xlsx'],
+        [
+          'members-backup-2026-10-11.xlsx',
+          'members-backup-2026-10-12.xlsx',
+          'members-backup-2026-10-13.xlsx',
+          'members-backup-2026-10-14.xlsx',
+          'members-backup-2026-10-15.xlsx',
+        ],
         'members-backup-2026-10-15.xlsx'
       )
     ).toEqual([]);
@@ -165,43 +175,41 @@ describe('which backups are kept', () => {
 
 describe('a backup run, night after night', () => {
   const night = (day: string) => new Date(`${day}T00:00:30+04:00`);
+  const days = ['14', '15', '16', '17', '18', '19'].map(d => `2026-10-${d}`);
 
-  it('holds two days at a time: the third night replaces the first', async () => {
+  it('holds five days at a time: the sixth night replaces the first', async () => {
     const { backupMembers, BACKUP_FOLDER } = await load();
     expect(BACKUP_FOLDER).toBe('Test/Al Barakah MCSL – Backups');
+    const held = (from: number, to: number) =>
+      days
+        .slice(from, to)
+        .map(d => `${BACKUP_FOLDER}/members-backup-${d}.xlsx`);
 
-    await backupMembers({ at: night('2026-10-14'), config: config() });
-    await backupMembers({ at: night('2026-10-15'), config: config() });
-    expect([...files.keys()].sort()).toEqual([
-      `${BACKUP_FOLDER}/members-backup-2026-10-14.xlsx`,
-      `${BACKUP_FOLDER}/members-backup-2026-10-15.xlsx`,
-    ]);
+    for (const day of days.slice(0, 5)) {
+      const outcome = await backupMembers({ at: night(day), config: config() });
+      expect(outcome.removed).toEqual([]);
+    }
+    expect([...files.keys()].sort()).toEqual(held(0, 5));
 
-    const third = await backupMembers({
-      at: night('2026-10-16'),
-      config: config(),
-    });
-    expect(third.removed).toEqual(['members-backup-2026-10-14.xlsx']);
-    expect([...files.keys()].sort()).toEqual([
-      `${BACKUP_FOLDER}/members-backup-2026-10-15.xlsx`,
-      `${BACKUP_FOLDER}/members-backup-2026-10-16.xlsx`,
-    ]);
+    const sixth = await backupMembers({ at: night(days[5]), config: config() });
+    expect(sixth.removed).toEqual(['members-backup-2026-10-14.xlsx']);
+    expect([...files.keys()].sort()).toEqual(held(1, 6));
   });
 
   it('replaces the day’s file when run twice the same day', async () => {
     const { backupMembers, BACKUP_FOLDER } = await load();
     const before = files.size;
-    await backupMembers({ at: night('2026-10-16'), config: config() });
+    await backupMembers({ at: night('2026-10-19'), config: config() });
     expect(files.size).toBe(before);
     expect(conflictBehaviours.every(b => b === 'replace')).toBe(true);
-    expect(files.has(`${BACKUP_FOLDER}/members-backup-2026-10-16.xlsx`)).toBe(
+    expect(files.has(`${BACKUP_FOLDER}/members-backup-2026-10-19.xlsx`)).toBe(
       true
     );
   });
 
   it('saves the export itself: the template’s sheets, opened as a workbook', async () => {
     const { BACKUP_FOLDER } = await load();
-    const saved = files.get(`${BACKUP_FOLDER}/members-backup-2026-10-16.xlsx`)!;
+    const saved = files.get(`${BACKUP_FOLDER}/members-backup-2026-10-19.xlsx`)!;
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(saved as any);
     expect(workbook.worksheets.map(w => w.name)).toEqual(

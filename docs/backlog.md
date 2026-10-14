@@ -5971,7 +5971,9 @@ Officer request, 14 October 2026.
 
 - **`members-backup` job:** "Export members with balances", saved every
   night at midnight Mauritius time to `<Production|Test>/Al Barakah MCSL –
-Backups/members-backup-<day>.xlsx`. The last two days are kept: on the
-  third night the oldest is deleted, only after the new file is in. Runs on
-  Azure Container Apps Jobs at `0 20 * * *` UTC (`docs/jobs.md`); the
+Backups/members-backup-<day>.xlsx`. The last five days are kept (two at
+  first; five on 14 October): on the sixth night the oldest is deleted,
+  only after the new file is in. Runs from
+  GitHub Actions at `0 20 * * *` UTC (`.github/workflows/members-backup.yml`,
+  `docs/jobs.md`) against production, with the code on `production`; the
   manual export on the migration page is unchanged.
