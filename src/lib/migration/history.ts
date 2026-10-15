@@ -187,16 +187,27 @@ interface AccountHere {
   opening_receipt_id: string | null;
 }
 
-function accountKey(cells: Cells): { key: string; label: string } {
+// An account by its own number (HSA0001, INV0001) where one has it;
+// otherwise — Shares and the MSA, which go by the member's AB number — by
+// holder and type. The number is tried first even when it equals the
+// holder's code: a non-member migrated with their account number as their
+// legacy code has both the same, and the account still carries the number.
+function accountKeys(cells: Cells): {
+  keys: { key: string; label: string }[];
+  label: string;
+} {
   const number = cells['account number'].trim().toUpperCase();
   const holder = cells['holder'].trim().toUpperCase();
   const type = cells['account type'].trim();
-  if (number !== '' && number !== holder) {
-    return { key: `no:${number}`, label: number };
-  }
-  return {
+  const byHolder = {
     key: `holder:${holder}|${type.toLowerCase()}`,
     label: `${holder} ${type}`,
+  };
+  if (number === '') return { keys: [byHolder], label: byHolder.label };
+  const byNumber = { key: `no:${number}`, label: number };
+  return {
+    keys: [byNumber, byHolder],
+    label: number === holder ? byHolder.label : number,
   };
 }
 
@@ -268,10 +279,13 @@ export async function planHistory(file: HistoryFile): Promise<Plan> {
   }
   const missingAccounts = new Set<string>();
   const resolve = (cells: Cells) => {
-    const { key, label } = accountKey(cells);
-    const account = byKey.get(key) ?? null;
-    if (!account) missingAccounts.add(label);
-    return { account, label };
+    const { keys, label } = accountKeys(cells);
+    for (const k of keys) {
+      const account = byKey.get(k.key);
+      if (account) return { account, label: k.label };
+    }
+    missingAccounts.add(label);
+    return { account: null, label };
   };
 
   const staff = await query<{

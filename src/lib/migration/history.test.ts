@@ -94,7 +94,7 @@ async function membersFile(
       n
     );
   });
-  const people = [
+  const people: Record<string, string>[] = [
     {
       'AB Number': 'AB0001',
       Surname: 'Joomun',
@@ -103,6 +103,8 @@ async function membersFile(
       Mobile: '57890001',
       'Shares Balance': '5000',
       'MSA Deposit Balance': '2000',
+      'Hajj Savings Account Number': 'HSA0001',
+      'Hajj Savings Account Balance': '4000',
     },
     {
       'AB Number': 'AB0002',
@@ -121,6 +123,17 @@ async function membersFile(
       Mobile: '57890003',
       'Shares Balance': '0',
       'MSA Deposit Balance': '1000',
+    },
+    // A non-member: no AB number, a Hajj Savings Account of their own,
+    // and — as in the migrated register — the account number as their code.
+    {
+      'Legacy Member Code': 'HSA0002',
+      Surname: 'Peerthum',
+      Name: 'Nazir',
+      NIC: 'P0404040404040',
+      Mobile: '57890004',
+      'Hajj Savings Account Number': 'HSA0002',
+      'Hajj Savings Account Balance': '2500',
     },
   ];
   people.forEach((person, i) => {
@@ -176,7 +189,8 @@ async function ledger() {
             coalesce(rn.state, '') as receipt_state,
             coalesce(tr.reference, '') as transfer,
             coalesce(o.reference, '') as reverses,
-            m.member_no, ty.code as type,
+            coalesce(m.member_no, c.legacy_code) as member_no,
+            ty.code as type,
             to_char(t.posted_at at time zone 'UTC', 'YYYY-MM-DD HH24:MI:SS')
               as posted_at,
             (t.payment_line_id is not null
@@ -184,7 +198,8 @@ async function ledger() {
        from transaction t
        join account a on a.id = t.account_id
        join account_type ty on ty.id = a.account_type_id
-       join member m on m.id = a.member_id
+       left join member m on m.id = a.member_id
+       left join customer c on c.id = a.customer_id
        left join receipt_number rn on rn.id = t.receipt_number_id
        left join transfer tr on tr.id = t.transfer_id
        left join transaction o on o.id = t.reverses_id
@@ -196,12 +211,13 @@ async function ledger() {
 async function balances() {
   const rows = await run(
     appUrl,
-    `select m.member_no || ' ' || ty.code as account, b.balance::text,
-            b.entry_count::int
+    `select coalesce(m.member_no, c.legacy_code) || ' ' || ty.code as account,
+            b.balance::text, b.entry_count::int
        from account_balance b
        join account a on a.id = b.account_id
        join account_type ty on ty.id = a.account_type_id
-       join member m on m.id = a.member_id
+       left join member m on m.id = a.member_id
+       left join customer c on c.id = a.customer_id
       order by 1`
   );
   return rows.rows;
@@ -217,6 +233,16 @@ beforeAll(async () => {
   await run(ownerUrl, 'revoke all on schema public from public');
   await run(ownerUrl, `grant connect on database ${dbName} to albarakah_app`);
   await migrate(ownerUrl, MIGRATIONS_DIR);
+  // Configuration, as Production has it: the Hajj Savings Account.
+  await run(
+    ownerUrl,
+    `begin;
+     select set_config('albarakah.actor_description', 'test fixture', true);
+     insert into account_type
+       (code, name, category, minimum_opening_amount, is_membership_default)
+     values ('hsa', 'Hajj Savings Account', 'savings', 0, false);
+     commit;`
+  );
 
   const users = await run(
     appUrl,
@@ -248,6 +274,20 @@ beforeAll(async () => {
   const ab1Msa = await accountOf('AB0001', 'msa');
   const ab2Msa = await accountOf('AB0002', 'msa');
   const ab2Shares = await accountOf('AB0002', 'shares');
+  const hsa = async (number: string) =>
+    (
+      await run(appUrl, `select id from account where account_no = $1`, [
+        number,
+      ])
+    ).rows[0].id as string;
+  await m.deposits.recordDeposit(
+    { accountId: await hsa('HSA0001'), amount: '600', method: 'cash' },
+    officer
+  );
+  await m.deposits.recordDeposit(
+    { accountId: await hsa('HSA0002'), amount: '350', method: 'cash' },
+    officer
+  );
   await m.deposits.recordDeposit(
     { accountId: ab1Msa, amount: '1000', method: 'cash' },
     officer
