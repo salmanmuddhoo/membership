@@ -5982,7 +5982,12 @@ Backups/members-backup-<day>.xlsx`. The last five days are kept (two at
   every transaction and its approval steps, and each account's balance to
   check against (`src/lib/migration/transactions-backup.ts`). The two files
   of a day are kept and removed together. The reset's backup saves both.
-  Next: importing that history back after a restore.
+- **Restore transaction history** (Migration page, `src/lib/migration/history.ts`,
+  migration 0130): after the members file is imported, the transactions file
+  puts every posted transaction back behind the import's opening balances —
+  original dates, TX/TR/RCT numbers and approval steps, balances unchanged.
+  Refused unless every account's entries add up to its balance and the
+  ledger holds nothing but the import. Procedure: `docs/restore.md`.
 
 ---
 

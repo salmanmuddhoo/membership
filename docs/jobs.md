@@ -319,6 +319,9 @@ same document library as the member documents (`GRAPH_DRIVE_ID`):
   account's balance and entry count to check against. Accounts are named
   as the balances upload names them; times are Mauritius time.
 
+**Migration → Restore transaction history** reads the transactions file
+back after the members file is imported (`docs/restore.md`).
+
 Once both are in, every day's pair but the five newest days is deleted — on
 the sixth night the first day's is gone. A failed upload deletes nothing. A
 second run the same day replaces that day's files.

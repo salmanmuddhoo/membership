@@ -9,14 +9,16 @@
 //                 order. An account's entries add up to its balance; that is
 //                 the check a restore makes before it puts them back.
 //   Transactions  every transaction whatever became of it (a request still
-//                 waiting is here, though it moved no money).
+//                 waiting is here, though it moved no money), with all a
+//                 restore needs to put it back: codes, receipt state, claimant.
 //   Approvals     every step each one went through, who and when.
 //   Accounts      each account's balance and entry count, to check against.
 //
 // An account is named the way the balances upload names it: its own number
 // (HSA0001, INV0001) where it has one, otherwise the holder's AB number and
 // the account type (Shares, MSA). Times are Mauritius time, as text, so a
-// spreadsheet never shifts them.
+// spreadsheet never shifts them. history.ts reads the file back: a column
+// renamed here must be renamed there.
 import ExcelJS from 'exceljs';
 import { query } from '../db/pool';
 
@@ -42,14 +44,20 @@ const HOLDER_COLUMNS = `
   coalesce(a.account_no, m.member_no, c.legacy_code, '') as account_number,
   at.name as account_type`;
 
-const KIND = `case t.kind when 'deposit' then 'Deposit'
-                          when 'withdrawal' then 'Withdrawal'
-                          when 'transfer_leg' then 'Transfer'
-                          when 'reversal' then 'Reversal'
-                          when 'closure' then 'Account closure'
-                          when 'resignation' then 'Resignation'
-                          when 'demise' then 'Demised claim'
-                          else t.kind end`;
+// The kinds as the files name them. The restore reads them back
+// (history.ts), so a label changed here is changed for both.
+export const KIND_LABELS: Record<string, string> = {
+  deposit: 'Deposit',
+  withdrawal: 'Withdrawal',
+  transfer_leg: 'Transfer',
+  reversal: 'Reversal',
+  closure: 'Account closure',
+  resignation: 'Resignation',
+  demise: 'Demised claim',
+};
+const KIND = `case t.kind ${Object.entries(KIND_LABELS)
+  .map(([code, label]) => `when '${code}' then '${label}'`)
+  .join(' ')} else t.kind end`;
 
 type Row = Record<string, string | number>;
 
@@ -109,15 +117,31 @@ export async function exportTransactions(): Promise<TransactionsExport> {
       order by e.sequence_no`
   );
 
+  // Everything a restore needs to put a transaction back as it was.
   const transactions = await query<Row>(
     `select t.reference, coalesce(tr.reference, '') as transfer,
             ${KIND} as kind, t.status,
+            case when t.payment_line_id is not null
+                   or t.payment_account_line_id is not null
+                 then 'Yes' else '' end as opening,
             ${HOLDER_COLUMNS},
             t.amount::float8 as amount,
             coalesce(pm.name, t.method) as method,
+            t.method as method_code,
             coalesce(t.method_reference, '') as method_reference,
+            coalesce(ba.code, '') as bank_account,
             coalesce(rn.receipt_no, '') as receipt_no,
+            coalesce(rn.state, '') as receipt_status,
+            case when rn.state = 'void' then coalesce(rn.reason, '') else '' end
+              as receipt_void_reason,
+            case when rn.state = 'void' then ${stamp('rn.settled_at')} else '' end
+              as receipt_voided_at,
             coalesce(t.reason, '') as reason,
+            coalesce(t.payee_name, '') as payee,
+            coalesce(o.reference, '') as reverses,
+            coalesce(t.takaful_benefit::text, '') as takaful_benefit,
+            coalesce(t.claimant_kind, '') as claimant_kind,
+            coalesce(t.claimant::text, '') as claimant,
             ${stamp('t.created_at')} as created_at,
             ${stamp('t.submitted_at')} as submitted_at,
             ${stamp('t.posted_at')} as posted_at,
@@ -128,6 +152,8 @@ export async function exportTransactions(): Promise<TransactionsExport> {
        left join transfer tr on tr.id = t.transfer_id
        left join receipt_number rn on rn.id = t.receipt_number_id
        left join payment_method pm on pm.code = t.method
+       left join bank_account ba on ba.id = t.bank_account_id
+       left join transaction o on o.id = t.reverses_id
        left join app_user cu on cu.id = t.captured_by
        left join app_user pu on pu.id = t.posted_by
       order by t.serial_no`
@@ -199,12 +225,23 @@ export async function exportTransactions(): Promise<TransactionsExport> {
       { header: 'Transfer', key: 'transfer', width: 12 },
       { header: 'Kind', key: 'kind', width: 16 },
       { header: 'Status', key: 'status', width: 14 },
+      { header: 'Opening balance', key: 'opening', width: 10 },
       ...holder,
       { header: 'Amount', key: 'amount', width: 14 },
       { header: 'Method', key: 'method', width: 18 },
+      { header: 'Method code', key: 'method_code', width: 16 },
       { header: 'Method reference', key: 'method_reference', width: 18 },
+      { header: 'Bank account', key: 'bank_account', width: 14 },
       { header: 'Receipt No', key: 'receipt_no', width: 14 },
+      { header: 'Receipt status', key: 'receipt_status', width: 12 },
+      { header: 'Receipt void reason', key: 'receipt_void_reason', width: 30 },
+      { header: 'Receipt voided at', key: 'receipt_voided_at', width: 20 },
       { header: 'Reason', key: 'reason', width: 30 },
+      { header: 'Payee', key: 'payee', width: 24 },
+      { header: 'Reverses', key: 'reverses', width: 12 },
+      { header: 'Takaful benefit', key: 'takaful_benefit', width: 14 },
+      { header: 'Claimant kind', key: 'claimant_kind', width: 12 },
+      { header: 'Claimant', key: 'claimant', width: 40 },
       { header: 'Created at', key: 'created_at', width: 20 },
       { header: 'Submitted at', key: 'submitted_at', width: 20 },
       { header: 'Posted at', key: 'posted_at', width: 20 },
