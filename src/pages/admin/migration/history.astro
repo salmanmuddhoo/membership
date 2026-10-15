@@ -1,0 +1,221 @@
+---
+// Transaction history from the nightly backup's transactions file
+// (lib/migration/history.ts, migration 0130), restored after the members
+// file has been imported. The whole file is checked first; one problem and
+// nothing changes.
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import { HistoryProblems, restoreHistory } from '@lib/migration/history';
+import type { HistoryOutcome } from '@lib/migration/history';
+import { MigrationError, checksumBuffer } from '@lib/migration/members';
+import { runningBatch } from '@lib/migration/batches';
+import {
+  BUTTON,
+  CARD,
+  CARD_DANGER,
+  CARD_DANGER_TITLE,
+  CARD_OK,
+  CARD_TITLE,
+  HINT,
+  MUTED,
+  NOTICE,
+  NOTICE_ERROR,
+  PAGE,
+  SECONDARY_SM,
+} from '@lib/ui';
+
+const principal = Astro.locals.principal!;
+const canMigrate = principal.permissions.has('system.migrate_members');
+
+const MAX_PROBLEMS = 100;
+
+let error: string | null = null;
+let problems: string[] = [];
+let outcome: HistoryOutcome | null = null;
+
+if (Astro.request.method === 'POST') {
+  if (!canMigrate) {
+    error = 'You do not have permission to import members.';
+  } else {
+    const form = await Astro.request.formData();
+    const file = form.get('file');
+    if (!(file instanceof File) || file.size === 0) {
+      error = 'Choose a transactions backup to upload.';
+    } else {
+      try {
+        const buffer = Buffer.from(await file.arrayBuffer());
+        outcome = await restoreHistory(
+          buffer,
+          checksumBuffer(buffer),
+          { userId: principal.userId, email: principal.email },
+          principal.permissions
+        );
+      } catch (err) {
+        if (err instanceof HistoryProblems) {
+          error = err.message;
+          problems = err.problems;
+        } else if (err instanceof MigrationError) {
+          error = err.message;
+        } else {
+          console.error('[admin/migration/history]', err);
+          error = 'That file could not be read. Please try again.';
+        }
+      }
+    }
+  }
+}
+
+const running = canMigrate ? await runningBatch() : null;
+---
+
+<DashboardLayout
+  title="Transaction history · Al Barakah MCSL"
+  heading="Transaction history"
+>
+  <div class={PAGE.list}>
+    <a href="/admin/migration" class={`${HINT} underline`}>
+      Back to Migration
+    </a>
+
+    {!canMigrate && (
+      <div class={NOTICE}>You do not have permission to import members.</div>
+    )}
+
+    {canMigrate && (
+      <>
+        <section class={CARD}>
+          <h2 class={CARD_TITLE}>Restore from a backup</h2>
+          <p class={`${MUTED} mt-2`}>
+            Import the members file first, then upload the transactions file
+            from the same night.
+          </p>
+          <p class={`${MUTED} mt-2`}>
+            Every posted transaction comes back with its original date and
+            numbers.
+          </p>
+        </section>
+
+        {error && <div class={NOTICE_ERROR}>{error}</div>}
+
+        {problems.length > 0 && (
+          <section class={CARD_DANGER}>
+            <h2 class={CARD_DANGER_TITLE}>To fix</h2>
+            <ul class="mt-3 space-y-2 text-sm text-red-800 dark:text-red-200">
+              {problems.slice(0, MAX_PROBLEMS).map(p => (
+                <li>{p}</li>
+              ))}
+              {problems.length > MAX_PROBLEMS && (
+                <li>and {problems.length - MAX_PROBLEMS} more</li>
+              )}
+            </ul>
+          </section>
+        )}
+
+        {outcome && (
+          <section class={CARD_OK}>
+            <h2 class={CARD_TITLE}>History restored</h2>
+            <dl class="mt-3 grid max-w-md grid-cols-[1fr_auto] gap-x-6 gap-y-1 text-sm">
+              <dt class="text-neutral-600 dark:text-neutral-300">
+                Transactions
+              </dt>
+              <dd class="text-right tabular-nums">{outcome.transactions}</dd>
+              <dt class="text-neutral-600 dark:text-neutral-300">Entries</dt>
+              <dd class="text-right tabular-nums">{outcome.entries}</dd>
+              <dt class="text-neutral-600 dark:text-neutral-300">Transfers</dt>
+              <dd class="text-right tabular-nums">{outcome.transfers}</dd>
+              <dt class="text-neutral-600 dark:text-neutral-300">
+                Approval steps
+              </dt>
+              <dd class="text-right tabular-nums">{outcome.approvals}</dd>
+              <dt class="text-neutral-600 dark:text-neutral-300">Accounts</dt>
+              <dd class="text-right tabular-nums">{outcome.accounts}</dd>
+              {outcome.notPosted > 0 && (
+                <>
+                  <dt class="text-neutral-600 dark:text-neutral-300">
+                    Not posted, not restored
+                  </dt>
+                  <dd class="text-right tabular-nums">{outcome.notPosted}</dd>
+                </>
+              )}
+            </dl>
+            {outcome.unknownStaff.length > 0 && (
+              <p class={`${MUTED} mt-3`}>
+                Recorded under the migration account, as no staff account has
+                these names: {outcome.unknownStaff.join(', ')}.
+              </p>
+            )}
+          </section>
+        )}
+
+        {running ? (
+          <div class={NOTICE}>
+            An import is still running. History can be restored once it has
+            finished.
+          </div>
+        ) : (
+          <section class={CARD}>
+            <h2 class={CARD_TITLE}>Upload the transactions file</h2>
+            <form
+              method="post"
+              enctype="multipart/form-data"
+              class="mt-4 space-y-4"
+              data-history-form
+            >
+              <div class="flex items-center gap-3">
+                <label class={`${SECONDARY_SM} cursor-pointer`}>
+                  Choose file
+                  <input
+                    type="file"
+                    name="file"
+                    accept=".xlsx"
+                    required
+                    data-history-file
+                    class="sr-only"
+                  />
+                </label>
+                <span data-history-filename class={HINT}>
+                  No file selected
+                </span>
+              </div>
+              <button type="submit" class={BUTTON} data-history-submit>
+                Restore history
+              </button>
+              <p class={HINT} data-history-working hidden>
+                Restoring history. A large file takes a few minutes; keep this
+                page open.
+              </p>
+            </form>
+          </section>
+        )}
+      </>
+    )}
+  </div>
+</DashboardLayout>
+
+<script>
+  // The native file input's own text is in the browser's language; this
+  // says it in English instead.
+  const input = document.querySelector<HTMLInputElement>('[data-history-file]');
+  const filename = document.querySelector<HTMLElement>(
+    '[data-history-filename]'
+  );
+  if (input && filename) {
+    input.addEventListener('change', () => {
+      filename.textContent = input.files?.[0]?.name ?? 'No file selected';
+    });
+  }
+  // One submission only: a second click would send the file again while
+  // the first is still being restored.
+  const form = document.querySelector<HTMLFormElement>('[data-history-form]');
+  form?.addEventListener('submit', () => {
+    const submit = form.querySelector<HTMLButtonElement>(
+      '[data-history-submit]'
+    );
+    if (submit) {
+      submit.disabled = true;
+      submit.textContent = 'Restoring…';
+    }
+    form
+      .querySelector<HTMLElement>('[data-history-working]')
+      ?.removeAttribute('hidden');
+  });
+</script>

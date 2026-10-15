@@ -84,16 +84,22 @@ export async function countsBeforeReset(
   };
 }
 
+export interface SavedBackup {
+  folder: string;
+  fileName: string;
+  transactionsFileName?: string;
+}
+
 export interface ResetOutcome {
   // The copy saved to SharePoint first, in production; null on Test.
-  backup: { folder: string; fileName: string } | null;
+  backup: SavedBackup | null;
 }
 
 // Permanently deletes every member, application, document, payment and
 // receipt in the database — in production, only once the export is saved.
 export async function resetAllTestData(
   actor: ResetActor,
-  options: { backup?: () => Promise<{ folder: string; fileName: string }> } = {}
+  options: { backup?: () => Promise<SavedBackup> } = {}
 ): Promise<ResetOutcome> {
   let backup: ResetOutcome['backup'] = null;
   if (isProductionEnvironment()) {
