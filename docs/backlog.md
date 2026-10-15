@@ -5977,6 +5977,17 @@ Backups/members-backup-<day>.xlsx`. The last five days are kept (two at
   GitHub Actions at `0 20 * * *` UTC (`.github/workflows/members-backup.yml`,
   `docs/jobs.md`) against production, with the code on `production`; the
   manual export on the migration page is unchanged.
+- **Every transaction too** (officer request, 15 October 2026): each night
+  also writes `transactions-backup-<day>.xlsx` — the ledger entry by entry,
+  every transaction and its approval steps, and each account's balance to
+  check against (`src/lib/migration/transactions-backup.ts`). The two files
+  of a day are kept and removed together. The reset's backup saves both.
+- **Restore transaction history** (Migration page, `src/lib/migration/history.ts`,
+  migration 0130): after the members file is imported, the transactions file
+  puts every posted transaction back behind the import's opening balances —
+  original dates, TX/TR/RCT numbers and approval steps, balances unchanged.
+  Refused unless every account's entries add up to its balance and the
+  ledger holds nothing but the import. Procedure: `docs/restore.md`.
 
 ---
 

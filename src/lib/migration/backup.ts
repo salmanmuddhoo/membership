@@ -4,12 +4,14 @@
 // (scripts/run-job.ts), the last five days kept (officer direction,
 // 14 October 2026; it was two).
 //
-// Each night's file is named for its day — members-backup-2026-10-14.xlsx —
-// and once it is safely in the library every backup but the five newest is
-// removed, so the folder always holds tonight's and the four nights before.
-// On the sixth night the first is gone — a rotation without fixed "slot"
-// names that would hide which day a file is from. A second run on the same day replaces that day's file rather than
-// adding a copy beside it.
+// Each night writes two files named for the day — members-backup-2026-10-14
+// .xlsx, and transactions-backup-2026-10-14.xlsx with every transaction
+// (officer request, 15 October 2026) — and once both are safely in the
+// library every day's pair but the five newest is removed, so the folder
+// always holds tonight's and the four nights before. On the sixth night the
+// first is gone — a rotation without fixed "slot" names that would hide which
+// day a file is from. A second run on the same day replaces that day's files
+// rather than adding copies beside them.
 //
 // The folder sits beside the member documents and is split by environment
 // the same way (documents.ts ROOT_FOLDER): a Test backup never lands next
@@ -29,6 +31,7 @@ import { ensureFolderPath } from '../documents/documents';
 import { uploadInChunks } from '../documents/upload';
 import { localDay } from '../time';
 import { PERMISSION_MIGRATE, exportMembers } from './members';
+import { exportTransactions } from './transactions-backup';
 
 export const BACKUP_FOLDER = isProductionEnvironment()
   ? 'Production/Al Barakah MCSL – Backups'
@@ -37,30 +40,45 @@ export const BACKUP_FOLDER = isProductionEnvironment()
 // Tonight's file and the four nights before.
 export const BACKUPS_KEPT = 5;
 
-const BACKUP_NAME = /^members-backup-(\d{4}-\d{2}-\d{2})\.xlsx$/;
+// Each night writes two files, kept and removed together: the members with
+// their balances, and every transaction (transactions-backup.ts).
+const BACKUP_NAME = /^(members|transactions)-backup-(\d{4}-\d{2}-\d{2})\.xlsx$/;
 
 export function backupFileName(day: string): string {
   return `members-backup-${day}.xlsx`;
 }
 
+export function transactionsBackupFileName(day: string): string {
+  return `transactions-backup-${day}.xlsx`;
+}
+
 /**
- * Which of the files in the folder go once `current` is written: every
- * backup but `current` and the BACKUPS_KEPT - 1 newest before it. Anything not named as a
- * backup is someone else's and is never touched.
+ * Which of the files in the folder go once `day`'s are written: every
+ * backup of any day but `day` and the BACKUPS_KEPT - 1 newest days before
+ * it. Anything not named as a backup is someone else's and is never touched.
  */
-export function backupsToRemove(names: string[], current: string): string[] {
-  const others = names
-    .filter(name => BACKUP_NAME.test(name) && name !== current)
+export function backupsToRemove(names: string[], day: string): string[] {
+  const dayOf = (name: string) => BACKUP_NAME.exec(name)?.[2] ?? null;
+  const earlier = [
+    ...new Set(names.map(dayOf).filter((d): d is string => !!d && d !== day)),
+  ]
     .sort()
     .reverse();
-  return others.slice(BACKUPS_KEPT - 1);
+  const kept = new Set([day, ...earlier.slice(0, BACKUPS_KEPT - 1)]);
+  return names.filter(name => {
+    const d = dayOf(name);
+    return d !== null && !kept.has(d);
+  });
 }
 
 export interface BackupOutcome {
   folder: string;
   fileName: string;
+  transactionsFileName: string;
   members: number;
   nonMembers: number;
+  transactions: number;
+  entries: number;
   removed: string[];
 }
 
@@ -73,22 +91,37 @@ export async function backupMembers(
   options: { at?: Date; config?: GraphConfig } = {}
 ): Promise<BackupOutcome> {
   const config = options.config ?? getGraphConfig();
-  const fileName = backupFileName(localDay(options.at));
+  const day = localDay(options.at);
+  const fileName = backupFileName(day);
+  const transactionsFileName = transactionsBackupFileName(day);
   const { members, nonMembers } = await saveExport(
     fileName,
     'members-backup job',
     config
   );
+  const { transactions, entries } = await saveTransactions(
+    transactionsFileName,
+    config
+  );
 
   const removed = backupsToRemove(
     await listFolderNames(BACKUP_FOLDER, config),
-    fileName
+    day
   );
   for (const name of removed) {
     await deleteItemByPath(`${BACKUP_FOLDER}/${name}`, config);
   }
 
-  return { folder: BACKUP_FOLDER, fileName, members, nonMembers, removed };
+  return {
+    folder: BACKUP_FOLDER,
+    fileName,
+    transactionsFileName,
+    members,
+    nonMembers,
+    transactions,
+    entries,
+    removed,
+  };
 }
 
 const clock = new Intl.DateTimeFormat('en-GB', {
@@ -100,21 +133,33 @@ const clock = new Intl.DateTimeFormat('en-GB', {
 
 /**
  * The export, saved just before "Reset data" wipes a production database
- * (admin/reset.ts): members-before-reset-2026-10-14-1530.xlsx, beside the
- * nightly files. Its name is not a nightly backup's, so the nightly trim
- * never removes it — the reset empties the audit log too, and this file is
- * what is left of what was there.
+ * (admin/reset.ts): members-before-reset-2026-10-14-1530.xlsx and
+ * transactions-before-reset-2026-10-14-1530.xlsx, beside the nightly files.
+ * Their names are not a nightly backup's, so the nightly trim never removes
+ * them — the reset empties the audit log too, and these files are what is
+ * left of what was there.
  */
 export async function backupBeforeReset(
   options: { at?: Date; config?: GraphConfig } = {}
-): Promise<{ folder: string; fileName: string }> {
+): Promise<{ folder: string; fileName: string; transactionsFileName: string }> {
   const config = options.config ?? getGraphConfig();
   const at = options.at ?? new Date();
-  const fileName =
-    `members-before-reset-${localDay(at)}-` +
-    `${clock.format(at).replace(':', '')}.xlsx`;
+  const when = `${localDay(at)}-${clock.format(at).replace(':', '')}`;
+  const fileName = `members-before-reset-${when}.xlsx`;
+  const transactionsFileName = `transactions-before-reset-${when}.xlsx`;
   await saveExport(fileName, 'before reset', config);
-  return { folder: BACKUP_FOLDER, fileName };
+  await saveTransactions(transactionsFileName, config);
+  return { folder: BACKUP_FOLDER, fileName, transactionsFileName };
+}
+
+async function saveTransactions(
+  fileName: string,
+  config: GraphConfig
+): Promise<{ transactions: number; entries: number }> {
+  const { buffer, transactions, entries } = await exportTransactions();
+  await ensureFolderPath(BACKUP_FOLDER, config);
+  await uploadReplacing(`${BACKUP_FOLDER}/${fileName}`, buffer, config);
+  return { transactions, entries };
 }
 
 // The export, saved to the backup folder under this name. Recorded in the

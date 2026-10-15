@@ -135,24 +135,26 @@ afterAll(async () => {
 });
 
 describe('which backups are kept', () => {
-  it('keeps the new file and the four newest before it, and nothing else of ours goes', async () => {
+  const pair = (day: string) => [
+    `members-backup-${day}.xlsx`,
+    `transactions-backup-${day}.xlsx`,
+  ];
+
+  it('keeps the new day and the four newest before it, both files of each, and nothing else of ours goes', async () => {
     const { backupsToRemove, BACKUPS_KEPT } = await load();
     expect(BACKUPS_KEPT).toBe(5);
     const names = [
-      'members-backup-2026-10-08.xlsx',
-      'members-backup-2026-10-09.xlsx',
-      'members-backup-2026-10-10.xlsx',
-      'members-backup-2026-10-11.xlsx',
-      'members-backup-2026-10-12.xlsx',
-      'members-backup-2026-10-13.xlsx',
-      'members-backup-2026-10-14.xlsx',
+      ...['08', '09', '10', '11', '12', '13', '14'].flatMap(d =>
+        pair(`2026-10-${d}`)
+      ),
+      'members-before-reset-2026-10-01-1530.xlsx',
       'notes.docx',
     ];
-    expect(
-      backupsToRemove(names, 'members-backup-2026-10-14.xlsx').sort()
-    ).toEqual([
+    expect(backupsToRemove(names, '2026-10-14').sort()).toEqual([
       'members-backup-2026-10-08.xlsx',
       'members-backup-2026-10-09.xlsx',
+      'transactions-backup-2026-10-08.xlsx',
+      'transactions-backup-2026-10-09.xlsx',
     ]);
   });
 
@@ -160,16 +162,24 @@ describe('which backups are kept', () => {
     const { backupsToRemove } = await load();
     expect(
       backupsToRemove(
-        [
-          'members-backup-2026-10-11.xlsx',
-          'members-backup-2026-10-12.xlsx',
-          'members-backup-2026-10-13.xlsx',
-          'members-backup-2026-10-14.xlsx',
-          'members-backup-2026-10-15.xlsx',
-        ],
-        'members-backup-2026-10-15.xlsx'
+        ['11', '12', '13', '14', '15'].flatMap(d => pair(`2026-10-${d}`)),
+        '2026-10-15'
       )
     ).toEqual([]);
+  });
+
+  it('counts a day once whether one file of it or both are there', async () => {
+    const { backupsToRemove } = await load();
+    expect(
+      backupsToRemove(
+        [
+          'members-backup-2026-10-10.xlsx',
+          ...['11', '12', '13', '14'].flatMap(d => pair(`2026-10-${d}`)),
+          'members-backup-2026-10-15.xlsx',
+        ],
+        '2026-10-15'
+      )
+    ).toEqual(['members-backup-2026-10-10.xlsx']);
   });
 });
 
@@ -183,7 +193,11 @@ describe('a backup run, night after night', () => {
     const held = (from: number, to: number) =>
       days
         .slice(from, to)
-        .map(d => `${BACKUP_FOLDER}/members-backup-${d}.xlsx`);
+        .flatMap(d => [
+          `${BACKUP_FOLDER}/members-backup-${d}.xlsx`,
+          `${BACKUP_FOLDER}/transactions-backup-${d}.xlsx`,
+        ])
+        .sort();
 
     for (const day of days.slice(0, 5)) {
       const outcome = await backupMembers({ at: night(day), config: config() });
@@ -192,11 +206,14 @@ describe('a backup run, night after night', () => {
     expect([...files.keys()].sort()).toEqual(held(0, 5));
 
     const sixth = await backupMembers({ at: night(days[5]), config: config() });
-    expect(sixth.removed).toEqual(['members-backup-2026-10-14.xlsx']);
+    expect(sixth.removed.sort()).toEqual([
+      'members-backup-2026-10-14.xlsx',
+      'transactions-backup-2026-10-14.xlsx',
+    ]);
     expect([...files.keys()].sort()).toEqual(held(1, 6));
   });
 
-  it('replaces the day’s file when run twice the same day', async () => {
+  it('replaces the day’s files when run twice the same day', async () => {
     const { backupMembers, BACKUP_FOLDER } = await load();
     const before = files.size;
     await backupMembers({ at: night('2026-10-19'), config: config() });
@@ -205,6 +222,9 @@ describe('a backup run, night after night', () => {
     expect(files.has(`${BACKUP_FOLDER}/members-backup-2026-10-19.xlsx`)).toBe(
       true
     );
+    expect(
+      files.has(`${BACKUP_FOLDER}/transactions-backup-2026-10-19.xlsx`)
+    ).toBe(true);
   });
 
   it('saves the export itself: the template’s sheets, opened as a workbook', async () => {
@@ -224,5 +244,144 @@ describe('a backup run, night after night', () => {
         where action = 'migration.exported' order by occurred_at desc limit 1`
     );
     expect(audit.rows[0]?.actor_description).toBe('members-backup job');
+  });
+});
+
+describe('the transactions file', () => {
+  it('holds every entry, adding up to each account’s balance, with each transaction and its steps', async () => {
+    const { backupMembers, BACKUP_FOLDER } = await load();
+    const { openEveryDrawer } = await import('../cash/drawers.testing');
+    const deposits = await import('../ledger/deposits');
+    const withdrawals = await import('../ledger/withdrawals');
+
+    const user = await run(
+      appUrl,
+      `insert into app_user (entra_subject, email, display_name)
+       values ('backup-officer', 'officer@albarakah.mu', 'Officer') returning id`
+    );
+    const officer = {
+      userId: user.rows[0].id,
+      entraSubject: 'backup-officer',
+      email: 'officer@albarakah.mu',
+      displayName: 'Officer',
+      roles: ['account_officer'],
+      roleNames: ['Account Officer'],
+      permissions: new Set([
+        'transaction.capture',
+        'transaction.post',
+        'transaction.disburse',
+        'transaction.view',
+      ]),
+    };
+    await openEveryDrawer(appUrl);
+
+    const type = await run(
+      appUrl,
+      `select id from membership_type where code = 'individual'`
+    );
+    const application = await run(
+      appUrl,
+      `insert into membership_application (membership_type_id, captured_by, status)
+       values ($1, $2, 'approved') returning id`,
+      [type.rows[0].id, officer.userId]
+    );
+    await run(
+      appUrl,
+      `insert into application_party (application_id, subject, ordinal, values)
+       values ($1, 'applicant', 1, $2::jsonb)`,
+      [
+        application.rows[0].id,
+        JSON.stringify({ name: 'Fatimah', surname: 'Test' }),
+      ]
+    );
+    const member = await run(
+      appUrl,
+      `insert into member (member_no, application_id, membership_type_id)
+       values ('AB0001', $1, $2) returning id`,
+      [application.rows[0].id, type.rows[0].id]
+    );
+    const account = await run(
+      appUrl,
+      `insert into account (member_id, account_type_id, is_membership_default, status)
+       select $1, id, true, 'active' from account_type where code = 'msa'
+       returning id`,
+      [member.rows[0].id]
+    );
+    const accountId = account.rows[0].id;
+    await deposits.recordDeposit(
+      { accountId, amount: '1000', method: 'cash' },
+      officer
+    );
+    await deposits.recordDeposit(
+      { accountId, amount: '500', method: 'cash' },
+      officer
+    );
+    await withdrawals.recordWithdrawal(
+      { accountId, amount: '300', method: 'cash' },
+      officer
+    );
+
+    const outcome = await backupMembers({
+      at: new Date('2026-10-20T00:00:30+04:00'),
+      config: config(),
+    });
+    expect(outcome.transactions).toBe(3);
+    expect(outcome.entries).toBe(3);
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(
+      files.get(`${BACKUP_FOLDER}/transactions-backup-2026-10-20.xlsx`) as any
+    );
+    expect(workbook.worksheets.map(w => w.name)).toEqual([
+      'Entries',
+      'Transactions',
+      'Approvals',
+      'Accounts',
+    ]);
+
+    const rows = (name: string) => {
+      const ws = workbook.getWorksheet(name)!;
+      const headers = (ws.getRow(1).values as unknown[]).slice(1) as string[];
+      const out: Record<string, unknown>[] = [];
+      ws.eachRow((row, n) => {
+        if (n === 1) return;
+        const values = (row.values as unknown[]).slice(1);
+        out.push(Object.fromEntries(headers.map((h, i) => [h, values[i]])));
+      });
+      return out;
+    };
+
+    const entries = rows('Entries');
+    expect(entries.map(e => [e['Kind'], e['Direction'], e['Amount']])).toEqual([
+      ['Deposit', 'In', 1000],
+      ['Deposit', 'In', 500],
+      ['Withdrawal', 'Out', 300],
+    ]);
+    expect(entries.every(e => e['Holder'] === 'AB0001')).toBe(true);
+    expect(entries.every(e => e['Holder name'] === 'Test Fatimah')).toBe(true);
+    expect(
+      entries.every(e => e['Account Type'] === 'Multiplier Savings Account')
+    ).toBe(true);
+    expect(
+      entries.every(e => /^\d{4}-\d{2}-\d{2} /.test(String(e['Posted at'])))
+    ).toBe(true);
+
+    const accounts = rows('Accounts');
+    expect(accounts).toHaveLength(1);
+    const sum = entries.reduce(
+      (total, e) =>
+        total + (e['Direction'] === 'In' ? 1 : -1) * Number(e['Amount']),
+      0
+    );
+    expect(accounts[0]['Balance']).toBe(1200);
+    expect(sum).toBe(1200);
+    expect(accounts[0]['Entries']).toBe(3);
+
+    expect(rows('Transactions').map(t => t['Status'])).toEqual([
+      'posted',
+      'posted',
+      'posted',
+    ]);
+    expect(rows('Approvals').length).toBeGreaterThan(0);
   });
 });

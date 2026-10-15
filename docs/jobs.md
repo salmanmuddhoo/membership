@@ -305,12 +305,26 @@ with the member-facing secret and fetched from the app's own address.
 
 "Export members with balances" (Data migration), saved to SharePoint every
 night at midnight Mauritius time, the last five days kept
-(`src/lib/migration/backup.ts`). Each night's file is named for its day,
-`members-backup-2026-10-14.xlsx`, in `Production/Al Barakah MCSL – Backups`
-(`Test/…` on Test), in the same document library as the member documents
-(`GRAPH_DRIVE_ID`). Once the new file is in, every backup but the five
-newest is deleted — on the sixth night the first is gone. A failed upload
-deletes nothing. A second run the same day replaces that day's file.
+(`src/lib/migration/backup.ts`). Each night writes two files named for its
+day, in `Production/Al Barakah MCSL – Backups` (`Test/…` on Test), in the
+same document library as the member documents (`GRAPH_DRIVE_ID`):
+
+- `members-backup-2026-10-14.xlsx` — every member and non-member with their
+  balances, the file the migration page imports;
+- `transactions-backup-2026-10-14.xlsx` — every transaction
+  (`src/lib/migration/transactions-backup.ts`, since 15 October 2026):
+  _Entries_, the ledger in posting order, one row per entry, each account's
+  rows adding up to its balance; _Transactions_, every transaction whatever
+  its status; _Approvals_, every step each went through; _Accounts_, each
+  account's balance and entry count to check against. Accounts are named
+  as the balances upload names them; times are Mauritius time.
+
+**Migration → Restore transaction history** reads the transactions file
+back after the members file is imported (`docs/restore.md`).
+
+Once both are in, every day's pair but the five newest days is deleted — on
+the sixth night the first day's is gone. A failed upload deletes nothing. A
+second run the same day replaces that day's files.
 
 The export is audited as `migration.exported`, by `members-backup job`.
 

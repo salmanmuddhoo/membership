@@ -107,6 +107,45 @@ that is about to be replaced.
    precisely what a restore can introduce.
 6. Tell the Treasurer what the money figures were before and after.
 
+## When the database backup itself cannot be used
+
+The fallback is the nightly SharePoint pair in `<Production|Test>/Al Barakah
+MCSL – Backups` (`docs/jobs.md`, `members-backup`): `members-backup-<day>.xlsx`
+and `transactions-backup-<day>.xlsx`, written together each night. Use the
+**same night's** two files.
+
+1. Start from an empty environment: **Reset data**, or a fresh database with
+   the migrations applied. Configuration (payment methods, bank accounts,
+   account types) must be in place first — import the configuration export
+   if it is not.
+2. **Migration → Import** the members file. Every member and non-member comes
+   back with their accounts, each holding its balance as one opening entry.
+3. **Migration → Restore transaction history** with the transactions file
+   (`src/lib/migration/history.ts`, migration 0130). The whole file is
+   checked before anything is written, and refused on one problem:
+   - every account's entries in the file must add up to the balance the
+     import gave it — that is what shows the two files are from the same
+     night;
+   - the ledger must hold nothing but the import's opening balances. Restore
+     before anyone records a transaction.
+4. What comes back: every **posted** transaction, on its original date, under
+   its original TX, TR and RCT numbers, with its approval steps; voided
+   receipts stay void; each account's opening takes back its original number
+   and date. Balances end exactly where the import left them, and each
+   numbering sequence carries on after the highest number the history used.
+5. What does not:
+   - transactions never posted (drafts, requests still waiting, returned,
+     rejected, cancelled) — the outcome counts them; record any still
+     needed again;
+   - cash drawers — a restored cash transaction belongs to no drawer;
+   - staff no longer on file — their transactions are recorded under the
+     migration account, and the outcome names them. Add the staff accounts
+     back **before** restoring and they are matched by name;
+   - the fee payments behind an opening that was later taken back to zero:
+     such an opening comes back as an ordinary deposit, without a receipt.
+6. Reconcile receipts: gaps are expected where the old system issued
+   numbers that were not for a transaction (fee receipts, abandoned numbers).
+
 ## What is still missing
 
 - **The drill itself**, and with it the recovery-time figure. Nobody knows it
