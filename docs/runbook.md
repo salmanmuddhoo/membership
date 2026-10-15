@@ -172,9 +172,10 @@ of hours, not as a first response to something unexplained.
 `system.reset_data` — the System Administrator by default). See
 `docs/environments.md`. In production the phrase to type is
 `DELETE ALL PRODUCTION DATA`, and "Export members with balances" is saved to
-SharePoint first as `members-before-reset-<day>-<hhmm>.xlsx` in
-`Production/Al Barakah MCSL – Backups` — if that save fails, nothing is
-removed. The nightly backup's trim never deletes that file. It removes every
+SharePoint first as `members-before-reset-<day>-<hhmm>.xlsx`, with every
+transaction beside it as `transactions-before-reset-<day>-<hhmm>.xlsx`, in
+`Production/Al Barakah MCSL – Backups` — if either save fails, nothing is
+removed. The nightly backup's trim never deletes those files. It removes every
 staff account but the one running it; the system users (`system:%` —
 the member app's, the retention job's, the public API's, the migration
 import's) stay (migration 0119). A test environment reset before that

@@ -44,7 +44,9 @@ if (Astro.request.method === 'POST') {
         email: principal.email,
       });
       backupFile = outcome.backup
-        ? `${outcome.backup.folder}/${outcome.backup.fileName}`
+        ? [outcome.backup.fileName, outcome.backup.transactionsFileName]
+            .filter(Boolean)
+            .join(' and ') + ` in ${outcome.backup.folder}`
         : null;
       done = true;
     } catch (err) {
@@ -89,7 +91,7 @@ const heading = production ? 'Reset data' : 'Reset test data';
           {counts.documents === 1 ? '' : 's'}, the audit log and the history of
           setting changes. This cannot be undone.
           {production &&
-            ' Every member and their balances are saved to SharePoint first.'}
+            ' Every member, their balances and every transaction are saved to SharePoint first.'}
         </p>
         <p class="mt-2 text-sm text-red-800 dark:text-red-200">
           {counts.otherStaff === 0
