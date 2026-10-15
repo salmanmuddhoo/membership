@@ -124,9 +124,10 @@ async function membersFile(
       'Shares Balance': '0',
       'MSA Deposit Balance': '1000',
     },
-    // A non-member: no AB number, a Hajj Savings Account of their own.
+    // A non-member: no AB number, a Hajj Savings Account of their own,
+    // and — as in the migrated register — the account number as their code.
     {
-      'Legacy Member Code': 'NM-0004',
+      'Legacy Member Code': 'HSA0002',
       Surname: 'Peerthum',
       Name: 'Nazir',
       NIC: 'P0404040404040',
