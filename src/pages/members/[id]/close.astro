@@ -18,6 +18,8 @@ import {
   PERMISSION_CAPTURE,
 } from '@lib/ledger/closures';
 import { nomineeOnApplication } from '@lib/ledger/claimants';
+import { nomineePayouts } from '@lib/ledger/nominee-payouts';
+import NomineeSplitList from '@components/NomineeSplitList.astro';
 import { loadCustomer, loadMember } from '@lib/members/create';
 import { formatMoney } from '@lib/payments/money';
 import {
@@ -84,6 +86,15 @@ const onDeathMode =
 const nominee = isNonMember
   ? await nomineeOnApplication(person.applicationId)
   : null;
+// Accounts naming different nominees: a claim to the nominee pays each
+// their own accounts (nominee-payouts.ts).
+const split = nominee
+  ? await nomineePayouts(
+      member
+        ? { memberId: member.id, customerId: null }
+        : { memberId: null, customerId: customer!.id }
+    )
+  : [];
 const onDeathAccounts = isNonMember
   ? await accountsOnDeath(
       member
@@ -302,12 +313,20 @@ const blockedMessage = causeIsDeath
                     class="mt-1"
                   />
                   <span>
-                    <span class="font-medium">Nominee: {nominee.name}</span>
-                    <span class="block text-xs text-neutral-500 dark:text-neutral-400">
-                      {[nominee.nic, nominee.address]
-                        .filter(Boolean)
-                        .join(' · ')}
+                    <span class="font-medium">
+                      {split.length > 1
+                        ? 'Nominees'
+                        : `Nominee: ${nominee.name}`}
                     </span>
+                    {split.length > 1 ? (
+                      <NomineeSplitList split={split} />
+                    ) : (
+                      <span class="block text-xs text-neutral-500 dark:text-neutral-400">
+                        {[nominee.nic, nominee.address]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </span>
+                    )}
                   </span>
                 </label>
               )}

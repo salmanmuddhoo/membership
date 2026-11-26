@@ -4,7 +4,7 @@
 // reversal, read entirely from the transaction — nothing typed twice. The
 // Treasurer's void is on screen only; the paper carries the receipt.
 // Rendered inside /receipts/[id], whose styles it shares.
-import { feeDestination } from '@lib/ledger/labels';
+import { feeDestination, paidToEachNominee } from '@lib/ledger/labels';
 import type { PrintHistory, TransactionReceipt } from '@lib/ledger/receipts';
 import { formatMoney, fromCents, toCents } from '@lib/payments/money';
 import { localFormat } from '@lib/time';
@@ -103,6 +103,9 @@ const otherSide =
           .join(' · ') || feeDestination(t)
     : null;
 const moneyIn = t.kind === 'deposit' || t.legDirection === 'credit';
+// A claim split between nominees: one Paid to line each, with the reference
+// of their own payment (receipt-pdf.ts reads it the same way).
+const split = paidToEachNominee(t);
 const backHref = `/transactions/${t.id}`;
 ---
 
@@ -172,7 +175,16 @@ const backHref = `/transactions/${t.id}`;
   <dl class="facts">
     <div class="row">
       <dt>{moneyIn ? 'Received from' : 'Paid to'}</dt>
-      <dd>{t.payeeName || receipt.atTheCounter || holder}</dd>
+      <dd>
+        {split
+          ? split.map((line, i) => (
+              <>
+                {i > 0 && <br />}
+                {line}
+              </>
+            ))
+          : t.payeeName || receipt.atTheCounter || holder}
+      </dd>
     </div>
     {receipt.atTheCounter && (
       <div class="row">
@@ -215,7 +227,7 @@ const backHref = `/transactions/${t.id}`;
         <dt>Method</dt>
         <dd>
           {t.methodName}
-          {t.methodReference && ` · ${t.methodReference}`}
+          {!split && t.methodReference && ` · ${t.methodReference}`}
         </dd>
       </div>
     )}

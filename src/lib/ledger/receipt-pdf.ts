@@ -9,7 +9,7 @@
 // to the paper an officer hands over, and this is the copy the member keeps.
 import { jsPDF } from 'jspdf';
 import { formatMoney, fromCents, toCents } from '../payments/money';
-import { feeDestination } from './labels';
+import { feeDestination, paidToEachNominee } from './labels';
 import type { TransactionReceipt } from './receipts';
 import { localFormat } from '../time';
 
@@ -60,11 +60,14 @@ export function receiptFacts(
         feeDestination(t)
       : null;
   const moneyIn = t.kind === 'deposit' || t.legDirection === 'credit';
+  const split = paidToEachNominee(t);
 
   const rows: { label: string; value: string }[] = [
     {
       label: moneyIn ? 'Received from' : 'Paid to',
-      value: t.payeeName || receipt.atTheCounter || holder,
+      value: split
+        ? split.join('\n')
+        : t.payeeName || receipt.atTheCounter || holder,
     },
     ...(receipt.atTheCounter ? [{ label: 'On behalf of', value: holder }] : []),
     receipt.accountsClosed.length > 0
@@ -98,7 +101,10 @@ export function receiptFacts(
   if (t.method !== 'internal_transfer') {
     rows.push({
       label: 'Method',
-      value: [t.methodName, t.methodReference].filter(Boolean).join(' · '),
+      // Split: each payment's reference is on its own Paid to line.
+      value: split
+        ? t.methodName
+        : [t.methodName, t.methodReference].filter(Boolean).join(' · '),
     });
   }
   rows.push({
