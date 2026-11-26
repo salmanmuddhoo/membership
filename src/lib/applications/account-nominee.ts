@@ -15,7 +15,7 @@ import {
   listMembershipTypes,
   type MembershipTypeField,
 } from '../config/reference';
-import { withTransaction } from '../db/pool';
+import { query, withTransaction } from '../db/pool';
 import {
   ApplicationError,
   isEditableStatus,
@@ -158,4 +158,61 @@ export async function setAccountNominee(
       client
     );
   });
+}
+
+export interface AccountNomineeSplit {
+  // The accounts that go to the holder's founding nominee: "Shares", "MSA",
+  // and any further account that kept that nominee, by its number.
+  founding: string[];
+  // Each further account that names a nominee of its own, by its number,
+  // with the application that nominee is written on.
+  separate: { label: string; applicationId: string }[];
+}
+
+/**
+ * Who each open account goes to, for the member page: null when every
+ * account goes to the founding nominee (the page then reads "Nominee"), so
+ * a holder without a separate nominee looks exactly as before. Matches the
+ * death-claim split (ledger/nominee-payouts.ts): a further account counts
+ * as separate only when its own application names a nominee.
+ */
+export async function accountNomineeSplit(holder: {
+  memberId: string | null;
+  customerId: string | null;
+}): Promise<AccountNomineeSplit | null> {
+  const accounts = await query<{
+    account_no: string | null;
+    code: string;
+    prefix: string | null;
+    application_id: string | null;
+    own_nominee: boolean;
+  }>(
+    `select a.account_no, ty.code, nullif(btrim(ty.number_prefix), '') as prefix,
+            a.opened_by_application_id as application_id,
+            (app.application_kind = 'additional_account' and exists (
+               select 1 from application_party p
+                where p.application_id = app.id
+                  and p.subject = 'nominee' and p.ordinal = 1
+                  and btrim(coalesce(p.values->>'name', '') ||
+                            coalesce(p.values->>'surname', '')) <> ''
+            )) as own_nominee
+       from account a
+       join account_type ty on ty.id = a.account_type_id
+       left join membership_application app on app.id = a.opened_by_application_id
+      where ((a.member_id = $1::uuid) or (a.customer_id = $2::uuid))
+        and a.status <> 'closed'
+      order by ty.sort_order, a.opened_at`,
+    [holder.memberId, holder.customerId]
+  );
+  const label = (a: (typeof accounts.rows)[number]) =>
+    a.account_no ??
+    (a.code === 'shares' ? 'Shares' : (a.prefix ?? a.code.toUpperCase()));
+  const separate = accounts.rows
+    .filter(a => a.own_nominee && a.application_id)
+    .map(a => ({ label: label(a), applicationId: a.application_id! }));
+  if (separate.length === 0) return null;
+  return {
+    founding: accounts.rows.filter(a => !a.own_nominee).map(label),
+    separate,
+  };
 }

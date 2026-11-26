@@ -355,6 +355,19 @@ describe('a nominee per account', () => {
     );
     expect(same?.own).toBeNull();
   });
+
+  it('names the accounts each nominee covers, for the member page', async () => {
+    const { accountNominee } = await load();
+    expect(
+      await accountNominee.accountNomineeSplit({
+        memberId: member.id,
+        customerId: null,
+      })
+    ).toEqual({
+      founding: ['Shares', 'MSA'],
+      separate: [{ label: 'HSA0001', applicationId: hsaApplicationId }],
+    });
+  });
 });
 
 describe('a death claim to the nominees', () => {

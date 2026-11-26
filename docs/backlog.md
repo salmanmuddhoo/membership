@@ -6055,6 +6055,11 @@ Officer request, 26 November 2026.
   nominee fields the holder's membership type captures
   (`src/lib/applications/account-nominee.ts`; written as the application's
   own nominee party). The printed form shows the account's nominee.
+- **The member page** shows a separate nominee card for each open account
+  with a nominee of its own, titled with the accounts each covers
+  ("Nominee · Shares, MSA", "Nominee · HSA0206"); when every account goes to
+  one nominee it reads "Nominee" as before (`accountNomineeSplit`). The
+  account's own nominee is read-only there.
 - **On a death claim to the nominee** (a member's demised claim, or a
   non-member's closure on death), each nominee is paid what their accounts
   hold; the Takaful benefit goes with the founding nominee
