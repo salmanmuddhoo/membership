@@ -23,6 +23,7 @@ import {
   PERMISSION_CHANGE as GUARDIAN_CHANGE,
 } from '@lib/members/guardian';
 import { otherPartyGroups } from '@lib/applications/parties';
+import { accountNomineeSplit } from '@lib/applications/account-nominee';
 import {
   paymentsForCustomer,
   paymentsForMember,
@@ -411,6 +412,27 @@ const dateFormat = localFormat({
 const applicationId = (member ?? customer)!.applicationId;
 const partyGroups = await otherPartyGroups(applicationId);
 const witnesses = await witnessesOf(applicationId);
+// An HSA or Investment account opened with a nominee of its own
+// (applications/account-nominee.ts): each nominee then gets its own card,
+// titled with the accounts it covers. When every account goes to one
+// nominee, the card reads "Nominee" as before.
+const nomineeSplit = await accountNomineeSplit({
+  memberId: member?.id ?? null,
+  customerId: member ? null : (customer?.id ?? null),
+});
+const nomineeTitle = nomineeSplit?.founding.length
+  ? `Nominee · ${nomineeSplit.founding.join(', ')}`
+  : 'Nominee';
+const separateNominees = nomineeSplit
+  ? await Promise.all(
+      nomineeSplit.separate.map(async account => ({
+        title: `Nominee · ${account.label}`,
+        groups: (await otherPartyGroups(account.applicationId)).filter(group =>
+          group.key.startsWith('nominee-')
+        ),
+      }))
+    )
+  : [];
 // The nominees move to their own editable card when they are offered for
 // correction (nomineeContactGroups); anyone else stays here, read-only.
 const readOnlyPartyGroups = partyGroups.filter(
@@ -1092,7 +1114,7 @@ const documentCount = documentGroups.reduce(
       <section class={CARD}>
         <div data-edit-block data-record-id={recordId}>
           <div class="flex flex-wrap items-start justify-between gap-2">
-            <h2 class={CARD_TITLE}>Nominee</h2>
+            <h2 class={CARD_TITLE}>{nomineeTitle}</h2>
             <button
               type="button"
               data-edit-toggle
@@ -1195,7 +1217,7 @@ const documentCount = documentGroups.reduce(
 
     {readOnlyPartyGroups.length > 0 && (
       <section class={CARD}>
-        <h2 class={CARD_TITLE}>Nominee</h2>
+        <h2 class={CARD_TITLE}>{nomineeTitle}</h2>
         <div class="mt-4 space-y-4">
           {readOnlyPartyGroups.map(group => (
             <div>
@@ -1219,6 +1241,28 @@ const documentCount = documentGroups.reduce(
         </div>
       </section>
     )}
+
+    {separateNominees.map(nominee => (
+      <section class={CARD}>
+        <h2 class={CARD_TITLE}>{nominee.title}</h2>
+        <div class="mt-4 space-y-4">
+          {nominee.groups.map(group => (
+            <dl class="grid gap-x-6 gap-y-2 sm:grid-cols-2">
+              {group.details.map(d => (
+                <div class="flex gap-2 text-sm">
+                  <dt class="min-w-32 text-neutral-500 capitalize dark:text-neutral-400">
+                    {partyDetailLabel(d.key, d.label)}
+                  </dt>
+                  <dd class="text-neutral-800 dark:text-neutral-100">
+                    {d.value}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          ))}
+        </div>
+      </section>
+    ))}
 
     <section class={CARD}>
       <div class="flex flex-wrap items-center justify-between gap-2">
