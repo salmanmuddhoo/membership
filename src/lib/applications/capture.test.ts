@@ -2681,6 +2681,31 @@ describe('S-614: a non-member opening an account of their own — schema', () =>
       expect(b.rows[0].n > a.rows[0].n).toBe(true);
     });
 
+    it('numbers past an account written with its own number, as the import does', async () => {
+      const before = await run(
+        appUrl,
+        `select next_customer_account_number($1) as n`,
+        [hsaTypeId]
+      );
+      const serial = Number(String(before.rows[0].n).slice(3));
+      // Ahead of the counter, the way a legacy HSA0205 lands.
+      const migrated = `HSA${String(serial + 40).padStart(4, '0')}`;
+      await run(
+        appUrl,
+        `insert into account (customer_id, account_type_id, account_no)
+         values ($1, $2, $3)`,
+        [await newCustomer(), hsaTypeId, migrated]
+      );
+      const after = await run(
+        appUrl,
+        `select next_customer_account_number($1) as n`,
+        [hsaTypeId]
+      );
+      expect(after.rows[0].n).toBe(
+        `HSA${String(serial + 41).padStart(4, '0')}`
+      );
+    });
+
     it('refuses to number an account type with no prefix configured', async () => {
       const noPrefix = await runAsConfigurator(
         appUrl,
