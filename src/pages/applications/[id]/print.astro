@@ -141,9 +141,16 @@ const accountsLabel = (
     : application.selectedAccountTypes.map(t => t.name)
 ).join(' and ');
 
+// A further account can name a nominee of its own (account-nominee.ts):
+// that one is printed in place of the founding application's.
+const ownNominee = isAdditionalAccount
+  ? application.parties.find(p => p.subject === 'nominee' && p.ordinal === 1)
+  : undefined;
 const valuesFor = (subject: FieldSubject) =>
-  formSource.parties.find(p => p.subject === subject && p.ordinal === 1)
-    ?.values ?? {};
+  (subject === 'nominee' && ownNominee
+    ? ownNominee.values
+    : formSource.parties.find(p => p.subject === subject && p.ordinal === 1)
+        ?.values) ?? {};
 
 const SUBJECT_LABELS: Record<string, string> = {
   applicant: 'Applicant',

@@ -6042,3 +6042,28 @@ Officer request, 26 November 2026.
 - **Not affected:** a withdrawal requested in the member app or through the
   staff API is recorded in one act as before; nobody is at a counter to
   sign.
+
+---
+
+### A nominee per account; a death claim split by nominee
+
+Officer request, 26 November 2026.
+
+- **Opening a further account** (Hajj Savings, Investment) for an existing
+  member or non-member: the application page asks for its nominee — the
+  one on the holder's Shares and MSA, or a different person with the
+  nominee fields the holder's membership type captures
+  (`src/lib/applications/account-nominee.ts`; written as the application's
+  own nominee party). The printed form shows the account's nominee.
+- **On a death claim to the nominee** (a member's demised claim, or a
+  non-member's closure on death), each nominee is paid what their accounts
+  hold; the Takaful benefit goes with the founding nominee
+  (`src/lib/ledger/nominee-payouts.ts`). The claim page and the transaction
+  page show the split; at disbursement the Treasurer gives one reference
+  (cheque number) per nominee, and what each was paid is kept on the
+  transaction (`transaction.payouts`, migration 0133) and in the nightly
+  transactions backup. A claim paid to another person in full, and a
+  resignation, are paid in one as before.
+- A claim split between nominees must go through an approval chain (as
+  seeded): one configured to post at once is refused, since it would never
+  reach the disbursement that records each payment.

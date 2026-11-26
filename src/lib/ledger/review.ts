@@ -47,6 +47,8 @@ import {
   settleFeeTransfer,
 } from '../payments/fee-transfer-settlement';
 import { guardianGoneMessage } from '../members/guardian';
+import { toCents } from '../payments/money';
+import { nomineePayouts, type NomineePayout } from './nominee-payouts';
 
 export const PERMISSION_REVIEW = 'transaction.review';
 export const PERMISSION_APPROVE = 'transaction.approve';
@@ -170,6 +172,9 @@ export interface TransactionSummary {
   claimantKind: 'nominee' | 'other' | null;
   claimant: Claimant | null;
   takafulBenefit: string;
+  // A claim paid to more than one nominee, once disbursed
+  // (nominee-payouts.ts).
+  payouts: Payout[] | null;
   // Which of the Society's bank accounts the money reached or left
   // (S-1901); null where none was named, or the method never touches one.
   bankAccountId: string | null;
@@ -191,6 +196,15 @@ export interface Claimant {
   // address of that kind.
   email?: string | null;
   mobile?: string | null;
+}
+
+export interface Payout {
+  name: string;
+  nic: string;
+  relation: string;
+  accounts: string[];
+  amount: string;
+  methodReference: string | null;
 }
 
 // Exported for the listings (history.ts) that read the same shape.
@@ -218,6 +232,7 @@ export const TRANSACTION_SELECT = `
          t.approval_rule_id, t.source_of_fund_form_confirmed,
          t.transfer_id, tr.reference as transfer_reference, t.leg_direction,
          t.payee_name, t.claimant_kind, t.claimant, t.takaful_benefit,
+         t.payouts,
          t.bank_account_id, ba.name as bank_account_name,
          l.account_id as counterpart_account_id,
          coalesce(la.account_no, lm.member_no) as counterpart_account_no,
@@ -305,6 +320,7 @@ export interface TransactionRow {
   claimant_kind: 'nominee' | 'other' | null;
   claimant: Claimant | null;
   takaful_benefit: string;
+  payouts: Payout[] | null;
   bank_account_id: string | null;
   bank_account_name: string | null;
   counterpart_account_id: string | null;
@@ -366,6 +382,7 @@ export function assembleTransaction(r: TransactionRow): TransactionSummary {
     claimantKind: r.claimant_kind,
     claimant: r.claimant,
     takafulBenefit: r.takaful_benefit,
+    payouts: r.payouts,
     bankAccountId: r.bank_account_id,
     bankAccountName: r.bank_account_name,
     feeApplicationId: r.fee_application_id,
@@ -862,6 +879,9 @@ export async function reviewTransaction(
 export interface Disbursement {
   method: string;
   methodReference?: string;
+  // A claim paid to more than one nominee: the reference of each payment,
+  // in the order nomineePayouts gives them.
+  payoutReferences?: string[];
   // The Society's bank account it was paid from (S-1901).
   bankAccountId?: string;
 }
@@ -952,6 +972,27 @@ export async function postApprovedTransaction(
       'conflict'
     );
   }
+  // A claim paid to the nominees: one payment per nominee, when the
+  // holder's accounts name more than one (nominee-payouts.ts).
+  let split: NomineePayout[] = [];
+  if (
+    transaction.claimantKind === 'nominee' &&
+    (transaction.kind === 'demise' || transaction.kind === 'closure')
+  ) {
+    const payouts = await nomineePayouts(
+      {
+        memberId:
+          transaction.holderKind === 'member' ? transaction.holderId : null,
+        customerId:
+          transaction.holderKind === 'customer' ? transaction.holderId : null,
+      },
+      transaction.kind === 'demise' ? transaction.takafulBenefit : '0'
+    );
+    if (payouts.length > 1) split = payouts;
+  }
+  const splitReferences = split.map(
+    (_, i) => (disbursement?.payoutReferences?.[i] ?? '').trim() || null
+  );
   if (needsDisbursement(transaction)) {
     if (!disbursement) {
       throw new ReviewError('Say how it was paid out.');
@@ -964,10 +1005,26 @@ export async function postApprovedTransaction(
         disbursement.method,
         paymentMethodUseFor(transaction) ?? undefined
       );
-      requireDisbursementReference(method, disbursement.methodReference);
+      if (split.length > 0) {
+        split.forEach((payout, i) => {
+          try {
+            requireDisbursementReference(method, splitReferences[i] ?? '');
+          } catch (err) {
+            if (err instanceof ReviewError) {
+              throw new ReviewError(`${payout.claimant.name}: ${err.message}`);
+            }
+            throw err;
+          }
+        });
+      } else {
+        requireDisbursementReference(method, disbursement.methodReference);
+      }
       paidBy = {
         code: method.code,
-        reference: (disbursement.methodReference ?? '').trim() || null,
+        reference:
+          split.length > 0
+            ? splitReferences.filter(Boolean).join('; ') || null
+            : (disbursement.methodReference ?? '').trim() || null,
         bankAccountId: await resolveBankAccount(
           disbursement.bankAccountId,
           message => new ReviewError(message)
@@ -1083,6 +1140,37 @@ export async function postApprovedTransaction(
                    and at.is_membership_default and a.status = 'closing')
             where t.id = $1`,
           [transaction.id]
+        );
+      }
+      // Split between nominees: what each is paid must add up to what the
+      // claim pays, read again just above.
+      if (split.length > 0) {
+        const total = await client.query<{ amount: string }>(
+          `select amount from transaction where id = $1`,
+          [transaction.id]
+        );
+        const splitCents = split.reduce((sum, p) => sum + toCents(p.amount), 0);
+        if (toCents(total.rows[0].amount) !== splitCents) {
+          throw new ReviewError(
+            'A balance changed while this was being disbursed. Try again.',
+            'conflict'
+          );
+        }
+        await client.query(
+          `update transaction set payouts = $2::jsonb where id = $1`,
+          [
+            transaction.id,
+            JSON.stringify(
+              split.map((p, i) => ({
+                name: p.claimant.name,
+                nic: p.claimant.nic,
+                relation: p.claimant.relation,
+                accounts: p.accounts.map(a => a.accountNo),
+                amount: p.amount,
+                methodReference: splitReferences[i],
+              }))
+            ),
+          ]
         );
       }
       await postTransaction(

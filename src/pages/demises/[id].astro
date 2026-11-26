@@ -25,6 +25,7 @@ import { draftsLeftOnDeath } from '@lib/ledger/claimants';
 import { resolveRoute } from '@lib/ledger/routing';
 import { loadTransaction, transitionsFor } from '@lib/ledger/review';
 import { formatMoney, toCents } from '@lib/payments/money';
+import { nomineePayouts } from '@lib/ledger/nominee-payouts';
 import { chainTimeline } from '@lib/workflow/timeline';
 import {
   PAGE,
@@ -151,6 +152,12 @@ const [
   nomineeFor(claim.holderId),
 ]);
 const drafts = await draftsLeftOnDeath(claim.holderId, claim.id);
+// Accounts naming different nominees: the claim to the nominee is paid to
+// each (nominee-payouts.ts).
+const split = await nomineePayouts(
+  { memberId: claim.holderId, customerId: null },
+  totals.takafulBenefit
+);
 const complete = checklistComplete(checklist);
 // Posted at once when the matrix routes it nowhere: only then is the payout
 // asked before the posting step, because submitting is the posting
@@ -226,10 +233,30 @@ const dateFormat = localFormat({
                 class="mt-1"
               />
               <span>
-                <span class="font-medium">Nominee: {nominee.name}</span>
-                <span class="block text-xs text-neutral-500 dark:text-neutral-400">
-                  {[nominee.nic, nominee.address].filter(Boolean).join(' · ')}
+                <span class="font-medium">
+                  {split.length > 1 ? 'Nominees' : `Nominee: ${nominee.name}`}
                 </span>
+                {split.length > 1 ? (
+                  <ul class="mt-1 space-y-1 text-xs text-neutral-500 dark:text-neutral-400">
+                    {split.map(payout => (
+                      <li>
+                        <span class="font-medium text-neutral-700 dark:text-neutral-200">
+                          {payout.claimant.name} · {formatMoney(payout.amount)}
+                        </span>{' '}
+                        ·{' '}
+                        {payout.accounts
+                          .map(a => `${a.accountNo} ${a.typeName}`)
+                          .join(', ')}
+                        {payout.takafulBenefit !== '0.00' &&
+                          ' and the Takaful benefit'}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <span class="block text-xs text-neutral-500 dark:text-neutral-400">
+                    {[nominee.nic, nominee.address].filter(Boolean).join(' · ')}
+                  </span>
+                )}
               </span>
             </label>
           )}
