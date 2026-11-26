@@ -71,6 +71,7 @@ async function load() {
     payouts: await import('./nominee-payouts'),
     accountNominee: await import('../applications/account-nominee'),
     capture: await import('../applications/capture'),
+    contact: await import('../members/contact'),
   };
 }
 
@@ -86,6 +87,7 @@ let secretary: Principal;
 let president: Principal;
 let member: { id: string; shares: string; msa: string; hsa: string };
 let hsaApplicationId: string;
+let foundingApplicationId: string;
 let certificateTypeId: string;
 let affidavitTypeId: string;
 let bankAccountId: string;
@@ -213,6 +215,7 @@ beforeAll(async () => {
      values ($1, $2, 'AB0001') returning id`,
     [founding.rows[0].id, membershipTypeId]
   );
+  foundingApplicationId = founding.rows[0].id;
   // The Hajj Savings account, opened later on an application of its own
   // that names a different nominee.
   const further = await run(
@@ -356,6 +359,67 @@ describe('a nominee per account', () => {
     expect(same?.own).toBeNull();
   });
 
+  it('keeps a nominee saved as it is typed, and asks for the rest before it stands', async () => {
+    const { accountNominee, capture } = await load();
+    const draft = await run(
+      appUrl,
+      `insert into membership_application
+         (application_kind, existing_member_id, captured_by, status)
+       values ('additional_account', $1, $2, 'draft') returning id`,
+      [member.id, clerk.userId]
+    );
+    const id = draft.rows[0].id;
+    const reload = async () => (await capture.loadApplication(id))!;
+
+    // Half typed: kept, though it does not stand yet.
+    await accountNominee.setAccountNominee(
+      id,
+      { choice: 'different', values: { name: 'Zaid' } },
+      clerk,
+      { draft: true }
+    );
+    expect(
+      (await accountNominee.accountNomineeChoice(await reload()))?.own
+    ).toMatchObject({ name: 'Zaid', surname: '' });
+    const problems = await accountNominee.accountNomineeProblems(
+      await reload()
+    );
+    expect(problems.length).toBeGreaterThan(0);
+    expect(problems.join(' ')).toMatch(/^Nominee: .*required/);
+
+    // Completed: it stands.
+    await accountNominee.setAccountNominee(
+      id,
+      {
+        choice: 'different',
+        values: {
+          surname: 'Test',
+          name: 'Zaid',
+          nic: 'Z1234567890123',
+          address: 'Quatre Bornes',
+        },
+      },
+      clerk
+    );
+    expect(await accountNominee.accountNomineeProblems(await reload())).toEqual(
+      []
+    );
+
+    // Back to the holder's own nominee: nothing left to complete.
+    await accountNominee.setAccountNominee(
+      id,
+      { choice: 'same', values: {} },
+      clerk,
+      { draft: true }
+    );
+    expect(
+      (await accountNominee.accountNomineeChoice(await reload()))?.own
+    ).toBeNull();
+    expect(await accountNominee.accountNomineeProblems(await reload())).toEqual(
+      []
+    );
+  });
+
   it('names the accounts each nominee covers, for the member page', async () => {
     const { accountNominee } = await load();
     expect(
@@ -367,6 +431,100 @@ describe('a nominee per account', () => {
       founding: ['Shares', 'MSA'],
       separate: [{ label: 'HSA0001', applicationId: hsaApplicationId }],
     });
+  });
+
+  it("corrects an account's own nominee as the holder's own is corrected", async () => {
+    const { contact } = await load();
+    const entity = { entityType: 'member' as const, entityId: member.id };
+    const options = { fieldsFrom: foundingApplicationId, account: 'HSA0001' };
+    expect(
+      await contact.accountOfNomineeApplication(hsaApplicationId, entity)
+    ).toEqual({ label: 'HSA0001' });
+    // Only an application that opened one of this holder's further accounts.
+    expect(
+      await contact.accountOfNomineeApplication(foundingApplicationId, entity)
+    ).toBeNull();
+
+    const atCounter = principalFor(
+      officer.userId,
+      officer.email,
+      ['account_officer'],
+      ['member.edit_contact']
+    );
+    const corrector = principalFor(
+      officer.userId,
+      officer.email,
+      ['account_officer'],
+      ['member.edit_all_details']
+    );
+    const address = {
+      subject: 'nominee' as const,
+      ordinal: 1,
+      fieldKey: 'address',
+      value: 'Rose Hill',
+    };
+
+    // Not offered, and not saved, without member.edit_all_details.
+    expect(
+      await contact.editableContactFields(hsaApplicationId, {
+        allDetails: false,
+        fieldsFrom: foundingApplicationId,
+      })
+    ).toEqual([]);
+    expect(
+      (
+        await contact.updateContactDetails(
+          hsaApplicationId,
+          [address],
+          entity,
+          atCounter,
+          options
+        )
+      ).updated
+    ).toEqual([]);
+
+    // Checked as the holder's own nominee is.
+    await expect(
+      contact.updateContactDetails(
+        hsaApplicationId,
+        [{ ...address, fieldKey: 'name', value: '' }],
+        entity,
+        corrector,
+        options
+      )
+    ).rejects.toThrowError(/required/);
+
+    // The one nominee, nothing else on that application.
+    const saved = await contact.updateContactDetails(
+      hsaApplicationId,
+      [
+        address,
+        { subject: 'applicant', fieldKey: 'name', value: 'Someone' },
+        { subject: 'nominee', ordinal: 2, fieldKey: 'name', value: 'Zaid' },
+      ],
+      entity,
+      corrector,
+      options
+    );
+    expect(saved.updated).toEqual(['HSA0001 nominee.1.address']);
+
+    const fields = await contact.editableContactFields(hsaApplicationId, {
+      allDetails: true,
+      fieldsFrom: foundingApplicationId,
+    });
+    expect(fields.every(f => f.subject === 'nominee' && f.ordinal === 1)).toBe(
+      true
+    );
+    expect(fields.find(f => f.fieldKey === 'address')?.value).toBe('Rose Hill');
+    expect(fields.find(f => f.fieldKey === 'name')?.value).toBe('Bilal');
+
+    // The holder's own nominee is untouched.
+    const own = await contact.editableContactFields(foundingApplicationId, {
+      allDetails: true,
+    });
+    expect(
+      own.find(f => f.subject === 'nominee' && f.fieldKey === 'address')?.value
+    ).toBe('Curepipe');
   });
 });
 

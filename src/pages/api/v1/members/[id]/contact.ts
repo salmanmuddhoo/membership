@@ -8,6 +8,7 @@ import type { APIRoute } from 'astro';
 import { defineEndpoint, apiSuccess, ApiError } from '@lib/api/endpoint';
 import { loadMember, loadCustomer } from '@lib/members/create';
 import {
+  accountOfNomineeApplication,
   editableContactFields,
   updateContactDetails,
   ContactUpdateError,
@@ -29,7 +30,10 @@ const endpoint = defineEndpoint(
       'sent anyway is silently dropped, never saved. With ' +
       'member.edit_all_details no applicant field is locked: name, NIC and ' +
       'the rest can be corrected, and each nominee too (by ordinal), checked ' +
-      'as on the application. Returns the field ' +
+      'as on the application. With accountApplicationId, the nominee of the ' +
+      'HSA or Investment account that application opened for this holder ' +
+      "instead, checked with the fields of the holder's own nominee. " +
+      'Returns the field ' +
       'list refreshed with what was actually saved, so the page can update ' +
       'in place.',
     tag: 'Members',
@@ -38,6 +42,13 @@ const endpoint = defineEndpoint(
       type: 'object',
       required: ['changes'],
       properties: {
+        accountApplicationId: {
+          type: 'string',
+          format: 'uuid',
+          description:
+            'The application that opened an account with a nominee of its ' +
+            "own: save that nominee rather than the holder's.",
+        },
         changes: {
           type: 'array',
           items: {
@@ -113,20 +124,40 @@ const endpoint = defineEndpoint(
 
     const payload = (await context.request.json().catch(() => null)) as {
       changes?: ContactFieldChange[];
+      accountApplicationId?: string;
     } | null;
     const changes = payload?.changes ?? [];
+    const entity = member
+      ? { entityType: 'member' as const, entityId: member.id }
+      : { entityType: 'customer' as const, entityId: customer!.id };
+
+    // An account's own nominee is written on the application that opened
+    // the account, and only one that opened an account of this holder's.
+    const accountApplicationId = payload?.accountApplicationId?.trim() || null;
+    const account =
+      accountApplicationId &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        accountApplicationId
+      )
+        ? await accountOfNomineeApplication(accountApplicationId, entity)
+        : null;
+    if (accountApplicationId && !account) throw new ApiError('not_found');
+    const target = account ? accountApplicationId! : applicationId;
+    const options = account
+      ? { fieldsFrom: applicationId, account: account.label }
+      : {};
 
     try {
       const { updated } = await updateContactDetails(
-        applicationId,
+        target,
         changes,
-        member
-          ? { entityType: 'member', entityId: member.id }
-          : { entityType: 'customer', entityId: customer!.id },
-        principal
+        entity,
+        principal,
+        options
       );
-      const fields = await editableContactFields(applicationId, {
+      const fields = await editableContactFields(target, {
         allDetails: mayEditAllDetails(principal),
+        ...options,
       });
       return apiSuccess({ updated, fields }, correlationId);
     } catch (error) {

@@ -126,27 +126,26 @@ export interface EditableContactField {
 export async function editableContactFields(
   applicationId: string,
   // With member.edit_all_details every applicant field is open, filled in
-  // or not.
-  options: { allDetails?: boolean } = {}
+  // or not. For an account's own nominee (AccountNomineeOptions) only that
+  // one nominee, with the fields the holder's own application captures.
+  options: { allDetails?: boolean } & AccountNomineeOptions = {}
 ): Promise<EditableContactField[]> {
   const application = await query<{ membership_type_id: string }>(
     `select membership_type_id from membership_application where id = $1`,
-    [applicationId]
+    [options.fieldsFrom ?? applicationId]
   );
   if (application.rowCount === 0) return [];
 
   const type = (await listMembershipTypes()).find(
     t => t.id === application.rows[0].membership_type_id
   );
-  const applicantFields = (type?.fields ?? []).filter(
-    f => f.subject === 'applicant' && f.isVisible
-  );
-  const employmentFields = (type?.fields ?? []).filter(
-    f => f.subject === 'employment' && f.isVisible
-  );
-  const guardianFields = (type?.fields ?? []).filter(
-    f => f.subject === 'guardian' && f.isVisible
-  );
+  const holderFields = (subject: string) =>
+    options.fieldsFrom
+      ? []
+      : (type?.fields ?? []).filter(f => f.subject === subject && f.isVisible);
+  const applicantFields = holderFields('applicant');
+  const employmentFields = holderFields('employment');
+  const guardianFields = holderFields('guardian');
   // Officer request: member.edit_all_details corrects the nominees too.
   // Without it they are not offered here at all — the page shows them in
   // their own card, read-only.
@@ -181,7 +180,9 @@ export async function editableContactFields(
       .map(p => [p.subject, p.values])
   );
   // Every nominee on file, or the first one's empty slot when none is yet.
-  const nominees = parties.rows.filter(p => p.subject === 'nominee');
+  const nominees = parties.rows.filter(
+    p => p.subject === 'nominee' && (!options.fieldsFrom || p.ordinal === 1)
+  );
   const nomineeRows =
     nomineeFields.length === 0
       ? []
@@ -239,6 +240,42 @@ export async function editableContactFields(
       }))
     ),
   ];
+}
+
+// An HSA or Investment account opened with a nominee of its own
+// (applications/account-nominee.ts): that nominee lives on the account's own
+// application, which carries no membership type, so the fields it is shown
+// and checked with are those of the holder's founding application — the
+// ones the Shares and MSA nominee is edited with. One nominee per account.
+export interface AccountNomineeOptions {
+  // The holder's own application, whose membership type gives the fields.
+  fieldsFrom?: string;
+  // How the account is named on the audit trail: its number.
+  account?: string;
+}
+
+/**
+ * The account an account's own nominee belongs to, when that application
+ * opened one of this holder's accounts with a nominee of its own; null
+ * otherwise, so a request naming someone else's application saves nothing.
+ */
+export async function accountOfNomineeApplication(
+  accountApplicationId: string,
+  entity: ContactEntity
+): Promise<{ label: string } | null> {
+  const found = await query<{ label: string }>(
+    `select coalesce(a.account_no, ty.code) as label
+       from account a
+       join account_type ty on ty.id = a.account_type_id
+       join membership_application app on app.id = a.opened_by_application_id
+      where a.opened_by_application_id = $1::uuid
+        and app.application_kind = 'additional_account'
+        and (case when $2 = 'member' then a.member_id else a.customer_id end)
+            = $3::uuid
+      limit 1`,
+    [accountApplicationId, entity.entityType, entity.entityId]
+  );
+  return found.rows[0] ?? null;
 }
 
 interface CorrectableFields {
@@ -356,8 +393,14 @@ export interface ContactFieldChange {
 
 // How a change is named in what is returned and on the audit trail: the
 // field's key, or for a nominee which one it was.
-function changeKey(subject: EditableSubject, ordinal: number, key: string) {
-  return subject === 'nominee' ? `nominee.${ordinal}.${key}` : key;
+function changeKey(
+  subject: EditableSubject,
+  ordinal: number,
+  key: string,
+  account?: string
+) {
+  if (subject !== 'nominee') return key;
+  return `${account ? `${account} ` : ''}nominee.${ordinal}.${key}`;
 }
 
 /**
@@ -379,13 +422,19 @@ export async function updateContactDetails(
   applicationId: string,
   changes: ContactFieldChange[],
   entity: ContactEntity,
-  principal: Principal
+  principal: Principal,
+  options: AccountNomineeOptions = {}
 ): Promise<{ updated: string[] }> {
   assertMayEdit(principal);
   const allDetails = mayEditAllDetails(principal);
   const fields: CorrectableFields = allDetails
-    ? await correctableFieldsOf(applicationId)
+    ? await correctableFieldsOf(options.fieldsFrom ?? applicationId)
     : { applicant: new Map(), nominee: new Map(), nomineeCount: 0 };
+  if (options.fieldsFrom) {
+    // An account's own nominee: that one nominee, nothing else.
+    fields.applicant = new Map();
+    fields.nomineeCount = Math.min(fields.nomineeCount, 1);
+  }
   const applicantFields = fields.applicant;
 
   return withTransaction(async client => {
@@ -400,6 +449,7 @@ export async function updateContactDetails(
     >();
     for (const change of changes) {
       if (change.subject === 'guardian') continue;
+      if (options.fieldsFrom && change.subject !== 'nominee') continue;
       // A nominee only with member.edit_all_details, and only one of those
       // the type asks for.
       let ordinal = 1;
@@ -504,7 +554,7 @@ export async function updateContactDetails(
       if (subject === 'nominee') nomineesChanged = true;
 
       for (const key of Object.keys(patch)) {
-        const named = changeKey(subject, ordinal, key);
+        const named = changeKey(subject, ordinal, key, options.account);
         updated.push(named);
         previousValue[named] = (before ?? {})[key] ?? '';
         newValue[named] = patch[key];
@@ -542,7 +592,7 @@ export async function updateContactDetails(
     const corrected = Object.keys(newValue).some(
       key =>
         previousValue[key] !== '' &&
-        (key.startsWith('nominee.') ||
+        (key.includes('nominee.') ||
           (applicantFields.has(key) &&
             !ALWAYS_EDITABLE_APPLICANT_FIELD_KEYS.has(key)))
     );
