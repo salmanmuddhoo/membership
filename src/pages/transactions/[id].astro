@@ -302,7 +302,7 @@ const canEditClosure =
 // cancel it (the wizard is theirs), so say so.
 const heldByColleague = exitInHand && !canEditClosure;
 const closureDocuments =
-  isExit || transaction.kind === 'deposit'
+  isExit || transaction.kind === 'deposit' || transaction.kind === 'withdrawal'
     ? await documentsForTransaction(transaction.id)
     : [];
 // A document's own author may not check it — reviewDocument refuses
@@ -314,10 +314,11 @@ const canVerifyDocuments =
   principal.permissions.has(PERMISSION_VERIFY_TRANSACTION_DOCUMENTS) &&
   transaction.capturedById !== principal.userId &&
   transaction.kind !== 'deposit';
-// A deposit request still its captor's to finish (S-1306): the wizard has
-// the amount, the signature and the submission, not this page.
+// A deposit request (S-1306), or a withdrawal at the counter waiting on
+// its signed form, still its captor's to finish: the wizard has the
+// signature and the submission, not this page.
 const canContinueDepositRequest =
-  transaction.kind === 'deposit' &&
+  (transaction.kind === 'deposit' || transaction.kind === 'withdrawal') &&
   transaction.status === 'draft' &&
   transaction.capturedById === principal.userId;
 // Posting money that leaves the Society is paying it out: the method and
@@ -463,7 +464,7 @@ const dateFormat = localFormat({
     {canContinueDepositRequest && (
       <p class="text-sm">
         <a
-          href={`/deposits/${transaction.id}`}
+          href={`/${transaction.kind === 'deposit' ? 'deposits' : 'withdrawals'}/${transaction.id}`}
           class="text-neutral-500 underline dark:text-neutral-400"
         >
           Continue the request
@@ -627,11 +628,13 @@ const dateFormat = localFormat({
             <dt class="text-neutral-500 dark:text-neutral-400">
               {isDeposit
                 ? 'Source of Fund form'
-                : isDemise
-                  ? 'Documents'
-                  : transaction.claimant
-                    ? 'Death certificate'
-                    : 'Signed request'}
+                : transaction.kind === 'withdrawal'
+                  ? 'Withdrawal Form'
+                  : isDemise
+                    ? 'Documents'
+                    : transaction.claimant
+                      ? 'Death certificate'
+                      : 'Signed request'}
             </dt>
             <dd class="text-neutral-800 dark:text-neutral-100">
               {closureDocuments.length === 0 ? (

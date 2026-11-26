@@ -6023,3 +6023,22 @@ Officer request, 26 November 2026.
   (`app_user.out_of_hours_access`, audited as `user.out_of_hours_changed`).
   The member app and the public API are not staff sessions and are not
   affected.
+
+---
+
+### Signed Withdrawal Form
+
+Officer request, 26 November 2026.
+
+- **Every withdrawal at the counter** starts as a draft: the officer fills
+  the withdrawal form as before, Next opens the Withdrawal Form the client
+  signs on screen, filed against the transaction (document type
+  `withdrawal_form`, migration 0132), and Submit sends it on — to the
+  Secretary's review when the matrix routes it, or paid out at once below
+  the band (`src/lib/ledger/withdrawal-requests.ts`, `/withdrawals/<id>`).
+  Every check runs at the start and again at the submission.
+- **The signed amount holds:** a returned withdrawal with a signed form
+  cannot be resubmitted for a different amount.
+- **Not affected:** a withdrawal requested in the member app or through the
+  staff API is recorded in one act as before; nobody is at a counter to
+  sign.
