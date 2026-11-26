@@ -57,6 +57,7 @@ import {
   reviewTransaction,
   transitionsFor,
 } from '@lib/ledger/review';
+import { nomineePayouts } from '@lib/ledger/nominee-payouts';
 import { loadCustomer, loadMember } from '@lib/members/create';
 import { formatMoney, toCents } from '@lib/payments/money';
 import {
@@ -140,6 +141,7 @@ if (Astro.request.method === 'POST') {
           ? {
               method: text('method'),
               methodReference: text('methodReference'),
+              payoutReferences: form.getAll('payoutReference').map(String),
               bankAccountId: text('bankAccountId'),
             }
           : undefined
@@ -270,6 +272,40 @@ const closedOnDeathAccounts =
   (isClosure && transaction.claimant) || isDemise || isResignation
     ? await accountsClosedTogether(transaction.id)
     : [];
+// A claim paid to the nominees, split when the holder's accounts name more
+// than one (nominee-payouts.ts): what each is paid, as recorded once
+// disbursed, or as it stands before.
+const nomineeSplit: {
+  name: string;
+  relation: string;
+  accounts: string[];
+  amount: string;
+  methodReference: string | null;
+}[] =
+  transaction.payouts ??
+  (transaction.claimantKind === 'nominee' &&
+  (isDemise || isClosure) &&
+  !['posted', 'rejected', 'cancelled'].includes(transaction.status)
+    ? await nomineePayouts(
+        {
+          memberId:
+            transaction.holderKind === 'member' ? transaction.holderId : null,
+          customerId:
+            transaction.holderKind === 'customer' ? transaction.holderId : null,
+        },
+        isDemise ? transaction.takafulBenefit : '0'
+      ).then(payouts =>
+        payouts.length > 1
+          ? payouts.map(p => ({
+              name: p.claimant.name,
+              relation: p.claimant.relation,
+              accounts: p.accounts.map(a => `${a.accountNo} · ${a.typeName}`),
+              amount: p.amount,
+              methodReference: null,
+            }))
+          : []
+      )
+    : []);
 // A claim not yet disbursed names the holder's drafts it will cancel.
 const draftsOnDeath =
   ((isClosure && transaction.claimant) || isDemise) &&
@@ -302,7 +338,7 @@ const canEditClosure =
 // cancel it (the wizard is theirs), so say so.
 const heldByColleague = exitInHand && !canEditClosure;
 const closureDocuments =
-  isExit || transaction.kind === 'deposit'
+  isExit || transaction.kind === 'deposit' || transaction.kind === 'withdrawal'
     ? await documentsForTransaction(transaction.id)
     : [];
 // A document's own author may not check it — reviewDocument refuses
@@ -314,10 +350,11 @@ const canVerifyDocuments =
   principal.permissions.has(PERMISSION_VERIFY_TRANSACTION_DOCUMENTS) &&
   transaction.capturedById !== principal.userId &&
   transaction.kind !== 'deposit';
-// A deposit request still its captor's to finish (S-1306): the wizard has
-// the amount, the signature and the submission, not this page.
+// A deposit request (S-1306), or a withdrawal at the counter waiting on
+// its signed form, still its captor's to finish: the wizard has the
+// signature and the submission, not this page.
 const canContinueDepositRequest =
-  transaction.kind === 'deposit' &&
+  (transaction.kind === 'deposit' || transaction.kind === 'withdrawal') &&
   transaction.status === 'draft' &&
   transaction.capturedById === principal.userId;
 // Posting money that leaves the Society is paying it out: the method and
@@ -463,7 +500,7 @@ const dateFormat = localFormat({
     {canContinueDepositRequest && (
       <p class="text-sm">
         <a
-          href={`/deposits/${transaction.id}`}
+          href={`/${transaction.kind === 'deposit' ? 'deposits' : 'withdrawals'}/${transaction.id}`}
           class="text-neutral-500 underline dark:text-neutral-400"
         >
           Continue the request
@@ -612,6 +649,28 @@ const dateFormat = localFormat({
             </dd>
           </>
         )}
+        {nomineeSplit.length > 0 && (
+          <>
+            <dt class="text-neutral-500 dark:text-neutral-400">
+              Paid to each nominee
+            </dt>
+            <dd class="text-neutral-800 dark:text-neutral-100">
+              <ul class="space-y-1">
+                {nomineeSplit.map(payout => (
+                  <li>
+                    <span class="font-medium">
+                      {payout.name} · {formatMoney(payout.amount)}
+                    </span>
+                    {payout.methodReference && ` · ${payout.methodReference}`}
+                    <span class="block text-xs text-neutral-500 dark:text-neutral-400">
+                      {payout.accounts.join(', ')}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </dd>
+          </>
+        )}
         {transaction.reason && (
           <>
             <dt class="text-neutral-500 dark:text-neutral-400">
@@ -627,11 +686,13 @@ const dateFormat = localFormat({
             <dt class="text-neutral-500 dark:text-neutral-400">
               {isDeposit
                 ? 'Source of Fund form'
-                : isDemise
-                  ? 'Documents'
-                  : transaction.claimant
-                    ? 'Death certificate'
-                    : 'Signed request'}
+                : transaction.kind === 'withdrawal'
+                  ? 'Withdrawal Form'
+                  : isDemise
+                    ? 'Documents'
+                    : transaction.claimant
+                      ? 'Death certificate'
+                      : 'Signed request'}
             </dt>
             <dd class="text-neutral-800 dark:text-neutral-100">
               {closureDocuments.length === 0 ? (
@@ -887,15 +948,26 @@ const dateFormat = localFormat({
                 ))}
               </select>
             </label>
-            <label data-method-reference-field class={LABEL}>
-              Reference (cheque number, transfer reference)
-              <input
-                type="text"
-                name="methodReference"
-                value={transaction.methodReference}
-                class={INPUT}
-              />
-            </label>
+            {nomineeSplit.length > 0 ? (
+              <div data-method-reference-field class="space-y-3 sm:col-span-2">
+                {nomineeSplit.map(payout => (
+                  <label class={LABEL}>
+                    Reference for {payout.name} · {formatMoney(payout.amount)}
+                    <input type="text" name="payoutReference" class={INPUT} />
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <label data-method-reference-field class={LABEL}>
+                Reference (cheque number, transfer reference)
+                <input
+                  type="text"
+                  name="methodReference"
+                  value={transaction.methodReference}
+                  class={INPUT}
+                />
+              </label>
+            )}
             <label data-bank-account-field class={LABEL}>
               Bank account
               <select name="bankAccountId" class={INPUT}>

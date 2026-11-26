@@ -24,6 +24,7 @@ import {
 } from '../ledger/closures';
 import { rolesHoldingPermission } from '../access/holders';
 import { sourceOfFundItem } from '../ledger/deposit-requests';
+import { withdrawalFormItem } from '../ledger/withdrawal-requests';
 import { finalStepLabel, recordedLabel } from '../ledger/labels';
 import {
   loadTransaction,
@@ -353,7 +354,9 @@ export async function chainTimeline(
       )
     : transaction.kind === 'deposit'
       ? await depositRequestPrelude(transaction.id, transaction.status)
-      : {};
+      : transaction.kind === 'withdrawal'
+        ? await withdrawalRequestPrelude(transaction.id, transaction.status)
+        : {};
   return transactionTimeline({
     status: transaction.status,
     chain,
@@ -386,7 +389,11 @@ async function expectedChain(transaction: {
   accountTypeId: string;
   amount: string;
 }): Promise<WorkflowStep[]> {
-  if (!isExitRequest(transaction.kind) && transaction.kind !== 'deposit') {
+  if (
+    !isExitRequest(transaction.kind) &&
+    transaction.kind !== 'deposit' &&
+    transaction.kind !== 'withdrawal'
+  ) {
     return [];
   }
   const route = await resolveRoute({
@@ -412,6 +419,34 @@ async function depositRequestPrelude(
   const item = await sourceOfFundItem(transactionId);
   if (status !== 'draft' && !item?.filed) return {};
   return depositPrelude(Boolean(item?.filed));
+}
+
+/**
+ * A withdrawal at the counter's own steps before its chain (officer
+ * request, 26 November 2026): the details, then the Withdrawal Form the
+ * client signs. One recorded in one act — the member app, the API, or
+ * before the form existed — has none.
+ */
+async function withdrawalRequestPrelude(
+  transactionId: string,
+  status: string
+): Promise<Pick<TransactionTimelineInput, 'prelude' | 'submitLabel'>> {
+  const item = await withdrawalFormItem(transactionId);
+  if (status !== 'draft' && !item?.filed) return {};
+  const signed = Boolean(item?.filed);
+  return {
+    prelude: [
+      { key: 'details', label: 'Details', done: true },
+      {
+        key: 'signature',
+        label: 'Withdrawal Form',
+        done: signed,
+        detail: signed ? undefined : 'Not signed yet',
+        problem: !signed,
+      },
+    ],
+    submitLabel: 'Submitted',
+  };
 }
 
 export function depositPrelude(

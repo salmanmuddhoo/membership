@@ -1,0 +1,292 @@
+---
+// A withdrawal at the counter as a request (withdrawal-requests.ts): the
+// details, the client's signature on the Withdrawal Form, and the
+// submission that sends it for approval or pays it out — the same shape as
+// a large cash deposit's (deposits/[id].astro).
+import DashboardLayout from '@layouts/DashboardLayout.astro';
+import {
+  cancelWithdrawalRequest,
+  submitWithdrawalRequest,
+  withdrawalFormItem,
+} from '@lib/ledger/withdrawal-requests';
+import { WithdrawalError } from '@lib/ledger/withdrawals';
+import { loadTransaction } from '@lib/ledger/review';
+import { DocumentError, removeFiledDocument } from '@lib/documents/documents';
+import DocumentViewer from '@components/DocumentViewer.astro';
+import ChainTimeline from '@components/ChainTimeline.astro';
+import { chainTimeline } from '@lib/workflow/timeline';
+import { formatMoney } from '@lib/payments/money';
+import {
+  PAGE,
+  FORM_CARD,
+  CARD_LABEL,
+  MUTED,
+  BUTTON,
+  DANGER,
+  NOTICE_ERROR,
+  PANEL,
+  PILL_WARN,
+  TAG,
+  VIEW_BUTTON,
+  DELETE_BUTTON,
+} from '@lib/ui';
+import { localFormat } from '@lib/time';
+
+const principal = Astro.locals.principal!;
+const { id } = Astro.params;
+const withdrawal = id ? await loadTransaction(id) : null;
+if (
+  !withdrawal ||
+  withdrawal.kind !== 'withdrawal' ||
+  withdrawal.status !== 'draft' ||
+  withdrawal.capturedById !== principal.userId
+) {
+  return new Response('Not found', { status: 404 });
+}
+
+const STEPS = ['details', 'signature', 'submit'] as const;
+type Step = (typeof STEPS)[number];
+const base = `/withdrawals/${withdrawal.id}`;
+const holderPage = `/members/${withdrawal.holderId}`;
+
+let error: string | null = null;
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = String(form.get('intent') ?? '');
+  try {
+    if (intent === 'submit') {
+      await submitWithdrawalRequest(withdrawal.id, principal);
+      return Astro.redirect(`/transactions/${withdrawal.id}`);
+    } else if (intent === 'remove-form') {
+      // The form on THIS request, read here rather than taken from the
+      // page: the id in a POST is not a pointer into anyone's documents.
+      const current = (await withdrawalFormItem(withdrawal.id))?.filed;
+      if (current) await removeFiledDocument(current.documentId, principal);
+      return Astro.redirect(`${base}?step=signature`);
+    } else if (intent === 'cancel') {
+      await cancelWithdrawalRequest(withdrawal.id, principal);
+      return Astro.redirect(holderPage);
+    }
+  } catch (err) {
+    if (err instanceof WithdrawalError || err instanceof DocumentError) {
+      error = err.message;
+    } else {
+      console.error('[withdrawals]', err);
+      error = 'Something went wrong. Please try again.';
+    }
+  }
+}
+
+const requested = Astro.url.searchParams.get('step') ?? 'details';
+const step: Step = (STEPS as readonly string[]).includes(requested)
+  ? (requested as Step)
+  : 'details';
+
+const item = await withdrawalFormItem(withdrawal.id);
+const timeline = (await chainTimeline('transaction', withdrawal.id)) ?? [];
+const stepHrefs: Record<string, string> = {
+  details: `${base}?step=details`,
+  signature: `${base}?step=signature`,
+  capture: `${base}?step=submit`,
+};
+const filed = item?.filed ?? null;
+const canSubmit = !!filed && filed.state !== 'rejected';
+
+const dateFormat = localFormat({
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+});
+---
+
+<DashboardLayout
+  title={`${withdrawal.reference} · Al Barakah MCSL`}
+  heading={`Withdrawal ${withdrawal.reference}`}
+>
+  <div class={PAGE.detail}>
+    <div class="-mx-4 flex flex-wrap items-center justify-between gap-2 border-t border-neutral-200/80 bg-neutral-100/95 px-4 py-3 text-sm sm:mx-0 sm:rounded-b-2xl sm:px-3 sm:py-1.5 dark:border-neutral-800/80 dark:bg-neutral-950/95">
+      <a
+        href={holderPage}
+        class="text-neutral-500 underline dark:text-neutral-400"
+      >
+        ← Back
+      </a>
+      <span class={TAG}>
+        {withdrawal.accountNo} · {withdrawal.accountTypeName} ·{' '}
+        {formatMoney(withdrawal.amount)}
+      </span>
+    </div>
+
+    <ChainTimeline
+      steps={timeline}
+      hrefs={stepHrefs}
+      label="Withdrawal progress"
+    />
+
+    {error && <div class={NOTICE_ERROR}>{error}</div>}
+
+    {(step === 'details' || step === 'submit') && (
+      <form method="post" class={FORM_CARD}>
+        <h2 class={CARD_LABEL}>{step === 'details' ? 'Details' : 'Submit'}</h2>
+        <dl class="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
+          <dt class="text-neutral-500 dark:text-neutral-400">Holder</dt>
+          <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+            {withdrawal.holderName}
+          </dd>
+          <dt class="text-neutral-500 dark:text-neutral-400">Account</dt>
+          <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+            {withdrawal.accountNo} · {withdrawal.accountTypeName}
+          </dd>
+          <dt class="text-neutral-500 dark:text-neutral-400">Amount</dt>
+          <dd class="font-medium text-neutral-800 dark:text-neutral-100">
+            {formatMoney(withdrawal.amount)}
+          </dd>
+          {withdrawal.payeeName && (
+            <>
+              <dt class="text-neutral-500 dark:text-neutral-400">Paid to</dt>
+              <dd class="text-neutral-800 dark:text-neutral-100">
+                {withdrawal.payeeName}
+              </dd>
+            </>
+          )}
+          {withdrawal.reason && (
+            <>
+              <dt class="text-neutral-500 dark:text-neutral-400">Note</dt>
+              <dd class="text-neutral-800 dark:text-neutral-100">
+                {withdrawal.reason}
+              </dd>
+            </>
+          )}
+        </dl>
+        <div class="flex flex-wrap items-center gap-2 pt-2">
+          {step === 'details' ? (
+            <a href={`${base}?step=signature`} class={BUTTON}>
+              Next
+            </a>
+          ) : (
+            <button
+              type="submit"
+              class={BUTTON}
+              name="intent"
+              value="submit"
+              disabled={!canSubmit}
+            >
+              Submit
+            </button>
+          )}
+          <button
+            type="submit"
+            class={DANGER}
+            name="intent"
+            value="cancel"
+            formnovalidate
+          >
+            Cancel withdrawal
+          </button>
+        </div>
+        {step === 'submit' &&
+          (!filed ? (
+            <p class={MUTED}>
+              The client has not signed the Withdrawal Form.{' '}
+              <a href={`${base}/form`} class="underline">
+                Sign it now
+              </a>
+            </p>
+          ) : filed.state === 'rejected' ? (
+            <p class={MUTED}>
+              The Withdrawal Form was rejected.{' '}
+              <a href={`${base}?step=signature`} class="underline">
+                Delete it and sign again
+              </a>
+            </p>
+          ) : null)}
+      </form>
+    )}
+
+    {step === 'signature' && (
+      <section class={FORM_CARD}>
+        <h2 class={CARD_LABEL}>Signature</h2>
+        {!item ? (
+          <p class="text-sm text-red-700 dark:text-red-300">
+            The Withdrawal Form document type is not configured. Ask an
+            administrator.
+          </p>
+        ) : !filed ? (
+          <div class="flex flex-wrap gap-2">
+            <a href={`${base}/form`} class={BUTTON}>
+              Sign the Withdrawal Form
+            </a>
+          </div>
+        ) : (
+          <>
+            <div
+              class={`${PANEL} flex flex-wrap items-center justify-between gap-3`}
+            >
+              <div class="min-w-0">
+                <p class="truncate font-medium text-neutral-800 dark:text-neutral-100">
+                  {filed.fileName}
+                </p>
+                <p class={MUTED}>
+                  Signed {dateFormat.format(filed.uploadedAt)} ·{' '}
+                  {filed.uploadedByName}
+                </p>
+              </div>
+              <div class="flex shrink-0 flex-wrap items-center gap-2">
+                {filed.state === 'rejected' && (
+                  <span class={PILL_WARN}>Rejected</span>
+                )}
+                <button
+                  type="button"
+                  data-view-document
+                  data-document-id={filed.documentId}
+                  class={VIEW_BUTTON}
+                >
+                  View
+                </button>
+                <form method="post" data-confirm-remove>
+                  <button
+                    type="submit"
+                    name="intent"
+                    value="remove-form"
+                    aria-label="Delete the signed form"
+                    title="Delete"
+                    class={DELETE_BUTTON}
+                  >
+                    ✕
+                  </button>
+                </form>
+              </div>
+            </div>
+            {filed.state === 'rejected' && (
+              <p class="text-sm text-red-700 dark:text-red-300">
+                Rejected. Delete it and sign the form again.
+              </p>
+            )}
+            <div class="flex flex-wrap gap-2">
+              <a href={`${base}?step=submit`} class={BUTTON}>
+                Next
+              </a>
+            </div>
+          </>
+        )}
+      </section>
+    )}
+  </div>
+  {filed && <DocumentViewer />}
+</DashboardLayout>
+
+<script>
+  // A destructive action warns once.
+  for (const form of document.querySelectorAll<HTMLFormElement>(
+    'form[data-confirm-remove]'
+  )) {
+    form.addEventListener('submit', event => {
+      if (!confirm('Delete the signed Withdrawal Form?')) {
+        event.preventDefault();
+      }
+    });
+  }
+</script>

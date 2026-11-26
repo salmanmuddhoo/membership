@@ -63,6 +63,26 @@ export class WithdrawalError extends Error {
 export const PERMISSION_CAPTURE = 'transaction.capture';
 export const PERMISSION_POST = 'transaction.post';
 
+// The sheet the client signs before a withdrawal at the counter goes
+// further (withdrawal-requests.ts; migration 0132).
+export const WITHDRAWAL_FORM_DOCUMENT_CODE = 'withdrawal_form';
+
+/** Whether a signed Withdrawal Form is filed against this transaction. */
+async function hasSignedForm(transactionId: string): Promise<boolean> {
+  const result = await query<{ found: boolean }>(
+    `select exists (
+       select 1 from document d
+         join document_type t on t.id = d.document_type_id
+        where d.transaction_id = $1 and t.code = $2
+          and exists (select 1 from document_version v
+                       where v.document_id = d.id
+                         and v.state = 'committed'
+                         and v.superseded_at is null)) as found`,
+    [transactionId, WITHDRAWAL_FORM_DOCUMENT_CODE]
+  );
+  return result.rows[0]?.found ?? false;
+}
+
 export interface WithdrawalInput {
   accountId: string;
   amount: string;
@@ -113,7 +133,7 @@ async function existingForKey(
   return row ? { id: row.id, fingerprint: row.idempotency_fingerprint } : null;
 }
 
-function parseAmount(amount: string): number {
+export function parseAmount(amount: string): number {
   let amountCents: number;
   try {
     amountCents = toCents(amount);
@@ -281,36 +301,22 @@ async function checkedMethod(code: string | undefined) {
   }
 }
 
-export async function recordWithdrawal(
-  input: WithdrawalInput,
-  principal: Principal
-): Promise<Withdrawal> {
-  if (!principal.permissions.has(PERMISSION_CAPTURE)) {
-    throw new WithdrawalError(
-      'You do not have permission to record withdrawals.',
-      'forbidden'
-    );
-  }
-  const amountCents = parseAmount(input.amount);
-
-  const key = input.idempotencyKey?.trim() || null;
-  const print = fingerprint(input, amountCents);
-  if (key) {
-    const existing = await existingForKey(principal.userId, key);
-    if (existing) {
-      if (existing.fingerprint !== print) {
-        throw new WithdrawalError(
-          'A different withdrawal was already submitted with this key.',
-          'conflict',
-          true
-        );
-      }
-      return (await loadTransaction(existing.id))!;
-    }
-  }
-
+/**
+ * Every check a withdrawal meets before it is written, in FRD 6.3's order:
+ * the account and the holder, the available balance, the matrix's route,
+ * how it is paid out and, when it is paid out at once, the reference, the
+ * bank account and the open drawer. Shared by a withdrawal recorded in one
+ * act and by the signed request (withdrawal-requests.ts), at its start and
+ * again at its submission.
+ */
+export async function checkedWithdrawal(
+  input: Omit<WithdrawalInput, 'amount' | 'idempotencyKey'>,
+  amountCents: number,
+  principal: Principal,
+  excludingTransactionId: string | null = null
+) {
   const from = await source(input.accountId);
-  await refuseUnlessWithdrawable(from, amountCents);
+  await refuseUnlessWithdrawable(from, amountCents, excludingTransactionId);
   const payeeName = (input.payeeName ?? '').trim() || null;
 
   const route = await resolveRoute({
@@ -346,14 +352,45 @@ export async function recordWithdrawal(
       bankAccountId,
       message => new WithdrawalError(message)
     );
-  }
-  if (!route.definition) {
     await refuseCashWithoutDrawer(
       method,
       principal.userId,
       message => new WithdrawalError(message, 'conflict')
     );
   }
+  return { from, payeeName, route, method, bankAccountId };
+}
+
+export async function recordWithdrawal(
+  input: WithdrawalInput,
+  principal: Principal
+): Promise<Withdrawal> {
+  if (!principal.permissions.has(PERMISSION_CAPTURE)) {
+    throw new WithdrawalError(
+      'You do not have permission to record withdrawals.',
+      'forbidden'
+    );
+  }
+  const amountCents = parseAmount(input.amount);
+
+  const key = input.idempotencyKey?.trim() || null;
+  const print = fingerprint(input, amountCents);
+  if (key) {
+    const existing = await existingForKey(principal.userId, key);
+    if (existing) {
+      if (existing.fingerprint !== print) {
+        throw new WithdrawalError(
+          'A different withdrawal was already submitted with this key.',
+          'conflict',
+          true
+        );
+      }
+      return (await loadTransaction(existing.id))!;
+    }
+  }
+
+  const { from, payeeName, route, method, bankAccountId } =
+    await checkedWithdrawal(input, amountCents, principal);
   const receipt = route.definition
     ? null
     : await allocateReceiptNumber(principal.userId);
@@ -488,6 +525,17 @@ export async function resubmitWithdrawal(
     );
   }
   const amountCents = parseAmount(input.amount);
+  // The client signed for this amount: a different one is a different
+  // withdrawal, with a form of its own.
+  if (
+    amountCents !== toCents(withdrawal.amount) &&
+    (await hasSignedForm(withdrawal.id))
+  ) {
+    throw new WithdrawalError(
+      `The client signed for ${formatMoney(withdrawal.amount)}. Keep that ` +
+        'amount; a different amount is a new withdrawal.'
+    );
+  }
   const from = await source(input.accountId);
   if (
     from.memberId !==

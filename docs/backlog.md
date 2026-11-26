@@ -6003,3 +6003,67 @@ Officer direction, 14 October 2026.
   to SharePoint as `members-before-reset-<day>-<hhmm>.xlsx` before anything
   is removed; if it cannot be saved, nothing is removed. The nightly trim
   never deletes it (`backupBeforeReset`, `src/lib/migration/backup.ts`).
+
+---
+
+### Staff access hours
+
+Officer request, 26 November 2026.
+
+- **Closed hours:** Configuration → Staff access hours sets a daily window,
+  Mauritius time (`access.closed_hours`, migration 0131), e.g. 17:00 to
+  07:00; a window past midnight is read as one. Blank, as it ships, leaves
+  the system open all day. Inside the window a staff session ends at its
+  next request — signed out on the trail, `access.out_of_hours` recorded —
+  and the sign-in page says when the system is closed
+  (`src/lib/access/hours.ts`, `src/middleware.ts`).
+- **Not held to it:** the System Administrator role, so the window can
+  never lock everyone out of the screen that sets it, and any account
+  marked "Allowed outside staff access hours" on Staff accounts
+  (`app_user.out_of_hours_access`, audited as `user.out_of_hours_changed`).
+  The member app and the public API are not staff sessions and are not
+  affected.
+
+---
+
+### Signed Withdrawal Form
+
+Officer request, 26 November 2026.
+
+- **Every withdrawal at the counter** starts as a draft: the officer fills
+  the withdrawal form as before, Next opens the Withdrawal Form the client
+  signs on screen, filed against the transaction (document type
+  `withdrawal_form`, migration 0132), and Submit sends it on — to the
+  Secretary's review when the matrix routes it, or paid out at once below
+  the band (`src/lib/ledger/withdrawal-requests.ts`, `/withdrawals/<id>`).
+  Every check runs at the start and again at the submission.
+- **The signed amount holds:** a returned withdrawal with a signed form
+  cannot be resubmitted for a different amount.
+- **Not affected:** a withdrawal requested in the member app or through the
+  staff API is recorded in one act as before; nobody is at a counter to
+  sign.
+
+---
+
+### A nominee per account; a death claim split by nominee
+
+Officer request, 26 November 2026.
+
+- **Opening a further account** (Hajj Savings, Investment) for an existing
+  member or non-member: the application page asks for its nominee — the
+  one on the holder's Shares and MSA, or a different person with the
+  nominee fields the holder's membership type captures
+  (`src/lib/applications/account-nominee.ts`; written as the application's
+  own nominee party). The printed form shows the account's nominee.
+- **On a death claim to the nominee** (a member's demised claim, or a
+  non-member's closure on death), each nominee is paid what their accounts
+  hold; the Takaful benefit goes with the founding nominee
+  (`src/lib/ledger/nominee-payouts.ts`). The claim page and the transaction
+  page show the split; at disbursement the Treasurer gives one reference
+  (cheque number) per nominee, and what each was paid is kept on the
+  transaction (`transaction.payouts`, migration 0133) and in the nightly
+  transactions backup. A claim paid to another person in full, and a
+  resignation, are paid in one as before.
+- A claim split between nominees must go through an approval chain (as
+  seeded): one configured to post at once is refused, since it would never
+  reach the disbursement that records each payment.

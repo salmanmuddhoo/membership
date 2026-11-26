@@ -3,7 +3,9 @@
 // (S-1501, S-1502). A withdrawal paid to someone with no account here names
 // them (Paid to); left blank, it is paid to the account holder. The rules are
 // ledger/withdrawals.ts's; this page gathers the form, shows the balance and
-// what is available beside it, and shows the receipt or the step it waits at.
+// what is available beside it. Next saves it as a draft and opens the
+// Withdrawal Form the client signs before it goes further
+// (withdrawal-requests.ts, /withdrawals/[id]).
 import IdempotencyKeyField from '@components/IdempotencyKeyField.astro';
 import { canTransact } from '@lib/members/status';
 import DashboardLayout from '@layouts/DashboardLayout.astro';
@@ -13,12 +15,8 @@ import {
   offeredPaymentMethods,
 } from '@lib/config/reference';
 import { availableBalance } from '@lib/ledger/ledger';
-import {
-  PERMISSION_CAPTURE,
-  recordWithdrawal,
-  WithdrawalError,
-  type Withdrawal,
-} from '@lib/ledger/withdrawals';
+import { PERMISSION_CAPTURE, WithdrawalError } from '@lib/ledger/withdrawals';
+import { startWithdrawalRequest } from '@lib/ledger/withdrawal-requests';
 import { loadCustomer, loadMember } from '@lib/members/create';
 import { formatMoney, toCents } from '@lib/payments/money';
 import { initialRouteBand, routePreviewGroups } from '@lib/workflow/timeline';
@@ -27,13 +25,11 @@ import {
   PAGE,
   MUTED,
   CARD,
-  CARD_TITLE,
   FORM_CARD,
   LABEL,
   INPUT,
   SECONDARY_SM,
   BUTTON,
-  CARD_OK,
   NOTICE_ERROR,
 } from '@lib/ui';
 
@@ -99,7 +95,6 @@ let values: Record<
   idempotencyKey: crypto.randomUUID(),
 };
 let error: string | null = null;
-let withdrawal: Withdrawal | null = null;
 
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
@@ -118,7 +113,10 @@ if (Astro.request.method === 'POST') {
     error = 'Choose which account the withdrawal comes from.';
   } else {
     try {
-      withdrawal = await recordWithdrawal(values, principal);
+      const draft = await startWithdrawalRequest(values, principal);
+      return Astro.redirect(
+        `/withdrawals/${draft.id}?step=signature${fromTransactions ? '&from=transactions' : ''}`
+      );
     } catch (err) {
       if (err instanceof WithdrawalError) {
         // A conflict here is this form posted a second time — Back, then
@@ -176,90 +174,7 @@ const paidAtOnce =
 
     {error && <div class={NOTICE_ERROR}>{error}</div>}
 
-    {withdrawal ? (
-      <section class={CARD_OK}>
-        <h2 class={CARD_TITLE}>
-          {withdrawal.status === 'posted'
-            ? `Withdrawal ${withdrawal.reference} paid out`
-            : `Withdrawal ${withdrawal.reference} submitted for approval`}
-        </h2>
-        {withdrawal.status !== 'posted' && withdrawal.currentStepName && (
-          <p class={`${MUTED} mt-1`}>
-            Waiting for {withdrawal.currentStepName}
-            {withdrawal.currentStepRole && ` (${withdrawal.currentStepRole})`}.
-            It is paid out once approved.
-          </p>
-        )}
-        <dl class="mt-4 grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
-          {withdrawal.receiptNo && (
-            <>
-              <dt class="text-neutral-500 dark:text-neutral-400">Receipt</dt>
-              <dd class="font-medium text-neutral-800 dark:text-neutral-100">
-                <a href={`/receipts/${withdrawal.id}`} class="underline">
-                  {withdrawal.receiptNo}
-                </a>
-              </dd>
-            </>
-          )}
-          <dt class="text-neutral-500 dark:text-neutral-400">Amount</dt>
-          <dd class="font-medium text-neutral-800 dark:text-neutral-100">
-            {formatMoney(withdrawal.amount, withdrawal.currency)}
-            {/* Only once paid out: one waiting for approval is paid how the
-                Treasurer says at Disburse. */}
-            {withdrawal.status === 'posted' && (
-              <>
-                {' by '}
-                {withdrawal.methodName}
-                {withdrawal.methodReference &&
-                  ` · ${withdrawal.methodReference}`}
-              </>
-            )}
-          </dd>
-          <dt class="text-neutral-500 dark:text-neutral-400">From</dt>
-          <dd class="font-medium text-neutral-800 dark:text-neutral-100">
-            {withdrawal.accountNo} · {withdrawal.accountTypeName}
-          </dd>
-          {withdrawal.payeeName && (
-            <>
-              <dt class="text-neutral-500 dark:text-neutral-400">Paid to</dt>
-              <dd class="font-medium text-neutral-800 dark:text-neutral-100">
-                {withdrawal.payeeName}
-              </dd>
-            </>
-          )}
-          {withdrawal.balanceAfter && (
-            <>
-              <dt class="text-neutral-500 dark:text-neutral-400">
-                Balance now
-              </dt>
-              <dd class="font-medium text-neutral-800 dark:text-neutral-100">
-                {formatMoney(withdrawal.balanceAfter, withdrawal.currency)}
-              </dd>
-            </>
-          )}
-        </dl>
-        <div class="mt-5 flex flex-wrap gap-2">
-          <a href={`/members/${person.id}`} class={BUTTON}>
-            Back to {member ? 'member' : 'customer'}
-          </a>
-          {withdrawal.status !== 'posted' && (
-            <a href={`/transactions/${withdrawal.id}`} class={SECONDARY_SM}>
-              Follow it
-            </a>
-          )}
-          <a
-            href={
-              fromTransactions
-                ? '/transactions/withdrawal'
-                : `/members/${person.id}/withdraw`
-            }
-            class={SECONDARY_SM}
-          >
-            Record another
-          </a>
-        </div>
-      </section>
-    ) : withdrawable.length === 0 ? (
+    {withdrawable.length === 0 ? (
       <section class={`${CARD} text-sm text-neutral-600 dark:text-neutral-300`}>
         {!canTransact(person.status)
           ? `This ${member ? 'member' : 'customer'} is ${person.status}, so nothing can be withdrawn.`
@@ -397,7 +312,7 @@ const paidAtOnce =
 
           <div class="flex flex-wrap gap-2 pt-2">
             <button type="submit" class={BUTTON}>
-              Record withdrawal
+              Next
             </button>
             <a href={`/members/${person.id}`} class={SECONDARY_SM}>
               Cancel

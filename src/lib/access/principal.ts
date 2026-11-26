@@ -22,6 +22,9 @@ export interface Principal {
   // follow-up), never for an access decision, which stays on `roles`' codes.
   roleNames: string[];
   permissions: ReadonlySet<string>;
+  // May use the system inside the closed hours (access/hours.ts). Absent
+  // reads as no.
+  outOfHoursAccess?: boolean;
 }
 
 // Why a session did not produce a principal. The distinction matters: an
@@ -46,6 +49,7 @@ interface PrincipalRow {
   email: string;
   display_name: string;
   is_active: boolean;
+  out_of_hours_access: boolean;
   roles: string[] | null;
   role_names: string[] | null;
   permissions: string[] | null;
@@ -61,6 +65,7 @@ const PRINCIPAL_QUERY = `
          u.email::text              as email,
          u.display_name             as display_name,
          u.is_active                as is_active,
+         u.out_of_hours_access      as out_of_hours_access,
          coalesce(
            array_agg(distinct r.code) filter (where r.code is not null),
            '{}'
@@ -191,6 +196,7 @@ export async function resolvePrincipal(
       roles: row.roles ?? [],
       roleNames: row.role_names ?? [],
       permissions: new Set(row.permissions ?? []),
+      outOfHoursAccess: row.out_of_hours_access,
     },
   };
 }

@@ -49,6 +49,7 @@ import {
   type ClosureChecklistItem,
 } from './closures';
 import { LedgerError } from './ledger';
+import { nomineePayouts } from './nominee-payouts';
 import { requireBankAccount, resolveBankAccount } from './bank-accounts';
 import { notifyExit } from './exit-notifications';
 import { notifySubmitted } from './transaction-notifications';
@@ -567,6 +568,24 @@ export async function submitDemise(
         'This claim posts at once, which you may not do. Ask an Account ' +
           'Officer to submit it.',
         'forbidden'
+      );
+    }
+    // Paid to more than one nominee: each payment is recorded at
+    // disbursement, which a claim posted at once never reaches.
+    if (
+      claim.claimantKind === 'nominee' &&
+      (
+        await nomineePayouts(
+          { memberId: claim.holderId, customerId: null },
+          totals.takafulBenefit
+        )
+      ).length > 1
+    ) {
+      throw new DemiseError(
+        'This claim is paid to more than one nominee and needs an approval ' +
+          'chain to record each payment. Ask an administrator to route ' +
+          'demised claims for approval.',
+        'conflict'
       );
     }
     try {

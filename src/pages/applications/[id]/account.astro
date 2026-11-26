@@ -12,6 +12,10 @@
 // already drives with zero changes required for this kind (S-612, S-613
 // phase 7).
 import { isEditableStatus } from '@lib/applications/capture';
+import {
+  accountNomineeChoice,
+  setAccountNominee,
+} from '@lib/applications/account-nominee';
 import DashboardLayout from '@layouts/DashboardLayout.astro';
 import WitnessesCard from '@components/WitnessesCard.astro';
 import LinkedReason from '@components/LinkedReason.astro';
@@ -225,6 +229,31 @@ if (Astro.request.method === 'POST') {
         sourceOfFundFormConfirmed,
       };
     }
+  } else if (intent === 'set-nominee') {
+    try {
+      const values: Record<string, string> = {};
+      for (const [key, value] of form.entries()) {
+        if (key.startsWith('nominee.')) values[key.slice(8)] = String(value);
+      }
+      await setAccountNominee(
+        application.id,
+        {
+          choice:
+            form.get('nomineeChoice') === 'different' ? 'different' : 'same',
+          values,
+        },
+        principal
+      );
+      notice = 'Nominee saved.';
+      application = await loadAccountApplication(application.id);
+    } catch (err) {
+      if (err instanceof ApplicationError) {
+        error = err.message;
+      } else {
+        console.error('[applications/account/nominee]', err);
+        error = 'The nominee could not be saved. Please try again.';
+      }
+    }
   } else if (intent === 'delete-document') {
     try {
       await removeFiledDocument(
@@ -372,6 +401,12 @@ const isDecided =
 // submitted, not something to delete — only 'draft' and 'returned' (sent
 // back for exactly this kind of correction) still allow it.
 const isEditable = isEditableStatus(application.status);
+// Who this account goes to on a death: the nominee on the holder's Shares
+// and MSA, or a different one (applications/account-nominee.ts).
+const nomineeChoice = await accountNomineeChoice(application!);
+const sameNomineeLabel = application!.existingMemberId
+  ? 'Same as Shares and MSA'
+  : 'Same as their other accounts';
 
 // Everything here depends only on the application itself, so it is read in
 // one round of parallel queries rather than one after another — and the
@@ -929,6 +964,74 @@ const dateFormat = localFormat({
                   </dl>
                 </div>
               ))}
+            </div>
+          )}
+
+          {nomineeChoice && (
+            <div class="mt-6 border-t border-neutral-200 pt-4 dark:border-neutral-800">
+              <h3 class={SUBTITLE}>Nominee for this account</h3>
+              {isEditable && currentStep === CAPTURE_STEP ? (
+                <form method="post" class="mt-3 space-y-3" data-nominee-form>
+                  <input type="hidden" name="intent" value="set-nominee" />
+                  {nomineeChoice.existingName && (
+                    <label class="flex items-center gap-2 text-sm text-neutral-700 dark:text-neutral-200">
+                      <input
+                        type="radio"
+                        name="nomineeChoice"
+                        value="same"
+                        checked={!nomineeChoice.own}
+                      />
+                      {sameNomineeLabel}: {nomineeChoice.existingName}
+                    </label>
+                  )}
+                  <label class="flex items-center gap-2 text-sm text-neutral-700 dark:text-neutral-200">
+                    <input
+                      type="radio"
+                      name="nomineeChoice"
+                      value="different"
+                      checked={
+                        !!nomineeChoice.own || !nomineeChoice.existingName
+                      }
+                    />
+                    A different nominee
+                  </label>
+                  <div
+                    data-nominee-fields
+                    hidden={!nomineeChoice.own && !!nomineeChoice.existingName}
+                    class="grid gap-3 sm:grid-cols-2"
+                  >
+                    {nomineeChoice.fields.map(field => (
+                      <label class={LABEL}>
+                        {field.label}
+                        {field.isMandatory && ' *'}
+                        <input
+                          type={field.dataType === 'date' ? 'date' : 'text'}
+                          name={`nominee.${field.fieldKey}`}
+                          value={nomineeChoice.own?.[field.fieldKey] ?? ''}
+                          class={INPUT}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                  <button type="submit" class={SECONDARY_SM}>
+                    Save nominee
+                  </button>
+                </form>
+              ) : (
+                <p class="mt-2 text-sm text-neutral-800 dark:text-neutral-100">
+                  {nomineeChoice.own
+                    ? [
+                        nomineeChoice.own.name,
+                        nomineeChoice.own.surname,
+                        nomineeChoice.own.nic,
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')
+                    : nomineeChoice.existingName
+                      ? `${sameNomineeLabel}: ${nomineeChoice.existingName}`
+                      : '—'}
+                </p>
+              )}
             </div>
           )}
 
@@ -1551,6 +1654,30 @@ const dateFormat = localFormat({
     {canSeeDocuments && <DocumentViewer />}
   </div>
 </DashboardLayout>
+
+<script>
+  // The nominee's fields only when a different nominee is named.
+  const nomineeForm = document.querySelector<HTMLFormElement>(
+    '[data-nominee-form]'
+  );
+  if (nomineeForm) {
+    const fields = nomineeForm.querySelector<HTMLElement>(
+      '[data-nominee-fields]'
+    );
+    const sync = () => {
+      const chosen = nomineeForm.querySelector<HTMLInputElement>(
+        'input[name="nomineeChoice"]:checked'
+      );
+      if (fields) fields.hidden = chosen?.value !== 'different';
+    };
+    for (const radio of nomineeForm.querySelectorAll(
+      'input[name="nomineeChoice"]'
+    )) {
+      radio.addEventListener('change', sync);
+    }
+    sync();
+  }
+</script>
 
 <script>
   import {

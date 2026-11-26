@@ -37,6 +37,7 @@ import {
   markReceiptIssued,
 } from '../payments/receipts';
 import { LedgerError } from './ledger';
+import { nomineePayouts } from './nominee-payouts';
 import { requireBankAccount, resolveBankAccount } from './bank-accounts';
 import {
   claimableMembershipType,
@@ -812,6 +813,25 @@ export async function submitClosure(
         'This closure posts at once, which you may not do. Ask an Account ' +
           'Officer to submit it.',
         'forbidden'
+      );
+    }
+    // Paid to more than one nominee: each payment is recorded at
+    // disbursement, which a closure posted at once never reaches.
+    if (
+      closure.claimantKind === 'nominee' &&
+      (
+        await nomineePayouts({
+          memberId: closure.holderKind === 'member' ? closure.holderId : null,
+          customerId:
+            closure.holderKind === 'customer' ? closure.holderId : null,
+        })
+      ).length > 1
+    ) {
+      throw new ClosureError(
+        'This closure is paid to more than one nominee and needs an ' +
+          'approval chain to record each payment. Ask an administrator to ' +
+          'route closures for approval.',
+        'conflict'
       );
     }
     try {

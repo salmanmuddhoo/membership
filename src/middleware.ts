@@ -8,8 +8,13 @@ import { apiError, correlationIdFrom } from '@lib/api/envelope';
 import { pendingActionCount } from '@lib/applications/workflow';
 import { pendingTransactionCount } from '@lib/ledger/review';
 import { createSessionCookie, SESSION_COOKIE } from '@lib/auth/session';
-import { ACTION_TIMED_OUT, recordSessionEvent } from '@lib/auth/session-audit';
-import { sessionIdleMinutes } from '@lib/config/reference';
+import {
+  ACTION_SIGNED_OUT,
+  ACTION_TIMED_OUT,
+  recordSessionEvent,
+} from '@lib/auth/session-audit';
+import { closedHours, sessionIdleMinutes } from '@lib/config/reference';
+import { heldToHours, isClosedAt } from '@lib/access/hours';
 import { clientAddress } from './lib/client-address';
 
 const LOGIN_PATH = '/login';
@@ -199,6 +204,38 @@ const guard = defineMiddleware(async (context, next) => {
   }
 
   context.locals.principal = principal;
+
+  // Closed hours (access.closed_hours, migration 0131): inside the window a
+  // staff session ends at its next request, signed out on the trail as any
+  // sign-out is, unless the person is not held to the hours (access/hours.ts).
+  // A setting that cannot be read leaves the system open: the hours are a
+  // working rule, not a security boundary.
+  if (heldToHours(principal)) {
+    let hours = null;
+    try {
+      hours = await closedHours();
+    } catch (error) {
+      console.error('[access] could not read access.closed_hours:', error);
+    }
+    if (hours && isClosedAt(hours, new Date())) {
+      await recordSessionEvent(
+        user,
+        ACTION_SIGNED_OUT,
+        clientAddress(context.request.headers)
+      );
+      await recordAuditQuietly({
+        actorUserId: principal.userId,
+        actorDescription: principal.email,
+        action: 'access.out_of_hours',
+        entityType: 'route',
+        entityId: pathname,
+        newValue: { from: hours.from, until: hours.until },
+        ipAddress: clientAddress(context.request.headers),
+      });
+      context.cookies.delete(SESSION_COOKIE, { path: '/' });
+      return refuse('forbidden', `${LOGIN_PATH}?reason=hours`);
+    }
+  }
 
   // API endpoints declare their own permission in their descriptor and enforce
   // it in defineEndpoint(), which also produces the correct envelope. Applying
