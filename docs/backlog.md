@@ -6076,6 +6076,11 @@ Officer request, 26 November 2026.
   transaction (`transaction.payouts`, migration 0133) and in the nightly
   transactions backup. A claim paid to another person in full, and a
   resignation, are paid in one as before.
+- Every screen of a split claim says so: the start page lists each
+  nominee with what they receive, the claim reads "To 2 nominees", the
+  claimant reads "Nominees", and the receipt (screen and PDF) has one Paid
+  to line per nominee with their amount and cheque number
+  (`paidToEachNominee`).
 - A claim split between nominees must go through an approval chain (as
   seeded): one configured to post at once is refused, since it would never
   reach the disbursement that records each payment.

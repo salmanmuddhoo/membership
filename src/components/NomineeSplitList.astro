@@ -1,0 +1,27 @@
+---
+// A claim to the nominees split by account (ledger/nominee-payouts.ts): each
+// nominee, what they are paid, and the accounts it comes from.
+import type { NomineePayout } from '@lib/ledger/nominee-payouts';
+import { formatMoney } from '@lib/payments/money';
+
+interface Props {
+  split: NomineePayout[];
+}
+
+const { split } = Astro.props;
+---
+
+<ul class="mt-1 space-y-1 text-xs text-neutral-500 dark:text-neutral-400">
+  {split.map(payout => (
+    <li>
+      <span class="font-medium text-neutral-700 dark:text-neutral-200">
+        {payout.claimant.name} · {formatMoney(payout.amount)}
+      </span>{' '}
+      ·{' '}
+      {[
+        ...payout.accounts.map(a => `${a.accountNo} ${a.typeName}`),
+        ...(payout.takafulBenefit !== '0.00' ? ['the Takaful benefit'] : []),
+      ].join(', ')}
+    </li>
+  ))}
+</ul>

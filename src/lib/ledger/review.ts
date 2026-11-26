@@ -1165,7 +1165,10 @@ export async function postApprovedTransaction(
                 name: p.claimant.name,
                 nic: p.claimant.nic,
                 relation: p.claimant.relation,
-                accounts: p.accounts.map(a => a.accountNo),
+                accounts: [
+                  ...p.accounts.map(a => `${a.accountNo} · ${a.typeName}`),
+                  ...(toCents(p.takafulBenefit) > 0 ? ['Takaful benefit'] : []),
+                ],
                 amount: p.amount,
                 methodReference: splitReferences[i],
               }))

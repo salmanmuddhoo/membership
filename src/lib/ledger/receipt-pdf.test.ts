@@ -74,6 +74,42 @@ describe('the receipt as a PDF', () => {
     expect(receiptPdfFileName(receipt())).toBe('Receipt RCT-000123.pdf');
   });
 
+  it('names each nominee of a split claim with their own payment', () => {
+    const rows = receiptFacts(
+      receipt({
+        kind: 'demise',
+        method: 'cheque',
+        methodName: 'Cheque',
+        methodReference: 'CHQ-1001; CHQ-1002',
+        payeeName: 'Yusuf Test',
+        amount: '3000.00',
+        payouts: [
+          {
+            name: 'Yusuf Test',
+            nic: 'Y1234567890123',
+            relation: 'Nominee',
+            accounts: ['AB0001 · Shares'],
+            amount: '1000.00',
+            methodReference: 'CHQ-1001',
+          },
+          {
+            name: 'Bilal Test',
+            nic: 'B1234567890123',
+            relation: 'Nominee',
+            accounts: ['HSA0001 · Hajj Savings Account'],
+            amount: '2000.00',
+            methodReference: 'CHQ-1002',
+          },
+        ],
+      })
+    );
+    const value = (label: string) => rows.find(r => r.label === label)?.value;
+    expect(value('Paid to')).toBe(
+      'Yusuf Test · MUR 1,000.00 · CHQ-1001\nBilal Test · MUR 2,000.00 · CHQ-1002'
+    );
+    expect(value('Method')).toBe('Cheque');
+  });
+
   it('reads a transfer leg and a payee the way the sheet does', () => {
     const rows = receiptFacts(
       receipt({

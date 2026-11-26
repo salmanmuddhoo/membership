@@ -299,7 +299,10 @@ const nomineeSplit: {
           ? payouts.map(p => ({
               name: p.claimant.name,
               relation: p.claimant.relation,
-              accounts: p.accounts.map(a => `${a.accountNo} · ${a.typeName}`),
+              accounts: [
+                ...p.accounts.map(a => `${a.accountNo} · ${a.typeName}`),
+                ...(p.takafulBenefit !== '0.00' ? ['Takaful benefit'] : []),
+              ],
               amount: p.amount,
               methodReference: null,
             }))
@@ -617,12 +620,18 @@ const dateFormat = localFormat({
           <>
             <dt class="text-neutral-500 dark:text-neutral-400">Claimant</dt>
             <dd class="font-medium text-neutral-800 dark:text-neutral-100">
-              {transaction.claimant.name} · {transaction.claimant.relation}
-              <span class="block text-xs font-normal text-neutral-500 dark:text-neutral-400">
-                {[transaction.claimant.nic, transaction.claimant.address]
-                  .filter(Boolean)
-                  .join(' · ')}
-              </span>
+              {nomineeSplit.length > 0 ? (
+                'Nominees'
+              ) : (
+                <>
+                  {transaction.claimant.name} · {transaction.claimant.relation}
+                  <span class="block text-xs font-normal text-neutral-500 dark:text-neutral-400">
+                    {[transaction.claimant.nic, transaction.claimant.address]
+                      .filter(Boolean)
+                      .join(' · ')}
+                  </span>
+                </>
+              )}
             </dd>
             <dt class="text-neutral-500 dark:text-neutral-400">
               Takaful benefit
@@ -640,12 +649,18 @@ const dateFormat = localFormat({
           <>
             <dt class="text-neutral-500 dark:text-neutral-400">Paid to</dt>
             <dd class="font-medium text-neutral-800 dark:text-neutral-100">
-              {transaction.claimant.name} · {transaction.claimant.relation}
-              <span class="block text-xs font-normal text-neutral-500 dark:text-neutral-400">
-                {[transaction.claimant.nic, transaction.claimant.address]
-                  .filter(Boolean)
-                  .join(' · ')}
-              </span>
+              {nomineeSplit.length > 0 ? (
+                'Nominees'
+              ) : (
+                <>
+                  {transaction.claimant.name} · {transaction.claimant.relation}
+                  <span class="block text-xs font-normal text-neutral-500 dark:text-neutral-400">
+                    {[transaction.claimant.nic, transaction.claimant.address]
+                      .filter(Boolean)
+                      .join(' · ')}
+                  </span>
+                </>
+              )}
             </dd>
           </>
         )}
@@ -821,9 +836,11 @@ const dateFormat = localFormat({
 
     {isClosure && transaction.status !== 'posted' && (
       <p class="rounded-lg border border-neutral-300 px-4 py-3 text-sm text-neutral-700 dark:border-neutral-700 dark:text-neutral-200">
-        {transaction.claimant
-          ? `Closes every account above and pays the total to ${transaction.claimant.name} when it is approved.`
-          : `Closes ${transaction.accountNo} · ${transaction.accountTypeName}. The balance is paid out when it is approved, as it stands then, and the account closes with it.`}
+        {nomineeSplit.length > 0
+          ? 'Closes every account above and pays each nominee their share when it is approved.'
+          : transaction.claimant
+            ? `Closes every account above and pays the total to ${transaction.claimant.name} when it is approved.`
+            : `Closes ${transaction.accountNo} · ${transaction.accountTypeName}. The balance is paid out when it is approved, as it stands then, and the account closes with it.`}
       </p>
     )}
 

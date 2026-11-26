@@ -1,3 +1,6 @@
+import { formatMoney } from '../payments/money';
+import type { TransactionSummary } from './review';
+
 // What a transaction's status is called on screen: every finished
 // transaction reads "Disbursed", not "Posted" (business decision) — a
 // withdrawal, a transfer, a deposit, a closure, a resignation, a claim.
@@ -75,4 +78,20 @@ export function feeDestination(t: {
   return ['Membership fees', t.feeApplicationReference, t.feeApplicantName]
     .filter(Boolean)
     .join(' · ');
+}
+
+/**
+ * A claim split between nominees (nominee-payouts.ts): who was paid what,
+ * one line each with the reference of their own payment. Null for anything
+ * paid to one person.
+ */
+export function paidToEachNominee(
+  t: Pick<TransactionSummary, 'payouts' | 'currency'>
+): string[] | null {
+  if (!t.payouts || t.payouts.length < 2) return null;
+  return t.payouts.map(p =>
+    [p.name, formatMoney(p.amount, t.currency), p.methodReference]
+      .filter(Boolean)
+      .join(' · ')
+  );
 }

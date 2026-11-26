@@ -26,6 +26,7 @@ import { resolveRoute } from '@lib/ledger/routing';
 import { loadTransaction, transitionsFor } from '@lib/ledger/review';
 import { formatMoney, toCents } from '@lib/payments/money';
 import { nomineePayouts } from '@lib/ledger/nominee-payouts';
+import NomineeSplitList from '@components/NomineeSplitList.astro';
 import { chainTimeline } from '@lib/workflow/timeline';
 import {
   PAGE,
@@ -206,7 +207,11 @@ const dateFormat = localFormat({
         {claim.memberNo && ` · ${claim.memberNo}`}
       </a>
       <span class={TAG}>
-        To {claim.payeeName} · {formatMoney(totals.total)}
+        To{' '}
+        {claim.claimantKind === 'nominee' && split.length > 1
+          ? `${split.length} nominees`
+          : claim.payeeName}{' '}
+        · {formatMoney(totals.total)}
       </span>
     </div>
 
@@ -237,21 +242,7 @@ const dateFormat = localFormat({
                   {split.length > 1 ? 'Nominees' : `Nominee: ${nominee.name}`}
                 </span>
                 {split.length > 1 ? (
-                  <ul class="mt-1 space-y-1 text-xs text-neutral-500 dark:text-neutral-400">
-                    {split.map(payout => (
-                      <li>
-                        <span class="font-medium text-neutral-700 dark:text-neutral-200">
-                          {payout.claimant.name} · {formatMoney(payout.amount)}
-                        </span>{' '}
-                        ·{' '}
-                        {payout.accounts
-                          .map(a => `${a.accountNo} ${a.typeName}`)
-                          .join(', ')}
-                        {payout.takafulBenefit !== '0.00' &&
-                          ' and the Takaful benefit'}
-                      </li>
-                    ))}
-                  </ul>
+                  <NomineeSplitList split={split} />
                 ) : (
                   <span class="block text-xs text-neutral-500 dark:text-neutral-400">
                     {[nominee.nic, nominee.address].filter(Boolean).join(' · ')}
