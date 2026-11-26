@@ -6058,8 +6058,11 @@ Officer request, 26 November 2026.
 - **The member page** shows a separate nominee card for each open account
   with a nominee of its own, titled with the accounts each covers
   ("Nominee · Shares, MSA", "Nominee · HSA0206"); when every account goes to
-  one nominee it reads "Nominee" as before (`accountNomineeSplit`). The
-  account's own nominee is read-only there.
+  one nominee it reads "Nominee" as before (`accountNomineeSplit`). An
+  account's own nominee is corrected there as the holder's own is — with
+  `member.edit_all_details`, checked with the holder's nominee fields — and
+  saved on the account's application (`PATCH /api/v1/members/{id}/contact`
+  with `accountApplicationId`).
 - **On a death claim to the nominee** (a member's demised claim, or a
   non-member's closure on death), each nominee is paid what their accounts
   hold; the Takaful benefit goes with the founding nominee

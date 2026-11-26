@@ -1,0 +1,145 @@
+---
+// A nominee's details on the member page, editable with
+// member.edit_all_details (members/contact.ts): the holder's own nominees,
+// or the nominee of an HSA or Investment account opened with one of its own
+// (accountApplicationId). Saved in place by the page's edit script, through
+// PATCH /api/v1/members/{id}/contact.
+import { forDisplay } from '@lib/applications/phone';
+import { formatDateOnly, partyDetailLabel } from '@lib/members/labels';
+import type { EditableContactField } from '@lib/members/contact';
+import {
+  BUTTON_SM,
+  CARD,
+  CARD_TITLE,
+  HINT,
+  ICON_BUTTON,
+  INPUT_SM,
+  SUBTITLE,
+} from '@lib/ui';
+
+interface Props {
+  title: string;
+  recordId: string;
+  groups: { ordinal: number; fields: EditableContactField[] }[];
+  accountApplicationId?: string;
+}
+
+const { title, recordId, groups, accountApplicationId } = Astro.props;
+
+function fieldDisplay(field: EditableContactField): string {
+  if (field.dataType === 'date') {
+    return field.value ? formatDateOnly(field.value) : field.value;
+  }
+  return field.dataType === 'phone' ? forDisplay(field.value) : field.value;
+}
+
+// A choice field's dropdown: the configured choices, plus the current value
+// when it is no longer among them, so an edit never silently drops it.
+function choiceOptions(field: EditableContactField): string[] {
+  return field.value && !field.choices.includes(field.value)
+    ? [...field.choices, field.value]
+    : field.choices;
+}
+---
+
+<section class={CARD}>
+  <div
+    data-edit-block
+    data-record-id={recordId}
+    data-account-application={accountApplicationId}
+  >
+    <div class="flex flex-wrap items-start justify-between gap-2">
+      <h2 class={CARD_TITLE}>{title}</h2>
+      <button
+        type="button"
+        data-edit-toggle
+        aria-label="Edit nominee"
+        class={ICON_BUTTON}
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 20 20"
+          fill="currentColor"
+          class="h-4 w-4"
+        >
+          <path d="M13.586 3.586a2 2 0 1 1 2.828 2.828l-8.5 8.5a2 2 0 0 1-.878.507l-3 .857a.5.5 0 0 1-.618-.618l.857-3a2 2 0 0 1 .507-.878l8.5-8.5Z" />
+          <path d="M11.379 5.793 14.207 8.621 6.5 16.328a1 1 0 0 1-.439.254l-2.121.606.606-2.12a1 1 0 0 1 .254-.44l6.579-6.835Z" />
+        </svg>
+      </button>
+    </div>
+    <div class="mt-4 space-y-4">
+      {groups.map(group => (
+        <div>
+          {groups.length > 1 && (
+            <h3 class={SUBTITLE}>Nominee {group.ordinal}</h3>
+          )}
+          <dl class="mt-2 grid gap-x-6 gap-y-2 sm:grid-cols-2">
+            {group.fields.map(field => (
+              <div
+                class="flex gap-2 text-sm"
+                data-field
+                data-subject="nominee"
+                data-ordinal={field.ordinal}
+                data-field-key={field.fieldKey}
+              >
+                <dt class="min-w-32 text-neutral-500 dark:text-neutral-400">
+                  {partyDetailLabel(
+                    field.fieldKey,
+                    field.label.replace(/^Nominee\s+(\w)/i, (_, c) =>
+                      c.toUpperCase()
+                    )
+                  )}
+                </dt>
+                <dd class="w-full text-neutral-800 dark:text-neutral-100">
+                  <span data-view>{fieldDisplay(field)}</span>
+                  {field.dataType === 'choice' && field.choices.length > 0 ? (
+                    <select
+                      data-edit
+                      data-original={field.value}
+                      hidden
+                      class={`${INPUT_SM} w-full`}
+                    >
+                      <option value="" />
+                      {choiceOptions(field).map(choice => (
+                        <option
+                          value={choice}
+                          selected={choice === field.value}
+                        >
+                          {choice}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      type={field.dataType === 'phone' ? 'tel' : 'text'}
+                      data-edit
+                      data-original={field.value}
+                      value={field.value}
+                      hidden
+                      class={`${INPUT_SM} w-full`}
+                    />
+                  )}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      ))}
+    </div>
+    <div class="mt-4">
+      <p
+        data-edit-error
+        hidden
+        class="mb-2 text-sm text-red-700 dark:text-red-300"
+      />
+      <div data-edit-actions hidden class="flex items-center gap-3">
+        <button type="button" data-edit-save class={BUTTON_SM}>
+          Save
+        </button>
+        <button type="button" data-edit-cancel class={`${HINT} underline`}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  </div>
+</section>
