@@ -172,6 +172,13 @@ let paymentFormValues: {
   sourceOfFundFormConfirmed: boolean;
 } | null = null;
 
+// The nominee panel's Next saves the nominee, then moves on to the
+// signature step (or the documents step, where there is no form to print).
+let nomineeSavedGoNext = false;
+// Next refused (a mandatory nominee field blank): back on the details step,
+// with the nominee in view, rather than wherever the record has reached.
+let nomineeRefused = false;
+
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
   const intent = String(form.get('intent') ?? '');
@@ -229,12 +236,15 @@ if (Astro.request.method === 'POST') {
         sourceOfFundFormConfirmed,
       };
     }
-  } else if (intent === 'set-nominee') {
+  } else if (intent === 'set-nominee' || intent === 'autosave-nominee') {
+    // Saved as the officer types (autosave-nominee, from the panel's own
+    // script, however far it is filled in) and in full by Next.
+    const draft = intent === 'autosave-nominee';
+    const values: Record<string, string> = {};
+    for (const [key, value] of form.entries()) {
+      if (key.startsWith('nominee.')) values[key.slice(8)] = String(value);
+    }
     try {
-      const values: Record<string, string> = {};
-      for (const [key, value] of form.entries()) {
-        if (key.startsWith('nominee.')) values[key.slice(8)] = String(value);
-      }
       await setAccountNominee(
         application.id,
         {
@@ -242,17 +252,32 @@ if (Astro.request.method === 'POST') {
             form.get('nomineeChoice') === 'different' ? 'different' : 'same',
           values,
         },
-        principal
+        principal,
+        { draft }
       );
-      notice = 'Nominee saved.';
-      application = await loadAccountApplication(application.id);
-    } catch (err) {
-      if (err instanceof ApplicationError) {
-        error = err.message;
-      } else {
-        console.error('[applications/account/nominee]', err);
-        error = 'The nominee could not be saved. Please try again.';
+      if (draft) {
+        return new Response(JSON.stringify({ saved: true }), {
+          headers: { 'content-type': 'application/json' },
+        });
       }
+      nomineeSavedGoNext = true;
+    } catch (err) {
+      const message =
+        err instanceof ApplicationError
+          ? err.message
+          : 'The nominee could not be saved. Please try again.';
+      if (!(err instanceof ApplicationError)) {
+        console.error('[applications/account/nominee]', err);
+      }
+      if (draft) {
+        return new Response(JSON.stringify({ error: message }), {
+          status: 422,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      error = message;
+      nomineeRefused = true;
+      application = await loadAccountApplication(application.id);
     }
   } else if (intent === 'delete-document') {
     try {
@@ -649,6 +674,13 @@ const requiredDocumentsMissing = checklist.filter(
 // form to print — they can still file a signed form obtained another way at
 // the documents step, but the print step and its links do not apply to them.
 const canSign = contact.holderApplicationId !== null;
+if (nomineeSavedGoNext) {
+  return Astro.redirect(
+    canSign
+      ? `/applications/${application!.id}/print`
+      : `/applications/${application!.id}/account?step=3`
+  );
+}
 
 const timeline = applicationTimeline({
   status: application!.status,
@@ -711,7 +743,7 @@ if (isEditable) {
     }
     currentStep = clamped;
   } else {
-    currentStep = defaultStep;
+    currentStep = nomineeRefused ? CAPTURE_STEP : defaultStep;
   }
 }
 
@@ -971,7 +1003,12 @@ const dateFormat = localFormat({
             <div class="mt-6 border-t border-neutral-200 pt-4 dark:border-neutral-800">
               <h3 class={SUBTITLE}>Nominee for this account</h3>
               {isEditable && currentStep === CAPTURE_STEP ? (
-                <form method="post" class="mt-3 space-y-3" data-nominee-form>
+                <form
+                  method="post"
+                  id="nominee-form"
+                  class="mt-3 space-y-3"
+                  data-nominee-form
+                >
                   <input type="hidden" name="intent" value="set-nominee" />
                   {nomineeChoice.existingName && (
                     <label class="flex items-center gap-2 text-sm text-neutral-700 dark:text-neutral-200">
@@ -1013,9 +1050,7 @@ const dateFormat = localFormat({
                       </label>
                     ))}
                   </div>
-                  <button type="submit" class={SECONDARY_SM}>
-                    Save nominee
-                  </button>
+                  <p data-nominee-status class={HINT} aria-live="polite" />
                 </form>
               ) : (
                 <p class="mt-2 text-sm text-neutral-800 dark:text-neutral-100">
@@ -1037,16 +1072,32 @@ const dateFormat = localFormat({
 
           {isEditable && currentStep === CAPTURE_STEP && (
             <div class="mt-6 flex flex-wrap items-center justify-end gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800">
-              <a
-                href={
-                  canSign
-                    ? `/applications/${application!.id}/print`
-                    : `/applications/${application!.id}/account?step=${DOCUMENTS_STEP}`
-                }
-                class={BUTTON}
-              >
-                {canSign ? 'Next: sign the form →' : 'Next: upload documents →'}
-              </a>
+              {nomineeChoice ? (
+                <button
+                  type="submit"
+                  form="nominee-form"
+                  name="intent"
+                  value="set-nominee"
+                  class={BUTTON}
+                >
+                  {canSign
+                    ? 'Next: sign the form →'
+                    : 'Next: upload documents →'}
+                </button>
+              ) : (
+                <a
+                  href={
+                    canSign
+                      ? `/applications/${application!.id}/print`
+                      : `/applications/${application!.id}/account?step=${DOCUMENTS_STEP}`
+                  }
+                  class={BUTTON}
+                >
+                  {canSign
+                    ? 'Next: sign the form →'
+                    : 'Next: upload documents →'}
+                </a>
+              )}
             </div>
           )}
         </section>
@@ -1676,6 +1727,43 @@ const dateFormat = localFormat({
       radio.addEventListener('change', sync);
     }
     sync();
+
+    // Saved as the officer types; Next saves it in full and moves on.
+    const status = nomineeForm.querySelector<HTMLElement>(
+      '[data-nominee-status]'
+    );
+    let timer: number | undefined;
+    let pending: Promise<void> = Promise.resolve();
+    const save = () => {
+      const body = new FormData(nomineeForm);
+      body.set('intent', 'autosave-nominee');
+      pending = pending.then(async () => {
+        try {
+          const response = await fetch(window.location.href, {
+            method: 'POST',
+            body,
+          });
+          const result = await response.json().catch(() => ({}));
+          if (status) {
+            status.textContent = response.ok
+              ? 'Saved.'
+              : (result.error ?? 'Not saved. Please try again.');
+          }
+        } catch {
+          if (status) status.textContent = 'Not saved. Please try again.';
+        }
+      });
+    };
+    const later = () => {
+      if (status) status.textContent = '';
+      window.clearTimeout(timer);
+      timer = window.setTimeout(save, 600);
+    };
+    nomineeForm.addEventListener('input', later);
+    nomineeForm.addEventListener('change', () => {
+      window.clearTimeout(timer);
+      save();
+    });
   }
 </script>
 

@@ -49,6 +49,7 @@ import {
   RECEIVED_STATUS,
 } from './capture';
 import { localDay } from '../time';
+import { accountNomineeProblems } from './account-nominee';
 
 export const WORKFLOW_CODE = 'membership_application_approval';
 export const ENTITY_TYPE = 'membership_application';
@@ -403,6 +404,12 @@ export async function submitApplication(
       'Enter both witness names on the Application signature step before ' +
         'this can be submitted.'
     );
+  }
+  // A further account's own nominee, saved as the officer typed it
+  // (account-nominee.ts), stands only once complete.
+  const nomineeProblems = await accountNomineeProblems(application);
+  if (nomineeProblems.length > 0) {
+    throw new ApplicationError(nomineeProblems.join(' '));
   }
   if (readiness.documentsOutstanding > 0) {
     throw new ApplicationError(

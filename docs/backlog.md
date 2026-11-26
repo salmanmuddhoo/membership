@@ -6054,7 +6054,11 @@ Officer request, 26 November 2026.
   one on the holder's Shares and MSA, or a different person with the
   nominee fields the holder's membership type captures
   (`src/lib/applications/account-nominee.ts`; written as the application's
-  own nominee party). The printed form shows the account's nominee.
+  own nominee party). The printed form shows the account's nominee. The
+  panel saves as the officer types, however far it is filled in; Next
+  saves it in full (every mandatory field) and goes on to the signature
+  step, and submission refuses a different nominee left incomplete
+  (`accountNomineeProblems`).
 - **The member page** shows a separate nominee card for each open account
   with a nominee of its own, titled with the accounts each covers
   ("Nominee · Shares, MSA", "Nominee · HSA0206"); when every account goes to

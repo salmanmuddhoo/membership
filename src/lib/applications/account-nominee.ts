@@ -53,6 +53,38 @@ async function holderApplication(
     : null;
 }
 
+function nomineeProblems(
+  fields: MembershipTypeField[],
+  normalised: ReturnType<typeof normalise>
+): string[] {
+  return [
+    ...fields
+      .filter(
+        f => f.isMandatory && (normalised.values[f.fieldKey] ?? '') === ''
+      )
+      .map(f => `${f.label} is required.`),
+    ...normalised.errors.map(e => e.label),
+  ];
+}
+
+/**
+ * What still stops this application's own nominee from standing: a
+ * different nominee started but with a mandatory field blank or a value
+ * that does not read. Empty when there is nothing to choose, the account
+ * keeps the holder's nominee, or the different one is complete.
+ */
+export async function accountNomineeProblems(
+  application: Application
+): Promise<string[]> {
+  const choice = await accountNomineeChoice(application);
+  if (!choice?.own) return [];
+  const problems = nomineeProblems(
+    choice.fields,
+    normalise(choice.own, choice.fields)
+  );
+  return problems.map(p => `Nominee: ${p}`);
+}
+
 /** What the account page offers: the nominee on file, or a different one. */
 export async function accountNomineeChoice(
   application: Application
@@ -73,7 +105,10 @@ export async function accountNomineeChoice(
   return {
     existingName: nameOf(existing),
     fields,
-    own: own && nameOf(own.values) !== '' ? own.values : null,
+    own:
+      own && Object.values(own.values).some(v => (v ?? '').trim() !== '')
+        ? own.values
+        : null,
   };
 }
 
@@ -81,11 +116,17 @@ export async function accountNomineeChoice(
  * The same nominee as the holder's Shares and MSA, or a different one with
  * every mandatory nominee field. Only while the application is the
  * officer's to change.
+ *
+ * As a draft (the panel saving as the officer types), a different nominee
+ * is kept however far it has been filled in; the mandatory fields are
+ * asked for when the officer moves on (accountNomineeProblems), and again
+ * at submission.
  */
 export async function setAccountNominee(
   applicationId: string,
   input: { choice: 'same' | 'different'; values: Record<string, string> },
-  actor: Actor
+  actor: Actor,
+  options: { draft?: boolean } = {}
 ): Promise<void> {
   const application = await loadApplication(applicationId);
   if (!application) {
@@ -108,22 +149,31 @@ export async function setAccountNominee(
   let values: Record<string, string> | null = null;
   if (input.choice === 'different') {
     const normalised = normalise(input.values, choice.fields);
-    const missing = choice.fields.filter(
-      f => f.isMandatory && (normalised.values[f.fieldKey] ?? '') === ''
-    );
-    const problems = [
-      ...missing.map(f => `${f.label} is required.`),
-      ...normalised.errors.map(e => e.label),
-    ];
-    if (problems.length > 0) {
+    const problems = nomineeProblems(choice.fields, normalised);
+    if (problems.length > 0 && !options.draft) {
       throw new ApplicationError(problems.join(' '));
     }
-    values = normalised.values;
-  } else if (!choice.existingName) {
+    // A draft keeps what was typed where it does not yet read as valid.
+    values = options.draft
+      ? Object.fromEntries(
+          choice.fields.map(f => [
+            f.fieldKey,
+            normalised.values[f.fieldKey] ??
+              (input.values[f.fieldKey] ?? '').trim(),
+          ])
+        )
+      : normalised.values;
+  } else if (!choice.existingName && !options.draft) {
     throw new ApplicationError(
       'No nominee is on file for this holder. Name a nominee for this account.'
     );
   }
+
+  const previous = choice.own ? nameOf(choice.own) || 'different' : 'same';
+  const next = values ? nameOf(values) || 'different' : 'same';
+  const unchanged =
+    JSON.stringify(values) === JSON.stringify(choice.own ?? null);
+  if (unchanged) return;
 
   await withTransaction(async client => {
     if (values) {
@@ -152,8 +202,8 @@ export async function setAccountNominee(
         action: 'membership.application.nominee_set',
         entityType: 'membership_application',
         entityId: applicationId,
-        previousValue: { nominee: choice.own ? nameOf(choice.own) : 'same' },
-        newValue: { nominee: values ? nameOf(values) : 'same' },
+        previousValue: { nominee: previous },
+        newValue: { nominee: next },
       },
       client
     );

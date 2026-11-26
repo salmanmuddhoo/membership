@@ -359,6 +359,67 @@ describe('a nominee per account', () => {
     expect(same?.own).toBeNull();
   });
 
+  it('keeps a nominee saved as it is typed, and asks for the rest before it stands', async () => {
+    const { accountNominee, capture } = await load();
+    const draft = await run(
+      appUrl,
+      `insert into membership_application
+         (application_kind, existing_member_id, captured_by, status)
+       values ('additional_account', $1, $2, 'draft') returning id`,
+      [member.id, clerk.userId]
+    );
+    const id = draft.rows[0].id;
+    const reload = async () => (await capture.loadApplication(id))!;
+
+    // Half typed: kept, though it does not stand yet.
+    await accountNominee.setAccountNominee(
+      id,
+      { choice: 'different', values: { name: 'Zaid' } },
+      clerk,
+      { draft: true }
+    );
+    expect(
+      (await accountNominee.accountNomineeChoice(await reload()))?.own
+    ).toMatchObject({ name: 'Zaid', surname: '' });
+    const problems = await accountNominee.accountNomineeProblems(
+      await reload()
+    );
+    expect(problems.length).toBeGreaterThan(0);
+    expect(problems.join(' ')).toMatch(/^Nominee: .*required/);
+
+    // Completed: it stands.
+    await accountNominee.setAccountNominee(
+      id,
+      {
+        choice: 'different',
+        values: {
+          surname: 'Test',
+          name: 'Zaid',
+          nic: 'Z1234567890123',
+          address: 'Quatre Bornes',
+        },
+      },
+      clerk
+    );
+    expect(await accountNominee.accountNomineeProblems(await reload())).toEqual(
+      []
+    );
+
+    // Back to the holder's own nominee: nothing left to complete.
+    await accountNominee.setAccountNominee(
+      id,
+      { choice: 'same', values: {} },
+      clerk,
+      { draft: true }
+    );
+    expect(
+      (await accountNominee.accountNomineeChoice(await reload()))?.own
+    ).toBeNull();
+    expect(await accountNominee.accountNomineeProblems(await reload())).toEqual(
+      []
+    );
+  });
+
   it('names the accounts each nominee covers, for the member page', async () => {
     const { accountNominee } = await load();
     expect(
