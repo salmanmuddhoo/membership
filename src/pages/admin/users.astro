@@ -9,6 +9,7 @@ import {
   listRoles,
   listUsers,
   setUserActive,
+  setUserOutOfHours,
   setUserRoles,
 } from '@lib/admin/roles';
 import { pagingFrom } from '@lib/paging';
@@ -65,7 +66,8 @@ if (Astro.request.method === 'POST') {
           'They can sign in with their Microsoft account straight away.';
       } else if (intent === 'roles') {
         await setUserRoles(userId, form.getAll('roles').map(String), actor);
-        notice = 'Roles updated.';
+        await setUserOutOfHours(userId, form.get('outOfHours') === 'on', actor);
+        notice = 'Account updated.';
       } else if (intent === 'delete') {
         await deleteStaffAccount(userId, actor);
         notice = 'Account deleted.';
@@ -285,6 +287,11 @@ const { users, total } = userPage;
               <span class="text-xs text-neutral-400 dark:text-neutral-500">
                 {user.roles.length > 0 ? user.roles.join(', ') : 'no roles'}
               </span>
+              {user.outOfHoursAccess && (
+                <span class="text-xs text-neutral-400 dark:text-neutral-500">
+                  · out of hours
+                </span>
+              )}
             </summary>
 
             <form method="post" class="mt-4 space-y-3">
@@ -309,6 +316,17 @@ const { users, total } = userPage;
                 ))}
               </fieldset>
 
+              <label class="flex items-center gap-x-2 text-sm text-neutral-600 dark:text-neutral-300">
+                <input
+                  type="checkbox"
+                  name="outOfHours"
+                  checked={user.outOfHoursAccess}
+                  disabled={!canManage}
+                  class="text-mint-500 focus:ring-mint-400 rounded border-neutral-300 dark:border-neutral-600"
+                />
+                Allowed outside staff access hours
+              </label>
+
               {canManage && (
                 <div class="flex flex-wrap gap-2 pt-2">
                   <button
@@ -317,7 +335,7 @@ const { users, total } = userPage;
                     value="roles"
                     class={BUTTON_SM}
                   >
-                    Save roles
+                    Save
                   </button>
                   {user.isActive ? (
                     user.id !== principal.userId && (

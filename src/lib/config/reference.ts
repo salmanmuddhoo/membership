@@ -11,6 +11,7 @@ import { query, withConfigurationActor } from '../db/pool';
 import { cached } from './cache';
 import type { ConfigurationActor } from '../db/pool';
 import type { PoolClient } from 'pg';
+import { isTime, OPEN_ALL_DAY, type ClosedHours } from '../access/hours';
 
 // A refusal the caller should show the person who asked, as opposed to a
 // defect. Mirrors AdminError in ../admin/roles.ts.
@@ -2278,6 +2279,60 @@ export async function setSessionIdleMinutes(
        on conflict (key) do update
          set value = excluded.value, updated_by = excluded.updated_by`,
       [SESSION_IDLE_MINUTES_KEY, Number(trimmed), actor.userId]
+    );
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Staff access hours (migration 0131; access/hours.ts). Read by the
+// middleware on every staff request and by the sign-in page.
+const CLOSED_HOURS_KEY = 'access.closed_hours';
+
+async function readClosedHours(): Promise<ClosedHours> {
+  const result = await query<{ value: unknown }>(
+    `select value from config_entry where key = $1`,
+    [CLOSED_HOURS_KEY]
+  );
+  const value = result.rows[0]?.value as Partial<ClosedHours> | undefined;
+  const from = typeof value?.from === 'string' ? value.from : '';
+  const until = typeof value?.until === 'string' ? value.until : '';
+  return isTime(from) && isTime(until) ? { from, until } : OPEN_ALL_DAY;
+}
+
+export function closedHours(): Promise<ClosedHours> {
+  return cached('closed-hours', readClosedHours);
+}
+
+/** Both times as HH:MM, or both blank to leave the system open all day. */
+export async function setClosedHours(
+  from: string,
+  until: string,
+  actor: Actor
+): Promise<void> {
+  const f = from.trim();
+  const u = until.trim();
+  if (f !== '' || u !== '') {
+    if (!isTime(f) || !isTime(u)) {
+      throw new ConfigError(
+        'Give both times as HH:MM, e.g. 17:00 and 07:00, or leave both blank.'
+      );
+    }
+    if (f === u) {
+      throw new ConfigError('The two times must differ.');
+    }
+  }
+  await withConfigurationActor(actorFor(actor), async client => {
+    await client.query(
+      `insert into config_entry (key, value, value_type, description, updated_by)
+       values (
+         $1, jsonb_build_object('from', $2::text, 'until', $3::text), 'json',
+         'Staff cannot use the system between these two times (Mauritius ' ||
+         'time, HH:MM). Blank leaves it open all day.',
+         $4
+       )
+       on conflict (key) do update
+         set value = excluded.value, updated_by = excluded.updated_by`,
+      [CLOSED_HOURS_KEY, f, u, actor.userId]
     );
   });
 }

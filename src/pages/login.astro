@@ -3,16 +3,33 @@ import AuthLayout from '@layouts/AuthLayout.astro';
 import BrandLogo from '@components/BrandLogo.astro';
 import EnvBadge from '@components/EnvBadge.astro';
 
+import { closedHours } from '@lib/config/reference';
+
 // Friendly messages for the two failure cases the /auth routes redirect back with.
 const errorCode = Astro.url.searchParams.get('error');
+const reason = Astro.url.searchParams.get('reason');
+// Signed out inside the closed hours (access/hours.ts): say when it opens.
+let hoursMessage = 'The system is closed to staff at this time.';
+if (reason === 'hours') {
+  try {
+    const hours = await closedHours();
+    if (hours.from) {
+      hoursMessage = `The system is closed to staff from ${hours.from} to ${hours.until}.`;
+    }
+  } catch {
+    // The general message stands.
+  }
+}
 const errorMessage =
   errorCode === 'config'
     ? 'Sign-in is not configured yet. Please contact your administrator.'
     : errorCode === 'auth'
       ? 'We could not sign you in. Please try again.'
-      : Astro.url.searchParams.get('reason') === 'idle'
+      : reason === 'idle'
         ? 'You were signed out after a period without activity.'
-        : null;
+        : reason === 'hours'
+          ? hoursMessage
+          : null;
 ---
 
 <AuthLayout

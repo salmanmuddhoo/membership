@@ -564,6 +564,43 @@ export async function setUserActive(
   });
 }
 
+/**
+ * Whether this account may use the system inside the closed hours
+ * (access.closed_hours, migration 0131). Audited either way.
+ */
+export async function setUserOutOfHours(
+  userId: string,
+  allowed: boolean,
+  actor: { userId: string; email: string }
+): Promise<void> {
+  await withTransaction(async client => {
+    const user = await client.query<{ out_of_hours_access: boolean }>(
+      'select out_of_hours_access from app_user where id = $1',
+      [userId]
+    );
+    if (user.rowCount === 0) throw new AdminError('No such user.', 'not_found');
+    if (user.rows[0].out_of_hours_access === allowed) return;
+
+    await client.query(
+      `update app_user set out_of_hours_access = $2, updated_at = now()
+        where id = $1`,
+      [userId, allowed]
+    );
+    await recordAudit(
+      {
+        actorUserId: actor.userId,
+        actorDescription: actor.email,
+        action: 'user.out_of_hours_changed',
+        entityType: 'app_user',
+        entityId: userId,
+        previousValue: { outOfHoursAccess: user.rows[0].out_of_hours_access },
+        newValue: { outOfHoursAccess: allowed },
+      },
+      client
+    );
+  });
+}
+
 export interface UserSummary {
   id: string;
   email: string;
@@ -571,6 +608,8 @@ export interface UserSummary {
   isActive: boolean;
   hasSignedIn: boolean;
   roles: string[];
+  // May use the system inside the closed hours (access/hours.ts).
+  outOfHoursAccess: boolean;
 }
 
 // How many accounts are deactivated. Counted in the database rather than by
@@ -626,6 +665,7 @@ export async function listUsers(
     email: string;
     display_name: string;
     is_active: boolean;
+    out_of_hours_access: boolean;
     has_signed_in: boolean;
     roles: string[];
     total_count: string;
@@ -633,6 +673,7 @@ export async function listUsers(
     // count(*) over () is evaluated before LIMIT/OFFSET, so it reports the
     // size of the whole match, not of the page.
     `select u.id, u.email::text as email, u.display_name, u.is_active,
+            u.out_of_hours_access,
             (u.entra_subject is not null) as has_signed_in,
             coalesce(
               array_agg(distinct r.code) filter (where r.code is not null), '{}'
@@ -658,6 +699,7 @@ export async function listUsers(
     isActive: r.is_active,
     hasSignedIn: r.has_signed_in,
     roles: r.roles,
+    outOfHoursAccess: r.out_of_hours_access,
   }));
 
   const total = result.rows.length > 0 ? Number(result.rows[0].total_count) : 0;

@@ -6003,3 +6003,23 @@ Officer direction, 14 October 2026.
   to SharePoint as `members-before-reset-<day>-<hhmm>.xlsx` before anything
   is removed; if it cannot be saved, nothing is removed. The nightly trim
   never deletes it (`backupBeforeReset`, `src/lib/migration/backup.ts`).
+
+---
+
+### Staff access hours
+
+Officer request, 26 November 2026.
+
+- **Closed hours:** Configuration → Staff access hours sets a daily window,
+  Mauritius time (`access.closed_hours`, migration 0131), e.g. 17:00 to
+  07:00; a window past midnight is read as one. Blank, as it ships, leaves
+  the system open all day. Inside the window a staff session ends at its
+  next request — signed out on the trail, `access.out_of_hours` recorded —
+  and the sign-in page says when the system is closed
+  (`src/lib/access/hours.ts`, `src/middleware.ts`).
+- **Not held to it:** the System Administrator role, so the window can
+  never lock everyone out of the screen that sets it, and any account
+  marked "Allowed outside staff access hours" on Staff accounts
+  (`app_user.out_of_hours_access`, audited as `user.out_of_hours_changed`).
+  The member app and the public API are not staff sessions and are not
+  affected.
