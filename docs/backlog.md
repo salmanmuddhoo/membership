@@ -5109,6 +5109,13 @@ name (`rolesHoldingPermission`, `src/lib/access/holders.ts`).
   request cannot be submitted until there is none. A minor's guardian
   cannot be changed on screen today, so the block lasts until the minor
   leaves or reaches majority.
+- **A guardian resigns with their minors, last** (officer request, 27
+  November 2026): the guardian's resignation may start once every minor
+  member in their care has a resignation submitted; a minor non-member or
+  a minor's application still blocks, as above. The President approves
+  each minor's resignation first: the guardian's is refused at approval,
+  and again at payout or when paid at once, until every one of theirs is
+  approved (`wardsStillToResign`, `members/guardian.ts`).
 - **A demised claim is for members only; a non-member's balances go to
   their nominee** (business decisions). A non-member — a customer, or a
   resigned member still holding an HSA or Investment — has no Demised

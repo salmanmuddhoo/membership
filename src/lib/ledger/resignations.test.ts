@@ -443,7 +443,9 @@ describe('a guardian (officer direction)', () => {
     const minorNo = minor.rows[0].member_no;
     let check = await guardianCheck();
     expect(check.passed).toBe(false);
-    expect(check.detail).toBe(`Guardian of ${minorNo} · Yusuf Test.`);
+    expect(check.detail).toBe(
+      `Guardian of ${minorNo} · Yusuf Test, not resigning. Submit their resignations first.`
+    );
     expect(
       resignations
         .blockingChecks(await resignations.checksFor(member.id))
@@ -476,7 +478,7 @@ describe('a guardian (officer direction)', () => {
     check = await guardianCheck();
     expect(check.passed).toBe(false);
     expect(check.detail).toBe(
-      `Guardian of ${pendingApp.rows[0].reference} · Maryam Test.`
+      `Guardian of ${pendingApp.rows[0].reference} · Maryam Test, not resigning. Submit their resignations first.`
     );
 
     // Decided against, it no longer does.
@@ -486,6 +488,150 @@ describe('a guardian (officer direction)', () => {
       [pendingApp.rows[0].id]
     );
     expect((await guardianCheck()).passed).toBe(true);
+  });
+});
+
+describe('a guardian resigning with their minors (officer direction)', () => {
+  it('starts once every minor is resigning, and is approved and paid last', async () => {
+    const { resignations, review, deposits } = await load();
+    const types = Object.fromEntries(
+      (await run(appUrl, `select code, id from account_type`)).rows.map(r => [
+        r.code,
+        r.id,
+      ])
+    );
+    const typeId = async (code: string) =>
+      (
+        await run(appUrl, `select id from membership_type where code = $1`, [
+          code,
+        ])
+      ).rows[0].id;
+    // A member with Shares and an MSA, Rs 100 on each, as the legacy import
+    // leaves them (joining fees paid before migration).
+    const newMember = async (
+      type: string,
+      name: string,
+      guardianNo: string | null
+    ) => {
+      const app = await run(
+        appUrl,
+        `insert into membership_application
+           (membership_type_id, captured_by, status)
+         values ($1, $2, 'approved') returning id`,
+        [await typeId(type), officer.userId]
+      );
+      await run(
+        appUrl,
+        `insert into application_party (application_id, subject, ordinal, values)
+         values ($1, 'applicant', 1, $2)`,
+        [app.rows[0].id, JSON.stringify({ name, surname: 'Family' })]
+      );
+      if (guardianNo) {
+        await run(
+          appUrl,
+          `insert into application_party (application_id, subject, ordinal, values)
+           values ($1, 'guardian', 1, $2)`,
+          [app.rows[0].id, JSON.stringify({ member_id: guardianNo })]
+        );
+      }
+      const m = await run(
+        appUrl,
+        `insert into member (application_id, membership_type_id)
+         values ($1, $2) returning id, member_no`,
+        [app.rows[0].id, await typeId(type)]
+      );
+      for (const code of ['shares', 'msa']) {
+        const account = await run(
+          appUrl,
+          `insert into account
+             (member_id, account_type_id, is_membership_default, status,
+              opened_via_migration, opened_by_application_id)
+           values ($1, $2, true, 'active', true, $3) returning id`,
+          [m.rows[0].id, types[code], app.rows[0].id]
+        );
+        await deposits.recordDeposit(
+          { accountId: account.rows[0].id, amount: '100', method: 'cash' },
+          officer
+        );
+      }
+      return { id: m.rows[0].id as string, no: m.rows[0].member_no as string };
+    };
+    const startFor = (memberId: string) =>
+      resignations.startResignation(
+        {
+          memberId,
+          reason: 'The family is moving',
+          method: 'bank_transfer',
+          methodReference: 'MCB 4471',
+          bankAccountId,
+        },
+        clerk
+      );
+    // Started, signed, submitted and past the Secretary.
+    const resign = async (memberId: string) => {
+      const draft = await startFor(memberId);
+      await fileRequest(draft.id, clerk);
+      await resignations.submitResignation(draft.id, clerk);
+      await review.reviewTransaction(
+        draft.id,
+        { outcome: 'forward', comment: '' },
+        secretary
+      );
+      return draft;
+    };
+    const approve = (id: string) =>
+      review.reviewTransaction(
+        id,
+        { outcome: 'forward', comment: 'Agreed' },
+        president
+      );
+
+    const guardian = await newMember('individual', 'Omar', null);
+    const ali = await newMember('minor', 'Ali', guardian.no);
+    const sara = await newMember('minor', 'Sara', guardian.no);
+    const guardianCheck = async () =>
+      (await resignations.checksFor(guardian.id)).find(
+        c => c.code === 'guardian'
+      )!;
+
+    // One of two minors resigning: the guardian may not.
+    const aliResignation = await resign(ali.id);
+    let check = await guardianCheck();
+    expect(check.passed).toBe(false);
+    expect(check.detail).toBe(
+      `Guardian of ${sara.no} · Sara Family, not resigning. Submit their resignations first.`
+    );
+    await expect(startFor(guardian.id)).rejects.toThrowError(/not resigning/);
+
+    // Both resigning: the guardian may, to be approved after them.
+    const saraResignation = await resign(sara.id);
+    check = await guardianCheck();
+    expect(check.passed).toBe(true);
+    expect(check.detail).toBe(
+      `${ali.no} · Ali Family (${aliResignation.reference}), ${sara.no} · Sara Family (${saraResignation.reference}) resigning. Approve theirs before this one.`
+    );
+    const guardianResignation = await resign(guardian.id);
+
+    // The President approves the minors first, the guardian last.
+    await expect(approve(guardianResignation.id)).rejects.toThrowError(
+      `Approve the minors' resignations first: ${ali.no} · Ali Family (${aliResignation.reference}), ${sara.no} · Sara Family (${saraResignation.reference}).`
+    );
+    await approve(aliResignation.id);
+    await expect(approve(guardianResignation.id)).rejects.toThrowError(
+      `Approve the minors' resignations first: ${sara.no} · Sara Family (${saraResignation.reference}).`
+    );
+    await approve(saraResignation.id);
+    expect((await approve(guardianResignation.id)).status).toBe('approved');
+
+    for (const r of [aliResignation, saraResignation, guardianResignation]) {
+      const paid = await review.postApprovedTransaction(r.id, treasurer, {
+        method: 'bank_transfer',
+        methodReference: 'MCB 4471',
+        bankAccountId,
+      });
+      expect(paid.status).toBe('posted');
+    }
+    expect((await guardianCheck()).detail).toBe('Guardian of no minor.');
   });
 });
 

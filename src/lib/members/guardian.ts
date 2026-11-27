@@ -190,6 +190,128 @@ export async function guardianGoneMessage(
   return `The guardian${who ? `, ${who},` : ''} is demised. Record a new guardian first.`;
 }
 
+export interface Ward {
+  label: string;
+  // The minor's member record; null for a minor non-member or an
+  // application still on its way, neither of which can resign.
+  memberId: string | null;
+  // The minor's own resignation, submitted and not yet finished.
+  resignation: { reference: string; status: string } | null;
+}
+
+// The minors this member is still guardian of (officer direction: a
+// guardian may not leave while a minor depends on them). A minor member not
+// yet resigned or deceased — one moved to an adult type at majority (S-610)
+// no longer counts — a minor non-member holding an account of their own,
+// and a minor's application still on its way, which would otherwise be
+// approved naming a guardian who has left.
+//
+// Matched as guardianOf (applications/capture.ts) matches, on what capture
+// wrote into the minor's guardian block: this member's number or their NIC.
+export async function wardsOf(memberId: string): Promise<Ward[]> {
+  const result = await query<{
+    label: string;
+    member_id: string | null;
+    resignation_reference: string | null;
+    resignation_status: string | null;
+  }>(
+    `with me as (
+       select m.member_no, coalesce(p.values->>'nic', '') as nic
+         from member m
+         left join application_party p
+           on p.application_id = m.application_id
+          and p.subject = 'applicant' and p.ordinal = 1
+        where m.id = $1
+     )
+     select w.label, w.member_id,
+            r.reference as resignation_reference,
+            r.status as resignation_status
+       from (
+       select m.member_no as ref, m.id as member_id,
+              m.member_no || ' · ' ||
+                trim(concat_ws(' ', a.values->>'name', a.values->>'surname'))
+                as label
+         from member m
+         join membership_type t on t.id = m.membership_type_id
+         join application_party g
+           on g.application_id = m.application_id and g.subject = 'guardian'
+         left join application_party a
+           on a.application_id = m.application_id
+          and a.subject = 'applicant' and a.ordinal = 1
+         cross join me
+        where m.id <> $1 and t.code = 'minor'
+          and m.status not in ('resigned', 'demised')
+          and ((me.member_no <> ''
+                and lower(g.values->>'member_id') = lower(me.member_no))
+               or (me.nic <> '' and g.values->>'nic' = me.nic))
+       union all
+       -- A minor who is not a member but holds an account of their own.
+       select coalesce(ap.reference, '') as ref, null::uuid as member_id,
+              coalesce(ap.reference, '') || ' · ' ||
+                trim(concat_ws(' ', a.values->>'name', a.values->>'surname'))
+                as label
+         from customer c
+         join membership_application ap on ap.id = c.application_id
+         join membership_type t on t.id = ap.membership_type_id
+         join application_party g
+           on g.application_id = ap.id and g.subject = 'guardian'
+         left join application_party a
+           on a.application_id = ap.id
+          and a.subject = 'applicant' and a.ordinal = 1
+         cross join me
+        where c.status = 'active' and t.code = 'minor'
+          and ((me.member_no <> ''
+                and lower(g.values->>'member_id') = lower(me.member_no))
+               or (me.nic <> '' and g.values->>'nic' = me.nic))
+       union all
+       select ap.reference as ref, null::uuid as member_id,
+              ap.reference || ' · ' ||
+                trim(concat_ws(' ', a.values->>'name', a.values->>'surname'))
+                as label
+         from membership_application ap
+         join application_party g
+           on g.application_id = ap.id and g.subject = 'guardian'
+         left join application_party a
+           on a.application_id = ap.id
+          and a.subject = 'applicant' and a.ordinal = 1
+         cross join me
+        where ap.status not in ('approved', 'rejected')
+          and ((me.member_no <> ''
+                and lower(g.values->>'member_id') = lower(me.member_no))
+               or (me.nic <> '' and g.values->>'nic' = me.nic))
+     ) w
+     -- The minor's own resignation, submitted and not yet finished.
+     left join lateral (
+       select t.reference, t.status from transaction t
+        where t.member_id = w.member_id and t.kind = 'resignation'
+          and t.status in ('submitted', 'under_review', 'approved')
+        order by t.created_at desc limit 1
+     ) r on true
+     order by w.ref`,
+    [memberId]
+  );
+  return result.rows.map(r => ({
+    label: r.label,
+    memberId: r.member_id,
+    resignation: r.resignation_reference
+      ? { reference: r.resignation_reference, status: r.resignation_status! }
+      : null,
+  }));
+}
+
+/**
+ * Officer direction: a guardian resigns last. Their resignation is approved
+ * and paid only once every minor in their care has had their own approved;
+ * a minor's paid resignation ends the membership and takes them out of the
+ * guardian's care. The minors in the way, by label and resignation; empty
+ * when the guardian may go.
+ */
+export async function wardsStillToResign(memberId: string): Promise<Ward[]> {
+  return (await wardsOf(memberId)).filter(
+    w => w.resignation?.status !== 'approved'
+  );
+}
+
 export interface GuardianChange {
   id: string;
   // The minor's own id: a member's, or a non-member customer's.
