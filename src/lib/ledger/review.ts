@@ -46,7 +46,7 @@ import {
   feeTransferForTransaction,
   settleFeeTransfer,
 } from '../payments/fee-transfer-settlement';
-import { guardianGoneMessage } from '../members/guardian';
+import { guardianGoneMessage, wardsStillToResign } from '../members/guardian';
 import { toCents } from '../payments/money';
 import { nomineePayouts, type NomineePayout } from './nominee-payouts';
 
@@ -647,6 +647,27 @@ async function refuseWhileGuardianGone(
   if (message) throw new ReviewError(message, 'conflict');
 }
 
+// Officer direction: a guardian resigns last. Their resignation is approved,
+// and paid, only once the resignation of every minor in their care has been
+// approved (members/guardian.ts, wardsStillToResign).
+async function refuseWhileWardsStay(
+  transaction: TransactionSummary
+): Promise<void> {
+  if (transaction.kind !== 'resignation' || !transaction.holderId) return;
+  const waiting = await wardsStillToResign(transaction.holderId);
+  if (waiting.length === 0) return;
+  throw new ReviewError(
+    `Approve the minors' resignations first: ${waiting
+      .map(w =>
+        w.resignation
+          ? `${w.label} (${w.resignation.reference})`
+          : `${w.label} (not resigning)`
+      )
+      .join(', ')}.`,
+    'conflict'
+  );
+}
+
 async function refuseUnlessSegregated(
   principal: Principal,
   reference: string,
@@ -737,6 +758,7 @@ export async function reviewTransaction(
   }
   if (decision.outcome === 'forward') {
     await refuseWhileGuardianGone(transaction);
+    if (position.isLast) await refuseWhileWardsStay(transaction);
   }
   await refuseUnlessSegregated(
     principal,
@@ -1041,6 +1063,7 @@ export async function postApprovedTransaction(
     }
   }
   await refuseWhileGuardianGone(transaction);
+  await refuseWhileWardsStay(transaction);
   await refuseUnlessSegregated(
     principal,
     transaction.reference,
